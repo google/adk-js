@@ -22,7 +22,7 @@ import {ToolContext} from '../tools/tool_context.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {BaseLlmRequestProcessor, BaseLlmResponseProcessor} from './base_llm_processor.js';
 import {CallbackContext} from './callback_context.js';
-import {getContents, getCurrentTurnContents} from './content_processsor_utils.js';
+import {getContents, getCurrentTurnContents} from './content_processor_utils.js';
 // TODO - b/425992518: handleFunctionCallsAsync reusable, other can merge in.
 import {generateAuthEvent, getLongRunningFunctionCalls, handleFunctionCallsAsync, populateClientFunctionCallId} from './functions.js';
 import {injectSessionState} from './instructions.js';
