@@ -946,7 +946,7 @@ export class LlmAgent extends BaseAgent {
 
     if (mergedEvent.content) {
       const functionCalls = mergedEvent.getFunctionCalls();
-      if (functionCalls) {
+      if (functionCalls?.length) {
         // TODO - b/425992518: rename topopulate if missing.
         populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
@@ -960,7 +960,7 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
     // =========================================================================
-    if (!mergedEvent.getFunctionCalls()) {
+    if (!mergedEvent.getFunctionCalls()?.length) {
       return;
     }
 

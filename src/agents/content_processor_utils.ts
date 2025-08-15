@@ -372,7 +372,7 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
     const functionResponses = event.getFunctionResponses();
-    if (functionResponses) {
+    if (functionResponses?.length) {
       for (const functionResponse of functionResponses) {
         if (!functionResponse.id) {
           continue;
@@ -394,7 +394,7 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
     }
 
     const functionCalls = event.getFunctionCalls();
-    if (functionCalls.length) {
+    if (functionCalls?.length) {
       const functionResponseEventsIndices: Set<number> = new Set();
       for (const functionCall of functionCalls) {
         const functionCallId = functionCall.id;
