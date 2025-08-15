@@ -1,7 +1,6 @@
 dist/
 node_modules/
 *.log
-package-lock.json
 .DS_Store
 .idea/
 .vscode/
