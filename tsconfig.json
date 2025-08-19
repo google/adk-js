@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
+    "module": "nodenext",
     "lib": ["ES2022", "DOM"],
     "declaration": true,
     "sourceMap": true,
-    "outDir": "dist",
+    "outDir": "dist/esm",
     "rootDir": "src",
-    "moduleResolution": "bundler",
+    "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
