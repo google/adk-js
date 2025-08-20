@@ -5,6 +5,7 @@
  */
 
 import {Content, createPartFromText} from '@google/genai';
+import {trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext, newInvocationContextId} from '../agents/invocation_context.js';
@@ -21,9 +22,9 @@ import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {Session} from '../sessions/session.js';
 import {BaseToolset} from '../tools/base_toolset.js';
+import {AutoEndingSpan} from '../utils/auto_ending_span.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
-// TODO - b/425992518: Implement tracer
 // TODO - b/425992518: Implement BasePlugin, PluginManager
 
 
@@ -100,10 +101,12 @@ export class Runner {
     stateDelta?: Record<string, any>;
     runConfig?: RunConfig;
   }): AsyncGenerator<Event, void, undefined> {
-    // TODO - b/425992518: Add telemetry
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
+    using span = new AutoEndingSpan(
+        trace.getTracer('gcp.vertex.agent').startSpan('invocation'));
+
     const session =
         await this.sessionService.getSession(this.appName, userId, sessionId);
 

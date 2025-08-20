@@ -5,8 +5,10 @@
  */
 
 import {Content} from '@google/genai';
+import {trace} from '@opentelemetry/api';
 
 import {Event} from '../events/event.js';
+import {AutoEndingSpan} from '../utils/auto_ending_span.js';
 
 import {CallbackContext} from './callback_context.js';
 import {InvocationContext} from './invocation_context.js';
@@ -124,7 +126,8 @@ export abstract class BaseAgent {
   async *
       runAsync(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    // TODO(b/425992518): Add OTEL support.
+    using span = new AutoEndingSpan(trace.getTracer('gcp.vertex.agent')
+                                        .startSpan(`agent_run [${this.name}]`));
     const context = this.createInvocationContext(parentContext);
 
     const beforeAgentCallbackEvent =
@@ -162,6 +165,8 @@ export abstract class BaseAgent {
   async *
       runLive(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
+    using span = new AutoEndingSpan(trace.getTracer('gcp.vertex.agent')
+                                        .startSpan(`agent_run [${this.name}]`));
     // TODO(b/425992518): Implement live mode.
     throw new Error('Live mode is not implemented yet.');
   }
