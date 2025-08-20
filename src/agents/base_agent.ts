@@ -227,38 +227,54 @@ export abstract class BaseAgent {
       InvocationContext {
     return new InvocationContext({
       ...parentContext,
+      // The spread operator ensures the pluginManager is passed down correctly.
       agent: this,
     });
   }
 
   /**
-   * Runs the before agent callback if it exists.
-   *
-   * @param invocationContext The invocation context of the agent.
-   * @return The event to return to the user, or undefined if no event is
-   *     generated.
+   * Runs the before agent callbacks (Plugins first, then Agent callbacks).
    */
   protected async handleBeforeAgentCallback(
       invocationContext: InvocationContext): Promise<Event|undefined> {
-    if (this.beforeAgentCallback.length === 0) {
+    // Optimization: Skip if no callbacks or plugins are registered.
+    if (
+      this.beforeAgentCallback.length === 0 &&
+      invocationContext.pluginManager.getPluginCount() === 0
+    ) {
       return undefined;
     }
 
     const callbackContext = new CallbackContext({invocationContext});
-    for (const callback of this.beforeAgentCallback) {
-      const content = await callback(callbackContext);
+    let content: Content | undefined = undefined;
 
-      if (content) {
-        invocationContext.endInvocation = true;
+    // Step 1: Run Plugins (Plugins take precedence and can short-circuit)
+    content = await invocationContext.pluginManager.runBeforeAgentCallback({
+      agent: this,
+      callbackContext: callbackContext,
+    });
 
-        return new Event({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
+    // Step 2: Run Agent Callbacks (if plugins didn't short-circuit)
+    if (!content && this.beforeAgentCallback.length > 0) {
+      for (const callback of this.beforeAgentCallback) {
+        content = await callback(callbackContext);
+        if (content) {
+          break;
+        }
       }
+    }
+
+    // Step 3: Handle results (Content return or State change)
+    if (content) {
+      invocationContext.endInvocation = true;
+
+      return new Event({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {
@@ -274,31 +290,46 @@ export abstract class BaseAgent {
   }
 
   /**
-   * Runs the after agent callback if it exists.
-   *
-   * @param invocationContext The invocation context of the agent.
-   * @return The event to return to the user, or undefined if no event is
-   *     generated.
+   * Runs the after agent callbacks (Plugins first, then Agent callbacks).
    */
   protected async handleAfterAgentCallback(
       invocationContext: InvocationContext): Promise<Event|undefined> {
-    if (this.afterAgentCallback.length === 0) {
+    // Optimization: Skip if no callbacks or plugins are registered.
+    if (
+      this.afterAgentCallback.length === 0 &&
+      invocationContext.pluginManager.getPluginCount() === 0
+    ) {
       return undefined;
     }
 
     const callbackContext = new CallbackContext({invocationContext});
-    for (const callback of this.afterAgentCallback) {
-      const content = await callback(callbackContext);
+    let content: Content | undefined = undefined;
 
-      if (content) {
-        return new Event({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
-        });
+    // Step 1: Run Plugins
+    content = await invocationContext.pluginManager.runAfterAgentCallback({
+      agent: this,
+      callbackContext: callbackContext,
+    });
+
+    // Step 2: Run Agent Callbacks
+    if (!content && this.afterAgentCallback.length > 0) {
+      for (const callback of this.afterAgentCallback) {
+        content = await callback(callbackContext);
+        if (content) {
+          break;
+        }
       }
+    }
+
+    // Step 3: Handle results
+    if (content) {
+      return new Event({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content,
+        actions: callbackContext.eventActions,
+      });
     }
 
     if (callbackContext.state.hasDelta()) {

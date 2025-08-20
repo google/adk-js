@@ -3,12 +3,48 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content} from '@google/genai';
+import {Content, Part} from '@google/genai';
 
 import {createNewEventId, Event} from '../events/event.js';
 import {deepClone} from '../utils/deep_clone.js';
 
 import {removeClientFunctionCallId, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
+
+/**
+ * Helper function to check if a Content object has any meaningful parts.
+ * This prevents empty events (like {"role": "user", "parts": []}) from corrupting the history.
+ */
+function hasMeaningfulContent(content: Content | undefined): boolean {
+  if (
+    !content ||
+    !content.role ||
+    !content.parts ||
+    content.parts.length === 0
+  ) {
+    return false;
+  }
+
+  // Check if there is at least one part that is not just empty text.
+  return content.parts.some((part) => {
+    if (!part) return false;
+
+    // Check for non-empty text specifically.
+    if ("text" in part && typeof part.text === "string") {
+      return part.text.length > 0;
+    }
+    // Other part types are inherently meaningful if present
+    if ("functionCall" in part && part.functionCall) return true;
+    if ("functionResponse" in part && part.functionResponse) return true;
+    if ("inlineData" in part && part.inlineData) return true;
+
+    // Handle potential type variations if necessary
+    if ("fileData" in part && (part as any).fileData) return true;
+    if ("codeExecutionResult" in part && (part as any).codeExecutionResult)
+      return true;
+
+    return false;
+  });
+}
 
 /**
  * Get the contents for the LLM request.
@@ -26,7 +62,7 @@ export function getContents(
   for (const event of events) {
     // Skip events without content, or generated neither by user nor by model.
     // E.g. events purely for mutating session states.
-    if (!event.content?.role || event.content.parts?.[0]?.text === '') {
+    if (!hasMeaningfulContent(event.content)) {
       continue;
     }
 

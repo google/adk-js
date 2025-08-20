@@ -10,6 +10,7 @@ import {randomUUID} from 'crypto';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
+import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 
@@ -24,6 +25,7 @@ interface InvocationContextParams {
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
   credentialService?: BaseCredentialService;
+  pluginManager?: PluginManager;
   invocationId: string;
   branch?: string;
   agent: BaseAgent;
@@ -109,6 +111,11 @@ export class InvocationContext {
   readonly credentialService?: BaseCredentialService;
 
   /**
+   * The plugin manager associated with this invocation.
+   */
+  readonly pluginManager: PluginManager;
+
+  /**
    * The id of this invocation context.
    */
   readonly invocationId: string;
@@ -178,6 +185,8 @@ export class InvocationContext {
     this.artifactService = params.artifactService;
     this.sessionService = params.sessionService;
     this.memoryService = params.memoryService;
+    this.credentialService = params.credentialService;
+    this.pluginManager = params.pluginManager ?? new PluginManager();
     this.invocationId = params.invocationId;
     this.branch = params.branch;
     this.agent = params.agent;

@@ -6,6 +6,7 @@
 
 import {Content, GenerateContentConfig, Schema,} from '@google/genai';
 import {z} from 'zod';
+import {zodToJsonSchema} from 'zod-to-json-schema';
 
 import {createNewEventId, Event} from '../events/event.js';
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
@@ -79,9 +80,7 @@ export type AfterModelCallback =
     |SingleAfterModelCallback|SingleAfterModelCallback[];
 
 /** A generic dictionary type. */
-export type Dict = {
-  [key: string]: unknown
-};
+export type Dict = Record<string, unknown>;
 
 /**
  * A callback that runs before a tool is called.
@@ -193,7 +192,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   includeContents?: 'default'|'none';
 
   /** The input schema when agent is used as a tool. */
-  inputSchema?: Schema;
+  inputSchema?: z.ZodTypeAny;
 
   /**
    * The output schema when agent replies.
@@ -202,7 +201,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    *   When this is set, agent can ONLY reply and CANNOT use any tools, such as
    *   function tools, RAGs, agent transfer, etc.
    */
-  outputSchema?: Schema;
+  outputSchema?: z.ZodTypeAny;
 
   /**
    * The key in session state to store the output of the agent.
@@ -239,6 +238,12 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   requestProcessors?: BaseLlmRequestProcessor[];
 
   /**
+   * Processors to append after the default request processors.
+   * This provides a stable extension point for frameworks built on ADK.
+   */
+  appendRequestProcessors?: BaseLlmRequestProcessor[];
+
+  /**
    * Processors to run after the LLM response is received.
    */
   responseProcessors?: BaseLlmResponseProcessor[];
@@ -272,8 +277,13 @@ class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest.model = agent.canonicalModel.model;
 
     llmRequest.config = {...agent.generateContentConfig ?? {}};
+    // TODO: This is a temporary change to enable thoughts.
+    // This should be removed once the planner is implemented.
+    llmRequest.config.thinkingConfig = { includeThoughts: true };
     if (agent.outputSchema) {
-      llmRequest.setOutputSchema(agent.outputSchema);
+      // Convert the Zod schema to a JSON Schema object.
+      const jsonSchema = zodToJsonSchema(agent.outputSchema);
+      llmRequest.setOutputSchema(jsonSchema as Schema);
     }
 
     if (invocationContext.runConfig) {
@@ -523,8 +533,8 @@ export class LlmAgent extends BaseAgent {
   disallowTransferToParent: boolean;
   disallowTransferToPeers: boolean;
   includeContents: 'default'|'none';
-  inputSchema?: Schema;
-  outputSchema?: Schema;
+  inputSchema?: z.ZodTypeAny;
+  outputSchema?: z.ZodTypeAny;
   outputKey?: string;
   beforeModelCallback?: BeforeModelCallback;
   afterModelCallback?: AfterModelCallback;
@@ -559,6 +569,11 @@ export class LlmAgent extends BaseAgent {
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
     ];
+
+    // Append additional processors if provided.
+    if (config.appendRequestProcessors) {
+      this.requestProcessors.push(...config.appendRequestProcessors);
+    }
     this.responseProcessors = config.responseProcessors ?? [];
 
     // Preserve the agent transfer behavior.
@@ -786,22 +801,39 @@ export class LlmAgent extends BaseAgent {
     const resultStr: string =
         event.content.parts.map((part) => (part.text ? part.text : ''))
             .join('');
-    let result: unknown;
+
+    // Initialize the result with the raw string (default behavior if no
+    // schema).
+    let result: unknown = resultStr;
+
     if (this.outputSchema) {
-      // If the result from the final chunk is just whitespace or empty,
-      // it means this is an empty final chunk of a stream.
-      // Do not attempt to parse it as JSON.
+      // Handle empty final chunk of a stream (common artifact).
       if (!resultStr.trim()) {
         return;
       }
-      // TODO - b/425992518: Use a proper Schema validation utility.
-      // Should use output schema to validate the JSON.
+
       try {
-        result = JSON.parse(resultStr);
-      } catch (e) {
-        console.error(`Error parsing output for agent ${this.name}`, e);
+        const parsedJson = JSON.parse(resultStr);
+        const validatedData = this.outputSchema.parse(parsedJson);
+        result = validatedData;
+      } catch (error: unknown) {
+        let errorMessage =
+            `ADK Contract Violation: Failed to process output for agent ${
+                this.name} against outputSchema. OutputKey '${
+                this.outputKey}' not saved.`;
+
+        if (error instanceof z.ZodError) {
+          errorMessage +=
+              ` Validation Errors: ${JSON.stringify(error.format(), null, 2)}`;
+        } else if (error instanceof Error) {
+          errorMessage += ` Error: ${error.message}`;
+        }
+
+        console.error(errorMessage);
+        return;  // ABORT the save operation.
       }
     }
+
     event.actions.stateDelta[this.outputKey] = result;
   }
 
@@ -946,7 +978,7 @@ export class LlmAgent extends BaseAgent {
 
     if (mergedEvent.content) {
       const functionCalls = mergedEvent.getFunctionCalls();
-      if (functionCalls) {
+      if (functionCalls?.length) {
         // TODO - b/425992518: rename topopulate if missing.
         populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
@@ -960,7 +992,7 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
     // =========================================================================
-    if (!mergedEvent.getFunctionCalls()) {
+    if (!mergedEvent.getFunctionCalls()?.length) {
       return;
     }
 
@@ -1053,7 +1085,9 @@ export class LlmAgent extends BaseAgent {
       throw new Error('CFC is not yet supported in callLlmAsync');
     } else {
       invocationContext.incrementLlmCallCount();
-      const responsesGenerator = llm.generateContentAsync(llmRequest);
+      const stream =
+        invocationContext.runConfig?.streamingMode === StreamingMode.SSE;
+      const responsesGenerator = llm.generateContentAsync(llmRequest, stream);
 
       for await (const llmResponse of this.runAndHandleError(
           responsesGenerator, invocationContext, llmRequest,

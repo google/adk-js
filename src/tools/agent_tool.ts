@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FunctionDeclaration, Type} from '@google/genai';
+import {Content, FunctionDeclaration, Schema, Type} from '@google/genai';
+import {z} from 'zod';
+import {zodToJsonSchema} from 'zod-to-json-schema';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {LlmAgent} from '../agents/llm_agent.js';
@@ -57,13 +59,15 @@ export class AgentTool extends BaseTool {
     let declaration: FunctionDeclaration;
 
     if (this.agent instanceof LlmAgent && this.agent.inputSchema) {
+      const jsonSchema = zodToJsonSchema(this.agent.inputSchema);
+
       declaration = {
         name: this.name,
         description: this.description,
         // TODO(b/425992518): We should not use the agent's input schema as is.
         // It should be validated and possibly transformed. Consider similar
         // logic to one we have in Python ADK.
-        parameters: this.agent.inputSchema,
+        parameters: jsonSchema as Schema,
       };
     } else {
       declaration = {
@@ -98,16 +102,32 @@ export class AgentTool extends BaseTool {
       toolContext.actions.skipSummarization = true;
     }
 
-    const hasInputSchema =
-        this.agent instanceof LlmAgent && this.agent.inputSchema;
+    let inputText: string;
+
+    if (this.agent instanceof LlmAgent && this.agent.inputSchema) {
+      try {
+        const validatedInput = this.agent.inputSchema.parse(args);
+        inputText = JSON.stringify(validatedInput);
+      } catch (error: unknown) {
+        // If validation fails, throw an error to halt execution.
+        // This is a contract violation by the calling agent.
+        const errorMessage =
+            `Invalid arguments provided to AgentTool '${this.name}'.`;
+        if (error instanceof z.ZodError) {
+          throw new Error(`${errorMessage} Validation Errors: ${
+              JSON.stringify(error.format())}`);
+        }
+        throw new Error(`${errorMessage} Error: ${String(error)}`);
+      }
+    } else {
+      inputText = args['request'] as string;
+    }
+
     const content: Content = {
       role: 'user',
       parts: [
         {
-          // TODO(b/425992518): Should be validated. Consider similar
-          // logic to one we have in Python ADK.
-          text: hasInputSchema ? JSON.stringify(args) :
-                                 args['request'] as string,
+          text: inputText,
         },
       ],
     };
@@ -144,15 +164,26 @@ export class AgentTool extends BaseTool {
       return '';
     }
 
-    const hasOutputSchema =
-        this.agent instanceof LlmAgent && this.agent.outputSchema;
-
-    const mergetText = lastEvent.content.parts.map((part) => part.text)
+    const mergedText = lastEvent.content.parts.map((part) => part.text)
                            .filter((text) => text)
                            .join('\n');
 
-    // TODO - b/425992518: In case of output schema, the output should be
-    // validated. Consider similar logic to one we have in Python ADK.
-    return hasOutputSchema ? JSON.parse(mergetText) : mergetText;
+    if (this.agent instanceof LlmAgent && this.agent.outputSchema) {
+      try {
+        const parsedJson = JSON.parse(mergedText);
+        return this.agent.outputSchema.parse(parsedJson);
+      } catch (error: unknown) {
+        const errorMessage =
+            `AgentTool '${this.name}' received invalid output from sub-agent '${
+                this.agent.name}'.`;
+        if (error instanceof z.ZodError) {
+          throw new Error(`${errorMessage} Validation Errors: ${
+              JSON.stringify(error.format())}`);
+        }
+        throw new Error(`${errorMessage} Error: ${String(error)}`);
+      }
+    } else {
+      return mergedText;
+    }
   }
 }

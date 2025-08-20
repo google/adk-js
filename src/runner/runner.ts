@@ -11,30 +11,30 @@ import {InvocationContext, newInvocationContextId} from '../agents/invocation_co
 import {LlmAgent} from '../agents/llm_agent.js';
 import {RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
-import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
-import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
+// Import Plugin Infrastructure
+import { BasePlugin } from '../plugins/base_plugin.js';
+import { PluginManager } from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {Session} from '../sessions/session.js';
-import {BaseToolset} from '../tools/base_toolset.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
 // TODO - b/425992518: Implement tracer
-// TODO - b/425992518: Implement BasePlugin, PluginManager
-
 
 interface RunnerInput {
   appName: string;
   agent: BaseAgent;
+  plugins?: BasePlugin[];
   artifactService?: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
   credentialService?: BaseCredentialService;
 }
+
+type ExecutionFn = (ctx: InvocationContext) => AsyncGenerator<Event, void, void>;
 
 export class Runner {
   readonly appName: string;
@@ -43,6 +43,7 @@ export class Runner {
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
+  readonly pluginManager: PluginManager;
 
   constructor(input: RunnerInput) {
     this.appName = input.appName;
@@ -51,6 +52,7 @@ export class Runner {
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
     this.credentialService = input.credentialService;
+    this.pluginManager = new PluginManager(input.plugins);
   }
 
   /**
@@ -120,35 +122,88 @@ export class Runner {
       // TODO - b/425992518: Add code executor support
     }
 
-    const invocationContext = new InvocationContext({
-      artifactService: this.artifactService,
-      sessionService: this.sessionService,
-      memoryService: this.memoryService,
-      credentialService: this.credentialService,
-      invocationId: newInvocationContextId(),
-      agent: this.agent,
-      session,
-      userContent: newMessage,
-      runConfig,
+        // Use the protected helper method for context creation
+    const invocationContext = this.newInvocationContext({
+        session,
+        newMessage,
+        runConfig,
     });
 
-    // =========================================================================
-    // Preprocess plugins on user message
-    // =========================================================================
-    // TODO - b/425992518: Add plugin run_on_user_message_callback
+    const modifiedUserMessage = await this.pluginManager.runOnUserMessageCallback({
+        invocationContext,
+        userMessage: newMessage,
+    });
+
+    const finalNewMessage = modifiedUserMessage || newMessage;
 
     // =========================================================================
     // Append user message to session
     // =========================================================================
-    if (newMessage) {
-      if (!newMessage.parts?.length) {
+    if (finalNewMessage) {
+      await this.appendNewMessageToSession(
+          session,
+          finalNewMessage,
+          invocationContext,
+          runConfig.saveInputBlobsAsArtifacts,
+          stateDelta
+      );
+    }
+
+    // =========================================================================
+    // Determine which agent should handle the workflow resumption.
+    // =========================================================================
+    invocationContext.agent = this.findAgentToRun(session, this.agent);
+
+    // =========================================================================
+    // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+    // =========================================================================
+    
+    // The default execution function simply calls agent.runAsync.
+    const executeFn: ExecutionFn = (ctx) => ctx.agent.runAsync(ctx);
+
+    // Use the execWithPlugin helper to wrap the main execution logic (before_run, on_event, after_run).
+    for await (const event of this.execWithPlugin(invocationContext, session, executeFn)) {
+        yield event;
+    }
+  }
+
+  /**
+   * Protected helper to create a new InvocationContext.
+   */
+  protected newInvocationContext(params: {
+      session: Session,
+      newMessage: Content,
+      runConfig: RunConfig
+  }): InvocationContext {
+    return new InvocationContext({
+        artifactService: this.artifactService,
+        sessionService: this.sessionService,
+        memoryService: this.memoryService,
+        credentialService: this.credentialService,
+        pluginManager: this.pluginManager, 
+        invocationId: newInvocationContextId(),
+        agent: this.agent,
+        session: params.session,
+        userContent: params.newMessage,
+        runConfig: params.runConfig,
+      });
+  }
+
+  /**
+   * Protected helper to append a new message to the session.
+   */
+  protected async appendNewMessageToSession(
+      session: Session,
+      newMessage: Content,
+      invocationContext: InvocationContext,
+      saveArtifacts: boolean,
+      stateDelta?: Record<string, any>
+  ): Promise<void> {
+    if (!newMessage.parts?.length) {
         throw new Error('No parts in the new_message.');
       }
 
-      // Directly saves the artifacts (if applicable) in the user message and
-      // replaces the artifact data with a file name placeholder.
-      // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
-      if (runConfig.saveInputBlobsAsArtifacts) {
+      if (saveArtifacts) {
         await this.saveArtifacts(
             invocationContext.invocationId, session.userId, session.id,
             newMessage);
@@ -161,32 +216,70 @@ export class Runner {
             actions: stateDelta ? new EventActions({stateDelta}) : undefined,
             content: newMessage,
           }));
-    }
+  }
 
-    // =========================================================================
-    // Determine which agent should handle the workflow resumption.
-    // =========================================================================
-    invocationContext.agent =
-        this.determineAgentForResumption(session, this.agent);
+  /**
+   * Executes the provided function wrapped by the runner-level plugin hooks.
+   * (before_run, on_event, after_run).
+   */
+  protected async *execWithPlugin(
+      invocationContext: InvocationContext,
+      session: Session,
+      executeFn: ExecutionFn
+  ): AsyncGenerator<Event, void, void> {
 
-    // =========================================================================
-    // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-    // =========================================================================
     // Step 1: Run the before_run callbacks to see if we should early exit.
-    // TODO - b/425992518: Add plugin support
-    // Step 2: Otherwise continue with normal execution
-    for await (
-        const event of invocationContext.agent.runAsync(invocationContext)) {
-      if (!event.partial) {
-        await this.sessionService.appendEvent(session, event);
-      }
-      // Step 3: Run the on_event callbacks to optionally modify the event.
-      // TODO - b/425992518: Add plugin support
-      yield event;
+    const earlyExitContent = await this.pluginManager.runBeforeRunCallback({
+        invocationContext,
+    });
+
+    if (earlyExitContent) {
+        // If a plugin returns content, we create an event, save it, and exit immediately.
+        const event = new Event({
+            invocationId: invocationContext.invocationId,
+            author: this.appName, // Authored by the runner/system
+            content: earlyExitContent,
+        });
+        
+        // Run on_event for this early exit event too
+        const modifiedEvent = await this.pluginManager.runOnEventCallback({
+            invocationContext,
+            event,
+        });
+
+        const finalEvent = modifiedEvent || event;
+
+        if (!finalEvent.partial) {
+            await this.sessionService.appendEvent(session, finalEvent);
+        }
+        yield finalEvent;
+
+        // Proceed to after_run callback even on early exit.
+        await this.pluginManager.runAfterRunCallback({ invocationContext });
+        return;
     }
-    // TODO - b/425992518: Add plugin support
-    // Step 4: Run the after_run callbacks to optionally modify the context.
-    // await pluginManager.runAfterRunCallback({ invocationContext });
+
+    // Step 2: Otherwise continue with normal execution
+    for await (const event of executeFn(invocationContext)) {
+      
+      // Step 3: Run the on_event callbacks to optionally modify the event.
+      const modifiedEvent = await this.pluginManager.runOnEventCallback({
+          invocationContext,
+          event,
+      });
+
+      const finalEvent = modifiedEvent || event;
+
+      // Persist the event (using the potentially modified version)
+      if (!finalEvent.partial) {
+        await this.sessionService.appendEvent(session, finalEvent);
+      }
+      
+      yield finalEvent;
+    }
+
+    // Step 4: Run the after_run callbacks.
+    await this.pluginManager.runAfterRunCallback({ invocationContext });
   }
 
   /**
@@ -218,6 +311,14 @@ export class Runner {
       message.parts[i] = createPartFromText(
           `Uploaded file: ${fileName}. It is saved into artifacts`);
     }
+  }
+
+   /**
+   * Determines the next agent to run to continue the session. 
+   * Public facing protected method for subclasses.
+   */
+  protected findAgentToRun(session: Session, rootAgent: BaseAgent): BaseAgent {
+    return this.determineAgentForResumption(session, rootAgent);
   }
 
   /**

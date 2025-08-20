@@ -70,6 +70,10 @@ export class InMemorySessionService extends BaseSessionService {
     const session: Session = this.sessions[appName][userId][sessionId];
     const copiedSession = structuredClone(session);
 
+    // Re-hydrate the Event objects to restore their methods. We need this b/c structuredClone strips
+    // methods.
+    copiedSession.events = copiedSession.events.map(eventData => new Event(eventData));
+
     if (config) {
       if (config.numRecentEvents) {
         copiedSession.events =

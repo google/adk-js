@@ -131,7 +131,7 @@ export function generateAuthEvent(
 
 async function callToolAsync(
     tool: BaseTool,
-    args: Record<string, any>,
+    args: Record<string, unknown>, // Use unknown for type safety
     toolContext: ToolContext,
     ): Promise<any> {
   // TODO - b/425992518: implement [tracer.start_as_current_span]
@@ -174,15 +174,13 @@ function buildResponseEvent(
 
 /**
  * Handles function calls.
- * Runtime behavior to pay attention to:
- * - Iterate through each function call in the `functionCallEvent`:
- *   - Execute before tool callbacks !!if a callback provides a response, short
- *     circuit the rest.
- *   - Execute the tool.
- *   - Execute after tool callbacks !!if a callback provides a response, short
- *     circuit the rest.
- *   - If the tool is long-running and the response is null, continue. !!state
- * - Merge all function response events into a single event.
+ *
+ * Execution order:
+ * 1. PLUGINS before_tool_callback
+ * 2. AGENT before_tool_callback
+ * 3. Tool Execution (with PLUGINS on_tool_error_callback handling)
+ * 4. PLUGINS after_tool_callback
+ * 5. AGENT after_tool_callback
  */
 export async function handleFunctionCallsAsync(
     invocationContext: InvocationContext,
@@ -192,84 +190,129 @@ export async function handleFunctionCallsAsync(
     afterToolCallbacks: SingleAfterToolCallback[],
     filters?: Set<string>,
     ): Promise<Event|null> {
-  const functionCalls = functionCallEvent.getFunctionCalls();
+  const allFunctionCalls = functionCallEvent.getFunctionCalls();
   const functionResponseEvents: Event[] = [];
 
-  for (const functionCall of functionCalls) {
-    if (functionCall.id && filters?.has(functionCall.id)) {
-      continue;
-    }
+  // Python ADK treats filters as an allowlist. We will replicate that logic here.
+  const functionCallsToExecute = allFunctionCalls.filter(
+    (fc) => !filters || (fc.id && filters.has(fc.id))
+  );
+
+  if (functionCallsToExecute.length === 0) {
+    return null;
+  }
+
+  // Access the plugin manager
+  const pluginManager = invocationContext.pluginManager;
+
+  for (const functionCall of functionCallsToExecute) {
     const {tool, toolContext} = getToolAndContext(
         invocationContext,
         functionCall,
         toolsDict,
     );
 
-    // TODO - b/425992518: implement [tracer.start_as_current_span]
     console.debug(`execute_tool ${tool.name}`);
-    const functionArgs = functionCall.args ?? {};
+    // Ensure args are treated as Record<string, unknown>
+    const functionArgs = (functionCall.args as Record<string, unknown>) ?? {};
 
-    // Step 1: Check if plugin before_tool_callback overrides the function
-    // response.
-    // TODO - b/425992518: implement PluginManager - runBeforeToolCallback
-    let functionResponse = null;
+    let functionResponse: unknown = undefined;
 
-    // Step 2: If no overrides are provided from the plugins, further run the
-    // canonical callback.
-    // TODO - b/425992518: validate the callback response type matches.
-    if (functionResponse === null) {
+    // Step 1: Check if PLUGIN before_tool_callback overrides the function response.
+    // This is where HITL confirmation checks would initially happen.
+    functionResponse = await pluginManager.runBeforeToolCallback({
+      tool: tool,
+      toolArgs: functionArgs,
+      toolContext: toolContext,
+    });
+
+
+    // Step 2: If no overrides from plugins, run the AGENT before_tool_callbacks.
+    if (functionResponse === undefined) {
       for (const callback of beforeToolCallbacks) {
         functionResponse = await callback({
           tool: tool,
           args: functionArgs,
           context: toolContext,
         });
-        if (functionResponse) {
+        if (functionResponse !== undefined) {
           break;
         }
       }
     }
 
-    // Step 3: Otherwise, proceed calling the tool normally.
-    if (functionResponse === null) {
-      functionResponse = await callToolAsync(
-          tool,
-          functionArgs,
-          toolContext,
-      );
-      // TODO - b/425992518: implement PluginManager - runOnToolErrorCallback
+    // Step 3: If still no response, proceed calling the tool normally.
+    if (functionResponse === undefined) {
+      try {
+        functionResponse = await callToolAsync(
+            tool,
+            functionArgs,
+            toolContext,
+        );
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        
+        // Step 3a: Handle tool errors using plugins.
+        const errorResponse = await pluginManager.runOnToolErrorCallback({
+          tool: tool,
+          toolArgs: functionArgs,
+          toolContext: toolContext,
+          error: err,
+        });
+
+        if (errorResponse !== undefined) {
+          // Plugin handled the error and provided a fallback response.
+          functionResponse = errorResponse;
+        } else {
+          // Plugin did not handle the error. Synthesize an error response for the LLM.
+          // This ensures parallel tool calls continue executing even if one fails.
+          console.error(`Tool execution failed and was unhandled by plugins: ${tool.name}`, err);
+          functionResponse = { error: `Tool execution failed: ${err.message}` };
+        }
+        // Continue processing this response (which is now the result or the error response).
+      }
     }
 
-    // Step 4: Check if plugin after_tool_callback overrides the function
-    // response.
-    // TODO - b/425992518: implement PluginManager - runAfterToolCallback
-    let alteredFunctionResponse = null;
+    let alteredFunctionResponse: unknown = undefined;
 
-    // Step 5: If no overrides are provided from the plugins, further run the
-    // canonical after_tool_callbacks.
-    if (alteredFunctionResponse === null) {
+    // Normalize response for 'after' callbacks to ensure it's an object for consistency.
+    const normalizedResponseForCallback = (typeof functionResponse === 'object' && functionResponse !== null && !Array.isArray(functionResponse))
+        ? functionResponse as Record<string, unknown>
+        : { result: functionResponse };
+
+
+    // Step 4: Check if PLUGIN after_tool_callback overrides the function response.
+    alteredFunctionResponse = await pluginManager.runAfterToolCallback({
+      tool: tool,
+      toolArgs: functionArgs,
+      toolContext: toolContext,
+      result: normalizedResponseForCallback,
+    });
+
+
+    // Step 5: If no overrides from plugins, run the AGENT after_tool_callbacks.
+    if (alteredFunctionResponse === undefined) {
       for (const callback of afterToolCallbacks) {
         alteredFunctionResponse = await callback({
           tool: tool,
           args: functionArgs,
           context: toolContext,
-          response: functionResponse,
+          // Pass the normalized response to agent callbacks as well
+          response: normalizedResponseForCallback,
         });
-        if (alteredFunctionResponse) {
+        if (alteredFunctionResponse !== undefined) {
           break;
         }
       }
     }
 
-    // Step 6: If alternative response exists from after_tool_callback, use it
-    // instead of the original function response.
-    if (alteredFunctionResponse !== null) {
+    // Step 6: If alternative response exists, use it.
+    if (alteredFunctionResponse !== undefined) {
       functionResponse = alteredFunctionResponse;
     }
 
-    // TODO - b/425992518: state event polluting runtime, consider fix.
-    // Allow long running function to return None as response.
-    if (tool.isLongRunning && !functionResponse) {
+    // Allow long running function to return undefined/null.
+    if (tool.isLongRunning && (functionResponse === undefined || functionResponse === null)) {
       continue;
     }
 
@@ -280,12 +323,7 @@ export async function handleFunctionCallsAsync(
         toolContext,
         invocationContext,
     );
-    // TODO - b/425992518: implement [traceToolCall]
-    console.debug('traceToolCall', {
-      tool: tool.name,
-      args: functionArgs,
-      functionResponseEvent: functionResponseEvent.id,
-    });
+    // ... (logging/tracing)
     functionResponseEvents.push(functionResponseEvent);
   }
 
