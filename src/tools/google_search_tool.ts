@@ -5,11 +5,11 @@
  */
 import {GenerateContentConfig, GoogleSearch, GoogleSearchRetrieval, Tool} from '@google/genai';
 
-import {LlmRequest} from '../models/llm_request';
-import {isGemini1Model, isGeminiModel} from '../utils/model_name';
+import {LlmRequest} from '../models/llm_request.js';
+import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';
 
-import {BaseTool} from './base_tool';
-import {ToolContext} from './tool_context';
+import {BaseTool} from './base_tool.js';
+import {ToolContext} from './tool_context.js';
 
 /**
  * A built-in tool that is automatically invoked by Gemini 2 models to retrieve

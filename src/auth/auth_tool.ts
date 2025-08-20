@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AuthCredential} from './auth_credential';
-import {AuthScheme} from './auth_schemes';
+import {AuthCredential} from './auth_credential.js';
+import {AuthScheme} from './auth_schemes.js';
 
 /**
  * The auth config sent by tool asking client to collect auth credentials and

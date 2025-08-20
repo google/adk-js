@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {LiveRequestQueue} from './live_request_queue';
+import {LiveRequestQueue} from './live_request_queue.js';
 
 /**
  * Manages streaming tool related resources during invocation.
