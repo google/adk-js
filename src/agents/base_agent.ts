@@ -8,7 +8,6 @@ import {Content} from '@google/genai';
 import {trace} from '@opentelemetry/api';
 
 import {Event} from '../events/event.js';
-import {AutoEndingSpan} from '../utils/auto_ending_span.js';
 
 import {CallbackContext} from './callback_context.js';
 import {InvocationContext} from './invocation_context.js';
@@ -126,32 +125,36 @@ export abstract class BaseAgent {
   async *
       runAsync(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    using span = new AutoEndingSpan(trace.getTracer('gcp.vertex.agent')
-                                        .startSpan(`agent_run [${this.name}]`));
-    const context = this.createInvocationContext(parentContext);
+    const span = trace.getTracer('gcp.vertex.agent')
+                     .startSpan(`agent_run [${this.name}]`);
+    try {
+      const context = this.createInvocationContext(parentContext);
 
-    const beforeAgentCallbackEvent =
-        await this.handleBeforeAgentCallback(context);
-    if (beforeAgentCallbackEvent) {
-      yield beforeAgentCallbackEvent;
-    }
+      const beforeAgentCallbackEvent =
+          await this.handleBeforeAgentCallback(context);
+      if (beforeAgentCallbackEvent) {
+        yield beforeAgentCallbackEvent;
+      }
 
-    if (context.endInvocation) {
-      return;
-    }
+      if (context.endInvocation) {
+        return;
+      }
 
-    for await (const event of this.runAsyncImpl(context)) {
-      yield event;
-    }
+      for await (const event of this.runAsyncImpl(context)) {
+        yield event;
+      }
 
-    if (context.endInvocation) {
-      return;
-    }
+      if (context.endInvocation) {
+        return;
+      }
 
-    const afterAgentCallbackEvent =
-        await this.handleAfterAgentCallback(context);
-    if (afterAgentCallbackEvent) {
-      yield afterAgentCallbackEvent;
+      const afterAgentCallbackEvent =
+          await this.handleAfterAgentCallback(context);
+      if (afterAgentCallbackEvent) {
+        yield afterAgentCallbackEvent;
+      }
+    } finally {
+      span.end();
     }
   }
 
@@ -165,10 +168,14 @@ export abstract class BaseAgent {
   async *
       runLive(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    using span = new AutoEndingSpan(trace.getTracer('gcp.vertex.agent')
-                                        .startSpan(`agent_run [${this.name}]`));
-    // TODO(b/425992518): Implement live mode.
-    throw new Error('Live mode is not implemented yet.');
+    const span = trace.getTracer('gcp.vertex.agent')
+                     .startSpan(`agent_run [${this.name}]`);
+    try {
+      // TODO(b/425992518): Implement live mode.
+      throw new Error('Live mode is not implemented yet.');
+    } finally {
+      span.end();
+    }
   }
 
   /**

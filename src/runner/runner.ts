@@ -22,7 +22,6 @@ import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {Session} from '../sessions/session.js';
 import {BaseToolset} from '../tools/base_toolset.js';
-import {AutoEndingSpan} from '../utils/auto_ending_span.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
 // TODO - b/425992518: Implement BasePlugin, PluginManager
@@ -70,12 +69,18 @@ export class Runner {
     userId: string; sessionId: string; newMessage: Content;
     runConfig?: RunConfig;
   }): Promise<Event[]> {
-    const events: Event[] = [];
-    for await (const event of this.runAsync(
-        {userId, sessionId, newMessage, runConfig})) {
-      events.push(event);
+    const span = trace.getTracer('gcp.vertex.agent')
+                     .startSpan(`agent_run_sync [${this.agent.name}]`);
+    try {
+      const events: Event[] = [];
+      for await (const event of this.runAsync(
+          {userId, sessionId, newMessage, runConfig})) {
+        events.push(event);
+      }
+      return events;
+    } finally {
+      span.end();
     }
-    return events;
   }
 
   /**
@@ -104,92 +109,94 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    using span = new AutoEndingSpan(
-        trace.getTracer('gcp.vertex.agent').startSpan('invocation'));
+    const span = trace.getTracer('gcp.vertex.agent').startSpan('invocation');
+    try {
+      const session =
+          await this.sessionService.getSession(this.appName, userId, sessionId);
 
-    const session =
-        await this.sessionService.getSession(this.appName, userId, sessionId);
-
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    if (runConfig.supportCfc && this.agent instanceof LlmAgent) {
-      const modelName = this.agent.canonicalModel.model;
-      if (!modelName.startsWith('gemini-2')) {
-        throw new Error(`CFC is not supported for model: ${
-            modelName} in agent: ${this.agent.name}`);
-      }
-      // TODO - b/425992518: Add code executor support
-    }
-
-    const invocationContext = new InvocationContext({
-      artifactService: this.artifactService,
-      sessionService: this.sessionService,
-      memoryService: this.memoryService,
-      credentialService: this.credentialService,
-      invocationId: newInvocationContextId(),
-      agent: this.agent,
-      session,
-      userContent: newMessage,
-      runConfig,
-    });
-
-    // =========================================================================
-    // Preprocess plugins on user message
-    // =========================================================================
-    // TODO - b/425992518: Add plugin run_on_user_message_callback
-
-    // =========================================================================
-    // Append user message to session
-    // =========================================================================
-    if (newMessage) {
-      if (!newMessage.parts?.length) {
-        throw new Error('No parts in the new_message.');
+      if (!session) {
+        throw new Error(`Session not found: ${sessionId}`);
       }
 
-      // Directly saves the artifacts (if applicable) in the user message and
-      // replaces the artifact data with a file name placeholder.
-      // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
-      if (runConfig.saveInputBlobsAsArtifacts) {
-        await this.saveArtifacts(
-            invocationContext.invocationId, session.userId, session.id,
-            newMessage);
+      if (runConfig.supportCfc && this.agent instanceof LlmAgent) {
+        const modelName = this.agent.canonicalModel.model;
+        if (!modelName.startsWith('gemini-2')) {
+          throw new Error(`CFC is not supported for model: ${
+              modelName} in agent: ${this.agent.name}`);
+        }
+        // TODO - b/425992518: Add code executor support
       }
-      // Append the user message to the session with optional state delta.
-      await this.sessionService.appendEvent(
-          session, new Event({
-            invocationId: invocationContext.invocationId,
-            author: 'user',
-            actions: stateDelta ? new EventActions({stateDelta}) : undefined,
-            content: newMessage,
-          }));
-    }
 
-    // =========================================================================
-    // Determine which agent should handle the workflow resumption.
-    // =========================================================================
-    invocationContext.agent =
-        this.determineAgentForResumption(session, this.agent);
+      const invocationContext = new InvocationContext({
+        artifactService: this.artifactService,
+        sessionService: this.sessionService,
+        memoryService: this.memoryService,
+        credentialService: this.credentialService,
+        invocationId: newInvocationContextId(),
+        agent: this.agent,
+        session,
+        userContent: newMessage,
+        runConfig,
+      });
 
-    // =========================================================================
-    // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-    // =========================================================================
-    // Step 1: Run the before_run callbacks to see if we should early exit.
-    // TODO - b/425992518: Add plugin support
-    // Step 2: Otherwise continue with normal execution
-    for await (
-        const event of invocationContext.agent.runAsync(invocationContext)) {
-      if (!event.partial) {
-        await this.sessionService.appendEvent(session, event);
+      // =========================================================================
+      // Preprocess plugins on user message
+      // =========================================================================
+      // TODO - b/425992518: Add plugin run_on_user_message_callback
+
+      // =========================================================================
+      // Append user message to session
+      // =========================================================================
+      if (newMessage) {
+        if (!newMessage.parts?.length) {
+          throw new Error('No parts in the new_message.');
+        }
+
+        // Directly saves the artifacts (if applicable) in the user message and
+        // replaces the artifact data with a file name placeholder.
+        // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
+        if (runConfig.saveInputBlobsAsArtifacts) {
+          await this.saveArtifacts(
+              invocationContext.invocationId, session.userId, session.id,
+              newMessage);
+        }
+        // Append the user message to the session with optional state delta.
+        await this.sessionService.appendEvent(
+            session, new Event({
+              invocationId: invocationContext.invocationId,
+              author: 'user',
+              actions: stateDelta ? new EventActions({stateDelta}) : undefined,
+              content: newMessage,
+            }));
       }
-      // Step 3: Run the on_event callbacks to optionally modify the event.
+
+      // =========================================================================
+      // Determine which agent should handle the workflow resumption.
+      // =========================================================================
+      invocationContext.agent =
+          this.determineAgentForResumption(session, this.agent);
+
+      // =========================================================================
+      // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+      // =========================================================================
+      // Step 1: Run the before_run callbacks to see if we should early exit.
       // TODO - b/425992518: Add plugin support
-      yield event;
+      // Step 2: Otherwise continue with normal execution
+      for await (
+          const event of invocationContext.agent.runAsync(invocationContext)) {
+        if (!event.partial) {
+          await this.sessionService.appendEvent(session, event);
+        }
+        // Step 3: Run the on_event callbacks to optionally modify the event.
+        // TODO - b/425992518: Add plugin support
+        yield event;
+      }
+      // TODO - b/425992518: Add plugin support
+      // Step 4: Run the after_run callbacks to optionally modify the context.
+      // await pluginManager.runAfterRunCallback({ invocationContext });
+    } finally {
+      span.end();
     }
-    // TODO - b/425992518: Add plugin support
-    // Step 4: Run the after_run callbacks to optionally modify the context.
-    // await pluginManager.runAfterRunCallback({ invocationContext });
   }
 
   /**
