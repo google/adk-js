@@ -6,16 +6,14 @@
 
 // TODO - b/425992518: implement traceMergedToolCalls, traceToolCall, tracer.
 import {Content, FunctionCall, Part} from '@google/genai';
-
 import {randomUUID} from 'crypto';
+
 import {InvocationContext} from '../agents/invocation_context.js';
-import {AuthToolArguments} from '../auth/auth_tool.js';
 import {Event} from '../events/event.js';
 import {EventActions, mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
 
-import {LiveRequestQueue} from './live_request_queue.js';
 import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js';
 
 const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';

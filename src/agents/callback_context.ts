@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, Part} from '@google/genai';
+import {Part} from '@google/genai';
 
 import {EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';

@@ -11,7 +11,6 @@ import {Event} from '../events/event.js';
 
 import {CallbackContext} from './callback_context.js';
 import {InvocationContext} from './invocation_context.js';
-import {ReadonlyContext} from './readonly_context.js';
 
 type SingleAgentCallback = (context: CallbackContext) =>
     Promise<Content|undefined>|(Content|undefined);

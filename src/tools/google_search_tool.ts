@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {GenerateContentConfig, GoogleSearch, GoogleSearchRetrieval, Tool} from '@google/genai';
+import {GenerateContentConfig} from '@google/genai';
 
 import {LlmRequest} from '../models/llm_request.js';
 import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';

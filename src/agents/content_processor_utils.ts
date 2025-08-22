@@ -5,7 +5,7 @@
  */
 import {Content} from '@google/genai';
 
-import {createNewEventId, Event} from '../events/event.js';
+import {Event} from '../events/event.js';
 import {deepClone} from '../utils/deep_clone.js';
 
 import {removeClientFunctionCallId, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';

@@ -7,7 +7,7 @@
 import {FunctionDeclaration, Tool} from '@google/genai';
 
 import {LlmRequest} from '../models/llm_request.js';
-import {getGoogleLlmVariant, GoogleLLMVariant} from '../utils/variant_utils.js';
+import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 
 import {ToolContext} from './tool_context.js';
 

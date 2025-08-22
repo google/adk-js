@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, Content, FunctionResponse, LiveServerMessage, Part, Session,} from '@google/genai';
+import {Blob, Content, FunctionResponse, Session,} from '@google/genai';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';

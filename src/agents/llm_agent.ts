@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, GenerateContentConfig, Schema,} from '@google/genai';
+import {GenerateContentConfig, Schema} from '@google/genai';
 import {z} from 'zod';
 
 import {createNewEventId, Event} from '../events/event.js';
@@ -28,7 +28,6 @@ import {generateAuthEvent, getLongRunningFunctionCalls, handleFunctionCallsAsync
 import {injectSessionState} from './instructions.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
-import {StreamingMode} from './run_config.js';
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (

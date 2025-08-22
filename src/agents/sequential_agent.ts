@@ -6,7 +6,7 @@
 import {Event} from '../events/event.js';
 import {FunctionTool} from '../tools/function_tool.js';
 
-import {BaseAgent, BaseAgentConfig} from './base_agent.js';
+import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 import {LlmAgent} from './llm_agent.js';
 import {ReadonlyContext} from './readonly_context.js';

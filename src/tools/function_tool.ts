@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionDeclaration, Schema, Tool, Type} from '@google/genai';
+import {FunctionDeclaration, Schema, Type} from '@google/genai';
 import {type infer as zInfer, ZodObject} from 'zod';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';

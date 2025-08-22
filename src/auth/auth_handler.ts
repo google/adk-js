@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {OpenAPIV3} from 'openapi-types';
-
 import {State} from '../sessions/state.js';
 
 import {AuthCredential} from './auth_credential.js';
-import {OpenIdConnectWithConfig} from './auth_schemes.js';
 import {AuthConfig} from './auth_tool.js';
 
 // TODO(b/425992518): Implement the rest

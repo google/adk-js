@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, Content, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentConfig, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
+import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentConfig, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
 
 import {deepClone} from '../utils/deep_clone.js';
-import {getGoogleLlmVariant, GoogleLLMVariant} from '../utils/variant_utils.js';
+import {GoogleLLMVariant} from '../utils/variant_utils.js';
 import {version} from '../version.js';
 
 import {BaseLlm} from './base_llm.js';
