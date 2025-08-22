@@ -7,6 +7,7 @@
 import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentConfig, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
 
 import {deepClone} from '../utils/deep_clone.js';
+import {isBrowser} from '../utils/env_aware_utils.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 import {version} from '../version.js';
 
@@ -180,11 +181,15 @@ export class Gemini extends BaseLlm {
   get trackingHeaders(): Record<string, string> {
     if (!this._trackingHeaders) {
       let frameworkLabel = `google-adk/${version}`;
-      if (process.env[AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME]) {
+      if (!isBrowser() &&
+          process.env[AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME]) {
         frameworkLabel = `${frameworkLabel}+${AGENT_ENGINE_TELEMETRY_TAG}`;
       }
       // TODO - b/425992518: this is node version, not js, verify.
-      const languageLabel = `gl-typescript/${process.version}`;
+      // TODO - b/425992518: For browser case we should extract the browser
+      // name and version from userAgent string.
+      const languageLabel = `gl-typescript/${
+          isBrowser() ? window.navigator.userAgent : process.version}`;
       const versionHeaderValue = `${frameworkLabel} ${languageLabel}`;
       this._trackingHeaders = {
         'x-goog-api-client': versionHeaderValue,

@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {randomUUID} from 'crypto';
-
 import {Event} from '../events/event.js';
+import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {BaseSessionService, GetSessionConfig, ListSessionsResponse} from './base_session_service.js';
 import {Session} from './session.js';

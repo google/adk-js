@@ -6,13 +6,13 @@
 
 // TODO - b/425992518: implement traceMergedToolCalls, traceToolCall, tracer.
 import {Content, FunctionCall, Part} from '@google/genai';
-import {randomUUID} from 'crypto';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {EventActions, mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
+import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js';
 
