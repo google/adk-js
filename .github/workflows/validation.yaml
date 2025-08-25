@@ -19,5 +19,10 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: '20'
-    - run: npm install --prefix core
-    - run: npm run test --prefix core
+    - name: Install dependencies in core
+      run: npm install
+      working-directory: ./core
+    - name: Run tests in core
+      run: npm run test
+      working-directory: ./core
+
