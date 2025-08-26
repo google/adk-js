@@ -19,6 +19,15 @@ export interface SearchMemoryResponse {
 }
 
 /**
+ * The parameters for `searchMemory`.
+ */
+export interface SearchMemoryRequest {
+  appName: string;
+  userId: string;
+  query: string;
+}
+
+/**
  * Base interface for memory services.
  *
  * The service provides functionalities to ingest sessions into memory so that
@@ -38,15 +47,9 @@ export interface BaseMemoryService {
   /**
    * Searches for sessions that match the query.
    *
-   * @param appName The app name.
-   * @param userId The user ID.
-   * @param query The query to search memory for.
+   * @param request The request to search memory.
    * @return A promise that resolves to SearchMemoryResponse containing the
    *     matching memories.
    */
-  searchMemory(
-      appName: string,
-      userId: string,
-      query: string,
-      ): Promise<SearchMemoryResponse>;
+  searchMemory(request: SearchMemoryRequest): Promise<SearchMemoryResponse>;
 }

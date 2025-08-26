@@ -441,7 +441,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     ]);
 
     const toolContext = new ToolContext({invocationContext});
-    await this.tool.processLlmRequest(toolContext, llmRequest);
+    await this.tool.processLlmRequest({toolContext, llmRequest});
   }
 
   private buildTargetAgentsInfo(targetAgent: BaseAgent): string {
@@ -876,7 +876,7 @@ export class LlmAgent extends BaseAgent {
       const tools = await convertToolUnionToTools(
           toolUnion, new ReadonlyContext(invocationContext));
       for (const tool of tools) {
-        await tool.processLlmRequest(toolContext, llmRequest);
+        await tool.processLlmRequest({toolContext, llmRequest});
       }
     }
     // =========================================================================

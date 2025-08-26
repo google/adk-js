@@ -108,7 +108,7 @@ export class Runner {
     const span = trace.getTracer('gcp.vertex.agent').startSpan('invocation');
     try {
       const session =
-          await this.sessionService.getSession(this.appName, userId, sessionId);
+          await this.sessionService.getSession({appName: this.appName, userId, sessionId});
 
       if (!session) {
         throw new Error(`Session not found: ${sessionId}`);
@@ -157,13 +157,15 @@ export class Runner {
               newMessage);
         }
         // Append the user message to the session with optional state delta.
-        await this.sessionService.appendEvent(
-            session, new Event({
-              invocationId: invocationContext.invocationId,
-              author: 'user',
-              actions: stateDelta ? new EventActions({stateDelta}) : undefined,
-              content: newMessage,
-            }));
+        await this.sessionService.appendEvent({
+          session,
+          event: new Event({
+            invocationId: invocationContext.invocationId,
+            author: 'user',
+            actions: stateDelta ? new EventActions({stateDelta}) : undefined,
+            content: newMessage,
+          }),
+        });
       }
 
       // =========================================================================
@@ -181,7 +183,7 @@ export class Runner {
       for await (
           const event of invocationContext.agent.runAsync(invocationContext)) {
         if (!event.partial) {
-          await this.sessionService.appendEvent(session, event);
+          await this.sessionService.appendEvent({session, event});
         }
         // Step 3: Run the on_event callbacks to optionally modify the event.
         // TODO - b/425992518: Add plugin support
@@ -218,8 +220,13 @@ export class Runner {
       }
       const fileName = `artifact_${invocationId}_${i}`;
       // TODO - b/425992518: group appname, userId, sessionId as a key.
-      await this.artifactService.saveArtifact(
-          this.appName, userId, sessionId, fileName, part);
+      await this.artifactService.saveArtifact({
+        appName: this.appName,
+        userId,
+        sessionId,
+        filename: fileName,
+        artifact: part,
+      });
       // TODO - b/425992518: potentially buggy if accidentally exposed to LLM.
       message.parts[i] = createPartFromText(
           `Uploaded file: ${fileName}. It is saved into artifacts`);

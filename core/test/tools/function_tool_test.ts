@@ -56,7 +56,7 @@ describe('FunctionTool', () => {
       execute: add,
     });
 
-    const result = await addTool.runAsync({a: 1, b: 2}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1, b: 2}, toolContext: emptyContext});
     expect(result).toEqual(3);
   });
 
@@ -72,7 +72,7 @@ describe('FunctionTool', () => {
         return a + b;
       },
     });
-    const result = await addTool.runAsync({a: 1, b: 2}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1, b: 2}, toolContext: emptyContext});
     expect(result).toEqual(3);
   });
 
@@ -93,7 +93,7 @@ describe('FunctionTool', () => {
       execute: Calculator.add,
     });
 
-    const result = await addTool.runAsync({a: 1, b: 2}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1, b: 2}, toolContext: emptyContext});
     expect(result).toEqual(3);
   });
 
@@ -114,11 +114,11 @@ describe('FunctionTool', () => {
       execute: counter.incrementBy.bind(counter),
     });
 
-    const result = await addTool.runAsync({a: 1}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1}, toolContext: emptyContext});
     expect(result).toEqual(1);
     expect(counter.count).toEqual(1);
 
-    const result2 = await addTool.runAsync({a: 2}, emptyContext);
+    const result2 = await addTool.runAsync({args: {a: 2}, toolContext: emptyContext});
     expect(result2).toEqual(3);
     expect(counter.count).toEqual(3);
   });
@@ -135,7 +135,7 @@ describe('FunctionTool', () => {
         return a + b;
       },
     });
-    const result = await addTool.runAsync({a: 1}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1}, toolContext: emptyContext});
     expect(result).toEqual(3);
   });
 
@@ -151,10 +151,10 @@ describe('FunctionTool', () => {
         return b ? a + b : a;
       },
     });
-    const result = await addTool.runAsync({a: 1}, emptyContext);
+    const result = await addTool.runAsync({args: {a: 1}, toolContext: emptyContext});
     expect(result).toEqual(1);
 
-    const result2 = await addTool.runAsync({a: 1, b: 2}, emptyContext);
+    const result2 = await addTool.runAsync({args: {a: 1, b: 2}, toolContext: emptyContext});
     expect(result2).toEqual(3);
   });
 
@@ -170,7 +170,7 @@ describe('FunctionTool', () => {
       },
     });
     const result = await concatStringTool.runAsync(
-        {strings: ['a', 'b', 'c']}, emptyContext);
+        {args: {strings: ['a', 'b', 'c']}, toolContext: emptyContext});
     expect(result).toEqual('a,b,c');
   });
 });

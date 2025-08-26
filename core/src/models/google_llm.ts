@@ -21,15 +21,30 @@ const AGENT_ENGINE_TELEMETRY_TAG = 'remote_reasoning_engine';
 const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
 
 /**
+ * The parameters for creating a Gemini instance.
+ */
+export interface GeminiParams {
+  /**
+   * The name of the model to use. Defaults to 'gemini-2.5-flash'.
+   */
+  model?: string;
+  /**
+   * The API key to use for the Gemini API. If not provided, it will look for
+   * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.
+   */
+  apiKey?: string;
+}
+
+/**
  * Integration for Gemini models.
  */
 export class Gemini extends BaseLlm {
   private readonly apiKey?: string;
 
   /**
-   * @param model The name of the Gemini model.
+   * @param params The parameters for creating a Gemini instance.
    */
-  constructor(model = 'gemini-2.5-flash', apiKey?: string) {
+  constructor({model = 'gemini-2.5-flash', apiKey}: GeminiParams = {}) {
     super(model);
 
     if (!apiKey && typeof process === 'object') {

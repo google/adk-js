@@ -7,7 +7,7 @@
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
-import {BaseSessionService, GetSessionConfig, ListSessionsResponse} from './base_session_service.js';
+import {AppendEventRequest, BaseSessionService, CreateSessionRequest, DeleteSessionRequest, GetSessionConfig, GetSessionRequest, ListSessionsRequest, ListSessionsResponse} from './base_session_service.js';
 import {Session} from './session.js';
 import {State} from './state.js';
 
@@ -33,9 +33,8 @@ export class InMemorySessionService extends BaseSessionService {
    */
   private appState: Record<string, Record<string, unknown>> = {};
 
-  createSession(
-      appName: string, userId: string, state?: Record<string, unknown>,
-      sessionId?: string): Promise<Session> {
+  createSession({appName, userId, state, sessionId}: CreateSessionRequest):
+      Promise<Session> {
     const session = new Session({
       id: sessionId || randomUUID(),
       appName,
@@ -58,9 +57,8 @@ export class InMemorySessionService extends BaseSessionService {
         this.mergeState(appName, userId, structuredClone(session)));
   }
 
-  getSession(
-      appName: string, userId: string, sessionId: string,
-      config?: GetSessionConfig): Promise<Session|undefined> {
+  getSession({appName, userId, sessionId, config}: GetSessionRequest):
+      Promise<Session|undefined> {
     if (!this.sessions[appName] || !this.sessions[appName][userId] ||
         !this.sessions[appName][userId][sessionId]) {
       return Promise.resolve(undefined);
@@ -91,7 +89,8 @@ export class InMemorySessionService extends BaseSessionService {
     return Promise.resolve(this.mergeState(appName, userId, copiedSession));
   }
 
-  listSessions(appName: string, userId: string): Promise<ListSessionsResponse> {
+  listSessions({appName, userId}: ListSessionsRequest):
+      Promise<ListSessionsResponse> {
     if (!this.sessions[appName] || !this.sessions[appName][userId]) {
       return Promise.resolve({sessions: []});
     }
@@ -111,9 +110,9 @@ export class InMemorySessionService extends BaseSessionService {
     return Promise.resolve({sessions: sessionsWithoutEvents});
   }
 
-  async deleteSession(appName: string, userId: string, sessionId: string):
+  async deleteSession({appName, userId, sessionId}: DeleteSessionRequest):
       Promise<void> {
-    const session = await this.getSession(appName, userId, sessionId);
+    const session = await this.getSession({appName, userId, sessionId});
 
     if (!session) {
       return;
@@ -122,8 +121,9 @@ export class InMemorySessionService extends BaseSessionService {
     delete this.sessions[appName][userId][sessionId];
   }
 
-  override async appendEvent(session: Session, event: Event): Promise<Event> {
-    await super.appendEvent(session, event);
+  override async appendEvent({session, event}: AppendEventRequest):
+      Promise<Event> {
+    await super.appendEvent({session, event});
     session.lastUpdateTime = event.timestamp;
 
     const appName = session.appName;
@@ -169,7 +169,7 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     const storageSession: Session = this.sessions[appName][userId][sessionId];
-    await super.appendEvent(storageSession, event);
+    await super.appendEvent({session: storageSession, event});
 
     storageSession.lastUpdateTime = event.timestamp;
 

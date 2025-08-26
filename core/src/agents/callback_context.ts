@@ -52,13 +52,13 @@ export class CallbackContext extends ReadonlyContext {
       throw new Error('Artifact service is not initialized.');
     }
 
-    return this.invocationContext.artifactService.loadArtifact(
-        this.invocationContext.appName,
-        this.invocationContext.userId,
-        this.invocationContext.session.id,
-        filename,
-        version,
-    );
+    return this.invocationContext.artifactService.loadArtifact({
+      appName: this.invocationContext.appName,
+      userId: this.invocationContext.userId,
+      sessionId: this.invocationContext.session.id,
+      filename,
+      version,
+    });
   }
 
   /**
@@ -73,13 +73,13 @@ export class CallbackContext extends ReadonlyContext {
       throw new Error('Artifact service is not initialized.');
     }
 
-    const version = await this.invocationContext.artifactService.saveArtifact(
-        this.invocationContext.appName,
-        this.invocationContext.userId,
-        this.invocationContext.session.id,
-        filename,
-        artifact,
-    );
+    const version = await this.invocationContext.artifactService.saveArtifact({
+      appName: this.invocationContext.appName,
+      userId: this.invocationContext.userId,
+      sessionId: this.invocationContext.session.id,
+      filename,
+      artifact,
+    });
     this.eventActions.artifactDelta[filename] = version;
 
     return version;

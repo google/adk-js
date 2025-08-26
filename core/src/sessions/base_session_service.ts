@@ -13,8 +13,70 @@ import {State} from './state.js';
  * The configuration of getting a session.
  */
 export interface GetSessionConfig {
+  /** The number of recent events to retrieve. */
   numRecentEvents?: number;
+  /** Retrieve events after this timestamp. */
   afterTimestamp?: number;
+}
+
+/**
+ * The parameters for `createSession`.
+ */
+export interface CreateSessionRequest {
+  /** The name of the application. */
+  appName: string;
+  /** The ID of the user. */
+  userId: string;
+  /** The initial state of the session. */
+  state?: Record<string, unknown>;
+  /** The ID of the session. A new ID will be generated if not provided. */
+  sessionId?: string;
+}
+
+/**
+ * The parameters for `getSession`.
+ */
+export interface GetSessionRequest {
+  /** The name of the application. */
+  appName: string;
+  /** The ID of the user. */
+  userId: string;
+  /** The ID of the session. */
+  sessionId: string;
+  /** The configurations for getting the session. */
+  config?: GetSessionConfig;
+}
+
+/**
+ * The parameters for `listSessions`.
+ */
+export interface ListSessionsRequest {
+  /** The name of the application. */
+  appName: string;
+  /** The ID of the user. */
+  userId: string;
+}
+
+/**
+ * The parameters for `deleteSession`.
+ */
+export interface DeleteSessionRequest {
+  /** The name of the application. */
+  appName: string;
+  /** The ID of the user. */
+  userId: string;
+  /** The ID of the session. */
+  sessionId: string;
+}
+
+/**
+ * The parameters for `appendEvent`.
+ */
+export interface AppendEventRequest {
+  /** The session to append the event to. */
+  session: Session;
+  /** The event to append. */
+  event: Event;
 }
 
 /**
@@ -23,6 +85,7 @@ export interface GetSessionConfig {
  * The events and states are not set within each Session object.
  */
 export interface ListSessionsResponse {
+  /** A list of sessions. */
   sessions: Session[];
 }
 
@@ -36,83 +99,66 @@ export abstract class BaseSessionService {
   /**
    * Creates a new session.
    *
-   * @param appName the name of the app.
-   * @param userId the id of the user.
-   * @param state the initial state of the session.
-   * @param sessionId the client-provided id of the session. If not provided, a
-   *     generated ID will be used.
+   * @param request The request to create a session.
    * @return A promise that resolves to the newly created session instance.
    */
-  abstract createSession(
-      appName: string, userId: string, state?: Record<string, unknown>,
-      sessionId?: string): Promise<Session>;
+  abstract createSession(request: CreateSessionRequest): Promise<Session>;
 
   /**
    * Gets a session.
    *
-   * @param appName the name of the app.
-   * @param userId the id of the user.
-   * @param sessionId the id of the session.
-   * @param config the configuration of getting the session.
+   * @param request The request to get a session.
    * @return A promise that resolves to the session instance or undefined if not
    *     found.
    */
-  abstract getSession(
-      appName: string, userId: string, sessionId: string,
-      config?: GetSessionConfig): Promise<Session|undefined>;
+  abstract getSession(request: GetSessionRequest): Promise<Session|undefined>;
 
   /**
    * Lists sessions for a user.
    *
-   * @param appName the name of the app.
-   * @param userId the id of the user.
+   * @param request The request to list sessions.
    * @return A promise that resolves to a list of sessions for the user.
    */
-  abstract listSessions(appName: string, userId: string):
+  abstract listSessions(request: ListSessionsRequest):
       Promise<ListSessionsResponse>;
 
   /**
    * Deletes a session.
    *
-   * @param appName the name of the app.
-   * @param userId the id of the user.
-   * @param sessionId the id of the session.
+   * @param request The request to delete a session.
    * @return A promise that resolves when the session is deleted.
    */
-  abstract deleteSession(appName: string, userId: string, sessionId: string):
-      Promise<void>;
+  abstract deleteSession(request: DeleteSessionRequest): Promise<void>;
 
   /**
    * Appends an event to a session.
    *
-   * @param session The session to append the event to.
-   * @param event The event to append.
+   * @param request The request to append an event.
    * @return A promise that resolves to the event that was appended.
    */
-  async appendEvent(session: Session, event: Event): Promise<Event> {
+  async appendEvent({session, event}: AppendEventRequest): Promise<Event> {
     if (event.partial) {
       return event;
     }
 
-    this.updateSessionState(session, event);
+    this.updateSessionState({session, event});
     session.events.push(event);
 
-    return event
+    return event;
   }
 
   /**
    * Updates the session state based on the event.
    *
-   * @param session The session to update the state of.
-   * @param event The event to update the state of.
+   * @param request The request to update the session state.
    */
-  private updateSessionState(session: Session, event: Event): void {
+  private updateSessionState({session, event}: AppendEventRequest): void {
     if (!event.actions || !event.actions.stateDelta) {
-      return
+      return;
     }
     for (const [key, value] of Object.entries(event.actions.stateDelta)) {
       if (key.startsWith(State.TEMP_PREFIX)) {
-        continue
+        continue;
       }
       session.state[key] = value;
     }

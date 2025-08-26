@@ -8,7 +8,7 @@ import {GenerateContentConfig} from '@google/genai';
 import {LlmRequest} from '../models/llm_request.js';
 import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';
 
-import {BaseTool} from './base_tool.js';
+import {BaseTool, ToolProcessLlmRequest, RunToolRequest} from './base_tool.js';
 import {ToolContext} from './tool_context.js';
 
 /**
@@ -23,15 +23,15 @@ export class GoogleSearchTool extends BaseTool {
     super('google_search', 'Google Search Tool');
   }
 
-  runAsync(args: Record<string, unknown>, toolContext: ToolContext):
-      Promise<unknown> {
+  runAsync(request: RunToolRequest): Promise<unknown> {
     // This is a built-in tool on server side, it's triggered by setting the
     // corresponding request parameters.
     return Promise.resolve();
   }
 
-  override async processLlmRequest(
-      toolContext: ToolContext, llmRequest: LlmRequest): Promise<void> {
+  override async processLlmRequest({toolContext, llmRequest}:
+                                       ToolProcessLlmRequest):
+      Promise<void> {
     if (!llmRequest.model) {
       return;
     }

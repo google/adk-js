@@ -12,6 +12,22 @@ import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 import {ToolContext} from './tool_context.js';
 
 /**
+ * The parameters for `runAsync`.
+ */
+export interface RunToolRequest {
+  args: Record<string, unknown>;
+  toolContext: ToolContext;
+}
+
+/**
+ * The parameters for `processLlmRequest`.
+ */
+export interface ToolProcessLlmRequest {
+  toolContext: ToolContext;
+  llmRequest: LlmRequest;
+}
+
+/**
  * The base class for all tools.
  */
 export abstract class BaseTool {
@@ -55,13 +71,10 @@ export abstract class BaseTool {
    * - Otherwise, can be skipped, e.g. for a built-in GoogleSearch tool for
    *   Gemini.
    *
-   * @param args The LLM-filled arguments.
-   * @param toolContext The context of the tool.
-   *
+   * @param request The request to run the tool.
    * @return A promise that resolves to the tool response.
    */
-  abstract runAsync(args: Record<string, unknown>, toolContext: ToolContext):
-      Promise<unknown>;
+  abstract runAsync(request: RunToolRequest): Promise<unknown>;
 
   /**
    * Processes the outgoing LLM request for this tool.
@@ -70,10 +83,9 @@ export abstract class BaseTool {
    * - Most common use case is adding this tool to the LLM request.
    * - Some tools may just preprocess the LLM request before it's sent out.
    *
-   * @param toolContext The context of the tool.
-   * @param llmRequest The outgoing LLM request, mutable this method.
+   * @param request The request to process the LLM request.
    */
-  async processLlmRequest(toolContext: ToolContext, llmRequest: LlmRequest):
+  async processLlmRequest({toolContext, llmRequest}: ToolProcessLlmRequest):
       Promise<void> {
     const functionDeclaration = this._getDeclaration();
     if (!functionDeclaration) {

@@ -6,7 +6,7 @@
 
 import {Part} from '@google/genai';
 
-import {BaseArtifactService} from './base_artifact_service.js';
+import {BaseArtifactService, DeleteArtifactRequest, ListArtifactKeysRequest, ListVersionsRequest, LoadArtifactRequest, SaveArtifactRequest,} from './base_artifact_service.js';
 
 /**
  * An in-memory implementation of the ArtifactService.
@@ -14,13 +14,13 @@ import {BaseArtifactService} from './base_artifact_service.js';
 export class InMemoryArtifactService implements BaseArtifactService {
   private readonly artifacts: Record<string, Part[]> = {};
 
-  saveArtifact(
-      appName: string,
-      userId: string,
-      sessionId: string,
-      filename: string,
-      artifact: Part,
-      ): Promise<number> {
+  saveArtifact({
+    appName,
+    userId,
+    sessionId,
+    filename,
+    artifact,
+  }: SaveArtifactRequest): Promise<number> {
     const path = artifactPath(appName, userId, sessionId, filename);
 
     if (!this.artifacts[path]) {
@@ -33,13 +33,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
     return Promise.resolve(version);
   }
 
-  loadArtifact(
-      appName: string,
-      userId: string,
-      sessionId: string,
-      filename: string,
-      version: number = -1,
-      ): Promise<Part|undefined> {
+  loadArtifact({
+    appName,
+    userId,
+    sessionId,
+    filename,
+    version = -1,
+  }: LoadArtifactRequest): Promise<Part|undefined> {
     const path = artifactPath(appName, userId, sessionId, filename);
     const versions = this.artifacts[path];
 
@@ -50,11 +50,8 @@ export class InMemoryArtifactService implements BaseArtifactService {
     return Promise.resolve(versions[version]);
   }
 
-  listArtifactKeys(
-      appName: string,
-      userId: string,
-      sessionId: string,
-      ): Promise<string[]> {
+  listArtifactKeys({appName, userId, sessionId}: ListArtifactKeysRequest):
+      Promise<string[]> {
     const sessionPrefix = `${appName}/${userId}/${sessionId}/`;
     const usernamespacePrefix = `${appName}/${userId}/user/`;
     const filenames: string[] = [];
@@ -72,12 +69,8 @@ export class InMemoryArtifactService implements BaseArtifactService {
     return Promise.resolve(filenames.sort());
   }
 
-  deleteArtifact(
-      appName: string,
-      userId: string,
-      sessionId: string,
-      filename: string,
-      ): Promise<void> {
+  deleteArtifact({appName, userId, sessionId, filename}: DeleteArtifactRequest):
+      Promise<void> {
     const path = artifactPath(appName, userId, sessionId, filename);
     if (!this.artifacts[path]) {
       return Promise.resolve();
@@ -87,12 +80,8 @@ export class InMemoryArtifactService implements BaseArtifactService {
     return Promise.resolve();
   }
 
-  listVersions(
-      appName: string,
-      userId: string,
-      sessionId: string,
-      filename: string,
-      ): Promise<number[]> {
+  listVersions({appName, userId, sessionId, filename}: ListVersionsRequest):
+      Promise<number[]> {
     const path = artifactPath(appName, userId, sessionId, filename);
     const artifacts = this.artifacts[path];
 

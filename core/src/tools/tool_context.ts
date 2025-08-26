@@ -81,11 +81,11 @@ export class ToolContext extends CallbackContext {
       throw new Error('Artifact service is not initialized.');
     }
 
-    return this.invocationContext.artifactService.listArtifactKeys(
-        this.invocationContext.session.appName,
-        this.invocationContext.session.userId,
-        this.invocationContext.session.id,
-    );
+    return this.invocationContext.artifactService.listArtifactKeys({
+      appName: this.invocationContext.session.appName,
+      userId: this.invocationContext.session.userId,
+      sessionId: this.invocationContext.session.id,
+    });
   }
 
   /**
@@ -100,10 +100,10 @@ export class ToolContext extends CallbackContext {
       throw new Error('Memory service is not initialized.');
     }
 
-    return this.invocationContext.memoryService.searchMemory(
-        this.invocationContext.session.appName,
-        this.invocationContext.session.userId,
-        query,
-    );
+    return this.invocationContext.memoryService.searchMemory({
+      appName: this.invocationContext.session.appName,
+      userId: this.invocationContext.session.userId,
+      query,
+    });
   }
 }

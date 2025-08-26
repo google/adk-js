@@ -9,7 +9,7 @@ import {type infer as zInfer, ZodObject} from 'zod';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 
-import {BaseTool} from './base_tool.js';
+import {BaseTool, RunToolRequest} from './base_tool.js';
 import {ToolContext} from './tool_context.js';
 
 /**
@@ -98,16 +98,14 @@ export class FunctionTool<
   /**
    * Logic for running the tool.
    */
-  override async runAsync(
-      args: Record<string, unknown>,
-      toolContext: ToolContext): Promise<unknown> {
+  override async runAsync(req: RunToolRequest): Promise<unknown> {
     try {
-      let validatedArgs: unknown = args;
+      let validatedArgs: unknown = req.args;
       if (this.parameters instanceof ZodObject) {
-        validatedArgs = this.parameters.parse(args);
+        validatedArgs = this.parameters.parse(req.args);
       }
       return await this.execute(
-          validatedArgs as ToolExecuteArgument<TParameters>, toolContext);
+          validatedArgs as ToolExecuteArgument<TParameters>, req.toolContext);
     } catch (error) {
       const errorMessage =
           error instanceof Error ? error.message : String(error);

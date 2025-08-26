@@ -7,6 +7,14 @@
 import {LiveRequestQueue} from './live_request_queue.js';
 
 /**
+ * The parameters for creating an ActiveStreamingTool.
+ */
+export interface ActiveStreamingToolParams {
+  task?: Promise<void>;
+  stream?: LiveRequestQueue;
+}
+
+/**
  * Manages streaming tool related resources during invocation.
  */
 export class ActiveStreamingTool {
@@ -22,8 +30,8 @@ export class ActiveStreamingTool {
    */
   stream?: LiveRequestQueue;
 
-  constructor(task?: Promise<void>, stream?: LiveRequestQueue) {
-    this.task = task;
-    this.stream = stream;
+  constructor(params: ActiveStreamingToolParams = {}) {
+    this.task = params.task;
+    this.stream = params.stream;
   }
 }

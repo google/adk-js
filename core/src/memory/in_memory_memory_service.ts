@@ -7,7 +7,7 @@
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 
-import {BaseMemoryService, SearchMemoryResponse} from './base_memory_service.js';
+import {BaseMemoryService, SearchMemoryRequest, SearchMemoryResponse} from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
 
 /**
@@ -29,14 +29,13 @@ export class InMemoryMemoryService implements BaseMemoryService {
         (event) => (event.content?.parts?.length ?? 0) > 0);
   }
 
-  async searchMemory(appName: string, userId: string, query: string):
-      Promise<SearchMemoryResponse> {
-    const userKey = getUserKey(appName, userId);
+  async searchMemory(req: SearchMemoryRequest): Promise<SearchMemoryResponse> {
+    const userKey = getUserKey(req.appName, req.userId);
     if (!this.sessionEvents[userKey]) {
       return Promise.resolve({memories: []});
     }
 
-    const wordsInQuery = query.toLowerCase().split(/\s+/);
+    const wordsInQuery = req.query.toLowerCase().split(/\s+/);
     const response: SearchMemoryResponse = {memories: []};
 
     for (const sessionEvents of Object.values(this.sessionEvents[userKey])) {

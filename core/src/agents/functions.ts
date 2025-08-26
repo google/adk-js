@@ -134,7 +134,7 @@ async function callToolAsync(
     ): Promise<any> {
   // TODO - b/425992518: implement [tracer.start_as_current_span]
   console.debug(`callToolAsync ${tool.name}`);
-  return await tool.runAsync(args, toolContext);
+    return await tool.runAsync({args, toolContext});
 }
 
 function buildResponseEvent(

@@ -60,12 +60,12 @@ export async function injectSessionState(
       if (invocationContext.artifactService === undefined) {
         throw new Error('Artifact service is not initialized.');
       }
-      const artifact = await invocationContext.artifactService.loadArtifact(
-          invocationContext.session.appName,
-          invocationContext.session.userId,
-          invocationContext.session.id,
-          fileName,
-      );
+      const artifact = await invocationContext.artifactService.loadArtifact({
+        appName: invocationContext.session.appName,
+        userId: invocationContext.session.userId,
+        sessionId: invocationContext.session.id,
+        filename: fileName,
+      });
       if (!artifact) {
         throw new Error(`Artifact ${fileName} not found.`);
       }
