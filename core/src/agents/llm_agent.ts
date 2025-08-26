@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {GenerateContentConfig, Schema} from '@google/genai';
+import {GenerateContentConfig, Schema, ThinkingConfig} from '@google/genai';
 import {z} from 'zod';
 
 import {createNewEventId, Event} from '../events/event.js';
@@ -401,6 +401,42 @@ class ContentRequestProcessor implements BaseLlmRequestProcessor {
 
 const CONTENT_REQUEST_PROCESSOR = new ContentRequestProcessor();
 
+/**
+ * Removes previous thoughts from the model input when thinking config is
+ * enabled.
+ */
+class PruneThoughtBooleanFromRequest extends BaseLlmRequestProcessor {
+  override async *
+      runAsync(
+          invocationContext: InvocationContext,
+          llmRequest: LlmRequest,
+          ): AsyncGenerator<Event, void, void> {
+    // `thinkingConfig` is set by `BasicLlmRequestProcessor`.,
+    if (!llmRequest.config?.thinkingConfig) {
+      return;
+    }
+
+    if (!llmRequest.contents) {
+      return;
+    }
+
+    // The `thought` property is accumulated from previous model calls, it needs
+    // to be removed before the Part being sent back to the model.
+    for (const content of llmRequest.contents) {
+      if (!content.parts?.length) {
+        continue;
+      }
+      for (const part of content.parts) {
+        if ('thought' in part) {
+          delete part.thought;
+        }
+      }
+    }
+  }
+}
+
+const PRUNE_THOUGHT_BOOLEAN_FROM_REQUEST = new PruneThoughtBooleanFromRequest();
+
 class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
   private readonly toolName = 'transfer_to_agent' as const;
   private readonly tool = new FunctionTool({
@@ -557,6 +593,7 @@ export class LlmAgent extends BaseAgent {
       IDENTITY_LLM_REQUEST_PROCESSOR,
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
+      PRUNE_THOUGHT_BOOLEAN_FROM_REQUEST,
     ];
     this.responseProcessors = config.responseProcessors ?? [];
 
@@ -569,10 +606,6 @@ export class LlmAgent extends BaseAgent {
 
     // Validate generateContentConfig.
     if (config.generateContentConfig) {
-      // TODO - b/425992518: This is not ideal, we should as it is.
-      if (config.generateContentConfig.thinkingConfig) {
-        throw new Error('Thinking config should be set via LlmAgent.planner.');
-      }
       if (config.generateContentConfig.tools) {
         throw new Error('All tools must be set via LlmAgent.tools.');
       }
@@ -1138,7 +1171,6 @@ export class LlmAgent extends BaseAgent {
   // --------------------------------------------------------------------------
 
   // TODO - b/425992518: omitted Py LlmAgent features.
-  // - planner
   // - code_executor
   // - configurable agents by yaml config
 }
