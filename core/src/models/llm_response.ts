@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, GenerateContentResponse, GenerateContentResponseUsageMetadata, GroundingMetadata,} from '@google/genai';
+import {Content, FinishReason, GenerateContentResponse, GenerateContentResponseUsageMetadata, GroundingMetadata, LiveServerSessionResumptionUpdate, Transcription,} from '@google/genai';
 
 /**
  * LLM response class that provides the first candidate response from the
@@ -62,6 +62,26 @@ export class LlmResponse {
   usageMetadata?: GenerateContentResponseUsageMetadata;
 
   /**
+   * The finish reason of the response.
+   */
+  finishReason?: FinishReason;
+
+  /**
+   * The session resumption update of the LlmResponse
+   */
+  liveSessionResumptionUpdate?: LiveServerSessionResumptionUpdate;
+
+  /**
+   * Audio transcription of user input.
+   */
+  inputTranscription?: Transcription;
+
+  /**
+   * Audio transcription of model output.
+   */
+  outputTranscription?: Transcription;
+
+  /**
    * Creates an instance of LlmResponse.
    */
   constructor(initialData?: Partial<LlmResponse>) {
@@ -89,12 +109,14 @@ export class LlmResponse {
           content: candidate.content,
           groundingMetadata: candidate.groundingMetadata,
           usageMetadata: usageMetadata,
+          finishReason: candidate.finishReason,
         });
       } else {
         return new LlmResponse({
           errorCode: candidate.finishReason,
           errorMessage: candidate.finishMessage,
           usageMetadata: usageMetadata,
+          finishReason: candidate.finishReason,
         });
       }
     } else {
