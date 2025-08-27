@@ -143,7 +143,9 @@ function convertForeignEvent(event: Event): Event {
   };
 
   for (const part of event.content.parts) {
-    if (part.text) {
+    // Exclude thoughts from the context.
+    // TODO - b/425992518: filtring should be configurable.
+    if (part.text && !part.thought) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });
