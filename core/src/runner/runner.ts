@@ -128,7 +128,7 @@ export class Runner {
         sessionService: this.sessionService,
         memoryService: this.memoryService,
         credentialService: this.credentialService,
-        invocationId: newInvocationContextId(),
+        invocationId: await newInvocationContextId(),
         agent: this.agent,
         session,
         userContent: newMessage,

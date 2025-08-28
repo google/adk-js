@@ -11,13 +11,16 @@ export function isBrowser() {
   return typeof window !== 'undefined';
 }
 
-const crypto = isBrowser() ? window.crypto : require('crypto');
-
 /**
  * Generates a random UUID.
  */
-export function randomUUID() {
-  return crypto.randomUUID();
+export async function randomUUID(): Promise<string> {
+  if (isBrowser()) {
+    return window.crypto.randomUUID();
+  } else {
+    const crypto = await import('crypto');
+    return crypto.randomUUID();
+  }
 }
 
 /**

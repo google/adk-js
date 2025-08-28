@@ -943,7 +943,7 @@ export class LlmAgent extends BaseAgent {
       const functionCalls = mergedEvent.getFunctionCalls();
       if (functionCalls?.length) {
         // TODO - b/425992518: rename topopulate if missing.
-        populateClientFunctionCallId(mergedEvent);
+        await populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
         // Long running is a property of tool in registry.
         mergedEvent.longRunningToolIds = Array.from(
@@ -973,7 +973,7 @@ export class LlmAgent extends BaseAgent {
     // Yiels an authentication event if any.
     // TODO - b/425992518: transaction log session, simplify.
     const authEvent =
-        generateAuthEvent(invocationContext, functionResponseEvent);
+        await generateAuthEvent(invocationContext, functionResponseEvent);
     if (authEvent) {
       yield authEvent;
     }

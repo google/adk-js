@@ -214,6 +214,6 @@ export class InvocationContext {
   }
 }
 
-export function newInvocationContextId(): string {
-  return `e-${randomUUID()}`;
+export async function newInvocationContextId(): Promise<string> {
+  return `e-${await randomUUID()}`;
 }

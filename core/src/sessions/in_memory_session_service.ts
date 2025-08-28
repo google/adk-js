@@ -34,10 +34,14 @@ export class InMemorySessionService extends BaseSessionService {
    */
   private appState: Record<string, Record<string, unknown>> = {};
 
-  createSession({appName, userId, state, sessionId}: CreateSessionRequest):
-      Promise<Session> {
+  async createSession({
+    appName,
+    userId,
+    state,
+    sessionId,
+  }: CreateSessionRequest): Promise<Session> {
     const session = new Session({
-      id: sessionId || randomUUID(),
+      id: sessionId || (await randomUUID()),
       appName,
       userId,
       state,

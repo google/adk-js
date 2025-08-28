@@ -19,8 +19,8 @@ import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js'
 const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 
-export function generateClientFunctionCallId(): string {
-  return `${AF_FUNCTION_CALL_ID_PREFIX}${randomUUID()}`;
+export async function generateClientFunctionCallId(): Promise<string> {
+  return `${AF_FUNCTION_CALL_ID_PREFIX}${await randomUUID()}`;
 }
 
 /**
@@ -30,16 +30,16 @@ export function generateClientFunctionCallId(): string {
  * unique client-side ID to each one that doesn't already have an ID.
  */
 // TODO - b/425992518: consider move into event.ts
-export function populateClientFunctionCallId(
-    modelResponseEvent: Event,
-    ): void {
+export async function populateClientFunctionCallId(
+  modelResponseEvent: Event
+): Promise<void> {
   const functionCalls = modelResponseEvent.getFunctionCalls();
   if (!functionCalls) {
     return;
   }
   for (const functionCall of functionCalls) {
     if (!functionCall.id) {
-      functionCall.id = generateClientFunctionCallId();
+      functionCall.id = await generateClientFunctionCallId();
     }
   }
 }
@@ -91,28 +91,28 @@ export function getLongRunningFunctionCalls(
  * It iterates through requested auth configurations in a function response
  * event and creates a new function call for each.
  */
-export function generateAuthEvent(
-    invocationContext: InvocationContext,
-    functionResponseEvent: Event,
-    ): Event|undefined {
+export async function generateAuthEvent(
+  invocationContext: InvocationContext,
+  functionResponseEvent: Event
+): Promise<Event | undefined> {
   if (!functionResponseEvent.actions?.requestedAuthConfigs) {
     return undefined;
   }
   const parts: Part[] = [];
   const longRunningToolIds = new Set<string>();
   for (const [functionCallId, authConfig] of Object.entries(
-           functionResponseEvent.actions.requestedAuthConfigs,
-           )) {
+    functionResponseEvent.actions.requestedAuthConfigs
+  )) {
     const requestEucFunctionCall: FunctionCall = {
       name: REQUEST_EUC_FUNCTION_CALL_NAME,
       args: {
-        'function_call_id': functionCallId,
-        'auth_config': authConfig,
+        function_call_id: functionCallId,
+        auth_config: authConfig,
       },
-      id: generateClientFunctionCallId(),
+      id: await generateClientFunctionCallId(),
     };
     longRunningToolIds.add(requestEucFunctionCall.id!);
-    parts.push({functionCall: requestEucFunctionCall});
+    parts.push({ functionCall: requestEucFunctionCall });
   }
 
   return new Event({
