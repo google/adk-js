@@ -17,6 +17,9 @@ export {BaseCredentialService} from './auth/credential_service/base_credential_s
 export {Event} from './events/event.js';
 export * from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
+export {BasePlugin} from './plugins/base_plugin.js';
+export {LoggingPlugin} from './plugins/logging_plugin.js';
+export {PluginManager} from './plugins/plugin_manager.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export * from './sessions/base_session_service.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
