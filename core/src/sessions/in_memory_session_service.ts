@@ -5,6 +5,7 @@
  */
 
 import {Event} from '../events/event.js';
+import {deepCloneSession} from '../utils/deep_clone.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {AppendEventRequest, BaseSessionService, CreateSessionRequest, DeleteSessionRequest, GetSessionConfig, GetSessionRequest, ListSessionsRequest, ListSessionsResponse} from './base_session_service.js';
@@ -54,7 +55,7 @@ export class InMemorySessionService extends BaseSessionService {
     this.sessions[appName][userId][session.id] = session;
 
     return Promise.resolve(
-        this.mergeState(appName, userId, structuredClone(session)));
+        this.mergeState(appName, userId, deepCloneSession(session)));
   }
 
   getSession({appName, userId, sessionId, config}: GetSessionRequest):
@@ -65,7 +66,7 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     const session: Session = this.sessions[appName][userId][sessionId];
-    const copiedSession = structuredClone(session);
+    const copiedSession = deepCloneSession(session);
 
     if (config) {
       if (config.numRecentEvents) {
