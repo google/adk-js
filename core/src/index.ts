@@ -30,3 +30,6 @@ export {BaseToolset} from './tools/base_toolset.js';
 export {FunctionTool} from './tools/function_tool.js';
 export {GoogleSearchTool} from './tools/google_search_tool.js';
 export {ToolContext} from './tools/tool_context.js';
+export * from './tools/mcp/mcp_tool.js';
+export * from './tools/mcp/mcp_toolset.js';
+export * from './tools/mcp/mcp_session_manager.js';
