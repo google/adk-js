@@ -11,13 +11,26 @@ export function isBrowser() {
   return typeof window !== 'undefined';
 }
 
-const crypto = isBrowser() ? window.crypto : require('crypto');
-
 /**
  * Generates a random UUID.
  */
+const UUID_MASK = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
 export function randomUUID() {
-  return crypto.randomUUID();
+  let uuid = '';
+
+  for (let i = 0; i < UUID_MASK.length; i++) {
+    const randomValue = (Math.random() * 16) | 0;
+
+    if (UUID_MASK[i] === 'x') {
+      uuid += randomValue.toString(16);
+    } else if (UUID_MASK[i] === 'y') {
+      uuid += ((randomValue & 0x3) | 0x8).toString(16);
+    } else {
+      uuid += UUID_MASK[i];
+    }
+  }
+
+  return uuid;
 }
 
 /**

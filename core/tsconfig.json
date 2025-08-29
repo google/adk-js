@@ -5,7 +5,7 @@
     "lib": ["ES2022", "DOM"],
     "declaration": true,
     "sourceMap": true,
-    "outDir": "dist/esm",
+    "outDir": "dist/types",
     "rootDir": "src",
     "moduleResolution": "nodenext",
     "esModuleInterop": true,

@@ -5,20 +5,26 @@
   "author": "",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "dist/cjs/index.cjs",
-  "module": "dist/esm/index.js",
+  "typings": "./dist/types/index.d.ts",
+  "main": "./dist/node/index.mjs",
+  "module": "./dist/web/index.js",
+  "browser": "./dist/web/index.js",
   "exports": {
     ".": {
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/node/index.mjs",
+      "require": "./dist/node/index.cjs",
+      "default": "./dist/node/index.mjs"
     }
   },
   "scripts": {
     "clean": "rm -rf dist",
     "clean:all": "npm run clean && rm -rf node_modules",
-    "build:esm": "tsc",
-    "build:cjs": "tsc -p tsconfig.cjs.json && echo '{ \"type\": \"commonjs\" }' >> dist/cjs/package.json",
-    "build": "npm run build:esm && npm run build:cjs",
+    "build": "npm run build:types && npm run build:node_esm && npm run build:node_cjs && npm run build:web",
+    "build:node_esm": "esbuild ./src/index.ts --outfile=dist/node/index.mjs --format=esm --bundle --platform=node --target=node10.4 --packages=external",
+    "build:node_cjs": "esbuild ./src/index.ts --outfile=dist/node/index.cjs --format=cjs --bundle --platform=node --target=node10.4 --packages=external",
+    "build:web": "esbuild ./src/index.ts --outfile=dist/web/index.js --format=esm --bundle  --platform=browser --target=chrome58,firefox57,safari11",
+    "build:types": "tsc --emitDeclarationOnly",
     "test": "vitest",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
@@ -28,6 +34,7 @@
     "@types/node": "^20.12.7",
     "@typescript-eslint/eslint-plugin": "^7.7.1",
     "@typescript-eslint/parser": "^7.7.1",
+    "esbuild": "^0.25.9",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5",
@@ -37,8 +44,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.6.0",
-    "openapi-types": "^12.1.3",
-    "@opentelemetry/api": "^1.9.0"
+    "@opentelemetry/api": "^1.9.0",
+    "openapi-types": "^12.1.3"
   },
   "peerDependencies": {
     "zod": "^3.22.4"
