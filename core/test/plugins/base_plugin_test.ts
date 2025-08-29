@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'jasmine';
-
 import {Content} from '@google/genai';
 
 import {BaseAgent} from '../../src/agents/base_agent.js';

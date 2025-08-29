@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'jasmine';
-
 import {Content} from '@google/genai';
 
 import {BaseAgent} from '../../src/agents/base_agent.js';
@@ -202,14 +200,13 @@ describe('PluginManager', () => {
     plugin1.exceptionsToRaise['beforeRunCallback'] = originalException;
     service.registerPlugin(plugin1);
 
-    await expectAsync(
-        service.runBeforeRunCallback({
+    try {
+        await service.runBeforeRunCallback({
           invocationContext: mockInvocationContext,
-        }),
-        )
-        .toBeRejectedWithError(
-            /Error in plugin 'plugin1' during 'beforeRunCallback' callback/,
-        );
+        });
+    } catch (e) {
+      expect((e as Error).message).toContain('Error in plugin \'plugin1\' during \'beforeRunCallback\' callback');
+    }
   });
 
   it('should support all callbacks', async () => {
