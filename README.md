@@ -13,9 +13,16 @@
     </h3>
     <h3 align="center">
       Important Links:
-      <a href="https://google.github.io/adk-docs/">Docs</a> &
-      <a href="https://github.com/google/adk-samples">Samples</a> &
-      <a href="https://github.com/google/adk-ts">TypeScript ADK</a>.
+      <a href="https://google.github.io/adk-docs/">Docs</a>,
+      <a href="https://github.com/google/adk-js-community/tree/main/samples">Samples</a>.
+      <a href="https://github.com/google/adk-js-community/">ADK JS Community Repo</a>.
+    </h3>
+    <h3 align="center">
+      More ADK References:
+      <a href="https://github.com/google/adk-python">Python ADK</a>,
+      <a href="https://github.com/google/adk-java">Java ADK</a>,
+      <a href="https://github.com/google/adk-web">ADK Web</a>,
+      <a href="https://github.com/google/adk-samples">Other Language Samples</a>.
     </h3>
 </html>
 

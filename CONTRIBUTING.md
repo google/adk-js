@@ -39,10 +39,6 @@ information on using pull requests.
 It's ok to generate the first draft using AI but we would like code which has
 gone through human refinement.
 
-### Alignment with [adk-python](https://github.com/google/adk-python)
-
-We lean on adk-python for being the source of truth and one should refer to
-adk-python for validation.
 
 ### TSDoc
 
