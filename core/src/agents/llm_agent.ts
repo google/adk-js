@@ -11,7 +11,7 @@ import {createNewEventId, Event} from '../events/event.js';
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
 import {BaseLlm} from '../models/base_llm.js';
-import {LlmRequest} from '../models/llm_request.js';
+import {appendInstructions, LlmRequest, setOutputSchema} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
 import {BaseTool} from '../tools/base_tool.js';
@@ -272,7 +272,7 @@ class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
 
     llmRequest.config = {...agent.generateContentConfig ?? {}};
     if (agent.outputSchema) {
-      llmRequest.setOutputSchema(agent.outputSchema);
+      setOutputSchema(llmRequest, agent.outputSchema);
     }
 
     if (invocationContext.runConfig) {
@@ -307,7 +307,7 @@ class IdentityLlmRequestProcessor extends BaseLlmRequestProcessor {
     if (agent.description) {
       si.push(`The description about you is "${agent.description}"`);
     }
-    llmRequest.appendInstructions(si);
+    appendInstructions(llmRequest, si);
   }
 }
 const IDENTITY_LLM_REQUEST_PROCESSOR = new IdentityLlmRequestProcessor();
@@ -344,7 +344,7 @@ class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
             new ReadonlyContext(invocationContext),
         );
       }
-      llmRequest.appendInstructions([instructionWithState]);
+      appendInstructions(llmRequest, [instructionWithState]);
     }
 
     // Step 2: Appends agent local instructions if set.
@@ -362,7 +362,7 @@ class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
             new ReadonlyContext(invocationContext),
         );
       }
-      llmRequest.appendInstructions([instructionWithState]);
+      appendInstructions(llmRequest, [instructionWithState]);
     }
   }
 }
@@ -433,7 +433,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    llmRequest.appendInstructions([
+    appendInstructions(llmRequest, [
       this.buildTargetAgentsInstructions(
           invocationContext.agent,
           transferTargets,
@@ -851,7 +851,11 @@ export class LlmAgent extends BaseAgent {
       runOneStepAsync(
           invocationContext: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
-    const llmRequest = new LlmRequest();
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
 
     // =========================================================================
     // Preprocess before calling the LLM
