@@ -16,16 +16,18 @@ import {BaseCredentialService} from '../auth/credential_service/base_credential_
 import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
+import {BasePlugin} from '../plugins/base_plugin.js';
+import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
-// TODO - b/425992518: Implement BasePlugin, PluginManager
 
 
 interface RunnerInput {
   appName: string;
   agent: BaseAgent;
+  plugins?: BasePlugin[];
   artifactService?: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
@@ -35,6 +37,7 @@ interface RunnerInput {
 export class Runner {
   readonly appName: string;
   readonly agent: BaseAgent;
+  readonly pluginManager: PluginManager;
   readonly artifactService?: BaseArtifactService;
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
@@ -43,6 +46,7 @@ export class Runner {
   constructor(input: RunnerInput) {
     this.appName = input.appName;
     this.agent = input.agent;
+    this.pluginManager = new PluginManager(input.plugins ?? []);
     this.artifactService = input.artifactService;
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
@@ -138,7 +142,14 @@ export class Runner {
       // =========================================================================
       // Preprocess plugins on user message
       // =========================================================================
-      // TODO - b/425992518: Add plugin run_on_user_message_callback
+      const pluginUserMessage =
+          await this.pluginManager.runOnUserMessageCallback({
+            userMessage: newMessage,
+            invocationContext,
+          });
+      if (pluginUserMessage) {
+        newMessage = pluginUserMessage as Content;
+      }
 
       // =========================================================================
       // Append user message to session
@@ -178,7 +189,8 @@ export class Runner {
       // Run the agent with the plugins (aka hooks to apply in the lifecycle)
       // =========================================================================
       // Step 1: Run the before_run callbacks to see if we should early exit.
-      // TODO - b/425992518: Add plugin support
+      await this.pluginManager.runBeforeRunCallback({invocationContext});
+
       // Step 2: Otherwise continue with normal execution
       for await (
           const event of invocationContext.agent.runAsync(invocationContext)) {
@@ -186,12 +198,16 @@ export class Runner {
           await this.sessionService.appendEvent({session, event});
         }
         // Step 3: Run the on_event callbacks to optionally modify the event.
-        // TODO - b/425992518: Add plugin support
-        yield event;
+        const modifiedEvent = await this.pluginManager.runOnEventCallback(
+            {invocationContext, event});
+        if (modifiedEvent) {
+          yield modifiedEvent;
+        } else {
+          yield event;
+        }
       }
-      // TODO - b/425992518: Add plugin support
       // Step 4: Run the after_run callbacks to optionally modify the context.
-      // await pluginManager.runAfterRunCallback({ invocationContext });
+      await this.pluginManager.runAfterRunCallback({invocationContext});
     } finally {
       span.end();
     }
@@ -257,6 +273,7 @@ export class Runner {
     // TODO - b/425992518: Optimize this, not going to work for long sessions.
     // TODO - b/425992518: The behavior is dynamic, needs better documentation.
     for (let i = session.events.length - 1; i >= 0; i--) {
+      console.log('event: ', JSON.stringify(session.events[i]));
       const event = session.events[i];
       if (event.author === 'user' || !event.author) {
         continue;
