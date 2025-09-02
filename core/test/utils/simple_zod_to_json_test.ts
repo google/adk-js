@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {zodObjectToSchema} from '@google/adk';
 import {Type} from '@google/genai';
 import {z} from 'zod';
-
-import {zodObjectToSchema} from '../../src/utils/simple_zod_to_json.js';
 
 describe('zodObjectToSchema', () => {
   it('converts a simple Zod object to JSON schema', () => {

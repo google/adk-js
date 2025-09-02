@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {LiveRequest, LiveRequestQueue} from '@google/adk';
 import {createUserContent} from '@google/genai';
-
-import {LiveRequest, LiveRequestQueue} from '../../src/agents/live_request_queue.js';
 
 describe('LiveRequestQueue', () => {
   it('should handle sendContent', async () => {

@@ -4,18 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent, BasePlugin, BaseTool, CallbackContext, Event, InvocationContext, LlmRequest, LlmResponse, PluginManager, ToolContext,} from '@google/adk';
 import {Content} from '@google/genai';
-
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {CallbackContext} from '../../src/agents/callback_context.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
-import {BasePlugin} from '../../src/plugins/base_plugin.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
-import {ToolContext} from '../../src/tools/tool_context.js';
 
 type PluginCallbackName = keyof BasePlugin;
 
@@ -201,11 +191,13 @@ describe('PluginManager', () => {
     service.registerPlugin(plugin1);
 
     try {
-        await service.runBeforeRunCallback({
-          invocationContext: mockInvocationContext,
-        });
+      await service.runBeforeRunCallback({
+        invocationContext: mockInvocationContext,
+      });
     } catch (e) {
-      expect((e as Error).message).toContain('Error in plugin \'plugin1\' during \'beforeRunCallback\' callback');
+      expect((e as Error).message)
+          .toContain(
+              'Error in plugin \'plugin1\' during \'beforeRunCallback\' callback');
     }
   });
 

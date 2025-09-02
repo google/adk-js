@@ -4,18 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent, BasePlugin, BaseTool, CallbackContext, Event, EventActions, InvocationContext, LlmRequest, LlmResponse, ToolContext} from '@google/adk';
 import {Content} from '@google/genai';
-
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {CallbackContext} from '../../src/agents/callback_context.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
-import {EventActions} from '../../src/events/event_actions.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
-import {BasePlugin} from '../../src/plugins/base_plugin.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
-import {ToolContext} from '../../src/tools/tool_context.js';
 
 class TestablePlugin extends BasePlugin {
   constructor(name = 'testable_plugin') {

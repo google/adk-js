@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {FunctionTool, ToolContext} from '@google/adk';
 import {Type} from '@google/genai';
 import {z} from 'zod';
-
-import {FunctionTool} from '../../src/tools/function_tool.js';
-import {ToolContext} from '../../src/tools/tool_context.js';
 
 describe('FunctionTool', () => {
   let emptyContext: ToolContext;
