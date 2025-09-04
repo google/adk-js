@@ -141,7 +141,7 @@ export class Event extends LlmResponse {
    * Returns whether the event has a trailing code execution result.
    */
   hasTrailingCodeExecutionResult(): boolean {
-    if (this.content && this.content.parts) {
+    if (this.content && this.content.parts?.length) {
       const lastPart = this.content.parts[this.content.parts.length - 1];
       return lastPart.codeExecutionResult !== undefined;
     }
