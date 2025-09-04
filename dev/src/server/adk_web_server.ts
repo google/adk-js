@@ -9,10 +9,12 @@ import * as path from 'path';
 import bodyparser = require('body-parser');
 import express = require('express');
 import type {Request, Response} from 'express';
+import {AgentLoader} from './agent_loader';
 
 interface ServerOptions {
   host?: string;
   port?: number;
+  agentLoader?: AgentLoader;
 }
 
 const defaultOptions: ServerOptions = {
@@ -28,10 +30,12 @@ export class AdkWebServer {
   private readonly host: string;
   private readonly port: number;
   private readonly app: express.Application;
+  private readonly agentLoader: AgentLoader;
 
   constructor(options = defaultOptions) {
     this.host = options.host ?? defaultOptions.host!;
     this.port = options.port ?? defaultOptions.port!;
+    this.agentLoader = options.agentLoader ?? new AgentLoader();
     this.app = express();
 
     this.init();
@@ -53,7 +57,13 @@ export class AdkWebServer {
     app.use(bodyparser.json());
 
     app.get('/list-apps', async (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
+      try {
+        const apps = await this.agentLoader.listAgents();
+
+        res.json(apps);
+      } catch (e: unknown) {
+        res.status(500).json({error: (e as Error).message});
+      }
     });
 
     app.get('/debug/trace/:eventId', (req: Request, res: Response) => {

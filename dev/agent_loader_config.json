@@ -1,0 +1,8 @@
+{
+  "agent_tool": "samples/agent_tool.js",
+  "weather_time_agent": "samples/agent_with_tool.js",
+  "google_search_agent": "samples/google_search_agent.js",
+  "loop_agent": "samples/loop_agent.js",
+  "parallel_agent": "samples/parallel_agent.js",
+  "sequential_agent": "samples/sequential_agent.js"
+}
