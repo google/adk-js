@@ -1,5 +1,5 @@
 {
-  "agent_tool": "samples/agent_tool.js",
+  "agent_as_tool": "samples/agent_as_tool.js",
   "weather_time_agent": "samples/agent_with_tool.js",
   "google_search_agent": "samples/google_search_agent.js",
   "loop_agent": "samples/loop_agent.js",

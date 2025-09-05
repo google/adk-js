@@ -53,8 +53,8 @@ export class AgentLoader {
           agentName} No agent config found for ${agentName}`);
     }
 
-    const filePath =
-        path.join(path.dirname(this.agentsLoaderConfigFilePath), agentPath);
+    const filePath = path.join(
+        path.dirname(this.agentsLoaderConfigFilePath), 'dist', agentPath);
     const jsModule = await import(filePath);
 
     if (jsModule && jsModule.rootAgent &&

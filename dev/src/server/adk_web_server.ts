@@ -266,7 +266,7 @@ export class AdkWebServer {
               userId,
               sessionId,
               filename: artifactName,
-              version: versionId,
+              version: parseInt(versionId, 10),
             });
 
             if (!artifact) {
