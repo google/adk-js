@@ -14,7 +14,7 @@ import {RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {Event} from '../events/event.js';
-import {EventActions} from '../events/event_actions.js';
+import {createEventActions, EventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
@@ -173,7 +173,7 @@ export class Runner {
           event: new Event({
             invocationId: invocationContext.invocationId,
             author: 'user',
-            actions: stateDelta ? new EventActions({stateDelta}) : undefined,
+            actions: stateDelta ? createEventActions({stateDelta}) : undefined,
             content: newMessage,
           }),
         });

@@ -6,7 +6,7 @@
 
 import {Part} from '@google/genai';
 
-import {EventActions} from '../events/event_actions.js';
+import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 
 import {InvocationContext} from './invocation_context.js';
@@ -25,7 +25,7 @@ export class CallbackContext extends ReadonlyContext {
     eventActions?: EventActions,
   }) {
     super(invocationContext);
-    this.eventActions = eventActions || new EventActions();
+    this.eventActions = eventActions || createEventActions();
     this._state = new State(
         invocationContext.session.state,
         this.eventActions.stateDelta,

@@ -17,7 +17,11 @@ const MOCK_OVERRIDE_EVENT = new Event({
   id: 'overridden_event_id',
   invocationId: 'overridden_event_invocation_id',
   timestamp: 123,
-  actions: new EventActions({}),
+  actions: {
+    stateDelta: {},
+    artifactDelta: {},
+    requestedAuthConfigs: {},
+  },
   content: {parts: [{text: 'overridden_on_event'}]},
 });
 

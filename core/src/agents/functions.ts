@@ -9,7 +9,7 @@ import {Content, FunctionCall, Part} from '@google/genai';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
-import {EventActions, mergeEventActions} from '../events/event_actions.js';
+import {mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -165,7 +165,7 @@ function buildResponseEvent(
     invocationId: invocationContext.invocationId,
     author: invocationContext.agent.name,
     content: content,
-    actions: toolContext.actions || new EventActions({}),
+    actions: toolContext.actions,
     branch: invocationContext.branch,
   });
 }

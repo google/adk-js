@@ -10,7 +10,7 @@ type AuthConfig = any;
 /**
  * Represents the actions attached to an event.
  */
-export class EventActions {
+export interface EventActions {
   /**
    * If true, it won't call model to summarize function response.
    * Only used for function_response event.
@@ -20,13 +20,13 @@ export class EventActions {
   /**
    * Indicates that the event is updating the state with the given delta.
    */
-  stateDelta: {[key: string]: any} = {};
+  stateDelta: {[key: string]: unknown};
 
   /**
    * Indicates that the event is updating an artifact. key is the filename,
    * value is the version.
    */
-  artifactDelta: {[key: string]: number} = {};
+  artifactDelta: {[key: string]: number};
 
   /**
    * If set, the event transfers to the specified agent.
@@ -49,32 +49,20 @@ export class EventActions {
    * used to identify the function call.
    * - Values: The requested auth config.
    */
-  requestedAuthConfigs: {[key: string]: AuthConfig} = {};
+  requestedAuthConfigs: {[key: string]: AuthConfig};
+}
 
-  /**
-   * Creates an instance of EventActions.
-   */
-  constructor(initialData?: Partial<EventActions>) {
-    if (initialData) {
-      Object.assign(this, initialData);
-    }
-  }
-
-  /**
-   * Serializes the EventActions instance to JSON.
-   */
-  toJSON(): Omit<EventActions, 'toJSON'> {
-    return Object.assign({}, this);
-  }
-
-  /**
-   * Creates a new EventActions instance from a JSON string
-   */
-  static fromJSON(source: object|string): EventActions {
-    const plainObject =
-        typeof source === 'string' ? JSON.parse(source) : source;
-    return new EventActions(plainObject as Partial<EventActions>);
-  }
+/**
+ * Creates an EventActions object.
+ */
+export function createEventActions(state: Partial<EventActions> = {}):
+    EventActions {
+  return {
+    stateDelta: {},
+    artifactDelta: {},
+    requestedAuthConfigs: {},
+    ...state,
+  };
 }
 
 /**
@@ -89,7 +77,8 @@ export class EventActions {
 export function mergeEventActions(
     sources: Array<Partial<EventActions>>,
     target?: EventActions): EventActions {
-  const result: EventActions = new EventActions({});
+  const result = createEventActions();
+
   if (target) {
     Object.assign(result, target);
   }

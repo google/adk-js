@@ -8,7 +8,7 @@ import {FunctionCall, FunctionResponse,} from '@google/genai';
 
 import {LlmResponse} from '../models/llm_response.js';
 
-import {EventActions} from './event_actions.js';
+import {createEventActions, EventActions} from './event_actions.js';
 
 const ASCII_LETTERS_AND_NUMBERS =
     'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -84,7 +84,7 @@ export class Event extends LlmResponse {
     this.id = params.id || createNewEventId();
     this.invocationId = params.invocationId || '';
     this.author = params.author;
-    this.actions = params.actions || new EventActions();
+    this.actions = params.actions || createEventActions();
     this.longRunningToolIds = params.longRunningToolIds || [];
     this.branch = params.branch;
     this.timestamp = params.timestamp || Date.now();
