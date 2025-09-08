@@ -23,7 +23,7 @@
     "build": "npm run build:types && npm run build:node_esm && npm run build:node_cjs && npm run build:web",
     "build:node_esm": "esbuild ./src/index.ts --outfile=dist/node/index.mjs --format=esm --bundle --platform=node --target=node10.4 --packages=external",
     "build:node_cjs": "esbuild ./src/index.ts --outfile=dist/node/index.cjs --format=cjs --bundle --platform=node --target=node10.4 --packages=external",
-    "build:web": "esbuild ./src/index.ts --outfile=dist/web/index.js --format=esm --bundle  --platform=browser --target=chrome58,firefox57,safari11",
+    "build:web": "esbuild ./src/index_web.ts --outfile=dist/web/index.js --format=esm --bundle  --platform=browser --target=chrome58,firefox57,safari11",
     "build:types": "tsc --emitDeclarationOnly",
     "test": "vitest",
     "lint": "eslint 'src/**/*.ts'",
