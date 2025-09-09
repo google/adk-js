@@ -91,8 +91,7 @@ export class AgentTool extends BaseTool {
     return declaration;
   }
 
-  override async runAsync({args, toolContext}: RunToolRequest):
-      Promise<unknown> {
+  override async run({args, toolContext}: RunToolRequest): Promise<unknown> {
     if (this.skipSummarization) {
       toolContext.actions.skipSummarization = true;
     }
@@ -127,7 +126,7 @@ export class AgentTool extends BaseTool {
     });
 
     let lastEvent: Event|undefined;
-    for await (const event of runner.runAsync({
+    for await (const event of runner.run({
       userId: session.userId,
       sessionId: session.id,
       newMessage: content,

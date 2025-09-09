@@ -127,14 +127,14 @@ export function generateAuthEvent(
   });
 }
 
-async function callToolAsync(
+async function callTool(
     tool: BaseTool,
     args: Record<string, any>,
     toolContext: ToolContext,
     ): Promise<any> {
   // TODO - b/425992518: implement [tracer.start_as_current_span]
-  console.debug(`callToolAsync ${tool.name}`);
-    return await tool.runAsync({args, toolContext});
+  console.debug(`callTool ${tool.name}`);
+  return await tool.run({args, toolContext});
 }
 
 function buildResponseEvent(
@@ -182,7 +182,7 @@ function buildResponseEvent(
  *   - If the tool is long-running and the response is null, continue. !!state
  * - Merge all function response events into a single event.
  */
-export async function handleFunctionCallsAsync(
+export async function handleFunctionCalls(
     invocationContext: InvocationContext,
     functionCallEvent: Event,
     toolsDict: Record<string, BaseTool>,
@@ -230,7 +230,7 @@ export async function handleFunctionCallsAsync(
 
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse === null) {
-      functionResponse = await callToolAsync(
+      functionResponse = await callTool(
           tool,
           functionArgs,
           toolContext,

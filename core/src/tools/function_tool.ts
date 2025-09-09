@@ -98,7 +98,7 @@ export class FunctionTool<
   /**
    * Logic for running the tool.
    */
-  override async runAsync(req: RunToolRequest): Promise<unknown> {
+  override async run(req: RunToolRequest): Promise<unknown> {
     try {
       let validatedArgs: unknown = req.args;
       if (this.parameters instanceof ZodObject) {

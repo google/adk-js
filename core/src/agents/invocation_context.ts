@@ -69,7 +69,7 @@ class InvocationCostManager {
  * An invocation:
  *     1. Starts with a user message and ends with a final response.
  *     2. Can contain one or multiple agent calls.
- *     3. Is handled by runner.runAsync().
+ *     3. Is handled by runner.run().
  *
  *   An invocation runs an agent until it does not request to transfer to
  * another agent.

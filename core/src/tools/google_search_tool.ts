@@ -23,7 +23,7 @@ export class GoogleSearchTool extends BaseTool {
     super('google_search', 'Google Search Tool');
   }
 
-  runAsync(request: RunToolRequest): Promise<unknown> {
+  run(request: RunToolRequest): Promise<unknown> {
     // This is a built-in tool on server side, it's triggered by setting the
     // corresponding request parameters.
     return Promise.resolve();

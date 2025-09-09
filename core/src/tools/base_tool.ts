@@ -12,7 +12,7 @@ import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 import {ToolContext} from './tool_context.js';
 
 /**
- * The parameters for `runAsync`.
+ * The parameters for `run`.
  */
 export interface RunToolRequest {
   args: Record<string, unknown>;
@@ -74,7 +74,7 @@ export abstract class BaseTool {
    * @param request The request to run the tool.
    * @return A promise that resolves to the tool response.
    */
-  abstract runAsync(request: RunToolRequest): Promise<unknown>;
+  abstract run(request: RunToolRequest): Promise<unknown>;
 
   /**
    * Processes the outgoing LLM request for this tool.

@@ -18,8 +18,7 @@ class MockAgent extends BaseAgent {
   }
 
   protected override async *
-      runAsyncImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
+      runImpl(context: InvocationContext): AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
@@ -50,8 +49,7 @@ class MockLlmAgent extends LlmAgent {
   }
 
   protected override async *
-      runAsyncImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
+      runImpl(context: InvocationContext): AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
@@ -156,11 +154,14 @@ describe('Runner.determineAgentForResumption', () => {
       await sessionService.appendEvent({session: session, event: event});
     }
 
-    const events = await runner.runSync({
+    const events: Event[] = [];
+    for await (const event of runner.run({
       userId: session.userId,
       sessionId: session.id,
       newMessage: {role: 'user', parts: [{text: 'Hello'}]}
-    });
+    })) {
+      events.push(event);
+    }
 
     return events;
   }
@@ -324,11 +325,15 @@ describe('Runner.determineAgentForResumption', () => {
     await sessionService.appendEvent({session: session, event: callEvent});
     await sessionService.appendEvent({session: session, event: rootEvent});
 
-    const events = await runner.runSync({
+    const events: Event[] = [];
+
+    for await (const event of runner.run({
       userId: session.userId,
       sessionId: session.id,
       newMessage: {role: 'user', parts: [{functionResponse}]}
-    });
+    })) {
+      events.push(event);
+    }
 
     expect(events[0].author).toBe('sub_agent2');
   });
@@ -360,7 +365,7 @@ describe('Runner with plugins', () => {
       sessionId: TEST_SESSION_ID
     });
     const events: Event[] = [];
-    for await (const event of runner.runAsync({
+    for await (const event of runner.run({
       userId: TEST_USER_ID,
       sessionId: TEST_SESSION_ID,
       newMessage: {role: 'user', parts: [{text: originalUserInput}]},

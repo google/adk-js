@@ -20,12 +20,12 @@ import {InvocationContext} from './invocation_context.js';
  */
 export class ParallelAgent extends BaseAgent {
   protected async *
-      runAsyncImpl(
+      runImpl(
           context: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
     const agentRuns = this.subAgents.map(
-        subAgent => subAgent.runAsync(
-            createBranchCtxForSubAgent(this, subAgent, context)));
+        subAgent =>
+            subAgent.run(createBranchCtxForSubAgent(this, subAgent, context)));
 
     for await (const event of mergeAgentRuns(agentRuns)) {
       yield event;

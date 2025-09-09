@@ -18,11 +18,11 @@ const TASK_COMPLETED_TOOL_NAME = 'task_completed';
  */
 export class SequentialAgent extends BaseAgent {
   protected async *
-      runAsyncImpl(
+      runImpl(
           context: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
     for (const subAgent of this.subAgents) {
-      for await (const event of subAgent.runAsync(context)) {
+      for await (const event of subAgent.run(context)) {
         yield event;
       }
     }

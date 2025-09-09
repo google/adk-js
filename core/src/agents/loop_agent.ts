@@ -36,7 +36,7 @@ export class LoopAgent extends BaseAgent {
   }
 
   protected async *
-      runAsyncImpl(
+      runImpl(
           context: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
     let iteration = 0;
@@ -44,7 +44,7 @@ export class LoopAgent extends BaseAgent {
     while (iteration < this.maxIterations) {
       for (const subAgent of this.subAgents) {
         let shouldExit = false;
-        for await (const event of subAgent.runAsync(context)) {
+        for await (const event of subAgent.run(context)) {
           yield event;
 
           if (event.actions.escalate) {
