@@ -5,7 +5,7 @@
  */
 import {Content} from '@google/genai';
 
-import {Event} from '../events/event.js';
+import {createEvent, Event, getFunctionCalls, getFunctionResponses} from '../events/event.js';
 import {deepClone} from '../utils/deep_clone.js';
 
 import {removeClientFunctionCallId, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
@@ -166,7 +166,7 @@ function convertForeignEvent(event: Event): Event {
     }
   }
 
-  return new Event({
+  return createEvent({
     invocationId: event.invocationId,
     author: 'user',
     content,
@@ -205,7 +205,7 @@ function mergeFunctionResponseEvents(events: Event[]): Event {
     throw new Error('Cannot merge an empty list of events.');
   }
 
-  const mergedEvent = new Event(events[0]);
+  const mergedEvent = createEvent(events[0]);
   const partsInMergedEvent = mergedEvent.content?.parts || [];
 
   if (partsInMergedEvent.length === 0) {
@@ -254,7 +254,7 @@ function rearrangeEventsForLatestFunctionResponse(
   }
 
   const latestEvent = events[events.length - 1];
-  const functionResponses = latestEvent.getFunctionResponses();
+  const functionResponses = getFunctionResponses(latestEvent);
 
   // No need to process, since the latest event is not functionResponse.
   if (!functionResponses?.length) {
@@ -271,7 +271,7 @@ function rearrangeEventsForLatestFunctionResponse(
   // corresponding function calls for the latest function responses.
   const secondLatestEvent = events.at(-2);
   if (secondLatestEvent) {
-    const functionCallsFromSecondLatest = secondLatestEvent.getFunctionCalls();
+    const functionCallsFromSecondLatest = getFunctionCalls(secondLatestEvent);
     if (functionCallsFromSecondLatest) {
       for (const functionCall of functionCallsFromSecondLatest) {
         if (functionCall.id && functionResponsesIds.has(functionCall.id)) {
@@ -285,7 +285,7 @@ function rearrangeEventsForLatestFunctionResponse(
   let functionCallEventIdx = -1;
   for (let idx = events.length - 2; idx >= 0; idx--) {
     const event = events[idx];
-    const functionCalls = event.getFunctionCalls();
+    const functionCalls = getFunctionCalls(event);
     if (!functionCalls?.length) {
       continue;
     }
@@ -337,7 +337,7 @@ function rearrangeEventsForLatestFunctionResponse(
   const functionResponseEvents: Event[] = [];
   for (let idx = functionCallEventIdx + 1; idx < events.length - 1; idx++) {
     const event = events[idx];
-    const responses = event.getFunctionResponses();
+    const responses = getFunctionResponses(event);
     if (responses &&
         responses.some(
             (response) =>
@@ -373,7 +373,7 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
   // corresponding response events.
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
-    const functionResponses = event.getFunctionResponses();
+    const functionResponses = getFunctionResponses(event);
     if (functionResponses?.length) {
       for (const functionResponse of functionResponses) {
         if (!functionResponse.id) {
@@ -391,11 +391,11 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
   for (const event of events) {
     // If the event contains function responses, it will be handled when
     // its corresponding function_call is encountered, so skip it for now.
-    if (event.getFunctionResponses().length > 0) {
+    if (getFunctionResponses(event).length > 0) {
       continue;
     }
 
-    const functionCalls = event.getFunctionCalls();
+    const functionCalls = getFunctionCalls(event);
     if (functionCalls?.length) {
       const functionResponseEventsIndices: Set<number> = new Set();
       for (const functionCall of functionCalls) {

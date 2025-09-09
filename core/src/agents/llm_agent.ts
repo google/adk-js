@@ -7,7 +7,7 @@
 import {GenerateContentConfig, Schema, ThinkingConfig} from '@google/genai';
 import {z} from 'zod';
 
-import {createNewEventId, Event} from '../events/event.js';
+import {createEvent, createNewEventId, Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
 import {BaseLlm} from '../models/base_llm.js';
@@ -764,7 +764,7 @@ export class LlmAgent extends BaseAgent {
       );
       return;
     }
-    if (!event.isFinalResponse()) {
+    if (!isFinalResponse(event)) {
       console.debug(
           `Skipping output save for agent ${
               this.name}: event is not a final response`,
@@ -812,7 +812,7 @@ export class LlmAgent extends BaseAgent {
         yield event;
       }
 
-      if (!lastEvent || lastEvent.isFinalResponse()) {
+      if (!lastEvent || isFinalResponse(lastEvent)) {
         break;
       }
       if (lastEvent.partial) {
@@ -891,7 +891,7 @@ export class LlmAgent extends BaseAgent {
     // Calls the LLM
     // =========================================================================
     // TODO - b/425992518: misleading, this is passing metadata.
-    const modelResponseEvent = new Event({
+    const modelResponseEvent = createEvent({
       invocationId: invocationContext.invocationId,
       author: this.name,
       branch: invocationContext.branch,
@@ -938,13 +938,13 @@ export class LlmAgent extends BaseAgent {
     }
 
     // Merge llm response with model response event.
-    const mergedEvent = new Event({
+    const mergedEvent = createEvent({
       ...modelResponseEvent,
       ...llmResponse,
     });
 
     if (mergedEvent.content) {
-      const functionCalls = mergedEvent.getFunctionCalls();
+      const functionCalls = getFunctionCalls(mergedEvent);
       if (functionCalls?.length) {
         // TODO - b/425992518: rename topopulate if missing.
         populateClientFunctionCallId(mergedEvent);
@@ -959,7 +959,7 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
     // =========================================================================
-    if (!mergedEvent.getFunctionCalls()?.length) {
+    if (!getFunctionCalls(mergedEvent)?.length) {
       return;
     }
 
@@ -967,8 +967,12 @@ export class LlmAgent extends BaseAgent {
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
     const functionResponseEvent = await handleFunctionCallsAsync(
-        invocationContext, mergedEvent, llmRequest.toolsDict,
-        this.canonicalBeforeToolCallbacks, this.canonicalAfterToolCallbacks);
+        invocationContext,
+        mergedEvent,
+        llmRequest.toolsDict,
+        this.canonicalBeforeToolCallbacks,
+        this.canonicalAfterToolCallbacks,
+    );
 
     if (!functionResponseEvent) {
       return;
@@ -1126,10 +1130,10 @@ export class LlmAgent extends BaseAgent {
       // TODO - b/425992518: replace with PluginManager.runOnModelErrorCallback
       // Return an LlmResponse with error details.
       // Note: this will cause agent to work better if there's a loop.
-      yield new LlmResponse({
+      yield {
         errorMessage: modelError instanceof Error ? modelError.message :
                                                     String(modelError),
-      });
+      };
     }
   }
 

@@ -8,7 +8,7 @@
 import {Content, FunctionCall, Part} from '@google/genai';
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
+import {createEvent, Event, getFunctionCalls} from '../events/event.js';
 import {mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
@@ -33,7 +33,7 @@ export function generateClientFunctionCallId(): string {
 export function populateClientFunctionCallId(
     modelResponseEvent: Event,
     ): void {
-  const functionCalls = modelResponseEvent.getFunctionCalls();
+  const functionCalls = getFunctionCalls(modelResponseEvent);
   if (!functionCalls) {
     return;
   }
@@ -115,7 +115,7 @@ export function generateAuthEvent(
     parts.push({functionCall: requestEucFunctionCall});
   }
 
-  return new Event({
+  return createEvent({
     invocationId: invocationContext.invocationId,
     author: invocationContext.agent.name,
     branch: invocationContext.branch,
@@ -161,7 +161,7 @@ function buildResponseEvent(
     parts: [partFunctionResponse],
   };
 
-  return new Event({
+  return createEvent({
     invocationId: invocationContext.invocationId,
     author: invocationContext.agent.name,
     content: content,
@@ -190,7 +190,7 @@ export async function handleFunctionCallsAsync(
     afterToolCallbacks: SingleAfterToolCallback[],
     filters?: Set<string>,
     ): Promise<Event|null> {
-  const functionCalls = functionCallEvent.getFunctionCalls();
+  const functionCalls = getFunctionCalls(functionCallEvent);
   const functionResponseEvents: Event[] = [];
 
   for (const functionCall of functionCalls) {
@@ -353,14 +353,13 @@ export function mergeParallelFunctionResponseEvents(
   const actionsList = functionResponseEvents.map(event => event.actions || {});
   const mergedActions = mergeEventActions(actionsList);
 
-  const mergedEvent = new Event({
+  return createEvent({
     author: baseEvent.author,
     branch: baseEvent.branch,
     content: {role: 'user', parts: mergedParts},
     actions: mergedActions,
     timestamp: baseEvent.timestamp!,
   });
-  return mergedEvent;
 }
 
 // TODO - b/425992518: support function call in live connection.

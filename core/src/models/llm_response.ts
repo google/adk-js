@@ -10,7 +10,7 @@ import {Content, FinishReason, GenerateContentResponse, GenerateContentResponseU
  * LLM response class that provides the first candidate response from the
  * model if available. Otherwise, returns error code and message.
  */
-export class LlmResponse {
+export interface LlmResponse {
   /**
    * The content of the response.
    */
@@ -80,77 +80,51 @@ export class LlmResponse {
    * Audio transcription of model output.
    */
   outputTranscription?: Transcription;
+}
 
-  /**
-   * Creates an instance of LlmResponse.
-   */
-  constructor(initialData?: Partial<LlmResponse>) {
-    if (initialData) {
-      Object.assign(this, initialData);
+/**
+ * Creates an LlmResponse from a GenerateContentResponse.
+ *
+ * @param response The GenerateContentResponse to create the
+ *   LlmResponse from.
+ * @returns The LlmResponse.
+ */
+export function createLlmResponse(
+    response: GenerateContentResponse,
+    ): LlmResponse {
+  const usageMetadata = response.usageMetadata;
+
+  if (response.candidates && response.candidates.length > 0) {
+    const candidate = response.candidates[0];
+    if (candidate.content?.parts && candidate.content.parts.length > 0) {
+      return {
+        content: candidate.content,
+        groundingMetadata: candidate.groundingMetadata,
+        usageMetadata: usageMetadata,
+        finishReason: candidate.finishReason,
+      };
     }
+
+    return {
+      errorCode: candidate.finishReason,
+      errorMessage: candidate.finishMessage,
+      usageMetadata: usageMetadata,
+      finishReason: candidate.finishReason,
+    };
   }
 
-  /**
-   * Creates an LlmResponse from a GenerateContentResponse.
-   *
-   * @param response The GenerateContentResponse to create the
-   *   LlmResponse from.
-   * @returns The LlmResponse.
-   */
-  static create(response: GenerateContentResponse): LlmResponse {
-    const usageMetadata = response.usageMetadata;
-
-    if (response.candidates && response.candidates.length > 0) {
-      const candidate = response.candidates[0];
-
-      if (candidate.content && candidate.content.parts &&
-          candidate.content.parts.length > 0) {
-        return new LlmResponse({
-          content: candidate.content,
-          groundingMetadata: candidate.groundingMetadata,
-          usageMetadata: usageMetadata,
-          finishReason: candidate.finishReason,
-        });
-      } else {
-        return new LlmResponse({
-          errorCode: candidate.finishReason,
-          errorMessage: candidate.finishMessage,
-          usageMetadata: usageMetadata,
-          finishReason: candidate.finishReason,
-        });
-      }
-    } else {
-      if (response.promptFeedback) {
-        return new LlmResponse({
-          errorCode: response.promptFeedback.blockReason,
-          errorMessage: response.promptFeedback.blockReasonMessage,
-          usageMetadata: usageMetadata,
-        });
-      } else {
-        // The ultimate fallback for an unknown error state
-        return new LlmResponse({
-          errorCode: 'UNKNOWN_ERROR',
-          errorMessage: 'Unknown error.',
-          usageMetadata: usageMetadata,
-        });
-      }
-    }
+  if (response.promptFeedback) {
+    return {
+      errorCode: response.promptFeedback.blockReason,
+      errorMessage: response.promptFeedback.blockReasonMessage,
+      usageMetadata: usageMetadata,
+    };
   }
 
-  /**
-   * Serializes the LlmResponse instance to JSON.
-   */
-  toJSON(): Omit<LlmResponse, 'toJSON'> {
-    return Object.assign({}, this);
-  }
-
-  /**
-   * Deserializes the LlmResponse instance from a JSON string.
-   */
-  static fromJSON(source: object|string): LlmResponse {
-    const plainObject: Partial<LlmResponse> = typeof source === 'string' ?
-        JSON.parse(source) as Partial<LlmResponse>:
-        source;
-    return new LlmResponse(plainObject);
-  }
+  // The ultimate fallback for an unknown error state
+  return {
+    errorCode: 'UNKNOWN_ERROR',
+    errorMessage: 'Unknown error.',
+    usageMetadata: usageMetadata,
+  };
 }

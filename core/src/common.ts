@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export {createEvent, Event, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse} from '../../core/src/events/event.js';
 export {BaseAgent} from './agents/base_agent.js';
 export {CallbackContext} from './agents/callback_context.js';
 export {InvocationContext} from './agents/invocation_context.js';
@@ -16,7 +17,6 @@ export {RunConfig} from './agents/run_config.js';
 export {SequentialAgent} from './agents/sequential_agent.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
-export {Event} from './events/event.js';
 export type {EventActions} from './events/event_actions.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {LlmRequest} from './models/llm_request.js';

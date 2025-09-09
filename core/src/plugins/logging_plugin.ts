@@ -9,7 +9,7 @@ import {Content} from '@google/genai';
 import {BaseAgent} from '../agents/base_agent.js';
 import {CallbackContext} from '../agents/callback_context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
+import {Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
@@ -86,15 +86,15 @@ export class LoggingPlugin extends BasePlugin {
     this.log(`   Event ID: ${event.id}`);
     this.log(`   Author: ${event.author}`);
     this.log(`   Content: ${this.formatContent(event.content)}`);
-    this.log(`   Final Response: ${event.isFinalResponse()}`);
+    this.log(`   Final Response: ${isFinalResponse(event)}`);
 
-    const functionCalls = event.getFunctionCalls();
+    const functionCalls = getFunctionCalls(event);
     if (functionCalls.length > 0) {
       const funcCalls = functionCalls.map((fc) => fc.name);
       this.log(`   Function Calls: ${funcCalls}`);
     }
 
-    const functionResponses = event.getFunctionResponses();
+    const functionResponses = getFunctionResponses(event);
     if (functionResponses.length > 0) {
       const funcResponses = functionResponses.map((fr) => fr.name);
       this.log(`   Function Responses: ${funcResponses}`);

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BasePlugin, BaseTool, CallbackContext, Event, EventActions, InvocationContext, LlmRequest, LlmResponse, ToolContext} from '@google/adk';
+import {BaseAgent, BasePlugin, BaseTool, CallbackContext, createEvent, Event, EventActions, InvocationContext, LlmRequest, LlmResponse, ToolContext} from '@google/adk';
 import {Content} from '@google/genai';
 
 class TestablePlugin extends BasePlugin {
@@ -13,7 +13,7 @@ class TestablePlugin extends BasePlugin {
   }
 }
 
-const MOCK_OVERRIDE_EVENT = new Event({
+const MOCK_OVERRIDE_EVENT = createEvent({
   id: 'overridden_event_id',
   invocationId: 'overridden_event_invocation_id',
   timestamp: 123,
@@ -91,25 +91,25 @@ class FullOverridePlugin extends BasePlugin {
   override async beforeModelCallback({callbackContext, llmRequest}: {
     callbackContext: CallbackContext; llmRequest: LlmRequest;
   }): Promise<LlmResponse|undefined> {
-    return new LlmResponse({
+    return {
       content: {parts: [{text: 'overridden_before_model'}]},
-    });
+    };
   }
 
   override async afterModelCallback({callbackContext, llmResponse}: {
     callbackContext: CallbackContext; llmResponse: LlmResponse;
   }): Promise<LlmResponse|undefined> {
-    return new LlmResponse({
+    return {
       content: {parts: [{text: 'overridden_after_model'}]},
-    });
+    };
   }
 
   override async onModelErrorCallback({callbackContext, llmRequest, error}: {
     callbackContext: CallbackContext; llmRequest: LlmRequest; error: Error;
   }): Promise<LlmResponse|undefined> {
-    return new LlmResponse({
+    return {
       content: {parts: [{text: 'overridden_on_model_error'}]},
-    });
+    };
   }
 }
 
@@ -270,9 +270,9 @@ describe('BasePlugin', () => {
         }),
         )
         .toEqual(
-            new LlmResponse({
+            {
               content: {parts: [{text: 'overridden_before_model'}]},
-            }),
+            },
         );
     expect(
         await plugin.afterModelCallback({
@@ -281,9 +281,9 @@ describe('BasePlugin', () => {
         }),
         )
         .toEqual(
-            new LlmResponse({
+            {
               content: {parts: [{text: 'overridden_after_model'}]},
-            }),
+            },
         );
     expect(
         await plugin.beforeToolCallback({
@@ -319,9 +319,9 @@ describe('BasePlugin', () => {
         }),
         )
         .toEqual(
-            new LlmResponse({
+            {
               content: {parts: [{text: 'overridden_on_model_error'}]},
-            }),
+            },
         );
   });
 });

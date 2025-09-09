@@ -13,7 +13,7 @@ import {LlmAgent} from '../agents/llm_agent.js';
 import {RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
-import {Event} from '../events/event.js';
+import {createEvent, Event, getFunctionCalls} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -170,7 +170,7 @@ export class Runner {
         // Append the user message to the session with optional state delta.
         await this.sessionService.appendEvent({
           session,
-          event: new Event({
+          event: createEvent({
             invocationId: invocationContext.invocationId,
             author: 'user',
             actions: stateDelta ? createEventActions({stateDelta}) : undefined,
@@ -349,7 +349,7 @@ function findEventByLastFunctionResponseId(events: Event[]): Event|null {
   for (let i = events.length - 2; i >= 0; i--) {
     const event = events[i];
     // Looking for the system long running request euc function call.
-    const functionCalls = event.getFunctionCalls();
+    const functionCalls = getFunctionCalls(event);
     if (!functionCalls) {
       continue;
     }

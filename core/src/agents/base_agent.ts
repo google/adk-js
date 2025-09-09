@@ -7,7 +7,7 @@
 import {Content} from '@google/genai';
 import {trace} from '@opentelemetry/api';
 
-import {Event} from '../events/event.js';
+import {createEvent, Event} from '../events/event.js';
 
 import {CallbackContext} from './callback_context.js';
 import {InvocationContext} from './invocation_context.js';
@@ -262,7 +262,7 @@ export abstract class BaseAgent {
       if (content) {
         invocationContext.endInvocation = true;
 
-        return new Event({
+        return createEvent({
           invocationId: invocationContext.invocationId,
           author: this.name,
           branch: invocationContext.branch,
@@ -273,7 +273,7 @@ export abstract class BaseAgent {
     }
 
     if (callbackContext.state.hasDelta()) {
-      return new Event({
+      return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
         branch: invocationContext.branch,
@@ -302,7 +302,7 @@ export abstract class BaseAgent {
       const content = await callback(callbackContext);
 
       if (content) {
-        return new Event({
+        return createEvent({
           invocationId: invocationContext.invocationId,
           author: this.name,
           branch: invocationContext.branch,
@@ -313,7 +313,7 @@ export abstract class BaseAgent {
     }
 
     if (callbackContext.state.hasDelta()) {
-      return new Event({
+      return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
         branch: invocationContext.branch,

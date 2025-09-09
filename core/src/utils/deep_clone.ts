@@ -28,7 +28,7 @@ export function deepCloneSession(session: Session): Session {
     appName: session.appName,
     userId: session.userId,
     state: {...session.state},
-    events: session.events.map((event) => new Event(event)),
+    events: session.events.map((event) => deepClone(event)),
     lastUpdateTime: session.lastUpdateTime,
   });
 }

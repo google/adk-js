@@ -4,17 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent, BasePlugin, createEvent, Event, InMemoryArtifactService, InMemorySessionService, InvocationContext, LlmAgent, Runner, Session} from '@google/adk';
 import {Content, FunctionCall, FunctionResponse, Part} from '@google/genai';
-
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {LlmAgent} from '../../src/agents/llm_agent.js';
-import {InMemoryArtifactService} from '../../src/artifacts/in_memory_artifact_service.js';
-import {Event} from '../../src/events/event.js';
-import {BasePlugin} from '../../src/plugins/base_plugin.js';
-import {Runner} from '../../src/runner/runner.js';
-import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
-import {Session} from '../../src/sessions/session.js';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -29,7 +20,7 @@ class MockAgent extends BaseAgent {
   protected override async *
       runAsyncImpl(context: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    yield new Event({
+    yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
       content: {role: 'model', parts: [{text: 'Test response'}]},
@@ -61,7 +52,7 @@ class MockLlmAgent extends LlmAgent {
   protected override async *
       runAsyncImpl(context: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    yield new Event({
+    yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
       content: {role: 'model', parts: [{text: 'Test LLM response'}]},
@@ -101,7 +92,7 @@ class MockPlugin extends BasePlugin {
     if (!this.enableEventCallback) {
       return undefined;
     }
-    return new Event({
+    return createEvent({
       invocationId: '',
       author: '',
       content: {
@@ -181,13 +172,13 @@ describe('Runner.determineAgentForResumption', () => {
     const functionResponse:
         FunctionResponse = {id: 'func_123', name: 'test_func', response: {}};
 
-    const callEvent = new Event({
+    const callEvent = createEvent({
       invocationId: 'inv1',
       author: 'sub_agent1',
       content: {role: 'model', parts: [{functionCall}]},
     });
 
-    const responseEvent = new Event({
+    const responseEvent = createEvent({
       invocationId: 'inv2',
       author: 'user',
       content: {role: 'user', parts: [{functionResponse}]},
@@ -203,7 +194,7 @@ describe('Runner.determineAgentForResumption', () => {
        console.log(
            'should return root agent when session has no non-user events');
 
-       const nonUserEvent = new Event({
+       const nonUserEvent = createEvent({
          invocationId: 'inv1',
          author: 'user',
          content: {role: 'user', parts: [{text: 'Hello'}]},
@@ -219,7 +210,7 @@ describe('Runner.determineAgentForResumption', () => {
        console.log(
            'should return root agent when it is found in session events');
 
-       const rootEvent = new Event({
+       const rootEvent = createEvent({
          invocationId: 'inv1',
          author: 'root_agent',
          content: {role: 'model', parts: [{text: 'Root response'}]},
@@ -233,7 +224,7 @@ describe('Runner.determineAgentForResumption', () => {
   it('should return transferable sub agent when found', async () => {
     console.log('should return transferable sub agent when found');
 
-    const subAgent1Event = new Event({
+    const subAgent1Event = createEvent({
       invocationId: 'inv1',
       author: 'sub_agent1',
       content: {role: 'model', parts: [{text: 'Sub agent response'}]},
@@ -247,7 +238,7 @@ describe('Runner.determineAgentForResumption', () => {
   it('should skip non-transferable agent and return root agent', async () => {
     console.log('should skip non-transferable agent and return root agent');
 
-    const nonTransferableResponse = new Event({
+    const nonTransferableResponse = createEvent({
       invocationId: 'inv1',
       author: 'non_transferable',
       content: {
@@ -268,7 +259,7 @@ describe('Runner.determineAgentForResumption', () => {
       userId: TEST_USER_ID,
       appName: TEST_APP_ID,
       events: [
-        new Event({
+        createEvent({
           invocationId: 'inv1',
           author: 'unknown_agent',
           content: {
@@ -276,7 +267,7 @@ describe('Runner.determineAgentForResumption', () => {
             parts: [{text: 'Unknown agent response'}],
           },
         }),
-        new Event({
+        createEvent({
           invocationId: 'inv2',
           author: 'root_agent',
           content: {role: 'model', parts: [{text: 'Root response'}]},
@@ -284,7 +275,7 @@ describe('Runner.determineAgentForResumption', () => {
       ],
     });
 
-    const unknownEvent = new Event({
+    const unknownEvent = createEvent({
       invocationId: 'inv1',
       author: 'unknown_agent',
       content: {
@@ -293,7 +284,7 @@ describe('Runner.determineAgentForResumption', () => {
       },
     });
 
-    const rootAgentEvent = new Event({
+    const rootAgentEvent = createEvent({
       invocationId: 'inv2',
       author: 'root_agent',
       content: {role: 'model', parts: [{text: 'Root response'}]},
@@ -311,13 +302,13 @@ describe('Runner.determineAgentForResumption', () => {
     const functionResponse:
         FunctionResponse = {id: 'func_456', name: 'test_func', response: {}};
 
-    const callEvent = new Event({
+    const callEvent = createEvent({
       invocationId: 'inv1',
       author: 'sub_agent2',
       content: {role: 'model', parts: [{functionCall}]},
     });
 
-    const rootEvent = new Event({
+    const rootEvent = createEvent({
       invocationId: 'inv2',
       author: 'root_agent',
       content: {role: 'model', parts: [{text: 'Root response'}]},

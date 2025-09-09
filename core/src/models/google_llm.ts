@@ -15,7 +15,7 @@ import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
-import {LlmResponse} from './llm_response.js';
+import {createLlmResponse, LlmResponse} from './llm_response.js';
 
 const AGENT_ENGINE_TELEMETRY_TAG = 'remote_reasoning_engine';
 const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
@@ -120,7 +120,7 @@ export class Gemini extends BaseLlm {
       for await (const response of streamResult) {
         lastResponse = response;
         console.info(buildResponseLog(response));
-        const llmResponse = LlmResponse.create(response);
+        const llmResponse = createLlmResponse(response);
         usageMetadata = llmResponse.usageMetadata;
         const firstPart = llmResponse.content?.parts?.[0];
         // Accumulates the text and thought text from the first part.
@@ -141,10 +141,13 @@ export class Gemini extends BaseLlm {
           if (text) {
             parts.push(createPartFromText(text));
           }
-          yield new LlmResponse({
-            content: {role: 'model', parts},
+          yield {
+            content: {
+              role: 'model',
+              parts,
+            },
             usageMetadata: llmResponse.usageMetadata,
-          });
+          };
           thoughtText = '';
           text = '';
         }
@@ -159,10 +162,13 @@ export class Gemini extends BaseLlm {
         if (text) {
           parts.push({text: text});
         }
-        yield new LlmResponse({
-          content: {role: 'model', parts},
+        yield {
+          content: {
+            role: 'model',
+            parts,
+          },
           usageMetadata,
-        });
+        };
       }
     } else {
       const response = await this.apiClient.models.generateContent({
@@ -171,7 +177,7 @@ export class Gemini extends BaseLlm {
         config: llmRequest.config,
       });
       console.info(buildResponseLog(response));
-      yield LlmResponse.create(response);
+      yield createLlmResponse(response);
     }
   }
 

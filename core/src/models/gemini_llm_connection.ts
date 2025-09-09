@@ -91,14 +91,15 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    * @param text The text to be included in the response.
    * @returns An LlmResponse containing the full text.
    */
-  private buildFullTextResponse(text: string) {
-    return new LlmResponse({
+  private buildFullTextResponse(text: string): LlmResponse {
+    return {
       content: {
         role: 'model',
         parts: [{text}],
       },
-    });
+    };
   }
+
   // TODO(b/425992518): GenAI SDK inconsistent API, missing methods.
   async * receive(): AsyncGenerator<LlmResponse, void, void> {
     throw new Error('Not Implemented.');

@@ -4,28 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionCall, FunctionResponse,} from '@google/genai';
+import {FunctionCall, FunctionResponse} from '@google/genai';
 
 import {LlmResponse} from '../models/llm_response.js';
 
 import {createEventActions, EventActions} from './event_actions.js';
-
-const ASCII_LETTERS_AND_NUMBERS =
-    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-
-/**
- * Generates a new unique ID for the event.
- */
-export function createNewEventId(): string {
-  let id = '';
-
-  for (let i = 0; i < 8; i++) {
-    id += ASCII_LETTERS_AND_NUMBERS[Math.floor(
-        Math.random() * ASCII_LETTERS_AND_NUMBERS.length)];
-  }
-
-  return id;
-}
 
 /**
  * Represents an event in a conversation between agents and users.
@@ -33,7 +16,7 @@ export function createNewEventId(): string {
   It is used to store the content of the conversation, as well as the actions
   taken by the agents like function calls, etc.
  */
-export class Event extends LlmResponse {
+export interface Event extends LlmResponse {
   /**
    * The unique identifier of the event.
    * Do not assign the ID. It will be assigned by the session.
@@ -78,74 +61,99 @@ export class Event extends LlmResponse {
    * The timestamp of the event.
    */
   timestamp: number;
+}
 
-  constructor(params: Partial<Event> = {}) {
-    super(params);
-    this.id = params.id || createNewEventId();
-    this.invocationId = params.invocationId || '';
-    this.author = params.author;
-    this.actions = params.actions || createEventActions();
-    this.longRunningToolIds = params.longRunningToolIds || [];
-    this.branch = params.branch;
-    this.timestamp = params.timestamp || Date.now();
+/**
+ * Creates an event from a partial event.
+ *
+ * @param params The partial event to create the event from.
+ * @returns The event.
+ */
+export function createEvent(params: Partial<Event> = {}): Event {
+  return {
+    ...params,
+    id: params.id || createNewEventId(),
+    invocationId: params.invocationId || '',
+    author: params.author,
+    actions: params.actions || createEventActions(),
+    longRunningToolIds: params.longRunningToolIds || [],
+    branch: params.branch,
+    timestamp: params.timestamp || Date.now(),
+  };
+}
+
+/**
+ * Returns whether the event is the final response of the agent.
+ */
+export function isFinalResponse(event: Event) {
+  if (event.actions.skipSummarization ||
+      (event.longRunningToolIds && event.longRunningToolIds.length > 0)) {
+    return true;
   }
 
-  /**
-   * Returns whether the event is the final response of the agent.
-   */
-  isFinalResponse() {
-    if (this.actions.skipSummarization ||
-        (this.longRunningToolIds && this.longRunningToolIds.length > 0)) {
-      return true;
-    }
+  return (
+      getFunctionCalls(event).length === 0 &&
+      getFunctionResponses(event).length === 0 && !event.partial &&
+      !hasTrailingCodeExecutionResult(event));
+}
 
-    return (
-        this.getFunctionCalls().length === 0 &&
-        this.getFunctionResponses().length === 0 && !this.partial &&
-        !this.hasTrailingCodeExecutionResult());
-  }
-
-  /**
-   * Returns the function calls in the event.
-   */
-  getFunctionCalls(): FunctionCall[] {
-    const funcCalls = [];
-    if (this.content && this.content.parts) {
-      for (const part of this.content.parts) {
-        if (part.functionCall) {
-          funcCalls.push(part.functionCall);
-        }
+/**
+ * Returns the function calls in the event.
+ */
+export function getFunctionCalls(event: Event): FunctionCall[] {
+  const funcCalls = [];
+  if (event.content && event.content.parts) {
+    for (const part of event.content.parts) {
+      if (part.functionCall) {
+        funcCalls.push(part.functionCall);
       }
     }
-
-    return funcCalls;
   }
 
-  /**
-   * Returns the function responses in the event.
-   */
-  getFunctionResponses(): FunctionResponse[] {
-    const funcResponses = [];
-    if (this.content && this.content.parts) {
-      for (const part of this.content.parts) {
-        if (part.functionResponse) {
-          funcResponses.push(part.functionResponse);
-        }
+  return funcCalls;
+}
+
+/**
+ * Returns the function responses in the event.
+ */
+export function getFunctionResponses(event: Event): FunctionResponse[] {
+  const funcResponses = [];
+  if (event.content && event.content.parts) {
+    for (const part of event.content.parts) {
+      if (part.functionResponse) {
+        funcResponses.push(part.functionResponse);
       }
     }
-
-    return funcResponses;
   }
 
-  /**
-   * Returns whether the event has a trailing code execution result.
-   */
-  hasTrailingCodeExecutionResult(): boolean {
-    if (this.content && this.content.parts?.length) {
-      const lastPart = this.content.parts[this.content.parts.length - 1];
-      return lastPart.codeExecutionResult !== undefined;
-    }
+  return funcResponses;
+}
 
-    return false;
+/**
+ * Returns whether the event has a trailing code execution result.
+ */
+export function hasTrailingCodeExecutionResult(event: Event): boolean {
+  if (event.content && event.content.parts?.length) {
+    const lastPart = event.content.parts[event.content.parts.length - 1];
+    return lastPart.codeExecutionResult !== undefined;
   }
+
+  return false;
+}
+
+const ASCII_LETTERS_AND_NUMBERS =
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/**
+ * Generates a new unique ID for the event.
+ */
+export function createNewEventId(): string {
+  let id = '';
+
+  for (let i = 0; i < 8; i++) {
+    id += ASCII_LETTERS_AND_NUMBERS[Math.floor(
+        Math.random() * ASCII_LETTERS_AND_NUMBERS.length)];
+  }
+
+  return id;
 }
