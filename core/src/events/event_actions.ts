@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {ToolConfirmation} from '../tools/tool_confirmation.js';
+
 // TODO: b/425992518 - Replace 'any' with a proper AuthConfig.
 type AuthConfig = any;
 
@@ -50,6 +52,12 @@ export interface EventActions {
    * - Values: The requested auth config.
    */
   requestedAuthConfigs: {[key: string]: AuthConfig};
+
+  /**
+   * A dict of tool confirmation requested by this event, keyed by the function
+   * call id.
+   */
+  requestedToolConfirmations: {[key: string]: ToolConfirmation};
 }
 
 /**
@@ -61,6 +69,7 @@ export function createEventActions(state: Partial<EventActions> = {}):
     stateDelta: {},
     artifactDelta: {},
     requestedAuthConfigs: {},
+    requestedToolConfirmations: {},
     ...state,
   };
 }
@@ -94,6 +103,10 @@ export function mergeEventActions(
     }
     if (source.requestedAuthConfigs) {
       Object.assign(result.requestedAuthConfigs, source.requestedAuthConfigs);
+    }
+    if (source.requestedToolConfirmations) {
+      Object.assign(
+          result.requestedToolConfirmations, source.requestedToolConfirmations);
     }
 
     if (source.skipSummarization !== undefined) {

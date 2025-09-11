@@ -9,6 +9,7 @@ import {Content} from '@google/genai';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
+import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -34,6 +35,7 @@ interface InvocationContextParams {
   runConfig?: RunConfig;
   liveRequestQueue?: LiveRequestQueue;
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
+  pluginManager: PluginManager;
 }
 
 /**
@@ -172,6 +174,11 @@ export class InvocationContext {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
 
   /**
+   * The manager for keeping track of plugins in this invocation.
+   */
+  pluginManager: PluginManager;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -188,6 +195,7 @@ export class InvocationContext {
     this.runConfig = params.runConfig;
     this.liveRequestQueue = params.liveRequestQueue;
     this.activeStreamingTools = params.activeStreamingTools;
+    this.pluginManager = params.pluginManager;
   }
 
   /**

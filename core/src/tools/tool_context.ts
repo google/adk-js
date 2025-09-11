@@ -11,6 +11,7 @@ import {AuthHandler} from '../auth/auth_handler.js';
 import {AuthConfig} from '../auth/auth_tool.js';
 import {EventActions} from '../events/event_actions.js';
 import {SearchMemoryResponse} from '../memory/base_memory_service.js';
+import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 /*
  * The context of the tool.
@@ -22,6 +23,7 @@ import {SearchMemoryResponse} from '../memory/base_memory_service.js';
  */
 export class ToolContext extends CallbackContext {
   readonly functionCallId?: string;
+  toolConfirmation?: ToolConfirmation;
 
   /**
    * @param params.invocationContext The invocation context of the tool.
@@ -31,18 +33,23 @@ export class ToolContext extends CallbackContext {
    *     function call. If LLM didn't return this id, ADK will assign one to it.
    *     This id is used to map function call response to the original function
    *     call.
+   * @param params.toolConfirmation The tool confirmation of the current tool
+   *     call.
    */
   constructor({
     invocationContext,
     eventActions,
     functionCallId,
+    toolConfirmation,
   }: {
     invocationContext: InvocationContext,
     eventActions?: EventActions,
     functionCallId?: string,
+    toolConfirmation?: ToolConfirmation,
   }) {
     super({invocationContext, eventActions});
     this.functionCallId = functionCallId;
+    this.toolConfirmation = toolConfirmation;
   }
 
   get actions(): EventActions {
@@ -105,5 +112,20 @@ export class ToolContext extends CallbackContext {
       userId: this.invocationContext.session.userId,
       query,
     });
+  }
+
+  /**
+   * Requests confirmation for the current tool call.
+   */
+  requestConfirmation({hint, payload}: {hint?: string, payload?: unknown}) {
+    if (!this.functionCallId) {
+      throw new Error('functionCallId is not set.');
+    }
+    this.eventActions.requestedToolConfirmations[this.functionCallId] =
+        new ToolConfirmation({
+          hint: hint,
+          confirmed: false,
+          payload: payload,
+        });
   }
 }

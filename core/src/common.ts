@@ -32,6 +32,7 @@ export {AgentTool} from './tools/agent_tool.js';
 export {BaseToolset} from './tools/base_toolset.js';
 export {FunctionTool} from './tools/function_tool.js';
 export {GoogleSearchTool} from './tools/google_search_tool.js';
+export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 

@@ -21,6 +21,7 @@ const MOCK_OVERRIDE_EVENT = createEvent({
     stateDelta: {},
     artifactDelta: {},
     requestedAuthConfigs: {},
+    requestedToolConfirmations: {},
   },
   content: {parts: [{text: 'overridden_on_event'}]},
 });

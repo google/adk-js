@@ -8,7 +8,7 @@ import {Content} from '@google/genai';
 import {createEvent, Event, getFunctionCalls, getFunctionResponses} from '../events/event.js';
 import {deepClone} from '../utils/deep_clone.js';
 
-import {removeClientFunctionCallId, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
+import {removeClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
 
 /**
  * Get the contents for the LLM request.
@@ -38,6 +38,10 @@ export function getContents(
     }
 
     if (isAuthEvent(event)) {
+      continue;
+    }
+
+    if (isToolConfirmationEvent(event)) {
       continue;
     }
 
@@ -106,6 +110,27 @@ function isAuthEvent(event: Event): boolean {
   for (const part of event.content.parts) {
     if (part.functionCall?.name === REQUEST_EUC_FUNCTION_CALL_NAME ||
         part.functionResponse?.name === REQUEST_EUC_FUNCTION_CALL_NAME) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether the event is a tool confirmation event.
+ *
+ * A tool confirmation event is an event that contains a function call or
+ * response related to requesting confirmation for a tool call. These events
+ * are skipped when constructing the content for the LLM request.
+ */
+function isToolConfirmationEvent(event: Event): boolean {
+  if (!event.content?.parts) {
+    return false;
+  }
+  for (const part of event.content.parts) {
+    if (part.functionCall?.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME ||
+        part.functionResponse?.name ===
+            REQUEST_CONFIRMATION_FUNCTION_CALL_NAME) {
       return true;
     }
   }

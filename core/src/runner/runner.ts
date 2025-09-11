@@ -107,6 +107,7 @@ export class Runner {
         session,
         userContent: newMessage,
         runConfig,
+        pluginManager: this.pluginManager,
       });
 
       // =========================================================================
