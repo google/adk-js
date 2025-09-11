@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {FunctionTool, InMemoryRunner, LlmAgent, SequentialAgent} from '@google/adk';
+import {FunctionTool, LlmAgent, SequentialAgent} from '@google/adk';
 import {z} from 'zod';
 
 function getRandomIntInclusive(min: number, max: number): number {

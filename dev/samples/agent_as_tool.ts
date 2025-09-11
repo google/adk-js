@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {AgentTool, FunctionTool, InMemoryRunner, LlmAgent} from '@google/adk';
+import {AgentTool, LlmAgent} from '@google/adk';
 
 const summaryAgent = new LlmAgent({
   model: 'gemini-2.0-flash',
