@@ -5,11 +5,11 @@
  */
 
 import {Event} from '../events/event.js';
-import {deepCloneSession} from '../utils/deep_clone.js';
+import {deepClone} from '../utils/deep_clone.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {AppendEventRequest, BaseSessionService, CreateSessionRequest, DeleteSessionRequest, GetSessionConfig, GetSessionRequest, ListSessionsRequest, ListSessionsResponse} from './base_session_service.js';
-import {Session} from './session.js';
+import {createSession, Session} from './session.js';
 import {State} from './state.js';
 
 /**
@@ -36,7 +36,7 @@ export class InMemorySessionService extends BaseSessionService {
 
   createSession({appName, userId, state, sessionId}: CreateSessionRequest):
       Promise<Session> {
-    const session = new Session({
+    const session = createSession({
       id: sessionId || randomUUID(),
       appName,
       userId,
@@ -55,7 +55,7 @@ export class InMemorySessionService extends BaseSessionService {
     this.sessions[appName][userId][session.id] = session;
 
     return Promise.resolve(
-        this.mergeState(appName, userId, deepCloneSession(session)));
+        this.mergeState(appName, userId, deepClone(session)));
   }
 
   getSession({appName, userId, sessionId, config}: GetSessionRequest):
@@ -66,7 +66,7 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     const session: Session = this.sessions[appName][userId][sessionId];
-    const copiedSession = deepCloneSession(session);
+    const copiedSession = deepClone(session);
 
     if (config) {
       if (config.numRecentEvents) {
@@ -98,7 +98,7 @@ export class InMemorySessionService extends BaseSessionService {
 
     const sessionsWithoutEvents: Session[] = [];
     for (const session of Object.values(this.sessions[appName][userId])) {
-      sessionsWithoutEvents.push(new Session({
+      sessionsWithoutEvents.push(createSession({
         id: session.id,
         appName: session.appName,
         userId: session.userId,

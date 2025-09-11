@@ -27,7 +27,7 @@ export {PluginManager} from './plugins/plugin_manager.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {Runner} from './runner/runner.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
-export {Session} from './sessions/session.js';
+export {createSession, Session} from './sessions/session.js';
 export {AgentTool} from './tools/agent_tool.js';
 export {BaseToolset} from './tools/base_toolset.js';
 export {FunctionTool} from './tools/function_tool.js';

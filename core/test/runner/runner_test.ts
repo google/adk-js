@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BasePlugin, createEvent, Event, InMemoryArtifactService, InMemorySessionService, InvocationContext, LlmAgent, Runner, Session} from '@google/adk';
+import {BaseAgent, BasePlugin, createEvent, createSession, Event, InMemoryArtifactService, InMemorySessionService, InvocationContext, LlmAgent, Runner} from '@google/adk';
 import {Content, FunctionCall, FunctionResponse, Part} from '@google/genai';
 
 const TEST_APP_ID = 'test_app_id';
@@ -255,7 +255,7 @@ describe('Runner.determineAgentForResumption', () => {
 
   it('should skip unknown agent and return root agent', async () => {
     console.log('should skip unknown agent and return root agent');
-    const session = new Session({
+    const session = createSession({
       id: TEST_SESSION_ID,
       userId: TEST_USER_ID,
       appName: TEST_APP_ID,

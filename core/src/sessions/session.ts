@@ -7,21 +7,9 @@
 import {Event} from '../events/event.js';
 
 /**
- * The parameters for creating a session.
- */
-export interface CreateSessionParams {
-  id: string;
-  appName: string;
-  userId: string;
-  state?: Record<string, unknown>;
-  events?: Event[];
-  lastUpdateTime?: number;
-}
-
-/**
  * Represents a session in a conversation between agents and users.
  */
-export class Session {
+export interface Session {
   /**
    * The unique identifier of the session.
    */
@@ -52,13 +40,24 @@ export class Session {
    * The last update time of the session.
    */
   lastUpdateTime: number;
+}
 
-  constructor(params: CreateSessionParams) {
-    this.id = params.id;
-    this.appName = params.appName;
-    this.userId = params.userId;
-    this.state = params.state || {};
-    this.events = params.events || [];
-    this.lastUpdateTime = params.lastUpdateTime || 0;
-  }
+/**
+ * Creates a session from a partial session.
+ *
+ * @param params The partial session to create the session from.
+ * @returns The session.
+ */
+export function createSession(params: Partial<Session>&{
+  id: string;
+  appName: string;
+}): Session {
+  return {
+    id: params.id,
+    appName: params.appName,
+    userId: params.userId || '',
+    state: params.state || {},
+    events: params.events || [],
+    lastUpdateTime: params.lastUpdateTime || 0,
+  };
 }
