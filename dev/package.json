@@ -18,8 +18,9 @@
   "scripts": {
     "clean": "rm -rf dist",
     "clean:all": "npm run clean && rm -rf node_modules",
-    "build": "npm run build:types && npm run build:node_cjs && npm run build:copy_assets",
+    "build": "npm run build:types && npm run build:node_cjs && npm run build:samples && npm run build:copy_assets",
     "build:node_cjs": "esbuild ./src/cli/cli.ts --outfile=dist/cli/cli.cjs --format=cjs --bundle --platform=node --target=node10.4 --packages=external",
+    "build:samples": "esbuild ./samples/**.ts --outdir=dist/samples --format=cjs --bundle --platform=node --target=node10.4 --packages=external",
     "build:copy_assets": "cp -r ./src/browser ./dist/browser",
     "build:types": "tsc --emitDeclarationOnly",
     "test": "vitest",
