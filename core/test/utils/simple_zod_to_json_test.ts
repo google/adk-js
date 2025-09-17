@@ -178,6 +178,26 @@ describe('zodObjectToSchema', () => {
     });
   });
 
+  it('handles native enums', () => {
+    enum NativeEnum {
+      A = 'a',
+      B = 'b',
+    }
+    const schema = z.object({
+      nativeEnum: z.nativeEnum(NativeEnum),
+    });
+
+    const jsonSchema = zodObjectToSchema(schema);
+
+    expect(jsonSchema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        nativeEnum: {type: Type.STRING, enum: ['a', 'b']},
+      },
+      required: ['nativeEnum'],
+    });
+  });
+
   it('handles literals', () => {
     const schema = z.object({
       version: z.literal('1.0'),

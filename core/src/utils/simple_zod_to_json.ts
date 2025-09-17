@@ -104,6 +104,11 @@ function parseZodType(zodType: ZodTypeAny): Schema|undefined {
       result.enum = def.values;
       return returnResult(result);
 
+    case z.ZodFirstPartyTypeKind.ZodNativeEnum:
+      result.type = Type.STRING;
+      result.enum = Object.values(def.values);
+      return returnResult(result);
+
     case z.ZodFirstPartyTypeKind.ZodUnion:
       result.anyOf = def.options.map(parseZodType);
       return returnResult(result);
