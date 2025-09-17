@@ -474,7 +474,11 @@ export class AdkWebServer {
 
         res.end();
       } catch (e: unknown) {
-        res.status(500).json({error: (e as Error).message});
+        if (res.headersSent) {
+          res.end(`error: ${(e as Error).message}\n\n`);
+        } else {
+          res.status(500).json({error: (e as Error).message});
+        }
       }
     });
   }
