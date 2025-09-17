@@ -7,10 +7,12 @@
 export {createEvent, Event, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse} from '../../core/src/events/event.js';
 export {BaseAgent} from './agents/base_agent.js';
 export {CallbackContext} from './agents/callback_context.js';
+export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
-export {LlmAgent} from './agents/llm_agent.js';
+// TODO: b/445695788 - Consider consolidating into a union type
+export {AfterModelCallback, AfterToolCallback, BeforeModelCallback, BeforeToolCallback, LlmAgent, SingleAfterModelCallback, SingleAfterToolCallback, SingleBeforeModelCallback, SingleBeforeToolCallback} from './agents/llm_agent.js';
 export {LoopAgent} from './agents/loop_agent.js';
 export {ParallelAgent} from './agents/parallel_agent.js';
 export {RunConfig} from './agents/run_config.js';

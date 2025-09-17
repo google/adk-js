@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// TODO - b/425992518: implement traceMergedToolCalls, traceToolCall, tracer.
+// TODO - b/436079721: implement traceMergedToolCalls, traceToolCall, tracer.
 import {Content, FunctionCall, Part} from '@google/genai';
 
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -21,6 +21,11 @@ const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
     'adk_request_confirmation';
+
+// Export these items for testing purposes only
+export const functionsExportedForTestingOnly = {
+  handleFunctionCallList,
+};
 
 export function generateClientFunctionCallId(): string {
   return `${AF_FUNCTION_CALL_ID_PREFIX}${randomUUID()}`;
@@ -185,7 +190,7 @@ async function callTool(
     args: Record<string, any>,
     toolContext: ToolContext,
     ): Promise<any> {
-  // TODO - b/425992518: implement [tracer.start_as_current_span]
+  // TODO - b/436079721: implement [tracer.start_as_current_span]
   console.debug(`callTool ${tool.name}`);
   return await tool.run({args, toolContext});
 }
@@ -308,7 +313,7 @@ export async function handleFunctionCallList({
         },
     );
 
-    // TODO - b/425992518: implement [tracer.start_as_current_span]
+    // TODO - b/436079721: implement [tracer.start_as_current_span]
     console.debug(`execute_tool ${tool.name}`);
     const functionArgs = functionCall.args ?? {};
 
@@ -339,23 +344,50 @@ export async function handleFunctionCallList({
     }
 
     // Step 3: Otherwise, proceed calling the tool normally.
-    if (functionResponse == null) {
-      functionResponse = await callTool(
-          tool,
-          functionArgs,
-          toolContext,
-      );
-      // TODO - b/425992518: implement PluginManager - runOnToolErrorCallback
+    if (functionResponse == null) {  // Cover both null and undefined
+      try {
+        functionResponse = await callTool(
+            tool,
+            functionArgs,
+            toolContext,
+        );
+      } catch (e: unknown) {
+        if (e instanceof Error) {
+          const onToolErrorResponse =
+              await invocationContext.pluginManager.runOnToolErrorCallback(
+                  {
+                    tool: tool,
+                    toolArgs: functionArgs,
+                    toolContext: toolContext,
+                    error: e as Error,
+                  },
+              );
+
+          // Set function response to the result of the error callback and
+          // continue execution, do not shortcut
+          if (onToolErrorResponse) {
+            functionResponse = onToolErrorResponse;
+          }
+        } else {
+          console.error('Unknown error on tool execution type', e);
+          throw e;
+        }
+      }
     }
 
     // Step 4: Check if plugin after_tool_callback overrides the function
     // response.
-    // TODO - b/425992518: implement PluginManager - runAfterToolCallback
-    let alteredFunctionResponse = null;
+    let alteredFunctionResponse =
+        await invocationContext.pluginManager.runAfterToolCallback({
+          tool: tool,
+          toolArgs: functionArgs,
+          toolContext: toolContext,
+          result: functionResponse,
+        });
 
     // Step 5: If no overrides are provided from the plugins, further run the
     // canonical after_tool_callbacks.
-    if (alteredFunctionResponse === null) {
+    if (alteredFunctionResponse == null) {  // Cover both null and undefined
       for (const callback of afterToolCallbacks) {
         alteredFunctionResponse = await callback({
           tool: tool,
@@ -388,7 +420,7 @@ export async function handleFunctionCallList({
         toolContext,
         invocationContext,
     );
-    // TODO - b/425992518: implement [traceToolCall]
+    // TODO - b/436079721: implement [traceToolCall]
     console.debug('traceToolCall', {
       tool: tool.name,
       args: functionArgs,
@@ -404,9 +436,9 @@ export async function handleFunctionCallList({
       mergeParallelFunctionResponseEvents(functionResponseEvents);
 
   if (functionResponseEvents.length > 1) {
-    // TODO - b/425992518: implement [tracer.start_as_current_span]
+    // TODO - b/436079721: implement [tracer.start_as_current_span]
     console.debug('execute_tool (merged)');
-    // TODO - b/425992518: implement [traceMergedToolCalls]
+    // TODO - b/436079721: implement [traceMergedToolCalls]
     console.debug('traceMergedToolCalls', {
       responseEventId: mergedEvent.id,
       functionResponseEvent: mergedEvent.id,
