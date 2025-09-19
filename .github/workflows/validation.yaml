@@ -25,4 +25,9 @@ jobs:
     - name: Run tests in core
       run: npm run test
       working-directory: ./core
-
+    - name: Install dependencies in dev
+      run: npm install
+      working-directory: ./dev
+    - name: Run tests in dev
+      run: npm run test
+      working-directory: ./dev

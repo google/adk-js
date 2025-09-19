@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+
 import bodyparser = require('body-parser');
 import express = require('express');
 import type {Request, Response} from 'express';
@@ -13,6 +14,7 @@ import * as path from 'path';
 import {Readable} from 'stream';
 
 import {AgentLoader} from './agent_loader.js';
+import {getAgentGraphAsDot} from './agent_graph.js';
 
 interface ServerOptions {
   host?: string;
@@ -93,7 +95,68 @@ export class AdkWebServer {
     app.get(
         '/apps/:appName/users/:userId/sessions/:sessionId/events/:eventId/graph',
         async (req: Request, res: Response) => {
-          return res.status(501).json({error: 'Not implemented'});
+          const appName = req.params['appName'];
+          const userId = req.params['userId'];
+          const sessionId = req.params['sessionId'];
+          const eventId = req.params['eventId'];
+
+          const session = await this.sessionService.getSession({
+            appName,
+            userId,
+            sessionId,
+          });
+
+          if (!session) {
+            res.status(404).json({error: `Session not found: ${sessionId}`});
+            return;
+          }
+
+          const sessionEvents = session.events || [];
+          const event = sessionEvents.find((e) => e.id === eventId);
+
+          if (!event) {
+            res.status(404).json({error: `Event not found: ${eventId}`});
+            return;
+          }
+
+          const functionCalls = getFunctionCalls(event);
+          const functionResponses = getFunctionResponses(event);
+          const rootAgent = await this.agentLoader.loadAgent(appName);
+
+          if (functionCalls.length > 0) {
+            const functionCallHighlights: Array<[string, string]> = [];
+            for (const functionCall of functionCalls) {
+              functionCallHighlights.push([
+                event.author!,
+                functionCall.name!,
+              ]);
+            }
+
+            return res.send({
+              dotSrc:
+                  await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
+            });
+          }
+
+          if (functionResponses.length > 0) {
+            const functionCallHighlights: Array<[string, string]> = [];
+
+            for (const functionResponse of functionResponses) {
+              functionCallHighlights.push([
+                functionResponse.name!,
+                event.author!,
+              ]);
+            }
+
+            return res.send({
+              dotSrc:
+                  await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
+            });
+          }
+
+          return res.send({
+            dotSrc: await getAgentGraphAsDot(rootAgent!, [[event.author!, '']])
+          });
         });
 
     // ------------------------- Session related endpoints ---------------------

@@ -47,6 +47,7 @@
     "body-parser": "^2.2.0",
     "commander": "^14.0.0",
     "express": "^4.21.2",
+    "ts-graphviz": "0.16.0",
     "zod": "^3.22.4"
   }
 }

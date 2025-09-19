@@ -245,7 +245,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
 
 async function convertToolUnionToTools(
     toolUnion: ToolUnion,
-    context: ReadonlyContext,
+    context?: ReadonlyContext,
     ): Promise<BaseTool[]> {
   if (toolUnion instanceof BaseTool) {
     return [toolUnion];
@@ -834,7 +834,7 @@ export class LlmAgent extends BaseAgent {
    *
    * This method is only for use by Agent Development Kit.
    */
-  async canonicalTools(context: ReadonlyContext): Promise<BaseTool[]> {
+  async canonicalTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const resolvedTools: BaseTool[] = [];
     for (const toolUnion of this.tools) {
       const tools = await convertToolUnionToTools(toolUnion, context);
