@@ -16,10 +16,30 @@ describe('AgentGraph', () => {
        });
 
        const dotGraph = await getAgentGraphAsDot(agent, []);
-       expect(dotGraph).toContain('digraph "testAgent"');
-       expect(dotGraph).toContain('"testAgent" -> "testTool"');
-       expect(dotGraph).toContain('label = "🤖 testAgent"');
-       expect(dotGraph).toContain('label = "🔧 testTool"');
+       expect(dotGraph).toContain(`strict digraph "testAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "testAgent" [
+    label = "🤖 testAgent";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "testTool" [
+    label = "🔧 testTool";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  "testAgent" -> "testTool" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+}`);
      });
 
   it('generates a DOT graph for a SequentialAgent', async () => {
@@ -41,11 +61,99 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, []);
-    expect(dotGraph).toContain('digraph "sequentialAgent"');
-    expect(dotGraph).toContain('cluster_sequentialAgent');
-    expect(dotGraph).toContain('"agent1" -> "agent2"');
-    expect(dotGraph).toContain('"agent1" -> "tool1"');
-    expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain(`strict digraph "sequentialAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool1" [
+    label = "🔧 tool1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool2" [
+    label = "🔧 tool2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_sequentialAgent (Sequential Agent)" {
+    label = "cluster_sequentialAgent (Sequential Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool1" [
+      label = "🔧 tool1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool2" [
+      label = "🔧 tool2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent1" -> "tool1" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+    "agent2" -> "tool2" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+  }
+  "agent1" -> "agent2" [
+    color = "#69CB87";
+  ];
+  "agent1" -> "tool1" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+  "agent2" -> "tool2" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+}`);
   });
 
   it('generates a DOT graph with highlighted edges', async () => {
@@ -59,7 +167,51 @@ describe('AgentGraph', () => {
     const highlights: Array<[string, string]> = [['agent1', 'agent2']];
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, highlights);
 
-    expect(dotGraph).toContain(`"agent1" -> "agent2"`);
+    expect(dotGraph).toContain(`strict digraph "sequentialAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "filled,rounded";
+    fillcolor = "#0F5223";
+    color = "#0F5223";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "filled,rounded";
+    fillcolor = "#0F5223";
+    color = "#0F5223";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_sequentialAgent (Sequential Agent)" {
+    label = "cluster_sequentialAgent (Sequential Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "filled,rounded";
+      fillcolor = "#0F5223";
+      color = "#0F5223";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "filled,rounded";
+      fillcolor = "#0F5223";
+      color = "#0F5223";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+  }
+  "agent1" -> "agent2" [
+    color = "#69CB87";
+  ];
+}`);
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -73,12 +225,96 @@ describe('AgentGraph', () => {
     const highlights: Array<[string, string]> = [['agent1', 'agent3']];
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, highlights);
 
-    expect(dotGraph).toMatch(
-        /\"agent1\"\s*\[[^\]]*style = \"filled,rounded\",[^\]]*fillcolor = \"#0F5223\",[^\]]*\];/s,
-    );
-    expect(dotGraph).not.toMatch(
-        /\"agent2\"\s*\[[^\]]*style = \"filled,rounded\",[^\]]*fillcolor = \"#0F5223\",[^\]]*\];/s,
-    );
+    expect(dotGraph).toEqual(`strict digraph "sequentialAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "filled,rounded";
+    fillcolor = "#0F5223";
+    color = "#0F5223";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_sequentialAgent (Sequential Agent)" {
+    label = "cluster_sequentialAgent (Sequential Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "filled,rounded";
+      fillcolor = "#0F5223";
+      color = "#0F5223";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+  }
+  "agent1" -> "agent2" [
+    color = "#69CB87";
+  ];
+}`);
+    expect(dotGraph).toEqual(`strict digraph "sequentialAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "filled,rounded";
+    fillcolor = "#0F5223";
+    color = "#0F5223";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_sequentialAgent (Sequential Agent)" {
+    label = "cluster_sequentialAgent (Sequential Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "filled,rounded";
+      fillcolor = "#0F5223";
+      color = "#0F5223";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+  }
+  "agent1" -> "agent2" [
+    color = "#69CB87";
+  ];
+}`);
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
@@ -100,12 +336,102 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(loopAgent, []);
-    expect(dotGraph).toContain('digraph "loopAgent"');
-    expect(dotGraph).toContain('cluster_loopAgent');
-    expect(dotGraph).toContain('"agent1" -> "agent2"');
-    expect(dotGraph).toContain('"agent2" -> "agent1"');
-    expect(dotGraph).toContain('"agent1" -> "tool1"');
-    expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain(`strict digraph "loopAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool1" [
+    label = "🔧 tool1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool2" [
+    label = "🔧 tool2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_loopAgent (Loop Agent)" {
+    label = "cluster_loopAgent (Loop Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool1" [
+      label = "🔧 tool1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool2" [
+      label = "🔧 tool2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent1" -> "tool1" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+    "agent2" -> "tool2" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+  }
+  "agent1" -> "agent2" [
+    color = "#69CB87";
+  ];
+  "agent2" -> "agent1" [
+    color = "#69CB87";
+  ];
+  "agent1" -> "tool1" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+  "agent2" -> "tool2" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+}`);
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
@@ -127,9 +453,95 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(parallelAgent, []);
-    expect(dotGraph).toContain('digraph "parallelAgent"');
-    expect(dotGraph).toContain('cluster_parallelAgent');
-    expect(dotGraph).toContain('"agent1" -> "tool1"');
-    expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain(`strict digraph "parallelAgent" {
+  rankdir = "LR";
+  bgcolor = "#333537";
+  "agent1" [
+    label = "🤖 agent1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool1" [
+    label = "🔧 tool1";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  "agent2" [
+    label = "🤖 agent2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "ellipse";
+    fontcolor = "#cccccc";
+  ];
+  "tool2" [
+    label = "🔧 tool2";
+    style = "rounded";
+    fillcolor = "#ffffff";
+    color = "#cccccc";
+    shape = "box";
+    fontcolor = "#cccccc";
+  ];
+  subgraph "cluster_parallelAgent (Parallel Agent)" {
+    label = "cluster_parallelAgent (Parallel Agent)";
+    style = "rounded";
+    bgcolor = "#ffffff";
+    fontcolor = "#cccccc";
+    "agent1" [
+      label = "🤖 agent1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool1" [
+      label = "🔧 tool1";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent2" [
+      label = "🤖 agent2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "ellipse";
+      fontcolor = "#cccccc";
+    ];
+    "tool2" [
+      label = "🔧 tool2";
+      style = "rounded";
+      fillcolor = "#ffffff";
+      color = "#cccccc";
+      shape = "box";
+      fontcolor = "#cccccc";
+    ];
+    "agent1" -> "tool1" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+    "agent2" -> "tool2" [
+      arrowhead = "none";
+      color = "#cccccc";
+    ];
+  }
+  "agent1" -> "tool1" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+  "agent2" -> "tool2" [
+    arrowhead = "none";
+    color = "#cccccc";
+  ];
+}`);
   });
 });
