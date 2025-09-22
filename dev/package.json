@@ -1,9 +1,13 @@
 {
-  "name": "@google/adk_cli",
-  "version": "0.1.0",
+  "name": "@google/adk-devtools",
+  "version": "0.1.0-rc.0",
   "description": "Google ADK JS CLI",
   "author": "",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/adk-js.git"
+  },
   "type": "commonjs",
   "main": "./dist/cli/cli.mjs",
   "bin": {

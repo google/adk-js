@@ -1,9 +1,13 @@
 {
   "name": "@google/adk",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.0",
   "description": "Google ADK JS",
   "author": "",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/adk-js.git"
+  },   
   "type": "module",
   "typings": "./dist/types/index.d.ts",
   "main": "./dist/node/index.mjs",
@@ -17,8 +21,13 @@
       "default": "./dist/node/index.mjs"
     }
   },
-  "scripts": {
-    "clean": "rm -rf dist",
+  "files": [
+    "dist",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {    "clean": "rm -rf dist",
     "clean:all": "npm run clean && rm -rf node_modules",
     "build": "npm run build:types && npm run build:node_esm && npm run build:node_cjs && npm run build:web",
     "build:node_esm": "esbuild ./src/index.ts --outfile=dist/node/index.mjs --format=esm --bundle --platform=node --target=node10.4 --packages=external",
