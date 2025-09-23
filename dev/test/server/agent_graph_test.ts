@@ -16,10 +16,13 @@ describe('AgentGraph', () => {
        });
 
        const dotGraph = await getAgentGraphAsDot(agent, []);
-       expect(dotGraph).toContain('digraph "testAgent"');
-       expect(dotGraph).toContain('"testAgent" -> "testTool"');
+       expect(dotGraph).toContain('strict digraph "testAgent" {');
+       expect(dotGraph).toContain('rankdir = "LR"');
+       expect(dotGraph).toContain('"testAgent"');
        expect(dotGraph).toContain('label = "🤖 testAgent"');
+       expect(dotGraph).toContain('"testTool"');
        expect(dotGraph).toContain('label = "🔧 testTool"');
+       expect(dotGraph).toContain('"testAgent" -> "testTool" [');
      });
 
   it('generates a DOT graph for a SequentialAgent', async () => {
@@ -41,11 +44,22 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, []);
-    expect(dotGraph).toContain('digraph "sequentialAgent"');
-    expect(dotGraph).toContain('cluster_sequentialAgent');
-    expect(dotGraph).toContain('"agent1" -> "agent2"');
+    expect(dotGraph).toContain('strict digraph "sequentialAgent"');
+    expect(dotGraph).toContain('rankdir = "LR"');
+    expect(dotGraph).toContain('"agent1"');
+    expect(dotGraph).toContain('label = "🤖 agent1"');
+    expect(dotGraph).toContain('"tool1"');
+    expect(dotGraph).toContain('label = "🔧 tool1"');
+    expect(dotGraph).toContain('"agent2"');
+    expect(dotGraph).toContain('label = "🤖 agent2"');
+    expect(dotGraph).toContain('"tool2"');
+    expect(dotGraph).toContain('label = "🔧 tool2"');
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain('"agent1" -> "agent2"');
+    expect(dotGraph).toContain(
+        'subgraph "cluster_sequentialAgent (Sequential Agent)"');
+    ;
   });
 
   it('generates a DOT graph with highlighted edges', async () => {
@@ -59,7 +73,17 @@ describe('AgentGraph', () => {
     const highlights: Array<[string, string]> = [['agent1', 'agent2']];
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, highlights);
 
-    expect(dotGraph).toContain(`"agent1" -> "agent2"`);
+    expect(dotGraph).toContain('strict digraph "sequentialAgent"');
+    expect(dotGraph).toContain('rankdir = "LR"');
+    expect(dotGraph).toContain('"agent1"');
+    expect(dotGraph).toContain('label = "🤖 agent1"');
+    expect(dotGraph).toContain('"agent2"');
+    expect(dotGraph).toContain('label = "🤖 agent2"');
+    expect(dotGraph).toContain('"agent1" -> "agent2"');
+    expect(dotGraph).toContain(
+        'subgraph "cluster_sequentialAgent (Sequential Agent)"');
+    expect(dotGraph).toContain(
+        'label = "cluster_sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -73,12 +97,16 @@ describe('AgentGraph', () => {
     const highlights: Array<[string, string]> = [['agent1', 'agent3']];
     const dotGraph = await getAgentGraphAsDot(sequentialAgent, highlights);
 
-    expect(dotGraph).toMatch(
-        /\"agent1\"\s*\[[^\]]*style = \"filled,rounded\",[^\]]*fillcolor = \"#0F5223\",[^\]]*\];/s,
-    );
-    expect(dotGraph).not.toMatch(
-        /\"agent2\"\s*\[[^\]]*style = \"filled,rounded\",[^\]]*fillcolor = \"#0F5223\",[^\]]*\];/s,
-    );
+    expect(dotGraph).toContain('strict digraph "sequentialAgent"');
+    expect(dotGraph).toContain('rankdir = "LR";');
+    expect(dotGraph).toContain('"agent1"');
+    expect(dotGraph).toContain('label = "🤖 agent1";');
+    expect(dotGraph).toContain('"agent2"');
+    expect(dotGraph).toContain('label = "🤖 agent2";');
+    expect(dotGraph).toContain('"agent1" -> "agent2"');
+    expect(dotGraph).toContain('cluster_sequentialAgent (Sequential Agent)"');
+    expect(dotGraph).toContain(
+        'label = "cluster_sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
@@ -100,12 +128,22 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(loopAgent, []);
-    expect(dotGraph).toContain('digraph "loopAgent"');
-    expect(dotGraph).toContain('cluster_loopAgent');
+    expect(dotGraph).toContain('strict digraph "loopAgent"');
+    expect(dotGraph).toContain('rankdir = "LR"');
+    expect(dotGraph).toContain('"agent1"');
+    expect(dotGraph).toContain('label = "🤖 agent1"');
+    expect(dotGraph).toContain('"tool1"');
+    expect(dotGraph).toContain('label = "🔧 tool1"');
+    expect(dotGraph).toContain('"agent2"');
+    expect(dotGraph).toContain('label = "🤖 agent2"');
+    expect(dotGraph).toContain('"tool2"');
+    expect(dotGraph).toContain('label = "🔧 tool2"');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain('"agent2" -> "agent1"');
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain('subgraph "cluster_loopAgent (Loop Agent)"');
+    expect(dotGraph).toContain('label = "cluster_loopAgent (Loop Agent)"');
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
@@ -127,9 +165,21 @@ describe('AgentGraph', () => {
     });
 
     const dotGraph = await getAgentGraphAsDot(parallelAgent, []);
-    expect(dotGraph).toContain('digraph "parallelAgent"');
-    expect(dotGraph).toContain('cluster_parallelAgent');
+    expect(dotGraph).toContain('strict digraph "parallelAgent"');
+    expect(dotGraph).toContain('rankdir = "LR"');
+    expect(dotGraph).toContain('"agent1"');
+    expect(dotGraph).toContain('label = "🤖 agent1"');
+    expect(dotGraph).toContain('"tool1"');
+    expect(dotGraph).toContain('label = "🔧 tool1"');
+    expect(dotGraph).toContain('"agent2"');
+    expect(dotGraph).toContain('label = "🤖 agent2"');
+    expect(dotGraph).toContain('"tool2"');
+    expect(dotGraph).toContain('label = "🔧 tool2"');
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
+    expect(dotGraph).toContain(
+        'subgraph "cluster_parallelAgent (Parallel Agent)"');
+    expect(dotGraph).toContain(
+        'label = "cluster_parallelAgent (Parallel Agent)"');
   });
 });

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {AgentTool, BaseAgent, BaseTool, FunctionTool, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent} from '@google/adk';
-import {Digraph, Edge, ICluster, ISubgraph, Node, toDot} from 'ts_graphviz';
+import {Digraph, Edge, Node, RootGraph, Subgraph, toDot} from 'ts-graphviz';
 
 const DARK_GREEN = '#0F5223';
 const LIGHT_GREEN = '#69CB87';
@@ -12,13 +12,15 @@ const LIGHT_GRAY = '#cccccc';
 const WHITE = '#ffffff';
 
 export async function buildGraph(
-    graph: ICluster,
+    graph: RootGraph|Subgraph,
     rootAgent: BaseAgent,
     highlightsPairs: Array<[string, string]>,
     parentAgent?: BaseAgent,
 ) {
   async function buildCluster(
-      subgraph: ISubgraph, agent: BaseAgent): Promise<ISubgraph> {
+      subgraph: Subgraph,
+      agent: BaseAgent,
+      ): Promise<Subgraph> {
     if (agent instanceof LoopAgent) {
       if (parentAgent) {
         drawEdge(parentAgent.name, agent.subAgents[0].name);
@@ -87,12 +89,14 @@ export async function buildGraph(
       for (const highlightsPair of highlightsPairs) {
         if (highlightsPair.includes(name)) {
           if (asCluster) {
-            const cluster = graph.createSubgraph({
+            const cluster = new Subgraph(`cluster_${name}`, {
               label: `cluster_${name}`,
               style: 'rounded',
               bgcolor: WHITE,
               fontcolor: LIGHT_GRAY,
             });
+            graph.addSubgraph(cluster);
+
             await buildCluster(cluster, rootAgent);
           } else {
             graph.addNode(new Node(name, {
@@ -110,12 +114,14 @@ export async function buildGraph(
     }
 
     if (asCluster) {
-      const cluster = graph.createSubgraph({
+      const cluster = new Subgraph(`cluster_${name}`, {
         label: `cluster_${name}`,
         style: 'rounded',
         bgcolor: WHITE,
         fontcolor: LIGHT_GRAY,
       });
+      graph.addSubgraph(cluster);
+
       await buildCluster(cluster, rootAgent);
 
       return;
