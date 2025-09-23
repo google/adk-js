@@ -8,7 +8,8 @@ import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, E
 
 import bodyparser = require('body-parser');
 import express = require('express');
-import type {Request, Response} from 'express';
+import type {Request, Response, NextFunction} from 'express';
+import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import {Readable} from 'stream';
@@ -23,36 +24,35 @@ interface ServerOptions {
   memoryService?: BaseMemoryService;
   artifactService?: BaseArtifactService;
   agentLoader?: AgentLoader;
+  serveDebugUI?: boolean;
+  allowOrigins?: string;
 }
-
-const defaultOptions: ServerOptions = {
-  host: os.hostname(),
-  port: 8000,
-  sessionService: new InMemorySessionService(),
-  memoryService: new InMemoryMemoryService(),
-  artifactService: new InMemoryArtifactService(),
-  agentLoader: new AgentLoader(),
-};
 
 export class AdkWebServer {
   private readonly host: string;
   private readonly port: number;
-  private readonly app: express.Application;
+  readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
-  private readonly runnerRecord: Record<string, Runner> = {};
+  private readonly runnerCache: Record<string, Runner> = {};
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
+  private readonly serveDebugUI: boolean;
+  private readonly allowOrigins?: string;
+  private server?: http.Server;
 
-  constructor(options = defaultOptions) {
-    this.host = options.host ?? defaultOptions.host!;
-    this.port = options.port ?? defaultOptions.port!;
+  constructor(options: ServerOptions) {
+    this.host = options.host ?? os.hostname();
+    this.port = options.port ?? 8000;
     this.sessionService =
-        options.sessionService ?? defaultOptions.sessionService!;
-    this.memoryService = options.memoryService ?? defaultOptions.memoryService!;
+        options.sessionService ?? new InMemorySessionService();
+    this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
-        options.artifactService ?? defaultOptions.artifactService!;
-    this.agentLoader = options.agentLoader ?? defaultOptions.agentLoader!;
+        options.artifactService ?? new InMemoryArtifactService();
+    this.agentLoader = options.agentLoader ?? new AgentLoader();
+    this.serveDebugUI = options.serveDebugUI ?? false;
+    this.allowOrigins = options.allowOrigins;
+
     this.app = express();
 
     this.init();
@@ -61,15 +61,35 @@ export class AdkWebServer {
   private init() {
     const app = this.app;
 
-    app.get('/', (req: Request, res: Response) => {res.redirect('/dev-ui')});
-    app.use('/dev-ui', express.static(path.join(__dirname, '../browser'), {
-      setHeaders: (res: Response, path: string) => {
-        if (path.endsWith('.js')) {
-          res.setHeader('Content-Type', 'text/javascript');
+    if (this.serveDebugUI) {
+      app.get('/', (req: Request, res: Response) => {
+        res.redirect('/dev-ui');
+      });
+      app.use('/dev-ui', express.static(path.join(__dirname, '../browser'), {
+        setHeaders: (res: Response, path: string) => {
+          if (path.endsWith('.js')) {
+            res.setHeader('Content-Type', 'text/javascript');
+          }
         }
-      }
-    }));
+      }));
+    }
 
+    if (this.allowOrigins) {
+      app.use((req: Request, res: Response, next: NextFunction) => {
+        res.setHeader('Access-Control-Allow-Origin', this.allowOrigins!);
+        res.header(
+            'Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+        res.header(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, Content-Length, X-Requested-With');
+
+        if (req.method === 'OPTIONS') {
+          res.sendStatus(200);
+        } else {
+          next();
+        }
+      });
+    }
     app.use(bodyparser.urlencoded({extended: true}));
     app.use(bodyparser.json());
 
@@ -279,7 +299,7 @@ export class AdkWebServer {
               sessionId,
             });
 
-            res.status(204);
+            res.status(204).json({});
           } catch (e: unknown) {
             res.status(500).json({error: (e as Error).message});
           }
@@ -402,7 +422,7 @@ export class AdkWebServer {
               filename: artifactName,
             });
 
-            res.status(204);
+            res.status(204).json({});
           } catch (e: unknown) {
             res.status(500).json({error: (e as Error).message});
           }
@@ -546,20 +566,45 @@ export class AdkWebServer {
     });
   }
 
-  start() {
-    this.app.listen(this.port);
+  start(): Promise<void> {
+    return new Promise((resolve) => {
+      this.server = this.app.listen(this.port, () => {
+        const url = `${this.host}:${this.port}`;
 
-    const url = `${this.host}:${this.port}`;
-    console.log(`
+        console.log(`
 +-----------------------------------------------------------------------------+
 | ADK Web Server started                                                      |
 |                                                                             |
 | For local testing, access at http://${url}.${''.padStart(39 - url.length)}|
 +-----------------------------------------------------------------------------+`);
+        resolve();
+      });
+    });
+  }
+
+  stop(): Promise<void> {
+    if (!this.server) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      this.server!.close((err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        console.log(`
++-----------------------------------------------------------------------------+
+| ADK Web Server stopped                                                      |
++-----------------------------------------------------------------------------+`);
+        resolve();
+      });
+    });
   }
 
   private async getRunner(appName: string): Promise<Runner> {
-    if (!(appName in this.runnerRecord)) {
+    if (!(appName in this.runnerCache)) {
       const agent = await this.agentLoader.loadAgent(appName);
 
       if (!agent) {
@@ -573,9 +618,9 @@ export class AdkWebServer {
         sessionService: this.sessionService,
         artifactService: this.artifactService,
       });
-      this.runnerRecord[appName] = runner;
+      this.runnerCache[appName] = runner;
     }
 
-    return this.runnerRecord[appName];
+    return this.runnerCache[appName];
   }
 }

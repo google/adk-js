@@ -3,9 +3,6 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import 'jasmine';
-
 import {BasePlugin, BaseTool, Event, functionsExportedForTestingOnly, FunctionTool, InvocationContext, LlmAgent, PluginManager, Session, SingleAfterToolCallback, SingleBeforeToolCallback, ToolContext,} from '@google/adk';
 import {FunctionCall} from '@google/genai';
 import {z} from 'zod';

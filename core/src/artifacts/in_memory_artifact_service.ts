@@ -38,13 +38,17 @@ export class InMemoryArtifactService implements BaseArtifactService {
     userId,
     sessionId,
     filename,
-    version = -1,
+    version,
   }: LoadArtifactRequest): Promise<Part|undefined> {
     const path = artifactPath(appName, userId, sessionId, filename);
     const versions = this.artifacts[path];
 
     if (!versions) {
       return Promise.resolve(undefined);
+    }
+
+    if (version === undefined) {
+      version = versions.length - 1;
     }
 
     return Promise.resolve(versions[version]);
