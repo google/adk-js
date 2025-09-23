@@ -1,9 +1,19 @@
 {
   "name": "@google/adk",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.0",
   "description": "Google ADK JS",
-  "author": "",
+  "author": "Google",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/adk-js"
+  },
+  "files": [
+    "package.json",
+    "README.md",
+    "LICENSE",
+    "dist"
+  ],
   "type": "module",
   "typings": "./dist/types/index.d.ts",
   "main": "./dist/node/index.mjs",
@@ -43,12 +53,10 @@
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },
-  "dependencies": {
-    "@google/genai": "^1.6.0",
-    "@modelcontextprotocol/sdk": "^1.17.3",
-    "@opentelemetry/api": "^1.9.0"
-  },
   "peerDependencies": {
-    "zod": "^3.22.4"
+    "@google/genai": "1.14.0",
+    "@modelcontextprotocol/sdk": "1.17.5",
+    "@opentelemetry/api": "1.9.0",
+    "zod": "3.25.76"
   }
 }
