@@ -4,18 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
-
-import bodyparser = require('body-parser');
-import express = require('express');
-import type {Request, Response, NextFunction} from 'express';
+import {BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner} from '@google/adk';
+import cors from 'cors';
+import express, {Request, Response} from 'express';
 import * as http from 'http';
-import * as os from 'os';
 import * as path from 'path';
-import {Readable} from 'stream';
 
-import {AgentLoader} from './agent_loader.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
+import {AgentLoader} from './agent_loader.js';
 
 interface ServerOptions {
   host?: string;
@@ -42,7 +38,7 @@ export class AdkWebServer {
   private server?: http.Server;
 
   constructor(options: ServerOptions) {
-    this.host = options.host ?? os.hostname();
+    this.host = options.host ?? 'localhost';
     this.port = options.port ?? 8000;
     this.sessionService =
         options.sessionService ?? new InMemorySessionService();
@@ -75,23 +71,12 @@ export class AdkWebServer {
     }
 
     if (this.allowOrigins) {
-      app.use((req: Request, res: Response, next: NextFunction) => {
-        res.setHeader('Access-Control-Allow-Origin', this.allowOrigins!);
-        res.header(
-            'Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-        res.header(
-            'Access-Control-Allow-Headers',
-            'Content-Type, Authorization, Content-Length, X-Requested-With');
-
-        if (req.method === 'OPTIONS') {
-          res.sendStatus(200);
-        } else {
-          next();
-        }
-      });
+      app.use(cors({
+        origin: this.allowOrigins!,
+      }));
     }
-    app.use(bodyparser.urlencoded({extended: true}));
-    app.use(bodyparser.json());
+    app.use(express.urlencoded({extended: true}));
+    app.use(express.json());
 
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {
