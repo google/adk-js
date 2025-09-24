@@ -1213,7 +1213,7 @@ export class LlmAgent extends BaseAgent {
 
     // Calls the LLM.
     const llm = this.canonicalModel;
-    // TODO - b/425992518: Add tracer.start_as_current_span('call_llm')
+    // TODO - b/436079721: Add tracer.start_as_current_span('call_llm')
     if (invocationContext.runConfig?.supportCfc) {
       // TODO - b/425992518: Implement CFC call path
       // This is a hack, underneath it calls runLive. Which makes
@@ -1226,7 +1226,7 @@ export class LlmAgent extends BaseAgent {
       for await (const llmResponse of this.runAndHandleError(
           responsesGenerator, invocationContext, llmRequest,
           modelResponseEvent)) {
-        // TODO - b/425992518: Add trace_call_llm
+        // TODO - b/436079721: Add trace_call_llm
 
         // Runs after_model_callback if it exists.
         const alteredLlmResponse = await this.handleAfterModelCallback(
@@ -1246,8 +1246,15 @@ export class LlmAgent extends BaseAgent {
     const callbackContext = new CallbackContext(
         {invocationContext, eventActions: modelResponseEvent.actions});
 
-    // TODO - b/425992518: Implement PluginManager - runBeforeModelCallback
+    // Plugin callbacks before canonical callbacks
+    const beforeModelCallbackResponse =
+        await invocationContext.pluginManager.runBeforeModelCallback(
+            {callbackContext, llmRequest});
+    if (beforeModelCallbackResponse) {
+      return beforeModelCallbackResponse;
+    }
 
+    // If no override was returned from the plugins, run the canonical callbacks
     for (const callback of this.canonicalBeforeModelCallbacks) {
       const callbackResponse =
           await callback({context: callbackContext, request: llmRequest});
@@ -1266,8 +1273,15 @@ export class LlmAgent extends BaseAgent {
     const callbackContext = new CallbackContext(
         {invocationContext, eventActions: modelResponseEvent.actions});
 
-    // TODO - b/425992518: Implement PluginManager - runAfterModelCallback
+    // Plugin callbacks before canonical callbacks
+    const afterModelCallbackResponse =
+        await invocationContext.pluginManager.runAfterModelCallback(
+            {callbackContext, llmResponse});
+    if (afterModelCallbackResponse) {
+      return afterModelCallbackResponse;
+    }
 
+    // If no override was returned from the plugins, run the canonical callbacks
     for (const callback of this.canonicalAfterModelCallbacks) {
       const callbackResponse =
           await callback({context: callbackContext, response: llmResponse});
@@ -1290,15 +1304,33 @@ export class LlmAgent extends BaseAgent {
         yield response;
       }
     } catch (modelError: unknown) {
-      const callbackContext = new CallbackContext(
-          {invocationContext, eventActions: modelResponseEvent.actions});
-      // TODO - b/425992518: replace with PluginManager.runOnModelErrorCallback
       // Return an LlmResponse with error details.
       // Note: this will cause agent to work better if there's a loop.
-      yield {
-        errorMessage: modelError instanceof Error ? modelError.message :
-                                                    String(modelError),
-      };
+      const callbackContext = new CallbackContext(
+          {invocationContext, eventActions: modelResponseEvent.actions});
+
+      // Wrapped LLM should throw Error-typed errors
+      if (modelError instanceof Error) {
+        // Try plugins to recover from the error
+        const onModelErrorCallbackResponse =
+            await invocationContext.pluginManager.runOnModelErrorCallback({
+              callbackContext: callbackContext,
+              llmRequest: llmRequest,
+              error: modelError as Error
+            });
+
+        if (onModelErrorCallbackResponse) {
+          yield onModelErrorCallbackResponse;
+        } else {
+          // If no plugins, just return the message.
+          yield {
+            errorMessage: modelError.message,
+          };
+        }
+      } else {
+        console.error('Unknown error during response generation', modelError);
+        throw modelError;
+      }
     }
   }
 

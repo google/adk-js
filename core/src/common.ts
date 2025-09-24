@@ -11,7 +11,6 @@ export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
-// TODO: b/445695788 - Consider consolidating into a union type
 export {AfterModelCallback, AfterToolCallback, BeforeModelCallback, BeforeToolCallback, LlmAgent, SingleAfterModelCallback, SingleAfterToolCallback, SingleBeforeModelCallback, SingleBeforeToolCallback} from './agents/llm_agent.js';
 export {LoopAgent} from './agents/loop_agent.js';
 export {ParallelAgent} from './agents/parallel_agent.js';
@@ -21,6 +20,8 @@ export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
 export type {EventActions} from './events/event_actions.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
+export {BaseLlm} from './models/base_llm.js';
+export {BaseLlmConnection} from './models/base_llm_connection.js';
 export type {LlmRequest} from './models/llm_request.js';
 export {LlmResponse} from './models/llm_response.js';
 export {BasePlugin} from './plugins/base_plugin.js';
