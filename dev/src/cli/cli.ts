@@ -8,6 +8,7 @@
 import * as os from 'os';
 import {Command} from 'commander';
 import {AdkWebServer} from '../server/adk_web_server.js';
+import {InteractiveRunner} from './interactive_runner.js';
 
 const program = new Command('ADK CLI');
 
@@ -49,6 +50,15 @@ program.command('api_server')
       });
 
       server.start();
+    });
+
+program.command('run')
+    .description('Run ADK interactive runner')
+    .option('-n, --name', 'Optional. Name of the agent')
+    .action((options) => {
+      const runner = new InteractiveRunner({ agentName: options.name });
+
+      runner.start();
     });
 
 program.parse(process.argv);
