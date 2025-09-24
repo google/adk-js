@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export {createEvent, Event, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse} from '../../core/src/events/event.js';
+export {createEvent, Event, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse} from './events/event.js';
 export {BaseAgent} from './agents/base_agent.js';
 export {CallbackContext} from './agents/callback_context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';

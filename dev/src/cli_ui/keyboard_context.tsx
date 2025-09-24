@@ -3,6 +3,7 @@ import { useStdin } from 'ink';
 import readline from 'readline';
 
 export interface Key {
+  char: string;
   name: string;
   ctrl: boolean;
   meta: boolean;
@@ -58,7 +59,10 @@ export function KeyboardProvider({
     readline.emitKeypressEvents(stdin, rl);
 
     const handleKeypress = (str: string, key: Key) => {
-      notifyListeners(key);
+      notifyListeners({
+        ...key,
+        char: str,
+      });
     };
 
     stdin.on('keypress', handleKeypress);
