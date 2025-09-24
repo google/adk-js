@@ -1,5 +1,5 @@
 import { render, Instance as UIInstance } from 'ink';
-import { Application } from './ui/application.js';
+import { Application } from '../cli_ui/application.js';
 import { randomUUID } from 'crypto';
 
 export interface InteractiveRunnerOptions {

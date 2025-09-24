@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef, useContext, use } from 'react';
-import { useStdin, Text } from 'ink'
+import React, { useState, useEffect, useCallback, useRef, useContext } from 'react';
+import { Text, Box } from 'ink'
 import Spinner from 'ink-spinner';
 import { InMemoryRunner, Runner, Session } from '@google/adk';
-import { AgentLoader } from '../../server/agent_loader.js';
-import { KeyboardProvider, KeyboardContext } from './keyboard_context.js';
+import { AgentLoader } from '../server/agent_loader.js';
+import { KeyboardProvider, KeyboardContext, Key } from './keyboard_context.js';
 
 export interface ApplicationProps {
   agentName: string | undefined;
@@ -33,6 +33,11 @@ export const Application = ({ agentName, userId }: ApplicationProps) => {
     initAgents();
   }, []);
 
+  const selectAgent = useCallback((agentName: string) => {
+    setSelectedAgent(agentName);
+    startNewSession(agentName);
+  }, []);
+
   const startNewSession = useCallback(async (agentName: string) => {
     const agent = await agentLoader.current.loadAgent(agentName);
     if (!agent) {
@@ -44,7 +49,6 @@ export const Application = ({ agentName, userId }: ApplicationProps) => {
       agent: agent!,
       appName: agentName,
     });
-
     const session = await runner.sessionService.createSession({
       appName: agentName,
       userId,
@@ -83,20 +87,22 @@ export const Application = ({ agentName, userId }: ApplicationProps) => {
 
   return (
     <KeyboardProvider>
-      {error && <Text color="red">{error}</Text>}
-      {session ?
-        <AgentChat
-          agentName={selectedAgent!}
-          session={session}
-          agentMesssages={agentMesssages}
-          isLoading={isLoading}
-          onUserMessage={onUserMessage}
-        /> :
-        <AgentSelection
-          agents={availableAgents}
-          onSelect={setSelectedAgent}
-        />
-      }
+      <Box flexDirection="column" borderStyle="round" borderColor="green">
+        {error && <Text color="red">{error}</Text>}
+        {session ?
+          <AgentChat
+            agentName={selectedAgent!}
+            session={session}
+            agentMesssages={agentMesssages}
+            isLoading={isLoading}
+            onUserMessage={onUserMessage}
+          /> :
+          <AgentSelection
+            agents={availableAgents}
+            onSelect={selectAgent}
+          />
+        }
+      </Box>
     </KeyboardProvider>
   );
 };
@@ -105,8 +111,8 @@ interface AgentSelectionProps {
   agents: string[];
   onSelect: (agentName: string) => void;
 }
-const AgentSelection = (props: AgentSelectionProps) => {
-  const [preselectedAgent, setPreselectedAgent] = useState<string | null>(null);
+const AgentSelection = ({agents, onSelect}: AgentSelectionProps) => {
+  const [preselectedAgent, setPreselectedAgent] = useState<string | undefined>(agents[0]);
   const keyboardCtx = useContext(KeyboardContext);
 
   useEffect(() => {
@@ -114,23 +120,23 @@ const AgentSelection = (props: AgentSelectionProps) => {
       return;
     }
 
-    const handleKeypress = (key: { name: string }) => {
+    const handleKeypress = (key: Key) => {
       if (key.name === 'up' || key.name === 'down') {
         setPreselectedAgent((prev) => {
           if (!prev) {
-            return props.agents[0];
+            return agents[0];
           }
-          const currentIndex = props.agents.indexOf(prev);
+          const currentIndex = agents.indexOf(prev);
           let newIndex;
           if (key.name === 'up') {
-            newIndex = (currentIndex - 1 + props.agents.length) % props.agents.length;
+            newIndex = (currentIndex - 1 + agents.length) % agents.length;
           } else {
-            newIndex = (currentIndex + 1) % props.agents.length;
+            newIndex = (currentIndex + 1) % agents.length;
           }
-          return props.agents[newIndex];
+          return agents[newIndex];
         });
       } else if (key.name === 'return' && preselectedAgent) {
-        props.onSelect(preselectedAgent);
+        onSelect(preselectedAgent);
       }
     }
 
@@ -139,13 +145,16 @@ const AgentSelection = (props: AgentSelectionProps) => {
     return () => {
       keyboardCtx.unsubscribe(handleKeypress);
     }
-  }, [keyboardCtx]);
+  }, [keyboardCtx, preselectedAgent]);
 
-  return props.agents.map(agent => (
-    <Text key={agent} color="green" backgroundColor={agent === preselectedAgent ? 'blue' : undefined}>
-      {agent}
-    </Text>
-  ));
+  return <>
+    <Box margin={2}><Text bold>Select agent:</Text></Box>
+    {agents.map(agent => (
+      <Text key={agent} color="green" backgroundColor={agent === preselectedAgent ? 'blue' : undefined}>
+        {agent}
+      </Text>
+    ))}
+  </>;
 };
 
 interface AgentChatProps {
@@ -159,15 +168,14 @@ const AgentChat = ({ agentName, agentMesssages, isLoading, onUserMessage }: Agen
   return (
     <>
       <Text>
-        <Text color="green">
+        {isLoading && <Text color="green">
           <Spinner type="dots" />
-        </Text>
-        {agentName}
+        </Text> }
+        &#32;Agent: {agentName}
       </Text>
       {agentMesssages.map((msg, idx) => (
         <Text key={idx}>{msg}</Text>
       ))}
-
       <PromptInput disabled={isLoading} onMessage={onUserMessage}/>
     </>
   );
@@ -178,7 +186,38 @@ interface PromptInputProps {
   onMessage?: (message: string) => void;
 }
 const PromptInput = ({ disabled, onMessage }: PromptInputProps) => {
+  const [value, setValue] = useState('');
+  const keyboardCtx = useContext(KeyboardContext);
+
+  useEffect(() => {
+    if (!keyboardCtx) {
+      return;
+    }
+
+    const handleKeypress = (key: Key) => {
+      if (key.name === 'return' && onMessage) {
+        setValue((v) => {
+          onMessage(v);
+
+          return v;
+        });
+
+        return;
+      }
+
+      setValue(v => v + key.name);
+    };
+
+    keyboardCtx.subscribe(handleKeypress);
+    return () => {
+      keyboardCtx.unsubscribe(handleKeypress);
+    };
+  }, [keyboardCtx, onMessage]);
+ 
   return (
-    <Text>&gt; </Text>
+    <>
+      <Text>Enter your prompt:</Text>
+      <Text>&gt; {value}</Text>
+    </>
   );
 }
