@@ -8,6 +8,7 @@ import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, G
 
 import {deepClone} from '../utils/deep_clone.js';
 import {isBrowser} from '../utils/env_aware_utils.js';
+import {getLogger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 import {version} from '../version.js';
 
@@ -40,6 +41,7 @@ export interface GeminiParams {
  */
 export class Gemini extends BaseLlm {
   private readonly apiKey?: string;
+  private readonly logger = getLogger();
 
   /**
    * @param params The parameters for creating a Gemini instance.
@@ -92,11 +94,11 @@ export class Gemini extends BaseLlm {
           ): AsyncGenerator<LlmResponse, void> {
     this.preprocessRequest(llmRequest);
     this.maybeAppendUserContent(llmRequest);
-    console.info(
+    this.logger.info(
         `Sending out request, model: ${llmRequest.model}, backend: ${
             this.apiBackend}, stream: ${stream}`,
     );
-    console.info(buildRequestLog(llmRequest));
+    this.logger.debug(buildRequestLog(llmRequest));
 
     if (llmRequest.config?.httpOptions) {
       llmRequest.config.httpOptions.headers = {
@@ -119,7 +121,7 @@ export class Gemini extends BaseLlm {
       // TODO - b/425992518: verify the type of streaming response is correct.
       for await (const response of streamResult) {
         lastResponse = response;
-        console.info(buildResponseLog(response));
+        this.logger.debug(buildResponseLog(response));
         const llmResponse = createLlmResponse(response);
         usageMetadata = llmResponse.usageMetadata;
         const firstPart = llmResponse.content?.parts?.[0];
@@ -176,7 +178,7 @@ export class Gemini extends BaseLlm {
         contents: llmRequest.contents,
         config: llmRequest.config,
       });
-      console.info(buildResponseLog(response));
+      this.logger.debug(buildResponseLog(response));
       yield createLlmResponse(response);
     }
   }

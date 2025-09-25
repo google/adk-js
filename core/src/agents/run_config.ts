@@ -6,6 +6,10 @@
 
 import {AudioTranscriptionConfig, Modality, ProactivityConfig, RealtimeInputConfig, SpeechConfig} from '@google/genai';
 
+import {getLogger} from '../utils/logger.js';
+
+const logger = getLogger();
+
 /**
  * The streaming mode for the run config.
  */
@@ -108,7 +112,7 @@ function validateMaxLlmCalls(value: number): number {
   }
 
   if (value <= 0) {
-    console.warn(
+    logger.warn(
         'maxLlmCalls is less than or equal to 0. This will result in no enforcement on total number of llm calls that will be made for a run. This may not be ideal, as this could result in a never ending communication between the model and the agent in certain cases.');
   }
   return value;

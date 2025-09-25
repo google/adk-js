@@ -7,6 +7,7 @@
 import {Event} from '../events/event.js';
 import {deepClone} from '../utils/deep_clone.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {getLogger} from '../utils/logger.js';
 
 import {AppendEventRequest, BaseSessionService, CreateSessionRequest, DeleteSessionRequest, GetSessionConfig, GetSessionRequest, ListSessionsRequest, ListSessionsResponse} from './base_session_service.js';
 import {createSession, Session} from './session.js';
@@ -16,6 +17,8 @@ import {State} from './state.js';
  * An in-memory implementation of the session service.
  */
 export class InMemorySessionService extends BaseSessionService {
+  private readonly logger = getLogger();
+
   /**
    * A map from app name to a map from user ID to a map from session ID to
    * session.
@@ -132,7 +135,7 @@ export class InMemorySessionService extends BaseSessionService {
     const sessionId = session.id;
 
     const warning = (message: string) => {
-      console.warn(
+      this.logger.warn(
           `Failed to append event to session ${sessionId}: ${message}`);
     };
 

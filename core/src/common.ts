@@ -37,6 +37,7 @@ export {FunctionTool} from './tools/function_tool.js';
 export {GoogleSearchTool} from './tools/google_search_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
+export {LogLevel} from './utils/logger.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 
 export * from './artifacts/base_artifact_service.js';

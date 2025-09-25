@@ -14,9 +14,11 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {ToolContext} from '../tools/tool_context.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {getLogger} from '../utils/logger.js';
 
 import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js';
 
+const logger = getLogger();
 const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
@@ -191,7 +193,7 @@ async function callTool(
     toolContext: ToolContext,
     ): Promise<any> {
   // TODO - b/436079721: implement [tracer.start_as_current_span]
-  console.debug(`callTool ${tool.name}`);
+  logger.debug(`callTool ${tool.name}`);
   return await tool.run({args, toolContext});
 }
 
@@ -314,7 +316,7 @@ export async function handleFunctionCallList({
     );
 
     // TODO - b/436079721: implement [tracer.start_as_current_span]
-    console.debug(`execute_tool ${tool.name}`);
+    logger.debug(`execute_tool ${tool.name}`);
     const functionArgs = functionCall.args ?? {};
 
     // Step 1: Check if plugin before_tool_callback overrides the function
@@ -369,7 +371,7 @@ export async function handleFunctionCallList({
             functionResponse = onToolErrorResponse;
           }
         } else {
-          console.error('Unknown error on tool execution type', e);
+          logger.error('Unknown error on tool execution type', e);
           throw e;
         }
       }
@@ -421,7 +423,7 @@ export async function handleFunctionCallList({
         invocationContext,
     );
     // TODO - b/436079721: implement [traceToolCall]
-    console.debug('traceToolCall', {
+    logger.debug('traceToolCall', {
       tool: tool.name,
       args: functionArgs,
       functionResponseEvent: functionResponseEvent.id,
@@ -437,9 +439,9 @@ export async function handleFunctionCallList({
 
   if (functionResponseEvents.length > 1) {
     // TODO - b/436079721: implement [tracer.start_as_current_span]
-    console.debug('execute_tool (merged)');
+    logger.debug('execute_tool (merged)');
     // TODO - b/436079721: implement [traceMergedToolCalls]
-    console.debug('traceMergedToolCalls', {
+    logger.debug('traceMergedToolCalls', {
       responseEventId: mergedEvent.id,
       functionResponseEvent: mergedEvent.id,
     });

@@ -236,7 +236,7 @@ export class LoggingPlugin extends BasePlugin {
 
   private log(message: string): void {
     const formattedMessage = `\u001b[90m[${this.name}] ${message}\u001b[0m`;
-    console.log(formattedMessage);
+    this.logger.info(formattedMessage);
   }
 
   private formatContent(content?: Content, maxLength = 200): string {

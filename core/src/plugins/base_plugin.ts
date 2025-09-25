@@ -14,6 +14,7 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
+import {getLogger} from '../utils/logger.js';
 
 /**
  * Base class for creating plugins.
@@ -66,7 +67,7 @@ import {ToolContext} from '../tools/tool_context.js';
  *       toolContext: ToolContext,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
- *     console.log(
+ *     this.logger.info(
  *       `[${this.name}] Calling tool '${tool.name}' with args:
  * ${JSON.stringify( toolArgs,
  *       )}`,
@@ -82,7 +83,7 @@ import {ToolContext} from '../tools/tool_context.js';
  *       result: Record<string, unknown>,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
- *     console.log(
+ *     this.logger.info(
  *       `[${this.name}] Tool '${tool.name}' finished with result:
  * ${JSON.stringify( result,
  *       )}`,
@@ -100,6 +101,7 @@ import {ToolContext} from '../tools/tool_context.js';
  */
 export abstract class BasePlugin {
   readonly name: string;
+  readonly logger = getLogger();
 
   /**
    * Initializes the plugin.

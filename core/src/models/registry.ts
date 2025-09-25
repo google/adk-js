@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {getLogger} from '../utils/logger.js';
+
 import {BaseLlm} from './base_llm.js';
 import {Gemini} from './google_llm.js';
 
@@ -59,6 +61,7 @@ export class LLMRegistry {
    */
   private static llmRegistryDict: Map<string|RegExp, BaseLlmType> = new Map();
   private static resolveCache = new LRUCache<string, BaseLlmType>(32);
+  private static readonly logger = getLogger();
 
   /**
    * Creates a new LLM instance.
@@ -71,7 +74,7 @@ export class LLMRegistry {
 
   private static _register(modelNameRegex: string|RegExp, llmCls: BaseLlmType) {
     if (LLMRegistry.llmRegistryDict.has(modelNameRegex)) {
-      console.info(
+      this.logger.info(
           `Updating LLM class for ${modelNameRegex} from ${
               LLMRegistry.llmRegistryDict.get(modelNameRegex)} to ${llmCls}`,
       );

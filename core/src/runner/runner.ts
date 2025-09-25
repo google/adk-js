@@ -20,9 +20,9 @@ import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {getLogger, LogLevel, setLogLevel} from '../utils/logger.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
-
 
 interface RunnerInput {
   appName: string;
@@ -32,6 +32,10 @@ interface RunnerInput {
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
   credentialService?: BaseCredentialService;
+  /**
+   * Set the log level for the entire agent run
+   */
+  logLevel?: LogLevel;
 }
 
 export class Runner {
@@ -42,6 +46,7 @@ export class Runner {
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
+  private readonly logger = getLogger();
 
   constructor(input: RunnerInput) {
     this.appName = input.appName;
@@ -51,6 +56,9 @@ export class Runner {
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
     this.credentialService = input.credentialService;
+    if (input.logLevel) {
+      setLogLevel(input.logLevel);
+    }
   }
 
   /**
@@ -244,7 +252,7 @@ export class Runner {
     // TODO - b/425992518: Optimize this, not going to work for long sessions.
     // TODO - b/425992518: The behavior is dynamic, needs better documentation.
     for (let i = session.events.length - 1; i >= 0; i--) {
-      console.log('event: ', JSON.stringify(session.events[i]));
+      this.logger.info('event: ', JSON.stringify(session.events[i]));
       const event = session.events[i];
       if (event.author === 'user' || !event.author) {
         continue;
@@ -256,8 +264,8 @@ export class Runner {
 
       const agent = rootAgent.findSubAgent(event.author!);
       if (!agent) {
-        console.warn(`Event from an unknown agent: ${event.author}, event id: ${
-            event.id}`);
+        this.logger.warn(`Event from an unknown agent: ${
+            event.author}, event id: ${event.id}`);
         continue;
       }
       if (this.isRoutableLlmAgent(agent)) {
