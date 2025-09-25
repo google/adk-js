@@ -4,12 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'jasmine';
-
 import {BaseLlm, BaseLlmConnection, BasePlugin, CallbackContext, Event, InvocationContext, LlmAgent, LlmRequest, LlmResponse, PluginManager, Session, SingleAfterModelCallback, SingleBeforeModelCallback,} from '@google/adk';
 import {Content} from '@google/genai';
-
-
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(history: Content[]): Promise<void> {

@@ -107,6 +107,15 @@ For remote agent-to-agent communication, ADK integrates with the
 [A2A protocol](https://github.com/google/A2A/).
 Examples coming soon...
 
+## 🏗️ Building the Project
+
+This project uses `esbuild` to compile and bundle the TypeScript source code.
+You can build the project using the following npm scripts:
+
+*   `npm run build`: Compiles the TypeScript code into CommonJS, ESM, and Web formats in the `dist` directory.
+*   `npm run build:bundle`: Creates bundled versions of the output for easier distribution or use in environments that don't support tree-shaking well.
+*   `npm run build:watch`: Watches for changes in the source files and automatically rebuilds the project for ESM format only.
+
 ## 🤝 Contributing
 
 We welcome contributions from the community! Whether it's bug reports, feature
