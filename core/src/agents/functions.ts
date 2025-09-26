@@ -14,11 +14,10 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {ToolContext} from '../tools/tool_context.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 
 import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js';
 
-const logger = getLogger();
 const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =

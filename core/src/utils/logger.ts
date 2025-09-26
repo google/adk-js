@@ -27,19 +27,7 @@ export interface Logger {
   error(...args: unknown[]): void;
 }
 
-let loggerInstance: Logger|undefined;
 let logLevel = LogLevel.INFO;
-
-/**
- * Returns the logger instance.
- */
-export function getLogger(): Logger {
-  if (!loggerInstance) {
-    loggerInstance = new SimpleLogger();
-  }
-
-  return loggerInstance;
-}
 
 /**
  * Sets the log level for the logger.
@@ -128,3 +116,8 @@ function getColoredPrefix(level: LogLevel): string {
   return `${CONSOLE_COLOR_MAP[level]}[ADK ${LOG_LEVEL_STR[level]}]:${
       RESET_COLOR}`;
 }
+
+/**
+ * The logger instance for ADK.
+ */
+export const logger = new SimpleLogger();

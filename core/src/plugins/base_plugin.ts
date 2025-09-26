@@ -14,7 +14,6 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
-import {getLogger} from '../utils/logger.js';
 
 /**
  * Base class for creating plugins.
@@ -101,7 +100,6 @@ import {getLogger} from '../utils/logger.js';
  */
 export abstract class BasePlugin {
   readonly name: string;
-  readonly logger = getLogger();
 
   /**
    * Initializes the plugin.

@@ -19,7 +19,7 @@ import {BaseToolset} from '../tools/base_toolset.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {ToolContext} from '../tools/tool_context.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {BaseLlmRequestProcessor, BaseLlmResponseProcessor} from './base_llm_processor.js';
@@ -688,7 +688,6 @@ export class LlmAgent extends BaseAgent {
   afterToolCallback?: AfterToolCallback;
   requestProcessors: BaseLlmRequestProcessor[];
   responseProcessors: BaseLlmResponseProcessor[];
-  private readonly logger = getLogger();
 
   constructor(config: LlmAgentConfig) {
     super(config);
@@ -747,7 +746,7 @@ export class LlmAgent extends BaseAgent {
     // Validate output schema related configurations.
     if (this.outputSchema) {
       if (!this.disallowTransferToParent || !this.disallowTransferToPeers) {
-        this.logger.warn(
+        logger.warn(
             `Invalid config for agent ${
                 this.name}: outputSchema cannot co-exist with agent transfer configurations. Setting disallowTransferToParent=true, disallowTransferToPeers=true`,
         );
@@ -911,27 +910,27 @@ export class LlmAgent extends BaseAgent {
    */
   private maybeSaveOutputToState(event: Event) {
     if (event.author !== this.name) {
-      this.logger.debug(
+      logger.debug(
           `Skipping output save for agent ${this.name}: event authored by ${
               event.author}`,
       );
       return;
     }
     if (!this.outputKey) {
-      this.logger.debug(
+      logger.debug(
           `Skipping output save for agent ${this.name}: outputKey is not set`,
       );
       return;
     }
     if (!isFinalResponse(event)) {
-      this.logger.debug(
+      logger.debug(
           `Skipping output save for agent ${
               this.name}: event is not a final response`,
       );
       return;
     }
     if (!event.content?.parts?.length) {
-      this.logger.debug(
+      logger.debug(
           `Skipping output save for agent ${this.name}: event content is empty`,
       );
       return;
@@ -953,7 +952,7 @@ export class LlmAgent extends BaseAgent {
       try {
         result = JSON.parse(resultStr);
       } catch (e) {
-        this.logger.error(`Error parsing output for agent ${this.name}`, e);
+        logger.error(`Error parsing output for agent ${this.name}`, e);
       }
     }
     event.actions.stateDelta[this.outputKey] = result;
@@ -975,7 +974,7 @@ export class LlmAgent extends BaseAgent {
         break;
       }
       if (lastEvent.partial) {
-        this.logger.warn('The last event is partial, which is not expected.');
+        logger.warn('The last event is partial, which is not expected.');
         break;
       }
     }
@@ -1330,8 +1329,7 @@ export class LlmAgent extends BaseAgent {
           };
         }
       } else {
-        this.logger.error(
-            'Unknown error during response generation', modelError);
+        logger.error('Unknown error during response generation', modelError);
         throw modelError;
       }
     }

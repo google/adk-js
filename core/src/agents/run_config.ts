@@ -6,9 +6,7 @@
 
 import {AudioTranscriptionConfig, Modality, ProactivityConfig, RealtimeInputConfig, SpeechConfig} from '@google/genai';
 
-import {getLogger} from '../utils/logger.js';
-
-const logger = getLogger();
+import {logger} from '../utils/logger.js';
 
 /**
  * The streaming mode for the run config.

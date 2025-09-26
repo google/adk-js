@@ -6,15 +6,13 @@
 
 import {Blob, Content, FunctionResponse, Session,} from '@google/genai';
 
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
 
 /** The Gemini model connection. */
 export class GeminiLlmConnection implements BaseLlmConnection {
-  private readonly logger = getLogger();
-
   constructor(
       private readonly geminiSession: Session,
   ) {}
@@ -40,7 +38,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
         turnComplete: contents[contents.length - 1].role === 'user',
       });
     } else {
-      this.logger.info('no content is sent');
+      logger.info('no content is sent');
     }
   }
 
@@ -62,12 +60,12 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       const functionResponses =
           content.parts.map((part) => part.functionResponse)
               .filter((fr): fr is FunctionResponse => !!fr);
-      this.logger.debug('Sending LLM function response:', functionResponses);
+      logger.debug('Sending LLM function response:', functionResponses);
       this.geminiSession.sendToolResponse({
         functionResponses,
       });
     } else {
-      this.logger.debug('Sending LLM new content', content);
+      logger.debug('Sending LLM new content', content);
       this.geminiSession.sendClientContent({
         turns: [content],
         turnComplete: true,
@@ -81,7 +79,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    * @param blob The blob to send to the model.
    */
   async sendRealtime(blob: Blob): Promise<void> {
-    this.logger.debug('Sending LLM Blob:', blob);
+    logger.debug('Sending LLM Blob:', blob);
     this.geminiSession.sendRealtimeInput({media: blob});
   }
 

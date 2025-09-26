@@ -8,6 +8,27 @@
 import * as os from 'os';
 import {Command} from 'commander';
 import {AdkWebServer} from '../server/adk_web_server.js';
+import {LogLevel, setLogLevel} from '@google/adk';
+
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  'debug': LogLevel.DEBUG,
+  'info': LogLevel.INFO,
+  'warn': LogLevel.WARN,
+  'error': LogLevel.ERROR,
+};
+
+function getLogLevelFromOptions(
+    options: {verbose?: boolean; logLevel?: string;}) {
+  if (options.verbose) {
+    return LogLevel.DEBUG;
+  }
+
+  if (typeof options.logLevel === 'string') {
+    return LOG_LEVEL_MAP[options.logLevel.toLowerCase()] || LogLevel.INFO;
+  }
+
+  return LogLevel.INFO;
+}
 
 const program = new Command('ADK CLI');
 
@@ -20,7 +41,13 @@ program.command('web')
     .option(
         '--allow-origins <string>', 'Optional. The allow origins of the server',
         '')
+    .option(
+        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
+    .option(
+        '--log-level <string>', 'Optional. The log level of the server', 'info')
     .action((options) => {
+      setLogLevel(getLogLevelFromOptions(options));
+
       const server = new AdkWebServer({
         host: options.host,
         port: parseInt(options.port, 10),
@@ -40,7 +67,13 @@ program.command('api_server')
     .option(
         '--allow-origins <string>', 'Optional. The allow origins of the server',
         '')
+    .option(
+        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
+    .option(
+        '--log-level <string>', 'Optional. The log level of the server', 'info')
     .action((options) => {
+      setLogLevel(getLogLevelFromOptions(options));
+
       const server = new AdkWebServer({
         host: options.host,
         port: parseInt(options.port, 10),

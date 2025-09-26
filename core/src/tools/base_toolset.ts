@@ -6,7 +6,6 @@
 
 import {ReadonlyContext} from '../agents/readonly_context.js';
 import {LlmRequest} from '../models/llm_request.js';
-import {getLogger} from '../utils/logger.js';
 
 import {BaseTool} from './base_tool.js';
 import {ToolContext} from './tool_context.js';
@@ -25,8 +24,6 @@ export type ToolPredicate =
  * A toolset is a collection of tools that can be used by an agent.
  */
 export abstract class BaseToolset {
-  protected readonly logger = getLogger();
-
   constructor(readonly toolFilter: ToolPredicate|string[]) {}
 
   /**

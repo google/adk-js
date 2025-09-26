@@ -7,6 +7,7 @@
 import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 
 import {ReadonlyContext} from '../../agents/readonly_context.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 
@@ -51,9 +52,9 @@ export class MCPToolset extends BaseToolset {
     const session = await this.mcpSessionManager.createSession();
 
     const listResult = await session.listTools() as ListToolsResult;
-    this.logger.debug(`number of tools: ${listResult.tools.length}`)
+    logger.debug(`number of tools: ${listResult.tools.length}`)
     for (const tool of listResult.tools) {
-      this.logger.debug(`tool: ${tool.name}`)
+      logger.debug(`tool: ${tool.name}`)
     }
 
     // TODO: respect context (e.g. tool filter)

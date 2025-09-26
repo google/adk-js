@@ -14,7 +14,7 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 
 import {BasePlugin} from './base_plugin.js';
 
@@ -34,8 +34,6 @@ import {BasePlugin} from './base_plugin.js';
  */
 export class PluginManager {
   private readonly plugins: Set<BasePlugin> = new Set();
-  private readonly logger = getLogger();
-
   /**
    * Initializes the plugin service.
    *
@@ -68,7 +66,7 @@ export class PluginManager {
 
     this.plugins.add(plugin);
 
-    this.logger.info(`Plugin '${plugin.name}' registered.`);
+    logger.info(`Plugin '${plugin.name}' registered.`);
   }
 
   /**
@@ -103,7 +101,7 @@ export class PluginManager {
       try {
         const result = await callback(plugin);
         if (result !== undefined) {
-          this.logger.debug(
+          logger.debug(
               `Plugin '${plugin.name}' returned a value for callback '${
                   callbackName}', exiting early.`);
           return result;
@@ -111,7 +109,7 @@ export class PluginManager {
       } catch (e) {
         const errorMessage = `Error in plugin '${
             plugin.name}' during '${callbackName}' callback: ${e}`;
-        this.logger.error(errorMessage);
+        logger.error(errorMessage);
         throw new Error(errorMessage);
       }
     }

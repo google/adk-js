@@ -14,6 +14,7 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolContext} from '../tools/tool_context.js';
+import {logger} from '../utils/logger.js';
 
 import {BasePlugin} from './base_plugin.js';
 
@@ -236,7 +237,7 @@ export class LoggingPlugin extends BasePlugin {
 
   private log(message: string): void {
     const formattedMessage = `\u001b[90m[${this.name}] ${message}\u001b[0m`;
-    this.logger.info(formattedMessage);
+    logger.info(formattedMessage);
   }
 
   private formatContent(content?: Content, maxLength = 200): string {
