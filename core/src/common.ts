@@ -29,6 +29,7 @@ export type {LlmResponse} from './models/llm_response.js';
 export {BasePlugin} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export {BasePolicyEngine, getAskUserConfirmationFunctionCalls, InMemoryPolicyEngine, PolicyCheckResult, PolicyOutcome, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME, SecurityPlugin, ToolCallPolicyContext} from './plugins/security_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {Runner} from './runner/runner.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
