@@ -63,9 +63,13 @@ class MockPlugin extends BasePlugin {
       'Modified user message ON_USER_CALLBACK_MSG from MockPlugin';
   static ON_EVENT_CALLBACK_MSG =
       'Modified event ON_EVENT_CALLBACK_MSG from MockPlugin';
+  static BEFORE_RUN_CALLBACK_MSG =
+      'Before run callback message from MockPlugin';
 
   enableUserMessageCallback = false;
   enableEventCallback = false;
+  enableBeforeRunCallback = false;
+  afterRunCallbackCalled = false;
 
   constructor() {
     super('mock_plugin');
@@ -102,6 +106,25 @@ class MockPlugin extends BasePlugin {
         role: event.content!.role,
       },
     });
+  }
+
+  override async beforeRunCallback({invocationContext}: {
+    invocationContext: InvocationContext;
+  }): Promise<Content|undefined> {
+    if (!this.enableBeforeRunCallback) {
+      return undefined;
+    }
+    return {
+      role: 'model',
+      parts: [{text: MockPlugin.BEFORE_RUN_CALLBACK_MSG}],
+    };
+  }
+
+  override async afterRunCallback({invocationContext}: {
+    invocationContext: InvocationContext;
+  }): Promise<void> {
+    this.afterRunCallbackCalled = true;
+    return Promise.resolve();
   }
 }
 
@@ -404,5 +427,21 @@ describe('Runner with plugins', () => {
     const modifiedEventMessage = generatedEvent.content!.parts![0].text;
 
     expect(modifiedEventMessage).toEqual(MockPlugin.ON_EVENT_CALLBACK_MSG);
+  });
+
+  it('should call beforeRunCallback and stop execution', async () => {
+    plugin.enableBeforeRunCallback = true;
+
+    const events = await runTest();
+    expect(events.length).toBe(1);
+    const event = events[0];
+    expect(event.content?.parts?.[0].text)
+        .toEqual(MockPlugin.BEFORE_RUN_CALLBACK_MSG);
+    expect(event.author).toEqual('model');
+  });
+
+  it('should call afterRunCallback', async () => {
+    await runTest();
+    expect(plugin.afterRunCallbackCalled).toBeTrue();
   });
 });

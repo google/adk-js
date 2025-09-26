@@ -160,21 +160,35 @@ export class Runner {
       // Run the agent with the plugins (aka hooks to apply in the lifecycle)
       // =========================================================================
       // Step 1: Run the before_run callbacks to see if we should early exit.
-      await this.pluginManager.runBeforeRunCallback({invocationContext});
+      const beforeRunCallbackResponse =
+          await this.pluginManager.runBeforeRunCallback({invocationContext});
 
-      // Step 2: Otherwise continue with normal execution
-      for await (
-          const event of invocationContext.agent.run(invocationContext)) {
-        if (!event.partial) {
-          await this.sessionService.appendEvent({session, event});
-        }
-        // Step 3: Run the on_event callbacks to optionally modify the event.
-        const modifiedEvent = await this.pluginManager.runOnEventCallback(
-            {invocationContext, event});
-        if (modifiedEvent) {
-          yield modifiedEvent;
-        } else {
-          yield event;
+      if (beforeRunCallbackResponse) {
+        const earlyExitEvent = createEvent({
+          invocationId: invocationContext.invocationId,
+          author: 'model',
+          content: beforeRunCallbackResponse,
+        });
+        // TODO: b/447446338 - In the future, do *not* save live call audio
+        // content to session This is a feature in Python ADK
+        await this.sessionService.appendEvent({session, event: earlyExitEvent});
+        yield earlyExitEvent;
+
+      } else {
+        // Step 2: Otherwise continue with normal execution
+        for await (
+            const event of invocationContext.agent.run(invocationContext)) {
+          if (!event.partial) {
+            await this.sessionService.appendEvent({session, event});
+          }
+          // Step 3: Run the on_event callbacks to optionally modify the event.
+          const modifiedEvent = await this.pluginManager.runOnEventCallback(
+              {invocationContext, event});
+          if (modifiedEvent) {
+            yield modifiedEvent;
+          } else {
+            yield event;
+          }
         }
       }
       // Step 4: Run the after_run callbacks to optionally modify the context.
