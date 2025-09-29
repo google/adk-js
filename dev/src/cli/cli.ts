@@ -8,6 +8,7 @@
 import * as os from 'os';
 import {Command} from 'commander';
 import {AdkWebServer} from '../server/adk_web_server.js';
+import {runAgent} from './cli_run.js';
 import {LogLevel, setLogLevel} from '@google/adk';
 
 const LOG_LEVEL_MAP: Record<string, LogLevel> = {
@@ -82,6 +83,37 @@ program.command('api_server')
       });
 
       server.start();
+    });
+
+program.command('run')
+    .description('Runs agent')
+    .argument('agent', 'Agent file path (.js or .ts)')
+    .option(
+        '--save_session <boolean>',
+        'Optional. Whether to save the session to a json file on exit.', false)
+    .option(
+        '--session_id <string>',
+        'Optional. The session ID to save the session to on exit when --save_session is set to true. User will be prompted to enter a session ID if not set.')
+    .option(
+        '--replay <string>',
+        'The json file that contains the initial state of the session and user queries. A new session will be created using this state. And user queries are run against the newly created session. Users cannot continue to interact with the agent.')
+    .option(
+        '--resume <string>',
+        'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.')
+    .option(
+        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
+    .option(
+        '--log-level <string>', 'Optional. The log level of the server', 'info')
+    .action((agentPath: string, options) => {
+      setLogLevel(getLogLevelFromOptions(options));
+
+      runAgent({
+        agentPath: agentPath,
+        inputFile: options.replay,
+        savedSessionFile: options.resume,
+        saveSession: options.save_session,
+        sessionId: options.session_id,
+      });
     });
 
 program.parse(process.argv);
