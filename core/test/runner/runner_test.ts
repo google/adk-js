@@ -442,6 +442,6 @@ describe('Runner with plugins', () => {
 
   it('should call afterRunCallback', async () => {
     await runTest();
-    expect(plugin.afterRunCallbackCalled).toBeTrue();
+    expect(plugin.afterRunCallbackCalled).toBe(true);
   });
 });
