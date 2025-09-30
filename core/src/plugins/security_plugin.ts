@@ -41,10 +41,9 @@ export interface PolicyCheckResult {
   reason?: string;
 }
 
-export class ToolCallPolicyContext {
-  constructor(
-      public readonly tool: BaseTool,
-      public readonly toolArgs: {[key: string]: any}) {}
+export interface ToolCallPolicyContext {
+  tool: BaseTool;
+  toolArgs: Record<string, unknown>;
 }
 
 export interface BasePolicyEngine {
@@ -152,8 +151,8 @@ export class SecurityPlugin extends BasePlugin {
     toolArgs: {[key: string]: any},
     toolContext: ToolContext
   }): Promise<{[key: string]: unknown}|undefined> {
-    const policyCheckResult = await this.policyEngine.evaluate(
-        new ToolCallPolicyContext(tool, toolArgs));
+    const policyCheckResult =
+        await this.policyEngine.evaluate({tool, toolArgs});
 
     this.setToolCallCheckState(toolContext, policyCheckResult.outcome);
 
