@@ -50,8 +50,8 @@ function build({
     logLevel: 'info',
   };
 
-  // CJS move down license comments, so we prepend them on top of the file again.
-  if (format === 'cjs') {
+  // Prepend license header to the top of the file
+  if (format === 'cjs' || bundle) {
     buildOptions.banner = {js: licenseHeaderText};
   }
 
