@@ -1324,8 +1324,12 @@ export class LlmAgent extends BaseAgent {
           yield onModelErrorCallbackResponse;
         } else {
           // If no plugins, just return the message.
+          const errorResponse = JSON.parse(modelError.message) as
+              {error: {code: number; message: string;}};
+
           yield {
-            errorMessage: modelError.message,
+            errorCode: String(errorResponse.error.code),
+            errorMessage: errorResponse.error.message,
           };
         }
       } else {

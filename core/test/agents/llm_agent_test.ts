@@ -104,7 +104,12 @@ describe('LlmAgent.callLlm', () => {
       LlmResponse = {content: {parts: [{text: 'after callback'}]}};
   const onModelErrorPluginResponse:
       LlmResponse = {content: {parts: [{text: 'on model error plugin'}]}};
-  const modelError = new Error('LLM error');
+  const modelError = new Error(JSON.stringify({
+    error: {
+      message: 'LLM error',
+      code: 500,
+    },
+  }));
 
   beforeEach(() => {
     mockPlugin = new MockPlugin('mock_plugin');
@@ -203,6 +208,7 @@ describe('LlmAgent.callLlm', () => {
        pluginManager.registerPlugin(mockPlugin);
        agent.model = new MockLlm(null, modelError);
        const responses = await callLlmUnderTest();
-       expect(responses).toEqual([{errorMessage: modelError.message}]);
+       expect(responses).toEqual(
+           [{errorMessage: 'LLM error', errorCode: '500'}]);
      });
 });
