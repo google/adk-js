@@ -6,10 +6,13 @@
  */
 
 import * as os from 'os';
+import dotenv from 'dotenv';
 import {Command} from 'commander';
+import {LogLevel, setLogLevel} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
-import {LogLevel, setLogLevel} from '@google/adk';
+
+dotenv.config();
 
 const LOG_LEVEL_MAP: Record<string, LogLevel> = {
   'debug': LogLevel.DEBUG,
@@ -108,7 +111,7 @@ program.command('run')
       setLogLevel(getLogLevelFromOptions(options));
 
       runAgent({
-        agentPath: agentPath,
+        agentPath,
         inputFile: options.replay,
         savedSessionFile: options.resume,
         saveSession: options.save_session,

@@ -4,14 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner} from '@google/adk';
+import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner} from '@google/adk';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'http';
 import * as path from 'path';
 
+import {AgentLoader} from '../utils/agent_loader.js';
+
 import {getAgentGraphAsDot} from './agent_graph.js';
-import {AgentLoader} from './agent_loader.js';
 
 interface ServerOptions {
   host?: string;
@@ -126,7 +127,8 @@ export class AdkWebServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          const rootAgent = await this.agentLoader.loadAgent(appName);
+          await using agentFile = this.agentLoader.getAgentFile(appName);
+          const rootAgent = await agentFile.load();
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];
@@ -139,7 +141,7 @@ export class AdkWebServer {
 
             return res.send({
               dotSrc:
-                  await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
+                  await getAgentGraphAsDot(rootAgent, functionCallHighlights)
             });
           }
 
@@ -492,7 +494,9 @@ export class AdkWebServer {
       }
 
       try {
-        const runner = await this.getRunner(appName);
+        await using agentFile = this.agentLoader.getAgentFile(appName);
+        const agent = await agentFile.load();
+        const runner = await this.getRunner(agent, appName);
         const events: Event[] = [];
 
         for await (const e of runner.run({
@@ -524,7 +528,9 @@ export class AdkWebServer {
       }
 
       try {
-        const runner = await this.getRunner(appName);
+        await using agentFile = this.agentLoader.getAgentFile(appName);
+        const agent = await agentFile.load();
+        const runner = await this.getRunner(agent, appName);
 
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Content-Type', 'text/event-stream');
@@ -588,22 +594,15 @@ export class AdkWebServer {
     });
   }
 
-  private async getRunner(appName: string): Promise<Runner> {
+  private async getRunner(agent: BaseAgent, appName: string): Promise<Runner> {
     if (!(appName in this.runnerCache)) {
-      const agent = await this.agentLoader.loadAgent(appName);
-
-      if (!agent) {
-        throw new Error(`Agent not found: ${appName}`);
-      }
-
-      const runner = new Runner({
+      this.runnerCache[appName] = new Runner({
         appName,
         agent,
         memoryService: this.memoryService,
         sessionService: this.sessionService,
         artifactService: this.artifactService,
       });
-      this.runnerCache[appName] = runner;
     }
 
     return this.runnerCache[appName];

@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
-import esbuild from 'esbuild';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as readline from 'readline';
+
+import {AgentFile} from '../utils/agent_loader';
 
 const dirname = process.cwd();
 
@@ -47,40 +48,6 @@ async function getUserInput(prompt: string): Promise<string> {
       resolve(answer);
     });
   });
-}
-
-let cleanupFile: string|undefined;
-async function loadAgent(filePath: string): Promise<BaseAgent> {
-  if (filePath.endsWith('.ts')) {
-    const compiledFilePath = filePath.replace('.ts', '.cjs');
-
-    await esbuild.build({
-      entryPoints: [filePath],
-      outfile: compiledFilePath,
-      target: 'node10.4',
-      platform: 'node',
-      format: 'cjs',
-      packages: 'external',
-      bundle: true,
-    });
-
-    cleanupFile = compiledFilePath;
-    filePath = compiledFilePath;
-  }
-
-  const jsModule = await import(filePath);
-
-  if (jsModule && jsModule.rootAgent) {
-    return jsModule.rootAgent;
-  }
-
-  throw new Error(`Failed to load agent ${filePath}: No rootAgent found`);
-}
-
-async function cleanupIfRequire(): Promise<void> {
-  if (cleanupFile) {
-    return fs.unlink(cleanupFile);
-  }
 }
 
 interface RunFromInputFileOptions {
@@ -192,7 +159,9 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     const artifactService = new InMemoryArtifactService();
     const sessionService = new InMemorySessionService();
     const memoryService = new InMemoryMemoryService();
-    const rootAgent = await loadAgent(path.join(dirname, options.agentPath));
+    await using agentFile =
+        new AgentFile(path.join(dirname, options.agentPath));
+    const rootAgent = await agentFile.load();
 
     let session = await sessionService.createSession({
       appName: rootAgent.name,
@@ -258,8 +227,6 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
 
       console.log('Session saved to', sessionPath);
     }
-
-    await cleanupIfRequire();
   } catch (e) {
     console.log(e);
   }
