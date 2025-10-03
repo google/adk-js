@@ -5,12 +5,11 @@
 [![r/agentdevelopmentkit](https://img.shields.io/badge/Reddit-r%2Fagentdevelopmentkit-FF4500?style=flat&logo=reddit&logoColor=white)](https://www.reddit.com/r/agentdevelopmentkit/)
 
 > [!CAUTION]
-> This proejct has been made public to facilitate collaboration with a few 
-> partners.  We do not yet guarantee stability of the api, and do not reccomend
-> using in production. We also do not have the bandwidth to support and triage
-> issues for the time being, unless you represent a self-organized group
-> with which we can collaborate. We're excited to share this with everyone, 
-> even if we aren't ready to announce it's availability yet.  
+> This project is in early development and is not quite yet ready for early
+> adopters. We don't yet guarantee the stability of the API and don't yet
+> recommend using it in production. Feel free to poke around, but we're not
+> quite yet ready for community contributions. Thank you for your interest
+> and we look forward to sharing more soon.
 
 
 <html>
@@ -127,9 +126,11 @@ You can build the project using the following npm scripts:
 
 ## 🤝 Contributing
 
-We welcome contributions from the community! Whether it's bug reports, feature
-requests, documentation improvements, or code contributions, please see our
-[**Contributing Guidelines**](./CONTRIBUTING.md) to get started.
+This project is in early development and is not quite ready for community
+contributions. But in the  future, we will welcome bug reports, feature
+requests, documentation improvements, and code contributions. Please see our
+[**Contributing Guidelines**](./CONTRIBUTING.md) for details on how this
+process will work.
 
 ## 📄 License
 
