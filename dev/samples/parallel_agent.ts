@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {FunctionTool, GoogleSearchTool, LlmAgent, ParallelAgent} from '@google/adk';
+import {FunctionTool, GOOGLE_SEARCH, LlmAgent, ParallelAgent} from '@google/adk';
 import {z} from 'zod';
 
 function getRandomArbitrary(min: number, max: number): number {
@@ -35,7 +35,7 @@ export const rootAgent = new ParallelAgent({
           'An agent whose job it is to perform Google search queries and answer questions about the results.',
       instruction:
           'You are an agent whose job is to perform Google search query and return summary for the result maximum containing 300 characters.',
-      tools: [new GoogleSearchTool()],
+      tools: [GOOGLE_SEARCH],
     }),
     new LlmAgent({
       name: 'get_weather_agent',

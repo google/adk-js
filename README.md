@@ -80,14 +80,14 @@ documentation & samples:
 ### Same Features & Familiar Interface As Other ADKs:
 
 ```typescript
-import { LlmAgent, GoogleSearchTool } from '@google/adk';
+import { LlmAgent, GOOGLE_SEARCH } from '@google/adk';
 
 const rootAgent = new LlmAgent({
     name: 'search_assistant',
     description: 'An assistant that can search the web.',
     model: 'gemini-2.5-flash', // Or your preferred models
     instruction: 'You are a helpful assistant. Answer user questions using Google Search when needed.',
-    tools: [new GoogleSearchTool()],
+    tools: [GOOGLE_SEARCH],
 });
 ```
 

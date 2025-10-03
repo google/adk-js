@@ -18,7 +18,7 @@ import {ToolContext} from './tool_context.js';
  * This tool operates internally within the model and does not require or
  * perform local code execution.
  */
-export class GoogleSearchTool extends BaseTool {
+class GoogleSearchTool extends BaseTool {
   constructor() {
     super('google_search', 'Google Search Tool');
   }
@@ -66,3 +66,8 @@ export class GoogleSearchTool extends BaseTool {
     );
   }
 }
+
+/**
+ * A global instance of GoogleSearchTool.
+ */
+export const GOOGLE_SEARCH = new GoogleSearchTool();
