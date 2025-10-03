@@ -2,7 +2,7 @@ import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, c
 import type {Application, Request, Response} from 'express';
 
 import {AdkWebServer} from '../../src/server/adk_web_server';
-import {AgentLoader} from '../../src/server/agent_loader';
+import {AgentLoader} from '../../src/utils/agent_loader';
 
 /**
  * Simple http client for testing the AdkWebServer. No addtional npm
@@ -159,7 +159,14 @@ describe('AdkWebServer', () => {
   beforeEach(async () => {
     agentLoader = {
       listAgents: () => Promise.resolve(['testApp']),
-      loadAgent: () => Promise.resolve(TEST_AGENT),
+      getAgentFile: () => ({
+        load() {
+          return Promise.resolve(TEST_AGENT);
+        },
+        async[Symbol.asyncDispose](): Promise<void> {
+          return;
+        }
+      }),
     } as unknown as AgentLoader;
     sessionService = new InMemorySessionService();
     memoryService = new InMemoryMemoryService();
