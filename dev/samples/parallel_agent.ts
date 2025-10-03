@@ -24,26 +24,27 @@ const getWeatherTemperatureTool = new FunctionTool({
   },
 });
 
+const googleSearchAgent = new LlmAgent({
+  name: 'google_search_agent',
+  model: 'gemini-2.5-flash',
+  description:
+      'An agent whose job it is to perform Google search queries and answer questions about the results.',
+  instruction:
+      'You are an agent whose job is to perform Google search query and return summary for the result maximum containing 300 characters.',
+  tools: [GOOGLE_SEARCH],
+});
+
+const getWeatherAgent = new LlmAgent({
+  name: 'get_weather_agent',
+  model: 'gemini-2.5-flash',
+  description: 'Retrieves the current weather report for a specified city.',
+  instruction:
+      'You are responsible for retrieving the current weather temperature for a city from the user request. You should not ask for additional information.',
+  tools: [getWeatherTemperatureTool],
+});
+
 export const rootAgent = new ParallelAgent({
   name: 'parallel_agent',
   description: 'A parallel agent that runs multiple sub-agents in parallel.',
-  subAgents: [
-    new LlmAgent({
-      name: 'google_search_agent',
-      model: 'gemini-2.5-flash',
-      description:
-          'An agent whose job it is to perform Google search queries and answer questions about the results.',
-      instruction:
-          'You are an agent whose job is to perform Google search query and return summary for the result maximum containing 300 characters.',
-      tools: [GOOGLE_SEARCH],
-    }),
-    new LlmAgent({
-      name: 'get_weather_agent',
-      model: 'gemini-2.5-flash',
-      description: 'Retrieves the current weather report for a specified city.',
-      instruction:
-          'You are responsible for retrieving the current weather temperature for a city from the user request. You should not ask for additional information.',
-      tools: [getWeatherTemperatureTool],
-    }),
-  ],
+  subAgents: [googleSearchAgent, getWeatherAgent],
 });
