@@ -4,6 +4,15 @@
 [![NPM Version](https://img.shields.io/npm/v/@google/adk)](https://www.npmjs.com/package/@google/adk)
 [![r/agentdevelopmentkit](https://img.shields.io/badge/Reddit-r%2Fagentdevelopmentkit-FF4500?style=flat&logo=reddit&logoColor=white)](https://www.reddit.com/r/agentdevelopmentkit/)
 
+> [!CAUTION]
+> This proejct has been made public to facilitate collaboration with a few 
+> partners.  We do not yet guarantee stability of the api, and do not reccomend
+> using in production. We also do not have the bandwidth to support and triage
+> issues for the time being, unless you represent a self-organized group
+> with which we can collaborate. We're excited to share this with everyone, 
+> even if we aren't ready to announce it's availability yet.  
+
+
 <html>
     <h2 align="center">
       <img src="https://raw.githubusercontent.com/google/adk-python/main/assets/agent-development-kit.png" width="256"/>
