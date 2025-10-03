@@ -37,6 +37,11 @@ type ToolExecuteFunction<
 
 /**
  * The configuration options for creating a function-based tool.
+ * The `name`, `description` and `parameters` fields are used to generate the
+ * tool definition that is passed to the LLM prompt.
+ *
+ * Note: Unlike Python's ADK, JSDoc on the `execute` function is ignored
+ * for tool definition generation.
  */
 export type ToolOptions<
   TParameters extends ToolInputParameters,
