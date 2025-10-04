@@ -1,5 +1,3 @@
-# @google/adk
-
 > [!CAUTION]
 > **API Stability:** Mostly stable, but expect potential breaking changes
 > before 1.0.
