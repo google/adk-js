@@ -50,6 +50,7 @@ export type ToolOptions<
   description: string;
   parameters?: TParameters;
   execute: ToolExecuteFunction<TParameters>;
+  isLongRunning?: boolean;
 };
 
 function toSchema<TParameters extends ToolInputParameters>(
@@ -84,7 +85,11 @@ export class FunctionTool<
           'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
       );
     }
-    super({name, description: options.description});
+    super({
+      name,
+      description: options.description,
+      isLongRunning: options.isLongRunning
+    });
     this.execute = options.execute;
     this.parameters = options.parameters;
   }
