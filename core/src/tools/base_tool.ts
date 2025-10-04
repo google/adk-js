@@ -28,23 +28,32 @@ export interface ToolProcessLlmRequest {
 }
 
 /**
+ * Parameters for the BaseTool constructor.
+ */
+export interface BaseToolParams {
+  name: string;
+  description: string;
+  isLongRunning?: boolean;
+}
+
+/**
  * The base class for all tools.
  */
 export abstract class BaseTool {
+  readonly name: string;
+  readonly description: string;
+  readonly isLongRunning: boolean;
+
   /**
    * Base constructor for a tool.
    *
-   * @param name The name of the tool.
-   * @param description The description of the tool.
-   * @param isLongRunning Whether the tool is a long running operation, which
-   *     typically returns a
-   * resource id first and finishes the operation later.
+   * @param params The parameters for `BaseTool`.
    */
-  constructor(
-      public readonly name: string,
-      public readonly description: string,
-      public readonly isLongRunning: boolean = false,
-  ) {}
+  constructor(params: BaseToolParams) {
+    this.name = params.name;
+    this.description = params.description;
+    this.isLongRunning = params.isLongRunning ?? false;
+  }
 
   /**
    * Gets the OpenAPI specification of this tool in the form of a

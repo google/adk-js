@@ -48,7 +48,8 @@ export class AgentTool extends BaseTool {
   private readonly skipSummarization: boolean;
 
   constructor(config: AgentToolConfig) {
-    super(config.agent.name, config.agent.description || '');
+    super(
+        {name: config.agent.name, description: config.agent.description || ''});
     this.agent = config.agent;
     this.skipSummarization = config.skipSummarization || false;
   }

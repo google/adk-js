@@ -20,7 +20,7 @@ import {ToolContext} from './tool_context.js';
  */
 class GoogleSearchTool extends BaseTool {
   constructor() {
-    super('google_search', 'Google Search Tool');
+    super({name: 'google_search', description: 'Google Search Tool'});
   }
 
   run(request: RunToolRequest): Promise<unknown> {

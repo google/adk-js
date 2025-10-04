@@ -84,7 +84,7 @@ export class FunctionTool<
           'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
       );
     }
-    super(name, options.description);
+    super({name, description: options.description});
     this.execute = options.execute;
     this.parameters = options.parameters;
   }

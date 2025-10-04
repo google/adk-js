@@ -31,7 +31,7 @@ export class MCPTool extends BaseTool {
   private readonly mcpSessionManager: MCPSessionManager;
 
   constructor(mcpTool: Tool, mcpSessionManager: MCPSessionManager) {
-    super(mcpTool.name, mcpTool.description || '');
+    super({name: mcpTool.name, description: mcpTool.description || ''});
     this.mcpTool = mcpTool;
     this.mcpSessionManager = mcpSessionManager;
   }
