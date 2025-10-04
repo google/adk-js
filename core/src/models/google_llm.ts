@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentConfig, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
+import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
 
 import {deepClone} from '../utils/deep_clone.js';
 import {isBrowser} from '../utils/env_aware_utils.js';
@@ -34,6 +34,23 @@ export interface GeminiParams {
    * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.
    */
   apiKey?: string;
+  /**
+   * Whether to use Vertex AI. If true, `project`, `location`
+   * should be provided.
+   */
+  vertexai?: boolean;
+  /**
+   * The Vertex AI project ID. Required if `vertexai` is true.
+   */
+  project?: string;
+  /**
+   * The Vertex AI location. Required if `vertexai` is true.
+   */
+  location?: string;
+  /**
+   * Headers to merge with internally crafted headers.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -41,22 +58,64 @@ export interface GeminiParams {
  */
 export class Gemini extends BaseLlm {
   private readonly apiKey?: string;
+  private readonly vertexai: boolean;
+  private readonly project?: string;
+  private readonly location?: string;
+  private readonly headers?: Record<string, string>;
 
   /**
    * @param params The parameters for creating a Gemini instance.
    */
-  constructor({model = 'gemini-2.5-flash', apiKey}: GeminiParams = {}) {
+  constructor({
+    model = 'gemini-2.5-flash',
+    apiKey,
+    vertexai,
+    project,
+    location,
+    headers
+  }: GeminiParams = {}) {
     super(model);
 
-    if (!apiKey && typeof process === 'object') {
-      apiKey =
-          process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
-    }
+    this.project = project;
+    this.location = location;
     this.apiKey = apiKey;
+    this.headers = headers;
 
-    if (!this.apiKey) {
-      throw new Error(
-          'API key is not set. Please set it in the constructor or as GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.');
+    const canReadEnv = !isBrowser() && typeof process === 'object';
+
+    this.vertexai = !!vertexai;
+    if (!this.vertexai && canReadEnv) {
+      const vertexAIfromEnv = process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+      if (vertexAIfromEnv) {
+        this.vertexai =
+          vertexAIfromEnv.toLowerCase() === 'true' || vertexAIfromEnv === '1';
+      }
+    }
+
+    if (this.vertexai) {
+      if (canReadEnv && !this.project) {
+        this.project = process.env['GOOGLE_CLOUD_PROJECT'];
+      }
+      if (canReadEnv && !this.location) {
+        this.location = process.env['GOOGLE_CLOUD_LOCATION'];
+      }
+      if (!this.project) {
+        throw new Error(
+            'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.');
+      }
+      if (!this.location) {
+        throw new Error(
+            'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.');
+      }
+    } else {
+      if (!this.apiKey && canReadEnv) {
+        this.apiKey = process.env['GOOGLE_GENAI_API_KEY'] ||
+            process.env['GEMINI_API_KEY'];
+      }
+      if (!this.apiKey) {
+        throw new Error(
+            'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.');
+      }
     }
   }
 
@@ -183,10 +242,27 @@ export class Gemini extends BaseLlm {
   }
 
   get apiClient(): GoogleGenAI {
-    if (!this._apiClient) {
+    if (this._apiClient) {
+      return this._apiClient;
+    }
+
+    const combinedHeaders = {
+      ...this.trackingHeaders,
+      ...this.headers,
+    }
+
+    if (this.vertexai) {
+      this._apiClient = new GoogleGenAI({
+        vertexai: this.vertexai,
+        project: this.project,
+        location: this.location,
+        httpOptions: {headers: combinedHeaders},
+      });
+    }
+    else {
       this._apiClient = new GoogleGenAI({
         apiKey: this.apiKey,
-        httpOptions: {headers: this.trackingHeaders},
+        httpOptions: {headers: combinedHeaders},
       });
     }
     return this._apiClient;
