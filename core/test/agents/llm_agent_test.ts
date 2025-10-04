@@ -39,7 +39,7 @@ class MockLlm extends BaseLlm {
   }
 
   async *
-      generateContent(request: LlmRequest):
+      generateContentAsync(request: LlmRequest):
           AsyncGenerator<LlmResponse, void, void> {
     if (this.error) {
       throw this.error;
@@ -130,7 +130,7 @@ describe('LlmAgent.callLlm', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for await (
         const response of (agent as any)
-            .callLlm(invocationContext, llmRequest, modelResponseEvent)) {
+            .callLlmAsync(invocationContext, llmRequest, modelResponseEvent)) {
       responses.push(response);
     }
     return responses;

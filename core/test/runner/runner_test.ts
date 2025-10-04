@@ -18,7 +18,8 @@ class MockAgent extends BaseAgent {
   }
 
   protected override async *
-      runImpl(context: InvocationContext): AsyncGenerator<Event, void, void> {
+      runAsyncImpl(context: InvocationContext):
+          AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
@@ -49,7 +50,8 @@ class MockLlmAgent extends LlmAgent {
   }
 
   protected override async *
-      runImpl(context: InvocationContext): AsyncGenerator<Event, void, void> {
+      runAsyncImpl(context: InvocationContext):
+          AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
@@ -178,7 +180,7 @@ describe('Runner.determineAgentForResumption', () => {
     }
 
     const events: Event[] = [];
-    for await (const event of runner.run({
+    for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
       newMessage: {role: 'user', parts: [{text: 'Hello'}]}
@@ -350,7 +352,7 @@ describe('Runner.determineAgentForResumption', () => {
 
     const events: Event[] = [];
 
-    for await (const event of runner.run({
+    for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
       newMessage: {role: 'user', parts: [{functionResponse}]}
@@ -388,7 +390,7 @@ describe('Runner with plugins', () => {
       sessionId: TEST_SESSION_ID
     });
     const events: Event[] = [];
-    for await (const event of runner.run({
+    for await (const event of runner.runAsync({
       userId: TEST_USER_ID,
       sessionId: TEST_SESSION_ID,
       newMessage: {role: 'user', parts: [{text: originalUserInput}]},

@@ -25,7 +25,7 @@ import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {BaseLlmRequestProcessor, BaseLlmResponseProcessor} from './base_llm_processor.js';
 import {CallbackContext} from './callback_context.js';
 import {getContents, getCurrentTurnContents} from './content_processor_utils.js';
-import {generateAuthEvent, generateRequestConfirmationEvent, getLongRunningFunctionCalls, handleFunctionCallList, handleFunctionCalls, populateClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME} from './functions.js';
+import {generateAuthEvent, generateRequestConfirmationEvent, getLongRunningFunctionCalls, handleFunctionCallList, handleFunctionCallsAsync, populateClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME} from './functions.js';
 import {injectSessionState} from './instructions.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
@@ -259,7 +259,7 @@ async function convertToolUnionToTools(
 // --------------------------------------------------------------------------
 class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
   override async *
-      run(
+      runAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           ): AsyncGenerator<Event, void, void> {
@@ -299,7 +299,7 @@ const BASIC_LLM_REQUEST_PROCESSOR = new BasicLlmRequestProcessor();
 
 class IdentityLlmRequestProcessor extends BaseLlmRequestProcessor {
   override async *
-      run(
+      runAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           ): AsyncGenerator<Event, void, undefined> {
@@ -319,7 +319,7 @@ class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
    * Handles instructions and global instructions for LLM flow.
    */
   async *
-      run(
+      runAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           ): AsyncGenerator<Event, void, void> {
@@ -373,7 +373,7 @@ const INSTRUCTIONS_LLM_REQUEST_PROCESSOR =
 
 class ContentRequestProcessor implements BaseLlmRequestProcessor {
   async *
-      run(invocationContext: InvocationContext, llmRequest: LlmRequest):
+      runAsync(invocationContext: InvocationContext, llmRequest: LlmRequest):
           AsyncGenerator<Event, void, void> {
     const agent = invocationContext.agent;
     if (!agent || !(agent instanceof LlmAgent)) {
@@ -421,7 +421,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
   });
 
   override async *
-      run(
+      runAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           ): AsyncGenerator<Event, void, void> {
@@ -511,7 +511,7 @@ const AGENT_TRANSFER_LLM_REQUEST_PROCESSOR =
 class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProcessor {
   /** Handles tool confirmation information to build the LLM request. */
   override async *
-      run(
+      runAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           ): AsyncGenerator<Event, void, void> {
@@ -959,12 +959,12 @@ export class LlmAgent extends BaseAgent {
   }
 
   protected async *
-      runImpl(
+      runAsyncImpl(
           context: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event|undefined = undefined;
-      for await (const event of this.runOneStep(context)) {
+      for await (const event of this.runOneStepAsync(context)) {
         lastEvent = event;
         this.maybeSaveOutputToState(event);
         yield event;
@@ -1006,7 +1006,7 @@ export class LlmAgent extends BaseAgent {
   }
 
   private async *
-      runOneStep(
+      runOneStepAsync(
           invocationContext: InvocationContext,
           ): AsyncGenerator<Event, void, void> {
     const llmRequest: LlmRequest = {
@@ -1020,7 +1020,8 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // Runs request processors.
     for (const processor of this.requestProcessors) {
-      for await (const event of processor.run(invocationContext, llmRequest)) {
+      for await (
+          const event of processor.runAsync(invocationContext, llmRequest)) {
         yield event;
       }
     }
@@ -1053,7 +1054,7 @@ export class LlmAgent extends BaseAgent {
       author: this.name,
       branch: invocationContext.branch,
     });
-    for await (const llmResponse of this.callLlm(
+    for await (const llmResponse of this.callLlmAsync(
         invocationContext, llmRequest, modelResponseEvent)) {
       // ======================================================================
       // Postprocess after calling the LLM
@@ -1079,7 +1080,8 @@ export class LlmAgent extends BaseAgent {
     // Runs response processors
     // =========================================================================
     for (const processor of this.responseProcessors) {
-      for await (const event of processor.run(invocationContext, llmResponse)) {
+      for await (
+          const event of processor.runAsync(invocationContext, llmResponse)) {
         yield event;
       }
     }
@@ -1122,7 +1124,7 @@ export class LlmAgent extends BaseAgent {
     // Call functions
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
-    const functionResponseEvent = await handleFunctionCalls({
+    const functionResponseEvent = await handleFunctionCallsAsync({
       invocationContext: invocationContext,
       functionCallEvent: mergedEvent,
       toolsDict: llmRequest.toolsDict,
@@ -1159,7 +1161,7 @@ export class LlmAgent extends BaseAgent {
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
-      for await (const event of nextAgent.run(invocationContext)) {
+      for await (const event of nextAgent.runAsync(invocationContext)) {
         yield event;
       }
     }
@@ -1190,7 +1192,7 @@ export class LlmAgent extends BaseAgent {
   }
 
   private async *
-      callLlm(
+      callLlmAsync(
           invocationContext: InvocationContext,
           llmRequest: LlmRequest,
           modelResponseEvent: Event,
@@ -1219,10 +1221,10 @@ export class LlmAgent extends BaseAgent {
       // TODO - b/425992518: Implement CFC call path
       // This is a hack, underneath it calls runLive. Which makes
       // runLive/run mixed.
-      throw new Error('CFC is not yet supported in callLlm');
+      throw new Error('CFC is not yet supported in callLlmAsync');
     } else {
       invocationContext.incrementLlmCallCount();
-      const responsesGenerator = llm.generateContent(llmRequest);
+      const responsesGenerator = llm.generateContentAsync(llmRequest);
 
       for await (const llmResponse of this.runAndHandleError(
           responsesGenerator, invocationContext, llmRequest,

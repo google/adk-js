@@ -9,7 +9,7 @@ import {type infer as zInfer, ZodObject} from 'zod';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 
-import {BaseTool, RunToolRequest} from './base_tool.js';
+import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ToolContext} from './tool_context.js';
 
 /**
@@ -108,7 +108,7 @@ export class FunctionTool<
   /**
    * Logic for running the tool.
    */
-  override async run(req: RunToolRequest): Promise<unknown> {
+  override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
       let validatedArgs: unknown = req.args;
       if (this.parameters instanceof ZodObject) {

@@ -499,7 +499,7 @@ export class AdkWebServer {
         const runner = await this.getRunner(agent, appName);
         const events: Event[] = [];
 
-        for await (const e of runner.run({
+        for await (const e of runner.runAsync({
           userId,
           sessionId,
           newMessage,
@@ -538,7 +538,7 @@ export class AdkWebServer {
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        for await (const event of runner.run({
+        for await (const event of runner.runAsync({
           userId,
           sessionId,
           newMessage,

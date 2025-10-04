@@ -71,14 +71,14 @@ class InvocationCostManager {
  * An invocation:
  *     1. Starts with a user message and ends with a final response.
  *     2. Can contain one or multiple agent calls.
- *     3. Is handled by runner.run().
+ *     3. Is handled by runner.runAsync().
  *
  *   An invocation runs an agent until it does not request to transfer to
  * another agent.
  *
  *   An agent call:
- *     1. Is handled by agent.run().
- *     2. Ends when agent.run() ends.
+ *     1. Is handled by agent.runAsync().
+ *     2. Ends when agent.runAsync() ends.
  *
  *   An LLM agent call is an agent with a BaseLLMFlow.
  *  An LLM agent call can contain one or multiple steps.

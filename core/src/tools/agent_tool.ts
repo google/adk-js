@@ -14,7 +14,7 @@ import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
-import {BaseTool, RunToolRequest} from './base_tool.js';
+import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ForwardingArtifactService} from './forwarding_artifact_service.js';
 import {ToolContext} from './tool_context.js';
 
@@ -92,7 +92,8 @@ export class AgentTool extends BaseTool {
     return declaration;
   }
 
-  override async run({args, toolContext}: RunToolRequest): Promise<unknown> {
+  override async runAsync({args, toolContext}: RunAsyncToolRequest):
+      Promise<unknown> {
     if (this.skipSummarization) {
       toolContext.actions.skipSummarization = true;
     }
@@ -127,7 +128,7 @@ export class AgentTool extends BaseTool {
     });
 
     let lastEvent: Event|undefined;
-    for await (const event of runner.run({
+    for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
       newMessage: content,

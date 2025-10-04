@@ -87,7 +87,7 @@ export class Gemini extends BaseLlm {
    * @yields LlmResponse: The model response.
    */
   override async *
-      generateContent(
+      generateContentAsync(
           llmRequest: LlmRequest,
           stream = false,
           ): AsyncGenerator<LlmResponse, void> {

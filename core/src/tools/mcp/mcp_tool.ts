@@ -21,7 +21,7 @@ import {MCPSessionManager} from './mcp_session_manager.js';
  * execution of the tool by communicating with the MCP server through an
  * {@link MCPSessionManager}.
  *
- * When an LLM decides to call this tool, the `run` method will be
+ * When an LLM decides to call this tool, the `runAsync` method will be
  * invoked, which in turn establishes an MCP session, sends a `callTool`
  * request with the provided arguments, and returns the result from the
  * remote tool.
@@ -49,7 +49,7 @@ export class MCPTool extends BaseTool {
     return declaration;
   }
 
-  override async run(request: RunToolRequest): Promise<unknown> {
+  override async runAsync(request: RunToolRequest): Promise<unknown> {
     const session = await this.mcpSessionManager.createSession();
 
     const callRequest: CallToolRequest = {} as CallToolRequest;

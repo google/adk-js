@@ -86,7 +86,8 @@ class MockHttpClient {
 
 class TestAgent extends BaseAgent {
   async *
-      runImpl(context: InvocationContext): AsyncGenerator<Event, void, void> {
+      runAsyncImpl(context: InvocationContext):
+          AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,

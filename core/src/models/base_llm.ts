@@ -32,7 +32,7 @@ export abstract class BaseLlm {
    * For non-streaming call, it will only yield one Content.
    * @return A generator of LlmResponse.
    */
-  abstract generateContent(llmRequest: LlmRequest):
+  abstract generateContentAsync(llmRequest: LlmRequest):
       AsyncGenerator<LlmResponse, void>;
 
   /**

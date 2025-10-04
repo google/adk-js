@@ -186,14 +186,14 @@ export function generateRequestConfirmationEvent({
   });
 }
 
-async function callTool(
+async function callToolAsync(
     tool: BaseTool,
     args: Record<string, any>,
     toolContext: ToolContext,
     ): Promise<any> {
   // TODO - b/436079721: implement [tracer.start_as_current_span]
-  logger.debug(`callTool ${tool.name}`);
-  return await tool.run({args, toolContext});
+  logger.debug(`callToolAsync ${tool.name}`);
+  return await tool.runAsync({args, toolContext});
 }
 
 function buildResponseEvent(
@@ -241,7 +241,7 @@ function buildResponseEvent(
  *   - If the tool is long-running and the response is null, continue. !!state
  * - Merge all function response events into a single event.
  */
-export async function handleFunctionCalls({
+export async function handleFunctionCallsAsync({
   invocationContext,
   functionCallEvent,
   toolsDict,
@@ -347,7 +347,7 @@ export async function handleFunctionCallList({
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse == null) {  // Cover both null and undefined
       try {
-        functionResponse = await callTool(
+        functionResponse = await callToolAsync(
             tool,
             functionArgs,
             toolContext,
