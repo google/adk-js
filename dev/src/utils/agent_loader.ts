@@ -5,15 +5,21 @@
  */
 import {BaseAgent} from '@google/adk';
 import esbuild from 'esbuild';
-import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 
-const DEFAULT_AGENT_CONFIG_FILENAME = 'agent_loader_config.json';
+const JS_FILES_EXTENSIONST_TO_COMPILE = ['.ts', '.mts'];
+const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts'];
 
-interface AgentNameToFileConfig {
-  [key: string]: string;
+interface FileMetadata {
+  path: string;
+  name: string;
+  ext?: string;
+  isFile: boolean;
+  isDirectory: boolean;
 }
+
+class AgentFileLoadingError extends Error {}
 
 /**
  * Wrapper class which loads file that contains base agent (support both .js and
@@ -23,13 +29,29 @@ interface AgentNameToFileConfig {
 export class AgentFile {
   private cleanupFilePath: string|undefined;
   private disposed = false;
+  private agent?: BaseAgent;
 
   constructor(private readonly filePath: string) {}
 
   async load(): Promise<BaseAgent> {
+    if (this.agent) {
+      return this.agent;
+    }
+
+    try {
+      await fsPromises.stat(this.filePath);
+    } catch (e) {
+      if ((e as {code: string}).code === 'ENOENT') {
+        throw new AgentFileLoadingError(
+            `Agent file ${this.filePath} does not exists`);
+      }
+    }
+
     let filePath = this.filePath;
-    if (filePath.endsWith('.ts')) {
-      const compiledFilePath = filePath.replace('.ts', '.cjs');
+    const fileExt = path.extname(filePath);
+
+    if (JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)) {
+      const compiledFilePath = filePath.replace(fileExt, '.cjs');
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -47,11 +69,13 @@ export class AgentFile {
 
     const jsModule = await import(filePath);
 
-    if (jsModule && jsModule.rootAgent) {
-      return jsModule.rootAgent;
+    if (jsModule && jsModule.rootAgent && jsModule.rootAgent) {
+      return this.agent = jsModule.rootAgent;
     }
 
-    throw new Error(`Failed to load agent ${filePath}: No rootAgent found`);
+    this.dispose();
+    throw new AgentFileLoadingError(
+        `Failed to load agent ${filePath}: No rootAgent found`);
   }
 
   async[Symbol.asyncDispose](): Promise<void> {
@@ -71,63 +95,116 @@ export class AgentFile {
 }
 
 /**
- * Loads agents from a JSON file. The JSON file is expected to be a map from
- * agent name to the path of the file containing the agent's code.
+ * Loads all agents from a given directory.
  *
- * User needs to define agent_loader_config.json file in the folder where they
- * want to run the CLI. The file should be a simple JSON object, having next
- * structure:
- * {
- *   "agent1": "agents/agent1.js",
- *   "agent2": "agents/agent2.ts"
- * }
+ * The directory structure should be:
+ * - agents_dir/{agentName}.[js | ts | mjs | cjs]
+ * - agents_dir/{agentName}/agent.[js | ts | mjs | cjs]
  *
- * The key is the name of the agent, and value is the path to the file with
- * the agent code. The agent file path is relative to the folder where the
- * config file is. It could be any nesting level for the agent file and it
- * supports both .js and .ts files. Ts files will be compiled to .cjs files on
- * the fly and compiled target will be removed after the usage.
+ * Agent file should has export of the rootAgent as instance of BaseAgent (e.g
+ * LlmAgent).
  */
 export class AgentLoader {
-  private readonly agentsLoaderConfig: AgentNameToFileConfig;
-  private readonly agentsLoaderConfigFilePath: string;
+  private agentsAlreadyPreloaded = false;
+  private readonly preloadedAgents: Record<string, AgentFile> = {};
 
-  constructor(
-      agentsLoaderConfigFilePath?: string,
-  ) {
-    this.agentsLoaderConfigFilePath = agentsLoaderConfigFilePath ||
-        path.join(process.cwd(), DEFAULT_AGENT_CONFIG_FILENAME);
-    this.agentsLoaderConfig = this.loadAgentsConfig();
-  }
-
-  private loadAgentsConfig(): AgentNameToFileConfig {
-    try {
-      const agentsConfig = JSON.parse(fs.readFileSync(
-                               this.agentsLoaderConfigFilePath, 'utf8')) as
-          AgentNameToFileConfig;
-      return agentsConfig;
-    } catch (e: unknown) {
-      throw new Error(`${
-          DEFAULT_AGENT_CONFIG_FILENAME} was not found or is not a valid JSON file. Please check if the file exists and is valid.`);
-    }
-  }
-
-  getAgentPath(agentName: string): string {
-    const agentPath = this.agentsLoaderConfig[agentName];
-
-    if (!agentPath) {
-      throw new Error(`File path is not defined for ${agentName} in ${
-          DEFAULT_AGENT_CONFIG_FILENAME}`);
-    }
-
-    return path.join(process.cwd(), agentPath);
-  }
-
-  getAgentFile(agentName: string): AgentFile {
-    return new AgentFile(this.getAgentPath(agentName));
-  }
+  constructor(private readonly agentsDirPath: string = process.cwd()) {}
 
   async listAgents(): Promise<string[]> {
-    return Object.keys(this.agentsLoaderConfig).sort();
+    await this.preloadAgents();
+
+    return Object.keys(this.preloadedAgents).sort();
   }
+
+  async getAgentFile(agentName: string): Promise<AgentFile> {
+    await this.preloadAgents();
+
+    return this.preloadedAgents[agentName];
+  }
+
+  async disposeAll(): Promise<void> {
+    await Promise.all(
+        Object.values(this.preloadedAgents).map(f => f.dispose()));
+  }
+
+  private async preloadAgents() {
+    if (this.agentsAlreadyPreloaded) {
+      return;
+    }
+
+    const files = await getDirFiles(this.agentsDirPath);
+
+    await Promise.all(files.map(async (fileOrDir: FileMetadata) => {
+      if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
+        return this.loadAgentFromFile(fileOrDir);
+      }
+
+      if (fileOrDir.isDirectory) {
+        return this.loadAgentFromDirectory(fileOrDir);
+      }
+    }));
+
+    this.agentsAlreadyPreloaded = true;
+    return;
+  }
+
+  private async loadAgentFromFile(file: FileMetadata): Promise<void> {
+    try {
+      const agentFile = new AgentFile(file.path);
+      await agentFile.load();
+      this.preloadedAgents[file.name] = agentFile;
+    } catch (e) {
+      if (e instanceof AgentFileLoadingError) {
+        return;
+      }
+      throw e;
+    }
+  }
+
+  private async loadAgentFromDirectory(dir: FileMetadata): Promise<void> {
+    const subFiles = await getDirFiles(dir.path);
+    const possibleAgentJsFile =
+        subFiles.find(f => f.isFile && f.name === 'agent' && isJsFile(f.ext));
+
+    if (!possibleAgentJsFile) {
+      return;
+    }
+
+    try {
+      const agentFile = new AgentFile(possibleAgentJsFile.path);
+      await agentFile.load();
+      this.preloadedAgents[dir.name] = agentFile;
+    } catch (e) {
+      if (e instanceof AgentFileLoadingError) {
+        return;
+      }
+      throw e;
+    }
+  }
+}
+
+function isJsFile(fileExt?: string): boolean {
+  return !!fileExt && JS_FILES_EXTENSIONS.includes(fileExt);
+}
+
+async function getDirFiles(dir: string): Promise<FileMetadata[]> {
+  const files = await fsPromises.readdir(dir);
+
+  return await Promise.all(
+      files.map(filePath => getFileMetadata(path.join(dir, filePath))));
+}
+
+async function getFileMetadata(filePath: string): Promise<FileMetadata> {
+  const fileStats = await fsPromises.stat(filePath);
+  const isFile = fileStats.isFile();
+  const baseName = path.basename(filePath)
+  const ext = path.extname(filePath);
+
+  return {
+    path: filePath,
+    name: isFile ? baseName.slice(0, baseName.length - ext.length) : baseName,
+    ext: isFile ? path.extname(filePath) : undefined,
+    isFile,
+    isDirectory: fileStats.isDirectory(),
+  };
 }

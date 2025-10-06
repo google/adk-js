@@ -6,8 +6,9 @@
  */
 
 import * as os from 'os';
+import * as path from 'path';
 import dotenv from 'dotenv';
-import {Command} from 'commander';
+import {Command, Argument, Option} from 'commander';
 import {LogLevel, setLogLevel} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
@@ -34,29 +35,53 @@ function getLogLevelFromOptions(
   return LogLevel.INFO;
 }
 
+function getAbsolutePath(p: string): string {
+  return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
+}
+
+const AGENT_DIR_ARGUMENT =
+    new Argument(
+        '[agents_dir]',
+        'Directory of agents to serve. Internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)')
+        .default(process.cwd());
+const HOST_OPTION =
+    new Option(
+        '-h, --host <string>', 'Optional. The binding host of the server')
+        .default(os.hostname());
+const PORT_OPTION =
+    new Option('-p, --port <number>', 'Optional. The port of the server')
+        .default('8000');
+const ORIGINS_OPTION =
+    new Option(
+        '--allow_origins <string>', 'Optional. The allow origins of the server')
+        .default('');
+const VERBOSE_OPTION =
+    new Option(
+        '-v, --verbose [boolean]', 'Optional. The verbose level of the server')
+        .default(false);
+const LOG_LEVEL_OPTION =
+    new Option('--log-level <string>', 'Optional. The log level of the server')
+        .default('info');
+
 const program = new Command('ADK CLI');
 
 program.command('web')
     .description('Start ADK web server')
-    .option(
-        '-h, --host <string>', 'Optional. The binding host of the server',
-        os.hostname())
-    .option('-p, --port <number>', 'Optional. The port of the server', '8000')
-    .option(
-        '--allow-origins <string>', 'Optional. The allow origins of the server',
-        '')
-    .option(
-        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
-    .option(
-        '--log-level <string>', 'Optional. The log level of the server', 'info')
-    .action((options) => {
+    .addArgument(AGENT_DIR_ARGUMENT)
+    .addOption(HOST_OPTION)
+    .addOption(PORT_OPTION)
+    .addOption(ORIGINS_OPTION)
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
       const server = new AdkWebServer({
-        host: options.host,
-        port: parseInt(options.port, 10),
+        agentsDir: getAbsolutePath(agentsDir),
+        host: options['host'],
+        port: parseInt(options['port'], 10),
         serveDebugUI: true,
-        allowOrigins: options.allowOrigins,
+        allowOrigins: options['allowOrigins'],
       });
 
       server.start();
@@ -64,25 +89,21 @@ program.command('web')
 
 program.command('api_server')
     .description('Start ADK API server')
-    .option(
-        '-h, --host <string>', 'Optional. The binding host of the server',
-        os.hostname())
-    .option('-p, --port <number>', 'Optional. The port of the server', '8000')
-    .option(
-        '--allow-origins <string>', 'Optional. The allow origins of the server',
-        '')
-    .option(
-        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
-    .option(
-        '--log-level <string>', 'Optional. The log level of the server', 'info')
-    .action((options) => {
+    .addArgument(AGENT_DIR_ARGUMENT)
+    .addOption(HOST_OPTION)
+    .addOption(PORT_OPTION)
+    .addOption(ORIGINS_OPTION)
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
       const server = new AdkWebServer({
-        host: options.host,
-        port: parseInt(options.port, 10),
+        agentsDir: getAbsolutePath(agentsDir),
+        host: options['host'],
+        port: parseInt(options['port'], 10),
         serveDebugUI: false,
-        allowOrigins: options.allowOrigins,
+        allowOrigins: options['allowOrigins'],
       });
 
       server.start();
@@ -90,9 +111,9 @@ program.command('api_server')
 
 program.command('run')
     .description('Runs agent')
-    .argument('agent', 'Agent file path (.js or .ts)')
+    .argument('<agent>', 'Agent file path (.js or .ts)')
     .option(
-        '--save_session <boolean>',
+        '--save_session [boolean]',
         'Optional. Whether to save the session to a json file on exit.', false)
     .option(
         '--session_id <string>',
@@ -103,19 +124,17 @@ program.command('run')
     .option(
         '--resume <string>',
         'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.')
-    .option(
-        '-v, --verbose <boolean>', 'Optional. The verbose level of the server')
-    .option(
-        '--log-level <string>', 'Optional. The log level of the server', 'info')
-    .action((agentPath: string, options) => {
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .action((agentPath: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
       runAgent({
         agentPath,
-        inputFile: options.replay,
-        savedSessionFile: options.resume,
-        saveSession: options.save_session,
-        sessionId: options.session_id,
+        inputFile: options['replay'],
+        savedSessionFile: options['resume'],
+        saveSession: !!options['save_session'],
+        sessionId: options['session_id'],
       });
     });
 

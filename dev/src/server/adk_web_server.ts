@@ -15,6 +15,7 @@ import {AgentLoader} from '../utils/agent_loader.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
 interface ServerOptions {
+  agentsDir?: string;
   host?: string;
   port?: number;
   sessionService?: BaseSessionService;
@@ -46,7 +47,8 @@ export class AdkWebServer {
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
     this.artifactService =
         options.artifactService ?? new InMemoryArtifactService();
-    this.agentLoader = options.agentLoader ?? new AgentLoader();
+    this.agentLoader =
+        options.agentLoader ?? new AgentLoader(options.agentsDir);
     this.serveDebugUI = options.serveDebugUI ?? false;
     this.allowOrigins = options.allowOrigins;
 
@@ -57,6 +59,23 @@ export class AdkWebServer {
 
   private init() {
     const app = this.app;
+
+    // Do cleanups on exit
+    const exitHandler =
+        async ({exit, cleanup}: {exit?: boolean; cleanup?: boolean;}) => {
+      if (cleanup) {
+        await this.agentLoader.disposeAll();
+      }
+
+      if (exit) {
+        process.exit();
+      }
+    };
+    process.on('exit', () => exitHandler({cleanup: true}));
+    process.on('SIGINT', () => exitHandler({exit: true}));
+    process.on('SIGUSR1', () => exitHandler({exit: true}));
+    process.on('SIGUSR2', () => exitHandler({exit: true}));
+    process.on('uncaughtException', () => exitHandler({exit: true}));
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
@@ -127,7 +146,7 @@ export class AdkWebServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = this.agentLoader.getAgentFile(appName);
+          await using agentFile = await this.agentLoader.getAgentFile(appName);
           const rootAgent = await agentFile.load();
 
           if (functionCalls.length > 0) {
@@ -494,7 +513,7 @@ export class AdkWebServer {
       }
 
       try {
-        await using agentFile = this.agentLoader.getAgentFile(appName);
+        await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
         const runner = await this.getRunner(agent, appName);
         const events: Event[] = [];
@@ -528,7 +547,7 @@ export class AdkWebServer {
       }
 
       try {
-        await using agentFile = this.agentLoader.getAgentFile(appName);
+        await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
         const runner = await this.getRunner(agent, appName);
 

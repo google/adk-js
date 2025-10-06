@@ -1,5 +1,6 @@
 import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, createEvent, Event, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, InvocationContext} from '@google/adk';
 import type {Application, Request, Response} from 'express';
+import {beforeEach, describe, expect, it} from 'vitest';
 
 import {AdkWebServer} from '../../src/server/adk_web_server';
 import {AgentLoader} from '../../src/utils/agent_loader';
@@ -160,14 +161,14 @@ describe('AdkWebServer', () => {
   beforeEach(async () => {
     agentLoader = {
       listAgents: () => Promise.resolve(['testApp']),
-      getAgentFile: () => ({
+      getAgentFile: () => Promise.resolve(({
         load() {
           return Promise.resolve(TEST_AGENT);
         },
         async[Symbol.asyncDispose](): Promise<void> {
           return;
         }
-      }),
+      })),
     } as unknown as AgentLoader;
     sessionService = new InMemorySessionService();
     memoryService = new InMemoryMemoryService();
