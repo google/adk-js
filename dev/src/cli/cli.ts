@@ -81,7 +81,7 @@ program.command('web')
         host: options['host'],
         port: parseInt(options['port'], 10),
         serveDebugUI: true,
-        allowOrigins: options['allowOrigins'],
+        allowOrigins: options['allow_origins'],
       });
 
       server.start();
@@ -103,7 +103,7 @@ program.command('api_server')
         host: options['host'],
         port: parseInt(options['port'], 10),
         serveDebugUI: false,
-        allowOrigins: options['allowOrigins'],
+        allowOrigins: options['allow_origins'],
       });
 
       server.start();

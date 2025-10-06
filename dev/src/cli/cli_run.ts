@@ -85,7 +85,7 @@ async function runFromInputFile(options: RunFromInputFileOptions):
       newMessage: {role: 'user', parts: [{text: query}]},
     };
 
-    for await (const event of runner.run(runOptions)) {
+    for await (const event of runner.runAsync(runOptions)) {
       if (event.content && event.content.parts) {
         const text =
             event.content.parts.map((part) => part.text || '').join('');
@@ -127,7 +127,7 @@ async function runInteractively(options: RunInteractivelyOptions):
       break;
     }
 
-    for await (const event of runner.run({
+    for await (const event of runner.runAsync({
       userId: options.session.userId,
       sessionId: options.session.id,
       newMessage: {role: 'user', parts: [{text: query}]},
