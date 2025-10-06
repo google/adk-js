@@ -8,7 +8,7 @@ import {FunctionDeclaration} from '@google/genai';
 import {CallToolRequest, CallToolResult, Tool} from '@modelcontextprotocol/sdk/types.js';
 
 import {toGeminiSchema} from '../../utils/gemini_schema_util.js';
-import {BaseTool, RunToolRequest} from '../base_tool.js';
+import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 
 import {MCPSessionManager} from './mcp_session_manager.js';
 
@@ -49,7 +49,7 @@ export class MCPTool extends BaseTool {
     return declaration;
   }
 
-  override async runAsync(request: RunToolRequest): Promise<unknown> {
+  override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
     const session = await this.mcpSessionManager.createSession();
 
     const callRequest: CallToolRequest = {} as CallToolRequest;
