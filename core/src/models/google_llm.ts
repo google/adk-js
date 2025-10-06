@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, createPartFromText, FileData, FinishReason, FunctionDeclaration, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
+import {Blob, createPartFromText, FileData, FinishReason, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
 
-import {deepClone} from '../utils/deep_clone.js';
 import {isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
@@ -81,7 +80,7 @@ export class Gemini extends BaseLlm {
     this.apiKey = apiKey;
     this.headers = headers;
 
-    const canReadEnv = !isBrowser() && typeof process === 'object';
+    const canReadEnv = typeof process === 'object';
 
     this.vertexai = !!vertexai;
     if (!this.vertexai && canReadEnv) {
@@ -156,7 +155,6 @@ export class Gemini extends BaseLlm {
         `Sending out request, model: ${llmRequest.model}, backend: ${
             this.apiBackend}, stream: ${stream}`,
     );
-    logger.debug(buildRequestLog(llmRequest));
 
     if (llmRequest.config?.httpOptions) {
       llmRequest.config.httpOptions.headers = {
@@ -179,7 +177,6 @@ export class Gemini extends BaseLlm {
       // TODO - b/425992518: verify the type of streaming response is correct.
       for await (const response of streamResult) {
         lastResponse = response;
-        logger.debug(buildResponseLog(response));
         const llmResponse = createLlmResponse(response);
         usageMetadata = llmResponse.usageMetadata;
         const firstPart = llmResponse.content?.parts?.[0];
@@ -236,7 +233,6 @@ export class Gemini extends BaseLlm {
         contents: llmRequest.contents,
         config: llmRequest.config,
       });
-      logger.debug(buildResponseLog(response));
       yield createLlmResponse(response);
     }
   }
@@ -381,77 +377,6 @@ export class Gemini extends BaseLlm {
     }
   }
 }
-
-function buildFunctionDeclarationLog(funcDecl: FunctionDeclaration): string {
-  const params = funcDecl.parameters?.properties ?
-      JSON.stringify(
-          Object.fromEntries(
-              Object.entries(funcDecl.parameters.properties)
-                  .map(([k, v]) => [k, v]),
-              ),
-          ) :
-      '{}';
-  const response =
-      funcDecl.response ? '-> ' + JSON.stringify(funcDecl.response) : '';
-  return `${funcDecl.name}: ${params} ${response}`;
-}
-
-function buildRequestLog(req: LlmRequest): string {
-  const firstTool = req.config?.tools?.[0];
-  const functionDecls = (firstTool as any)?.functionDeclarations ?? [];
-  const functionLogs = functionDecls.map(buildFunctionDeclarationLog);
-
-  const contentsLogs = req.contents.map((content) => {
-    const modifiedContent = deepClone(content);
-    if (modifiedContent && modifiedContent.parts) {
-      for (const part of modifiedContent.parts) {
-        if (part.inlineData?.data) {
-          delete part.inlineData.data;
-        }
-      }
-    }
-    return JSON.stringify(modifiedContent);
-  });
-
-  return `
-LLM Request:
------------------------------------------------------------
-System Instruction:
-${req.config?.systemInstruction}
------------------------------------------------------------
-Contents:
-${contentsLogs.join('\n')}
------------------------------------------------------------
-Functions:
-${functionLogs.join('\n')}
------------------------------------------------------------
-`;
-}
-
-function buildResponseLog(resp: GenerateContentResponse): string {
-  const functionCallsText = [];
-  if (resp.functionCalls) {
-    for (const funcCall of resp.functionCalls) {
-      functionCallsText.push(
-          `name: ${funcCall.name}, args: ${JSON.stringify(funcCall.args)}`);
-    }
-  }
-
-  return `
-LLM Response:
------------------------------------------------------------
-Text:
-${resp.text}
------------------------------------------------------------
-Function calls:
-${functionCallsText.join('\n')}
------------------------------------------------------------
-Raw response:
-${JSON.stringify(resp)}
------------------------------------------------------------
-`;
-}
-
 
 function removeDisplayNameIfPresent(
     dataObj: Blob|FileData|undefined,
