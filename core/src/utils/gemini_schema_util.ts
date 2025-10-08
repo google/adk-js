@@ -34,27 +34,31 @@ function toGeminiType(mcpType: string): Type {
   }
 }
 
-export function toGeminiSchema(mcp_schema?: MCPToolSchema): Schema|undefined {
-  if (!mcp_schema) {
+export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema|undefined {
+  if (!mcpSchema) {
     return undefined;
   }
 
-  const gemini_schema: Schema = {
-    type: Type.OBJECT,
-    properties: {},
-    required: mcp_schema.required,
-  };
+  function recursiveConvert(mcp: any): Schema {
+    const geminiType = toGeminiType(mcp.type);
+    const geminiSchema:
+        Schema = {type: geminiType, description: mcp.description};
 
-  if (mcp_schema.properties && gemini_schema.properties) {
-    for (const name in mcp_schema.properties) {
-      // TODO: revisit this.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const property = mcp_schema.properties[name] as any;
-      gemini_schema.properties[name] = {
-        type: toGeminiType(property.type),
-        description: property.description,
-      };
+    if (geminiType === Type.OBJECT) {
+      geminiSchema.properties = {};
+      if (mcp.properties) {
+        for (const name in mcp.properties) {
+          geminiSchema.properties[name] =
+              recursiveConvert(mcp.properties[name]);
+        }
+      }
+      geminiSchema.required = mcp.required;
+    } else if (geminiType === Type.ARRAY) {
+      if (mcp.items) {
+        geminiSchema.items = recursiveConvert(mcp.items);
+      }
     }
+    return geminiSchema;
   }
-  return gemini_schema;
+  return recursiveConvert(mcpSchema);
 }
