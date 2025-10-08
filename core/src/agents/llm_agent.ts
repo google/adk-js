@@ -939,7 +939,7 @@ export class LlmAgent extends BaseAgent {
     const resultStr: string =
         event.content.parts.map((part) => (part.text ? part.text : ''))
             .join('');
-    let result: unknown;
+    let result: unknown = resultStr;
     if (this.outputSchema) {
       // If the result from the final chunk is just whitespace or empty,
       // it means this is an empty final chunk of a stream.
