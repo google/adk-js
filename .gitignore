@@ -4,4 +4,4 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
-dev/package-lock.json
+package-lock.json

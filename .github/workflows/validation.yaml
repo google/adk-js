@@ -19,15 +19,7 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: '20'
-    - name: Install dependencies in core
+    - name: Install dependencies
       run: npm install
-      working-directory: ./core
-    - name: Run tests in core
+    - name: Run tests
       run: npm run test
-      working-directory: ./core
-    - name: Install dependencies in dev
-      run: npm install
-      working-directory: ./dev
-    - name: Run tests in dev
-      run: npm run test
-      working-directory: ./dev

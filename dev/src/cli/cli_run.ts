@@ -23,6 +23,8 @@ async function loadFileData<T>(filePath: string): Promise<T|undefined> {
                path.join(dirname, filePath), {encoding: 'utf-8'})) as T;
   } catch (e) {
     console.error(`Failed to read or parse file ${filePath}:`, e);
+
+    return undefined;
   }
 }
 

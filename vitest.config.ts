@@ -13,5 +13,5 @@ export default defineConfig({
     globals: true,
     include: ['**/*_test.ts'],
   },
-  resolve: {alias: {'@google/adk': path.resolve(__dirname, '../core/src')}},
+  resolve: {alias: {'@google/adk': path.resolve(__dirname, './core/src')}},
 });
