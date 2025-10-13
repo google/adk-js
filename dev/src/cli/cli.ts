@@ -23,13 +23,13 @@ const LOG_LEVEL_MAP: Record<string, LogLevel> = {
 };
 
 function getLogLevelFromOptions(
-    options: {verbose?: boolean; logLevel?: string;}) {
+    options: {verbose?: boolean; log_level?: string;}) {
   if (options.verbose) {
     return LogLevel.DEBUG;
   }
 
-  if (typeof options.logLevel === 'string') {
-    return LOG_LEVEL_MAP[options.logLevel.toLowerCase()] || LogLevel.INFO;
+  if (typeof options.log_level === 'string') {
+    return LOG_LEVEL_MAP[options.log_level.toLowerCase()] || LogLevel.INFO;
   }
 
   return LogLevel.INFO;
@@ -42,7 +42,7 @@ function getAbsolutePath(p: string): string {
 const AGENT_DIR_ARGUMENT =
     new Argument(
         '[agents_dir]',
-        'Directory of agents to serve. Internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)')
+        'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)')
         .default(process.cwd());
 const HOST_OPTION =
     new Option(
@@ -60,7 +60,7 @@ const VERBOSE_OPTION =
         '-v, --verbose [boolean]', 'Optional. The verbose level of the server')
         .default(false);
 const LOG_LEVEL_OPTION =
-    new Option('--log-level <string>', 'Optional. The log level of the server')
+    new Option('--log_level <string>', 'Optional. The log level of the server')
         .default('info');
 
 const program = new Command('ADK CLI');

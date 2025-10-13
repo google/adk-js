@@ -132,7 +132,9 @@ export class AgentLoader {
       return;
     }
 
-    const files = await getDirFiles(this.agentsDirPath);
+    const files = await isFile(this.agentsDirPath) ?
+        [await getFileMetadata(this.agentsDirPath)] :
+        await getDirFiles(this.agentsDirPath);
 
     await Promise.all(files.map(async (fileOrDir: FileMetadata) => {
       if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
@@ -207,4 +209,14 @@ async function getFileMetadata(filePath: string): Promise<FileMetadata> {
     isFile,
     isDirectory: fileStats.isDirectory(),
   };
+}
+
+/** Check if the given path is a file. */
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fsPromises.stat(filePath);
+    return stat.isFile();
+  } catch (e: unknown) {
+    return false;
+  }
 }

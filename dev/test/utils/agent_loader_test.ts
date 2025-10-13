@@ -201,5 +201,15 @@ describe('AgentLoader', () => {
       await agentLoader.disposeAll();
       await expect(fs.access(compiledAgent2Path)).rejects.toThrow();
     });
+
+    it('can load agent when agentDir is the filepath', async () => {
+      const loader = new AgentLoader(path.join(tempAgentsDir, 'agent1.js'));
+      const agents = await loader.listAgents();
+      expect(agents).toEqual(['agent1']);
+      const agentFile = await loader.getAgentFile('agent1');
+      const agent = await agentFile.load();
+      expect(agent.name).toBe('agent1');
+      await loader.disposeAll();
+    });
   });
 });
