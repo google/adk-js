@@ -141,6 +141,20 @@ export function hasTrailingCodeExecutionResult(event: Event): boolean {
   return false;
 }
 
+/**
+ * Extracts and concatenates all text from the parts of a `Event` object.
+ * @param event The `Event` object to process.
+ *
+ * @returns A single string with the combined text.
+ */
+export function stringifyContent(event: Event): string {
+  if (!event.content?.parts) {
+    return '';
+  }
+
+  return event.content.parts.map(part => part.text ?? '').join('');
+}
+
 const ASCII_LETTERS_AND_NUMBERS =
     'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
