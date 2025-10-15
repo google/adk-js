@@ -24,6 +24,8 @@ export type {EventActions} from './events/event_actions.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export {BaseLlm} from './models/base_llm.js';
 export type {BaseLlmConnection} from './models/base_llm_connection.js';
+export {Gemini} from './models/google_llm.js';
+export type {GeminiParams} from './models/google_llm.js';
 export type {LlmRequest} from './models/llm_request.js';
 export type {LlmResponse} from './models/llm_response.js';
 export {BasePlugin} from './plugins/base_plugin.js';
