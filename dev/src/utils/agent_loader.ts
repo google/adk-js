@@ -3,10 +3,13 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+
 import {BaseAgent} from '@google/adk';
 import esbuild from 'esbuild';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
+
+import {isFile} from './file_utils.js';
 
 const JS_FILES_EXTENSIONST_TO_COMPILE = ['.ts', '.mts'];
 const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts'];
@@ -21,6 +24,27 @@ interface FileMetadata {
 
 class AgentFileLoadingError extends Error {}
 
+export enum AgentFileBundleMode {
+  ANY = 'any',
+  TS = 'ts',
+}
+
+/**
+ * Options for loading an agent file.
+ */
+export interface AgentFileOptions {
+  bundle?: AgentFileBundleMode;
+}
+
+/**
+ * Default options for loading an agent file.
+ *
+ * Compile and bundle only .ts files.
+ */
+const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
+  bundle: AgentFileBundleMode.TS,
+};
+
 /**
  * Wrapper class which loads file that contains base agent (support both .js and
  * .ts) and has a dispose function to cleanup the comliped artifact after file
@@ -31,7 +55,10 @@ export class AgentFile {
   private disposed = false;
   private agent?: BaseAgent;
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+      private readonly filePath: string,
+      private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
+  ) {}
 
   async load(): Promise<BaseAgent> {
     if (this.agent) {
@@ -50,7 +77,8 @@ export class AgentFile {
     let filePath = this.filePath;
     const fileExt = path.extname(filePath);
 
-    if (JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)) {
+    if (this.options.bundle === AgentFileBundleMode.ANY ||
+        JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)) {
       const compiledFilePath = filePath.replace(fileExt, '.cjs');
 
       await esbuild.build({
@@ -61,6 +89,7 @@ export class AgentFile {
         format: 'cjs',
         packages: 'external',
         bundle: true,
+        allowOverwrite: true,
       });
 
       this.cleanupFilePath = compiledFilePath;
@@ -68,14 +97,25 @@ export class AgentFile {
     }
 
     const jsModule = await import(filePath);
-
-    if (jsModule && jsModule.rootAgent && jsModule.rootAgent) {
+    if (jsModule && jsModule.rootAgent) {
       return this.agent = jsModule.rootAgent;
     }
 
     this.dispose();
     throw new AgentFileLoadingError(
         `Failed to load agent ${filePath}: No rootAgent found`);
+  }
+
+  getFilePath(): string {
+    if (!this.agent) {
+      throw new Error('Agent is not loaded yet');
+    }
+
+    if (this.disposed) {
+      throw new Error('Agent is disposed and can not be used');
+    }
+
+    return this.cleanupFilePath || this.filePath;
   }
 
   async[Symbol.asyncDispose](): Promise<void> {
@@ -108,7 +148,28 @@ export class AgentLoader {
   private agentsAlreadyPreloaded = false;
   private readonly preloadedAgents: Record<string, AgentFile> = {};
 
-  constructor(private readonly agentsDirPath: string = process.cwd()) {}
+  constructor(
+      private readonly agentsDirPath: string = process.cwd(),
+      private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
+  ) {
+    // Do cleanups on exit
+    const exitHandler =
+        async ({exit, cleanup}: {exit?: boolean; cleanup?: boolean;}) => {
+      if (cleanup) {
+        await this.disposeAll();
+      }
+
+      if (exit) {
+        process.exit();
+      }
+    };
+
+    process.on('exit', () => exitHandler({cleanup: true}));
+    process.on('SIGINT', () => exitHandler({exit: true}));
+    process.on('SIGUSR1', () => exitHandler({exit: true}));
+    process.on('SIGUSR2', () => exitHandler({exit: true}));
+    process.on('uncaughtException', () => exitHandler({exit: true}));
+  }
 
   async listAgents(): Promise<string[]> {
     await this.preloadAgents();
@@ -127,7 +188,7 @@ export class AgentLoader {
         Object.values(this.preloadedAgents).map(f => f.dispose()));
   }
 
-  private async preloadAgents() {
+  async preloadAgents() {
     if (this.agentsAlreadyPreloaded) {
       return;
     }
@@ -152,7 +213,7 @@ export class AgentLoader {
 
   private async loadAgentFromFile(file: FileMetadata): Promise<void> {
     try {
-      const agentFile = new AgentFile(file.path);
+      const agentFile = new AgentFile(file.path, this.options);
       await agentFile.load();
       this.preloadedAgents[file.name] = agentFile;
     } catch (e) {
@@ -173,7 +234,7 @@ export class AgentLoader {
     }
 
     try {
-      const agentFile = new AgentFile(possibleAgentJsFile.path);
+      const agentFile = new AgentFile(possibleAgentJsFile.path, this.options);
       await agentFile.load();
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {
@@ -209,14 +270,4 @@ async function getFileMetadata(filePath: string): Promise<FileMetadata> {
     isFile,
     isDirectory: fileStats.isDirectory(),
   };
-}
-
-/** Check if the given path is a file. */
-async function isFile(filePath: string): Promise<boolean> {
-  try {
-    const stat = await fsPromises.stat(filePath);
-    return stat.isFile();
-  } catch (e: unknown) {
-    return false;
-  }
 }

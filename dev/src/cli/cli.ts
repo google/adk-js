@@ -12,6 +12,8 @@ import {Command, Argument, Option} from 'commander';
 import {LogLevel, setLogLevel} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
+import {deployToCloudRun} from './cli_deploy.js';
+import {getTempDir} from '../utils/file_utils.js';
 
 dotenv.config();
 
@@ -135,6 +137,68 @@ program.command('run')
         savedSessionFile: options['resume'],
         saveSession: !!options['save_session'],
         sessionId: options['session_id'],
+      });
+    });
+
+const DEPLOY_COMMAND = program.command('deploy')
+                           .description('Deploy agent')
+                           .allowUnknownOption()
+                           .allowExcessArguments();
+
+DEPLOY_COMMAND.command('cloud_run')
+    .addArgument(AGENT_DIR_ARGUMENT)
+    .addOption(PORT_OPTION)
+    .option(
+        '--project [string]',
+        'Optional. Google Cloud project to deploy the agent. If not set, default project from gcloud config is used')
+    .option(
+        '--region [string]',
+        'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used')
+    .option(
+        '--service_name [string]',
+        'Optional. The service name to use in Cloud Run. Default: "adk-default-service-name"',
+        'adk-default-service-name')
+    .option(
+        '--temp_folder [string]',
+        'Optional. Temp folder for the generated Cloud Run source files (default: a timestamped folder in the system temp directory).',
+        getTempDir('cloud_run_deploy_src'))
+    .option(
+        '--adk_version [string]',
+        'Optional. ADK version to use in the Cloud Run service. If not set, default to the latest version available on npm',
+        'latest')
+    .option(
+        '--with_ui [boolean]',
+        'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
+        false)
+    .addOption(ORIGINS_OPTION)
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .action((agentPath: string, options: Record<string, string>) => {
+      const extraGcloudArgs = [];
+      for (const arg of process.argv.slice(5)) {
+        let argName = arg.replace(/^-+/, '');
+        if (argName.includes('=')) {
+          argName = argName.split('=')[0];
+        }
+        if (argName in options) {
+          continue;
+        }
+
+        extraGcloudArgs.push(arg);
+      }
+
+      deployToCloudRun({
+        agentPath: getAbsolutePath(agentPath),
+        project: options['project'],
+        region: options['region'],
+        serviceName: options['service_name'],
+        tempFolder: options['temp_folder'],
+        port: parseInt(options['port'], 10),
+        withUi: !!options['with_ui'],
+        logLevel: options['log_level'],
+        adkVersion: options['adk_version'],
+        allowOrigins: options['allow_origins'],
+        extraGcloudArgs,
       });
     });
 

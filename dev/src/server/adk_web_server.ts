@@ -60,23 +60,6 @@ export class AdkWebServer {
   private init() {
     const app = this.app;
 
-    // Do cleanups on exit
-    const exitHandler =
-        async ({exit, cleanup}: {exit?: boolean; cleanup?: boolean;}) => {
-      if (cleanup) {
-        await this.agentLoader.disposeAll();
-      }
-
-      if (exit) {
-        process.exit();
-      }
-    };
-    process.on('exit', () => exitHandler({cleanup: true}));
-    process.on('SIGINT', () => exitHandler({exit: true}));
-    process.on('SIGUSR1', () => exitHandler({exit: true}));
-    process.on('SIGUSR2', () => exitHandler({exit: true}));
-    process.on('uncaughtException', () => exitHandler({exit: true}));
-
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
         res.redirect('/dev-ui');

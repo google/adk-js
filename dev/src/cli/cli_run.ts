@@ -3,39 +3,19 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+
 import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as readline from 'readline';
+import * as path from 'node:path';
+import * as readline from 'node:readline';
 
 import {AgentFile} from '../utils/agent_loader';
+import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
 
 interface InputFile {
   state: Record<string, unknown>;
   queries: string[];
-}
-
-async function loadFileData<T>(filePath: string): Promise<T|undefined> {
-  try {
-    return JSON.parse(await fs.readFile(
-               path.join(dirname, filePath), {encoding: 'utf-8'})) as T;
-  } catch (e) {
-    console.error(`Failed to read or parse file ${filePath}:`, e);
-
-    return undefined;
-  }
-}
-
-async function saveToFile<T>(filePath: string, data: T): Promise<void> {
-  try {
-    await fs.writeFile(
-        path.join(dirname, filePath), JSON.stringify(data, null, 2),
-        {encoding: 'utf-8'});
-  } catch (e) {
-    console.error(`Failed to write file ${filePath}:`, e);
-  }
 }
 
 async function getUserInput(prompt: string): Promise<string> {
@@ -63,7 +43,8 @@ interface RunFromInputFileOptions {
 }
 async function runFromInputFile(options: RunFromInputFileOptions):
     Promise<Session|undefined> {
-  const fileContent = await loadFileData<InputFile>(options.filePath);
+  const fileContent =
+      await loadFileData<InputFile>(path.join(dirname, options.filePath));
   if (!fileContent) {
     return;
   }
@@ -225,7 +206,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         userId: session.userId,
         sessionId: session.id,
       });
-      await saveToFile(sessionPath, sessionToStore);
+      await saveToFile(path.join(dirname, sessionPath), sessionToStore);
 
       console.log('Session saved to', sessionPath);
     }

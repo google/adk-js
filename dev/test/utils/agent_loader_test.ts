@@ -130,6 +130,7 @@ describe('AgentLoader', () => {
         format: 'cjs',
         packages: 'external',
         bundle: true,
+        allowOverwrite: true,
       });
 
       await agentFile.dispose();
