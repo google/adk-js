@@ -1,0 +1,107 @@
+import { SecurityPlugin, FunctionTool, LlmAgent, BasePolicyEngine, PolicyCheckResult, ToolCallPolicyContext, PolicyOutcome } from '@google/adk';
+import { z } from 'zod';
+
+interface ToolResult {
+  status: 'success' | 'error';
+  report?: string;
+  error_message?: string;
+}
+
+/**
+ * Retrieves the current weather report for a specified city.
+ *
+ * @param city The name of the city for which to retrieve the weather
+ report.
+ * @returns status and result or error msg.
+ */
+async function get_weather({ city }: { city: string }): Promise<ToolResult> {
+  if (city.toLowerCase() === 'new york') {
+    return {
+      'status': 'success',
+      'report':
+        'The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit).',
+    };
+  } else {
+    return {
+      'status': 'error',
+      'error_message': `Weather information for '${city}' is not available.`,
+    };
+  }
+}
+
+/**
+ * Returns the current time in a specified city.
+ *
+ * @param city The name of the city for which to retrieve the current time.
+ * @returns status and result or error msg.
+ */
+async function get_current_time({ city }: { city: string }): Promise<ToolResult> {
+  if (city.toLowerCase() === 'new york') {
+    const tzIdentifier = 'America/New_York';
+    try {
+      const now = new Date();
+      const report =
+        `The current time in ${city} is ${now.toLocaleString('en-US', {
+          timeZone: tzIdentifier
+        })} ${tzIdentifier}`;
+      return { 'status': 'success', 'report': report };
+    } catch (e) {
+      return {
+        'status': 'error',
+        'error_message': `Error getting time for ${city}: ${e}`,
+      };
+    }
+  } else {
+    return {
+      'status': 'error',
+      'error_message': `Sorry, I don't have timezone information for ${city}.`,
+    };
+  }
+}
+
+const getWeatherTool = new FunctionTool({
+  name: 'get_weather',
+  description: 'Retrieves the current weather report for a specified city.',
+  parameters: z.object({
+    city: z.string().describe('The name of the city.'),
+  }),
+  execute: get_weather,
+});
+
+const getCurrentTimeTool = new FunctionTool({
+  name: 'get_current_time',
+  description: 'Returns the current time in a specified city.',
+  parameters: z.object({
+    city: z.string().describe('The name of the city.'),
+  }),
+  execute: get_current_time,
+});
+
+export class CustomPolicyEngine implements BasePolicyEngine {
+  async evaluate(context: ToolCallPolicyContext): Promise<PolicyCheckResult> {
+    // Default permissive implementation
+    return Promise.resolve({
+      outcome: PolicyOutcome.CONFIRM,
+      reason: 'Needs confirmation for tool call',
+    });
+  }
+}
+
+export const rootAgent = new LlmAgent({
+  name: 'weather_time_agent',
+  model: 'gemini-2.5-flash',
+  description:
+    'Agent to answer questions about the time and weather in a city.',
+  instruction:
+    'You are a helpful agent who can answer user questions about the time and weather in a city.',
+  tools: [getWeatherTool, getCurrentTimeTool],
+});
+
+export const app = {
+  name: 'tool_confirmation',
+  rootAgent,
+  resumabilityConfig: {
+    isResumable: true,
+  },
+  plugins: [new SecurityPlugin({ policyEngine: new CustomPolicyEngine() })],
+};

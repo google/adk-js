@@ -54,6 +54,7 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     this.sessions[appName][userId][session.id] = session;
+    logger.info(`Session created: appName: ${appName}, userId: ${userId}, sessionId: ${sessionId}`);
 
     return Promise.resolve(
         this.mergeState(appName, userId, deepClone(session)));
@@ -63,6 +64,7 @@ export class InMemorySessionService extends BaseSessionService {
       Promise<Session|undefined> {
     if (!this.sessions[appName] || !this.sessions[appName][userId] ||
         !this.sessions[appName][userId][sessionId]) {
+      logger.warn(`Session not found: appName: ${appName}, userId: ${userId}, sessionId: ${sessionId}`);
       return Promise.resolve(undefined);
     }
 

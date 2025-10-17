@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent} from '@google/adk';
+import {App, isAdkAppInstance, isAdkAgentInstance} from '@google/adk';
 import esbuild from 'esbuild';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
@@ -22,7 +22,7 @@ interface FileMetadata {
   isDirectory: boolean;
 }
 
-class AgentFileLoadingError extends Error {}
+class AgentAppFileLoadingError extends Error {}
 
 export enum AgentFileBundleMode {
   ANY = 'any',
@@ -50,27 +50,27 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  * .ts) and has a dispose function to cleanup the comliped artifact after file
  * usage.
  */
-export class AgentFile {
+export class AgentAppFile {
   private cleanupFilePath: string|undefined;
   private disposed = false;
-  private agent?: BaseAgent;
+  private app?: App;
 
   constructor(
       private readonly filePath: string,
       private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {}
 
-  async load(): Promise<BaseAgent> {
-    if (this.agent) {
-      return this.agent;
+  async load(): Promise<App> {
+    if (this.app) {
+      return this.app;
     }
 
     try {
       await fsPromises.stat(this.filePath);
     } catch (e) {
       if ((e as {code: string}).code === 'ENOENT') {
-        throw new AgentFileLoadingError(
-            `Agent file ${this.filePath} does not exists`);
+        throw new AgentAppFileLoadingError(
+            `File ${this.filePath} does not exists`);
       }
     }
 
@@ -97,17 +97,29 @@ export class AgentFile {
     }
 
     const jsModule = await import(filePath);
-    if (jsModule && jsModule.rootAgent) {
-      return this.agent = jsModule.rootAgent;
+    if (jsModule) {
+      if (jsModule.app && isAdkAppInstance(jsModule.app)) {
+        return this.app = jsModule.app;
+      }
+
+      if (jsModule.rootAgent && isAdkAgentInstance(jsModule.rootAgent)) {
+        return this.app = {
+          name: jsModule.rootAgent.name,
+          rootAgent: jsModule.rootAgent,
+          plugins: [],
+        };
+      }
+
+      return this.app = jsModule.rootAgent;
     }
 
     this.dispose();
-    throw new AgentFileLoadingError(
-        `Failed to load agent ${filePath}: No rootAgent found`);
+    throw new AgentAppFileLoadingError(
+        `Failed to load agent/app ${filePath}: No rootAgent or app found`);
   }
 
   getFilePath(): string {
-    if (!this.agent) {
+    if (!this.app) {
       throw new Error('Agent is not loaded yet');
     }
 
@@ -146,7 +158,7 @@ export class AgentFile {
  */
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
-  private readonly preloadedAgents: Record<string, AgentFile> = {};
+  private readonly preloadedAgents: Record<string, AgentAppFile> = {};
 
   constructor(
       private readonly agentsDirPath: string = process.cwd(),
@@ -177,7 +189,7 @@ export class AgentLoader {
     return Object.keys(this.preloadedAgents).sort();
   }
 
-  async getAgentFile(agentName: string): Promise<AgentFile> {
+  async getAgentAppFile(agentName: string): Promise<AgentAppFile> {
     await this.preloadAgents();
 
     return this.preloadedAgents[agentName];
@@ -213,11 +225,11 @@ export class AgentLoader {
 
   private async loadAgentFromFile(file: FileMetadata): Promise<void> {
     try {
-      const agentFile = new AgentFile(file.path, this.options);
+      const agentFile = new AgentAppFile(file.path, this.options);
       await agentFile.load();
       this.preloadedAgents[file.name] = agentFile;
     } catch (e) {
-      if (e instanceof AgentFileLoadingError) {
+      if (e instanceof AgentAppFileLoadingError) {
         return;
       }
       throw e;
@@ -234,11 +246,11 @@ export class AgentLoader {
     }
 
     try {
-      const agentFile = new AgentFile(possibleAgentJsFile.path, this.options);
+      const agentFile = new AgentAppFile(possibleAgentJsFile.path, this.options);
       await agentFile.load();
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {
-      if (e instanceof AgentFileLoadingError) {
+      if (e instanceof AgentAppFileLoadingError) {
         return;
       }
       throw e;
