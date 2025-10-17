@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+import {App, isAdkAgentInstance, BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
+import {AgentAppFile} from '../utils/agent_loader';
 import {AgentAppFile} from '../utils/agent_loader';
 import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
@@ -35,6 +36,7 @@ async function getUserInput(prompt: string): Promise<string> {
 interface RunFromInputFileOptions {
   appName: string;
   userId: string;
+  app: App;
   app: App;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
@@ -91,6 +93,7 @@ async function runFromInputFile(options: RunFromInputFileOptions):
 
 interface RunInteractivelyOptions {
   app: App;
+  app: App;
   session: Session;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
@@ -99,6 +102,9 @@ interface RunInteractivelyOptions {
 async function runInteractively(options: RunInteractivelyOptions):
     Promise<void> {
   const runner = new Runner({
+    appName: options.app.name,
+    agent: options.app.rootAgent,
+    plugins: options.app.plugins,
     appName: options.app.name,
     agent: options.app.rootAgent,
     plugins: options.app.plugins,
