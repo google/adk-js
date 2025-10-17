@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, StreamingMode} from '@google/adk';
+import {App, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, StreamingMode} from '@google/adk';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'http';
@@ -129,8 +129,8 @@ export class AdkWebServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
-          const rootAgent = await agentFile.load();
+          await using agentFile = await this.agentLoader.getAgentAppFile(appName);
+          const app = await agentFile.load();
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];
@@ -143,7 +143,7 @@ export class AdkWebServer {
 
             return res.send({
               dotSrc:
-                  await getAgentGraphAsDot(rootAgent, functionCallHighlights)
+                  await getAgentGraphAsDot(app.rootAgent, functionCallHighlights)
             });
           }
 
@@ -159,12 +159,12 @@ export class AdkWebServer {
 
             return res.send({
               dotSrc:
-                  await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
+                  await getAgentGraphAsDot(app.rootAgent!, functionCallHighlights)
             });
           }
 
           return res.send({
-            dotSrc: await getAgentGraphAsDot(rootAgent!, [[event.author!, '']])
+            dotSrc: await getAgentGraphAsDot(app.rootAgent!, [[event.author!, '']])
           });
         });
 
@@ -496,9 +496,9 @@ export class AdkWebServer {
       }
 
       try {
-        await using agentFile = await this.agentLoader.getAgentFile(appName);
-        const agent = await agentFile.load();
-        const runner = await this.getRunner(agent, appName);
+        await using agentFile = await this.agentLoader.getAgentAppFile(appName);
+        const app = await agentFile.load();
+        const runner = await this.getRunner(app, appName);
         const events: Event[] = [];
 
         for await (const e of runner.runAsync({
@@ -530,9 +530,9 @@ export class AdkWebServer {
       }
 
       try {
-        await using agentFile = await this.agentLoader.getAgentFile(appName);
-        const agent = await agentFile.load();
-        const runner = await this.getRunner(agent, appName);
+        await using agentFile = await this.agentLoader.getAgentAppFile(appName);
+        const app = await agentFile.load();
+        const runner = await this.getRunner(app, appName);
 
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Content-Type', 'text/event-stream');
@@ -599,11 +599,12 @@ export class AdkWebServer {
     });
   }
 
-  private async getRunner(agent: BaseAgent, appName: string): Promise<Runner> {
+  private async getRunner(app: App, appName: string): Promise<Runner> {
     if (!(appName in this.runnerCache)) {
       this.runnerCache[appName] = new Runner({
-        appName,
-        agent,
+        appName: app.name,
+        agent: app.rootAgent,
+        plugins: app.plugins,
         memoryService: this.memoryService,
         sessionService: this.sessionService,
         artifactService: this.artifactService,

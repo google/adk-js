@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+import {App, isAdkAgentInstance, BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
-import {AgentFile} from '../utils/agent_loader';
+import {AgentAppFile} from '../utils/agent_loader';
 import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
@@ -35,7 +35,7 @@ async function getUserInput(prompt: string): Promise<string> {
 interface RunFromInputFileOptions {
   appName: string;
   userId: string;
-  agent: BaseAgent;
+  app: App;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
@@ -57,7 +57,14 @@ async function runFromInputFile(options: RunFromInputFileOptions):
     state: fileContent.state,
   });
 
-  const runner = new Runner(options);
+  const runner = new Runner({
+    appName: options.app.name,
+    agent: options.app.rootAgent,
+    plugins: options.app.plugins,
+    artifactService: options.artifactService,
+    sessionService: options.sessionService,
+    memoryService: options.memoryService,
+  });
 
   for (const query of fileContent.queries) {
     console.log(`[user]: ${query}`);
@@ -83,7 +90,7 @@ async function runFromInputFile(options: RunFromInputFileOptions):
 }
 
 interface RunInteractivelyOptions {
-  rootAgent: BaseAgent;
+  app: App;
   session: Session;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
@@ -92,8 +99,9 @@ interface RunInteractivelyOptions {
 async function runInteractively(options: RunInteractivelyOptions):
     Promise<void> {
   const runner = new Runner({
-    appName: options.rootAgent.name,
-    agent: options.rootAgent,
+    appName: options.app.name,
+    agent: options.app.rootAgent,
+    plugins: options.app.plugins,
     artifactService: options.artifactService,
     sessionService: options.sessionService,
     memoryService: options.memoryService,
@@ -143,19 +151,19 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     const sessionService = new InMemorySessionService();
     const memoryService = new InMemoryMemoryService();
     await using agentFile =
-        new AgentFile(path.join(dirname, options.agentPath));
-    const rootAgent = await agentFile.load();
+        new AgentAppFile(path.join(dirname, options.agentPath));
+    const app = await agentFile.load();
 
     let session = await sessionService.createSession({
-      appName: rootAgent.name,
+      appName: app.name,
       userId,
     });
 
     if (options.inputFile) {
       session = await runFromInputFile({
-                  appName: rootAgent.name,
+                  appName: app.name,
                   userId,
-                  agent: rootAgent,
+                  app,
                   artifactService,
                   sessionService,
                   memoryService,
@@ -179,16 +187,16 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       }
 
       await runInteractively({
-        rootAgent,
+        app,
         artifactService,
         sessionService,
         memoryService,
         session,
       });
     } else {
-      console.log(`Running agent ${rootAgent.name}, type exit to exit.`);
+      console.log(`Running app ${app.name}, type exit to exit.`);
       await runInteractively({
-        rootAgent,
+        app,
         artifactService,
         sessionService,
         memoryService,

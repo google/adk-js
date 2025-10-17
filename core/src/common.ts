@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export {BaseAgent} from './agents/base_agent.js';
+export {BaseAgent, isAdkAgentInstance} from './agents/base_agent.js';
+export {App, isAdkAppInstance} from './apps/app.js';
 export {CallbackContext} from './agents/callback_context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';

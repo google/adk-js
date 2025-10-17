@@ -63,7 +63,7 @@ async function copyAgentFiles(
   const agentNames = await agentLoader.listAgents();
 
   for (const agentName of agentNames) {
-    const agentFile = await agentLoader.getAgentFile(agentName);
+    const agentFile = await agentLoader.getAgentAppFile(agentName);
     const fileName = path.parse(agentFile.getFilePath()).base;
 
     await fs.cp(
