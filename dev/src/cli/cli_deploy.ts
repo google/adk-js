@@ -25,6 +25,7 @@ export interface CreateDockerFileContentOptions {
   withUi: boolean;
   logLevel: string;
   allowOrigins?: string;
+  artifactServiceUri?: string;
 }
 
 export interface DeployToCloudRunOptions extends
@@ -165,6 +166,11 @@ function createDockerFileContent(
 
   if (options.allowOrigins) {
     adkServerOptions.push(`--allow_origins=${options.allowOrigins}`);
+  }
+
+  if (options.artifactServiceUri) {
+    adkServerOptions.push(
+        `--artifact_service_uri=${options.artifactServiceUri}`);
   }
 
   return `

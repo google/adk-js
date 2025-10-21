@@ -135,13 +135,18 @@ export interface RunAgentOptions {
   savedSessionFile?: string;
   saveSession?: boolean;
   sessionId?: string;
+  artifactService?: BaseArtifactService;
+  sessionService?: BaseSessionService;
+  memoryService?: BaseMemoryService;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
     const userId = 'test_user';
-    const artifactService = new InMemoryArtifactService();
-    const sessionService = new InMemorySessionService();
-    const memoryService = new InMemoryMemoryService();
+    const artifactService =
+        options.artifactService || new InMemoryArtifactService();
+    const sessionService =
+        options.sessionService || new InMemorySessionService();
+    const memoryService = options.memoryService || new InMemoryMemoryService();
     await using agentFile =
         new AgentFile(path.join(dirname, options.agentPath));
     const rootAgent = await agentFile.load();

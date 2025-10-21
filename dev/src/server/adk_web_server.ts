@@ -78,8 +78,10 @@ export class AdkWebServer {
         origin: this.allowOrigins!,
       }));
     }
-    app.use(express.urlencoded({extended: true}));
-    app.use(express.json());
+    app.use(express.urlencoded({limit: '50mb', extended: true}));
+    app.use(express.json({
+      limit: '50mb',
+    }));
 
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {

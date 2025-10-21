@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import dotenv from 'dotenv';
 import {Command, Argument, Option} from 'commander';
-import {LogLevel, setLogLevel} from '@google/adk';
+import {LogLevel, setLogLevel, BaseArtifactService, GcsArtifactService} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
 import {deployToCloudRun} from './cli_deploy.js';
@@ -41,6 +41,16 @@ function getAbsolutePath(p: string): string {
   return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
 }
 
+function getArtifactServiceFromUri(uri: string): BaseArtifactService {
+  if (uri.startsWith('gs://')) {
+    const bucket = uri.split('://')[1];
+
+    return new GcsArtifactService(bucket);
+  }
+
+  throw new Error(`Unsupported artifact service URI: ${uri}`);
+}
+
 const AGENT_DIR_ARGUMENT =
     new Argument(
         '[agents_dir]',
@@ -64,6 +74,8 @@ const VERBOSE_OPTION =
 const LOG_LEVEL_OPTION =
     new Option('--log_level <string>', 'Optional. The log level of the server')
         .default('info');
+const ARTIFACT_SERVICE_URI_OPTION = new Option(
+    '--artifact_service_uri <string>, Optional. The URI of the artifact service, supported URIs: gs://<bucket name> for GCS artifact service.')
 
 const program = new Command('ADK CLI');
 
@@ -75,6 +87,7 @@ program.command('web')
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -84,6 +97,9 @@ program.command('web')
         port: parseInt(options['port'], 10),
         serveDebugUI: true,
         allowOrigins: options['allow_origins'],
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
 
       server.start();
@@ -97,6 +113,7 @@ program.command('api_server')
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -106,6 +123,9 @@ program.command('api_server')
         port: parseInt(options['port'], 10),
         serveDebugUI: false,
         allowOrigins: options['allow_origins'],
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
 
       server.start();
@@ -128,6 +148,7 @@ program.command('run')
         'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -137,6 +158,9 @@ program.command('run')
         savedSessionFile: options['resume'],
         saveSession: !!options['save_session'],
         sessionId: options['session_id'],
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
     });
 
@@ -173,6 +197,7 @@ DEPLOY_COMMAND.command('cloud_run')
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
       for (const arg of process.argv.slice(5)) {
@@ -199,6 +224,7 @@ DEPLOY_COMMAND.command('cloud_run')
         adkVersion: options['adk_version'],
         allowOrigins: options['allow_origins'],
         extraGcloudArgs,
+        artifactServiceUri: options['artifact_service_uri'],
       });
     });
 
