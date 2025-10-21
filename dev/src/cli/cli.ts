@@ -10,6 +10,7 @@ import * as path from 'path';
 import dotenv from 'dotenv';
 import {Command, Argument, Option} from 'commander';
 import {LogLevel, setLogLevel, BaseArtifactService, GcsArtifactService} from '@google/adk';
+import {LogLevel, setLogLevel, BaseArtifactService, GcsArtifactService} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
 import {deployToCloudRun} from './cli_deploy.js';
@@ -43,7 +44,7 @@ function getAbsolutePath(p: string): string {
 
 function getArtifactServiceFromUri(uri: string): BaseArtifactService {
   if (uri.startsWith('gs://')) {
-    const bucket = uri.split("://")[1];
+    const bucket = uri.split('://')[1];
 
     return new GcsArtifactService(bucket);
   }
@@ -74,7 +75,8 @@ const VERBOSE_OPTION =
 const LOG_LEVEL_OPTION =
     new Option('--log_level <string>', 'Optional. The log level of the server')
         .default('info');
-const ARTIFACT_SERVICE_URI_OPTION = new Option('--artifact_service_uri <string>, Optional. The URI of the artifact service, supported URIs: gs://<bucket name> for GCS artifact service.')
+const ARTIFACT_SERVICE_URI_OPTION = new Option(
+    '--artifact_service_uri <string>, Optional. The URI of the artifact service, supported URIs: gs://<bucket name> for GCS artifact service.')
 
 const program = new Command('ADK CLI');
 
@@ -87,6 +89,7 @@ program.command('web')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -96,7 +99,9 @@ program.command('web')
         port: parseInt(options['port'], 10),
         serveDebugUI: true,
         allowOrigins: options['allow_origins'],
-        artifactService: options['artifact_service_uri'] ? getArtifactServiceFromUri(options['artifact_service_uri']) : undefined,
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
 
       server.start();
@@ -111,6 +116,7 @@ program.command('api_server')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -120,7 +126,9 @@ program.command('api_server')
         port: parseInt(options['port'], 10),
         serveDebugUI: false,
         allowOrigins: options['allow_origins'],
-        artifactService: options['artifact_service_uri'] ? getArtifactServiceFromUri(options['artifact_service_uri']) : undefined,
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
 
       server.start();
@@ -144,6 +152,7 @@ program.command('run')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -153,7 +162,9 @@ program.command('run')
         savedSessionFile: options['resume'],
         saveSession: !!options['save_session'],
         sessionId: options['session_id'],
-        artifactService: options['artifact_service_uri'] ? getArtifactServiceFromUri(options['artifact_service_uri']) : undefined,
+        artifactService: options['artifact_service_uri'] ?
+            getArtifactServiceFromUri(options['artifact_service_uri']) :
+            undefined,
       });
     });
 
@@ -191,6 +202,7 @@ DEPLOY_COMMAND.command('cloud_run')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
+    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
       for (const arg of process.argv.slice(5)) {
@@ -217,6 +229,7 @@ DEPLOY_COMMAND.command('cloud_run')
         adkVersion: options['adk_version'],
         allowOrigins: options['allow_origins'],
         extraGcloudArgs,
+        artifactServiceUri: options['artifact_service_uri'],
         artifactServiceUri: options['artifact_service_uri'],
       });
     });
