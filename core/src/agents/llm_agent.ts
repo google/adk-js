@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionCall, FunctionResponse, GenerateContentConfig, Part, Schema, ThinkingConfig} from '@google/genai';
+import {FunctionCall, GenerateContentConfig, Schema} from '@google/genai';
 import {z} from 'zod';
 
 import {createEvent, createNewEventId, Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
@@ -29,6 +29,7 @@ import {generateAuthEvent, generateRequestConfirmationEvent, getLongRunningFunct
 import {injectSessionState} from './instructions.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
+import {StreamingMode} from './run_config.js';
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (
@@ -1224,7 +1225,11 @@ export class LlmAgent extends BaseAgent {
       throw new Error('CFC is not yet supported in callLlmAsync');
     } else {
       invocationContext.incrementLlmCallCount();
-      const responsesGenerator = llm.generateContentAsync(llmRequest);
+      const responsesGenerator = llm.generateContentAsync(
+          llmRequest,
+          /* stream= */ invocationContext.runConfig?.streamingMode ===
+              StreamingMode.SSE,
+      );
 
       for await (const llmResponse of this.runAndHandleError(
           responsesGenerator, invocationContext, llmRequest,

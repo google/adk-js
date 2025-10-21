@@ -29,10 +29,11 @@ export abstract class BaseLlm {
    * Generates one content from the given contents and tools.
    *
    * @param llmRequest  LlmRequest, the request to send to the LLM.
+   * @param stream whether to do streaming call.
    * For non-streaming call, it will only yield one Content.
    * @return A generator of LlmResponse.
    */
-  abstract generateContentAsync(llmRequest: LlmRequest):
+  abstract generateContentAsync(llmRequest: LlmRequest, stream?: boolean):
       AsyncGenerator<LlmResponse, void>;
 
   /**

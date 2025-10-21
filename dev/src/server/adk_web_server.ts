@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner} from '@google/adk';
+import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, Event, getFunctionCalls, getFunctionResponses, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, RunConfig, Runner, StreamingMode} from '@google/adk';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'http';
@@ -516,7 +516,7 @@ export class AdkWebServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage} = req.body;
+      const {appName, userId, sessionId, newMessage, streaming} = req.body;
 
       const session = await this.sessionService.getSession({
         appName,
@@ -544,6 +544,9 @@ export class AdkWebServer {
           userId,
           sessionId,
           newMessage,
+          runConfig: new RunConfig({
+            streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+          }),
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
