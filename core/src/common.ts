@@ -22,6 +22,7 @@ export type {BaseCredentialService} from './auth/credential_service/base_credent
 export {createEvent, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse, stringifyContent} from './events/event.js';
 export type {Event} from './events/event.js';
 export type {EventActions} from './events/event_actions.js';
+export {createEventActions} from './events/event_actions.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export {BaseLlm} from './models/base_llm.js';
 export type {BaseLlmConnection} from './models/base_llm_connection.js';
