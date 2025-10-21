@@ -74,7 +74,11 @@ export class MCPSessionManager {
         break;
       case 'StreamableHTTPConnectionParams':
         await client.connect(new StreamableHTTPClientTransport(
-            new URL(this.connectionParams.url)));
+            new URL(this.connectionParams.url), this.connectionParams.header ?? {
+              requestInit: {
+                headers: this.connectionParams.header
+              }
+          }));
         break;
       default:
         // Triggers compile error if a case is missing.
