@@ -10,11 +10,11 @@ import {trace} from '@opentelemetry/api';
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext, newInvocationContextId} from '../agents/invocation_context.js';
 import {LlmAgent} from '../agents/llm_agent.js';
-import {RunConfig} from '../agents/run_config.js';
+import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
-import {createEventActions, EventActions} from '../events/event_actions.js';
+import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
@@ -70,12 +70,13 @@ export class Runner {
     sessionId,
     newMessage,
     stateDelta,
-    runConfig = new RunConfig(),
+    runConfig,
   }: {
     userId: string; sessionId: string; newMessage: Content;
     stateDelta?: Record<string, any>;
     runConfig?: RunConfig;
   }): AsyncGenerator<Event, void, undefined> {
+    runConfig = createRunConfig(runConfig);
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================

@@ -20,7 +20,7 @@ export enum StreamingMode {
 /**
  * Configs for runtime behavior of agents.
  */
-export class RunConfig {
+export interface RunConfig {
   /**
    * Speech configuration for the live agent.
    */
@@ -34,7 +34,7 @@ export class RunConfig {
   /**
    * Whether or not to save the input blobs as artifacts.
    */
-  saveInputBlobsAsArtifacts: boolean;
+  saveInputBlobsAsArtifacts?: boolean;
 
   /**
    * Whether to support CFC (Compositional Function Calling). Only applicable
@@ -44,12 +44,12 @@ export class RunConfig {
    * WARNING: This feature is **experimental** and its API or behavior may
    * change in future releases.
    */
-  supportCfc: boolean;
+  supportCfc?: boolean;
 
   /**
    * Streaming mode, None or StreamingMode.SSE or StreamingMode.BIDI.
    */
-  streamingMode: StreamingMode;
+  streamingMode?: StreamingMode;
 
   /**
    * Output audio transcription config.
@@ -65,7 +65,7 @@ export class RunConfig {
    * If enabled, the model will detect emotions and adapt its responses
    * accordingly.
    */
-  enableAffectiveDialog: boolean;
+  enableAffectiveDialog?: boolean;
 
   /**
    * Configures the proactivity of the model. This allows the model to respond
@@ -86,20 +86,18 @@ export class RunConfig {
    *     calls is enforced, if the value is set in this range.
    *   - Less than or equal to 0: This allows for unbounded number of llm calls.
    */
-  maxLlmCalls: number;
+  maxLlmCalls?: number;
+}
 
-  constructor(params: Partial<RunConfig> = {}) {
-    this.speechConfig = params.speechConfig;
-    this.responseModalities = params.responseModalities;
-    this.saveInputBlobsAsArtifacts = params.saveInputBlobsAsArtifacts || false;
-    this.supportCfc = params.supportCfc || false;
-    this.streamingMode = params.streamingMode || StreamingMode.NONE;
-    this.outputAudioTranscription = params.outputAudioTranscription;
-    this.inputAudioTranscription = params.inputAudioTranscription;
-    this.enableAffectiveDialog = params.enableAffectiveDialog || false;
-    this.realtimeInputConfig = params.realtimeInputConfig;
-    this.maxLlmCalls = validateMaxLlmCalls(params.maxLlmCalls || 500);
-  }
+export function createRunConfig(params: Partial<RunConfig> = {}) {
+  return {
+    saveInputBlobsAsArtifacts: false,
+    supportCfc: false,
+    enableAffectiveDialog: false,
+    streamingMode: StreamingMode.NONE,
+    maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
+    ...params,
+  };
 }
 
 function validateMaxLlmCalls(value: number): number {

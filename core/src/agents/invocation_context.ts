@@ -57,10 +57,10 @@ class InvocationCostManager {
   incrementAndEnforceLlmCallsLimit(runConfig?: RunConfig) {
     this.numberOfLlmCalls++;
 
-    if (runConfig && runConfig.maxLlmCalls > 0 &&
-        this.numberOfLlmCalls > runConfig.maxLlmCalls) {
-      throw new Error(
-          `Max number of llm calls limit of ${runConfig.maxLlmCalls} exceeded`);
+    if (runConfig && runConfig.maxLlmCalls! > 0 &&
+        this.numberOfLlmCalls > runConfig.maxLlmCalls!) {
+      throw new Error(`Max number of llm calls limit of ${
+          runConfig.maxLlmCalls!} exceeded`);
     }
   }
 }
