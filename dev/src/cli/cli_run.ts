@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, isAdkAgentInstance, BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+import {App, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -143,13 +143,16 @@ export interface RunAgentOptions {
   savedSessionFile?: string;
   saveSession?: boolean;
   sessionId?: string;
+  artifactService?: BaseArtifactService;
+  sessionService?: BaseSessionService;
+  memoryService?: BaseMemoryService;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
     const userId = 'test_user';
-    const artifactService = new InMemoryArtifactService();
-    const sessionService = new InMemorySessionService();
-    const memoryService = new InMemoryMemoryService();
+    const artifactService = options.artifactService || new InMemoryArtifactService();
+    const sessionService = options.sessionService || new InMemorySessionService();
+    const memoryService = options.memoryService || new InMemoryMemoryService();
     await using agentFile =
         new AgentAppFile(path.join(dirname, options.agentPath));
     const app = await agentFile.load();

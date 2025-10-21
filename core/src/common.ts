@@ -18,6 +18,7 @@ export {ParallelAgent} from './agents/parallel_agent.js';
 export type {RunConfig} from './agents/run_config.js';
 export {StreamingMode} from './agents/run_config.js';
 export {SequentialAgent} from './agents/sequential_agent.js';
+export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
 export {createEvent, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse, stringifyContent} from './events/event.js';

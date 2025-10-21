@@ -46,5 +46,8 @@
     "@modelcontextprotocol/sdk": "1.17.5",
     "@opentelemetry/api": "1.9.0",
     "zod": "3.25.76"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.17.2"
   }
 }
