@@ -88,7 +88,6 @@ program.command('web')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
 
@@ -114,7 +113,6 @@ program.command('api_server')
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentsDir: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
@@ -150,7 +148,6 @@ program.command('run')
         'The json file that contains a previously saved session (by --save_session option). The previous session will be re-displayed. And user can continue to interact with the agent.')
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       setLogLevel(getLogLevelFromOptions(options));
@@ -200,7 +197,6 @@ DEPLOY_COMMAND.command('cloud_run')
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
-    .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .addOption(ARTIFACT_SERVICE_URI_OPTION)
     .action((agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
