@@ -10,7 +10,6 @@ import * as path from 'path';
 import dotenv from 'dotenv';
 import {Command, Argument, Option} from 'commander';
 import {LogLevel, setLogLevel, BaseArtifactService, GcsArtifactService} from '@google/adk';
-import {LogLevel, setLogLevel, BaseArtifactService, GcsArtifactService} from '@google/adk';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {runAgent} from './cli_run.js';
 import {deployToCloudRun} from './cli_deploy.js';
@@ -229,7 +228,6 @@ DEPLOY_COMMAND.command('cloud_run')
         adkVersion: options['adk_version'],
         allowOrigins: options['allow_origins'],
         extraGcloudArgs,
-        artifactServiceUri: options['artifact_service_uri'],
         artifactServiceUri: options['artifact_service_uri'],
       });
     });
