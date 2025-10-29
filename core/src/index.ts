@@ -9,3 +9,5 @@ export * from './tools/mcp/mcp_session_manager.js';
 export * from './tools/mcp/mcp_tool.js';
 export * from './tools/mcp/mcp_toolset.js';
 export * from './artifacts/gcs_artifact_service.js';
+export * from './telemetry/setup.js';
+export * from './telemetry/google_cloud.js';
