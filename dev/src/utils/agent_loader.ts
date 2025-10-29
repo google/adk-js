@@ -9,7 +9,7 @@ import esbuild from 'esbuild';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 
-import {isFile} from './file_utils.js';
+import {getTempDir, isFile} from './file_utils.js';
 
 const JS_FILES_EXTENSIONST_TO_COMPILE = ['.ts', '.mts'];
 const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts'];
@@ -79,7 +79,9 @@ export class AgentFile {
 
     if (this.options.bundle === AgentFileBundleMode.ANY ||
         JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)) {
-      const compiledFilePath = filePath.replace(fileExt, '.cjs');
+      const parsedPath = path.parse(filePath);
+      const compiledFilePath =
+          path.join(getTempDir('adk_agent_loader'), parsedPath.name + '.cjs');
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -87,8 +89,9 @@ export class AgentFile {
         target: 'node10.4',
         platform: 'node',
         format: 'cjs',
-        packages: 'external',
+        packages: 'bundle',
         bundle: true,
+        minify: true,
         allowOverwrite: true,
       });
 

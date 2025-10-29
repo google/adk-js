@@ -10,6 +10,12 @@ import * as path from 'path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
 import {AgentFile, AgentLoader} from '../../src/utils/agent_loader';
+import * as fileUtils from '../../src/utils/file_utils.js';
+
+vi.mock('../../src/utils/file_utils.js', () => ({
+                                           getTempDir: vi.fn(),
+                                           isFile: vi.fn(),
+                                         }));
 
 vi.mock('esbuild', () => ({
                      default: {
@@ -89,6 +95,7 @@ describe('AgentLoader', () => {
   beforeEach(async () => {
     tempAgentsDir =
         await fs.mkdtemp(path.join(os.tmpdir(), 'adk-test-agents-'));
+    (fileUtils.getTempDir as Mock).mockImplementation(() => tempAgentsDir);
   });
 
   afterEach(async () => {
@@ -128,8 +135,9 @@ describe('AgentLoader', () => {
         target: 'node10.4',
         platform: 'node',
         format: 'cjs',
-        packages: 'external',
+        packages: 'bundle',
         bundle: true,
+        minify: true,
         allowOverwrite: true,
       });
 
@@ -204,6 +212,7 @@ describe('AgentLoader', () => {
     });
 
     it('can load agent when agentDir is the filepath', async () => {
+      (fileUtils.isFile as Mock).mockReturnValue(true);
       const loader = new AgentLoader(path.join(tempAgentsDir, 'agent1.js'));
       const agents = await loader.listAgents();
       expect(agents).toEqual(['agent1']);
