@@ -18,12 +18,20 @@ import {
   Runner,
   StreamingMode,
 } from '@google/adk';
+import {trace, TracerProvider} from '@opentelemetry/api';
+import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'http';
 import * as path from 'path';
 
 import {AgentLoader} from '../utils/agent_loader.js';
+import {
+  ApiServerSpanExporter,
+  hrTimeToNanoseconds,
+  InMemoryExporter,
+  setupTelemetry,
+} from '../utils/telemetry_utils.js';
 
 import {getAgentGraphAsDot} from './agent_graph.js';
 
@@ -37,6 +45,8 @@ interface ServerOptions {
   agentLoader?: AgentLoader;
   serveDebugUI?: boolean;
   allowOrigins?: string;
+  otelToCloud?: boolean;
+  registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
 export class AdkWebServer {
@@ -50,7 +60,14 @@ export class AdkWebServer {
   private readonly artifactService: BaseArtifactService;
   private readonly serveDebugUI: boolean;
   private readonly allowOrigins?: string;
+  private readonly otelToCloud: boolean;
+  private readonly registerProcessors?: (
+    tracerProvider: TracerProvider,
+  ) => void;
   private server?: http.Server;
+  private readonly traceDict: Record<string, Record<string, unknown>> = {};
+  private readonly sessionTraceDict: Record<string, string[]> = {};
+  private memoryExporter: InMemoryExporter;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -64,14 +81,32 @@ export class AdkWebServer {
       options.agentLoader ?? new AgentLoader(options.agentsDir);
     this.serveDebugUI = options.serveDebugUI ?? false;
     this.allowOrigins = options.allowOrigins;
+    this.otelToCloud = options.otelToCloud ?? false;
+    this.registerProcessors = options.registerProcessors;
+    this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
 
     this.app = express();
 
     this.init();
   }
 
+  private async setupTelemetry(): Promise<void> {
+    const internalExporters = [
+      new SimpleSpanProcessor(new ApiServerSpanExporter(this.traceDict)),
+      new SimpleSpanProcessor(this.memoryExporter),
+    ];
+
+    await setupTelemetry(this.otelToCloud, internalExporters);
+
+    if (this.registerProcessors) {
+      const tracerProvider = trace.getTracerProvider();
+      this.registerProcessors(tracerProvider);
+    }
+  }
+
   private init() {
     const app = this.app;
+    this.setupTelemetry();
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
@@ -106,7 +141,6 @@ export class AdkWebServer {
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {
         const apps = await this.agentLoader.listAgents();
-
         res.json(apps);
       } catch (e: unknown) {
         res.status(500).json({error: (e as Error).message});
@@ -114,13 +148,35 @@ export class AdkWebServer {
     });
 
     app.get('/debug/trace/:eventId', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
+      const eventId = req.params['eventId'];
+      const eventDict = this.traceDict[eventId];
+
+      if (!eventDict) {
+        return res.status(404).json({error: 'Trace not found'});
+      }
+
+      return res.json(eventDict);
     });
 
     app.get(
       '/debug/trace/session/:sessionId',
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        const sessionId = req.params['sessionId'];
+        const spans = this.memoryExporter.getFinishedSpans(sessionId);
+        if (spans.length === 0) {
+          return res.json([]);
+        }
+        const spanData = spans.map((span) => ({
+          name: span.name,
+          span_id: span.spanContext().spanId,
+          trace_id: span.spanContext().traceId,
+          start_time: hrTimeToNanoseconds(span.startTime),
+          end_time: hrTimeToNanoseconds(span.endTime),
+          attributes: {...span.attributes},
+          parent_span_id: span.parentSpanContext?.spanId || null,
+        }));
+
+        return res.json(spanData);
       },
     );
 

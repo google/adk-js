@@ -86,6 +86,10 @@ const LOG_LEVEL_OPTION = new Option(
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
   '--artifact_service_uri <string>, Optional. The URI of the artifact service, supported URIs: gs://<bucket name> for GCS artifact service.',
 );
+const OTEL_TO_CLOUD_OPTION = new Option(
+  '--otel_to_cloud [boolean]',
+  'Optional. Whether to send otel traces to cloud.',
+).default(false);
 
 const program = new Command('ADK CLI');
 
@@ -99,6 +103,7 @@ program
   .addOption(VERBOSE_OPTION)
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
+  .addOption(OTEL_TO_CLOUD_OPTION)
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -111,6 +116,7 @@ program
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
+      otelToCloud: options['otel_to_cloud'] ? true : false,
     });
 
     server.start();
@@ -126,6 +132,7 @@ program
   .addOption(VERBOSE_OPTION)
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
+  .addOption(OTEL_TO_CLOUD_OPTION)
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -138,6 +145,7 @@ program
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
+      otelToCloud: options['otel_to_cloud'] ? true : false,
     });
     server.start();
   });
@@ -200,6 +208,7 @@ program
   .addOption(VERBOSE_OPTION)
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
+  .addOption(OTEL_TO_CLOUD_OPTION)
   .action((agentPath: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -212,6 +221,7 @@ program
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
+      otelToCloud: options['otel_to_cloud'] ? true : false,
     });
   });
 

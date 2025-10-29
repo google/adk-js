@@ -5,7 +5,7 @@
  */
 
 import {Content, createPartFromText} from '@google/genai';
-import {trace} from '@opentelemetry/api';
+import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {
@@ -27,6 +27,10 @@ import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {
+  runAsyncGeneratorWithOtelContext,
+  tracer,
+} from '../telemetry/tracing.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 
@@ -95,144 +99,161 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = trace.getTracer('gcp.vertex.agent').startSpan('invocation');
+    const span = tracer.startSpan('invocation');
+    const ctx = trace.setSpan(context.active(), span);
     try {
-      const session = await this.sessionService.getSession({
-        appName: this.appName,
-        userId,
-        sessionId,
-      });
-
-      if (!session) {
-        if (!this.appName) {
-          throw new Error(
-            `Session lookup failed: appName must be provided in runner constructor`,
-          );
-        }
-        throw new Error(`Session not found: ${sessionId}`);
-      }
-
-      if (runConfig.supportCfc && isLlmAgent(this.agent)) {
-        const modelName = this.agent.canonicalModel.model;
-        if (!isGemini2OrAbove(modelName)) {
-          throw new Error(
-            `CFC is not supported for model: ${
-              modelName
-            } in agent: ${this.agent.name}`,
-          );
-        }
-
-        if (!isBuiltInCodeExecutor(this.agent.codeExecutor)) {
-          this.agent.codeExecutor = new BuiltInCodeExecutor();
-        }
-      }
-
-      const invocationContext = new InvocationContext({
-        artifactService: this.artifactService,
-        sessionService: this.sessionService,
-        memoryService: this.memoryService,
-        credentialService: this.credentialService,
-        invocationId: newInvocationContextId(),
-        agent: this.agent,
-        session,
-        userContent: newMessage,
-        runConfig,
-        pluginManager: this.pluginManager,
-      });
-
-      // =========================================================================
-      // Preprocess plugins on user message
-      // =========================================================================
-      const pluginUserMessage =
-        await this.pluginManager.runOnUserMessageCallback({
-          userMessage: newMessage,
-          invocationContext,
-        });
-      if (pluginUserMessage) {
-        newMessage = pluginUserMessage as Content;
-      }
-
-      // =========================================================================
-      // Append user message to session
-      // =========================================================================
-      if (newMessage) {
-        if (!newMessage.parts?.length) {
-          throw new Error('No parts in the newMessage.');
-        }
-
-        // Directly saves the artifacts (if applicable) in the user message and
-        // replaces the artifact data with a file name placeholder.
-        // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
-        if (runConfig.saveInputBlobsAsArtifacts) {
-          await this.saveArtifacts(
-            invocationContext.invocationId,
-            session.userId,
-            session.id,
-            newMessage,
-          );
-        }
-        // Append the user message to the session with optional state delta.
-        await this.sessionService.appendEvent({
-          session,
-          event: createEvent({
-            invocationId: invocationContext.invocationId,
-            author: 'user',
-            actions: stateDelta ? createEventActions({stateDelta}) : undefined,
-            content: newMessage,
-          }),
-        });
-      }
-
-      // =========================================================================
-      // Determine which agent should handle the workflow resumption.
-      // =========================================================================
-      invocationContext.agent = this.determineAgentForResumption(
-        session,
-        this.agent,
-      );
-
-      // =========================================================================
-      // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-      // =========================================================================
-      // Step 1: Run the before_run callbacks to see if we should early exit.
-      const beforeRunCallbackResponse =
-        await this.pluginManager.runBeforeRunCallback({invocationContext});
-
-      if (beforeRunCallbackResponse) {
-        const earlyExitEvent = createEvent({
-          invocationId: invocationContext.invocationId,
-          author: 'model',
-          content: beforeRunCallbackResponse,
-        });
-        // TODO: b/447446338 - In the future, do *not* save live call audio
-        // content to session This is a feature in Python ADK
-        await this.sessionService.appendEvent({
-          session,
-          event: earlyExitEvent,
-        });
-        yield earlyExitEvent;
-      } else {
-        // Step 2: Otherwise continue with normal execution
-        for await (const event of invocationContext.agent.runAsync(
-          invocationContext,
-        )) {
-          if (!event.partial) {
-            await this.sessionService.appendEvent({session, event});
-          }
-          // Step 3: Run the on_event callbacks to optionally modify the event.
-          const modifiedEvent = await this.pluginManager.runOnEventCallback({
-            invocationContext,
-            event,
+      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
+        ctx,
+        this,
+        async function* () {
+          const session = await this.sessionService.getSession({
+            appName: this.appName,
+            userId,
+            sessionId,
           });
-          if (modifiedEvent) {
-            yield modifiedEvent;
-          } else {
-            yield event;
+
+          if (!session) {
+            if (!this.appName) {
+              throw new Error(
+                `Session lookup failed: appName must be provided in runner constructor`,
+              );
+            }
+            throw new Error(`Session not found: ${sessionId}`);
           }
-        }
-      }
-      // Step 4: Run the after_run callbacks to optionally modify the context.
-      await this.pluginManager.runAfterRunCallback({invocationContext});
+
+          if (runConfig.supportCfc && isLlmAgent(this.agent)) {
+            const modelName = this.agent.canonicalModel.model;
+            if (!isGemini2OrAbove(modelName)) {
+              throw new Error(
+                `CFC is not supported for model: ${
+                  modelName
+                } in agent: ${this.agent.name}`,
+              );
+            }
+
+            if (!isBuiltInCodeExecutor(this.agent.codeExecutor)) {
+              this.agent.codeExecutor = new BuiltInCodeExecutor();
+            }
+          }
+
+          const invocationContext = new InvocationContext({
+            artifactService: this.artifactService,
+            sessionService: this.sessionService,
+            memoryService: this.memoryService,
+            credentialService: this.credentialService,
+            invocationId: newInvocationContextId(),
+            agent: this.agent,
+            session,
+            userContent: newMessage,
+            runConfig,
+            pluginManager: this.pluginManager,
+          });
+
+          // =========================================================================
+          // Preprocess plugins on user message
+          // =========================================================================
+          const pluginUserMessage =
+            await this.pluginManager.runOnUserMessageCallback({
+              userMessage: newMessage,
+              invocationContext,
+            });
+          if (pluginUserMessage) {
+            newMessage = pluginUserMessage as Content;
+          }
+
+          // =========================================================================
+          // Append user message to session
+          // =========================================================================
+          if (newMessage) {
+            if (!newMessage.parts?.length) {
+              throw new Error('No parts in the newMessage.');
+            }
+
+            // Directly saves the artifacts (if applicable) in the user message and
+            // replaces the artifact data with a file name placeholder.
+            // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
+            if (runConfig.saveInputBlobsAsArtifacts) {
+              await this.saveArtifacts(
+                invocationContext.invocationId,
+                session.userId,
+                session.id,
+                newMessage,
+              );
+            }
+            // Append the user message to the session with optional state delta.
+            await this.sessionService.appendEvent({
+              session,
+              event: createEvent({
+                invocationId: invocationContext.invocationId,
+                author: 'user',
+                actions: stateDelta
+                  ? createEventActions({stateDelta})
+                  : undefined,
+                content: newMessage,
+              }),
+            });
+          }
+
+          // =========================================================================
+          // Determine which agent should handle the workflow resumption.
+          // =========================================================================
+          invocationContext.agent = this.determineAgentForResumption(
+            session,
+            this.agent,
+          );
+
+          // =========================================================================
+          // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+          // =========================================================================
+          if (newMessage) {
+            // =========================================================================
+            // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+            // =========================================================================
+            // Step 1: Run the before_run callbacks to see if we should early exit.
+            const beforeRunCallbackResponse =
+              await this.pluginManager.runBeforeRunCallback({
+                invocationContext,
+              });
+
+            if (beforeRunCallbackResponse) {
+              const earlyExitEvent = createEvent({
+                invocationId: invocationContext.invocationId,
+                author: 'model',
+                content: beforeRunCallbackResponse,
+              });
+              // TODO: b/447446338 - In the future, do *not* save live call audio
+              // content to session This is a feature in Python ADK
+              await this.sessionService.appendEvent({
+                session,
+                event: earlyExitEvent,
+              });
+              yield earlyExitEvent;
+            } else {
+              // Step 2: Otherwise continue with normal execution
+              for await (const event of invocationContext.agent.runAsync(
+                invocationContext,
+              )) {
+                if (!event.partial) {
+                  await this.sessionService.appendEvent({session, event});
+                }
+                // Step 3: Run the on_event callbacks to optionally modify the event.
+                const modifiedEvent =
+                  await this.pluginManager.runOnEventCallback({
+                    invocationContext,
+                    event,
+                  });
+                if (modifiedEvent) {
+                  yield modifiedEvent;
+                } else {
+                  yield event;
+                }
+              }
+              // Step 4: Run the after_run callbacks to optionally modify the context.
+              await this.pluginManager.runAfterRunCallback({invocationContext});
+            }
+          }
+        },
+      );
     } finally {
       span.end();
     }

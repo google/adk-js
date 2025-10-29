@@ -352,11 +352,10 @@ function buildLlmRequestForTrace(
  *
  * @returns A new async generator that executes all operations within the provided context
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function bindAsyncGenerator<T = unknown, TReturn = any, TNext = unknown>(
+function bindOtelContextToAsyncGenerator<T>(
   ctx: Context,
-  generator: AsyncGenerator<T, TReturn, TNext>,
-): AsyncGenerator<T, TReturn, TNext> {
+  generator: AsyncGenerator<T, void, void>,
+): AsyncGenerator<T, void, void> {
   return {
     // Bind the next() method to execute within the provided context
     next: context.bind(ctx, generator.next.bind(generator)),
@@ -369,9 +368,30 @@ export function bindAsyncGenerator<T = unknown, TReturn = any, TNext = unknown>(
 
     // Ensure the async iterator symbol also returns a context-bound generator
     [Symbol.asyncIterator]() {
-      return bindAsyncGenerator(ctx, generator[Symbol.asyncIterator]());
+      return bindOtelContextToAsyncGenerator(
+        ctx,
+        generator[Symbol.asyncIterator](),
+      );
     },
   };
+}
+
+/**
+ * Runs an async generator function with both OTEL context and JavaScript 'this' context.
+ *
+ * @param otelContext - The OpenTelemetry context to bind the generator to
+ * @param generatorFnContext - The 'this' context to bind to the generator function
+ * @param generatorFn - The generator function to execute
+ *
+ * @returns A new async generator that executes within both contexts
+ */
+export function runAsyncGeneratorWithOtelContext<TThis, T>(
+  otelContext: Context,
+  generatorFnContext: TThis,
+  generatorFn: (this: TThis) => AsyncGenerator<T, void, void>,
+): AsyncGenerator<T, void, void> {
+  const generator = generatorFn.call(generatorFnContext);
+  return bindOtelContextToAsyncGenerator(otelContext, generator);
 }
 
 /**

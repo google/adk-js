@@ -11,6 +11,7 @@ import {
   Part,
   Schema,
 } from '@google/genai';
+import {context, trace} from '@opentelemetry/api';
 import {cloneDeep} from 'lodash-es';
 import {z} from 'zod';
 
@@ -56,6 +57,11 @@ import {ToolContext} from '../tools/tool_context.js';
 import {base64Decode} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
+import {
+  runAsyncGeneratorWithOtelContext,
+  traceCallLlm,
+  tracer,
+} from '../telemetry/tracing.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {
   BaseLlmRequestProcessor,
@@ -1707,26 +1713,35 @@ export class LlmAgent extends BaseAgent {
       author: this.name,
       branch: invocationContext.branch,
     });
-    for await (const llmResponse of this.callLlmAsync(
-      invocationContext,
-      llmRequest,
-      modelResponseEvent,
-    )) {
-      // ======================================================================
-      // Postprocess after calling the LLM
-      // ======================================================================
-      for await (const event of this.postprocess(
-        invocationContext,
-        llmRequest,
-        llmResponse,
-        modelResponseEvent,
-      )) {
-        // Update the mutable event id to avoid conflict
-        modelResponseEvent.id = createNewEventId();
-        modelResponseEvent.timestamp = new Date().getTime();
-        yield event;
-      }
-    }
+    const span = tracer.startSpan('call_llm');
+    const ctx = trace.setSpan(context.active(), span);
+    yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
+      ctx,
+      this,
+      async function* () {
+        for await (const llmResponse of this.callLlmAsync(
+          invocationContext,
+          llmRequest,
+          modelResponseEvent,
+        )) {
+          // ======================================================================
+          // Postprocess after calling the LLM
+          // ======================================================================
+          for await (const event of this.postprocess(
+            invocationContext,
+            llmRequest,
+            llmResponse,
+            modelResponseEvent,
+          )) {
+            // Update the mutable event id to avoid conflict
+            modelResponseEvent.id = createNewEventId();
+            modelResponseEvent.timestamp = new Date().getTime();
+            yield event;
+          }
+        }
+      },
+    );
+    span.end();
   }
 
   private async *postprocess(
@@ -1885,7 +1900,6 @@ export class LlmAgent extends BaseAgent {
 
     // Calls the LLM.
     const llm = this.canonicalModel;
-    // TODO - b/436079721: Add tracer.start_as_current_span('call_llm')
     if (invocationContext.runConfig?.supportCfc) {
       // TODO - b/425992518: Implement CFC call path
       // This is a hack, underneath it calls runLive. Which makes
@@ -1905,8 +1919,12 @@ export class LlmAgent extends BaseAgent {
         llmRequest,
         modelResponseEvent,
       )) {
-        // TODO - b/436079721: Add trace_call_llm
-
+        traceCallLlm({
+          invocationContext,
+          eventId: modelResponseEvent.id,
+          llmRequest,
+          llmResponse,
+        });
         // Runs after_model_callback if it exists.
         const alteredLlmResponse = await this.handleAfterModelCallback(
           invocationContext,

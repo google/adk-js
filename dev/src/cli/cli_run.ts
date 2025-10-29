@@ -153,6 +153,7 @@ export interface RunAgentOptions {
   artifactService?: BaseArtifactService;
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
+  otelToCloud?: boolean;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {

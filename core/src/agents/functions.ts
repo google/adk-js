@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// TODO - b/436079721: implement traceMergedToolCalls, traceToolCall, tracer.
 import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
 import {isEmpty} from 'lodash-es';
 
@@ -17,6 +16,11 @@ import {ToolContext} from '../tools/tool_context.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
+import {
+  traceMergedToolCalls,
+  tracer,
+  traceToolCall,
+} from '../telemetry/tracing.js';
 import {
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
@@ -212,11 +216,61 @@ async function callToolAsync(
   toolContext: ToolContext,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  // TODO - b/436079721: implement [tracer.start_as_current_span]
-  logger.debug(`callToolAsync ${tool.name}`);
-  return await tool.runAsync({args, toolContext});
+  return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
+    try {
+      logger.debug(`callToolAsync ${tool.name}`);
+      const result = await tool.runAsync({args, toolContext});
+      traceToolCall({
+        tool,
+        args,
+        functionResponseEvent: buildResponseEvent(
+          tool,
+          result,
+          toolContext,
+          toolContext.invocationContext,
+        ),
+      });
+      return result;
+    } finally {
+      span.end();
+    }
+  });
 }
 
+function buildResponseEvent(
+  tool: BaseTool,
+  functionResult: unknown,
+  toolContext: ToolContext,
+  invocationContext: InvocationContext,
+): Event {
+  let responseResult: Record<string, unknown>;
+  if (typeof functionResult !== 'object' || functionResult == null) {
+    responseResult = {result: functionResult};
+  } else {
+    responseResult = functionResult as Record<string, unknown>;
+  }
+
+  const partFunctionResponse: Part = {
+    functionResponse: {
+      name: tool.name,
+      response: responseResult,
+      id: toolContext.functionCallId,
+    },
+  };
+
+  const content: Content = {
+    role: 'user',
+    parts: [partFunctionResponse],
+  };
+
+  return createEvent({
+    invocationId: invocationContext.invocationId,
+    author: invocationContext.agent.name,
+    content: content,
+    actions: toolContext.actions,
+    branch: invocationContext.branch,
+  });
+}
 /**
  * Handles function calls.
  * Runtime behavior to pay attention to:
@@ -444,12 +498,21 @@ export async function handleFunctionCallList({
   );
 
   if (functionResponseEvents.length > 1) {
-    // TODO - b/436079721: implement [tracer.start_as_current_span]
-    logger.debug('execute_tool (merged)');
-    // TODO - b/436079721: implement [traceMergedToolCalls]
-    logger.debug('traceMergedToolCalls', {
-      responseEventId: mergedEvent.id,
-      functionResponseEvent: mergedEvent.id,
+    tracer.startActiveSpan('execute_tool (merged)', (span) => {
+      try {
+        logger.debug('execute_tool (merged)');
+        // TODO - b/436079721: implement [traceMergedToolCalls]
+        logger.debug('traceMergedToolCalls', {
+          responseEventId: mergedEvent.id,
+          functionResponseEvent: mergedEvent.id,
+        });
+        traceMergedToolCalls({
+          responseEventId: mergedEvent.id,
+          functionResponseEvent: mergedEvent,
+        });
+      } finally {
+        span.end();
+      }
     });
   }
   return mergedEvent;
