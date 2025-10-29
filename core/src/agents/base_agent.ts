@@ -5,12 +5,13 @@
  */
 
 import {Content} from '@google/genai';
-import {trace} from '@opentelemetry/api';
+import {context, trace} from '@opentelemetry/api';
 
 import {createEvent, Event} from '../events/event.js';
 
 import {CallbackContext} from './callback_context.js';
 import {InvocationContext} from './invocation_context.js';
+import {runAsyncGeneratorWithOtelContext, traceAgentInvocation, tracer} from '../telemetry/tracing.js';
 
 type SingleAgentCallback = (context: CallbackContext) =>
     Promise<Content|undefined>|(Content|undefined);
@@ -124,34 +125,37 @@ export abstract class BaseAgent {
   async *
       runAsync(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    const span = trace.getTracer('gcp.vertex.agent')
-                     .startSpan(`agent_run [${this.name}]`);
+    const span = tracer.startSpan(`invoke_agent ${this.name}`);
+    const ctx = trace.setSpan(context.active(), span);
     try {
-      const context = this.createInvocationContext(parentContext);
+      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(ctx, this, async function* () {
+        const context = this.createInvocationContext(parentContext);
 
-      const beforeAgentCallbackEvent =
-          await this.handleBeforeAgentCallback(context);
-      if (beforeAgentCallbackEvent) {
-        yield beforeAgentCallbackEvent;
-      }
+        const beforeAgentCallbackEvent =
+            await this.handleBeforeAgentCallback(context);
+        if (beforeAgentCallbackEvent) {
+          yield beforeAgentCallbackEvent;
+        }
 
-      if (context.endInvocation) {
-        return;
-      }
+        if (context.endInvocation) {
+          return;
+        }
 
-      for await (const event of this.runAsyncImpl(context)) {
-        yield event;
-      }
+        traceAgentInvocation({agent: this, invocationContext: context});
+        for await (const event of this.runAsyncImpl(context)) {
+          yield event;
+        }
 
-      if (context.endInvocation) {
-        return;
-      }
+        if (context.endInvocation) {
+          return;
+        }
 
-      const afterAgentCallbackEvent =
-          await this.handleAfterAgentCallback(context);
-      if (afterAgentCallbackEvent) {
-        yield afterAgentCallbackEvent;
-      }
+        const afterAgentCallbackEvent =
+            await this.handleAfterAgentCallback(context);
+        if (afterAgentCallbackEvent) {
+          yield afterAgentCallbackEvent;
+        }
+      });
     } finally {
       span.end();
     }
@@ -167,10 +171,12 @@ export abstract class BaseAgent {
   async *
       runLive(parentContext: InvocationContext):
           AsyncGenerator<Event, void, void> {
-    const span = trace.getTracer('gcp.vertex.agent')
-                     .startSpan(`agent_run [${this.name}]`);
+    const span = tracer.startSpan(`invoke_agent ${this.name}`);
+    const ctx = trace.setSpan(context.active(), span);
     try {
-      // TODO(b/425992518): Implement live mode.
+      yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(ctx, this, async function* () {
+        // TODO(b/425992518): Implement live mode.
+      });
       throw new Error('Live mode is not implemented yet.');
     } finally {
       span.end();
