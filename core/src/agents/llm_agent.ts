@@ -5,6 +5,7 @@
  */
 
 import {FunctionCall, GenerateContentConfig, Schema} from '@google/genai';
+import {context, trace} from '@opentelemetry/api';
 import {z} from 'zod';
 
 import {createEvent, createNewEventId, Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
@@ -30,6 +31,7 @@ import {injectSessionState} from './instructions.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 import {StreamingMode} from './run_config.js';
+import {runAsyncGeneratorWithOtelContext, traceCallLlm, tracer} from '../telemetry/tracing.js';
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (
@@ -1055,7 +1057,10 @@ export class LlmAgent extends BaseAgent {
       author: this.name,
       branch: invocationContext.branch,
     });
-    for await (const llmResponse of this.callLlmAsync(
+    const span = tracer.startSpan('call_llm');
+    const ctx = trace.setSpan(context.active(), span);
+    yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(ctx, this, async function* () {
+      for await (const llmResponse of this.callLlmAsync(
         invocationContext, llmRequest, modelResponseEvent)) {
       // ======================================================================
       // Postprocess after calling the LLM
@@ -1066,8 +1071,10 @@ export class LlmAgent extends BaseAgent {
         modelResponseEvent.id = createNewEventId();
         modelResponseEvent.timestamp = new Date().getTime();
         yield event;
+        }
       }
-    }
+    });
+    span.end();
   }
 
   private async *
@@ -1217,7 +1224,6 @@ export class LlmAgent extends BaseAgent {
 
     // Calls the LLM.
     const llm = this.canonicalModel;
-    // TODO - b/436079721: Add tracer.start_as_current_span('call_llm')
     if (invocationContext.runConfig?.supportCfc) {
       // TODO - b/425992518: Implement CFC call path
       // This is a hack, underneath it calls runLive. Which makes
@@ -1234,8 +1240,12 @@ export class LlmAgent extends BaseAgent {
       for await (const llmResponse of this.runAndHandleError(
           responsesGenerator, invocationContext, llmRequest,
           modelResponseEvent)) {
-        // TODO - b/436079721: Add trace_call_llm
-
+        traceCallLlm({
+          invocationContext,
+          eventId: modelResponseEvent.id,
+          llmRequest,
+          llmResponse,
+        });
         // Runs after_model_callback if it exists.
         const alteredLlmResponse = await this.handleAfterModelCallback(
             invocationContext, llmResponse, modelResponseEvent);
