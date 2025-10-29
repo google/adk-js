@@ -5,7 +5,7 @@
  */
 
 // TODO - b/436079721: implement traceMergedToolCalls, traceToolCall, tracer.
-import {Content, FunctionCall, Part} from '@google/genai';
+import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
@@ -196,39 +196,6 @@ async function callToolAsync(
   return await tool.runAsync({args, toolContext});
 }
 
-function buildResponseEvent(
-    tool: BaseTool,
-    functionResult: any,
-    toolContext: ToolContext,
-    invocationContext: InvocationContext,
-    ): Event {
-  let responseResult = functionResult;
-  if (typeof functionResult !== 'object' || functionResult == null) {
-    responseResult = {result: functionResult};
-  }
-
-  const partFunctionResponse: Part = {
-    functionResponse: {
-      name: tool.name,
-      response: responseResult,
-      id: toolContext.functionCallId,
-    },
-  };
-
-  const content: Content = {
-    role: 'user',
-    parts: [partFunctionResponse],
-  };
-
-  return createEvent({
-    invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
-    content: content,
-    actions: toolContext.actions,
-    branch: invocationContext.branch,
-  });
-}
-
 /**
  * Handles function calls.
  * Runtime behavior to pay attention to:
@@ -307,10 +274,10 @@ export async function handleFunctionCallList({
 
     const {tool, toolContext} = getToolAndContext(
         {
-          invocationContext: invocationContext,
-          functionCall: functionCall,
-          toolsDict: toolsDict,
-          toolConfirmation: toolConfirmation,
+          invocationContext,
+          functionCall,
+          toolsDict,
+          toolConfirmation,
         },
     );
 
@@ -321,6 +288,7 @@ export async function handleFunctionCallList({
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.
     let functionResponse = null;
+    let functionResponseError: string|unknown|undefined;
     functionResponse =
         await invocationContext.pluginManager.runBeforeToolCallback({
           tool: tool,
@@ -360,7 +328,7 @@ export async function handleFunctionCallList({
                     tool: tool,
                     toolArgs: functionArgs,
                     toolContext: toolContext,
-                    error: e as Error,
+                    error: e,
                   },
               );
 
@@ -368,10 +336,15 @@ export async function handleFunctionCallList({
           // continue execution, do not shortcut
           if (onToolErrorResponse) {
             functionResponse = onToolErrorResponse;
+          } else {
+            // If the error callback returns undefined, use the error message
+            // as the function response error.
+            functionResponseError = e.message;
           }
         } else {
-          logger.error('Unknown error on tool execution type', e);
-          throw e;
+          // If the error is not an Error, use the error object as the function
+          // response error.
+          functionResponseError = e;
         }
       }
     }
@@ -414,13 +387,28 @@ export async function handleFunctionCallList({
       continue;
     }
 
+    if (functionResponseError) {
+      functionResponse = {error: functionResponseError};
+    } else if (
+        typeof functionResponse !== 'object' || functionResponse == null) {
+      functionResponse = {result: functionResponse};
+    }
+
     // Builds the function response event.
-    const functionResponseEvent = buildResponseEvent(
-        tool,
-        functionResponse,
-        toolContext,
-        invocationContext,
-    );
+    const functionResponseEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: invocationContext.agent.name,
+      content: createUserContent({
+        functionResponse: {
+          id: toolContext.functionCallId,
+          name: tool.name,
+          response: functionResponse,
+        },
+      }),
+      actions: toolContext.actions,
+      branch: invocationContext.branch,
+    });
+
     // TODO - b/436079721: implement [traceToolCall]
     logger.debug('traceToolCall', {
       tool: tool.name,

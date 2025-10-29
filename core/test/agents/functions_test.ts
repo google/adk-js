@@ -25,7 +25,7 @@ const errorTool = new FunctionTool({
   description: 'error tool',
   parameters: z.object({}),
   execute: async () => {
-    throw new Error('tool error');
+    throw new Error('tool error message content');
   },
 });
 
@@ -259,4 +259,25 @@ describe('handleFunctionCallList', () => {
           result: 'onToolErrorCallback executed',
         });
   });
+
+  it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided',
+     async () => {
+       const errorFunctionCall: FunctionCall = {
+         id: randomIdForTestingOnly(),
+         name: 'errorTool',
+         args: {},
+       };
+
+       const event = await handleFunctionCallList({
+         invocationContext,
+         functionCalls: [errorFunctionCall],
+         toolsDict: {'errorTool': errorTool},
+         beforeToolCallbacks: [],
+         afterToolCallbacks: [],
+       });
+
+       expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+         error: 'Error in tool \'errorTool\': tool error message content',
+       });
+     });
 });
