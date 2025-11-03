@@ -103,8 +103,9 @@ export class AgentAppFile {
       }
 
       if (jsModule.rootAgent && isAdkAgentInstance(jsModule.rootAgent)) {
+        const fileName = path.parse(this.filePath).name;
         return this.app = {
-          name: jsModule.rootAgent.name,
+          name: fileName,
           rootAgent: jsModule.rootAgent,
           plugins: [],
         };

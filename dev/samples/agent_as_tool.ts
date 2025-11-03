@@ -19,4 +19,9 @@ export const rootAgent = new LlmAgent({
   instruction:
       'You are a helpful assistant. When the user provides a text, use the \'summarize\' tool to generate a summary. Always forward the user\'s message exactly as received to the \'summarize\' tool, without modifying or summarizing it yourself. Present the response from the tool to the user.',
   tools: [new AgentTool({agent: summaryAgent, skipSummarization: true})],
+  generateContentConfig: {
+    thinkingConfig: {
+      includeThoughts: true,
+    }
+  },
 });
