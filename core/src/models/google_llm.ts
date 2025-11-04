@@ -66,14 +66,18 @@ export class Gemini extends BaseLlm {
    * @param params The parameters for creating a Gemini instance.
    */
   constructor({
-    model = 'gemini-2.5-flash',
+    model,
     apiKey,
     vertexai,
     project,
     location,
-    headers
-  }: GeminiParams = {}) {
-    super(model);
+    headers,
+  }: GeminiParams) {
+    if (!model) {
+      model = 'gemini-2.5-flash';
+    }
+
+    super({model});
 
     this.project = project;
     this.location = location;

@@ -33,7 +33,7 @@ class MockLlm extends BaseLlm {
   error: Error|null;
 
   constructor(response: LlmResponse|null, error: Error|null = null) {
-    super('mock-llm');
+    super({model: 'mock-llm'});
     this.response = response;
     this.error = error;
   }

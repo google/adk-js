@@ -12,13 +12,17 @@ import {LlmResponse} from './llm_response.js';
  * The BaseLLM class.
  */
 export abstract class BaseLlm {
+  readonly model: string;
+
   /**
    * Creates an instance of BaseLLM.
-   *
-   * @param model The name of the LLM, e.g. gemini-1.5-flash or
+   * @param params The parameters for creating a BaseLlm instance.
+   * @param params.model The name of the LLM, e.g. gemini-1.5-flash or
    *     gemini-1.5-flash-001.
    */
-  constructor(readonly model: string) {}
+  constructor({model}: {model: string}) {
+    this.model = model;
+  }
 
   /**
    * List of supported models in regex for LlmRegistry.

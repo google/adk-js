@@ -13,7 +13,7 @@ import {Gemini} from './google_llm.js';
  * type[BaseLlm] equivalent in TypeScript, represents a class that can be new-ed
  * to create a BaseLlm instance.
  */
-export type BaseLlmType = (new (model: string) => BaseLlm)&{
+export type BaseLlmType = (new (params: {model: string}) => BaseLlm)&{
   readonly supportedModels: Array<string|RegExp>;
 };
 
@@ -68,7 +68,7 @@ export class LLMRegistry {
    * @returns The LLM instance.
    */
   static newLlm(model: string): BaseLlm {
-    return new (LLMRegistry.resolve(model))(model);
+    return new (LLMRegistry.resolve(model))({model});
   }
 
   private static _register(modelNameRegex: string|RegExp, llmCls: BaseLlmType) {
@@ -85,9 +85,10 @@ export class LLMRegistry {
    * Registers a new LLM class.
    * @param llmCls The class that implements the model.
    */
-  static register<T extends BaseLlm>(llmCls: (new(model: string) => T)&{
-    readonly supportedModels: Array<string|RegExp>;
-  }) {
+  static register<T extends BaseLlm>(
+      llmCls: (new(params: {model: string}) => T)&{
+        readonly supportedModels: Array<string|RegExp>;
+      }) {
     for (const regex of llmCls.supportedModels) {
       LLMRegistry._register(regex, llmCls);
     }
