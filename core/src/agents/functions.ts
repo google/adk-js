@@ -17,6 +17,7 @@ import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
 import {SingleAfterToolCallback, SingleBeforeToolCallback} from './llm_agent.js';
+import {traceMergedToolCalls, tracer, traceToolCall} from '../telemetry/tracing.js';
 
 const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
@@ -191,11 +192,53 @@ async function callToolAsync(
     args: Record<string, any>,
     toolContext: ToolContext,
     ): Promise<any> {
-  // TODO - b/436079721: implement [tracer.start_as_current_span]
-  logger.debug(`callToolAsync ${tool.name}`);
-  return await tool.runAsync({args, toolContext});
+  const span = tracer.startSpan(`execute_tool ${tool.name}`);
+  try {
+    logger.debug(`callToolAsync ${tool.name}`);
+    const result = await tool.runAsync({args, toolContext});
+    traceToolCall({
+      tool,
+      args,
+      functionResponseEvent: buildResponseEvent(tool, result, toolContext, toolContext.invocationContext)
+    })
+    return result;
+  } finally {
+    span.end();
+  }
 }
 
+function buildResponseEvent(
+    tool: BaseTool,
+    functionResult: any,
+    toolContext: ToolContext,
+    invocationContext: InvocationContext,
+    ): Event {
+  let responseResult = functionResult;
+  if (typeof functionResult !== 'object' || functionResult == null) {
+    responseResult = {result: functionResult};
+  }
+
+  const partFunctionResponse: Part = {
+    functionResponse: {
+      name: tool.name,
+      response: responseResult,
+      id: toolContext.functionCallId,
+    },
+  };
+
+  const content: Content = {
+    role: 'user',
+    parts: [partFunctionResponse],
+  };
+
+  return createEvent({
+    invocationId: invocationContext.invocationId,
+    author: invocationContext.agent.name,
+    content: content,
+    actions: toolContext.actions,
+    branch: invocationContext.branch,
+  });
+}
 /**
  * Handles function calls.
  * Runtime behavior to pay attention to:
@@ -426,12 +469,18 @@ export async function handleFunctionCallList({
 
   if (functionResponseEvents.length > 1) {
     // TODO - b/436079721: implement [tracer.start_as_current_span]
-    logger.debug('execute_tool (merged)');
-    // TODO - b/436079721: implement [traceMergedToolCalls]
-    logger.debug('traceMergedToolCalls', {
-      responseEventId: mergedEvent.id,
-      functionResponseEvent: mergedEvent.id,
-    });
+    const span = tracer.startSpan('execute_tool (merged)');
+    try {
+      logger.debug('execute_tool (merged)');
+      // TODO - b/436079721: implement [traceMergedToolCalls]
+      logger.debug('traceMergedToolCalls', {
+        responseEventId: mergedEvent.id,
+        functionResponseEvent: mergedEvent.id,
+      });
+      traceMergedToolCalls({responseEventId: mergedEvent.id, functionResponseEvent: mergedEvent});
+    } finally {
+      span.end();
+    }
   }
   return mergedEvent;
 }
