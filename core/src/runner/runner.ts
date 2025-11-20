@@ -5,7 +5,7 @@
  */
 
 import {Content, createPartFromText} from '@google/genai';
-import {trace} from '@opentelemetry/api';
+import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext, newInvocationContextId} from '../agents/invocation_context.js';
@@ -21,6 +21,7 @@ import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
+import {runAsyncGeneratorWithOtelContext, tracer} from '../telemetry/tracing.js';
 
 // TODO - b/425992518: Implement BuiltInCodeExecutor
 
@@ -80,120 +81,123 @@ export class Runner {
     // =========================================================================
     // Setup the session and invocation context
     // =========================================================================
-    const span = trace.getTracer('gcp.vertex.agent').startSpan('invocation');
+    const span = tracer.startSpan('invocation');
+    const ctx = trace.setSpan(context.active(), span);
     try {
-      const session =
+      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(ctx, this, async function* () {
+        const session =
           await this.sessionService.getSession({appName: this.appName, userId, sessionId});
 
-      if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
-      }
+        if (!session) {
+          throw new Error(`Session not found: ${sessionId}`);
+        }
 
-      if (runConfig.supportCfc && this.agent instanceof LlmAgent) {
-        const modelName = this.agent.canonicalModel.model;
-        if (!modelName.startsWith('gemini-2')) {
+        if (runConfig.supportCfc && this.agent instanceof LlmAgent) {
+          const modelName = this.agent.canonicalModel.model;
+          if (!modelName.startsWith('gemini-2')) {
           throw new Error(`CFC is not supported for model: ${
               modelName} in agent: ${this.agent.name}`);
+          }
+          // TODO - b/425992518: Add code executor support
         }
-        // TODO - b/425992518: Add code executor support
-      }
 
-      const invocationContext = new InvocationContext({
-        artifactService: this.artifactService,
-        sessionService: this.sessionService,
-        memoryService: this.memoryService,
-        credentialService: this.credentialService,
-        invocationId: newInvocationContextId(),
-        agent: this.agent,
-        session,
-        userContent: newMessage,
-        runConfig,
-        pluginManager: this.pluginManager,
-      });
+        const invocationContext = new InvocationContext({
+          artifactService: this.artifactService,
+          sessionService: this.sessionService,
+          memoryService: this.memoryService,
+          credentialService: this.credentialService,
+          invocationId: newInvocationContextId(),
+          agent: this.agent,
+          session,
+          userContent: newMessage,
+          runConfig,
+          pluginManager: this.pluginManager,
+        });
 
-      // =========================================================================
-      // Preprocess plugins on user message
-      // =========================================================================
-      const pluginUserMessage =
+        // =========================================================================
+        // Preprocess plugins on user message
+        // =========================================================================
+        const pluginUserMessage =
           await this.pluginManager.runOnUserMessageCallback({
             userMessage: newMessage,
             invocationContext,
           });
-      if (pluginUserMessage) {
-        newMessage = pluginUserMessage as Content;
-      }
-
-      // =========================================================================
-      // Append user message to session
-      // =========================================================================
-      if (newMessage) {
-        if (!newMessage.parts?.length) {
-          throw new Error('No parts in the new_message.');
+        if (pluginUserMessage) {
+          newMessage = pluginUserMessage as Content;
         }
 
-        // Directly saves the artifacts (if applicable) in the user message and
-        // replaces the artifact data with a file name placeholder.
-        // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
-        if (runConfig.saveInputBlobsAsArtifacts) {
-          await this.saveArtifacts(
+        // =========================================================================
+        // Append user message to session
+        // =========================================================================
+        if (newMessage) {
+          if (!newMessage.parts?.length) {
+            throw new Error('No parts in the new_message.');
+          }
+
+          // Directly saves the artifacts (if applicable) in the user message and
+          // replaces the artifact data with a file name placeholder.
+          // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
+          if (runConfig.saveInputBlobsAsArtifacts) {
+            await this.saveArtifacts(
               invocationContext.invocationId, session.userId, session.id,
               newMessage);
+          }
+          // Append the user message to the session with optional state delta.
+          await this.sessionService.appendEvent({
+            session,
+            event: createEvent({
+              invocationId: invocationContext.invocationId,
+              author: 'user',
+              actions: stateDelta ? createEventActions({stateDelta}) : undefined,
+              content: newMessage,
+            }),
+          });
         }
-        // Append the user message to the session with optional state delta.
-        await this.sessionService.appendEvent({
-          session,
-          event: createEvent({
-            invocationId: invocationContext.invocationId,
-            author: 'user',
-            actions: stateDelta ? createEventActions({stateDelta}) : undefined,
-            content: newMessage,
-          }),
-        });
-      }
 
-      // =========================================================================
-      // Determine which agent should handle the workflow resumption.
-      // =========================================================================
-      invocationContext.agent =
+        // =========================================================================
+        // Determine which agent should handle the workflow resumption.
+        // =========================================================================
+        invocationContext.agent =
           this.determineAgentForResumption(session, this.agent);
 
-      // =========================================================================
-      // Run the agent with the plugins (aka hooks to apply in the lifecycle)
-      // =========================================================================
-      // Step 1: Run the before_run callbacks to see if we should early exit.
-      const beforeRunCallbackResponse =
+        // =========================================================================
+        // Run the agent with the plugins (aka hooks to apply in the lifecycle)
+        // =========================================================================
+        // Step 1: Run the before_run callbacks to see if we should early exit.
+        const beforeRunCallbackResponse =
           await this.pluginManager.runBeforeRunCallback({invocationContext});
 
-      if (beforeRunCallbackResponse) {
-        const earlyExitEvent = createEvent({
-          invocationId: invocationContext.invocationId,
-          author: 'model',
-          content: beforeRunCallbackResponse,
-        });
-        // TODO: b/447446338 - In the future, do *not* save live call audio
-        // content to session This is a feature in Python ADK
+        if (beforeRunCallbackResponse) {
+          const earlyExitEvent = createEvent({
+            invocationId: invocationContext.invocationId,
+            author: 'model',
+            content: beforeRunCallbackResponse,
+          });
+          // TODO: b/447446338 - In the future, do *not* save live call audio
+          // content to session This is a feature in Python ADK
         await this.sessionService.appendEvent({session, event: earlyExitEvent});
-        yield earlyExitEvent;
+          yield earlyExitEvent;
 
-      } else {
-        // Step 2: Otherwise continue with normal execution
-        for await (const event of invocationContext.agent.runAsync(
+        } else {
+          // Step 2: Otherwise continue with normal execution
+          for await (const event of invocationContext.agent.runAsync(
             invocationContext)) {
-          if (!event.partial) {
+            if (!event.partial) {
             await this.sessionService.appendEvent({session, event});
-          }
-          // Step 3: Run the on_event callbacks to optionally modify the event.
-          const modifiedEvent = await this.pluginManager.runOnEventCallback(
+            }
+            // Step 3: Run the on_event callbacks to optionally modify the event.
+            const modifiedEvent = await this.pluginManager.runOnEventCallback(
               {invocationContext, event});
-          if (modifiedEvent) {
-            yield modifiedEvent;
-          } else {
-            yield event;
+            if (modifiedEvent) {
+              yield modifiedEvent;
+            } else {
+              yield event;
+            }
           }
         }
-      }
-      // Step 4: Run the after_run callbacks to optionally modify the context.
-      await this.pluginManager.runAfterRunCallback({invocationContext});
+        // Step 4: Run the after_run callbacks to optionally modify the context.
+        await this.pluginManager.runAfterRunCallback({invocationContext});
+      });
     } finally {
       span.end();
     }
@@ -209,8 +213,8 @@ export class Runner {
    * @param message The message containing parts to process.
    */
   private async saveArtifacts(
-      invocationId: string, userId: string, sessionId: string,
-      message: Content): Promise<void> {
+    invocationId: string, userId: string, sessionId: string,
+    message: Content): Promise<void> {
     if (!this.artifactService || !message.parts?.length) {
       return;
     }
@@ -231,7 +235,7 @@ export class Runner {
       });
       // TODO - b/425992518: potentially buggy if accidentally exposed to LLM.
       message.parts[i] = createPartFromText(
-          `Uploaded file: ${fileName}. It is saved into artifacts`);
+        `Uploaded file: ${fileName}. It is saved into artifacts`);
     }
   }
 
@@ -242,7 +246,7 @@ export class Runner {
   // TODO - b/425992518: This is where LRO integration should happen.
   // Needs clean up before we can generalize it.
   private determineAgentForResumption(session: Session, rootAgent: BaseAgent):
-      BaseAgent {
+    BaseAgent {
     // =========================================================================
     // Case 1: If the last event is a function response, this returns the
     // agent that made the original function call.
@@ -325,8 +329,8 @@ function findEventByLastFunctionResponseId(events: Event[]): Event|null {
 
   const lastEvent = events[events.length - 1];
   const functionCallId =
-      lastEvent.content?.parts?.find((part) => part.functionResponse)
-          ?.functionResponse?.id;
+    lastEvent.content?.parts?.find((part) => part.functionResponse)
+      ?.functionResponse?.id;
   if (!functionCallId) {
     return null;
   }
