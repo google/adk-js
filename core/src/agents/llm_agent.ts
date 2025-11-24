@@ -418,6 +418,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
             throw new Error('toolContext is required.');
           }
           toolContext.actions.transferToAgent = args.agentName;
+          return 'Transfer queued';
         },
   });
 

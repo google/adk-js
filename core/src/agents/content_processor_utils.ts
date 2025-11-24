@@ -156,7 +156,7 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  * @returns The converted event.
  */
 function convertForeignEvent(event: Event): Event {
-  if (!event.content?.parts) {
+  if (!event.content?.parts?.length) {
     return event;
   }
 
@@ -175,16 +175,22 @@ function convertForeignEvent(event: Event): Event {
         text: `[${event.author}] said: ${part.text}`,
       });
     } else if (part.functionCall) {
+      const args = part.functionCall.args;
+      const argsText = typeof args === 'object' ?
+        JSON.stringify(args) :
+        args;
       content.parts?.push({
         text: `[${event.author}] called tool \`${
-            part.functionCall.name}\` with parameters: ${
-            part.functionCall.args}`,
+          part.functionCall.name}\` with parameters: ${argsText}`,
       });
     } else if (part.functionResponse) {
+      const response = part.functionResponse.response;
+      const responseText = typeof response === 'object' ?
+        JSON.stringify(response) :
+        response;
       content.parts?.push({
         text: `[${event.author}] tool \`${
-            part.functionResponse.name}\` returned result: ${
-            part.functionResponse.response}`,
+          part.functionResponse.name}\` returned result: ${responseText}`,
       });
     } else {
       content.parts?.push(part);
