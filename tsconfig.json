@@ -6,6 +6,16 @@
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
-    "skipLibCheck": true
-  }
+    "skipLibCheck": true,
+    "rootDir": "."
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "**/*_test.ts",
+    "**/test",
+    "core/test",
+    "dev/test"
+  ]
 }
