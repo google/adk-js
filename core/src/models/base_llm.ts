@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {getClientLabels} from '../utils/client_labels.js';
+
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
@@ -47,6 +49,15 @@ export abstract class BaseLlm {
    * @return A live connection to the LLM.
    */
   abstract connect(llmRequest: LlmRequest): Promise<BaseLlmConnection>;
+
+  protected get trackingHeaders(): Record<string, string> {
+    const labels = getClientLabels();
+    const headerValue = labels.join(' ');
+    return {
+      'x-goog-api-client': headerValue,
+      'user-agent': headerValue,
+    };
+  }
 
   /**
    * Appends a user content, so that model can continue to output.
