@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'jasmine';
-
 import {BaseLlm, BaseLlmConnection, LlmRequest, LlmResponse} from '@google/adk';
 
 import {version} from '../../src/version.js';
