@@ -781,6 +781,13 @@ export class LlmAgent extends BaseAgent {
     if (this.model instanceof BaseLlm) {
       return this.model;
     }
+    // Duck typing fallback for bundled environments where instanceof fails.
+    if (this.model && typeof this.model === 'object' &&
+        'model' in this.model &&
+        'generateContentAsync' in this.model &&
+        typeof (this.model as BaseLlm).generateContentAsync === 'function') {
+      return this.model as BaseLlm;
+    }
     if (typeof this.model === 'string' && this.model) {
       return LLMRegistry.newLlm(this.model);
     }
