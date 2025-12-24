@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FunctionCall, GenerateContentConfig, Schema, Part} from '@google/genai';
+import {Content, FunctionCall, GenerateContentConfig, Part, Schema} from '@google/genai';
 import {z} from 'zod';
 
 import {BaseCodeExecutor} from '../code_executors/base_code_executor.js';
@@ -12,14 +12,14 @@ import {BuiltInCodeExecutor} from '../code_executors/built_in_code_executor.js';
 import {buildCodeExecutionResultPart, buildExecutableCodePart, CodeExecutionResult, convertCodeExecutionParts, extractCodeAndTruncateContent, File} from '../code_executors/code_execution_utils.js';
 import {CodeExecutorContext} from '../code_executors/code_executor_context.js';
 import {createEvent, createNewEventId, Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
-import {EventActions, createEventActions} from '../events/event_actions.js';
+import {createEventActions} from '../events/event_actions.js';
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
 import {BaseLlm, isBaseLlm} from '../models/base_llm.js';
 import {appendInstructions, LlmRequest, setOutputSchema} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
-import {State} from '../sessions/state';
+import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
 import {FunctionTool} from '../tools/function_tool.js';
