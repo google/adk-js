@@ -300,10 +300,9 @@ export async function createAgent(options: AgentCreationOptions) {
   if (options.language === 'ts') {
     await execPromise(`npm install typescript --save-dev`, {cwd: agentDir});
   }
-  await execPromise(
-    `npm install @google/adk @google/adk-devtools zod@3.25.76 dotenv`,
-    {cwd: agentDir},
-  );
+  await execPromise(`npm install @google/adk @google/adk-devtools zod dotenv`, {
+    cwd: agentDir,
+  });
 
   const files = await listFiles(agentDir);
 

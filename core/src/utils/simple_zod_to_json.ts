@@ -5,196 +5,189 @@
  */
 
 import {Schema, Type} from '@google/genai';
-import {z, ZodObject, ZodTypeAny} from 'zod';
+import {
+  JsonSchema7ArrayType,
+  JsonSchema7BigintType,
+  JsonSchema7EnumType,
+  JsonSchema7NumberType,
+  JsonSchema7ObjectType,
+  JsonSchema7StringType,
+  zodToJsonSchema as toJSONSchemaV3,
+} from 'zod-to-json-schema';
+import {z as z3} from 'zod/v3';
+import {toJSONSchema as toJSONSchemaV4, z as z4} from 'zod/v4';
 
-/**
- * Returns true if the given object is a V3 ZodObject.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isZodObject(obj: unknown): obj is ZodObject<any> {
+type ZodSchema<T = unknown> = z3.ZodType<T> | z4.ZodType<T>;
+
+function isZodSchema(obj: unknown): obj is ZodSchema {
   return (
     obj !== null &&
     typeof obj === 'object' &&
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (obj as any)._def?.typeName === 'ZodObject'
+    'parse' in obj &&
+    typeof (obj as {parse: unknown}).parse === 'function' &&
+    'safeParse' in obj &&
+    typeof (obj as {safeParse: unknown}).safeParse === 'function'
   );
 }
 
-// TODO(b/425992518): consider conversion to FunctionDeclaration directly.
-
-function parseZodType(zodType: ZodTypeAny): Schema | undefined {
-  const def = zodType._def;
-  if (!def) {
-    return {};
-  }
-  const description = def.description;
-  const result: Schema = {};
-  if (description) result.description = description;
-
-  const returnResult = (result: Schema) => {
-    if (result.description === undefined) {
-      delete result.description;
-    }
-    return result;
-  };
-
-  switch (def.typeName) {
-    case z.ZodFirstPartyTypeKind.ZodString: {
-      result.type = Type.STRING;
-      for (const check of def.checks || []) {
-        if (check.kind === 'min') result.minLength = check.value.toString();
-        else if (check.kind === 'max')
-          result.maxLength = check.value.toString();
-        else if (check.kind === 'email') result.format = 'email';
-        else if (check.kind === 'uuid') result.format = 'uuid';
-        else if (check.kind === 'url') result.format = 'uri';
-        else if (check.kind === 'regex') result.pattern = check.regex.source;
-      }
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodNumber: {
-      result.type = Type.NUMBER;
-      for (const check of def.checks || []) {
-        if (check.kind === 'min') result.minimum = check.value;
-        else if (check.kind === 'max') result.maximum = check.value;
-        else if (check.kind === 'int') result.type = Type.INTEGER;
-      }
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodBoolean: {
-      result.type = Type.BOOLEAN;
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodArray: {
-      result.type = Type.ARRAY;
-      result.items = parseZodType(def.type);
-      if (def.minLength) result.minItems = def.minLength.value.toString();
-      if (def.maxLength) result.maxItems = def.maxLength.value.toString();
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodObject: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const nestedSchema = zodObjectToSchema(zodType as ZodObject<any>);
-      return nestedSchema as Schema;
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodLiteral: {
-      const literalType = typeof def.value;
-      result.enum = [def.value.toString()];
-
-      if (literalType === 'string') {
-        result.type = Type.STRING;
-      } else if (literalType === 'number') {
-        result.type = Type.NUMBER;
-      } else if (literalType === 'boolean') {
-        result.type = Type.BOOLEAN;
-      } else if (def.value === null) {
-        result.type = Type.NULL;
-      } else {
-        throw new Error(`Unsupported ZodLiteral value type: ${literalType}`);
-      }
-
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodEnum: {
-      result.type = Type.STRING;
-      result.enum = def.values;
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodNativeEnum: {
-      result.type = Type.STRING;
-      result.enum = Object.values(def.values);
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodUnion: {
-      result.anyOf = def.options.map(parseZodType);
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodOptional:
-      return parseZodType(def.innerType);
-
-    case z.ZodFirstPartyTypeKind.ZodNullable: {
-      const nullableInner = parseZodType(def.innerType);
-      return nullableInner
-        ? returnResult({
-            anyOf: [nullableInner, {type: Type.NULL}],
-            ...(description && {description}),
-          })
-        : returnResult({
-            type: Type.NULL,
-            ...(description && {description}),
-          });
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodDefault: {
-      const defaultInner = parseZodType(def.innerType);
-      if (defaultInner) defaultInner.default = def.defaultValue();
-
-      return defaultInner;
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodBranded:
-      return parseZodType(def.type);
-
-    case z.ZodFirstPartyTypeKind.ZodReadonly:
-      return parseZodType(def.innerType);
-
-    case z.ZodFirstPartyTypeKind.ZodNull: {
-      result.type = Type.NULL;
-      return returnResult(result);
-    }
-
-    case z.ZodFirstPartyTypeKind.ZodAny:
-    case z.ZodFirstPartyTypeKind.ZodUnknown:
-      return returnResult({...(description && {description})});
-    default:
-      throw new Error(`Unsupported Zod type: ${def.typeName}`);
-  }
+function isZodV3Schema(obj: unknown): obj is z3.ZodTypeAny {
+  return isZodSchema(obj) && !('_zod' in obj);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function zodObjectToSchema(schema: ZodObject<any>): Schema {
-  if (schema._def.typeName !== z.ZodFirstPartyTypeKind.ZodObject) {
-    throw new Error('Expected a ZodObject');
+function isZodV4Schema(obj: unknown): obj is z4.ZodType {
+  return isZodSchema(obj) && '_zod' in obj;
+}
+
+function getZodTypeName(
+  schema: z3.ZodTypeAny | z4.ZodType,
+): string | undefined {
+  const schemaAny = schema as {_def: z3.ZodTypeDef | z4.ZodType};
+
+  if ((schemaAny._def as z3.ZodStringDef)?.typeName) {
+    return (schemaAny._def as z3.ZodStringDef).typeName;
   }
 
-  const shape = schema.shape;
-  const properties: Record<string, Schema> = {};
-  const required: string[] = [];
-
-  for (const key in shape) {
-    const fieldSchema = shape[key];
-    const parsedField = parseZodType(fieldSchema);
-    if (parsedField) {
-      properties[key] = parsedField;
-    }
-
-    let currentSchema = fieldSchema;
-    let isOptional = false;
-    while (
-      currentSchema._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional ||
-      currentSchema._def.typeName === z.ZodFirstPartyTypeKind.ZodDefault
-    ) {
-      isOptional = true;
-      currentSchema = currentSchema._def.innerType;
-    }
-    if (!isOptional) {
-      required.push(key);
-    }
+  const zod4Type = (schemaAny._def as z4.ZodType)?.type;
+  if (typeof zod4Type === 'string' && zod4Type) {
+    return 'Zod' + zod4Type.charAt(0).toUpperCase() + zod4Type.slice(1);
   }
 
-  return {
-    type: Type.OBJECT,
-    properties,
-    required: required.length > 0 ? required : [],
-    ...(schema._def.description ? {description: schema._def.description} : {}),
-  };
+  return undefined;
+}
+
+/**
+ * Returns true if the given object is a ZodObject (supports both Zod v3 and v4).
+ */
+export function isZodObject(
+  obj: unknown,
+): obj is z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape> {
+  return isZodSchema(obj) && getZodTypeName(obj) === 'ZodObject';
+}
+
+export function zodObjectToSchema(
+  schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape>,
+): Schema {
+  if (!isZodObject(schema)) {
+    throw new Error('Expected a Zod Object');
+  }
+
+  if (isZodV4Schema(schema)) {
+    return toJSONSchemaV4(schema, {
+      target: 'openapi-3.0',
+      io: 'input',
+      override: (ctx) => {
+        const {jsonSchema} = ctx;
+
+        if (jsonSchema.additionalProperties !== undefined) {
+          delete jsonSchema.additionalProperties;
+        }
+
+        if (jsonSchema.readOnly !== undefined) {
+          delete jsonSchema.readOnly;
+        }
+
+        if (jsonSchema.maxItems !== undefined) {
+          (jsonSchema as Schema).maxItems = jsonSchema.maxItems.toString();
+        }
+
+        if (jsonSchema.format === 'email' || jsonSchema.format === 'uuid') {
+          delete jsonSchema.pattern;
+        }
+
+        if (jsonSchema.minItems !== undefined) {
+          (jsonSchema as Schema).minItems = jsonSchema.minItems.toString();
+        }
+
+        if (jsonSchema.minLength !== undefined) {
+          (jsonSchema as Schema).minLength = jsonSchema.minLength.toString();
+        }
+
+        if (jsonSchema.maxLength !== undefined) {
+          (jsonSchema as Schema).maxLength = jsonSchema.maxLength.toString();
+        }
+
+        if (jsonSchema.enum?.length === 1 && jsonSchema.enum[0] === null) {
+          (jsonSchema as Schema).type = Type.NULL;
+          delete jsonSchema.enum;
+        }
+
+        if (jsonSchema.type !== undefined) {
+          (jsonSchema as {type: string}).type = (
+            jsonSchema as {type: string}
+          ).type.toUpperCase();
+        }
+      },
+    }) as Schema;
+  }
+
+  if (isZodV3Schema(schema)) {
+    return toJSONSchemaV3(schema, {
+      target: 'openApi3',
+      emailStrategy: 'format:email',
+      postProcess: (jsonSchema) => {
+        if (!jsonSchema) {
+          return;
+        }
+
+        if (
+          (jsonSchema as JsonSchema7ObjectType).additionalProperties !==
+          undefined
+        ) {
+          delete (jsonSchema as JsonSchema7ObjectType).additionalProperties;
+        }
+
+        if ((jsonSchema as JsonSchema7ArrayType).maxItems !== undefined) {
+          (jsonSchema as Schema).maxItems = (
+            jsonSchema as JsonSchema7ArrayType
+          ).maxItems?.toString();
+        }
+
+        if ((jsonSchema as JsonSchema7ArrayType).minItems !== undefined) {
+          (jsonSchema as Schema).minItems = (
+            jsonSchema as JsonSchema7ArrayType
+          ).minItems?.toString();
+        }
+
+        if ((jsonSchema as JsonSchema7StringType).minLength !== undefined) {
+          (jsonSchema as Schema).minLength = (
+            jsonSchema as JsonSchema7StringType
+          ).minLength?.toString();
+        }
+
+        if ((jsonSchema as JsonSchema7StringType).maxLength !== undefined) {
+          (jsonSchema as Schema).maxLength = (
+            jsonSchema as JsonSchema7StringType
+          ).maxLength?.toString();
+        }
+
+        if (
+          (jsonSchema as JsonSchema7EnumType).enum?.length === 1 &&
+          (jsonSchema as JsonSchema7EnumType).enum[0] === 'null'
+        ) {
+          (jsonSchema as Schema).type = Type.NULL;
+          delete (jsonSchema as unknown as {enum?: []}).enum;
+        }
+
+        if (
+          (jsonSchema as JsonSchema7NumberType).type === 'integer' &&
+          (jsonSchema as JsonSchema7BigintType).format !== 'int64'
+        ) {
+          (jsonSchema as JsonSchema7NumberType).minimum ??=
+            Number.MIN_SAFE_INTEGER;
+          (jsonSchema as JsonSchema7NumberType).maximum ??=
+            Number.MAX_SAFE_INTEGER;
+        }
+
+        if ((jsonSchema as {type: string}).type !== undefined) {
+          (jsonSchema as {type: string}).type = (
+            jsonSchema as {type: string}
+          ).type.toUpperCase();
+        }
+
+        return jsonSchema;
+      },
+    }) as Schema;
+  }
+
+  throw new Error('Unsupported Zod schema version.');
 }

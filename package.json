@@ -12,8 +12,9 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "clean": "npm run clean --workspaces",
-    "clean:all": "rm -rf ./node_modules && npm run clean:all --workspaces",
+    "clean:all": "rm package-lock.json && rm -rf ./node_modules && npm run clean:all --workspaces",
     "rebuild": "npm run clean:all && npm install && npm run build",
+    "ts:check": "tsc --noEmit",
     "lint": "eslint **/**.ts",
     "lint:fix": "eslint --fix **/**.ts",
     "format": "prettier **/**.ts --write",
@@ -24,6 +25,8 @@
     "docs:serve": "http-server api-reference/typescript",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
     "test": "vitest",
+    "test:unit": "vitest core/** dev/**",
+    "test:integration": "vitest tests/integration/**",
     "prepare": "husky"
   },
   "workspaces": [

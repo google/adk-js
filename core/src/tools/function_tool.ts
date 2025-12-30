@@ -5,7 +5,8 @@
  */
 
 import {FunctionDeclaration, Schema, Type} from '@google/genai';
-import {type infer as zInfer, ZodObject, type ZodRawShape} from 'zod';
+import {z as z3} from 'zod/v3';
+import {z as z4} from 'zod/v4';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 
@@ -15,17 +16,23 @@ import {ToolContext} from './tool_context.js';
 /**
  * Input parameters of the function tool.
  */
-export type ToolInputParameters = undefined | ZodObject<ZodRawShape> | Schema;
+export type ToolInputParameters =
+  | z3.ZodObject<z3.ZodRawShape>
+  | z4.ZodObject<z4.ZodRawShape>
+  | Schema
+  | undefined;
 
 /*
  * The arguments of the function tool.
  */
 export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
-  TParameters extends ZodObject<infer T, infer U, infer V>
-    ? zInfer<ZodObject<T, U, V>>
-    : TParameters extends Schema
-      ? unknown
-      : string;
+  TParameters extends z3.ZodObject<infer T, infer U, infer V>
+    ? z3.infer<z3.ZodObject<T, U, V>>
+    : TParameters extends z4.ZodObject<infer T>
+      ? z4.infer<z4.ZodObject<T>>
+      : TParameters extends Schema
+        ? unknown
+        : string;
 
 /*
  * The function to execute by the tool.
@@ -133,7 +140,7 @@ export class FunctionTool<
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
       let validatedArgs: unknown = req.args;
-      if (this.parameters instanceof ZodObject) {
+      if (isZodObject(this.parameters)) {
         validatedArgs = this.parameters.parse(req.args);
       }
       return await this.execute(

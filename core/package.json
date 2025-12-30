@@ -30,6 +30,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "clean:all": "npm run clean && rm -rf node_modules",
+    "rebuild": "npm run clean:all && npm install && npm run build",
     "build": "tsc --emitDeclarationOnly && node ./build.js",
     "build:bundle": "tsc --emitDeclarationOnly && node ./build.js --bundle",
     "build:watch": "concurrently \"tsc --noEmit --watch --preserveWatchOutput\" \"node ./build.js --watch\"",
@@ -43,7 +44,8 @@
     "@modelcontextprotocol/sdk": "^1.24.0",
     "google-auth-library": "^10.3.0",
     "lodash-es": "^4.17.23",
-    "zod": "3.25.76"
+    "zod": "^4.2.1",
+    "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
     "@types/lodash-es": "^4.17.12",
