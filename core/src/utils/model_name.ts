@@ -57,5 +57,5 @@ export function isGemini1Model(modelString: string): boolean {
 export function isGemini2Model(modelString: string): boolean {
   const modelName = extractModelName(modelString);
 
-  return modelName.startsWith('gemini-2');
+  return modelName.startsWith('gemini-2') || modelName.startsWith('gemini-3');
 }

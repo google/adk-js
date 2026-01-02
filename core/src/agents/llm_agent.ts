@@ -1498,13 +1498,17 @@ export class LlmAgent extends BaseAgent {
           ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event|undefined = undefined;
+      let hasFunctionResponse = false;
       for await (const event of this.runOneStepAsync(context)) {
         lastEvent = event;
+        if (getFunctionResponses(event).length > 0) {
+          hasFunctionResponse = true;
+        }
         this.maybeSaveOutputToState(event);
         yield event;
       }
 
-      if (!lastEvent || isFinalResponse(lastEvent)) {
+      if (!lastEvent || (isFinalResponse(lastEvent) && !hasFunctionResponse)) {
         break;
       }
       if (lastEvent.partial) {
