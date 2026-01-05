@@ -5,7 +5,7 @@
  */
 
 const MODEL_NAME_PATTERN =
-    '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
+  '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
 
 /**
  * Extract the actual model name from either simple or path-based format.
@@ -57,5 +57,27 @@ export function isGemini1Model(modelString: string): boolean {
 export function isGemini2Model(modelString: string): boolean {
   const modelName = extractModelName(modelString);
 
-  return modelName.startsWith('gemini-2') || modelName.startsWith('gemini-3');
+  return modelName.startsWith('gemini-2');
+}
+
+/**
+ * Check if the model is a Gemini 3.x model using regex patterns.
+ *
+ * @param modelString Either a simple model name or path - based model name
+ * @return true if it's a Gemini 3.x model, false otherwise.
+ */
+export function isGemini3Model(modelString: string): boolean {
+  const modelName = extractModelName(modelString);
+
+  return modelName.startsWith('gemini-3');
+}
+
+/**
+ * Check if the model is Gemini 2.0 or later (includes 2.x and 3.x).
+ *
+ * @param modelString Either a simple model name or path - based model name
+ * @return true if it's Gemini 2.0+, false otherwise.
+ */
+export function isGemini2OrLaterModel(modelString: string): boolean {
+  return isGemini2Model(modelString) || isGemini3Model(modelString);
 }
