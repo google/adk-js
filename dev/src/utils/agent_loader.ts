@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent} from '@google/adk';
+import {BaseAgent, isBaseAgent} from '@google/adk';
 import esbuild from 'esbuild';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
@@ -100,13 +100,35 @@ export class AgentFile {
     }
 
     const jsModule = await import(filePath);
-    if (jsModule && jsModule.rootAgent) {
-      return this.agent = jsModule.rootAgent;
+
+    console.log('Loaded module exports:', filePath, jsModule.rootAgent);
+
+    if (jsModule) {
+      if (isBaseAgent(jsModule.rootAgent)) {
+        return this.agent = jsModule.rootAgent;
+      }
+
+      if (isBaseAgent(jsModule.default)) {
+        return this.agent = jsModule.default;
+      }
+
+      const rootAgents =
+          Object.values(jsModule).filter(
+              exportValue => isBaseAgent(exportValue)) as BaseAgent[];
+
+      if (rootAgents.length > 1) {
+        console.warn(`Multiple agents found in ${filePath}. Using the ${
+            rootAgents[0].name} as a root agent.`);
+      }
+
+      if (rootAgents.length > 0) {
+        return this.agent = rootAgents[0];
+      }
     }
 
     this.dispose();
-    throw new AgentFileLoadingError(
-        `Failed to load agent ${filePath}: No rootAgent found`);
+    throw new AgentFileLoadingError(`Failed to load agent ${
+        filePath}: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`);
   }
 
   getFilePath(): string {
