@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {Content, Language, Outcome, Part} from '@google/genai';
-import {cloneDeep} from 'lodash';
+import {cloneDeep} from '../utils/lodash.js';
 
 import {base64Encode, isBase64Encoded} from '../utils/env_aware_utils.js';
 

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {Content} from '@google/genai';
-import {cloneDeep} from 'lodash';
+import {cloneDeep} from '../utils/lodash.js';
 
 import {createEvent, Event, getFunctionCalls, getFunctionResponses} from '../events/event.js';
 

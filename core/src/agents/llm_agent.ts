@@ -5,7 +5,7 @@
  */
 
 import {Content, FunctionCall, GenerateContentConfig, Part, Schema} from '@google/genai';
-import {cloneDeep} from 'lodash';
+import {cloneDeep} from '../utils/lodash.js';
 import {z} from 'zod';
 
 import {BaseCodeExecutor} from '../code_executors/base_code_executor.js';
