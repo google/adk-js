@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@google/genai": "1.32.0",
-    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@modelcontextprotocol/sdk": "^1.25.2",
     "google-auth-library": "^10.3.0",
     "lodash": "^4.17.21",
     "zod": "3.25.76"
