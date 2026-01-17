@@ -5,6 +5,7 @@
  */
 
 import {Content, FunctionCall, GenerateContentConfig, Part, Schema} from '@google/genai';
+import {cloneDeep} from 'lodash-es';
 import {z} from 'zod';
 
 import {BaseCodeExecutor} from '../code_executors/base_code_executor.js';
@@ -25,7 +26,6 @@ import {BaseToolset} from '../tools/base_toolset.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {ToolContext} from '../tools/tool_context.js';
-import {deepClone} from '../utils/deep_clone.js';
 import {base64Decode} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
@@ -878,7 +878,7 @@ async function*
       ]
     };
 
-    llmRequest.contents.push(deepClone(codeContent)!);
+    llmRequest.contents.push(cloneDeep(codeContent)!);
 
     yield createEvent({
       invocationId: invocationContext.invocationId,
@@ -916,7 +916,7 @@ async function*
     );
 
     yield executionResultEvent;
-    llmRequest.contents.push(deepClone(executionResultEvent.content)!);
+    llmRequest.contents.push(cloneDeep(executionResultEvent.content)!);
   }
 }
 

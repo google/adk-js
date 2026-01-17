@@ -1,0 +1,19 @@
+{
+	"name": "ts_commonjs_build_setup",
+	"version": "1.0.0",
+	"description": "",
+	"main": "agent.ts",
+	"type": "commonjs",
+	"scripts": {
+		"build": "tsc && echo Build complete",
+		"start": "npx @google/adk-devtools run agent.ts"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"@google/adk": "file:../../../../core",
+		"@google/adk-devtools": "file:../../../../dev",
+		"@google/genai": "^1.37.0"
+	}
+}

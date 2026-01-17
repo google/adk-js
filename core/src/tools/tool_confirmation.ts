@@ -12,7 +12,7 @@ export class ToolConfirmation {
   /** The hint text for why the input is needed. */
   hint: string;
 
-  /** Whether the tool excution is confirmed. */
+  /** Whether the tool execution is confirmed. */
   confirmed: boolean;
 
   /**

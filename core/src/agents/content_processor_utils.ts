@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {Content} from '@google/genai';
+import {cloneDeep} from 'lodash-es';
 
 import {createEvent, Event, getFunctionCalls, getFunctionResponses} from '../events/event.js';
-import {deepClone} from '../utils/deep_clone.js';
 
 import {removeClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
 
@@ -55,7 +55,7 @@ export function getContents(
       rearrangeEventsForAsyncFunctionResponsesInHistory(resultEvents);
   const contents = [];
   for (const event of resultEvents) {
-    const content = deepClone(event.content) as Content;
+    const content = cloneDeep(event.content!);
     removeClientFunctionCallId(content);
     contents.push(content);
   }
@@ -469,4 +469,3 @@ function safeStringify(obj: unknown): string {
     return String(obj);
   }
 }
-

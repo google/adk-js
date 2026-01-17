@@ -6,6 +6,7 @@
 
 // TODO - b/436079721: implement traceMergedToolCalls, traceToolCall, tracer.
 import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
+import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
@@ -26,6 +27,8 @@ export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
 // Export these items for testing purposes only
 export const functionsExportedForTestingOnly = {
   handleFunctionCallList,
+  generateAuthEvent,
+  generateRequestConfirmationEvent,
 };
 
 export function generateClientFunctionCallId(): string {
@@ -104,7 +107,8 @@ export function generateAuthEvent(
     invocationContext: InvocationContext,
     functionResponseEvent: Event,
     ): Event|undefined {
-  if (!functionResponseEvent.actions?.requestedAuthConfigs) {
+  if (!functionResponseEvent.actions?.requestedAuthConfigs ||
+      isEmpty(functionResponseEvent.actions.requestedAuthConfigs)) {
     return undefined;
   }
   const parts: Part[] = [];
@@ -148,7 +152,8 @@ export function generateRequestConfirmationEvent({
   functionCallEvent: Event,
   functionResponseEvent: Event
 }): Event|undefined {
-  if (!functionResponseEvent.actions?.requestedToolConfirmations) {
+  if (!functionResponseEvent.actions?.requestedToolConfirmations ||
+      isEmpty(functionResponseEvent.actions.requestedToolConfirmations)) {
     return;
   }
   const parts: Part[] = [];

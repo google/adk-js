@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {Content, Language, Outcome, Part} from '@google/genai';
+import {cloneDeep} from 'lodash-es';
 
-import {deepClone} from '../utils/deep_clone.js';
 import {base64Encode, isBase64Encoded} from '../utils/env_aware_utils.js';
 
 /**
@@ -120,7 +120,7 @@ export function extractCodeAndTruncateContent(
     return '';
   }
 
-  const firstTextPart = deepClone(textParts[0])!;
+  const firstTextPart = cloneDeep(textParts[0])!;
   const responseText = textParts.map((part) => part.text!).join('\n');
 
   // Find the first code block.

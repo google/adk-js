@@ -36,6 +36,25 @@ export function isGeminiModel(modelString: string): boolean {
   return modelName.startsWith('gemini-');
 }
 
+interface ParsedVersion {
+  valid: boolean;
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+function parseVersion(versionString: string): ParsedVersion {
+  if (!/^\d+(\.\d+)*$/.test(versionString)) {
+    return {valid: false, major: 0, minor: 0, patch: 0};
+  }
+  const parts = versionString.split('.').map(part => parseInt(part, 10));
+
+  return {
+    valid: true, major: parts[0], minor: parts.length > 1 ? parts[1] : 0,
+        patch: parts.length > 2 ? parts[2] : 0
+  }
+}
+
 /**
  * Check if the model is a Gemini 1.x model using regex patterns.
  *
@@ -54,30 +73,19 @@ export function isGemini1Model(modelString: string): boolean {
  * @param modelString Either a simple model name or path - based model name
  * @return true if it's a Gemini 2.x model, false otherwise.
  */
-export function isGemini2Model(modelString: string): boolean {
+export function isGemini2OrAbove(modelString: string): boolean {
+  if (!modelString) {
+    return false;
+  }
+
   const modelName = extractModelName(modelString);
 
-  return modelName.startsWith('gemini-2');
-}
+  if (!modelName.startsWith('gemini-')) {
+    return false;
+  }
 
-/**
- * Check if the model is a Gemini 3.x model using regex patterns.
- *
- * @param modelString Either a simple model name or path - based model name
- * @return true if it's a Gemini 3.x model, false otherwise.
- */
-export function isGemini3Model(modelString: string): boolean {
-  const modelName = extractModelName(modelString);
+  const versionString = modelName.slice('gemini-'.length).split('-', 1)[0];
 
-  return modelName.startsWith('gemini-3');
-}
-
-/**
- * Check if the model is Gemini 2.0 or later (includes 2.x and 3.x).
- *
- * @param modelString Either a simple model name or path - based model name
- * @return true if it's Gemini 2.0+, false otherwise.
- */
-export function isGemini2OrLaterModel(modelString: string): boolean {
-  return isGemini2Model(modelString) || isGemini3Model(modelString);
+  const parsedVersion = parseVersion(versionString);
+  return parsedVersion.valid && parsedVersion.major >= 2;
 }

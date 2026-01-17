@@ -3,9 +3,9 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
-import {deepClone} from '../utils/deep_clone.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
@@ -56,7 +56,7 @@ export class InMemorySessionService extends BaseSessionService {
     this.sessions[appName][userId][session.id] = session;
 
     return Promise.resolve(
-        this.mergeState(appName, userId, deepClone(session)));
+        this.mergeState(appName, userId, cloneDeep(session)));
   }
 
   getSession({appName, userId, sessionId, config}: GetSessionRequest):
@@ -67,7 +67,7 @@ export class InMemorySessionService extends BaseSessionService {
     }
 
     const session: Session = this.sessions[appName][userId][sessionId];
-    const copiedSession = deepClone(session);
+    const copiedSession = cloneDeep(session);
 
     if (config) {
       if (config.numRecentEvents) {

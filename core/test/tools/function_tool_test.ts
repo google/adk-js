@@ -199,4 +199,25 @@ describe('FunctionTool', () => {
     });
     expect(result).toEqual(3);
   });
+
+  it('wraps errors from execute function', async () => {
+    const tool = new FunctionTool({
+      name: 'errorTool',
+      description: 'Throws an error.',
+      parameters: z.object({}),
+      execute: async () => {
+        throw new Error('Test error');
+      },
+    });
+    try {
+      await tool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+    } catch (e) {
+      expect((e as Error).message).toContain(
+        "Error in tool 'errorTool': Test error",
+      );
+    }
+  });
 });

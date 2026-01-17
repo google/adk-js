@@ -32,9 +32,31 @@ export interface BaseAgentConfig {
 }
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all BaseAgent instances.
+ */
+const BASE_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseAgent');
+
+/**
+ * Type guard to check if an object is an instance of BaseAgent.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BaseAgent, false otherwise.
+ */
+export function isBaseAgent(obj: unknown): obj is BaseAgent {
+  return typeof obj === 'object' && obj !== null &&
+      BASE_AGENT_SIGNATURE_SYMBOL in obj &&
+      obj[BASE_AGENT_SIGNATURE_SYMBOL] === true;
+}
+
+/**
  * Base class for all agents in Agent Development Kit.
  */
 export abstract class BaseAgent {
+  /**
+   * A unique symbol to identify ADK agent classes.
+   */
+  readonly[BASE_AGENT_SIGNATURE_SYMBOL] = true;
+
   /**
    * The agent's name.
    * Agent name must be a JS identifier and unique within the agent tree.

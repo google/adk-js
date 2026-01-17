@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export {BaseAgent} from './agents/base_agent.js';
+export {BaseAgent, isBaseAgent} from './agents/base_agent.js';
 export {CallbackContext} from './agents/callback_context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
@@ -52,6 +52,7 @@ export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
 export {LogLevel, setLogLevel} from './utils/logger.js';
+export {isGemini2OrAbove} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {version} from './version.js';
 
