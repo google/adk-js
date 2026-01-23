@@ -276,27 +276,6 @@ export class Gemini extends BaseLlm {
     return this._apiBackend;
   }
 
-  get trackingHeaders(): Record<string, string> {
-    if (!this._trackingHeaders) {
-      let frameworkLabel = `google-adk/${version}`;
-      if (!isBrowser() &&
-          process.env[AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME]) {
-        frameworkLabel = `${frameworkLabel}+${AGENT_ENGINE_TELEMETRY_TAG}`;
-      }
-      // TODO - b/425992518: this is node version, not js, verify.
-      // TODO - b/425992518: For browser case we should extract the browser
-      // name and version from userAgent string.
-      const languageLabel = `gl-typescript/${
-          isBrowser() ? window.navigator.userAgent : process.version}`;
-      const versionHeaderValue = `${frameworkLabel} ${languageLabel}`;
-      this._trackingHeaders = {
-        'x-goog-api-client': versionHeaderValue,
-        'user-agent': versionHeaderValue,
-      };
-    }
-    return this._trackingHeaders;
-  }
-
   get liveApiVersion(): string {
     if (!this._liveApiVersion) {
       this._liveApiVersion = this.apiBackend === GoogleLLMVariant.VERTEX_AI ?

@@ -18,6 +18,35 @@ export async function isFolderExists(folderPath: string): Promise<boolean> {
   }
 }
 
+/** Create a new folder at the specific path */
+export async function createFolder(folderPath: string): Promise<void> {
+  try {
+    await fs.mkdir(folderPath);
+  } catch (e) {
+    console.error(`Failed to create folder ${folderPath}`, e);
+  }
+}
+
+/** Remove a folder at the specified location */
+export async function removeFolder(folderPath: string): Promise<void> {
+  try {
+    await fs.rm(folderPath, {recursive: true});
+  } catch (e) {
+    console.error(`Failed to remove folder ${folderPath}`, e);
+  }
+}
+
+/** List files within a directory */
+export async function listFiles(folderPath: string): Promise<string[]> {
+  try {
+    return await fs.readdir(folderPath);
+  } catch (e) {
+    console.error(`Failed to list files in folder ${folderPath}`, e);
+
+    return [];
+  }
+}
+
 /** Check if the given path is a file. */
 export async function isFile(filePath: string): Promise<boolean> {
   try {

@@ -73,8 +73,13 @@ export class MCPSessionManager {
             new StdioClientTransport(this.connectionParams.serverParams));
         break;
       case 'StreamableHTTPConnectionParams':
+        const transportOptions = this.connectionParams.header ? {
+          requestInit: {
+            headers: this.connectionParams.header as Record<string, string>
+          }
+        } : undefined;
         await client.connect(new StreamableHTTPClientTransport(
-            new URL(this.connectionParams.url)));
+            new URL(this.connectionParams.url), transportOptions));
         break;
       default:
         // Triggers compile error if a case is missing.

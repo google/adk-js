@@ -14,12 +14,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v6
+
     - name: Use Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20'
+      uses: actions/setup-node@v6
+
     - name: Install dependencies
       run: npm install
+
+    - name: Build packages
+      run: npm run build
+
     - name: Run tests
       run: npm run test

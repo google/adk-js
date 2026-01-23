@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionTool, ToolContext} from '@google/adk';
-import {Type} from '@google/genai';
-import {z} from 'zod';
+import { FunctionTool, ToolContext } from '@google/adk'
+import { Type } from '@google/genai'
+import { z } from 'zod'
 
 describe('FunctionTool', () => {
   let emptyContext: ToolContext;
@@ -178,5 +178,46 @@ describe('FunctionTool', () => {
     const result = await concatStringTool.runAsync(
         {args: {strings: ['a', 'b', 'c']}, toolContext: emptyContext});
     expect(result).toEqual('a,b,c');
+  });
+
+  it('infers types from zod schema without explicit annotations', async () => {
+    const addTool = new FunctionTool({
+      name: 'add',
+      description: 'Adds two numbers.',
+      parameters: z.object({
+        a: z.number(),
+        b: z.number(),
+      }),
+      execute: async ({a, b}) => {
+        return a + b;
+      },
+    });
+
+    const result = await addTool.runAsync({
+      args: {a: 1, b: 2},
+      toolContext: emptyContext,
+    });
+    expect(result).toEqual(3);
+  });
+
+  it('wraps errors from execute function', async () => {
+    const tool = new FunctionTool({
+      name: 'errorTool',
+      description: 'Throws an error.',
+      parameters: z.object({}),
+      execute: async () => {
+        throw new Error('Test error');
+      },
+    });
+    try {
+      await tool.runAsync({
+        args: {},
+        toolContext: emptyContext,
+      });
+    } catch (e) {
+      expect((e as Error).message).toContain(
+        "Error in tool 'errorTool': Test error",
+      );
+    }
   });
 });

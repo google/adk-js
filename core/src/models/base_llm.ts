@@ -4,14 +4,37 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {getClientLabels} from '../utils/client_labels.js';
+
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
 /**
+ * A unique symbol to identify BaseLlm classes.
+ * Defined once and shared by all BaseLlm instances.
+ */
+const BASE_MODEL_SYMBOL = Symbol.for('google.adk.baseModel');
+
+/**
+ * Type guard to check if an object is an instance of BaseLlm.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BaseLlm, false otherwise.
+ */
+export function isBaseLlm(obj: unknown): obj is BaseLlm {
+  return typeof obj === 'object' && obj !== null && BASE_MODEL_SYMBOL in obj &&
+      obj[BASE_MODEL_SYMBOL] === true;
+}
+
+/**
  * The BaseLLM class.
  */
 export abstract class BaseLlm {
+  /**
+   * A unique symbol to identify BaseLlm classes.
+   */
+  readonly[BASE_MODEL_SYMBOL] = true;
+
   readonly model: string;
 
   /**
@@ -47,6 +70,15 @@ export abstract class BaseLlm {
    * @return A live connection to the LLM.
    */
   abstract connect(llmRequest: LlmRequest): Promise<BaseLlmConnection>;
+
+  protected get trackingHeaders(): Record<string, string> {
+    const labels = getClientLabels();
+    const headerValue = labels.join(' ');
+    return {
+      'x-goog-api-client': headerValue,
+      'user-agent': headerValue,
+    };
+  }
 
   /**
    * Appends a user content, so that model can continue to output.

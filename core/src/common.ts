@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export {BaseAgent} from './agents/base_agent.js';
+export {BaseAgent, isBaseAgent} from './agents/base_agent.js';
 export {CallbackContext} from './agents/callback_context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
@@ -19,12 +19,13 @@ export {StreamingMode} from './agents/run_config.js';
 export {SequentialAgent} from './agents/sequential_agent.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
+export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
 export {createEvent, getFunctionCalls, getFunctionResponses, hasTrailingCodeExecutionResult, isFinalResponse, stringifyContent} from './events/event.js';
 export type {Event} from './events/event.js';
 export type {EventActions} from './events/event_actions.js';
 export {createEventActions} from './events/event_actions.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
-export {BaseLlm} from './models/base_llm.js';
+export {BaseLlm, isBaseLlm} from './models/base_llm.js';
 export type {BaseLlmConnection} from './models/base_llm_connection.js';
 export {Gemini} from './models/google_llm.js';
 export type {GeminiParams} from './models/google_llm.js';
@@ -41,6 +42,7 @@ export {Runner} from './runner/runner.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {Session} from './sessions/session.js';
+export {State} from './sessions/state.js';
 export {AgentTool} from './tools/agent_tool.js';
 export {BaseTool} from './tools/base_tool.js';
 export {BaseToolset} from './tools/base_toolset.js';
@@ -50,7 +52,9 @@ export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
 export {LogLevel, setLogLevel} from './utils/logger.js';
+export {isGemini2OrAbove} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
+export {version} from './version.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './memory/base_memory_service.js';

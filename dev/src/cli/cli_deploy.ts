@@ -15,7 +15,7 @@ import {isFile, isFolderExists, loadFileData, saveToFile, tryToFindFileRecursive
 const execAsync = promisify(exec);
 const spawnAsync = promisify(spawn);
 
-const REQUIRED_NPM_PACKAGES = ['@google/adk', '@google/genai'];
+const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
 export interface CreateDockerFileContentOptions {
   appName?: string;

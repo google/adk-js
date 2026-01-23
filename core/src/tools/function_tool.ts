@@ -5,7 +5,11 @@
  */
 
 import {FunctionDeclaration, Schema, Type} from '@google/genai';
-import {type infer as zInfer, ZodObject} from 'zod';
+import {
+  type infer as zInfer,
+  ZodObject,
+  type ZodRawShape,
+} from 'zod';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 
@@ -15,15 +19,20 @@ import {ToolContext} from './tool_context.js';
 /**
  * Input parameters of the function tool.
  */
-export type ToolInputParameters =|undefined|ZodObject<any>|Schema;
+export type ToolInputParameters =
+  | undefined
+  | ZodObject<ZodRawShape>
+  | Schema;
 
 /*
  * The arguments of the function tool.
  */
 export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
-    TParameters extends ZodObject<any>?
-    zInfer<TParameters>:
-    TParameters extends Schema ? unknown : string;
+  TParameters extends ZodObject<infer T, infer U, infer V>
+    ? zInfer<ZodObject<T, U, V>>
+    : TParameters extends Schema
+      ? unknown
+      : string;
 
 /*
  * The function to execute by the tool.
@@ -54,7 +63,7 @@ export type ToolOptions<
 };
 
 function toSchema<TParameters extends ToolInputParameters>(
-    parameters: TParameters): Schema {
+  parameters: TParameters): Schema {
   if (parameters === undefined) {
     return {type: Type.OBJECT, properties: {}};
   }
@@ -79,16 +88,16 @@ export class FunctionTool<
    * @param options The configuration for the tool.
    */
   constructor(options: ToolOptions<TParameters>) {
-    const name = options.name ?? (options.execute as any).name;
+    const name = options.name ?? (options.execute as {name?: string}).name;
     if (!name) {
       throw new Error(
-          'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
+        'Tool name cannot be empty. Either name the `execute` function or provide a `name`.',
       );
     }
     super({
       name,
       description: options.description,
-      isLongRunning: options.isLongRunning
+      isLongRunning: options.isLongRunning,
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
@@ -115,10 +124,12 @@ export class FunctionTool<
         validatedArgs = this.parameters.parse(req.args);
       }
       return await this.execute(
-          validatedArgs as ToolExecuteArgument<TParameters>, req.toolContext);
+        validatedArgs as ToolExecuteArgument<TParameters>,
+        req.toolContext,
+      );
     } catch (error) {
       const errorMessage =
-          error instanceof Error ? error.message : String(error);
+        error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
     }
   }

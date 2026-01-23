@@ -447,3 +447,71 @@ describe('Runner with plugins', () => {
     expect(plugin.afterRunCallbackCalled).toBe(true);
   });
 });
+
+describe('Runner error handling', () => {
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+  });
+
+  async function runTestExpectingError(
+    runner: Runner,
+    sessionId: string,
+    userId: string,
+  ): Promise<Error | null> {
+    try {
+      for await (const event of runner.runAsync({
+        userId,
+        sessionId,
+        newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+      })) {
+        console.log('Unexpected event:', event);
+      }
+      return null;
+    } catch (e) {
+      return e as Error;
+    }
+  }
+
+  it('should throw clear error when appName is not configured in runner', async () => {
+    const agent = new MockLlmAgent('test_agent');
+    // @ts-expect-error - Intentionally omitting appName to test error handling
+    const runner = new Runner({
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const error = await runTestExpectingError(runner, session.id, session.userId);
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain('appName must be provided in runner constructor');
+  });
+
+  it('should throw session not found error when session does not exist', async () => {
+    const agent = new MockLlmAgent('test_agent');
+
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+
+    const nonExistentSessionId = 'non_existent_session_id';
+
+    const error = await runTestExpectingError(runner, nonExistentSessionId, TEST_USER_ID);
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(`Session not found: ${nonExistentSessionId}`);
+  });
+});

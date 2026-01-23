@@ -147,12 +147,12 @@ export class AgentTool extends BaseTool {
     const hasOutputSchema =
         this.agent instanceof LlmAgent && this.agent.outputSchema;
 
-    const mergetText = lastEvent.content.parts.map((part) => part.text)
+    const mergedText = lastEvent.content.parts.map((part) => part.text)
                            .filter((text) => text)
                            .join('\n');
 
     // TODO - b/425992518: In case of output schema, the output should be
     // validated. Consider similar logic to one we have in Python ADK.
-    return hasOutputSchema ? JSON.parse(mergetText) : mergetText;
+    return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
   }
 }

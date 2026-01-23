@@ -4,13 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
+import {exec} from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {promisify} from 'node:util';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
 import {AgentFile, AgentLoader} from '../../src/utils/agent_loader';
 import * as fileUtils from '../../src/utils/file_utils.js';
+
+const execAsync = promisify(exec);
 
 vi.mock('../../src/utils/file_utils.js', () => ({
                                            getTempDir: vi.fn(),
@@ -24,67 +28,43 @@ vi.mock('esbuild', () => ({
                    }));
 
 const agent1JsContent = `
-// represents @google/adk
-class BaseAgent {
-    constructor() {
-        this.name = 'BaseAgent';
-    }
-}
+import {BaseAgent} from '@google/adk';
 
 class FakeAgent1 extends BaseAgent {
   constructor(name) {
-    super();
-    this.name = name;
+    super({ name });
   }
 }
 exports.rootAgent = new FakeAgent1('agent1');`;
 
 const agent2TsContent = `
-// represents @google/adk
-class BaseAgent {
-    readonly name: string;
-    constructor() {
-        this.name = 'BaseAgent';
-    }
-}
+import {BaseAgent} from '@google/adk';
 
 class FakeAgent2 extends BaseAgent {
   constructor(public name: string) {
-    super();
+    super({ name });
   }
 }
 export const rootAgent = new FakeAgent2('agent2');`;
 
 const agent2CjsContentMocked = `
 "use strict";
-// represents @google/adk
-class BaseAgent {
-    constructor() {
-        this.name = 'BaseAgent';
-    }
-}
+const {BaseAgent} = require('@google/adk');
 
 class FakeAgent2 extends BaseAgent {
     constructor(name) {
-        super();
-        this.name = name;
+      super({ name });
     }
 }
 exports.rootAgent = new FakeAgent2('agent2');
 `;
 
 const agent3JsContent = `
-// represents @google/adk
-class BaseAgent {
-    constructor() {
-        this.name = 'BaseAgent';
-    }
-}
+const {BaseAgent} = require('@google/adk');
 
 class FakeAgent3 extends BaseAgent {
   constructor(name) {
-    super();
-    this.name = name;
+    super({ name });
   }
 }
 exports.rootAgent = new FakeAgent3('agent3');`;
@@ -96,12 +76,29 @@ describe('AgentLoader', () => {
     tempAgentsDir =
         await fs.mkdtemp(path.join(os.tmpdir(), 'adk-test-agents-'));
     (fileUtils.getTempDir as Mock).mockImplementation(() => tempAgentsDir);
+    await initNpmProject();
   });
 
   afterEach(async () => {
     await fs.rm(tempAgentsDir, {recursive: true, force: true});
     vi.clearAllMocks();
   });
+
+  async function initNpmProject() {
+    await fs.writeFile(
+        path.join(tempAgentsDir, 'package.json'),
+        JSON.stringify({
+          name: 'test-agents',
+          version: '1.0.0',
+          dependencies: {
+            '@google/adk':
+                `file:${path.dirname(require.resolve('@google/adk'))}`,
+          }
+        }),
+    );
+
+    await execAsync('npm install', {cwd: tempAgentsDir});
+  }
 
   describe('AgentFile', () => {
     it('loads .js agent file', async () => {
@@ -152,7 +149,8 @@ describe('AgentLoader', () => {
       const agentFile = new AgentFile(agentPath);
       await expect(agentFile.load())
           .rejects.toThrow(
-              `Failed to load agent ${agentPath}: No rootAgent found`,
+              `Failed to load agent ${
+                  agentPath}: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`,
           );
       await agentFile.dispose();
     });

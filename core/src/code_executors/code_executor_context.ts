@@ -3,8 +3,9 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {cloneDeep} from 'lodash-es';
+
 import {State} from '../sessions/state.js';
-import {deepClone} from '../utils/deep_clone.js';
 
 import {File} from './code_execution_utils.js';
 
@@ -50,7 +51,7 @@ export class CodeExecutorContext {
    */
   getStateDelta(): Record<string, unknown> {
     return {
-      [CONTEXT_KEY]: deepClone(this.context),
+      [CONTEXT_KEY]: cloneDeep(this.context),
     };
   }
 

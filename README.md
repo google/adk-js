@@ -4,15 +4,6 @@
 [![NPM Version](https://img.shields.io/npm/v/@google/adk)](https://www.npmjs.com/package/@google/adk)
 [![r/agentdevelopmentkit](https://img.shields.io/badge/Reddit-r%2Fagentdevelopmentkit-FF4500?style=flat&logo=reddit&logoColor=white)](https://www.reddit.com/r/agentdevelopmentkit/)
 
-> [!CAUTION]
-> **API Stability:** Mostly stable, but expect potential breaking changes
-> before 1.0.
-> **Production Use:** Not recommended yet. Use at your own risk.
-> **Collaboration:** General contributions are closed (issues/PRs). We are,
-> however, accepting organized teams that can follow our coding standards and
-> planning. Please contact us if you are interested.
-
-
 <html>
     <h2 align="center">
       <img src="https://raw.githubusercontent.com/google/adk-python/main/assets/agent-development-kit.png" width="256"/>
@@ -23,15 +14,11 @@
     <h3 align="center">
       Important Links:
       <a href="https://google.github.io/adk-docs/">Docs</a>,
-      <a href="https://github.com/google/adk-js-community/tree/main/samples">Samples</a>.
-      <a href="https://github.com/google/adk-js-community/">ADK JS Community Repo</a>.
-    </h3>
-    <h3 align="center">
-      More ADK References:
-      <a href="https://github.com/google/adk-python">Python ADK</a>,
+      <a href="https://github.com/google/adk-samples">Samples</a>,
+      <a href="https://github.com/google/adk-python">Python ADK</a>.
       <a href="https://github.com/google/adk-java">Java ADK</a>,
-      <a href="https://github.com/google/adk-web">ADK Web</a>,
-      <a href="https://github.com/google/adk-samples">Other Language Samples</a>.
+      <a href="https://github.com/google/adk-go">Go ADK</a> &
+      <a href="https://github.com/google/adk-web">Web ADK</a>.
     </h3>
 </html>
 
@@ -68,13 +55,6 @@ Or with yarn:
 ```bash
 yarn add @google/adk
 ```
-
-**Note:** This package requires `zod` version `^3.22.4` as a peer dependency. Please ensure it is installed in your project:
-```bash
-npm install zod
-```
-
-The current version is `0.1.0`.
 
 ## 📚 Documentation
 
@@ -127,11 +107,9 @@ You can build the project using the following npm scripts:
 
 ## 🤝 Contributing
 
-This project is in early development and is not quite ready for community
-contributions. But in the  future, we will welcome bug reports, feature
-requests, documentation improvements, and code contributions. Please see our
-[**Contributing Guidelines**](./CONTRIBUTING.md) for details on how this
-process will work.
+We welcome contributions from the community! Whether it's bug reports, feature requests, documentation improvements, or code contributions, please see our
+- [General contribution guideline and flow](https://google.github.io/adk-docs/contributing-guide/).
+- Then if you want to contribute code, please read [Code Contributing Guidelines](./CONTRIBUTING.md) to get started.
 
 ## 📄 License
 

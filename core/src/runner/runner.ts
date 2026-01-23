@@ -13,6 +13,7 @@ import {LlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {BuiltInCodeExecutor} from '../code_executors/built_in_code_executor.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
@@ -21,8 +22,7 @@ import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
-
-// TODO - b/425992518: Implement BuiltInCodeExecutor
+import {isGemini2OrAbove} from '../utils/model_name.js';
 
 interface RunnerInput {
   appName: string;
@@ -86,16 +86,24 @@ export class Runner {
           await this.sessionService.getSession({appName: this.appName, userId, sessionId});
 
       if (!session) {
+        if (!this.appName) {
+          throw new Error(
+            `Session lookup failed: appName must be provided in runner constructor`
+          );
+        }
         throw new Error(`Session not found: ${sessionId}`);
       }
 
       if (runConfig.supportCfc && this.agent instanceof LlmAgent) {
         const modelName = this.agent.canonicalModel.model;
-        if (!modelName.startsWith('gemini-2')) {
+        if (!isGemini2OrAbove(modelName)) {
           throw new Error(`CFC is not supported for model: ${
               modelName} in agent: ${this.agent.name}`);
         }
-        // TODO - b/425992518: Add code executor support
+
+        if (!(this.agent.codeExecutor instanceof BuiltInCodeExecutor)) {
+          this.agent.codeExecutor = new BuiltInCodeExecutor();
+        }
       }
 
       const invocationContext = new InvocationContext({
@@ -128,7 +136,7 @@ export class Runner {
       // =========================================================================
       if (newMessage) {
         if (!newMessage.parts?.length) {
-          throw new Error('No parts in the new_message.');
+          throw new Error('No parts in the newMessage.');
         }
 
         // Directly saves the artifacts (if applicable) in the user message and

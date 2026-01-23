@@ -40,6 +40,26 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema|undefined {
   }
 
   function recursiveConvert(mcp: any): Schema {
+    // Handle nullable types
+    if (!mcp.type && mcp.anyOf && Array.isArray(mcp.anyOf)) {
+      const nonNullOption = mcp.anyOf.find((opt: any) => {
+        const t = opt.type;
+        return t !== 'null' && t !== 'NULL';
+      });
+      if (nonNullOption) {
+        mcp = nonNullOption;
+      }
+    }
+
+    // Infer unknown types
+    if (!mcp.type) {
+      if (mcp.properties || mcp.$ref) {
+        mcp.type = 'object';
+      } else if (mcp.items) {
+        mcp.type = 'array';
+      }
+    }
+
     const geminiType = toGeminiType(mcp.type);
     const geminiSchema:
         Schema = {type: geminiType, description: mcp.description};

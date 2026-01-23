@@ -7,7 +7,7 @@ import {GenerateContentConfig} from '@google/genai'
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {LlmRequest} from '../models/llm_request.js';
-import {isGemini2Model} from '../utils/model_name.js';
+import {isGemini2OrAbove} from '../utils/model_name.js';
 
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {CodeExecutionInput, CodeExecutionResult} from './code_execution_utils.js';
@@ -28,7 +28,7 @@ export class BuiltInCodeExecutor extends BaseCodeExecutor {
   }
 
   processLlmRequest(llmRequest: LlmRequest) {
-    if (llmRequest.model && isGemini2Model(llmRequest.model)) {
+    if (llmRequest.model && isGemini2OrAbove(llmRequest.model)) {
       llmRequest.config = llmRequest.config || {};
       llmRequest.config.tools = llmRequest.config.tools || [];
       llmRequest.config.tools.push({codeExecution: {}});

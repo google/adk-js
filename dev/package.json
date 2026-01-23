@@ -1,6 +1,6 @@
 {
   "name": "@google/adk-devtools",
-  "version": "0.1.3",
+  "version": "0.2.4",
   "description": "Google ADK JS Development Tools",
   "author": "Google",
   "license": "Apache-2.0",
@@ -48,7 +48,8 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@google/adk": "^0.1.3",
+    "@clack/prompts": "^0.11.0",
+    "@google/adk": "^0.2.4",
     "commander": "^14.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

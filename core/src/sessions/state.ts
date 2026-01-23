@@ -15,9 +15,9 @@ export class State {
 
   constructor(
       /** The current value of the state. */
-      private value: Record<string, unknown>,
+      private value: Record<string, unknown> = {},
       /** The delta change to the current value that hasn't been committed. */
-      private delta: Record<string, unknown>,
+      private delta: Record<string, unknown> = {},
   ) {}
 
   /**
