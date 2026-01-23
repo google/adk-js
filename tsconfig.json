@@ -13,9 +13,5 @@
     "node_modules",
     "dist",
     "coverage",
-    "**/*_test.ts",
-    "**/test",
-    "core/test",
-    "dev/test"
   ]
 }
