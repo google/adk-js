@@ -2,9 +2,9 @@ name: validation
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   run-tests:
@@ -14,17 +14,20 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-    - name: Use Node.js
-      uses: actions/setup-node@v6
+      - name: Use Node.js
+        uses: actions/setup-node@v6
 
-    - name: Install dependencies
-      run: npm install
+      - name: Install dependencies
+        run: npm install
 
-    - name: Build packages
-      run: npm run build
+      - name: Build packages
+        run: npm run build
 
-    - name: Run tests
-      run: npm run test
+      - name: Run tests
+        run: npm run test
+
+      - name: Generate documentation
+        run: npm run docs:generate

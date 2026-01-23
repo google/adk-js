@@ -6,6 +6,7 @@
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["vitest/globals"]
   }
 }
