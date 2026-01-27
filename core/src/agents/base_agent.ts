@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
-import {trace} from '@opentelemetry/api';
+import { Content } from '@google/genai';
+import { trace } from '@opentelemetry/api';
 
-import {createEvent, Event} from '../events/event.js';
+import { createEvent, Event } from '../events/event.js';
 
-import {CallbackContext} from './callback_context.js';
-import {InvocationContext} from './invocation_context.js';
+import { CallbackContext } from './callback_context.js';
+import { InvocationContext } from './invocation_context.js';
 
 /**
  * A single callback function for an agent.
@@ -299,7 +299,7 @@ export abstract class BaseAgent {
       return undefined;
     }
 
-    const callbackContext = new CallbackContext({invocationContext});
+    const callbackContext = new CallbackContext({ invocationContext });
     for (const callback of this.beforeAgentCallback) {
       const content = await callback(callbackContext);
 
@@ -342,7 +342,7 @@ export abstract class BaseAgent {
       return undefined;
     }
 
-    const callbackContext = new CallbackContext({invocationContext});
+    const callbackContext = new CallbackContext({ invocationContext });
     for (const callback of this.afterAgentCallback) {
       const content = await callback(callbackContext);
 
@@ -373,15 +373,23 @@ export abstract class BaseAgent {
     for (const subAgent of this.subAgents) {
       if (subAgent.parentAgent) {
         throw new Error(
-          `Agent "${
-            subAgent.name
-          }" already has a parent agent, current parent: "${
-            subAgent.parentAgent.name
+          `Agent "${subAgent.name
+          }" already has a parent agent, current parent: "${subAgent.parentAgent.name
           }", trying to add: "${this.name}"`,
         );
       }
 
       subAgent.parentAgent = this;
+      subAgent.updateRootAgent(this.rootAgent);
+    }
+  }
+
+  protected updateRootAgent(rootAgent: BaseAgent): void {
+    // @ts-ignore: constrained by readonly in strict TS, but valid in JS runtime logic
+    this.rootAgent = rootAgent;
+
+    for (const subAgent of this.subAgents) {
+      subAgent.updateRootAgent(rootAgent);
     }
   }
 }
@@ -395,8 +403,7 @@ export abstract class BaseAgent {
 function validateAgentName(name: string): string {
   if (!isIdentifier(name)) {
     throw new Error(
-      `Found invalid agent name: "${
-        name
+      `Found invalid agent name: "${name
       }". Agent name must be a valid identifier. It should start with a letter (a-z, A-Z) or an underscore (_), and can only contain letters, digits (0-9), and underscores.`,
     );
   }
