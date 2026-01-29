@@ -1,4 +1,16 @@
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, createEvent, Event, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, InvocationContext} from '@google/adk';
+import {
+  BaseAgent,
+  BaseArtifactService,
+  BaseMemoryService,
+  BaseSessionService,
+  createEvent,
+  Event,
+  InMemoryArtifactService,
+  InMemoryMemoryService,
+  InMemorySessionService,
+  InvocationContext,
+  Session,
+} from '@google/adk';
 import type {Application, Request, Response} from 'express';
 import {beforeEach, describe, expect, it} from 'vitest';
 
@@ -13,26 +25,26 @@ import {AgentLoader} from '../../src/utils/agent_loader';
 class MockHttpClient {
   constructor(private readonly app: Application) {}
 
-  get(url: string) {
-    return this.sendMockRequest(url, {method: 'GET'});
+  get<T>(url: string) {
+    return this.sendMockRequest<T>(url, {method: 'GET'});
   }
 
-  post(url: string, body: unknown) {
-    return this.sendMockRequest(url, {method: 'POST', body});
+  post<T>(url: string, body: unknown) {
+    return this.sendMockRequest<T>(url, {method: 'POST', body});
   }
 
-  put(url: string, body: unknown) {
-    return this.sendMockRequest(url, {method: 'PUT', body});
+  put<T>(url: string, body: unknown) {
+    return this.sendMockRequest<T>(url, {method: 'PUT', body});
   }
 
-  delete(url: string) {
-    return this.sendMockRequest(url, {method: 'DELETE'});
+  delete<T>(url: string) {
+    return this.sendMockRequest<T>(url, {method: 'DELETE'});
   }
 
-  private sendMockRequest(
-      url: string,
-      {method, body}: {method: string; body?: unknown},
-      ): Promise<{status: number; data?: any, text?: string}> {
+  private sendMockRequest<T = unknown>(
+    url: string,
+    {method, body}: {method: string; body?: unknown},
+  ): Promise<{status: number; data?: T; text?: string}> {
     return new Promise((resolve, reject) => {
       let statusCode: number = 200;
       let streamText: string = '';
@@ -55,15 +67,15 @@ class MockHttpClient {
         end: () => {
           sendRespose(statusCode, undefined, streamText);
         },
-        setHeader: (name: string, value: string) => {},
+        setHeader: () => {},
         flushHeaders: () => {},
       } as unknown as Response;
 
       const sendRespose = (
-          statusCode: number,
-          jsonData?: unknown,
-          text?: string,
-          ) => {
+        statusCode: number,
+        jsonData?: unknown,
+        text?: string,
+      ) => {
         if (statusCode > 399) {
           reject({
             response: {
@@ -75,7 +87,7 @@ class MockHttpClient {
 
         resolve({
           status: statusCode,
-          data: jsonData,
+          data: jsonData as T,
           text,
         });
       };
@@ -86,17 +98,19 @@ class MockHttpClient {
 }
 
 class TestAgent extends BaseAgent {
-  async *
-      runAsyncImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
+  async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
       branch: context.branch,
       content: {
-        parts: [{
-          text: 'Hello user! I\'m streaming you events now!',
-        }],
+        parts: [
+          {
+            text: "Hello user! I'm streaming you events now!",
+          },
+        ],
         role: 'model',
       },
     });
@@ -106,9 +120,11 @@ class TestAgent extends BaseAgent {
       author: this.name,
       branch: context.branch,
       content: {
-        parts: [{
-          text: 'Event 1',
-        }],
+        parts: [
+          {
+            text: 'Event 1',
+          },
+        ],
         role: 'model',
       },
     });
@@ -118,9 +134,11 @@ class TestAgent extends BaseAgent {
       author: this.name,
       branch: context.branch,
       content: {
-        parts: [{
-          text: 'Event 2',
-        }],
+        parts: [
+          {
+            text: 'Event 2',
+          },
+        ],
         role: 'model',
       },
     });
@@ -128,17 +146,19 @@ class TestAgent extends BaseAgent {
     return;
   }
 
-  async *
-      runLiveImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
+  async *runLiveImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
       branch: context.branch,
       content: {
-        parts: [{
-          text: 'test live content',
-        }],
+        parts: [
+          {
+            text: 'test live content',
+          },
+        ],
         role: 'model',
       },
     });
@@ -161,14 +181,15 @@ describe('AdkWebServer', () => {
   beforeEach(async () => {
     agentLoader = {
       listAgents: () => Promise.resolve(['testApp']),
-      getAgentFile: () => Promise.resolve(({
-        load() {
-          return Promise.resolve(TEST_AGENT);
-        },
-        async[Symbol.asyncDispose](): Promise<void> {
-          return;
-        }
-      })),
+      getAgentFile: () =>
+        Promise.resolve({
+          load() {
+            return Promise.resolve(TEST_AGENT);
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        }),
     } as unknown as AgentLoader;
     sessionService = new InMemorySessionService();
     memoryService = new InMemoryMemoryService();
@@ -186,52 +207,54 @@ describe('AdkWebServer', () => {
 
   describe('Sessions', () => {
     it('should return an empty list of sessions', async () => {
-      const response =
-          await client.get('/apps/testApp/users/testUser/sessions');
+      const response = await client.get<{
+        sessions: Session[];
+      }>('/apps/testApp/users/testUser/sessions');
 
       expect(response.status).toBe(200);
-      expect(response.data.sessions).toEqual([]);
+      expect(response.data?.sessions).toEqual([]);
     });
 
     it('should create a session with a random id', async () => {
-      const response = await client.post(
-          '/apps/testApp/users/testUser/sessions',
-          {},
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions',
+        {},
       );
 
       expect(response.status).toBe(200);
-      expect(response.data.id).toBeDefined();
-      expect(response.data.appName).toEqual('testApp');
-      expect(response.data.userId).toEqual('testUser');
+      expect(response.data?.id).toBeDefined();
+      expect(response.data?.appName).toEqual('testApp');
+      expect(response.data?.userId).toEqual('testUser');
     });
 
     it('should create a session with a given id', async () => {
-      const response = await client.post(
-          '/apps/testApp/users/testUser/sessions/sessionId',
-          {},
+      const response = await client.post<Session>(
+        '/apps/testApp/users/testUser/sessions/sessionId',
+        {},
       );
 
       expect(response.status).toBe(200);
-      expect(response.data.id).toEqual('sessionId');
-      expect(response.data.appName).toEqual('testApp');
-      expect(response.data.userId).toEqual('testUser');
+      expect(response.data?.id).toEqual('sessionId');
+      expect(response.data?.appName).toEqual('testApp');
+      expect(response.data?.userId).toEqual('testUser');
     });
 
-    it('should return 400 if session with given id already exists',
-       async () => {
-         await sessionService.createSession({
-           appName: 'testApp',
-           userId: 'testUser',
-           sessionId: 'sessionId',
-         });
+    it('should return 400 if session with given id already exists', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
 
-         try {
-           await client.post(
-               '/apps/testApp/users/testUser/sessions/sessionId', {});
-         } catch (e: unknown) {
-           expect((e as any).response.status).toBe(400);
-         }
-       });
+      try {
+        await client.post(
+          '/apps/testApp/users/testUser/sessions/sessionId',
+          {},
+        );
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(400);
+      }
+    });
 
     it('should return a session by id', async () => {
       await sessionService.createSession({
@@ -240,19 +263,19 @@ describe('AdkWebServer', () => {
         sessionId: 'sessionId',
       });
 
-      const response = await client.get(
-          '/apps/testApp/users/testUser/sessions/sessionId',
+      const response = await client.get<Session>(
+        '/apps/testApp/users/testUser/sessions/sessionId',
       );
 
       expect(response.status).toBe(200);
-      expect(response.data.id).toEqual('sessionId');
+      expect(response.data?.id).toEqual('sessionId');
     });
 
     it('should return 404 if session not found', async () => {
       try {
         await client.get('/apps/testApp/users/testUser/sessions/sessionId');
       } catch (e: unknown) {
-        expect((e as any).response.status).toBe(404);
+        expect((e as {response: {status: number}}).response.status).toBe(404);
       }
     });
 
@@ -264,18 +287,17 @@ describe('AdkWebServer', () => {
       });
 
       const response = await client.delete(
-          '/apps/testApp/users/testUser/sessions/sessionId',
+        '/apps/testApp/users/testUser/sessions/sessionId',
       );
 
       expect(response.status).toBe(204);
       expect(
-          await sessionService.getSession({
-            appName: 'testApp',
-            userId: 'testUser',
-            sessionId: 'sessionId',
-          }),
-          )
-          .toBeUndefined();
+        await sessionService.getSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        }),
+      ).toBeUndefined();
     });
   });
 
@@ -288,7 +310,7 @@ describe('AdkWebServer', () => {
       });
 
       const response = await client.get(
-          '/apps/testApp/users/testUser/sessions/sessionId/artifacts',
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts',
       );
 
       expect(response.status).toBe(200);
@@ -312,7 +334,7 @@ describe('AdkWebServer', () => {
       });
 
       const response = await client.get(
-          '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
       );
 
       expect(response.status).toBe(200);
@@ -330,10 +352,10 @@ describe('AdkWebServer', () => {
 
       try {
         await client.get(
-            '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
+          '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
         );
       } catch (e: unknown) {
-        expect((e as any).response.status).toBe(404);
+        expect((e as {response: {status: number}}).response.status).toBe(404);
       }
     });
 
@@ -354,7 +376,7 @@ describe('AdkWebServer', () => {
       });
 
       const response = await client.get(
-          '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt/versions/0',
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt/versions/0',
       );
 
       expect(response.status).toBe(200);
@@ -386,12 +408,12 @@ describe('AdkWebServer', () => {
         },
       });
 
-      const response = await client.get(
-          '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt/versions',
+      const response = await client.get<string[]>(
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt/versions',
       );
 
       expect(response.status).toBe(200);
-      expect(response.data.length).toEqual(2);
+      expect(response.data?.length).toEqual(2);
     });
 
     it('should delete an artifact', async () => {
@@ -411,16 +433,18 @@ describe('AdkWebServer', () => {
       });
 
       const response = await client.delete(
-          '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/artifact.txt',
       );
 
       expect(response.status).toBe(204);
-      expect(await artifactService.loadArtifact({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
-        filename: 'artifact.txt',
-      })).toBeUndefined();
+      expect(
+        await artifactService.loadArtifact({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          filename: 'artifact.txt',
+        }),
+      ).toBeUndefined();
     });
   });
 
@@ -437,9 +461,11 @@ describe('AdkWebServer', () => {
         userId: 'testUser',
         sessionId: 'sessionId',
         newMessage: {
-          parts: [{
-            text: 'Hello test agent!',
-          }],
+          parts: [
+            {
+              text: 'Hello test agent!',
+            },
+          ],
           role: 'user',
         },
       });
@@ -449,14 +475,14 @@ describe('AdkWebServer', () => {
       rawEvent.pop();
 
       const events = rawEvent.map(
-          eventText => JSON.parse(eventText.split('data: ')[1]) as Event);
+        (eventText) => JSON.parse(eventText.split('data: ')[1]) as Event,
+      );
 
       expect(response.status).toBe(200);
       expect(events.length).toBe(3);
-      expect(events[0]!.content?.parts?.[0].text)
-          .toBe(
-              'Hello user! I\'m streaming you events now!',
-          );
+      expect(events[0]!.content?.parts?.[0].text).toBe(
+        "Hello user! I'm streaming you events now!",
+      );
       expect(events[1]!.content?.parts?.[0].text).toBe('Event 1');
       expect(events[2]!.content?.parts?.[0].text).toBe('Event 2');
     });

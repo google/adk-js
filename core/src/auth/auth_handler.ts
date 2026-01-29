@@ -18,7 +18,7 @@ import {AuthConfig} from './auth_tool.js';
 export class AuthHandler {
   constructor(private readonly authConfig: AuthConfig) {}
 
-  getAuthResponse(state: State): AuthCredential|undefined {
+  getAuthResponse(state: State): AuthCredential | undefined {
     const credentialKey = 'temp:' + this.authConfig.credentialKey;
 
     return state.get<AuthCredential>(credentialKey);
@@ -41,7 +41,8 @@ export class AuthHandler {
 
     if (!this.authConfig.rawAuthCredential.oauth2) {
       throw new Error(
-          `Auth Scheme ${authSchemeType} requires oauth2 in authCredential.`);
+        `Auth Scheme ${authSchemeType} requires oauth2 in authCredential.`,
+      );
     }
 
     if (this.authConfig.rawAuthCredential.oauth2.authUri) {
@@ -53,10 +54,13 @@ export class AuthHandler {
       };
     }
 
-    if (!this.authConfig.rawAuthCredential.oauth2.clientId ||
-        !this.authConfig.rawAuthCredential.oauth2.clientSecret) {
-      throw new Error(`Auth Scheme ${
-          authSchemeType} requires both clientId and clientSecret in authCredential.oauth2.`);
+    if (
+      !this.authConfig.rawAuthCredential.oauth2.clientId ||
+      !this.authConfig.rawAuthCredential.oauth2.clientSecret
+    ) {
+      throw new Error(
+        `Auth Scheme ${authSchemeType} requires both clientId and clientSecret in authCredential.oauth2.`,
+      );
     }
 
     return {
@@ -74,7 +78,7 @@ export class AuthHandler {
    * @throws Error: If the authorization endpoint is not configured in the
    *     auth scheme.
    */
-  generateAuthUri(): AuthCredential|undefined {
+  generateAuthUri(): AuthCredential | undefined {
     return this.authConfig.rawAuthCredential;
     // TODO - b/425992518: Implement the rest of the function
   }

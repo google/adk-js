@@ -11,6 +11,10 @@ import { defineConfig } from "eslint/config";
 
 export default defineConfig([
   {
+    ignores: ["**/dist/**", "dev/src/browser/**"],
+  },
+  tseslint.configs.recommended,
+  {
     files: ["**/*.ts"],
     plugins: { js },
     extends: ["js/recommended"],
@@ -20,6 +24,16 @@ export default defineConfig([
         ...globals.vitest
       },
     },
+    rules: {
+      "no-unused-vars": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          "argsIgnorePattern": "^_",
+          "varsIgnorePattern": "^_",
+          "caughtErrorsIgnorePattern": "^_"
+        }
+      ]
+    },
   },
-  tseslint.configs.recommended,
 ]);

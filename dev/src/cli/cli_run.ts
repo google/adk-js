@@ -4,7 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseArtifactService, BaseMemoryService, BaseSessionService, InMemoryArtifactService, InMemoryMemoryService, InMemorySessionService, Runner, Session} from '@google/adk';
+import {
+  BaseAgent,
+  BaseArtifactService,
+  BaseMemoryService,
+  BaseSessionService,
+  InMemoryArtifactService,
+  InMemoryMemoryService,
+  InMemorySessionService,
+  Runner,
+  Session,
+} from '@google/adk';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -41,10 +51,12 @@ interface RunFromInputFileOptions {
   memoryService?: BaseMemoryService;
   filePath: string;
 }
-async function runFromInputFile(options: RunFromInputFileOptions):
-    Promise<Session|undefined> {
-  const fileContent =
-      await loadFileData<InputFile>(path.join(dirname, options.filePath));
+async function runFromInputFile(
+  options: RunFromInputFileOptions,
+): Promise<Session | undefined> {
+  const fileContent = await loadFileData<InputFile>(
+    path.join(dirname, options.filePath),
+  );
   if (!fileContent) {
     return;
   }
@@ -70,8 +82,9 @@ async function runFromInputFile(options: RunFromInputFileOptions):
 
     for await (const event of runner.runAsync(runOptions)) {
       if (event.content && event.content.parts) {
-        const text =
-            event.content.parts.map((part) => part.text || '').join('');
+        const text = event.content.parts
+          .map((part) => part.text || '')
+          .join('');
         if (text) {
           console.log(`[${event.author}]: ${text}`);
         }
@@ -89,8 +102,9 @@ interface RunInteractivelyOptions {
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
 }
-async function runInteractively(options: RunInteractivelyOptions):
-    Promise<void> {
+async function runInteractively(
+  options: RunInteractivelyOptions,
+): Promise<void> {
   const runner = new Runner({
     appName: options.rootAgent.name,
     agent: options.rootAgent,
@@ -116,8 +130,9 @@ async function runInteractively(options: RunInteractivelyOptions):
       newMessage: {role: 'user', parts: [{text: query}]},
     })) {
       if (event.content && event.content.parts) {
-        const text =
-            event.content.parts.map((part) => part.text || '').join('');
+        const text = event.content.parts
+          .map((part) => part.text || '')
+          .join('');
         if (text) {
           console.log(`[${event.author}]: ${text}`);
         }
@@ -143,12 +158,13 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
     const userId = 'test_user';
     const artifactService =
-        options.artifactService || new InMemoryArtifactService();
+      options.artifactService || new InMemoryArtifactService();
     const sessionService =
-        options.sessionService || new InMemorySessionService();
+      options.sessionService || new InMemorySessionService();
     const memoryService = options.memoryService || new InMemoryMemoryService();
-    await using agentFile =
-        new AgentFile(path.join(dirname, options.agentPath));
+    await using agentFile = new AgentFile(
+      path.join(dirname, options.agentPath),
+    );
     const rootAgent = await agentFile.load();
 
     let session = await sessionService.createSession({
@@ -157,19 +173,20 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     });
 
     if (options.inputFile) {
-      session = await runFromInputFile({
-                  appName: rootAgent.name,
-                  userId,
-                  agent: rootAgent,
-                  artifactService,
-                  sessionService,
-                  memoryService,
-                  filePath: options.inputFile,
-                }) ||
-          session;
+      session =
+        (await runFromInputFile({
+          appName: rootAgent.name,
+          userId,
+          agent: rootAgent,
+          artifactService,
+          sessionService,
+          memoryService,
+          filePath: options.inputFile,
+        })) || session;
     } else if (options.savedSessionFile) {
-      const loadedSession =
-          await loadFileData<Session>(options.savedSessionFile);
+      const loadedSession = await loadFileData<Session>(
+        options.savedSessionFile,
+      );
       if (loadedSession) {
         for (const event of loadedSession.events) {
           await sessionService.appendEvent({session, event});
@@ -203,9 +220,11 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
 
     if (options.saveSession) {
       const sessionId =
-          options.sessionId || await getUserInput('Session ID to save: ');
-      const sessionPath =
-          path.join(options.agentPath, `${sessionId}.session.json`);
+        options.sessionId || (await getUserInput('Session ID to save: '));
+      const sessionPath = path.join(
+        options.agentPath,
+        `${sessionId}.session.json`,
+      );
       const sessionToStore = await sessionService.getSession({
         appName: session.appName,
         userId: session.userId,

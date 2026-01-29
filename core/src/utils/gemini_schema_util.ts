@@ -7,12 +7,13 @@
 import {Schema, Type} from '@google/genai';
 import {z} from 'zod';
 
-const MCPToolSchema = z.object({
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const MCPToolSchemaObject = z.object({
   type: z.literal('object'),
   properties: z.record(z.unknown()).optional(),
   required: z.string().array().optional(),
 });
-type MCPToolSchema = z.infer<typeof MCPToolSchema>;
+type MCPToolSchema = z.infer<typeof MCPToolSchemaObject>;
 
 function toGeminiType(mcpType: string): Type {
   if (!mcpType) return Type.TYPE_UNSPECIFIED;
@@ -36,14 +37,16 @@ function toGeminiType(mcpType: string): Type {
   }
 }
 
-export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema|undefined {
+export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   if (!mcpSchema) {
     return undefined;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function recursiveConvert(mcp: any): Schema {
     // Handle nullable types
     if (!mcp.type && mcp.anyOf && Array.isArray(mcp.anyOf)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nonNullOption = mcp.anyOf.find((opt: any) => {
         const t = opt.type;
         return t !== 'null' && t !== 'NULL';
@@ -63,15 +66,18 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema|undefined {
     }
 
     const geminiType = toGeminiType(mcp.type);
-    const geminiSchema:
-        Schema = {type: geminiType, description: mcp.description};
+    const geminiSchema: Schema = {
+      type: geminiType,
+      description: mcp.description,
+    };
 
     if (geminiType === Type.OBJECT) {
       geminiSchema.properties = {};
       if (mcp.properties) {
         for (const name in mcp.properties) {
-          geminiSchema.properties[name] =
-              recursiveConvert(mcp.properties[name]);
+          geminiSchema.properties[name] = recursiveConvert(
+            mcp.properties[name],
+          );
         }
       }
       geminiSchema.required = mcp.required;

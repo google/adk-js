@@ -5,7 +5,11 @@
  */
 
 import {FunctionDeclaration} from '@google/genai';
-import {CallToolRequest, CallToolResult, Tool} from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequest,
+  CallToolResult,
+  Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import {toGeminiSchema} from '../../utils/gemini_schema_util.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
@@ -37,8 +41,7 @@ export class MCPTool extends BaseTool {
   }
 
   override _getDeclaration(): FunctionDeclaration {
-    let declaration: FunctionDeclaration;
-    declaration = {
+    return {
       name: this.mcpTool.name,
       description: this.mcpTool.description,
       parameters: toGeminiSchema(this.mcpTool.inputSchema),
@@ -46,7 +49,6 @@ export class MCPTool extends BaseTool {
       // https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-result
       response: toGeminiSchema(this.mcpTool.outputSchema),
     };
-    return declaration;
   }
 
   override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
@@ -55,6 +57,6 @@ export class MCPTool extends BaseTool {
     const callRequest: CallToolRequest = {} as CallToolRequest;
     callRequest.params = {name: this.mcpTool.name, arguments: request.args};
 
-    return await session.callTool(callRequest.params) as CallToolResult;
+    return (await session.callTool(callRequest.params)) as CallToolResult;
   }
 }

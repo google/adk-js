@@ -111,7 +111,7 @@ export abstract class BaseSessionService {
    * @return A promise that resolves to the session instance or undefined if not
    *     found.
    */
-  abstract getSession(request: GetSessionRequest): Promise<Session|undefined>;
+  abstract getSession(request: GetSessionRequest): Promise<Session | undefined>;
 
   /**
    * Lists sessions for a user.
@@ -119,8 +119,9 @@ export abstract class BaseSessionService {
    * @param request The request to list sessions.
    * @return A promise that resolves to a list of sessions for the user.
    */
-  abstract listSessions(request: ListSessionsRequest):
-      Promise<ListSessionsResponse>;
+  abstract listSessions(
+    request: ListSessionsRequest,
+  ): Promise<ListSessionsResponse>;
 
   /**
    * Deletes a session.

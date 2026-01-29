@@ -26,8 +26,9 @@ export class ToolConfirmation {
     confirmed,
     payload,
   }: {
-    hint?: string, confirmed: boolean,
-    payload?: unknown,
+    hint?: string;
+    confirmed: boolean;
+    payload?: unknown;
   }) {
     this.hint = hint ?? '';
     this.confirmed = confirmed;

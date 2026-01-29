@@ -15,32 +15,35 @@ import {BaseCredentialService} from './base_credential_service.js';
  * implementation of credential service
  */
 export class InMemoryCredentialService implements BaseCredentialService {
-  private readonly credentials:
-      Record<string, Record<string, Record<string, AuthCredential>>> = {};
+  private readonly credentials: Record<
+    string,
+    Record<string, Record<string, AuthCredential>>
+  > = {};
 
   loadCredential(
-      authConfig: AuthConfig,
-      toolContext: ToolContext,
-      ): Promise<AuthCredential|undefined> {
+    authConfig: AuthConfig,
+    toolContext: ToolContext,
+  ): Promise<AuthCredential | undefined> {
     const credentialBucket = this.getBucketForCurrentContext(toolContext);
 
     return Promise.resolve(credentialBucket[authConfig.credentialKey]);
   }
 
   async saveCredential(
-      authConfig: AuthConfig,
-      toolContext: ToolContext,
-      ): Promise<void> {
+    authConfig: AuthConfig,
+    toolContext: ToolContext,
+  ): Promise<void> {
     const credentialBucket = this.getBucketForCurrentContext(toolContext);
 
     if (authConfig.exchangedAuthCredential) {
       credentialBucket[authConfig.credentialKey] =
-          authConfig.exchangedAuthCredential;
+        authConfig.exchangedAuthCredential;
     }
   }
 
-  private getBucketForCurrentContext(toolContext: ToolContext):
-      Record<string, AuthCredential> {
+  private getBucketForCurrentContext(
+    toolContext: ToolContext,
+  ): Record<string, AuthCredential> {
     const {appName, userId} = toolContext.invocationContext.session;
 
     if (!this.credentials[appName]) {

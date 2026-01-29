@@ -20,15 +20,18 @@ export class CallbackContext extends ReadonlyContext {
 
   readonly eventActions: EventActions;
 
-  constructor({invocationContext, eventActions}: {
-    invocationContext: InvocationContext,
-    eventActions?: EventActions,
+  constructor({
+    invocationContext,
+    eventActions,
+  }: {
+    invocationContext: InvocationContext;
+    eventActions?: EventActions;
   }) {
     super(invocationContext);
     this.eventActions = eventActions || createEventActions();
     this._state = new State(
-        invocationContext.session.state,
-        this.eventActions.stateDelta,
+      invocationContext.session.state,
+      this.eventActions.stateDelta,
     );
   }
 
@@ -47,7 +50,7 @@ export class CallbackContext extends ReadonlyContext {
    *     version will be used.
    * @return A promise that resolves to the loaded artifact.
    */
-  loadArtifact(filename: string, version?: number): Promise<Part|undefined> {
+  loadArtifact(filename: string, version?: number): Promise<Part | undefined> {
     if (!this.invocationContext.artifactService) {
       throw new Error('Artifact service is not initialized.');
     }

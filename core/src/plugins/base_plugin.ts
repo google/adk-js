@@ -123,6 +123,7 @@ export abstract class BasePlugin {
    *     value to replace the user message. Returning `undefined` to proceed
    *     normally.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onUserMessageCallback(params: {
     invocationContext: InvocationContext;
     userMessage: Content;
@@ -142,6 +143,7 @@ export abstract class BasePlugin {
    *     to halt execution of the runner and ends the runner with that event.
    *     Return `undefined` to proceed normally.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeRunCallback(params: {
     invocationContext: InvocationContext;
   }): Promise<Content | undefined> {
@@ -160,6 +162,7 @@ export abstract class BasePlugin {
    *     framework to modify or replace the response. Returning `undefined`
    *     allows the original response to be used.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onEventCallback(params: {
     invocationContext: InvocationContext;
     event: Event;
@@ -176,6 +179,7 @@ export abstract class BasePlugin {
    * @param params.invocationContext The context for the entire invocation.
    * @returns undefined
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterRunCallback(params: {
     invocationContext: InvocationContext;
   }): Promise<void> {
@@ -194,6 +198,7 @@ export abstract class BasePlugin {
    *     bypass the agent's callbacks and its execution, and return this value
    *     directly. Returning `undefined` allows the agent to proceed normally.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: CallbackContext;
@@ -213,6 +218,7 @@ export abstract class BasePlugin {
    *     replace the agent's original result. Returning `undefined` uses the
    *     original, unmodified result.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: CallbackContext;
@@ -233,6 +239,7 @@ export abstract class BasePlugin {
    *     trigger an early exit and returns the response immediately. Returning
    *     `undefined` allows the LLM request to proceed normally.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeModelCallback(params: {
     callbackContext: CallbackContext;
     llmRequest: LlmRequest;
@@ -252,6 +259,7 @@ export abstract class BasePlugin {
    *     framework to modify or replace the response. Returning `undefined`
    *     allows the original response to be used.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterModelCallback(params: {
     callbackContext: CallbackContext;
     llmResponse: LlmResponse;
@@ -273,6 +281,7 @@ export abstract class BasePlugin {
    *     used instead of propagating the error. Returning `undefined` allows
    *     the original error to be raised.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onModelErrorCallback(params: {
     callbackContext: CallbackContext;
     llmRequest: LlmRequest;
@@ -295,6 +304,7 @@ export abstract class BasePlugin {
    *     the tool execution and return this response immediately. Returning
    *     `undefined` uses the original, unmodified arguments.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeToolCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
@@ -318,6 +328,7 @@ export abstract class BasePlugin {
    *     post-processing or altering tool outputs. Returning `undefined` uses
    *     the original, unmodified result.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterToolCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
@@ -351,6 +362,7 @@ export abstract class BasePlugin {
    *     used as the tool response instead of propagating the error. Returning
    *     `undefined` allows the original error to be raised.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onToolErrorCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;

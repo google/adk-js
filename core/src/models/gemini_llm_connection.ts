@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, Content, FunctionResponse, Session,} from '@google/genai';
+import {Blob, Content, FunctionResponse, Session} from '@google/genai';
 
 import {logger} from '../utils/logger.js';
 
@@ -13,9 +13,7 @@ import {LlmResponse} from './llm_response.js';
 
 /** The Gemini model connection. */
 export class GeminiLlmConnection implements BaseLlmConnection {
-  constructor(
-      private readonly geminiSession: Session,
-  ) {}
+  constructor(private readonly geminiSession: Session) {}
 
   /**
    * Sends the conversation history to the gemini model.
@@ -29,7 +27,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   async sendHistory(history: Content[]): Promise<void> {
     // We ignore any audio from user during the agent transfer phase.
     const contents = history.filter(
-        (content) => content.parts && content.parts[0]?.text,
+      (content) => content.parts && content.parts[0]?.text,
     );
 
     if (contents.length > 0) {
@@ -57,9 +55,9 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     }
     if (content.parts[0].functionResponse) {
       // All parts have to be function responses.
-      const functionResponses =
-          content.parts.map((part) => part.functionResponse)
-              .filter((fr): fr is FunctionResponse => !!fr);
+      const functionResponses = content.parts
+        .map((part) => part.functionResponse)
+        .filter((fr): fr is FunctionResponse => !!fr);
       logger.debug('Sending LLM function response:', functionResponses);
       this.geminiSession.sendToolResponse({
         functionResponses,
@@ -102,7 +100,8 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   }
 
   // TODO(b/425992518): GenAI SDK inconsistent API, missing methods.
-  async * receive(): AsyncGenerator<LlmResponse, void, void> {
+  // eslint-disable-next-line require-yield
+  async *receive(): AsyncGenerator<LlmResponse, void, void> {
     throw new Error('Not Implemented.');
   }
 

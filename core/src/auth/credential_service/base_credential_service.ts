@@ -25,9 +25,9 @@ export interface BaseCredentialService {
    * @return A promise that resolves to the credential saved in the store.
    */
   loadCredential(
-      authConfig: AuthConfig,
-      toolContext: ToolContext,
-      ): Promise<AuthCredential|undefined>;
+    authConfig: AuthConfig,
+    toolContext: ToolContext,
+  ): Promise<AuthCredential | undefined>;
 
   /*
    * Saves the exchanged_auth_credential in auth config to the backend
@@ -41,7 +41,7 @@ export interface BaseCredentialService {
    * @return A promise that resolves when the credential is saved to the store.
    */
   saveCredential(
-      authConfig: AuthConfig,
-      toolContext: ToolContext,
-      ): Promise<void>;
+    authConfig: AuthConfig,
+    toolContext: ToolContext,
+  ): Promise<void>;
 }

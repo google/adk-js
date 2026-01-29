@@ -25,8 +25,8 @@ function _getDefaultLabels(): string[] {
 
   // TODO: b/468051563 - Consider extracting browser name and version from
   // userAgent string
-  const languageLabel = `${LANGUAGE_LABEL}/${
-      isBrowser() ? window.navigator.userAgent : process.version}`;
+  // eslint-disable-next-line no-undef
+  const languageLabel = `${LANGUAGE_LABEL}/${isBrowser() ? window.navigator.userAgent : process.version}`;
   return [frameworkLabel, languageLabel];
 }
 

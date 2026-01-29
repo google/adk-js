@@ -6,7 +6,6 @@
 
 import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 
-import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
@@ -42,24 +41,26 @@ export class MCPToolset extends BaseToolset {
   private readonly mcpSessionManager: MCPSessionManager;
 
   constructor(
-      connectionParams: MCPConnectionParams,
-      toolFilter: ToolPredicate|string[] = []) {
+    connectionParams: MCPConnectionParams,
+    toolFilter: ToolPredicate | string[] = [],
+  ) {
     super(toolFilter);
     this.mcpSessionManager = new MCPSessionManager(connectionParams);
   }
 
-  async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
+  async getTools(): Promise<BaseTool[]> {
     const session = await this.mcpSessionManager.createSession();
 
-    const listResult = await session.listTools() as ListToolsResult;
-    logger.debug(`number of tools: ${listResult.tools.length}`)
+    const listResult = (await session.listTools()) as ListToolsResult;
+    logger.debug(`number of tools: ${listResult.tools.length}`);
     for (const tool of listResult.tools) {
-      logger.debug(`tool: ${tool.name}`)
+      logger.debug(`tool: ${tool.name}`);
     }
 
     // TODO: respect context (e.g. tool filter)
     return listResult.tools.map(
-        (tool) => new MCPTool(tool, this.mcpSessionManager));
+      (tool) => new MCPTool(tool, this.mcpSessionManager),
+    );
   }
 
   async close(): Promise<void> {}

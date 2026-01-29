@@ -3,7 +3,12 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {FunctionTool, GOOGLE_SEARCH, LlmAgent, ParallelAgent} from '@google/adk';
+import {
+  FunctionTool,
+  GOOGLE_SEARCH,
+  LlmAgent,
+  ParallelAgent,
+} from '@google/adk';
 import {z} from 'zod';
 
 function getRandomArbitrary(min: number, max: number): number {
@@ -13,7 +18,7 @@ function getRandomArbitrary(min: number, max: number): number {
 const getWeatherTemperatureTool = new FunctionTool({
   name: 'get_weather_temperature',
   description:
-      'Retrieves the current templature in celsius for a specified city.',
+    'Retrieves the current templature in celsius for a specified city.',
   parameters: z.object({
     city: z.string().describe('The name of the city.'),
   }),
@@ -28,9 +33,9 @@ const googleSearchAgent = new LlmAgent({
   name: 'google_search_agent',
   model: 'gemini-2.5-flash',
   description:
-      'An agent whose job it is to perform Google search queries and answer questions about the results.',
+    'An agent whose job it is to perform Google search queries and answer questions about the results.',
   instruction:
-      'You are an agent whose job is to perform Google search query and return summary for the result maximum containing 300 characters.',
+    'You are an agent whose job is to perform Google search query and return summary for the result maximum containing 300 characters.',
   tools: [GOOGLE_SEARCH],
 });
 
@@ -39,7 +44,7 @@ const getWeatherAgent = new LlmAgent({
   model: 'gemini-2.5-flash',
   description: 'Retrieves the current weather report for a specified city.',
   instruction:
-      'You are responsible for retrieving the current weather temperature for a city from the user request. You should not ask for additional information.',
+    'You are responsible for retrieving the current weather temperature for a city from the user request. You should not ask for additional information.',
   tools: [getWeatherTemperatureTool],
 });
 

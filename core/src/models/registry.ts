@@ -13,8 +13,8 @@ import {Gemini} from './google_llm.js';
  * type[BaseLlm] equivalent in TypeScript, represents a class that can be new-ed
  * to create a BaseLlm instance.
  */
-export type BaseLlmType = (new (params: {model: string}) => BaseLlm)&{
-  readonly supportedModels: Array<string|RegExp>;
+export type BaseLlmType = (new (params: {model: string}) => BaseLlm) & {
+  readonly supportedModels: Array<string | RegExp>;
 };
 
 /**
@@ -30,7 +30,7 @@ class LRUCache<K, V> {
     this.cache = new Map<K, V>();
   }
 
-  get(key: K): V|undefined {
+  get(key: K): V | undefined {
     const item = this.cache.get(key);
     if (item) {
       // Map maintians insertion order.
@@ -59,7 +59,7 @@ export class LLMRegistry {
    * Key is the regex that matches the model name.
    * Value is the class that implements the model.
    */
-  private static llmRegistryDict: Map<string|RegExp, BaseLlmType> = new Map();
+  private static llmRegistryDict: Map<string | RegExp, BaseLlmType> = new Map();
   private static resolveCache = new LRUCache<string, BaseLlmType>(32);
 
   /**
@@ -71,11 +71,13 @@ export class LLMRegistry {
     return new (LLMRegistry.resolve(model))({model});
   }
 
-  private static _register(modelNameRegex: string|RegExp, llmCls: BaseLlmType) {
+  private static _register(
+    modelNameRegex: string | RegExp,
+    llmCls: BaseLlmType,
+  ) {
     if (LLMRegistry.llmRegistryDict.has(modelNameRegex)) {
       logger.info(
-          `Updating LLM class for ${modelNameRegex} from ${
-              LLMRegistry.llmRegistryDict.get(modelNameRegex)} to ${llmCls}`,
+        `Updating LLM class for ${modelNameRegex} from ${LLMRegistry.llmRegistryDict.get(modelNameRegex)} to ${llmCls}`,
       );
     }
     LLMRegistry.llmRegistryDict.set(modelNameRegex, llmCls);
@@ -86,9 +88,10 @@ export class LLMRegistry {
    * @param llmCls The class that implements the model.
    */
   static register<T extends BaseLlm>(
-      llmCls: (new(params: {model: string}) => T)&{
-        readonly supportedModels: Array<string|RegExp>;
-      }) {
+    llmCls: (new (params: {model: string}) => T) & {
+      readonly supportedModels: Array<string | RegExp>;
+    },
+  ) {
     for (const regex of llmCls.supportedModels) {
       LLMRegistry._register(regex, llmCls);
     }
@@ -111,8 +114,8 @@ export class LLMRegistry {
       // to the start (^) and end ($) of the string.
       // TODO - b/425992518: validate it works well.
       const pattern = new RegExp(
-          `^${regex instanceof RegExp ? regex.source : regex}$`,
-          regex instanceof RegExp ? regex.flags : undefined,
+        `^${regex instanceof RegExp ? regex.source : regex}$`,
+        regex instanceof RegExp ? regex.flags : undefined,
       );
       if (pattern.test(model)) {
         LLMRegistry.resolveCache.set(model, llmClass);

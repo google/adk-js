@@ -3,7 +3,15 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {BaseLlm, BaseLlmConnection, LlmAgent, LLMRegistry, LlmResponse, LogLevel, setLogLevel} from '@google/adk';
+import {
+  BaseLlm,
+  BaseLlmConnection,
+  LlmAgent,
+  LLMRegistry,
+  LlmResponse,
+  LogLevel,
+  setLogLevel,
+} from '@google/adk';
 import {createModelContent, GenerateContentResponse} from '@google/genai';
 
 setLogLevel(LogLevel.DEBUG);
@@ -17,7 +25,7 @@ class MockLlmConnection implements BaseLlmConnection {
 
   async sendRealtime(): Promise<void> {}
 
-  async * receive(): AsyncGenerator<LlmResponse, void, void> {}
+  async *receive(): AsyncGenerator<LlmResponse, void, void> {}
 
   async close(): Promise<void> {}
 }
@@ -29,11 +37,12 @@ class MockLll extends BaseLlm {
 
   static override readonly supportedModels = ['test-llm-model'];
 
-  async * generateContentAsync(): AsyncGenerator<LlmResponse, void> {
+  async *generateContentAsync(): AsyncGenerator<LlmResponse, void> {
     const generateContentResponse = new GenerateContentResponse();
 
-    generateContentResponse.candidates =
-        [{content: createModelContent('test-llm-model-response')}];
+    generateContentResponse.candidates = [
+      {content: createModelContent('test-llm-model-response')},
+    ];
     const candidate = generateContentResponse.candidates[0]!;
 
     yield {

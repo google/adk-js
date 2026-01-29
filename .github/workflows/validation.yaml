@@ -29,5 +29,11 @@ jobs:
     - name: Run tests
       run: npm run test
 
-    - name: Check documentation can be built
+    - name: Run lint check
+      run: npm run lint
+
+    - name: Run format check
+      run: npm run format:check
+
+    - name: Run documentation build check
       run: npm run docs:check

@@ -6,7 +6,11 @@
 
 import {FunctionDeclaration} from '@google/genai';
 
-import {FunctionTool, ToolInputParameters, ToolOptions,} from './function_tool.js';
+import {
+  FunctionTool,
+  ToolInputParameters,
+  ToolOptions,
+} from './function_tool.js';
 
 /**
  * A function tool that returns the result asynchronously.

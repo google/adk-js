@@ -60,7 +60,7 @@ export class PluginManager {
     if (this.plugins.has(plugin)) {
       throw new Error(`Plugin '${plugin.name}' already registered.`);
     }
-    if (Array.from(this.plugins).some(p => p.name === plugin.name)) {
+    if (Array.from(this.plugins).some((p) => p.name === plugin.name)) {
       throw new Error(`Plugin with name '${plugin.name}' already registered.`);
     }
 
@@ -75,9 +75,9 @@ export class PluginManager {
    * @param pluginName The name of the plugin to retrieve.
    * @returns The plugin instance if found, otherwise `undefined`.
    */
-  getPlugin(pluginName: string): BasePlugin|undefined {
+  getPlugin(pluginName: string): BasePlugin | undefined {
     // Set operates on strict equality, we only want to match by name
-    return Array.from(this.plugins).find(p => p.name === pluginName);
+    return Array.from(this.plugins).find((p) => p.name === pluginName);
   }
 
   /**
@@ -93,22 +93,21 @@ export class PluginManager {
    *     the proper type for the plugin method.
    */
   private async runCallbacks(
-      plugins: Set<BasePlugin>,
-      callback: (plugin: BasePlugin) => Promise<unknown>,
-      callbackName: string,
-      ): Promise<unknown> {
+    plugins: Set<BasePlugin>,
+    callback: (plugin: BasePlugin) => Promise<unknown>,
+    callbackName: string,
+  ): Promise<unknown> {
     for (const plugin of plugins) {
       try {
         const result = await callback(plugin);
         if (result !== undefined) {
           logger.debug(
-              `Plugin '${plugin.name}' returned a value for callback '${
-                  callbackName}', exiting early.`);
+            `Plugin '${plugin.name}' returned a value for callback '${callbackName}', exiting early.`,
+          );
           return result;
         }
       } catch (e) {
-        const errorMessage = `Error in plugin '${
-            plugin.name}' during '${callbackName}' callback: ${e}`;
+        const errorMessage = `Error in plugin '${plugin.name}' during '${callbackName}' callback: ${e}`;
         logger.error(errorMessage);
         throw new Error(errorMessage);
       }
@@ -119,181 +118,222 @@ export class PluginManager {
   /**
    * Runs the `onUserMessageCallback` for all plugins.
    */
-  async runOnUserMessageCallback(
-      {userMessage, invocationContext}:
-          {userMessage: Content; invocationContext: InvocationContext;},
-      ): Promise<Content|undefined> {
-    return await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) => plugin.onUserMessageCallback(
-                   {userMessage, invocationContext}),
-               'onUserMessageCallback',
-               ) as Content |
-        undefined;
+  async runOnUserMessageCallback({
+    userMessage,
+    invocationContext,
+  }: {
+    userMessage: Content;
+    invocationContext: InvocationContext;
+  }): Promise<Content | undefined> {
+    return (await this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.onUserMessageCallback({userMessage, invocationContext}),
+      'onUserMessageCallback',
+    )) as Content | undefined;
   }
 
   /**
    * Runs the `beforeRunCallback` for all plugins.
    */
-  async runBeforeRunCallback({invocationContext}: {
+  async runBeforeRunCallback({
+    invocationContext,
+  }: {
     invocationContext: InvocationContext;
-  }): Promise<Content|undefined> {
+  }): Promise<Content | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.beforeRunCallback({invocationContext}),
-               'beforeRunCallback',
-               )) as Content |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) => plugin.beforeRunCallback({invocationContext}),
+      'beforeRunCallback',
+    )) as Content | undefined;
   }
 
   /**
    * Runs the `afterRunCallback` for all plugins.
    */
-  async runAfterRunCallback({invocationContext}: {
+  async runAfterRunCallback({
+    invocationContext,
+  }: {
     invocationContext: InvocationContext;
   }): Promise<void> {
     await this.runCallbacks(
-        this.plugins,
-        (plugin: BasePlugin) => plugin.afterRunCallback({invocationContext}),
-        'afterRunCallback',
+      this.plugins,
+      (plugin: BasePlugin) => plugin.afterRunCallback({invocationContext}),
+      'afterRunCallback',
     );
   }
 
   /**
    * Runs the `onEventCallback` for all plugins.
    */
-  async runOnEventCallback({invocationContext, event}: {
-    invocationContext: InvocationContext; event: Event;
-  }): Promise<Event|undefined> {
+  async runOnEventCallback({
+    invocationContext,
+    event,
+  }: {
+    invocationContext: InvocationContext;
+    event: Event;
+  }): Promise<Event | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.onEventCallback({invocationContext, event}),
-               'onEventCallback',
-               )) as Event |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.onEventCallback({invocationContext, event}),
+      'onEventCallback',
+    )) as Event | undefined;
   }
 
   /**
    * Runs the `beforeAgentCallback` for all plugins.
    */
-  async runBeforeAgentCallback({agent, callbackContext}: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
+  async runBeforeAgentCallback({
+    agent,
+    callbackContext,
+  }: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.beforeAgentCallback({agent, callbackContext}),
-               'beforeAgentCallback',
-               )) as Content |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeAgentCallback({agent, callbackContext}),
+      'beforeAgentCallback',
+    )) as Content | undefined;
   }
 
   /**
    * Runs the `afterAgentCallback` for all plugins.
    */
-  async runAfterAgentCallback({agent, callbackContext}: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
+  async runAfterAgentCallback({
+    agent,
+    callbackContext,
+  }: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.afterAgentCallback({agent, callbackContext}),
-               'afterAgentCallback',
-               )) as Content |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.afterAgentCallback({agent, callbackContext}),
+      'afterAgentCallback',
+    )) as Content | undefined;
   }
 
   /**
    * Runs the `beforeToolCallback` for all plugins.
    */
-  async runBeforeToolCallback({tool, toolArgs, toolContext}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
-  }): Promise<Record<string, unknown>|undefined> {
+  async runBeforeToolCallback({
+    tool,
+    toolArgs,
+    toolContext,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
+  }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.beforeToolCallback({tool, toolArgs, toolContext}),
-               'beforeToolCallback',
-               )) as Record<string, unknown>|
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeToolCallback({tool, toolArgs, toolContext}),
+      'beforeToolCallback',
+    )) as Record<string, unknown> | undefined;
   }
 
   /**
    * Runs the `afterToolCallback` for all plugins.
    */
-  async runAfterToolCallback({tool, toolArgs, toolContext, result}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  async runAfterToolCallback({
+    tool,
+    toolArgs,
+    toolContext,
+    result,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     result: Record<string, unknown>;
-  }): Promise<Record<string, unknown>|undefined> {
+  }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) => plugin.afterToolCallback(
-                   {tool, toolArgs, toolContext, result}),
-               'afterToolCallback',
-               )) as Record<string, unknown>|
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.afterToolCallback({tool, toolArgs, toolContext, result}),
+      'afterToolCallback',
+    )) as Record<string, unknown> | undefined;
   }
 
   /**
    * Runs the `onModelErrorCallback` for all plugins.
    */
-  async runOnModelErrorCallback({callbackContext, llmRequest, error}: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest; error: Error;
-  }): Promise<LlmResponse|undefined> {
+  async runOnModelErrorCallback({
+    callbackContext,
+    llmRequest,
+    error,
+  }: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+    error: Error;
+  }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) => plugin.onModelErrorCallback(
-                   {callbackContext, llmRequest, error}),
-               'onModelErrorCallback',
-               )) as LlmResponse |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.onModelErrorCallback({callbackContext, llmRequest, error}),
+      'onModelErrorCallback',
+    )) as LlmResponse | undefined;
   }
 
   /**
    * Runs the `beforeModelCallback` for all plugins.
    */
-  async runBeforeModelCallback({callbackContext, llmRequest}: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest;
-  }): Promise<LlmResponse|undefined> {
+  async runBeforeModelCallback({
+    callbackContext,
+    llmRequest,
+  }: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+  }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.beforeModelCallback({callbackContext, llmRequest}),
-               'beforeModelCallback',
-               )) as LlmResponse |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeModelCallback({callbackContext, llmRequest}),
+      'beforeModelCallback',
+    )) as LlmResponse | undefined;
   }
 
   /**
    * Runs the `afterModelCallback` for all plugins.
    */
-  async runAfterModelCallback({callbackContext, llmResponse}: {
-    callbackContext: CallbackContext; llmResponse: LlmResponse;
-  }): Promise<LlmResponse|undefined> {
+  async runAfterModelCallback({
+    callbackContext,
+    llmResponse,
+  }: {
+    callbackContext: CallbackContext;
+    llmResponse: LlmResponse;
+  }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) =>
-                   plugin.afterModelCallback({callbackContext, llmResponse}),
-               'afterModelCallback',
-               )) as LlmResponse |
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.afterModelCallback({callbackContext, llmResponse}),
+      'afterModelCallback',
+    )) as LlmResponse | undefined;
   }
 
   /**
    * Runs the `onToolErrorCallback` for all plugins.
    */
-  async runOnToolErrorCallback({tool, toolArgs, toolContext, error}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  async runOnToolErrorCallback({
+    tool,
+    toolArgs,
+    toolContext,
+    error,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     error: Error;
-  }): Promise<Record<string, unknown>|undefined> {
+  }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
-               this.plugins,
-               (plugin: BasePlugin) => plugin.onToolErrorCallback(
-                   {tool, toolArgs, toolContext, error}),
-               'onToolErrorCallback',
-               )) as Record<string, unknown>|
-        undefined;
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.onToolErrorCallback({tool, toolArgs, toolContext, error}),
+      'onToolErrorCallback',
+    )) as Record<string, unknown> | undefined;
   }
 }

@@ -13,7 +13,7 @@ export async function isFolderExists(folderPath: string): Promise<boolean> {
   try {
     await fs.access(folderPath);
     return true;
-  } catch (e: unknown) {
+  } catch (_e: unknown) {
     return false;
   }
 }
@@ -52,13 +52,15 @@ export async function isFile(filePath: string): Promise<boolean> {
   try {
     const stat = await fs.stat(filePath);
     return stat.isFile();
-  } catch (e: unknown) {
+  } catch (_e: unknown) {
     return false;
   }
 }
 
 /** Load data from a file in JSON format. */
-export async function loadFileData<T>(filePath: string): Promise<T|undefined> {
+export async function loadFileData<T>(
+  filePath: string,
+): Promise<T | undefined> {
   try {
     return JSON.parse(await fs.readFile(filePath, {encoding: 'utf-8'})) as T;
   } catch (e) {
@@ -72,9 +74,10 @@ export async function loadFileData<T>(filePath: string): Promise<T|undefined> {
 export async function saveToFile<T>(filePath: string, data: T): Promise<void> {
   try {
     await fs.writeFile(
-        filePath,
-        typeof data === 'string' ? data : JSON.stringify(data, null, 2),
-        {encoding: 'utf-8'});
+      filePath,
+      typeof data === 'string' ? data : JSON.stringify(data, null, 2),
+      {encoding: 'utf-8'},
+    );
   } catch (e) {
     console.error(`Failed to write file ${filePath}:`, e);
 
@@ -109,10 +112,10 @@ export function getTempDir(prefix?: string): string {
  *     iterations.
  */
 export async function tryToFindFileRecursively(
-    sourceFolder: string,
-    fileName: string,
-    maxIterations: number,
-    ): Promise<string> {
+  sourceFolder: string,
+  fileName: string,
+  maxIterations: number,
+): Promise<string> {
   let currentFolder = sourceFolder;
 
   for (let i = 0; i < maxIterations; i++) {
@@ -125,6 +128,9 @@ export async function tryToFindFileRecursively(
     currentFolder = path.join(currentFolder, '../');
   }
 
-  throw new Error(`No ${fileName} found in ${
-      sourceFolder} or its parent folders up to ${maxIterations} levels.`);
-};
+  throw new Error(
+    `No ${fileName} found in ${
+      sourceFolder
+    } or its parent folders up to ${maxIterations} levels.`,
+  );
+}

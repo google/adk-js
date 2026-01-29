@@ -5,7 +5,7 @@
  */
 
 const MODEL_NAME_PATTERN =
-    '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
+  '^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$';
 
 /**
  * Extract the actual model name from either simple or path-based format.
@@ -47,12 +47,14 @@ function parseVersion(versionString: string): ParsedVersion {
   if (!/^\d+(\.\d+)*$/.test(versionString)) {
     return {valid: false, major: 0, minor: 0, patch: 0};
   }
-  const parts = versionString.split('.').map(part => parseInt(part, 10));
+  const parts = versionString.split('.').map((part) => parseInt(part, 10));
 
   return {
-    valid: true, major: parts[0], minor: parts.length > 1 ? parts[1] : 0,
-        patch: parts.length > 2 ? parts[2] : 0
-  }
+    valid: true,
+    major: parts[0],
+    minor: parts.length > 1 ? parts[1] : 0,
+    patch: parts.length > 2 ? parts[2] : 0,
+  };
 }
 
 /**

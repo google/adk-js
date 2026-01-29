@@ -15,8 +15,10 @@ import {ToolContext} from './tool_context.js';
  * implementer could consider whether to accept such instance in the toolset's
  * constructor and apply the predicate in getTools method.
  */
-export type ToolPredicate =
-    (tool: BaseTool, readonlyContext: ReadonlyContext) => boolean;
+export type ToolPredicate = (
+  tool: BaseTool,
+  readonlyContext: ReadonlyContext,
+) => boolean;
 
 /**
  * Base class for toolset.
@@ -24,7 +26,7 @@ export type ToolPredicate =
  * A toolset is a collection of tools that can be used by an agent.
  */
 export abstract class BaseToolset {
-  constructor(readonly toolFilter: ToolPredicate|string[]) {}
+  constructor(readonly toolFilter: ToolPredicate | string[]) {}
 
   /**
    * Returns the tools that should be exposed to LLM.
@@ -83,7 +85,7 @@ export abstract class BaseToolset {
    * @param llmRequest The outgoing LLM request, mutable this method.
    */
   async processLlmRequest(
-      toolContext: ToolContext,
-      llmRequest: LlmRequest,
-      ): Promise<void> {}
+    toolContext: ToolContext, // eslint-disable-line @typescript-eslint/no-unused-vars
+    llmRequest: LlmRequest, // eslint-disable-line @typescript-eslint/no-unused-vars
+  ): Promise<void> {}
 }

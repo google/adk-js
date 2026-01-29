@@ -17,7 +17,11 @@ export class InMemoryRunner extends Runner {
     agent,
     appName = 'InMemoryRunner',
     plugins = [],
-  }: {agent: BaseAgent; appName?: string; plugins?: BasePlugin[];}) {
+  }: {
+    agent: BaseAgent;
+    appName?: string;
+    plugins?: BasePlugin[];
+  }) {
     super({
       appName,
       agent,

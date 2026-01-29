@@ -7,6 +7,7 @@
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 // TODO: b/425992518 - Replace 'any' with a proper AuthConfig.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AuthConfig = any;
 
 /**
@@ -63,8 +64,9 @@ export interface EventActions {
 /**
  * Creates an EventActions object.
  */
-export function createEventActions(state: Partial<EventActions> = {}):
-    EventActions {
+export function createEventActions(
+  state: Partial<EventActions> = {},
+): EventActions {
   return {
     stateDelta: {},
     artifactDelta: {},
@@ -84,8 +86,9 @@ export function createEventActions(state: Partial<EventActions> = {}):
  * last one wins.
  */
 export function mergeEventActions(
-    sources: Array<Partial<EventActions>>,
-    target?: EventActions): EventActions {
+  sources: Array<Partial<EventActions>>,
+  target?: EventActions,
+): EventActions {
   const result = createEventActions();
 
   if (target) {
@@ -106,7 +109,9 @@ export function mergeEventActions(
     }
     if (source.requestedToolConfirmations) {
       Object.assign(
-          result.requestedToolConfirmations, source.requestedToolConfirmations);
+        result.requestedToolConfirmations,
+        source.requestedToolConfirmations,
+      );
     }
 
     if (source.skipSummarization !== undefined) {

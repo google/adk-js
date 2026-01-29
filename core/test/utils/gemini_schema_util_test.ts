@@ -8,9 +8,15 @@ import {Type} from '@google/genai';
 
 import {toGeminiSchema} from '../../src/utils/gemini_schema_util.js';
 
+interface MCPToolSchema {
+  type: 'object';
+  properties?: Record<string, unknown>;
+  required?: string[];
+}
+
 describe('toGeminiSchema', () => {
   it('converts a simple object schema with explicit type', () => {
-    const input = {
+    const input: MCPToolSchema = {
       type: 'object',
       properties: {
         name: {type: 'string'},
@@ -19,7 +25,7 @@ describe('toGeminiSchema', () => {
       required: ['name'],
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input);
 
     expect(schema).toEqual({
       type: Type.OBJECT,
@@ -38,7 +44,7 @@ describe('toGeminiSchema', () => {
       },
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     expect(schema).toEqual({
       type: Type.OBJECT,
@@ -53,7 +59,7 @@ describe('toGeminiSchema', () => {
       items: {type: 'string'},
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     expect(schema).toEqual({
       type: Type.ARRAY,
@@ -61,26 +67,25 @@ describe('toGeminiSchema', () => {
     });
   });
 
-  it('handles optional types (anyOf with null) by picking the non-null type',
-     () => {
-       const input = {
-         anyOf: [{type: 'string'}, {type: 'null'}],
-       };
+  it('handles optional types (anyOf with null) by picking the non-null type', () => {
+    const input = {
+      anyOf: [{type: 'string'}, {type: 'null'}],
+    };
 
-       const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
-       // Should resolve to STRING
-       expect(schema).toEqual({
-         type: Type.STRING,
-       });
-     });
+    // Should resolve to STRING
+    expect(schema).toEqual({
+      type: Type.STRING,
+    });
+  });
 
   it('handles optional types (anyOf with null) reverse order', () => {
     const input = {
       anyOf: [{type: 'null'}, {type: 'string'}],
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     expect(schema).toEqual({
       type: Type.STRING,
@@ -107,7 +112,7 @@ describe('toGeminiSchema', () => {
       },
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     expect(schema).toEqual({
       type: Type.OBJECT,
@@ -131,7 +136,7 @@ describe('toGeminiSchema', () => {
       $ref: '#/definitions/MyType',
     };
 
-    const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     expect(schema).toEqual({
       type: Type.OBJECT,
@@ -139,21 +144,22 @@ describe('toGeminiSchema', () => {
     });
   });
 
-  it("handles empty items schema for arrays (e.g., items: {}) without crashing",
-     () => {
-       const input = {
-         type: "array",
-         items: {},  // valid JSON Schema meaning "any", seen in AWS MCP server
-       };
+  it('handles empty items schema for arrays (e.g., items: {}) without crashing', () => {
+    const input = {
+      type: 'array',
+      items: {}, // valid JSON Schema meaning "any", seen in AWS MCP server
+    };
 
-       expect(() => toGeminiSchema(input as any)).not.toThrow();
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
 
-       const schema = toGeminiSchema(input as any);
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
-       // For empty items schema, items type becomes TYPE_UNSPECIFIED
-       expect(schema).toEqual({
-         type: Type.ARRAY,
-         items: {type: Type.TYPE_UNSPECIFIED},
-       });
-     });
+    // For empty items schema, items type becomes TYPE_UNSPECIFIED
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.TYPE_UNSPECIFIED},
+    });
+  });
 });

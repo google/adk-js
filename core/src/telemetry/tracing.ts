@@ -16,7 +16,7 @@
  */
 
 import {Content} from '@google/genai';
-import {trace, context, Context} from '@opentelemetry/api';
+import {context, Context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -35,10 +35,7 @@ const GEN_AI_TOOL_DESCRIPTION = 'gen_ai.tool.description';
 const GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
 const GEN_AI_TOOL_TYPE = 'gen_ai.tool.type';
 
-export const tracer = trace.getTracer(
-  'gcp.vertex.agent',
-  version,
-);
+export const tracer = trace.getTracer('gcp.vertex.agent', version);
 
 /**
  * Convert any JavaScript object to a JSON-serializable string.
@@ -49,7 +46,7 @@ export const tracer = trace.getTracer(
 function safeJsonSerialize(obj: unknown): string {
   try {
     return JSON.stringify(obj);
-  } catch (error) {
+  } catch (_e: unknown) {
     return '<not serializable>';
   }
 }
@@ -82,7 +79,7 @@ export function traceAgentInvocation({
 }: TraceAgentInvocationParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
-  
+
   // Required
   span.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'invoke_agent',
@@ -111,7 +108,7 @@ export function traceToolCall({
 }: TraceToolCallParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
-  
+
   span.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'execute_tool',
     [GEN_AI_TOOL_DESCRIPTION]: tool.description || '',
@@ -122,15 +119,15 @@ export function traceToolCall({
     // applicable for tool_response.
     'gcp.vertex.agent.llm_request': '{}',
     'gcp.vertex.agent.llm_response': '{}',
-    'gcp.vertex.agent.tool_call_args': shouldAddRequestResponseToSpans() 
+    'gcp.vertex.agent.tool_call_args': shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(args)
-      : '{}'
+      : '{}',
   });
 
   // Tracing tool response
   let toolCallId = '<not specified>';
   let toolResponse: unknown = '<not specified>';
-  
+
   if (functionResponseEvent.content?.parts) {
     const responseParts = functionResponseEvent.content.parts;
     const functionResponse = responseParts[0]?.functionResponse;
@@ -142,7 +139,7 @@ export function traceToolCall({
     }
   }
   if (typeof toolResponse !== 'object' || toolResponse === null) {
-    toolResponse = { result: toolResponse };
+    toolResponse = {result: toolResponse};
   }
 
   span.setAttributes({
@@ -150,7 +147,7 @@ export function traceToolCall({
     'gcp.vertex.agent.event_id': functionResponseEvent.id,
     'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(toolResponse)
-      : '{}'
+      : '{}',
   });
 }
 
@@ -187,9 +184,12 @@ export function traceMergedToolCalls({
     'gcp.vertex.agent.llm_response': '{}',
   });
 
-  span.setAttribute('gcp.vertex.agent.tool_response', shouldAddRequestResponseToSpans()
-    ? safeJsonSerialize(functionResponseEvent)
-    : '{}');
+  span.setAttribute(
+    'gcp.vertex.agent.tool_response',
+    shouldAddRequestResponseToSpans()
+      ? safeJsonSerialize(functionResponseEvent)
+      : '{}',
+  );
 }
 
 export interface TraceCallLlmParams {
@@ -217,7 +217,7 @@ export function traceCallLlm({
   // that this is a span related to a Generative AI system.
   const span = trace.getActiveSpan();
   if (!span) return;
-  
+
   span.setAttributes({
     'gen_ai.system': 'gcp.vertex.agent',
     'gen_ai.request.model': llmRequest.model,
@@ -232,30 +232,41 @@ export function traceCallLlm({
 
   // Consider removing once GenAI SDK provides a way to record this info.
   if (llmRequest.config?.topP) {
-      span.setAttribute('gen_ai.request.top_p', llmRequest.config.topP);
+    span.setAttribute('gen_ai.request.top_p', llmRequest.config.topP);
   }
 
   if (llmRequest.config?.maxOutputTokens !== undefined) {
-    span.setAttribute('gen_ai.request.max_tokens', llmRequest.config.maxOutputTokens);
+    span.setAttribute(
+      'gen_ai.request.max_tokens',
+      llmRequest.config.maxOutputTokens,
+    );
   }
 
-  span.setAttribute('gcp.vertex.agent.llm_response', shouldAddRequestResponseToSpans()
-    ? safeJsonSerialize(llmResponse)
-    : '{}');
+  span.setAttribute(
+    'gcp.vertex.agent.llm_response',
+    shouldAddRequestResponseToSpans() ? safeJsonSerialize(llmResponse) : '{}',
+  );
 
   if (llmResponse.usageMetadata) {
-    span.setAttribute('gen_ai.usage.input_tokens', llmResponse.usageMetadata.promptTokenCount || 0);
+    span.setAttribute(
+      'gen_ai.usage.input_tokens',
+      llmResponse.usageMetadata.promptTokenCount || 0,
+    );
   }
-  
+
   if (llmResponse.usageMetadata?.candidatesTokenCount) {
-    span.setAttribute('gen_ai.usage.output_tokens', llmResponse.usageMetadata.candidatesTokenCount);
+    span.setAttribute(
+      'gen_ai.usage.output_tokens',
+      llmResponse.usageMetadata.candidatesTokenCount,
+    );
   }
 
   if (llmResponse.finishReason) {
     // Convert enum to lowercase string array
-    const finishReasonValue = typeof llmResponse.finishReason === 'string' 
-      ? llmResponse.finishReason.toLowerCase()
-      : String(llmResponse.finishReason).toLowerCase();
+    const finishReasonValue =
+      typeof llmResponse.finishReason === 'string'
+        ? llmResponse.finishReason.toLowerCase()
+        : String(llmResponse.finishReason).toLowerCase();
     span.setAttribute('gen_ai.response.finish_reasons', [finishReasonValue]);
   }
 }
@@ -284,7 +295,7 @@ export function traceSendData({
 }: TraceSendDataParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
-  
+
   span.setAttributes({
     'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
     'gcp.vertex.agent.event_id': eventId,
@@ -293,9 +304,10 @@ export function traceSendData({
   // Once instrumentation is added to the GenAI SDK, consider whether this
   // information still needs to be recorded by the Agent Development Kit.
 
-  span.setAttribute('gcp.vertex.agent.data', shouldAddRequestResponseToSpans()
-    ? safeJsonSerialize(data)
-    : '{}');
+  span.setAttribute(
+    'gcp.vertex.agent.data',
+    shouldAddRequestResponseToSpans() ? safeJsonSerialize(data) : '{}',
+  );
 }
 
 /**
@@ -308,7 +320,9 @@ export function traceSendData({
  * @param llmRequest The LlmRequest object.
  * @returns A dictionary representation of the LLM request.
  */
-function buildLlmRequestForTrace(llmRequest: LlmRequest): Record<string, unknown> {
+function buildLlmRequestForTrace(
+  llmRequest: LlmRequest,
+): Record<string, unknown> {
   const result: Record<string, unknown> = {
     model: llmRequest.model,
     contents: [],
@@ -316,14 +330,15 @@ function buildLlmRequestForTrace(llmRequest: LlmRequest): Record<string, unknown
 
   if (llmRequest.config) {
     // Create a clean config object, pruning responseSchema to reduce noise size
-    const { responseSchema, ...cleanConfig } = llmRequest.config;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const {responseSchema, ...cleanConfig} = llmRequest.config;
     result.config = cleanConfig;
   }
 
   // We do not want to send bytes data to the trace.
-  result.contents = llmRequest.contents.map(content => ({
+  result.contents = llmRequest.contents.map((content) => ({
     role: content.role,
-    parts: content.parts?.filter(part => !part.inlineData) || [],
+    parts: content.parts?.filter((part) => !part.inlineData) || [],
   }));
 
   return result;
@@ -331,12 +346,13 @@ function buildLlmRequestForTrace(llmRequest: LlmRequest): Record<string, unknown
 
 /**
  * Binds an async generator to OpenTelemetry context for trace propagation.
- * This is a temporary solution.	
+ * This is a temporary solution.
  * @param ctx - The OpenTelemetry context to bind the generator to
  * @param generator - The async generator to be bound to the context
- * 
+ *
  * @returns A new async generator that executes all operations within the provided context
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function bindAsyncGenerator<T = unknown, TReturn = any, TNext = unknown>(
   ctx: Context,
   generator: AsyncGenerator<T, TReturn, TNext>,
@@ -344,10 +360,10 @@ export function bindAsyncGenerator<T = unknown, TReturn = any, TNext = unknown>(
   return {
     // Bind the next() method to execute within the provided context
     next: context.bind(ctx, generator.next.bind(generator)),
-    
+
     // Bind the return() method to execute within the provided context
     return: context.bind(ctx, generator.return.bind(generator)),
-    
+
     // Bind the throw() method to execute within the provided context
     throw: context.bind(ctx, generator.throw.bind(generator)),
 
@@ -360,12 +376,12 @@ export function bindAsyncGenerator<T = unknown, TReturn = any, TNext = unknown>(
 
 /**
  * Determines whether to add request/response content to spans.
- * 
+ *
  * Defaults to true for now to preserve backward compatibility.
  * Once prompt and response logging is well established in ADK, we might start
  * a deprecation of request/response content in spans by switching the default
  * to false.
- * 
+ *
  * @returns false only when ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS is explicitly set to 'false' or '0'
  */
 function shouldAddRequestResponseToSpans(): boolean {

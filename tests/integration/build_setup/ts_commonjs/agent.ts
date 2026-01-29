@@ -5,22 +5,23 @@
  */
 const {
   BaseLlm,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   BaseLlmConnection,
   LlmAgent,
   LLMRegistry,
-  LlmRequest,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   LlmResponse,
   setLogLevel,
-  LogLevel
-} = require('@google/adk');
-const {createModelContent, GenerateContentResponse} = require('@google/genai');
+  LogLevel,
+} = require('@google/adk'); // eslint-disable-line @typescript-eslint/no-require-imports
+const {createModelContent, GenerateContentResponse} = require('@google/genai'); // eslint-disable-line @typescript-eslint/no-require-imports
 
-type BaseLlmConnection = typeof BaseLlmConnection;
-type LlmResponse = typeof LlmResponse;
+type BaseLlmConnectionType = typeof BaseLlmConnection;
+type LlmResponseType = typeof LlmResponse;
 
 setLogLevel(LogLevel.DEBUG);
 
-class MockLlmConnection implements BaseLlmConnection {
+class MockLlmConnection implements BaseLlmConnectionType {
   async sendHistory(): Promise<void> {
     return Promise.resolve();
   }
@@ -29,7 +30,7 @@ class MockLlmConnection implements BaseLlmConnection {
 
   async sendRealtime(): Promise<void> {}
 
-  async * receive(): AsyncGenerator<LlmResponse, void, void> {}
+  async *receive(): AsyncGenerator<LlmResponseType, void, void> {}
 
   async close(): Promise<void> {}
 }
@@ -41,11 +42,12 @@ class MockLll extends BaseLlm {
 
   static readonly supportedModels = ['test-llm-model'];
 
-  async * generateContentAsync(): AsyncGenerator<LlmResponse, void> {
+  async *generateContentAsync(): AsyncGenerator<LlmResponseType, void> {
     const generateContentResponse = new GenerateContentResponse();
 
-    generateContentResponse.candidates =
-        [{content: createModelContent('test-llm-model-response')}];
+    generateContentResponse.candidates = [
+      {content: createModelContent('test-llm-model-response')},
+    ];
     const candidate = generateContentResponse.candidates[0]!;
 
     yield {
@@ -56,7 +58,7 @@ class MockLll extends BaseLlm {
     };
   }
 
-  async connect(): Promise<BaseLlmConnection> {
+  async connect(): Promise<BaseLlmConnectionType> {
     return new MockLlmConnection();
   }
 }

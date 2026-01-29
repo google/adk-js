@@ -4,7 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FinishReason, GenerateContentResponse, GenerateContentResponseUsageMetadata, GroundingMetadata, LiveServerSessionResumptionUpdate, Transcription,} from '@google/genai';
+import {
+  Content,
+  FinishReason,
+  GenerateContentResponse,
+  GenerateContentResponseUsageMetadata,
+  GroundingMetadata,
+  LiveServerSessionResumptionUpdate,
+  Transcription,
+} from '@google/genai';
 
 /**
  * LLM response class that provides the first candidate response from the
@@ -54,7 +62,7 @@ export interface LlmResponse {
    * An optional key-value pair to label an LlmResponse.
    * NOTE: the entire object must be JSON serializable.
    */
-  customMetadata?: {[key: string]: any};
+  customMetadata?: {[key: string]: unknown};
 
   /**
    * The usage metadata of the LlmResponse.
@@ -90,8 +98,8 @@ export interface LlmResponse {
  * @returns The LlmResponse.
  */
 export function createLlmResponse(
-    response: GenerateContentResponse,
-    ): LlmResponse {
+  response: GenerateContentResponse,
+): LlmResponse {
   const usageMetadata = response.usageMetadata;
 
   if (response.candidates && response.candidates.length > 0) {

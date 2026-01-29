@@ -85,7 +85,7 @@ export class Runner {
     userId: string;
     sessionId: string;
     newMessage: Content;
-    stateDelta?: Record<string, any>;
+    stateDelta?: Record<string, unknown>;
     runConfig?: RunConfig;
   }): AsyncGenerator<Event, void, undefined> {
     const {userId, sessionId, stateDelta} = params;
@@ -206,7 +206,10 @@ export class Runner {
         });
         // TODO: b/447446338 - In the future, do *not* save live call audio
         // content to session This is a feature in Python ADK
-        await this.sessionService.appendEvent({session, event: earlyExitEvent});
+        await this.sessionService.appendEvent({
+          session,
+          event: earlyExitEvent,
+        });
         yield earlyExitEvent;
       } else {
         // Step 2: Otherwise continue with normal execution

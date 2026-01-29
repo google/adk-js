@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 const esbuild = require('esbuild');
-const { exec } = require('node:child_process');
-const { promisify } = require('node:util');
+const {exec} = require('node:child_process');
+const {promisify} = require('node:util');
 const execAsync = promisify(exec);
 
 const licenseHeaderText = `/**

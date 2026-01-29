@@ -48,10 +48,12 @@ export interface Session {
  * @param params The partial session to create the session from.
  * @returns The session.
  */
-export function createSession(params: Partial<Session>&{
-  id: string;
-  appName: string;
-}): Session {
+export function createSession(
+  params: Partial<Session> & {
+    id: string;
+    appName: string;
+  },
+): Session {
   return {
     id: params.id,
     appName: params.appName,

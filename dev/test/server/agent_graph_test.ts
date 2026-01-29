@@ -1,40 +1,51 @@
-import {FunctionTool, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent} from '@google/adk';
+import {
+  FunctionTool,
+  LlmAgent,
+  LoopAgent,
+  ParallelAgent,
+  SequentialAgent,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
 import {getAgentGraphAsDot} from '../../src/server/agent_graph.js';
 
 describe('AgentGraph', () => {
-  it('generates a DOT graph for a simple LlmAgent with a FunctionTool',
-     async () => {
-       const tool = new FunctionTool({
-         name: 'testTool',
-         description: 'a test tool',
-         execute: async () => 'result'
-       });
-       const agent = new LlmAgent({
-         name: 'testAgent',
-         tools: [tool],
-       });
+  it('generates a DOT graph for a simple LlmAgent with a FunctionTool', async () => {
+    const tool = new FunctionTool({
+      name: 'testTool',
+      description: 'a test tool',
+      execute: async () => 'result',
+    });
+    const agent = new LlmAgent({
+      name: 'testAgent',
+      tools: [tool],
+    });
 
-       const dotGraph = await getAgentGraphAsDot(agent, []);
-       expect(dotGraph).toContain('strict digraph "testAgent" {');
-       expect(dotGraph).toContain('rankdir = "LR"');
-       expect(dotGraph).toContain('"testAgent"');
-       expect(dotGraph).toContain('label = "🤖 testAgent"');
-       expect(dotGraph).toContain('"testTool"');
-       expect(dotGraph).toContain('label = "🔧 testTool"');
-       expect(dotGraph).toContain('"testAgent" -> "testTool" [');
-     });
+    const dotGraph = await getAgentGraphAsDot(agent, []);
+    expect(dotGraph).toContain('strict digraph "testAgent" {');
+    expect(dotGraph).toContain('rankdir = "LR"');
+    expect(dotGraph).toContain('"testAgent"');
+    expect(dotGraph).toContain('label = "🤖 testAgent"');
+    expect(dotGraph).toContain('"testTool"');
+    expect(dotGraph).toContain('label = "🔧 testTool"');
+    expect(dotGraph).toContain('"testAgent" -> "testTool" [');
+  });
 
   it('generates a DOT graph for a SequentialAgent', async () => {
-    const tool1 = new FunctionTool(
-        {name: 'tool1', description: 'tool1', execute: async () => 'result'});
+    const tool1 = new FunctionTool({
+      name: 'tool1',
+      description: 'tool1',
+      execute: async () => 'result',
+    });
     const agent1 = new LlmAgent({
       name: 'agent1',
       tools: [tool1],
     });
-    const tool2 = new FunctionTool(
-        {name: 'tool2', description: 'tool2', execute: async () => 'result'});
+    const tool2 = new FunctionTool({
+      name: 'tool2',
+      description: 'tool2',
+      execute: async () => 'result',
+    });
     const agent2 = new LlmAgent({
       name: 'agent2',
       tools: [tool2],
@@ -59,8 +70,8 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent2" -> "tool2"');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain(
-        'subgraph "cluster_sequentialAgent (Sequential Agent)"');
-    ;
+      'subgraph "cluster_sequentialAgent (Sequential Agent)"',
+    );
   });
 
   it('generates a DOT graph with highlighted edges', async () => {
@@ -82,9 +93,11 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('label = "🤖 agent2"');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain(
-        'subgraph "cluster_sequentialAgent (Sequential Agent)"');
+      'subgraph "cluster_sequentialAgent (Sequential Agent)"',
+    );
     expect(dotGraph).toContain(
-        'label = "cluster_sequentialAgent (Sequential Agent)"');
+      'label = "cluster_sequentialAgent (Sequential Agent)"',
+    );
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -107,18 +120,25 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain('cluster_sequentialAgent (Sequential Agent)"');
     expect(dotGraph).toContain(
-        'label = "cluster_sequentialAgent (Sequential Agent)"');
+      'label = "cluster_sequentialAgent (Sequential Agent)"',
+    );
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
-    const tool1 = new FunctionTool(
-        {name: 'tool1', description: 'tool1', execute: async () => 'result'});
+    const tool1 = new FunctionTool({
+      name: 'tool1',
+      description: 'tool1',
+      execute: async () => 'result',
+    });
     const agent1 = new LlmAgent({
       name: 'agent1',
       tools: [tool1],
     });
-    const tool2 = new FunctionTool(
-        {name: 'tool2', description: 'tool2', execute: async () => 'result'});
+    const tool2 = new FunctionTool({
+      name: 'tool2',
+      description: 'tool2',
+      execute: async () => 'result',
+    });
     const agent2 = new LlmAgent({
       name: 'agent2',
       tools: [tool2],
@@ -148,14 +168,20 @@ describe('AgentGraph', () => {
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
-    const tool1 = new FunctionTool(
-        {name: 'tool1', description: 'tool1', execute: async () => 'result'});
+    const tool1 = new FunctionTool({
+      name: 'tool1',
+      description: 'tool1',
+      execute: async () => 'result',
+    });
     const agent1 = new LlmAgent({
       name: 'agent1',
       tools: [tool1],
     });
-    const tool2 = new FunctionTool(
-        {name: 'tool2', description: 'tool2', execute: async () => 'result'});
+    const tool2 = new FunctionTool({
+      name: 'tool2',
+      description: 'tool2',
+      execute: async () => 'result',
+    });
     const agent2 = new LlmAgent({
       name: 'agent2',
       tools: [tool2],
@@ -179,8 +205,10 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
     expect(dotGraph).toContain(
-        'subgraph "cluster_parallelAgent (Parallel Agent)"');
+      'subgraph "cluster_parallelAgent (Parallel Agent)"',
+    );
     expect(dotGraph).toContain(
-        'label = "cluster_parallelAgent (Parallel Agent)"');
+      'label = "cluster_parallelAgent (Parallel Agent)"',
+    );
   });
 });

@@ -40,9 +40,7 @@ export interface BaseMemoryService {
    * @param session The session to add to the memory.
    * @return A promise that resolves when the session is added to the memory.
    */
-  addSessionToMemory(
-      session: Session,
-      ): Promise<void>;
+  addSessionToMemory(session: Session): Promise<void>;
 
   /**
    * Searches for sessions that match the query.

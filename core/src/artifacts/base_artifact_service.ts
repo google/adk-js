@@ -108,7 +108,7 @@ export interface BaseArtifactService {
    * @param request The request to load an artifact.
    * @return A promise that resolves to the artifact or undefined if not found.
    */
-  loadArtifact(request: LoadArtifactRequest): Promise<Part|undefined>;
+  loadArtifact(request: LoadArtifactRequest): Promise<Part | undefined>;
 
   /**
    * Lists all the artifact filenames within a session.

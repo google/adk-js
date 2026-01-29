@@ -21,9 +21,12 @@ const PARALLEL_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.parallelAgent');
  * @returns True if the object is an instance of ParallelAgent, false otherwise.
  */
 export function isParallelAgent(obj: unknown): obj is ParallelAgent {
-  return typeof obj === 'object' && obj !== null &&
-      PARALLEL_AGENT_SIGNATURE_SYMBOL in obj &&
-      obj[PARALLEL_AGENT_SIGNATURE_SYMBOL] === true;
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    PARALLEL_AGENT_SIGNATURE_SYMBOL in obj &&
+    obj[PARALLEL_AGENT_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -39,25 +42,24 @@ export class ParallelAgent extends BaseAgent {
   /**
    * A unique symbol to identify ADK parallel agent class.
    */
-  readonly[PARALLEL_AGENT_SIGNATURE_SYMBOL] = true;
+  readonly [PARALLEL_AGENT_SIGNATURE_SYMBOL] = true;
 
-  protected async *
-      runAsyncImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
-    const agentRuns = this.subAgents.map(
-        subAgent => subAgent.runAsync(
-            createBranchCtxForSubAgent(this, subAgent, context)));
+  protected async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    const agentRuns = this.subAgents.map((subAgent) =>
+      subAgent.runAsync(createBranchCtxForSubAgent(this, subAgent, context)),
+    );
 
     for await (const event of mergeAgentRuns(agentRuns)) {
       yield event;
     }
   }
 
-  protected async *
-      runLiveImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(
+    _context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     throw new Error('This is not supported yet for ParallelAgent.');
   }
 }
@@ -66,15 +68,15 @@ export class ParallelAgent extends BaseAgent {
  * Create isolated branch for every sub-agent.
  */
 function createBranchCtxForSubAgent(
-    agent: BaseAgent,
-    subAgent: BaseAgent,
-    originalContext: InvocationContext,
-    ): InvocationContext {
+  agent: BaseAgent,
+  subAgent: BaseAgent,
+  originalContext: InvocationContext,
+): InvocationContext {
   const invocationContext = new InvocationContext(originalContext);
   const branchSuffix = `${agent.name}.${subAgent.name}`;
-  invocationContext.branch = invocationContext.branch ?
-      `${invocationContext.branch}.${branchSuffix}` :
-      branchSuffix;
+  invocationContext.branch = invocationContext.branch
+    ? `${invocationContext.branch}.${branchSuffix}`
+    : branchSuffix;
 
   return invocationContext;
 }
@@ -92,14 +94,16 @@ function createBranchCtxForSubAgent(
  *
  * @yield The next event from the merged generator.
  */
-async function*
-    mergeAgentRuns(agentRuns: AsyncGenerator<Event, void, void>[]):
-        AsyncGenerator<Event, void, void> {
+async function* mergeAgentRuns(
+  agentRuns: AsyncGenerator<Event, void, void>[],
+): AsyncGenerator<Event, void, void> {
   const pendingPromises = new Map<
-      number, Promise<{result: IteratorResult<Event>; index: number}>>();
+    number,
+    Promise<{result: IteratorResult<Event>; index: number}>
+  >();
 
   for (const [index, generator] of agentRuns.entries()) {
-    const promise = generator.next().then(result => ({result, index}));
+    const promise = generator.next().then((result) => ({result, index}));
     pendingPromises.set(index, promise);
   }
 
@@ -113,8 +117,9 @@ async function*
 
     yield result.value;
 
-    const nextPromise =
-        agentRuns[index].next().then(result => ({result, index}));
+    const nextPromise = agentRuns[index]
+      .next()
+      .then((result) => ({result, index}));
     pendingPromises.set(index, nextPromise);
   }
 }

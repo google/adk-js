@@ -104,17 +104,16 @@ const LOG_LEVEL_STR: Record<LogLevel, string> = {
 };
 
 const CONSOLE_COLOR_MAP: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: '\x1b[34m',  // Blue
-  [LogLevel.INFO]: '\x1b[32m',   // Green
-  [LogLevel.WARN]: '\x1b[33m',   // Yellow
-  [LogLevel.ERROR]: '\x1b[31m',  // Red
+  [LogLevel.DEBUG]: '\x1b[34m', // Blue
+  [LogLevel.INFO]: '\x1b[32m', // Green
+  [LogLevel.WARN]: '\x1b[33m', // Yellow
+  [LogLevel.ERROR]: '\x1b[31m', // Red
 };
 
 const RESET_COLOR = '\x1b[0m';
 
 function getColoredPrefix(level: LogLevel): string {
-  return `${CONSOLE_COLOR_MAP[level]}[ADK ${LOG_LEVEL_STR[level]}]:${
-      RESET_COLOR}`;
+  return `${CONSOLE_COLOR_MAP[level]}[ADK ${LOG_LEVEL_STR[level]}]:${RESET_COLOR}`;
 }
 
 /**

@@ -16,7 +16,6 @@ import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credentia
 class MockCredentialExchanger implements BaseCredentialExchanger {
   async exchange({
     authCredential,
-    authScheme,
   }: {
     authCredential: AuthCredential;
     authScheme?: AuthScheme;

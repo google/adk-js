@@ -41,6 +41,7 @@ export function randomUUID() {
  */
 export function base64Encode(data: string): string {
   if (isBrowser()) {
+    // eslint-disable-next-line no-undef
     return window.btoa(data);
   }
 
@@ -55,6 +56,7 @@ export function base64Encode(data: string): string {
  */
 export function base64Decode(data: string): string {
   if (isBrowser()) {
+    // eslint-disable-next-line no-undef
     return window.atob(data);
   }
 
@@ -70,7 +72,7 @@ export function base64Decode(data: string): string {
 export function isBase64Encoded(data: string): boolean {
   try {
     return base64Encode(base64Decode(data)) === data;
-  } catch (e) {
+  } catch (_e: unknown) {
     return false;
   }
 }

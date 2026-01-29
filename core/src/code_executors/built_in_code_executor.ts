@@ -13,17 +13,24 @@ import {CodeExecutionResult} from './code_execution_utils.js';
  * A unique symbol to identify BuiltInCodeExecutor classes.
  * Defined once and shared by all BuiltInCodeExecutor instances.
  */
-const BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for('google.adk.builtInCodeExecutor');
+const BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.builtInCodeExecutor',
+);
 
 /**
  * Type guard to check if an object is an instance of BuiltInCodeExecutor.
  * @param obj The object to check.
  * @returns True if the object is an instance of BuiltInCodeExecutor, false otherwise.
  */
-export function isBuiltInCodeExecutor(obj: unknown): obj is BuiltInCodeExecutor {
-  return typeof obj === 'object' && obj !== null &&
-      BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
-      obj[BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true;
+export function isBuiltInCodeExecutor(
+  obj: unknown,
+): obj is BuiltInCodeExecutor {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
+    obj[BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -36,7 +43,7 @@ export class BuiltInCodeExecutor extends BaseCodeExecutor {
   /** A unique symbol to identify BuiltInCodeExecutor class. */
   readonly [BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL] = true;
 
-  executeCode(params: ExecuteCodeParams): Promise<CodeExecutionResult> {
+  executeCode(_params: ExecuteCodeParams): Promise<CodeExecutionResult> {
     return Promise.resolve({
       stdout: '',
       stderr: '',
@@ -53,7 +60,8 @@ export class BuiltInCodeExecutor extends BaseCodeExecutor {
       return;
     }
 
-    throw new Error(`Gemini code execution tool is not supported for model ${
-        llmRequest.model}`);
+    throw new Error(
+      `Gemini code execution tool is not supported for model ${llmRequest.model}`,
+    );
   }
 }

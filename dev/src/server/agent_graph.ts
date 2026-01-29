@@ -3,7 +3,18 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {BaseAgent, BaseTool, isBaseAgent, isParallelAgent, isSequentialAgent, isLlmAgent, isLoopAgent, isBaseTool, isFunctionTool, isAgentTool} from '@google/adk';
+import {
+  BaseAgent,
+  BaseTool,
+  isAgentTool,
+  isBaseAgent,
+  isBaseTool,
+  isFunctionTool,
+  isLlmAgent,
+  isLoopAgent,
+  isParallelAgent,
+  isSequentialAgent,
+} from '@google/adk';
 import {Digraph, Edge, Node, RootGraph, Subgraph, toDot} from 'ts-graphviz';
 
 const DARK_GREEN = '#0F5223';
@@ -12,15 +23,15 @@ const LIGHT_GRAY = '#cccccc';
 const WHITE = '#ffffff';
 
 export async function buildGraph(
-    graph: RootGraph|Subgraph,
-    rootAgent: BaseAgent,
-    highlightsPairs: Array<[string, string]>,
-    parentAgent?: BaseAgent,
+  graph: RootGraph | Subgraph,
+  rootAgent: BaseAgent,
+  highlightsPairs: Array<[string, string]>,
+  parentAgent?: BaseAgent,
 ) {
   async function buildCluster(
-      subgraph: Subgraph,
-      agent: BaseAgent,
-      ): Promise<Subgraph> {
+    subgraph: Subgraph,
+    agent: BaseAgent,
+  ): Promise<Subgraph> {
     if (isLoopAgent(agent)) {
       if (parentAgent) {
         drawEdge(parentAgent.name, agent.subAgents[0].name);
@@ -32,14 +43,12 @@ export async function buildGraph(
       for (const subAgent of agent.subAgents) {
         await buildGraph(subgraph, subAgent, highlightsPairs, agent);
 
-        const adjAgent = currLength === length - 1 ?
-            agent.subAgents[0] :
-            agent.subAgents[currLength + 1];
+        const adjAgent =
+          currLength === length - 1
+            ? agent.subAgents[0]
+            : agent.subAgents[currLength + 1];
 
-        drawEdge(
-            agent.subAgents[currLength].name,
-            adjAgent.name,
-        );
+        drawEdge(agent.subAgents[currLength].name, adjAgent.name);
         currLength++;
       }
     } else if (isSequentialAgent(agent)) {
@@ -55,8 +64,8 @@ export async function buildGraph(
 
         if (currLength !== length - 1) {
           drawEdge(
-              agent.subAgents[currLength].name,
-              agent.subAgents[currLength + 1].name,
+            agent.subAgents[currLength].name,
+            agent.subAgents[currLength + 1].name,
           );
         }
 
@@ -79,7 +88,7 @@ export async function buildGraph(
     return subgraph;
   }
 
-  async function drawNode(toolOrAgent: BaseAgent|BaseTool) {
+  async function drawNode(toolOrAgent: BaseAgent | BaseTool) {
     const name = getNodeName(toolOrAgent);
     const shape = getNodeShape(toolOrAgent);
     const caption = getNodeCaption(toolOrAgent);
@@ -99,14 +108,16 @@ export async function buildGraph(
 
             await buildCluster(cluster, rootAgent);
           } else {
-            graph.addNode(new Node(name, {
-              label: caption,
-              style: 'filled,rounded',
-              fillcolor: DARK_GREEN,
-              color: DARK_GREEN,
-              shape,
-              fontcolor: LIGHT_GRAY
-            }));
+            graph.addNode(
+              new Node(name, {
+                label: caption,
+                style: 'filled,rounded',
+                fillcolor: DARK_GREEN,
+                color: DARK_GREEN,
+                shape,
+                fontcolor: LIGHT_GRAY,
+              }),
+            );
           }
           return;
         }
@@ -127,45 +138,58 @@ export async function buildGraph(
       return;
     }
 
-    graph.addNode(new Node(name, {
-      label: caption,
-      style: 'rounded',
-      fillcolor: WHITE,
-      color: LIGHT_GRAY,
-      shape,
-      fontcolor: LIGHT_GRAY
-    }));
+    graph.addNode(
+      new Node(name, {
+        label: caption,
+        style: 'rounded',
+        fillcolor: WHITE,
+        color: LIGHT_GRAY,
+        shape,
+        fontcolor: LIGHT_GRAY,
+      }),
+    );
   }
 
   function drawEdge(fromName: string, toName: string) {
     if (highlightsPairs) {
       for (const [highlightFrom, highlightTo] of highlightsPairs) {
         if (fromName === highlightFrom && toName === highlightTo) {
-          graph.addEdge(new Edge(
-              [graph.node(fromName), graph.node(toName)],
-              {color: LIGHT_GREEN}));
-          return
+          graph.addEdge(
+            new Edge([graph.node(fromName), graph.node(toName)], {
+              color: LIGHT_GREEN,
+            }),
+          );
+          return;
         }
 
         if (fromName === highlightTo && toName === highlightFrom) {
-          graph.addEdge(new Edge(
-              [graph.node(fromName), graph.node(toName)],
-              {color: LIGHT_GREEN, dir: 'back'}));
-          return
+          graph.addEdge(
+            new Edge([graph.node(fromName), graph.node(toName)], {
+              color: LIGHT_GREEN,
+              dir: 'back',
+            }),
+          );
+          return;
         }
       }
     }
 
     if (shouldBuildAgentCluster(rootAgent)) {
-      graph.addEdge(new Edge(
-          [new Node(fromName), new Node(toName)], {color: LIGHT_GREEN}));
+      graph.addEdge(
+        new Edge([new Node(fromName), new Node(toName)], {
+          color: LIGHT_GREEN,
+        }),
+      );
 
       return;
     }
 
-    graph.addEdge(new Edge(
-        [new Node(fromName), new Node(toName)],
-        {arrowhead: 'none', color: LIGHT_GRAY}));
+    graph.addEdge(
+      new Edge([new Node(fromName), new Node(toName)], {
+        arrowhead: 'none',
+        color: LIGHT_GRAY,
+      }),
+    );
   }
 
   await drawNode(rootAgent);
@@ -173,8 +197,10 @@ export async function buildGraph(
   for (const subAgent of rootAgent.subAgents) {
     await buildGraph(graph, subAgent, highlightsPairs, rootAgent);
 
-    if (!shouldBuildAgentCluster(subAgent) &&
-        !shouldBuildAgentCluster(rootAgent)) {
+    if (
+      !shouldBuildAgentCluster(subAgent) &&
+      !shouldBuildAgentCluster(rootAgent)
+    ) {
       drawEdge(rootAgent.name, subAgent.name);
     }
   }
@@ -187,7 +213,7 @@ export async function buildGraph(
   }
 }
 
-function getNodeName(toolOrAgent: BaseAgent|BaseTool): string {
+function getNodeName(toolOrAgent: BaseAgent | BaseTool): string {
   if (isBaseAgent(toolOrAgent)) {
     if (isSequentialAgent(toolOrAgent)) {
       return `${toolOrAgent.name} (Sequential Agent)`;
@@ -212,7 +238,7 @@ function getNodeName(toolOrAgent: BaseAgent|BaseTool): string {
 }
 
 // TODO: Support BaseRetrievalTool
-function getNodeCaption(toolOrAgent: BaseAgent|BaseTool): string {
+function getNodeCaption(toolOrAgent: BaseAgent | BaseTool): string {
   if (isBaseAgent(toolOrAgent)) {
     return `🤖 ${toolOrAgent.name}`;
   }
@@ -229,15 +255,13 @@ function getNodeCaption(toolOrAgent: BaseAgent|BaseTool): string {
     return `🔧 ${toolOrAgent.name}`;
   }
 
-  console.warn(
-      `Unsupported tool type: ${typeof toolOrAgent}`,
-  );
+  console.warn(`Unsupported tool type: ${typeof toolOrAgent}`);
 
   return `❓ Unsupported tool type: ${typeof toolOrAgent}`;
 }
 
 // TODO: Support BaseRetrievalTool
-function getNodeShape(toolOrAgent: BaseAgent|BaseTool): string {
+function getNodeShape(toolOrAgent: BaseAgent | BaseTool): string {
   if (isBaseAgent(toolOrAgent)) {
     return 'ellipse';
   }
@@ -250,15 +274,13 @@ function getNodeShape(toolOrAgent: BaseAgent|BaseTool): string {
     return 'box';
   }
 
-  console.warn(
-      `Unsupported tool type: ${typeof toolOrAgent}`,
-  );
+  console.warn(`Unsupported tool type: ${typeof toolOrAgent}`);
 
   return 'cylinder';
 }
 
 // TODO: Support BaseRetrievalTool
-function shouldBuildAgentCluster(toolOrAgent: BaseAgent|BaseTool): boolean {
+function shouldBuildAgentCluster(toolOrAgent: BaseAgent | BaseTool): boolean {
   if (isSequentialAgent(toolOrAgent)) {
     return true;
   }
@@ -282,9 +304,9 @@ function shouldBuildAgentCluster(toolOrAgent: BaseAgent|BaseTool): boolean {
  * @return A graphviz graph of the agent tree.
  */
 export async function getAgentGraph(
-    rootAgent: BaseAgent,
-    highlightsPairs: Array<[string, string]>,
-    ): Promise<Digraph> {
+  rootAgent: BaseAgent,
+  highlightsPairs: Array<[string, string]>,
+): Promise<Digraph> {
   const graph = new Digraph(rootAgent.name, /* strict= */ true, {
     rankdir: 'LR',
     bgcolor: '#333537',
@@ -303,9 +325,9 @@ export async function getAgentGraph(
  * @return A graphviz graph in DOT format of the agent tree as a string.
  */
 export async function getAgentGraphAsDot(
-    rootAgent: BaseAgent,
-    highlightsPairs: Array<[string, string]>,
-    ): Promise<string> {
+  rootAgent: BaseAgent,
+  highlightsPairs: Array<[string, string]>,
+): Promise<string> {
   const graph = await getAgentGraph(rootAgent, highlightsPairs);
 
   return toDot(graph);

@@ -33,9 +33,12 @@ const LOOP_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.loopAgent');
  * @returns True if the object is an instance of LoopAgent, false otherwise.
  */
 export function isLoopAgent(obj: unknown): obj is LoopAgent {
-  return typeof obj === 'object' && obj !== null &&
-      LOOP_AGENT_SIGNATURE_SYMBOL in obj &&
-      obj[LOOP_AGENT_SIGNATURE_SYMBOL] === true;
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    LOOP_AGENT_SIGNATURE_SYMBOL in obj &&
+    obj[LOOP_AGENT_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -48,8 +51,8 @@ export class LoopAgent extends BaseAgent {
   /**
    * A unique symbol to identify ADK loop agent class.
    */
-  readonly[LOOP_AGENT_SIGNATURE_SYMBOL] = true;
-  
+  readonly [LOOP_AGENT_SIGNATURE_SYMBOL] = true;
+
   private readonly maxIterations: number;
 
   constructor(config: LoopAgentConfig) {
@@ -57,10 +60,9 @@ export class LoopAgent extends BaseAgent {
     this.maxIterations = config.maxIterations ?? Number.MAX_SAFE_INTEGER;
   }
 
-  protected async *
-      runAsyncImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
+  protected async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     let iteration = 0;
 
     while (iteration < this.maxIterations) {
@@ -85,10 +87,10 @@ export class LoopAgent extends BaseAgent {
     return;
   }
 
-  protected async *
-      runLiveImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(
+    _context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     throw new Error('This is not supported yet for LoopAgent.');
   }
 }

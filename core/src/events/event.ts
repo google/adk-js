@@ -86,15 +86,19 @@ export function createEvent(params: Partial<Event> = {}): Event {
  * Returns whether the event is the final response of the agent.
  */
 export function isFinalResponse(event: Event) {
-  if (event.actions.skipSummarization ||
-      (event.longRunningToolIds && event.longRunningToolIds.length > 0)) {
+  if (
+    event.actions.skipSummarization ||
+    (event.longRunningToolIds && event.longRunningToolIds.length > 0)
+  ) {
     return true;
   }
 
   return (
-      getFunctionCalls(event).length === 0 &&
-      getFunctionResponses(event).length === 0 && !event.partial &&
-      !hasTrailingCodeExecutionResult(event));
+    getFunctionCalls(event).length === 0 &&
+    getFunctionResponses(event).length === 0 &&
+    !event.partial &&
+    !hasTrailingCodeExecutionResult(event)
+  );
 }
 
 /**
@@ -152,11 +156,11 @@ export function stringifyContent(event: Event): string {
     return '';
   }
 
-  return event.content.parts.map(part => part.text ?? '').join('');
+  return event.content.parts.map((part) => part.text ?? '').join('');
 }
 
 const ASCII_LETTERS_AND_NUMBERS =
-    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 /**
  * Generates a new unique ID for the event.
@@ -165,8 +169,10 @@ export function createNewEventId(): string {
   let id = '';
 
   for (let i = 0; i < 8; i++) {
-    id += ASCII_LETTERS_AND_NUMBERS[Math.floor(
-        Math.random() * ASCII_LETTERS_AND_NUMBERS.length)];
+    id +=
+      ASCII_LETTERS_AND_NUMBERS[
+        Math.floor(Math.random() * ASCII_LETTERS_AND_NUMBERS.length)
+      ];
   }
 
   return id;

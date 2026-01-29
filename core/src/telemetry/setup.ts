@@ -4,16 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {trace, metrics} from '@opentelemetry/api';
+import {metrics, trace} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
-import {LoggerProvider, LogRecordProcessor, BatchLogRecordProcessor} from '@opentelemetry/sdk-logs';
-import {MetricReader, MeterProvider, PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
-import {detectResources, Resource} from '@opentelemetry/resources';
-import {SpanProcessor, BatchSpanProcessor} from '@opentelemetry/sdk-trace-base';
-import {NodeTracerProvider} from '@opentelemetry/sdk-trace-node';
-import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
-import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
 import {OTLPLogExporter} from '@opentelemetry/exporter-logs-otlp-http';
+import {OTLPMetricExporter} from '@opentelemetry/exporter-metrics-otlp-http';
+import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-http';
+import {detectResources, Resource} from '@opentelemetry/resources';
+import {
+  BatchLogRecordProcessor,
+  LoggerProvider,
+  LogRecordProcessor,
+} from '@opentelemetry/sdk-logs';
+import {
+  MeterProvider,
+  MetricReader,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
+import {BatchSpanProcessor, SpanProcessor} from '@opentelemetry/sdk-trace-base';
+import {NodeTracerProvider} from '@opentelemetry/sdk-trace-node';
 
 export interface OtelExportersConfig {
   enableTracing?: boolean;
@@ -23,7 +31,7 @@ export interface OtelExportersConfig {
 
 /**
  * Configuration hooks for OpenTelemetry setup.
- * 
+ *
  * This interface defines the structure for configuring OpenTelemetry
  * components including span processors, metric readers, and log record processors.
  */
@@ -48,7 +56,7 @@ export interface OTelHooks {
  * this function will not override it or register more exporters.
  *
  * @experimental (Experimental, subject to change)
- * 
+ *
  * @param otelHooksToSetup per-telemetry-type processors and readers to be added
  * to OTel providers. If no hooks for a specific telemetry type are passed -
  * provider will not be set.
@@ -57,18 +65,22 @@ export interface OTelHooks {
  */
 export function maybeSetOtelProviders(
   otelHooksToSetup: OTelHooks[] = [],
-  otelResource?: Resource
+  otelResource?: Resource,
 ): void {
   const resource = otelResource || getOtelResource();
   const allHooks = [...otelHooksToSetup, getOtelExporters()];
-  const spanProcessors = allHooks.flatMap(hooks => hooks.spanProcessors || []);
-  const metricReaders = allHooks.flatMap(hooks => hooks.metricReaders || []);
-  const logRecordProcessors = allHooks.flatMap(hooks => hooks.logRecordProcessors || []);
+  const spanProcessors = allHooks.flatMap(
+    (hooks) => hooks.spanProcessors || [],
+  );
+  const metricReaders = allHooks.flatMap((hooks) => hooks.metricReaders || []);
+  const logRecordProcessors = allHooks.flatMap(
+    (hooks) => hooks.logRecordProcessors || [],
+  );
 
   if (spanProcessors.length > 0) {
     const tracerProvider = new NodeTracerProvider({
       resource,
-      spanProcessors
+      spanProcessors,
     });
     tracerProvider.register();
     trace.setGlobalTracerProvider(tracerProvider);
@@ -94,10 +106,10 @@ export function maybeSetOtelProviders(
 
 /**
  * Gets the OTel resource with environment variable detection.
- * 
+ *
  * The resource detection populates resource labels from
  * environment variables like OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
- * 
+ *
  * @returns A Resource object with detected attributes
  */
 function getOtelResource(): Resource {
@@ -108,28 +120,47 @@ function getOtelResource(): Resource {
 
 /**
  * Gets OTel exporters configuration based on environment variables.
- * 
+ *
  * @returns OtelExportersConfig with flags based on environment variables
  */
 function getOtelExportersConfig(): OtelExportersConfig {
   return {
-    enableTracing: !!(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
-    enableMetrics: !!(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT),
-    enableLogging: !!(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT),
+    enableTracing: !!(
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+      process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    ),
+    enableMetrics: !!(
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+      process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+    ),
+    enableLogging: !!(
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+      process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+    ),
   };
 }
 
 /**
  * Gets OTel exporters based on configuration.
- * 
+ *
  * @param config Configuration for which exporters to enable
  * @returns OTelHooks containing configured exporters
  */
 function getOtelExporters(config = getOtelExportersConfig()): OTelHooks {
-  const { enableTracing, enableMetrics, enableLogging } = config;
+  const {enableTracing, enableMetrics, enableLogging} = config;
   return {
-    spanProcessors: enableTracing ? [new BatchSpanProcessor(new OTLPTraceExporter())] : [],
-    metricReaders: enableMetrics ? [new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter() })] : [],
-    logRecordProcessors: enableLogging ? [new BatchLogRecordProcessor(new OTLPLogExporter())] : [],
+    spanProcessors: enableTracing
+      ? [new BatchSpanProcessor(new OTLPTraceExporter())]
+      : [],
+    metricReaders: enableMetrics
+      ? [
+          new PeriodicExportingMetricReader({
+            exporter: new OTLPMetricExporter(),
+          }),
+        ]
+      : [],
+    logRecordProcessors: enableLogging
+      ? [new BatchLogRecordProcessor(new OTLPLogExporter())]
+      : [],
   };
 }

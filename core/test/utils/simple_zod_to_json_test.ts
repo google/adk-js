@@ -91,9 +91,11 @@ describe('zodObjectToSchema', () => {
   });
 
   it('handles additional properties', () => {
-    const schema = z.object({
-                      name: z.string(),
-                    }).catchall(z.string());
+    const schema = z
+      .object({
+        name: z.string(),
+      })
+      .catchall(z.string());
 
     const jsonSchema = zodObjectToSchema(schema);
 
@@ -351,7 +353,8 @@ describe('zodObjectToSchema', () => {
 
   it('throws an error for non-object schemas', () => {
     const schema = z.string();
-    expect(() => zodObjectToSchema(schema as any))
-        .toThrow(new Error('Expected a ZodObject'));
+    expect(
+      () => zodObjectToSchema(schema as unknown as z.ZodObject<any>), // eslint-disable-line @typescript-eslint/no-explicit-any
+    ).toThrow(new Error('Expected a ZodObject'));
   });
 });

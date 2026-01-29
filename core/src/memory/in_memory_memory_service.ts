@@ -7,7 +7,11 @@
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 
-import {BaseMemoryService, SearchMemoryRequest, SearchMemoryResponse} from './base_memory_service.js';
+import {
+  BaseMemoryService,
+  SearchMemoryRequest,
+  SearchMemoryResponse,
+} from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
 
 /**
@@ -17,8 +21,9 @@ import {MemoryEntry} from './memory_entry.js';
  */
 export class InMemoryMemoryService implements BaseMemoryService {
   private readonly memories: MemoryEntry[] = [];
-  private readonly sessionEvents:
-      {[userKey: string]: {[sessionId: string]: Event[]}} = {};
+  private readonly sessionEvents: {
+    [userKey: string]: {[sessionId: string]: Event[]};
+  } = {};
 
   async addSessionToMemory(session: Session): Promise<void> {
     const userKey = getUserKey(session.appName, session.userId);
@@ -26,7 +31,8 @@ export class InMemoryMemoryService implements BaseMemoryService {
       this.sessionEvents[userKey] = {};
     }
     this.sessionEvents[userKey][session.id] = session.events.filter(
-        (event) => (event.content?.parts?.length ?? 0) > 0);
+      (event) => (event.content?.parts?.length ?? 0) > 0,
+    );
   }
 
   async searchMemory(req: SearchMemoryRequest): Promise<SearchMemoryResponse> {
@@ -44,16 +50,18 @@ export class InMemoryMemoryService implements BaseMemoryService {
           continue;
         }
 
-        const joinedText = event.content.parts.map((part) => part.text)
-                               .filter(text => !!text)
-                               .join(' ');
+        const joinedText = event.content.parts
+          .map((part) => part.text)
+          .filter((text) => !!text)
+          .join(' ');
         const wordsInEvent = extractWordsLower(joinedText);
         if (!wordsInEvent.size) {
           continue;
         }
 
-        const matchQuery =
-            wordsInQuery.some(queryWord => wordsInEvent.has(queryWord));
+        const matchQuery = wordsInQuery.some((queryWord) =>
+          wordsInEvent.has(queryWord),
+        );
         if (matchQuery) {
           response.memories.push({
             content: event.content,
@@ -87,7 +95,8 @@ function getUserKey(appName: string, userId: string): string {
  */
 function extractWordsLower(text: string): Set<string> {
   return new Set(
-      [...text.matchAll(/[A-Za-z]+/)].map(match => match[0].toLowerCase()));
+    [...text.matchAll(/[A-Za-z]+/)].map((match) => match[0].toLowerCase()),
+  );
 }
 
 /**

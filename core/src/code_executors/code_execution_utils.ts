@@ -80,7 +80,7 @@ export function getEncodedFileContent(data: string): string {
 
 // Type to be used for regex matching of code blocks.
 interface CodeGroupMatch {
-  groups?: {prefix?: string; codeStr?: string;};
+  groups?: {prefix?: string; codeStr?: string};
   index?: number;
   length?: number;
 }
@@ -95,9 +95,9 @@ interface CodeGroupMatch {
  * @return The first code block if found, otherwise None.
  */
 export function extractCodeAndTruncateContent(
-    content: Content,
-    codeBlockDelimiters: Array<[string, string]>,
-    ): string {
+  content: Content,
+  codeBlockDelimiters: Array<[string, string]>,
+): string {
   if (!content.parts?.length) {
     return '';
   }
@@ -106,9 +106,11 @@ export function extractCodeAndTruncateContent(
   // code execution result parts.
   for (let i = 0; i < content.parts.length; i++) {
     const part = content.parts[i];
-    if (part.executableCode &&
-        (i === content.parts.length - 1 ||
-         !content.parts[i + 1].codeExecutionResult)) {
+    if (
+      part.executableCode &&
+      (i === content.parts.length - 1 ||
+        !content.parts[i + 1].codeExecutionResult)
+    ) {
       content.parts = content.parts.slice(0, i + 1);
       return part.executableCode.code!;
     }
@@ -124,16 +126,16 @@ export function extractCodeAndTruncateContent(
   const responseText = textParts.map((part) => part.text!).join('\n');
 
   // Find the first code block.
-  const leadingDelimiterPattern =
-      codeBlockDelimiters.map((d) => d[0]).join('|');
-  const trailingDelimiterPattern =
-      codeBlockDelimiters.map((d) => d[1]).join('|');
-  const match =
-      new RegExp(
-          `?<prefix>.*?)(${leadingDelimiterPattern})(?<codeStr>.*?)(${
-              trailingDelimiterPattern})(?<suffix>.*?)$`,
-          's').exec(responseText) as unknown as CodeGroupMatch |
-      null;
+  const leadingDelimiterPattern = codeBlockDelimiters
+    .map((d) => d[0])
+    .join('|');
+  const trailingDelimiterPattern = codeBlockDelimiters
+    .map((d) => d[1])
+    .join('|');
+  const match = new RegExp(
+    `?<prefix>.*?)(${leadingDelimiterPattern})(?<codeStr>.*?)(${trailingDelimiterPattern})(?<suffix>.*?)$`,
+    's',
+  ).exec(responseText) as unknown as CodeGroupMatch | null;
 
   const {prefix, codeStr} = match?.groups || {};
 
@@ -175,8 +177,8 @@ export function buildExecutableCodePart(code: string): Part {
  * @return The code execution result part.
  */
 export function buildCodeExecutionResultPart(
-    codeExecutionResult: CodeExecutionResult,
-    ): Part {
+  codeExecutionResult: CodeExecutionResult,
+): Part {
   if (codeExecutionResult.stderr) {
     return {
       text: codeExecutionResult.stderr,
@@ -192,8 +194,9 @@ export function buildCodeExecutionResultPart(
   }
   if (codeExecutionResult.outputFiles) {
     finalResult.push(
-        `Saved artifacts:\n` +
-        codeExecutionResult.outputFiles.map(f => f.name).join(', '));
+      `Saved artifacts:\n` +
+        codeExecutionResult.outputFiles.map((f) => f.name).join(', '),
+    );
   }
 
   return {
@@ -215,9 +218,9 @@ export function buildCodeExecutionResultPart(
  * @return The converted content.
  */
 export function convertCodeExecutionParts(
-    content: Content,
-    codeBlockDelimiter: [string, string],
-    executionResultDelimiters: [string, string],
+  content: Content,
+  codeBlockDelimiter: [string, string],
+  executionResultDelimiters: [string, string],
 ) {
   if (!content.parts?.length) {
     return;
@@ -227,14 +230,18 @@ export function convertCodeExecutionParts(
 
   if (lastPart.executableCode) {
     content.parts[content.parts.length - 1] = {
-      text: codeBlockDelimiter[0] + lastPart.executableCode.code +
-          codeBlockDelimiter[1],
+      text:
+        codeBlockDelimiter[0] +
+        lastPart.executableCode.code +
+        codeBlockDelimiter[1],
     };
   } else if (content.parts.length == 1 && lastPart.codeExecutionResult) {
     content.parts[content.parts.length - 1] = {
-      text: executionResultDelimiters[0] + lastPart.codeExecutionResult.output +
-          executionResultDelimiters[1],
+      text:
+        executionResultDelimiters[0] +
+        lastPart.codeExecutionResult.output +
+        executionResultDelimiters[1],
     };
-    content.role = 'user'
+    content.role = 'user';
   }
 }

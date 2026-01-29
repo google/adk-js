@@ -4,41 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BasePlugin, createEvent, createSession, Event, InMemoryArtifactService, InMemorySessionService, InvocationContext, LlmAgent, Runner} from '@google/adk';
-import {Content, FunctionCall, FunctionResponse, Part} from '@google/genai';
+import {
+  BaseAgent,
+  BasePlugin,
+  createEvent,
+  Event,
+  InMemoryArtifactService,
+  InMemorySessionService,
+  InvocationContext,
+  LlmAgent,
+  Runner,
+} from '@google/adk';
+import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
 const TEST_SESSION_ID = 'test_session_id';
 const TEST_MESSAGE = 'test_message';
 
-class MockAgent extends BaseAgent {
-  constructor(name: string, parentAgent?: BaseAgent) {
-    super({name, parentAgent});
-  }
-
-  protected override async *
-      runAsyncImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
-    yield createEvent({
-      invocationId: context.invocationId,
-      author: this.name,
-      content: {role: 'model', parts: [{text: 'Test response'}]},
-    });
-  }
-
-  protected override async *
-      runLiveImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
-    throw new Error('Not implemented');
-  }
-}
-
 class MockLlmAgent extends LlmAgent {
   constructor(
-      name: string,
-      disallowTransferToParent = false,
-      parentAgent?: BaseAgent,
+    name: string,
+    disallowTransferToParent = false,
+    parentAgent?: BaseAgent,
   ) {
     super({
       name,
@@ -49,9 +37,9 @@ class MockLlmAgent extends LlmAgent {
     });
   }
 
-  protected override async *
-      runAsyncImpl(context: InvocationContext):
-          AsyncGenerator<Event, void, void> {
+  protected override async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     yield createEvent({
       invocationId: context.invocationId,
       author: this.name,
@@ -62,11 +50,11 @@ class MockLlmAgent extends LlmAgent {
 
 class MockPlugin extends BasePlugin {
   static ON_USER_CALLBACK_MSG =
-      'Modified user message ON_USER_CALLBACK_MSG from MockPlugin';
+    'Modified user message ON_USER_CALLBACK_MSG from MockPlugin';
   static ON_EVENT_CALLBACK_MSG =
-      'Modified event ON_EVENT_CALLBACK_MSG from MockPlugin';
+    'Modified event ON_EVENT_CALLBACK_MSG from MockPlugin';
   static BEFORE_RUN_CALLBACK_MSG =
-      'Before run callback message from MockPlugin';
+    'Before run callback message from MockPlugin';
 
   enableUserMessageCallback = false;
   enableEventCallback = false;
@@ -77,10 +65,10 @@ class MockPlugin extends BasePlugin {
     super('mock_plugin');
   }
 
-  override async onUserMessageCallback(
-      {invocationContext, userMessage}:
-          {invocationContext: InvocationContext; userMessage: Content;},
-      ): Promise<Content|undefined> {
+  override async onUserMessageCallback(_params: {
+    invocationContext: InvocationContext;
+    userMessage: Content;
+  }): Promise<Content | undefined> {
     if (!this.enableUserMessageCallback) {
       return undefined;
     }
@@ -90,9 +78,12 @@ class MockPlugin extends BasePlugin {
     };
   }
 
-  override async onEventCallback({invocationContext, event}: {
-    invocationContext: InvocationContext; event: Event;
-  }): Promise<Event|undefined> {
+  override async onEventCallback({
+    event,
+  }: {
+    invocationContext: InvocationContext;
+    event: Event;
+  }): Promise<Event | undefined> {
     if (!this.enableEventCallback) {
       return undefined;
     }
@@ -110,9 +101,9 @@ class MockPlugin extends BasePlugin {
     });
   }
 
-  override async beforeRunCallback({invocationContext}: {
+  override async beforeRunCallback(_params: {
     invocationContext: InvocationContext;
-  }): Promise<Content|undefined> {
+  }): Promise<Content | undefined> {
     if (!this.enableBeforeRunCallback) {
       return undefined;
     }
@@ -122,7 +113,7 @@ class MockPlugin extends BasePlugin {
     };
   }
 
-  override async afterRunCallback({invocationContext}: {
+  override async afterRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<void> {
     this.afterRunCallbackCalled = true;
@@ -145,8 +136,11 @@ describe('Runner.determineAgentForResumption', () => {
     rootAgent = new MockLlmAgent('root_agent');
     subAgent1 = new MockLlmAgent('sub_agent1', false, rootAgent);
     subAgent2 = new MockLlmAgent('sub_agent2', false, rootAgent);
-    nonTransferableAgent =
-        new MockLlmAgent('non_transferable', true, rootAgent);
+    nonTransferableAgent = new MockLlmAgent(
+      'non_transferable',
+      true,
+      rootAgent,
+    );
     rootAgent.subAgents.push(subAgent1, subAgent2, nonTransferableAgent);
 
     runner = new Runner({
@@ -183,7 +177,7 @@ describe('Runner.determineAgentForResumption', () => {
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Hello'}]}
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
     })) {
       events.push(event);
     }
@@ -193,10 +187,16 @@ describe('Runner.determineAgentForResumption', () => {
 
   it('should find agent when last event is function response', async () => {
     console.log('should find agent when last event is function response');
-    const functionCall:
-        FunctionCall = {id: 'func_123', name: 'test_func', args: {}};
-    const functionResponse:
-        FunctionResponse = {id: 'func_123', name: 'test_func', response: {}};
+    const functionCall: FunctionCall = {
+      id: 'func_123',
+      name: 'test_func',
+      args: {},
+    };
+    const functionResponse: FunctionResponse = {
+      id: 'func_123',
+      name: 'test_func',
+      response: {},
+    };
 
     const callEvent = createEvent({
       invocationId: 'inv1',
@@ -215,37 +215,33 @@ describe('Runner.determineAgentForResumption', () => {
     expect(events[0].author).toBe('sub_agent1');
   });
 
-  it('should return root agent when session has no non-user events',
-     async () => {
-       console.log(
-           'should return root agent when session has no non-user events');
+  it('should return root agent when session has no non-user events', async () => {
+    console.log('should return root agent when session has no non-user events');
 
-       const nonUserEvent = createEvent({
-         invocationId: 'inv1',
-         author: 'user',
-         content: {role: 'user', parts: [{text: 'Hello'}]},
-       });
+    const nonUserEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'user',
+      content: {role: 'user', parts: [{text: 'Hello'}]},
+    });
 
-       const events = await runTest([nonUserEvent]);
+    const events = await runTest([nonUserEvent]);
 
-       expect(events[0].author).toBe('root_agent');
-     });
+    expect(events[0].author).toBe('root_agent');
+  });
 
-  it('should return root agent when it is found in session events',
-     async () => {
-       console.log(
-           'should return root agent when it is found in session events');
+  it('should return root agent when it is found in session events', async () => {
+    console.log('should return root agent when it is found in session events');
 
-       const rootEvent = createEvent({
-         invocationId: 'inv1',
-         author: 'root_agent',
-         content: {role: 'model', parts: [{text: 'Root response'}]},
-       });
+    const rootEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'root_agent',
+      content: {role: 'model', parts: [{text: 'Root response'}]},
+    });
 
-       const events = await runTest([rootEvent]);
+    const events = await runTest([rootEvent]);
 
-       expect(events[0].author).toBe('root_agent');
-     });
+    expect(events[0].author).toBe('root_agent');
+  });
 
   it('should return transferable sub agent when found', async () => {
     console.log('should return transferable sub agent when found');
@@ -280,26 +276,6 @@ describe('Runner.determineAgentForResumption', () => {
 
   it('should skip unknown agent and return root agent', async () => {
     console.log('should skip unknown agent and return root agent');
-    const session = createSession({
-      id: TEST_SESSION_ID,
-      userId: TEST_USER_ID,
-      appName: TEST_APP_ID,
-      events: [
-        createEvent({
-          invocationId: 'inv1',
-          author: 'unknown_agent',
-          content: {
-            role: 'model',
-            parts: [{text: 'Unknown agent response'}],
-          },
-        }),
-        createEvent({
-          invocationId: 'inv2',
-          author: 'root_agent',
-          content: {role: 'model', parts: [{text: 'Root response'}]},
-        }),
-      ],
-    });
 
     const unknownEvent = createEvent({
       invocationId: 'inv1',
@@ -323,10 +299,16 @@ describe('Runner.determineAgentForResumption', () => {
 
   it('should prioritize function response scenario', async () => {
     console.log('should prioritize function response scenario');
-    const functionCall:
-        FunctionCall = {id: 'func_456', name: 'test_func', args: {}};
-    const functionResponse:
-        FunctionResponse = {id: 'func_456', name: 'test_func', response: {}};
+    const functionCall: FunctionCall = {
+      id: 'func_456',
+      name: 'test_func',
+      args: {},
+    };
+    const functionResponse: FunctionResponse = {
+      id: 'func_456',
+      name: 'test_func',
+      response: {},
+    };
 
     const callEvent = createEvent({
       invocationId: 'inv1',
@@ -355,7 +337,7 @@ describe('Runner.determineAgentForResumption', () => {
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{functionResponse}]}
+      newMessage: {role: 'user', parts: [{functionResponse}]},
     })) {
       events.push(event);
     }
@@ -387,7 +369,7 @@ describe('Runner with plugins', () => {
     await sessionService.createSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID
+      sessionId: TEST_SESSION_ID,
     });
     const events: Event[] = [];
     for await (const event of runner.runAsync({
@@ -413,7 +395,7 @@ describe('Runner with plugins', () => {
     const session = await sessionService.getSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID
+      sessionId: TEST_SESSION_ID,
     });
     const generatedEvent = session!.events[0];
     const modifiedUserMessage = generatedEvent.content!.parts![0].text;
@@ -437,8 +419,9 @@ describe('Runner with plugins', () => {
     const events = await runTest();
     expect(events.length).toBe(1);
     const event = events[0];
-    expect(event.content?.parts?.[0].text)
-        .toEqual(MockPlugin.BEFORE_RUN_CALLBACK_MSG);
+    expect(event.content?.parts?.[0].text).toEqual(
+      MockPlugin.BEFORE_RUN_CALLBACK_MSG,
+    );
     expect(event.author).toEqual('model');
   });
 
@@ -491,10 +474,16 @@ describe('Runner error handling', () => {
       sessionId: TEST_SESSION_ID,
     });
 
-    const error = await runTestExpectingError(runner, session.id, session.userId);
+    const error = await runTestExpectingError(
+      runner,
+      session.id,
+      session.userId,
+    );
 
     expect(error).not.toBeNull();
-    expect(error?.message).toContain('appName must be provided in runner constructor');
+    expect(error?.message).toContain(
+      'appName must be provided in runner constructor',
+    );
   });
 
   it('should throw session not found error when session does not exist', async () => {
@@ -509,9 +498,15 @@ describe('Runner error handling', () => {
 
     const nonExistentSessionId = 'non_existent_session_id';
 
-    const error = await runTestExpectingError(runner, nonExistentSessionId, TEST_USER_ID);
+    const error = await runTestExpectingError(
+      runner,
+      nonExistentSessionId,
+      TEST_USER_ID,
+    );
 
     expect(error).not.toBeNull();
-    expect(error?.message).toContain(`Session not found: ${nonExistentSessionId}`);
+    expect(error?.message).toContain(
+      `Session not found: ${nonExistentSessionId}`,
+    );
   });
 });

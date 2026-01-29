@@ -328,6 +328,7 @@ async function convertToolUnionToTools(
 // #START Request Processors
 // --------------------------------------------------------------------------
 class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
+  // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
@@ -366,6 +367,7 @@ class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
 const BASIC_LLM_REQUEST_PROCESSOR = new BasicLlmRequestProcessor();
 
 class IdentityLlmRequestProcessor extends BaseLlmRequestProcessor {
+  // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
@@ -384,6 +386,7 @@ class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
   /**
    * Handles instructions and global instructions for LLM flow.
    */
+  // eslint-disable-next-line require-yield
   async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
@@ -438,6 +441,7 @@ const INSTRUCTIONS_LLM_REQUEST_PROCESSOR =
   new InstructionsLlmRequestProcessor();
 
 class ContentRequestProcessor implements BaseLlmRequestProcessor {
+  // eslint-disable-next-line require-yield
   async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
@@ -486,6 +490,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     },
   });
 
+  // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
@@ -575,7 +580,6 @@ class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProcessor {
   /** Handles tool confirmation information to build the LLM request. */
   override async *runAsync(
     invocationContext: InvocationContext,
-    llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     const agent = invocationContext.agent;
     if (!isLlmAgent(agent)) {
@@ -762,7 +766,7 @@ class CodeExecutionRequestProcessor extends BaseLlmRequestProcessor {
         ? invocationContext.agent.codeExecutor.codeBlockDelimiters[0]
         : ['', ''];
 
-      const codeExecutionParts = convertCodeExecutionParts(
+      convertCodeExecutionParts(
         content,
         delimeters,
         invocationContext.agent.codeExecutor.executionResultDelimiters,
@@ -1081,7 +1085,7 @@ async function* runPostProcessor(
 
   // [Step 3] Skip processing the original model response
   // to continue code generation loop
-  llmResponse.content = null as any;
+  llmResponse.content = undefined;
 }
 
 /**
@@ -1465,7 +1469,10 @@ export class LlmAgent extends BaseAgent {
     context: ReadonlyContext,
   ): Promise<{instruction: string; requireStateInjection: boolean}> {
     if (typeof this.globalInstruction === 'string') {
-      return {instruction: this.globalInstruction, requireStateInjection: true};
+      return {
+        instruction: this.globalInstruction,
+        requireStateInjection: true,
+      };
     }
     return {
       instruction: await this.globalInstruction(context),
@@ -1639,8 +1646,9 @@ export class LlmAgent extends BaseAgent {
   // --------------------------------------------------------------------------
   // #START LlmFlow Logic
   // --------------------------------------------------------------------------
+  // eslint-disable-next-line require-yield
   private async *runLiveFlow(
-    invocationContext: InvocationContext,
+    _invocationContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     // TODO - b/425992518: remove dummy logic, implement this.
     await Promise.resolve();

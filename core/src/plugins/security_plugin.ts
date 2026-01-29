@@ -51,7 +51,7 @@ export interface BasePolicyEngine {
 }
 
 export class InMemoryPolicyEngine implements BasePolicyEngine {
-  async evaluate(context: ToolCallPolicyContext): Promise<PolicyCheckResult> {
+  async evaluate(): Promise<PolicyCheckResult> {
     // Default permissive implementation
     return Promise.resolve({
       outcome: PolicyOutcome.ALLOW,
@@ -151,7 +151,7 @@ export class SecurityPlugin extends BasePlugin {
     toolContext,
   }: {
     tool: BaseTool;
-    toolArgs: {[key: string]: any};
+    toolArgs: {[key: string]: unknown};
     toolContext: ToolContext;
   }): Promise<{[key: string]: unknown} | undefined> {
     const policyCheckResult = await this.policyEngine.evaluate({

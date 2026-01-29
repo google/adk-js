@@ -6,7 +6,10 @@
 
 import {InvocationContext} from '../agents/invocation_context.js';
 
-import {CodeExecutionInput, CodeExecutionResult} from './code_execution_utils.js';
+import {
+  CodeExecutionInput,
+  CodeExecutionResult,
+} from './code_execution_utils.js';
 
 /**
  * The parameters for executing code.
@@ -22,7 +25,9 @@ export interface ExecuteCodeParams {
  * A unique symbol to identify BaseCodeExecutor classes.
  * Defined once and shared by all BaseCodeExecutor instances.
  */
-const BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseCodeExecutor');
+const BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.baseCodeExecutor',
+);
 
 /**
  * Type guard to check if an object is an instance of BaseCodeExecutor.
@@ -30,9 +35,12 @@ const BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseCodeExecu
  * @returns True if the object is an instance of BaseCodeExecutor, false otherwise.
  */
 export function isBaseCodeExecutor(obj: unknown): obj is BaseCodeExecutor {
-  return typeof obj === 'object' && obj !== null &&
-      BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
-      obj[BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true;
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
+    obj[BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**

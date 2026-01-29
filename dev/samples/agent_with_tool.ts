@@ -7,7 +7,7 @@ import {FunctionTool, LlmAgent} from '@google/adk';
 import {z} from 'zod';
 
 interface ToolResult {
-  status: 'success'|'error';
+  status: 'success' | 'error';
   report?: string;
   error_message?: string;
 }
@@ -24,7 +24,7 @@ async function get_weather({city}: {city: string}): Promise<ToolResult> {
     return {
       'status': 'success',
       'report':
-          'The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit).',
+        'The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit).',
     };
   } else {
     return {
@@ -45,10 +45,12 @@ async function get_current_time({city}: {city: string}): Promise<ToolResult> {
     const tzIdentifier = 'America/New_York';
     try {
       const now = new Date();
-      const report =
-          `The current time in ${city} is ${now.toLocaleString('en-US', {
-            timeZone: tzIdentifier
-          })} ${tzIdentifier}`;
+      const report = `The current time in ${city} is ${now.toLocaleString(
+        'en-US',
+        {
+          timeZone: tzIdentifier,
+        },
+      )} ${tzIdentifier}`;
       return {'status': 'success', 'report': report};
     } catch (e) {
       return {
@@ -86,8 +88,8 @@ export const rootAgent = new LlmAgent({
   name: 'weather_time_agent',
   model: 'gemini-2.5-flash',
   description:
-      'Agent to answer questions about the time and weather in a city.',
+    'Agent to answer questions about the time and weather in a city.',
   instruction:
-      'You are a helpful agent who can answer user questions about the time and weather in a city.',
+    'You are a helpful agent who can answer user questions about the time and weather in a city.',
   tools: [getWeatherTool, getCurrentTimeTool],
 });

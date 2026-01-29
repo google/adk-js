@@ -52,7 +52,6 @@ describe('LiveRequestQueue', () => {
     expect(await queue.get()).toEqual(request2);
   });
 
-
   it('should handle non-blocking read to be resolved later', async () => {
     const queue = new LiveRequestQueue();
     const getPromise1 = queue.get();
@@ -79,7 +78,7 @@ describe('LiveRequestQueue', () => {
     // Send the requests with a random delay.
     const sendRequestsPromise = (async () => {
       for (const request of expectedRequests) {
-        await new Promise(resolve => {
+        await new Promise((resolve) => {
           setTimeout(resolve, Math.random() * 10);
         });
         queue.send(request);
@@ -125,27 +124,26 @@ describe('LiveRequestQueue', () => {
     }).toThrowError('Cannot send to a closed queue.');
   });
 
-  it('should drain remaining items after close, then return close signal',
-     async () => {
-       const queue = new LiveRequestQueue();
-       const request1 = {content: createUserContent('item1')};
-       const request2 = {content: createUserContent('item2')};
-       const request3 = {content: createUserContent('item3')};
+  it('should drain remaining items after close, then return close signal', async () => {
+    const queue = new LiveRequestQueue();
+    const request1 = {content: createUserContent('item1')};
+    const request2 = {content: createUserContent('item2')};
+    const request3 = {content: createUserContent('item3')};
 
-       queue.send(request1);
-       queue.send(request2);
-       queue.send(request3);
+    queue.send(request1);
+    queue.send(request2);
+    queue.send(request3);
 
-       // No pending gets when close is called
-       queue.close();
+    // No pending gets when close is called
+    queue.close();
 
-       // Should be able to retrieve all items sent before close
-       expect(await queue.get()).toEqual(request1);
-       expect(await queue.get()).toEqual(request2);
-       expect(await queue.get()).toEqual(request3);
+    // Should be able to retrieve all items sent before close
+    expect(await queue.get()).toEqual(request1);
+    expect(await queue.get()).toEqual(request2);
+    expect(await queue.get()).toEqual(request3);
 
-       // Subsequent gets should receive close signal
-       expect(await queue.get()).toEqual({close: true});
-       expect(await queue.get()).toEqual({close: true});
-     });
+    // Subsequent gets should receive close signal
+    expect(await queue.get()).toEqual({close: true});
+    expect(await queue.get()).toEqual({close: true});
+  });
 });

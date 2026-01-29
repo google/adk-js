@@ -22,8 +22,12 @@ const BASE_MODEL_SYMBOL = Symbol.for('google.adk.baseModel');
  * @returns True if the object is an instance of BaseLlm, false otherwise.
  */
 export function isBaseLlm(obj: unknown): obj is BaseLlm {
-  return typeof obj === 'object' && obj !== null && BASE_MODEL_SYMBOL in obj &&
-      obj[BASE_MODEL_SYMBOL] === true;
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BASE_MODEL_SYMBOL in obj &&
+    obj[BASE_MODEL_SYMBOL] === true
+  );
 }
 
 /**
@@ -33,7 +37,7 @@ export abstract class BaseLlm {
   /**
    * A unique symbol to identify BaseLlm classes.
    */
-  readonly[BASE_MODEL_SYMBOL] = true;
+  readonly [BASE_MODEL_SYMBOL] = true;
 
   readonly model: string;
 
@@ -50,7 +54,7 @@ export abstract class BaseLlm {
   /**
    * List of supported models in regex for LlmRegistry.
    */
-  static readonly supportedModels: Array<string|RegExp> = [];
+  static readonly supportedModels: Array<string | RegExp> = [];
 
   /**
    * Generates one content from the given contents and tools.
@@ -60,8 +64,10 @@ export abstract class BaseLlm {
    * For non-streaming call, it will only yield one Content.
    * @return A generator of LlmResponse.
    */
-  abstract generateContentAsync(llmRequest: LlmRequest, stream?: boolean):
-      AsyncGenerator<LlmResponse, void>;
+  abstract generateContentAsync(
+    llmRequest: LlmRequest,
+    stream?: boolean,
+  ): AsyncGenerator<LlmResponse, void>;
 
   /**
    * Creates a live connection to the LLM.
@@ -90,7 +96,9 @@ export abstract class BaseLlm {
       llmRequest.contents.push({
         role: 'user',
         parts: [
-          {text: 'Handle the requests as specified in the System Instruction.'}
+          {
+            text: 'Handle the requests as specified in the System Instruction.',
+          },
         ],
       });
     }
@@ -98,10 +106,11 @@ export abstract class BaseLlm {
     if (llmRequest.contents[llmRequest.contents.length - 1]?.role !== 'user') {
       llmRequest.contents.push({
         role: 'user',
-        parts: [{
-          text:
-              'Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed.'
-        }],
+        parts: [
+          {
+            text: 'Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed.',
+          },
+        ],
       });
     }
   }

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {ExecuteCodeParams} from '@google/adk';
 import {BuiltInCodeExecutor, LlmRequest} from '@google/adk';
 
 describe('BuiltInCodeExecutor', () => {
@@ -14,7 +15,9 @@ describe('BuiltInCodeExecutor', () => {
   });
 
   it('executeCode should return dummy values', async () => {
-    const result = await executor.executeCode({} as any);
+    const result = await executor.executeCode(
+      {} as unknown as ExecuteCodeParams,
+    );
     expect(result).toEqual({
       stdout: '',
       stderr: '',
@@ -28,9 +31,9 @@ describe('BuiltInCodeExecutor', () => {
       toolsDict: {},
       liveConnectConfig: {},
     };
-    expect(() => executor.processLlmRequest(llmRequest))
-        .toThrowError(
-            'Gemini code execution tool is not supported for model undefined');
+    expect(() => executor.processLlmRequest(llmRequest)).toThrowError(
+      'Gemini code execution tool is not supported for model undefined',
+    );
   });
 
   it('processLlmRequest should not throw error if model is valid', () => {
@@ -51,8 +54,8 @@ describe('BuiltInCodeExecutor', () => {
       toolsDict: {},
       liveConnectConfig: {},
     };
-    expect(() => executor.processLlmRequest(llmRequest))
-        .toThrowError(
-            'Gemini code execution tool is not supported for model invalid-model');
+    expect(() => executor.processLlmRequest(llmRequest)).toThrowError(
+      'Gemini code execution tool is not supported for model invalid-model',
+    );
   });
 });

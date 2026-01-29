@@ -25,9 +25,9 @@ export enum GoogleLLMVariant {
  * Gets the Google LLM variant to use.
  */
 export function getGoogleLlmVariant() {
-  return getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI') ?
-      GoogleLLMVariant.VERTEX_AI :
-      GoogleLLMVariant.GEMINI_API;
+  return getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI')
+    ? GoogleLLMVariant.VERTEX_AI
+    : GoogleLLMVariant.GEMINI_API;
 }
 
 /**
@@ -43,5 +43,5 @@ function getBooleanEnvVar(envVar: string): boolean {
 
   const envVarValue = (process.env[envVar] || '').toLowerCase();
 
-  return ['true', '1'].includes(envVar.toLowerCase());
+  return ['true', '1'].includes(envVarValue);
 }

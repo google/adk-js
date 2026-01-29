@@ -10,15 +10,19 @@ import {z, ZodObject, ZodTypeAny} from 'zod';
 /**
  * Returns true if the given object is a V3 ZodObject.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isZodObject(obj: unknown): obj is ZodObject<any> {
   return (
-      obj !== null && typeof obj === 'object' &&
-      (obj as any)._def?.typeName === 'ZodObject');
+    obj !== null &&
+    typeof obj === 'object' &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (obj as any)._def?.typeName === 'ZodObject'
+  );
 }
 
 // TODO(b/425992518): consider conversion to FunctionDeclaration directly.
 
-function parseZodType(zodType: ZodTypeAny): Schema|undefined {
+function parseZodType(zodType: ZodTypeAny): Schema | undefined {
   const def = zodType._def;
   if (!def) {
     return {};
@@ -35,53 +39,50 @@ function parseZodType(zodType: ZodTypeAny): Schema|undefined {
   };
 
   switch (def.typeName) {
-    case z.ZodFirstPartyTypeKind.ZodString:
+    case z.ZodFirstPartyTypeKind.ZodString: {
       result.type = Type.STRING;
       for (const check of def.checks || []) {
-        if (check.kind === 'min')
-          result.minLength = check.value.toString();
+        if (check.kind === 'min') result.minLength = check.value.toString();
         else if (check.kind === 'max')
           result.maxLength = check.value.toString();
-        else if (check.kind === 'email')
-          result.format = 'email';
-        else if (check.kind === 'uuid')
-          result.format = 'uuid';
-        else if (check.kind === 'url')
-          result.format = 'uri';
-        else if (check.kind === 'regex')
-          result.pattern = check.regex.source;
+        else if (check.kind === 'email') result.format = 'email';
+        else if (check.kind === 'uuid') result.format = 'uuid';
+        else if (check.kind === 'url') result.format = 'uri';
+        else if (check.kind === 'regex') result.pattern = check.regex.source;
       }
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodNumber:
+    case z.ZodFirstPartyTypeKind.ZodNumber: {
       result.type = Type.NUMBER;
       for (const check of def.checks || []) {
-        if (check.kind === 'min')
-          result.minimum = check.value;
-        else if (check.kind === 'max')
-          result.maximum = check.value;
-        else if (check.kind === 'int')
-          result.type = Type.INTEGER;
+        if (check.kind === 'min') result.minimum = check.value;
+        else if (check.kind === 'max') result.maximum = check.value;
+        else if (check.kind === 'int') result.type = Type.INTEGER;
       }
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodBoolean:
+    case z.ZodFirstPartyTypeKind.ZodBoolean: {
       result.type = Type.BOOLEAN;
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodArray:
+    case z.ZodFirstPartyTypeKind.ZodArray: {
       result.type = Type.ARRAY;
       result.items = parseZodType(def.type);
       if (def.minLength) result.minItems = def.minLength.value.toString();
       if (def.maxLength) result.maxItems = def.maxLength.value.toString();
       return returnResult(result);
+    }
 
     case z.ZodFirstPartyTypeKind.ZodObject: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nestedSchema = zodObjectToSchema(zodType as ZodObject<any>);
       return nestedSchema as Schema;
     }
 
-    case z.ZodFirstPartyTypeKind.ZodLiteral:
+    case z.ZodFirstPartyTypeKind.ZodLiteral: {
       const literalType = typeof def.value;
       result.enum = [def.value.toString()];
 
@@ -98,42 +99,59 @@ function parseZodType(zodType: ZodTypeAny): Schema|undefined {
       }
 
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodEnum:
+    case z.ZodFirstPartyTypeKind.ZodEnum: {
       result.type = Type.STRING;
       result.enum = def.values;
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodNativeEnum:
+    case z.ZodFirstPartyTypeKind.ZodNativeEnum: {
       result.type = Type.STRING;
       result.enum = Object.values(def.values);
       return returnResult(result);
+    }
 
-    case z.ZodFirstPartyTypeKind.ZodUnion:
+    case z.ZodFirstPartyTypeKind.ZodUnion: {
       result.anyOf = def.options.map(parseZodType);
       return returnResult(result);
+    }
 
     case z.ZodFirstPartyTypeKind.ZodOptional:
       return parseZodType(def.innerType);
-    case z.ZodFirstPartyTypeKind.ZodNullable:
+
+    case z.ZodFirstPartyTypeKind.ZodNullable: {
       const nullableInner = parseZodType(def.innerType);
-      return nullableInner ?
-          returnResult({
+      return nullableInner
+        ? returnResult({
             anyOf: [nullableInner, {type: Type.NULL}],
-            ...(description && {description})
-          }) :
-          returnResult({type: Type.NULL, ...(description && {description})});
-    case z.ZodFirstPartyTypeKind.ZodDefault:
+            ...(description && {description}),
+          })
+        : returnResult({
+            type: Type.NULL,
+            ...(description && {description}),
+          });
+    }
+
+    case z.ZodFirstPartyTypeKind.ZodDefault: {
       const defaultInner = parseZodType(def.innerType);
       if (defaultInner) defaultInner.default = def.defaultValue();
+
       return defaultInner;
+    }
+
     case z.ZodFirstPartyTypeKind.ZodBranded:
       return parseZodType(def.type);
+
     case z.ZodFirstPartyTypeKind.ZodReadonly:
       return parseZodType(def.innerType);
-    case z.ZodFirstPartyTypeKind.ZodNull:
+
+    case z.ZodFirstPartyTypeKind.ZodNull: {
       result.type = Type.NULL;
       return returnResult(result);
+    }
+
     case z.ZodFirstPartyTypeKind.ZodAny:
     case z.ZodFirstPartyTypeKind.ZodUnknown:
       return returnResult({...(description && {description})});
@@ -142,6 +160,7 @@ function parseZodType(zodType: ZodTypeAny): Schema|undefined {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function zodObjectToSchema(schema: ZodObject<any>): Schema {
   if (schema._def.typeName !== z.ZodFirstPartyTypeKind.ZodObject) {
     throw new Error('Expected a ZodObject');
@@ -160,10 +179,11 @@ export function zodObjectToSchema(schema: ZodObject<any>): Schema {
 
     let currentSchema = fieldSchema;
     let isOptional = false;
-    while (currentSchema._def.typeName ===
-               z.ZodFirstPartyTypeKind.ZodOptional ||
-           currentSchema._def.typeName === z.ZodFirstPartyTypeKind.ZodDefault) {
-        isOptional = true;
+    while (
+      currentSchema._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional ||
+      currentSchema._def.typeName === z.ZodFirstPartyTypeKind.ZodDefault
+    ) {
+      isOptional = true;
       currentSchema = currentSchema._def.innerType;
     }
     if (!isOptional) {
@@ -171,13 +191,6 @@ export function zodObjectToSchema(schema: ZodObject<any>): Schema {
     }
   }
 
-  const catchall = schema._def.catchall;
-  let additionalProperties: boolean|Schema = false;
-  if (catchall && catchall._def.typeName !== z.ZodFirstPartyTypeKind.ZodNever) {
-    additionalProperties = parseZodType(catchall) || true;
-  } else {
-    additionalProperties = schema._def.unknownKeys === 'passthrough';
-  }
   return {
     type: Type.OBJECT,
     properties,

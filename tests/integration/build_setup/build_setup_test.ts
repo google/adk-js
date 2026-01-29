@@ -13,17 +13,20 @@ const dirname = process.cwd();
 
 const TEST_EXECUTION_TIMEOUT = 20000;
 
-function sendInput(childProcess: ChildProcessWithoutNullStreams, input: string):
-    Promise<string> {
+function sendInput(
+  childProcess: ChildProcessWithoutNullStreams,
+  input: string,
+): Promise<string> {
   childProcess.stdin.write(input);
   childProcess.stdin.end();
 
   return getResponse(childProcess);
 }
 
-function getResponse(childProcess: ChildProcessWithoutNullStreams):
-    Promise<string> {
-  return new Promise<string>(resolve => {
+function getResponse(
+  childProcess: ChildProcessWithoutNullStreams,
+): Promise<string> {
+  return new Promise<string>((resolve) => {
     let output = '';
     let resolved = false;
 
@@ -48,37 +51,45 @@ function getResponse(childProcess: ChildProcessWithoutNullStreams):
 
 describe('Build setup', () => {
   describe.each(['js_commonjs', 'js_esm', 'ts_commonjs', 'ts_esm'])(
-      '%s', (buildSetup: string) => {
-        const projectPath =
-            `${dirname}/tests/integration/build_setup/${buildSetup}`;
+    '%s',
+    (buildSetup: string) => {
+      const projectPath = `${dirname}/tests/integration/build_setup/${buildSetup}`;
 
-        it('should build and run agent successfully', async () => {
+      it(
+        'should build and run agent successfully',
+        async () => {
           await execAsync('npm install', {cwd: projectPath});
 
           if (buildSetup.startsWith('ts_')) {
-            const buildResult =
-                await execAsync('npm run build', {cwd: projectPath});
+            const buildResult = await execAsync('npm run build', {
+              cwd: projectPath,
+            });
             expect(buildResult.stderr).toBe('');
             expect(buildResult.stdout).toContain('\nBuild complete');
           }
 
-          const childProcess =
-              spawn('npm', ['run', 'start'], {cwd: projectPath, shell: true});
+          const childProcess = spawn('npm', ['run', 'start'], {
+            cwd: projectPath,
+            shell: true,
+          });
 
           let response = await sendInput(childProcess, 'Tell me a joke.\n');
           expect(response.toString()).toContain('test-llm-model-response');
 
           response = await sendInput(childProcess, 'exit\n');
           expect(response.toString()).toContain('');
-        }, TEST_EXECUTION_TIMEOUT);
+        },
+        TEST_EXECUTION_TIMEOUT,
+      );
 
-        afterAll(async () => {
-          await fs.rm(`${projectPath}/node_modules`, {recursive: true});
-          await fs.unlink(`${projectPath}/package-lock.json`);
+      afterAll(async () => {
+        await fs.rm(`${projectPath}/node_modules`, {recursive: true});
+        await fs.unlink(`${projectPath}/package-lock.json`);
 
-          if (buildSetup.startsWith('ts_')) {
-            await fs.rm(`${projectPath}/dist`, {recursive: true});
-          }
-        });
+        if (buildSetup.startsWith('ts_')) {
+          await fs.rm(`${projectPath}/dist`, {recursive: true});
+        }
       });
+    },
+  );
 });

@@ -3,9 +3,8 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-const {LlmAgent, setLogLevel, LogLevel, BaseLlm, LLMRegistry} =
-    require('@google/adk');
-const {createModelContent, GenerateContentResponse} = require('@google/genai');
+const {LlmAgent, setLogLevel, LogLevel, BaseLlm, LLMRegistry} = require('@google/adk'); // eslint-disable-line @typescript-eslint/no-require-imports
+const {createModelContent, GenerateContentResponse} = require('@google/genai'); // eslint-disable-line @typescript-eslint/no-require-imports
 
 setLogLevel(LogLevel.DEBUG);
 
@@ -16,7 +15,7 @@ class MockLlmConnection {
   async sendContent() {
     return Promise.resolve();
   }
-  async sendRealtime(blob) {}
+  async sendRealtime() {}
   async * receive() {}
   async close() {}
 }
@@ -28,7 +27,7 @@ class MockLll extends BaseLlm {
     return `Mock response to: ${prompt}`;
   }
 
-  async * generateContentAsync(llmRequest) {
+  async * generateContentAsync() {
     const generateContentResponse = new GenerateContentResponse();
 
     generateContentResponse.candidates =

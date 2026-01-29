@@ -48,9 +48,12 @@ const BASE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseTool');
  * @returns True if the object is an instance of BaseTool, false otherwise.
  */
 export function isBaseTool(obj: unknown): obj is BaseTool {
-  return typeof obj === 'object' && obj !== null &&
-      BASE_TOOL_SIGNATURE_SYMBOL in obj &&
-      obj[BASE_TOOL_SIGNATURE_SYMBOL] === true;
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BASE_TOOL_SIGNATURE_SYMBOL in obj &&
+    obj[BASE_TOOL_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -58,7 +61,7 @@ export function isBaseTool(obj: unknown): obj is BaseTool {
  */
 export abstract class BaseTool {
   /** A unique symbol to identify ADK base tool class. */
-  readonly[BASE_TOOL_SIGNATURE_SYMBOL] = true;
+  readonly [BASE_TOOL_SIGNATURE_SYMBOL] = true;
 
   readonly name: string;
   readonly description: string;
@@ -88,7 +91,7 @@ export abstract class BaseTool {
    * @return The FunctionDeclaration of this tool, or undefined if it doesn't
    *     need to be added to LlmRequest.config.
    */
-  _getDeclaration(): FunctionDeclaration|undefined {
+  _getDeclaration(): FunctionDeclaration | undefined {
     return undefined;
   }
 
@@ -114,8 +117,7 @@ export abstract class BaseTool {
    *
    * @param request The request to process the LLM request.
    */
-  async processLlmRequest({toolContext, llmRequest}: ToolProcessLlmRequest):
-      Promise<void> {
+  async processLlmRequest({llmRequest}: ToolProcessLlmRequest): Promise<void> {
     const functionDeclaration = this._getDeclaration();
     if (!functionDeclaration) {
       return;
@@ -147,9 +149,10 @@ export abstract class BaseTool {
   }
 }
 
-function findToolWithFunctionDeclarations(llmRequest: LlmRequest): Tool|
-    undefined {
-  return (llmRequest.config?.tools ||
-          []).find(tool => 'functionDeclarations' in tool) as Tool |
-      undefined;
+function findToolWithFunctionDeclarations(
+  llmRequest: LlmRequest,
+): Tool | undefined {
+  return (llmRequest.config?.tools || []).find(
+    (tool) => 'functionDeclarations' in tool,
+  ) as Tool | undefined;
 }

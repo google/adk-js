@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FunctionDeclaration, GenerateContentConfig, LiveConnectConfig, SchemaUnion} from '@google/genai';
+import {
+  Content,
+  FunctionDeclaration,
+  GenerateContentConfig,
+  LiveConnectConfig,
+  SchemaUnion,
+} from '@google/genai';
 
 import {BaseTool} from '../tools/base_tool.js';
 
@@ -42,9 +48,9 @@ export interface LlmRequest {
  * @param instructions The instructions to append.
  */
 export function appendInstructions(
-    llmRequest: LlmRequest,
-    instructions: string[],
-    ): void {
+  llmRequest: LlmRequest,
+  instructions: string[],
+): void {
   if (!llmRequest.config) {
     llmRequest.config = {};
   }
@@ -56,14 +62,11 @@ export function appendInstructions(
   }
 }
 
-  /**
-   * Appends tools to the request.
-   * @param tools The tools to append.
-   */
-export function appendTools(
-    llmRequest: LlmRequest,
-    tools: BaseTool[],
-    ): void {
+/**
+ * Appends tools to the request.
+ * @param tools The tools to append.
+ */
+export function appendTools(llmRequest: LlmRequest, tools: BaseTool[]): void {
   if (!tools?.length) {
     return;
   }
@@ -88,15 +91,15 @@ export function appendTools(
   }
 }
 
-  /**
-   * Sets the output schema for the request.
-   *
-   * @param schema The JSON Schema object to set as the output schema.
-   */
+/**
+ * Sets the output schema for the request.
+ *
+ * @param schema The JSON Schema object to set as the output schema.
+ */
 export function setOutputSchema(
-    llmRequest: LlmRequest,
-    schema: SchemaUnion,
-    ): void {
+  llmRequest: LlmRequest,
+  schema: SchemaUnion,
+): void {
   if (!llmRequest.config) {
     llmRequest.config = {};
   }

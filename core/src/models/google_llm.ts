@@ -4,21 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, createPartFromText, FileData, FinishReason, GenerateContentResponse, GoogleGenAI, Part} from '@google/genai';
+import {
+  Blob,
+  createPartFromText,
+  FileData,
+  FinishReason,
+  GenerateContentResponse,
+  GoogleGenAI,
+  Part,
+} from '@google/genai';
 
-import {isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
-import {version} from '../version.js';
 
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {createLlmResponse, LlmResponse} from './llm_response.js';
-
-const AGENT_ENGINE_TELEMETRY_TAG = 'remote_reasoning_engine';
-const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
 
 /**
  * The parameters for creating a Gemini instance.
@@ -104,20 +107,23 @@ export class Gemini extends BaseLlm {
       }
       if (!this.project) {
         throw new Error(
-            'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.');
+          'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.',
+        );
       }
       if (!this.location) {
         throw new Error(
-            'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.');
+          'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.',
+        );
       }
     } else {
       if (!this.apiKey && canReadEnv) {
-        this.apiKey = process.env['GOOGLE_GENAI_API_KEY'] ||
-            process.env['GEMINI_API_KEY'];
+        this.apiKey =
+          process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
       }
       if (!this.apiKey) {
         throw new Error(
-            'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.');
+          'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
+        );
       }
     }
   }
@@ -127,7 +133,7 @@ export class Gemini extends BaseLlm {
    *
    * @returns A list of supported models.
    */
-  static override readonly supportedModels: Array<string|RegExp> = [
+  static override readonly supportedModels: Array<string | RegExp> = [
     /gemini-.*/,
     // fine-tuned vertex endpoint pattern
     /projects\/.+\/locations\/.+\/endpoints\/.+/,
@@ -148,16 +154,14 @@ export class Gemini extends BaseLlm {
    * @param stream bool = false, whether to do streaming call.
    * @yields LlmResponse: The model response.
    */
-  override async *
-      generateContentAsync(
-          llmRequest: LlmRequest,
-          stream = false,
-          ): AsyncGenerator<LlmResponse, void> {
+  override async *generateContentAsync(
+    llmRequest: LlmRequest,
+    stream = false,
+  ): AsyncGenerator<LlmResponse, void> {
     this.preprocessRequest(llmRequest);
     this.maybeAppendUserContent(llmRequest);
     logger.info(
-        `Sending out request, model: ${llmRequest.model}, backend: ${
-            this.apiBackend}, stream: ${stream}`,
+      `Sending out request, model: ${llmRequest.model}, backend: ${this.apiBackend}, stream: ${stream}`,
     );
 
     if (llmRequest.config?.httpOptions) {
@@ -176,7 +180,7 @@ export class Gemini extends BaseLlm {
       let thoughtText = '';
       let text = '';
       let usageMetadata;
-      let lastResponse: GenerateContentResponse|undefined;
+      let lastResponse: GenerateContentResponse | undefined;
 
       // TODO - b/425992518: verify the type of streaming response is correct.
       for await (const response of streamResult) {
@@ -193,7 +197,9 @@ export class Gemini extends BaseLlm {
           }
           llmResponse.partial = true;
         } else if (
-            (thoughtText || text) && (!firstPart || !firstPart.inlineData)) {
+          (thoughtText || text) &&
+          (!firstPart || !firstPart.inlineData)
+        ) {
           // Flushes the data if there's no more text.
           const parts: Part[] = [];
           if (thoughtText) {
@@ -214,8 +220,10 @@ export class Gemini extends BaseLlm {
         }
         yield llmResponse;
       }
-      if ((text || thoughtText) &&
-          lastResponse?.candidates?.[0]?.finishReason === FinishReason.STOP) {
+      if (
+        (text || thoughtText) &&
+        lastResponse?.candidates?.[0]?.finishReason === FinishReason.STOP
+      ) {
         const parts: Part[] = [];
         if (thoughtText) {
           parts.push({text: thoughtText, thought: true} as Part);
@@ -249,7 +257,7 @@ export class Gemini extends BaseLlm {
     const combinedHeaders = {
       ...this.trackingHeaders,
       ...this.headers,
-    }
+    };
 
     if (this.vertexai) {
       this._apiClient = new GoogleGenAI({
@@ -258,8 +266,7 @@ export class Gemini extends BaseLlm {
         location: this.location,
         httpOptions: {headers: combinedHeaders},
       });
-    }
-    else {
+    } else {
       this._apiClient = new GoogleGenAI({
         apiKey: this.apiKey,
         httpOptions: {headers: combinedHeaders},
@@ -270,17 +277,17 @@ export class Gemini extends BaseLlm {
 
   get apiBackend(): GoogleLLMVariant {
     if (!this._apiBackend) {
-      this._apiBackend = this.apiClient.vertexai ? GoogleLLMVariant.VERTEX_AI :
-                                                   GoogleLLMVariant.GEMINI_API;
+      this._apiBackend = this.apiClient.vertexai
+        ? GoogleLLMVariant.VERTEX_AI
+        : GoogleLLMVariant.GEMINI_API;
     }
     return this._apiBackend;
   }
 
   get liveApiVersion(): string {
     if (!this._liveApiVersion) {
-      this._liveApiVersion = this.apiBackend === GoogleLLMVariant.VERTEX_AI ?
-          'v1beta1' :
-          'v1alpha';
+      this._liveApiVersion =
+        this.apiBackend === GoogleLLMVariant.VERTEX_AI ? 'v1beta1' : 'v1alpha';
     }
     return this._liveApiVersion;
   }
@@ -313,8 +320,8 @@ export class Gemini extends BaseLlm {
         llmRequest.liveConnectConfig.httpOptions.headers = {};
       }
       Object.assign(
-          llmRequest.liveConnectConfig.httpOptions.headers,
-          this.trackingHeaders,
+        llmRequest.liveConnectConfig.httpOptions.headers,
+        this.trackingHeaders,
       );
       llmRequest.liveConnectConfig.httpOptions.apiVersion = this.liveApiVersion;
     }
@@ -323,8 +330,9 @@ export class Gemini extends BaseLlm {
       llmRequest.liveConnectConfig.systemInstruction = {
         role: 'system',
         // TODO - b/425992518: validate type casting works well.
-        parts:
-            [createPartFromText(llmRequest.config.systemInstruction as string)],
+        parts: [
+          createPartFromText(llmRequest.config.systemInstruction as string),
+        ],
       };
     }
 
@@ -346,7 +354,7 @@ export class Gemini extends BaseLlm {
       if (llmRequest.config) {
         // Using API key from Google AI Studio to call model doesn't support
         // labels.
-        (llmRequest.config as any).labels = undefined;
+        (llmRequest.config as {labels?: unknown}).labels = undefined;
       }
       if (llmRequest.contents) {
         for (const content of llmRequest.contents) {
@@ -362,8 +370,8 @@ export class Gemini extends BaseLlm {
 }
 
 function removeDisplayNameIfPresent(
-    dataObj: Blob|FileData|undefined,
-    ): void {
+  dataObj: Blob | FileData | undefined,
+): void {
   // display_name is not supported for Gemini API (non-vertex)
   if (dataObj && (dataObj as FileData).displayName) {
     (dataObj as FileData).displayName = undefined;

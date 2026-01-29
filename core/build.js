@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import { writeFile } from 'node:fs/promises';
+import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
@@ -63,8 +63,9 @@ function build({
     buildOptions.outdir = `./dist/${targetDir}`;
   }
 
-  return watch ? esbuild.context(buildOptions).then(c => c.watch()) :
-                 esbuild.build(buildOptions);
+  return watch
+    ? esbuild.context(buildOptions).then((c) => c.watch())
+    : esbuild.build(buildOptions);
 }
 
 /**
@@ -80,7 +81,7 @@ async function main() {
       platform: 'node',
       format: 'esm',
       bundle,
-      watch: true
+      watch: true,
     });
   } else {
     await Promise.all([
@@ -91,7 +92,7 @@ async function main() {
         platform: 'browser',
         format: 'esm',
         entry: 'index_web.ts',
-        bundle
+        bundle,
       }),
     ]);
 

@@ -17,7 +17,7 @@ class MockLlmConnection {
     return Promise.resolve();
   }
 
-  async sendRealtime(blob) {}
+  async sendRealtime() {}
 
   async * receive() {}
 
@@ -31,7 +31,7 @@ class MockLll extends BaseLlm {
     return `Mock response to: ${prompt}`;
   }
 
-  async * generateContentAsync(llmRequest) {
+  async * generateContentAsync() {
     const generateContentResponse = new GenerateContentResponse();
 
     generateContentResponse.candidates =

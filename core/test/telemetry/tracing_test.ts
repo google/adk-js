@@ -4,21 +4,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {traceAgentInvocation, traceToolCall, traceMergedToolCalls, traceCallLlm} from '../../src/telemetry/tracing.js';
+import {trace} from '@opentelemetry/api';
+import {vi} from 'vitest';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
 import {Event} from '../../src/events/event.js';
 import {createEventActions} from '../../src/events/event_actions.js';
+import {LlmRequest} from '../../src/models/llm_request.js';
+import {LlmResponse} from '../../src/models/llm_response.js';
 import {Session} from '../../src/sessions/session.js';
-import {trace} from '@opentelemetry/api';
+import {
+  traceAgentInvocation,
+  traceCallLlm,
+  traceMergedToolCalls,
+  traceToolCall,
+} from '../../src/telemetry/tracing.js';
+import {BaseTool} from '../../src/tools/base_tool.js';
 
 // Mock OpenTelemetry API
 vi.mock('@opentelemetry/api');
 
 describe('Telemetry Tracing Functions', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockSpan: any;
   let mockAgent: BaseAgent;
   let mockInvocationContext: InvocationContext;
@@ -29,7 +36,7 @@ describe('Telemetry Tracing Functions', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     mockSpan = {
       setAttributes: vi.fn(),
       setAttribute: vi.fn(),
@@ -59,14 +66,14 @@ describe('Telemetry Tracing Functions', () => {
     mockEvent = {
       id: 'test-event-id',
       invocationId: 'test-invocation-id',
-      actions: createEventActions({ skipSummarization: false }),
+      actions: createEventActions({skipSummarization: false}),
       timestamp: Date.now(),
       content: {
         parts: [
           {
             functionResponse: {
               id: 'test-call-id',
-              response: { result: 'test-result' },
+              response: {result: 'test-result'},
             },
           },
         ],
@@ -85,7 +92,7 @@ describe('Telemetry Tracing Functions', () => {
     } as LlmRequest;
 
     mockLlmResponse = {
-      content: { parts: [{ text: 'test-response' }] },
+      content: {parts: [{text: 'test-response'}]},
     } as LlmResponse;
   });
 
@@ -118,7 +125,7 @@ describe('Telemetry Tracing Functions', () => {
     it('should set correct attributes for tool call', () => {
       // Arrange
       vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-      const args = { param1: 'value1', param2: 123 };
+      const args = {param1: 'value1', param2: 123};
 
       // Act
       traceToolCall({
@@ -141,7 +148,8 @@ describe('Telemetry Tracing Functions', () => {
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.tool.call.id': 'test-call-id',
         'gcp.vertex.agent.event_id': 'test-event-id',
-        'gcp.vertex.agent.tool_response': expect.stringContaining('test-result'),
+        'gcp.vertex.agent.tool_response':
+          expect.stringContaining('test-result'),
       });
     });
 
@@ -151,9 +159,9 @@ describe('Telemetry Tracing Functions', () => {
       const eventWithoutResponse = {
         id: 'test-event-id',
         invocationId: 'test-invocation-id',
-        actions: createEventActions({ skipSummarization: false }),
+        actions: createEventActions({skipSummarization: false}),
         timestamp: Date.now(),
-        content: { parts: [] },
+        content: {parts: []},
       } as Event;
 
       // Act
@@ -167,7 +175,8 @@ describe('Telemetry Tracing Functions', () => {
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.tool.call.id': '<not specified>',
         'gcp.vertex.agent.event_id': 'test-event-id',
-        'gcp.vertex.agent.tool_response': expect.stringContaining('not specified'),
+        'gcp.vertex.agent.tool_response':
+          expect.stringContaining('not specified'),
       });
     });
   });
@@ -179,12 +188,14 @@ describe('Telemetry Tracing Functions', () => {
       const mockEventWithJson = {
         id: 'merged-event-id',
         invocationId: 'test-invocation-id',
-        actions: createEventActions({ skipSummarization: false }),
+        actions: createEventActions({skipSummarization: false}),
         timestamp: Date.now(),
         content: {
-          parts: [{
-            text: 'merged response data'
-          }]
+          parts: [
+            {
+              text: 'merged response data',
+            },
+          ],
         },
         model_dumps_json: vi.fn().mockReturnValue('{"merged": "data"}'),
       };
@@ -192,7 +203,7 @@ describe('Telemetry Tracing Functions', () => {
       // Act
       traceMergedToolCalls({
         responseEventId: 'merged-event-id',
-        functionResponseEvent: mockEventWithJson as any,
+        functionResponseEvent: mockEventWithJson as unknown as Event,
       });
 
       // Assert - setAttributes is called without tool_response
@@ -206,11 +217,11 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.llm_request': '{}',
         'gcp.vertex.agent.llm_response': '{}',
       });
-      
+
       // tool_response is set separately via setAttribute
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'gcp.vertex.agent.tool_response',
-        expect.any(String)
+        expect.any(String),
       );
     });
   });
@@ -238,14 +249,20 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.llm_request': expect.stringContaining('test-model'),
       });
 
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith('gen_ai.request.top_p', 0.8);
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith('gen_ai.request.max_tokens', 100);
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'gen_ai.request.top_p',
+        0.8,
+      );
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'gen_ai.request.max_tokens',
+        100,
+      );
     });
 
     it('should handle LLM call without config', () => {
       // Arrange
       vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-      const requestWithoutConfig = { ...mockLlmRequest, config: undefined };
+      const requestWithoutConfig = {...mockLlmRequest, config: undefined};
 
       // Act
       traceCallLlm({
@@ -256,8 +273,14 @@ describe('Telemetry Tracing Functions', () => {
       });
 
       // Assert
-      expect(mockSpan.setAttribute).not.toHaveBeenCalledWith('gen_ai.request.top_p', expect.anything());
-      expect(mockSpan.setAttribute).not.toHaveBeenCalledWith('gen_ai.request.max_tokens', expect.anything());
+      expect(mockSpan.setAttribute).not.toHaveBeenCalledWith(
+        'gen_ai.request.top_p',
+        expect.anything(),
+      );
+      expect(mockSpan.setAttribute).not.toHaveBeenCalledWith(
+        'gen_ai.request.max_tokens',
+        expect.anything(),
+      );
     });
   });
 });

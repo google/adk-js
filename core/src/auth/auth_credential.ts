@@ -175,7 +175,7 @@ export enum AuthCredentialTypes {
  *
  * To exchange for the actual credential, please use
  * CredentialExchanger.exchangeCredential().
- * 
+ *
  * @example
  * // API Key Auth
  * const authCredential: AuthCredential = {

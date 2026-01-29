@@ -9,7 +9,12 @@ import {Content} from '@google/genai';
 import {BaseAgent} from '../agents/base_agent.js';
 import {CallbackContext} from '../agents/callback_context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event, getFunctionCalls, getFunctionResponses, isFinalResponse} from '../events/event.js';
+import {
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+  isFinalResponse,
+} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
@@ -54,10 +59,13 @@ export class LoggingPlugin extends BasePlugin {
     super(name);
   }
 
-  override async onUserMessageCallback(
-      {invocationContext, userMessage}:
-          {invocationContext: InvocationContext; userMessage: Content;},
-      ): Promise<Content|undefined> {
+  override async onUserMessageCallback({
+    invocationContext,
+    userMessage,
+  }: {
+    invocationContext: InvocationContext;
+    userMessage: Content;
+  }): Promise<Content | undefined> {
     this.log('🚀 USER MESSAGE RECEIVED');
     this.log(`   Invocation ID: ${invocationContext.invocationId}`);
     this.log(`   Session ID: ${invocationContext.session.id}`);
@@ -71,18 +79,23 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async beforeRunCallback({invocationContext}: {
+  override async beforeRunCallback({
+    invocationContext,
+  }: {
     invocationContext: InvocationContext;
-  }): Promise<Content|undefined> {
+  }): Promise<Content | undefined> {
     this.log('🏃 INVOCATION STARTING');
     this.log(`   Invocation ID: ${invocationContext.invocationId}`);
     this.log(`   Starting Agent: ${invocationContext.agent.name ?? 'Unknown'}`);
     return undefined;
   }
 
-  override async onEventCallback({invocationContext, event}: {
-    invocationContext: InvocationContext; event: Event;
-  }): Promise<Event|undefined> {
+  override async onEventCallback({
+    event,
+  }: {
+    invocationContext: InvocationContext;
+    event: Event;
+  }): Promise<Event | undefined> {
     this.log('📢 EVENT YIELDED');
     this.log(`   Event ID: ${event.id}`);
     this.log(`   Author: ${event.author}`);
@@ -108,7 +121,9 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async afterRunCallback({invocationContext}: {
+  override async afterRunCallback({
+    invocationContext,
+  }: {
     invocationContext: InvocationContext;
   }): Promise<void> {
     this.log('✅ INVOCATION COMPLETED');
@@ -117,9 +132,12 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async beforeAgentCallback({agent, callbackContext}: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
+  override async beforeAgentCallback({
+    callbackContext,
+  }: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
     this.log('🤖 AGENT STARTING');
     this.log(`   Agent Name: ${callbackContext.agentName}`);
     this.log(`   Invocation ID: ${callbackContext.invocationId}`);
@@ -129,18 +147,25 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async afterAgentCallback({agent, callbackContext}: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
+  override async afterAgentCallback({
+    callbackContext,
+  }: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
     this.log('🤖 AGENT COMPLETED');
     this.log(`   Agent Name: ${callbackContext.agentName}`);
     this.log(`   Invocation ID: ${callbackContext.invocationId}`);
     return undefined;
   }
 
-  override async beforeModelCallback({callbackContext, llmRequest}: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest;
-  }): Promise<LlmResponse|undefined> {
+  override async beforeModelCallback({
+    callbackContext,
+    llmRequest,
+  }: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+  }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM REQUEST');
     this.log(`   Model: ${llmRequest.model ?? 'default'}`);
     this.log(`   Agent: ${callbackContext.agentName}`);
@@ -161,9 +186,13 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async afterModelCallback({callbackContext, llmResponse}: {
-    callbackContext: CallbackContext; llmResponse: LlmResponse;
-  }): Promise<LlmResponse|undefined> {
+  override async afterModelCallback({
+    callbackContext,
+    llmResponse,
+  }: {
+    callbackContext: CallbackContext;
+    llmResponse: LlmResponse;
+  }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM RESPONSE');
     this.log(`   Agent: ${callbackContext.agentName}`);
 
@@ -181,17 +210,23 @@ export class LoggingPlugin extends BasePlugin {
     }
 
     if (llmResponse.usageMetadata) {
-      this.log(`   Token Usage - Input: ${
-          llmResponse.usageMetadata.promptTokenCount}, Output: ${
-          llmResponse.usageMetadata.candidatesTokenCount}`);
+      this.log(
+        `   Token Usage - Input: ${llmResponse.usageMetadata.promptTokenCount}, Output: ${llmResponse.usageMetadata.candidatesTokenCount}`,
+      );
     }
 
     return undefined;
   }
 
-  override async beforeToolCallback({tool, toolArgs, toolContext}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
-  }): Promise<Record<string, unknown>|undefined> {
+  override async beforeToolCallback({
+    tool,
+    toolArgs,
+    toolContext,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
+  }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL STARTING');
     this.log(`   Tool Name: ${tool.name}`);
     this.log(`   Agent: ${toolContext.agentName}`);
@@ -200,10 +235,16 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async afterToolCallback({tool, toolArgs, toolContext, result}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  override async afterToolCallback({
+    tool,
+    toolContext,
+    result,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     result: Record<string, unknown>;
-  }): Promise<Record<string, unknown>|undefined> {
+  }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL COMPLETED');
     this.log(`   Tool Name: ${tool.name}`);
     this.log(`   Agent: ${toolContext.agentName}`);
@@ -212,9 +253,14 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async onModelErrorCallback({callbackContext, llmRequest, error}: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest; error: Error;
-  }): Promise<LlmResponse|undefined> {
+  override async onModelErrorCallback({
+    callbackContext,
+    error,
+  }: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+    error: Error;
+  }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM ERROR');
     this.log(`   Agent: ${callbackContext.agentName}`);
     this.log(`   Error: ${error}`);
@@ -222,10 +268,17 @@ export class LoggingPlugin extends BasePlugin {
     return undefined;
   }
 
-  override async onToolErrorCallback({tool, toolArgs, toolContext, error}: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  override async onToolErrorCallback({
+    tool,
+    toolArgs,
+    toolContext,
+    error,
+  }: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     error: Error;
-  }): Promise<Record<string, unknown>|undefined> {
+  }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL ERROR');
     this.log(`   Tool Name: ${tool.name}`);
     this.log(`   Agent: ${toolContext.agentName}`);

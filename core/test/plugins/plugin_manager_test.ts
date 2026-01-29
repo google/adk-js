@@ -4,7 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BasePlugin, BaseTool, CallbackContext, Event, InvocationContext, LlmRequest, LlmResponse, PluginManager, ToolContext,} from '@google/adk';
+import {
+  BaseAgent,
+  BasePlugin,
+  BaseTool,
+  CallbackContext,
+  Event,
+  InvocationContext,
+  LlmRequest,
+  LlmResponse,
+  PluginManager,
+  ToolContext,
+} from '@google/adk';
 import {Content} from '@google/genai';
 
 type PluginCallbackName = keyof BasePlugin;
@@ -19,8 +30,8 @@ class TestPlugin extends BasePlugin {
   }
 
   private async handleCallback(
-      name: PluginCallbackName,
-      ): Promise<unknown|undefined> {
+    name: PluginCallbackName,
+  ): Promise<unknown | undefined> {
     this.callLog.push(name);
     if (this.exceptionsToRaise[name]) {
       throw this.exceptionsToRaise[name];
@@ -28,88 +39,112 @@ class TestPlugin extends BasePlugin {
     return this.returnValues[name];
   }
 
-  override async onUserMessageCallback(kwargs: {
-    invocationContext: InvocationContext; userMessage: Content;
-  }): Promise<Content|undefined> {
-    return (await this.handleCallback('onUserMessageCallback')) as | Content |
-        undefined;
-  }
-
-  override async beforeRunCallback(kwargs: {
+  override async onUserMessageCallback(_params: {
     invocationContext: InvocationContext;
-  }): Promise<Content|undefined> {
-    return (await this.handleCallback('beforeRunCallback')) as | Content |
-        undefined;
+    userMessage: Content;
+  }): Promise<Content | undefined> {
+    return (await this.handleCallback('onUserMessageCallback')) as
+      | Content
+      | undefined;
   }
 
-  override async afterRunCallback(kwargs: {
+  override async beforeRunCallback(_params: {
+    invocationContext: InvocationContext;
+  }): Promise<Content | undefined> {
+    return (await this.handleCallback('beforeRunCallback')) as
+      | Content
+      | undefined;
+  }
+
+  override async afterRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<void> {
     await this.handleCallback('afterRunCallback');
   }
 
-  override async onEventCallback(kwargs: {
-    invocationContext: InvocationContext; event: Event;
-  }): Promise<Event|undefined> {
+  override async onEventCallback(_params: {
+    invocationContext: InvocationContext;
+    event: Event;
+  }): Promise<Event | undefined> {
     return (await this.handleCallback('onEventCallback')) as Event | undefined;
   }
 
-  override async beforeAgentCallback(kwargs: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
-    return (await this.handleCallback('beforeAgentCallback')) as | Content |
-        undefined;
+  override async beforeAgentCallback(_params: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
+    return (await this.handleCallback('beforeAgentCallback')) as
+      | Content
+      | undefined;
   }
 
-  override async afterAgentCallback(kwargs: {
-    agent: BaseAgent; callbackContext: CallbackContext;
-  }): Promise<Content|undefined> {
-    return (await this.handleCallback('afterAgentCallback')) as | Content |
-        undefined;
+  override async afterAgentCallback(_params: {
+    agent: BaseAgent;
+    callbackContext: CallbackContext;
+  }): Promise<Content | undefined> {
+    return (await this.handleCallback('afterAgentCallback')) as
+      | Content
+      | undefined;
   }
 
-  override async beforeToolCallback(kwargs: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
-  }): Promise<Record<string, unknown>|undefined> {
-    return (await this.handleCallback('beforeToolCallback')) as |
-        Record<string, unknown>| undefined;
+  override async beforeToolCallback(_params: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
+  }): Promise<Record<string, unknown> | undefined> {
+    return (await this.handleCallback('beforeToolCallback')) as
+      | Record<string, unknown>
+      | undefined;
   }
 
-  override async afterToolCallback(kwargs: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  override async afterToolCallback(_params: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     result: Record<string, unknown>;
-  }): Promise<Record<string, unknown>|undefined> {
-    return (await this.handleCallback('afterToolCallback')) as |
-        Record<string, unknown>| undefined;
+  }): Promise<Record<string, unknown> | undefined> {
+    return (await this.handleCallback('afterToolCallback')) as
+      | Record<string, unknown>
+      | undefined;
   }
 
-  override async onToolErrorCallback(kwargs: {
-    tool: BaseTool; toolArgs: Record<string, unknown>; toolContext: ToolContext;
+  override async onToolErrorCallback(_params: {
+    tool: BaseTool;
+    toolArgs: Record<string, unknown>;
+    toolContext: ToolContext;
     error: Error;
-  }): Promise<Record<string, unknown>|undefined> {
-    return (await this.handleCallback('onToolErrorCallback')) as |
-        Record<string, unknown>| undefined;
+  }): Promise<Record<string, unknown> | undefined> {
+    return (await this.handleCallback('onToolErrorCallback')) as
+      | Record<string, unknown>
+      | undefined;
   }
 
-  override async beforeModelCallback(kwargs: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest;
-  }): Promise<LlmResponse|undefined> {
-    return (await this.handleCallback('beforeModelCallback')) as | LlmResponse |
-        undefined;
+  override async beforeModelCallback(_params: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+  }): Promise<LlmResponse | undefined> {
+    return (await this.handleCallback('beforeModelCallback')) as
+      | LlmResponse
+      | undefined;
   }
 
-  override async afterModelCallback(kwargs: {
-    callbackContext: CallbackContext; llmResponse: LlmResponse;
-  }): Promise<LlmResponse|undefined> {
-    return (await this.handleCallback('afterModelCallback')) as | LlmResponse |
-        undefined;
+  override async afterModelCallback(_params: {
+    callbackContext: CallbackContext;
+    llmResponse: LlmResponse;
+  }): Promise<LlmResponse | undefined> {
+    return (await this.handleCallback('afterModelCallback')) as
+      | LlmResponse
+      | undefined;
   }
 
-  override async onModelErrorCallback(kwargs: {
-    callbackContext: CallbackContext; llmRequest: LlmRequest; error: Error;
-  }): Promise<LlmResponse|undefined> {
-    return (await this.handleCallback('onModelErrorCallback')) as |
-        LlmResponse | undefined;
+  override async onModelErrorCallback(_params: {
+    callbackContext: CallbackContext;
+    llmRequest: LlmRequest;
+    error: Error;
+  }): Promise<LlmResponse | undefined> {
+    return (await this.handleCallback('onModelErrorCallback')) as
+      | LlmResponse
+      | undefined;
   }
 }
 
@@ -141,19 +176,17 @@ describe('PluginManager', () => {
 
   it('should throw an error when registering a duplicate plugin object', () => {
     service.registerPlugin(plugin1);
-    expect(() => service.registerPlugin(plugin1))
-        .toThrowError(
-            /Plugin 'plugin1' already registered/,
-        );
+    expect(() => service.registerPlugin(plugin1)).toThrowError(
+      /Plugin 'plugin1' already registered/,
+    );
   });
 
   it('should throw an error when registering a duplicate plugin name', () => {
     service.registerPlugin(plugin1);
     const plugin1Duplicate = new TestPlugin('plugin1');
-    expect(() => service.registerPlugin(plugin1Duplicate))
-        .toThrowError(
-            /Plugin with name 'plugin1' already registered/,
-        );
+    expect(() => service.registerPlugin(plugin1Duplicate)).toThrowError(
+      /Plugin with name 'plugin1' already registered/,
+    );
   });
 
   it('should stop subsequent plugins if early exit occurs', async () => {
@@ -185,8 +218,9 @@ describe('PluginManager', () => {
   });
 
   it('should wrap plugin exception in a runtime error', async () => {
-    const originalException =
-        new Error('Something went wrong inside the plugin!');
+    const originalException = new Error(
+      'Something went wrong inside the plugin!',
+    );
     plugin1.exceptionsToRaise['beforeRunCallback'] = originalException;
     service.registerPlugin(plugin1);
 
@@ -195,9 +229,9 @@ describe('PluginManager', () => {
         invocationContext: mockInvocationContext,
       });
     } catch (e) {
-      expect((e as Error).message)
-          .toContain(
-              'Error in plugin \'plugin1\' during \'beforeRunCallback\' callback');
+      expect((e as Error).message).toContain(
+        "Error in plugin 'plugin1' during 'beforeRunCallback' callback",
+      );
     }
   });
 
@@ -208,10 +242,12 @@ describe('PluginManager', () => {
       userMessage: mockUserMessage,
       invocationContext: mockInvocationContext,
     });
-    await service.runBeforeRunCallback(
-        {invocationContext: mockInvocationContext});
-    await service.runAfterRunCallback(
-        {invocationContext: mockInvocationContext});
+    await service.runBeforeRunCallback({
+      invocationContext: mockInvocationContext,
+    });
+    await service.runAfterRunCallback({
+      invocationContext: mockInvocationContext,
+    });
     await service.runOnEventCallback({
       invocationContext: mockInvocationContext,
       event: mockEvent,

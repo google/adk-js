@@ -4,9 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
-import {getTempDir, isFile, isFolderExists, loadFileData, saveToFile, tryToFindFileRecursively,} from '../../src/utils/file_utils.js';
+import {
+  getTempDir,
+  isFile,
+  isFolderExists,
+  loadFileData,
+  saveToFile,
+  tryToFindFileRecursively,
+} from '../../src/utils/file_utils.js';
 
 vi.mock('node:fs/promises', async () => {
   return {
@@ -25,16 +32,28 @@ vi.mock('node:os', async () => {
 });
 
 describe('file_utils', () => {
-  let fsPromises: any;
-  let osMock: any;
+  let fsPromises: {
+    readFile: Mock;
+    writeFile: Mock;
+    unlink: Mock;
+    access: Mock;
+    stat: Mock;
+  };
+  let osMock: {tmpdir: Mock};
 
   const testPath = '/tmp/test.txt';
   const testContent = 'Hello, world!';
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    fsPromises = await import('node:fs/promises');
-    osMock = await import('node:os');
+    fsPromises = (await import('node:fs/promises')) as unknown as {
+      readFile: Mock;
+      writeFile: Mock;
+      unlink: Mock;
+      access: Mock;
+      stat: Mock;
+    };
+    osMock = (await import('node:os')) as unknown as {tmpdir: Mock};
   });
 
   afterEach(() => {
@@ -76,7 +95,7 @@ describe('file_utils', () => {
     fsPromises.writeFile.mockResolvedValue(undefined);
     await expect(saveToFile(testPath, testContent)).resolves.toBeUndefined();
     expect(fsPromises.writeFile).toHaveBeenCalledWith(testPath, testContent, {
-      encoding: 'utf-8'
+      encoding: 'utf-8',
     });
   });
 
@@ -84,12 +103,11 @@ describe('file_utils', () => {
     const data = {a: 1};
     fsPromises.writeFile.mockResolvedValue(undefined);
     await expect(saveToFile('/tmp/data.json', data)).resolves.toBeUndefined();
-    expect(fsPromises.writeFile)
-        .toHaveBeenCalledWith(
-            '/tmp/data.json',
-            JSON.stringify(data, null, 2),
-            {encoding: 'utf-8'},
-        );
+    expect(fsPromises.writeFile).toHaveBeenCalledWith(
+      '/tmp/data.json',
+      JSON.stringify(data, null, 2),
+      {encoding: 'utf-8'},
+    );
   });
 
   it('getTempDir uses os.tmpdir and optional prefix and Date.now', () => {
@@ -112,10 +130,10 @@ describe('file_utils', () => {
     expect(found).toBe(path.join('/a', 'target.txt'));
   });
 
-  it('tryToFindFileRecursively throws when file not found within maxIterations',
-     async () => {
-       fsPromises.access.mockRejectedValue(new Error('not found'));
-       await expect(tryToFindFileRecursively('/a/b/c', 'target.txt', 2))
-           .rejects.toThrow(/No target.txt found/);
-     });
+  it('tryToFindFileRecursively throws when file not found within maxIterations', async () => {
+    fsPromises.access.mockRejectedValue(new Error('not found'));
+    await expect(
+      tryToFindFileRecursively('/a/b/c', 'target.txt', 2),
+    ).rejects.toThrow(/No target.txt found/);
+  });
 });

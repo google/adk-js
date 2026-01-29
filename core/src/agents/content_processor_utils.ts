@@ -6,9 +6,18 @@
 import {Content} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
-import {createEvent, Event, getFunctionCalls, getFunctionResponses} from '../events/event.js';
+import {
+  createEvent,
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 
-import {removeClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME, REQUEST_EUC_FUNCTION_CALL_NAME} from './functions.js';
+import {
+  removeClientFunctionCallId,
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_EUC_FUNCTION_CALL_NAME,
+} from './functions.js';
 
 /**
  * Get the contents for the LLM request.
@@ -20,7 +29,10 @@ import {removeClientFunctionCallId, REQUEST_CONFIRMATION_FUNCTION_CALL_NAME, REQ
  * @returns A list of processed contents.
  */
 export function getContents(
-    events: Event[], agentName: string, currentBranch?: string): Content[] {
+  events: Event[],
+  agentName: string,
+  currentBranch?: string,
+): Content[] {
   const filteredEvents: Event[] = [];
 
   for (const event of events) {
@@ -32,8 +44,11 @@ export function getContents(
 
     // Skip events not in the current branch.
     // TODO - b/425992518: inefficient, a tire search is better.
-    if (currentBranch && event.branch &&
-        !currentBranch.startsWith(event.branch)) {
+    if (
+      currentBranch &&
+      event.branch &&
+      !currentBranch.startsWith(event.branch)
+    ) {
       continue;
     }
 
@@ -46,13 +61,15 @@ export function getContents(
     }
 
     filteredEvents.push(
-        isEventFromAnotherAgent(agentName, event) ? convertForeignEvent(event) :
-                                                    event);
+      isEventFromAnotherAgent(agentName, event)
+        ? convertForeignEvent(event)
+        : event,
+    );
   }
 
   let resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
   resultEvents =
-      rearrangeEventsForAsyncFunctionResponsesInHistory(resultEvents);
+    rearrangeEventsForAsyncFunctionResponsesInHistory(resultEvents);
   const contents = [];
   for (const event of resultEvents) {
     const content = cloneDeep(event.content!);
@@ -81,10 +98,10 @@ export function getContents(
  *     needed for proper tool execution while excluding conversation history.
  */
 export function getCurrentTurnContents(
-    events: Event[],
-    agentName: string,
-    currentBranch?: string,
-    ): Content[] {
+  events: Event[],
+  agentName: string,
+  currentBranch?: string,
+): Content[] {
   // Find the latest event that starts the current turn and process from there.
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
@@ -108,8 +125,10 @@ function isAuthEvent(event: Event): boolean {
     return false;
   }
   for (const part of event.content.parts) {
-    if (part.functionCall?.name === REQUEST_EUC_FUNCTION_CALL_NAME ||
-        part.functionResponse?.name === REQUEST_EUC_FUNCTION_CALL_NAME) {
+    if (
+      part.functionCall?.name === REQUEST_EUC_FUNCTION_CALL_NAME ||
+      part.functionResponse?.name === REQUEST_EUC_FUNCTION_CALL_NAME
+    ) {
       return true;
     }
   }
@@ -128,9 +147,10 @@ function isToolConfirmationEvent(event: Event): boolean {
     return false;
   }
   for (const part of event.content.parts) {
-    if (part.functionCall?.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME ||
-        part.functionResponse?.name ===
-            REQUEST_CONFIRMATION_FUNCTION_CALL_NAME) {
+    if (
+      part.functionCall?.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME ||
+      part.functionResponse?.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME
+    ) {
       return true;
     }
   }
@@ -162,9 +182,11 @@ function convertForeignEvent(event: Event): Event {
 
   const content: Content = {
     role: 'user',
-    parts: [{
-      text: 'For context:',
-    }],
+    parts: [
+      {
+        text: 'For context:',
+      },
+    ],
   };
 
   for (const part of event.content.parts) {
@@ -177,14 +199,12 @@ function convertForeignEvent(event: Event): Event {
     } else if (part.functionCall) {
       const argsText = safeStringify(part.functionCall.args);
       content.parts?.push({
-        text: `[${event.author}] called tool \`${
-          part.functionCall.name}\` with parameters: ${argsText}`,
+        text: `[${event.author}] called tool \`${part.functionCall.name}\` with parameters: ${argsText}`,
       });
     } else if (part.functionResponse) {
       const responseText = safeStringify(part.functionResponse.response);
       content.parts?.push({
-        text: `[${event.author}] tool \`${
-          part.functionResponse.name}\` returned result: ${responseText}`,
+        text: `[${event.author}] tool \`${part.functionResponse.name}\` returned result: ${responseText}`,
       });
     } else {
       content.parts?.push(part);
@@ -257,7 +277,7 @@ function mergeFunctionResponseEvents(events: Event[]): Event {
         } else {
           partsInMergedEvent.push(part);
           partIndicesInMergedEvent[functionCallId] =
-              partsInMergedEvent.length - 1;
+            partsInMergedEvent.length - 1;
         }
       } else {
         partsInMergedEvent.push(part);
@@ -271,9 +291,7 @@ function mergeFunctionResponseEvents(events: Event[]): Event {
 /**
  * Rearrange the async functionResponse events in the history.
  */
-function rearrangeEventsForLatestFunctionResponse(
-    events: Event[],
-    ): Event[] {
+function rearrangeEventsForLatestFunctionResponse(events: Event[]): Event[] {
   if (events.length === 0) {
     return events;
   }
@@ -287,9 +305,9 @@ function rearrangeEventsForLatestFunctionResponse(
   }
 
   let functionResponsesIds = new Set<string>(
-      functionResponses
-          .filter((response): response is {id: string} => !!response.id)
-          .map((response) => response.id),
+    functionResponses
+      .filter((response): response is {id: string} => !!response.id)
+      .map((response) => response.id),
   );
 
   // No need to rearrange if the second latest event already contains the
@@ -319,22 +337,22 @@ function rearrangeEventsForLatestFunctionResponse(
       if (functionCall.id && functionResponsesIds.has(functionCall.id)) {
         functionCallEventIdx = idx;
         const functionCallIds = new Set<string>(
-            functionCalls.map(fc => fc.id).filter((id): id is string => !!id),
+          functionCalls.map((fc) => fc.id).filter((id): id is string => !!id),
         );
 
         // Check if functionResponsesIds is a subset of functionCallIds
-        const isSubset = Array.from(functionResponsesIds)
-                             .every(id => functionCallIds.has(id));
+        const isSubset = Array.from(functionResponsesIds).every((id) =>
+          functionCallIds.has(id),
+        );
 
         if (!isSubset) {
           throw new Error(
-              'Last response event should only contain the responses for the' +
-                  ' function calls in the same function call event. Function' +
-                  ` call ids found : ${
-                      Array.from(functionCallIds)
-                          .join(', ')}, function response` +
-                  ` ids provided: ${
-                      Array.from(functionResponsesIds).join(', ')}`,
+            'Last response event should only contain the responses for the' +
+              ' function calls in the same function call event. Function' +
+              ` call ids found : ${Array.from(functionCallIds).join(
+                ', ',
+              )}, function response` +
+              ` ids provided: ${Array.from(functionResponsesIds).join(', ')}`,
           );
         }
         // Expand the function call events to collect all function responses
@@ -348,12 +366,9 @@ function rearrangeEventsForLatestFunctionResponse(
 
   if (functionCallEventIdx === -1) {
     throw new Error(
-        `No function call event found for function responses ids: ${
-            Array
-                .from(
-                    functionResponsesIds,
-                    )
-                .join(', ')}`,
+      `No function call event found for function responses ids: ${Array.from(
+        functionResponsesIds,
+      ).join(', ')}`,
     );
   }
 
@@ -363,10 +378,12 @@ function rearrangeEventsForLatestFunctionResponse(
   for (let idx = functionCallEventIdx + 1; idx < events.length - 1; idx++) {
     const event = events[idx];
     const responses = getFunctionResponses(event);
-    if (responses &&
-        responses.some(
-            (response) =>
-                response.id && functionResponsesIds.has(response.id))) {
+    if (
+      responses &&
+      responses.some(
+        (response) => response.id && functionResponsesIds.has(response.id),
+      )
+    ) {
       functionResponseEvents.push(event);
     }
   }
@@ -390,8 +407,8 @@ function rearrangeEventsForLatestFunctionResponse(
  * @returns A list of events with the latest function_response rearranged.
  */
 function rearrangeEventsForAsyncFunctionResponsesInHistory(
-    events: Event[],
-    ): Event[] {
+  events: Event[],
+): Event[] {
   const functionCallIdToResponseEventIndex: Map<string, number> = new Map();
 
   // First pass: Map function_call_id to the index of their
@@ -425,10 +442,12 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
       const functionResponseEventsIndices: Set<number> = new Set();
       for (const functionCall of functionCalls) {
         const functionCallId = functionCall.id;
-        if (functionCallId &&
-            functionCallIdToResponseEventIndex.has(functionCallId)) {
+        if (
+          functionCallId &&
+          functionCallIdToResponseEventIndex.has(functionCallId)
+        ) {
           functionResponseEventsIndices.add(
-              functionCallIdToResponseEventIndex.get(functionCallId)!,
+            functionCallIdToResponseEventIndex.get(functionCallId)!,
           );
         }
       }
@@ -443,8 +462,9 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
         const [responseIndex] = [...functionResponseEventsIndices];
         resultEvents.push(events[responseIndex]);
       } else {
-        const indicesArray =
-            Array.from(functionResponseEventsIndices).sort((a, b) => a - b);
+        const indicesArray = Array.from(functionResponseEventsIndices).sort(
+          (a, b) => a - b,
+        );
         const eventsToMerge = indicesArray.map((index) => events[index]);
         resultEvents.push(mergeFunctionResponseEvents(eventsToMerge));
       }
@@ -465,7 +485,7 @@ function safeStringify(obj: unknown): string {
   }
   try {
     return JSON.stringify(obj);
-  } catch (e) {
+  } catch (_e: unknown) {
     return String(obj);
   }
 }

@@ -51,13 +51,13 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  * usage.
  */
 export class AgentFile {
-  private cleanupFilePath: string|undefined;
+  private cleanupFilePath: string | undefined;
   private disposed = false;
   private agent?: BaseAgent;
 
   constructor(
-      private readonly filePath: string,
-      private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
+    private readonly filePath: string,
+    private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {}
 
   async load(): Promise<BaseAgent> {
@@ -70,18 +70,23 @@ export class AgentFile {
     } catch (e) {
       if ((e as {code: string}).code === 'ENOENT') {
         throw new AgentFileLoadingError(
-            `Agent file ${this.filePath} does not exists`);
+          `Agent file ${this.filePath} does not exists`,
+        );
       }
     }
 
     let filePath = this.filePath;
     const fileExt = path.extname(filePath);
 
-    if (this.options.bundle === AgentFileBundleMode.ANY ||
-        JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)) {
+    if (
+      this.options.bundle === AgentFileBundleMode.ANY ||
+      JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)
+    ) {
       const parsedPath = path.parse(filePath);
-      const compiledFilePath =
-          path.join(getTempDir('adk_agent_loader'), parsedPath.name + '.cjs');
+      const compiledFilePath = path.join(
+        getTempDir('adk_agent_loader'),
+        parsedPath.name + '.cjs',
+      );
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -103,30 +108,36 @@ export class AgentFile {
 
     if (jsModule) {
       if (isBaseAgent(jsModule.rootAgent)) {
-        return this.agent = jsModule.rootAgent;
+        return (this.agent = jsModule.rootAgent);
       }
 
       if (isBaseAgent(jsModule.default)) {
-        return this.agent = jsModule.default;
+        return (this.agent = jsModule.default);
       }
 
-      const rootAgents =
-          Object.values(jsModule).filter(
-              exportValue => isBaseAgent(exportValue)) as BaseAgent[];
+      const rootAgents = Object.values(jsModule).filter((exportValue) =>
+        isBaseAgent(exportValue),
+      ) as BaseAgent[];
 
       if (rootAgents.length > 1) {
-        console.warn(`Multiple agents found in ${filePath}. Using the ${
-            rootAgents[0].name} as a root agent.`);
+        console.warn(
+          `Multiple agents found in ${filePath}. Using the ${
+            rootAgents[0].name
+          } as a root agent.`,
+        );
       }
 
       if (rootAgents.length > 0) {
-        return this.agent = rootAgents[0];
+        return (this.agent = rootAgents[0]);
       }
     }
 
     this.dispose();
-    throw new AgentFileLoadingError(`Failed to load agent ${
-        filePath}: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`);
+    throw new AgentFileLoadingError(
+      `Failed to load agent ${
+        filePath
+      }: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`,
+    );
   }
 
   getFilePath(): string {
@@ -141,7 +152,7 @@ export class AgentFile {
     return this.cleanupFilePath || this.filePath;
   }
 
-  async[Symbol.asyncDispose](): Promise<void> {
+  async [Symbol.asyncDispose](): Promise<void> {
     return this.dispose();
   }
 
@@ -172,12 +183,17 @@ export class AgentLoader {
   private readonly preloadedAgents: Record<string, AgentFile> = {};
 
   constructor(
-      private readonly agentsDirPath: string = process.cwd(),
-      private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
+    private readonly agentsDirPath: string = process.cwd(),
+    private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {
     // Do cleanups on exit
-    const exitHandler =
-        async ({exit, cleanup}: {exit?: boolean; cleanup?: boolean;}) => {
+    const exitHandler = async ({
+      exit,
+      cleanup,
+    }: {
+      exit?: boolean;
+      cleanup?: boolean;
+    }) => {
       if (cleanup) {
         await this.disposeAll();
       }
@@ -208,7 +224,8 @@ export class AgentLoader {
 
   async disposeAll(): Promise<void> {
     await Promise.all(
-        Object.values(this.preloadedAgents).map(f => f.dispose()));
+      Object.values(this.preloadedAgents).map((f) => f.dispose()),
+    );
   }
 
   async preloadAgents() {
@@ -216,19 +233,21 @@ export class AgentLoader {
       return;
     }
 
-    const files = await isFile(this.agentsDirPath) ?
-        [await getFileMetadata(this.agentsDirPath)] :
-        await getDirFiles(this.agentsDirPath);
+    const files = (await isFile(this.agentsDirPath))
+      ? [await getFileMetadata(this.agentsDirPath)]
+      : await getDirFiles(this.agentsDirPath);
 
-    await Promise.all(files.map(async (fileOrDir: FileMetadata) => {
-      if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
-        return this.loadAgentFromFile(fileOrDir);
-      }
+    await Promise.all(
+      files.map(async (fileOrDir: FileMetadata) => {
+        if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
+          return this.loadAgentFromFile(fileOrDir);
+        }
 
-      if (fileOrDir.isDirectory) {
-        return this.loadAgentFromDirectory(fileOrDir);
-      }
-    }));
+        if (fileOrDir.isDirectory) {
+          return this.loadAgentFromDirectory(fileOrDir);
+        }
+      }),
+    );
 
     this.agentsAlreadyPreloaded = true;
     return;
@@ -249,8 +268,9 @@ export class AgentLoader {
 
   private async loadAgentFromDirectory(dir: FileMetadata): Promise<void> {
     const subFiles = await getDirFiles(dir.path);
-    const possibleAgentJsFile =
-        subFiles.find(f => f.isFile && f.name === 'agent' && isJsFile(f.ext));
+    const possibleAgentJsFile = subFiles.find(
+      (f) => f.isFile && f.name === 'agent' && isJsFile(f.ext),
+    );
 
     if (!possibleAgentJsFile) {
       return;
@@ -277,13 +297,14 @@ async function getDirFiles(dir: string): Promise<FileMetadata[]> {
   const files = await fsPromises.readdir(dir);
 
   return await Promise.all(
-      files.map(filePath => getFileMetadata(path.join(dir, filePath))));
+    files.map((filePath) => getFileMetadata(path.join(dir, filePath))),
+  );
 }
 
 async function getFileMetadata(filePath: string): Promise<FileMetadata> {
   const fileStats = await fsPromises.stat(filePath);
   const isFile = fileStats.isFile();
-  const baseName = path.basename(filePath)
+  const baseName = path.basename(filePath);
   const ext = path.extname(filePath);
 
   return {

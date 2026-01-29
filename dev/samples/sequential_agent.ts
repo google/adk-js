@@ -25,8 +25,7 @@ const rollAgent = new LlmAgent({
   name: 'roll_agent',
   description: 'Handles rolling dice of different sizes.',
   model: 'gemini-2.5-flash',
-  instruction:
-      `You are responsible for rolling dice based on the user's request. When asked to roll a dice, you must call the roll_dice tool with the number of sides as an integer.`,
+  instruction: `You are responsible for rolling dice based on the user's request. When asked to roll a dice, you must call the roll_dice tool with the number of sides as an integer.`,
   tools: [rollDiceTool],
 });
 
@@ -71,8 +70,7 @@ const primeAgent = new LlmAgent({
   name: 'prime_agent',
   description: 'Handles checking if numbers are prime.',
   model: 'gemini-2.5-flash',
-  instruction:
-      `You are responsible for checking whether numbers are prime. When asked to check primes, you must call the check_prime tool with a list of integers. Never attempt to determine prime numbers manually. Return the prime number results to the root agent.`,
+  instruction: `You are responsible for checking whether numbers are prime. When asked to check primes, you must call the check_prime tool with a list of integers. Never attempt to determine prime numbers manually. Return the prime number results to the root agent.`,
   tools: [checkPrimeTool],
 });
 

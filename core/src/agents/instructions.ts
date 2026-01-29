@@ -33,9 +33,9 @@ import {ReadonlyContext} from './readonly_context.js';
  * @returns The instruction template with values populated.
  */
 export async function injectSessionState(
-    template: string,
-    readonlyContext: ReadonlyContext,
-    ): Promise<string> {
+  template: string,
+  readonlyContext: ReadonlyContext,
+): Promise<string> {
   const invocationContext = readonlyContext.invocationContext;
 
   /**
@@ -45,8 +45,9 @@ export async function injectSessionState(
    * @param match The matched string in the template.
    * @returns The replaced string.
    */
-  async function replaceMatchedKeyWithItsValue(match: RegExpMatchArray):
-      Promise<string> {
+  async function replaceMatchedKeyWithItsValue(
+    match: RegExpMatchArray,
+  ): Promise<string> {
     // Step 1: extract the key from the match
     let key = match[0].replace(/^\{+/, '').replace(/\}+$/, '').trim();
     const isOptional = key.endsWith('?');
@@ -102,7 +103,6 @@ export async function injectSessionState(
   result.push(template.slice(lastEnd));
   return result.join('');
 }
-
 
 /**
  * An IIFE that checks if the JavaScript runtime supports Unicode property

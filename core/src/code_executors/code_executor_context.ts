@@ -37,8 +37,10 @@ export interface UpdateCodeExecutionResultParams {
  * The persistent context used to configure the code executor.
  */
 export class CodeExecutorContext {
-  private readonly context:
-      {[SESSION_ID_KEY]?: string;[PROCESSED_FILE_NAMES_KEY]?: string[];};
+  private readonly context: {
+    [SESSION_ID_KEY]?: string;
+    [PROCESSED_FILE_NAMES_KEY]?: string[];
+  };
 
   constructor(private readonly sessionState: State) {
     this.context = sessionState.get(CONTEXT_KEY) ?? {};
@@ -59,7 +61,7 @@ export class CodeExecutorContext {
    * Gets the execution ID for the code executor.
    * @return The execution ID for the code executor.
    */
-  getExecutionId(): string|undefined {
+  getExecutionId(): string | undefined {
     if (!(SESSION_ID_KEY in this.context)) {
       return undefined;
     }
@@ -143,9 +145,11 @@ export class CodeExecutorContext {
       return 0;
     }
 
-    return (this.sessionState.get(ERROR_COUNT_KEY) as
-            Record<string, number>)[invocationId] as number ||
-        0;
+    return (
+      ((this.sessionState.get(ERROR_COUNT_KEY) as Record<string, number>)[
+        invocationId
+      ] as number) || 0
+    );
   }
 
   /**
@@ -157,9 +161,9 @@ export class CodeExecutorContext {
       this.sessionState.set(ERROR_COUNT_KEY, {});
     }
 
-    (this.sessionState.get(ERROR_COUNT_KEY) as
-     Record<string, number>)[invocationId] =
-        (this.getErrorCount(invocationId) + 1);
+    (this.sessionState.get(ERROR_COUNT_KEY) as Record<string, number>)[
+      invocationId
+    ] = this.getErrorCount(invocationId) + 1;
   }
 
   /**
@@ -171,8 +175,10 @@ export class CodeExecutorContext {
       return;
     }
 
-    const errorCounts =
-        this.sessionState.get(ERROR_COUNT_KEY) as Record<string, number>;
+    const errorCounts = this.sessionState.get(ERROR_COUNT_KEY) as Record<
+      string,
+      number
+    >;
 
     if (invocationId in errorCounts) {
       delete errorCounts[invocationId];
@@ -197,9 +203,9 @@ export class CodeExecutorContext {
       this.sessionState.set(CODE_EXECUTION_RESULTS_KEY, {});
     }
 
-    const codeExecutionResults =
-        this.sessionState.get(CODE_EXECUTION_RESULTS_KEY) as
-        Record<string, CodeExecutionResult[]>;
+    const codeExecutionResults = this.sessionState.get(
+      CODE_EXECUTION_RESULTS_KEY,
+    ) as Record<string, CodeExecutionResult[]>;
 
     if (!(invocationId in codeExecutionResults)) {
       codeExecutionResults[invocationId] = [];
@@ -214,12 +220,10 @@ export class CodeExecutorContext {
   }
 
   /**
-   * Gets the code executor context from the session state.
-   * @param invocationId The session state to get the code executor context
-   *     from.
+   * Gets the code execution context from the session state.
    * @return The code execution context for the given invocation ID.
    */
-  getCodeExecutionContext(invocationId: string): Record<string, unknown> {
+  getCodeExecutionContext(): Record<string, unknown> {
     return this.sessionState.get(CONTEXT_KEY) || {};
   }
 }

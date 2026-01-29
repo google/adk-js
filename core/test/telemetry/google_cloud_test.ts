@@ -4,10 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getGcpExporters, getGcpResource} from '../../src/telemetry/google_cloud.js';
-import type { OtelExportersConfig} from '../../src/telemetry/setup.js';
+import {detectResources, Resource} from '@opentelemetry/resources';
 import {GoogleAuth} from 'google-auth-library';
-import {detectResources} from '@opentelemetry/resources';
+import {
+  getGcpExporters,
+  getGcpResource,
+} from '../../src/telemetry/google_cloud.js';
+import type {OtelExportersConfig} from '../../src/telemetry/setup.js';
 
 // Mock Google Cloud modules
 vi.mock('google-auth-library');
@@ -32,7 +35,7 @@ describe('getGcpExporters', () => {
   /**
    * Test initializing correct providers in getGcpExporters
    * when enabling telemetry via Google Cloud.
-   * 
+   *
    * This test is parameterized to test different combinations of GCP service options.
    */
   const testCases: Array<{
@@ -43,57 +46,88 @@ describe('getGcpExporters', () => {
     description: string;
   }> = [
     {
-      config: { enableTracing: true, enableMetrics: false, enableLogging: false },
+      config: {
+        enableTracing: true,
+        enableMetrics: false,
+        enableLogging: false,
+      },
       expectedSpanProcessors: 1,
       expectedMetricReaders: 0,
       expectedLogRecordProcessors: 0,
       description: 'should set up Cloud Trace when enableTracing is true',
     },
     {
-      config: { enableTracing: false, enableMetrics: true, enableLogging: false },
+      config: {
+        enableTracing: false,
+        enableMetrics: true,
+        enableLogging: false,
+      },
       expectedSpanProcessors: 0,
       expectedMetricReaders: 1,
       expectedLogRecordProcessors: 0,
       description: 'should set up Cloud Monitoring when enableMetrics is true',
     },
     {
-      config: { enableTracing: false, enableMetrics: false, enableLogging: true },
+      config: {
+        enableTracing: false,
+        enableMetrics: false,
+        enableLogging: true,
+      },
       expectedSpanProcessors: 0,
       expectedMetricReaders: 0,
       expectedLogRecordProcessors: 0, // Cloud Logging is not supported in Node.js
       description: 'should not set up Cloud Logging (unsupported in Node.js)',
     },
     {
-      config: { enableTracing: true, enableMetrics: true, enableLogging: false },
+      config: {
+        enableTracing: true,
+        enableMetrics: true,
+        enableLogging: false,
+      },
       expectedSpanProcessors: 1,
       expectedMetricReaders: 1,
       expectedLogRecordProcessors: 0,
-      description: 'should set up multiple exporters when multiple options are enabled',
+      description:
+        'should set up multiple exporters when multiple options are enabled',
     },
   ];
 
-  testCases.forEach(({ config, expectedSpanProcessors, expectedMetricReaders, expectedLogRecordProcessors, description }) => {
-    it(description, async () => {
-      const mockAuth = {
-        getProjectId: vi.fn().mockResolvedValue('test-project'),
-      };
-      vi.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
+  testCases.forEach(
+    ({
+      config,
+      expectedSpanProcessors,
+      expectedMetricReaders,
+      expectedLogRecordProcessors,
+      description,
+    }) => {
+      it(description, async () => {
+        const mockAuth = {
+          getProjectId: vi.fn().mockResolvedValue('test-project'),
+        };
+        vi.mocked(GoogleAuth).mockImplementation(
+          () => mockAuth as unknown as GoogleAuth,
+        );
 
-      const result = await getGcpExporters(config);
+        const result = await getGcpExporters(config);
 
-      expect(result.spanProcessors?.length).toBe(expectedSpanProcessors);
-      expect(result.metricReaders?.length).toBe(expectedMetricReaders);
-      expect(result.logRecordProcessors?.length).toBe(expectedLogRecordProcessors);
-    });
-  });
+        expect(result.spanProcessors?.length).toBe(expectedSpanProcessors);
+        expect(result.metricReaders?.length).toBe(expectedMetricReaders);
+        expect(result.logRecordProcessors?.length).toBe(
+          expectedLogRecordProcessors,
+        );
+      });
+    },
+  );
 
   it('should return empty hooks when GoogleAuth fails to get project ID', async () => {
     const mockAuth = {
       getProjectId: vi.fn().mockRejectedValue(new Error('Auth error')),
     };
-    vi.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
+    vi.mocked(GoogleAuth).mockImplementation(
+      () => mockAuth as unknown as GoogleAuth,
+    );
 
-    const result = await getGcpExporters({ enableTracing: true });
+    const result = await getGcpExporters({enableTracing: true});
 
     expect(result).toEqual({});
   });
@@ -102,9 +136,11 @@ describe('getGcpExporters', () => {
     const mockAuth = {
       getProjectId: vi.fn().mockResolvedValue(null),
     };
-    vi.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
+    vi.mocked(GoogleAuth).mockImplementation(
+      () => mockAuth as unknown as GoogleAuth,
+    );
 
-    const result = await getGcpExporters({ enableTracing: true });
+    const result = await getGcpExporters({enableTracing: true});
 
     expect(result).toEqual({});
   });
@@ -112,8 +148,10 @@ describe('getGcpExporters', () => {
 
 describe('getGcpResource', () => {
   it('should detect GCP resources using gcpDetector', async () => {
-    const mockDetectedResource = { attributes: { 'cloud.provider': 'gcp' } };
-    vi.mocked(detectResources).mockResolvedValue(mockDetectedResource as any);
+    const mockDetectedResource = {attributes: {'cloud.provider': 'gcp'}};
+    vi.mocked(detectResources).mockResolvedValue(
+      mockDetectedResource as unknown as Resource,
+    );
 
     const result = await getGcpResource();
 

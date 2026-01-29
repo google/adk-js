@@ -128,8 +128,11 @@ export class LiveRequestQueue {
   /**
    * Implements the async iterator protocol.
    */
-  async *
-      [Symbol.asyncIterator](): AsyncGenerator<LiveRequest, void, undefined> {
+  async *[Symbol.asyncIterator](): AsyncGenerator<
+    LiveRequest,
+    void,
+    undefined
+  > {
     while (true) {
       const request = await this.get();
       yield request;
