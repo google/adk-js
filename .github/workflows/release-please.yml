@@ -20,28 +20,3 @@ jobs:
           token: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-      - name: Checkout Repository
-        if: ${{ steps.release.outputs.core--release_created || steps.release.outputs.dev--release_created }}
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        if: ${{ steps.release.outputs.core--release_created || steps.release.outputs.dev--release_created }}
-        with:
-          node-version: '24'
-          registry-url: 'https://wombat-dressing-room.appspot.com'
-
-      - name: Publish Core package to NPM
-        if: ${{ steps.release.outputs.core--release_created }}
-        working-directory: ./core
-        run: npm publish --access=public --registry https://wombat-dressing-room.appspot.com/@google/adk/_ns
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.WOMBAT_CORE_TOKEN }}
-
-      - name: Publish Dev package to NPM
-        if: ${{ steps.release.outputs.dev--release_created }}
-        working-directory: ./dev
-        run: npm publish --access=public --registry https://wombat-dressing-room.appspot.com/@google/adk-devtools/_ns
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.WOMBAT_DEVTOOLS_TOKEN }}
