@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.5](https://github.com/google/adk-js/compare/devtools-v0.2.5...devtools-v0.2.5) (2026-01-29)
+
+
+### Miscellaneous Chores
+
+* **devtools:** Synchronize adk versions
+
 ## [0.2.5](https://github.com/google/adk-js/compare/v0.2.4...devtools-v0.2.5) (2026-01-28)
 
 ### Dependencies
