@@ -20,7 +20,10 @@ import {LiveRequestQueue} from './live_request_queue.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
 
-interface InvocationContextParams {
+/**
+ * The parameters for creating an invocation context.
+ */
+export interface InvocationContextParams {
   artifactService?: BaseArtifactService;
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
@@ -57,10 +60,14 @@ class InvocationCostManager {
   incrementAndEnforceLlmCallsLimit(runConfig?: RunConfig) {
     this.numberOfLlmCalls++;
 
-    if (runConfig && runConfig.maxLlmCalls! > 0 &&
-        this.numberOfLlmCalls > runConfig.maxLlmCalls!) {
-      throw new Error(`Max number of llm calls limit of ${
-          runConfig.maxLlmCalls!} exceeded`);
+    if (
+      runConfig &&
+      runConfig.maxLlmCalls! > 0 &&
+      this.numberOfLlmCalls > runConfig.maxLlmCalls!
+    ) {
+      throw new Error(
+        `Max number of llm calls limit of ${runConfig.maxLlmCalls!} exceeded`,
+      );
     }
   }
 }

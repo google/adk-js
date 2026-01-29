@@ -1,6 +1,6 @@
 {
   "name": "@google/adk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -42,7 +42,7 @@
     "@google/genai": "^1.37.0",
     "@modelcontextprotocol/sdk": "^1.24.0",
     "google-auth-library": "^10.3.0",
-    "lodash-es": "^4.17.22",
+    "lodash-es": "^4.17.23",
     "zod": "3.25.76"
   },
   "devDependencies": {

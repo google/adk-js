@@ -10,6 +10,23 @@ import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all ParallelAgent instances.
+ */
+const PARALLEL_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.parallelAgent');
+
+/**
+ * Type guard to check if an object is an instance of ParallelAgent.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of ParallelAgent, false otherwise.
+ */
+export function isParallelAgent(obj: unknown): obj is ParallelAgent {
+  return typeof obj === 'object' && obj !== null &&
+      PARALLEL_AGENT_SIGNATURE_SYMBOL in obj &&
+      obj[PARALLEL_AGENT_SIGNATURE_SYMBOL] === true;
+}
+
+/**
  * A shell agent that run its sub-agents in parallel in isolated manner.
  *
  * This approach is beneficial for scenarios requiring multiple perspectives or
@@ -19,6 +36,11 @@ import {InvocationContext} from './invocation_context.js';
  *  - Generating multiple responses for review by a subsequent evaluation agent.
  */
 export class ParallelAgent extends BaseAgent {
+  /**
+   * A unique symbol to identify ADK parallel agent class.
+   */
+  readonly[PARALLEL_AGENT_SIGNATURE_SYMBOL] = true;
+
   protected async *
       runAsyncImpl(
           context: InvocationContext,

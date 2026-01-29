@@ -1,6 +1,6 @@
 {
   "name": "adk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -13,9 +13,15 @@
     "build": "npm run build --workspaces",
     "clean": "npm run clean --workspaces",
     "clean:all": "rm -rf ./node_modules && npm run clean:all --workspaces",
+    "rebuild": "npm run clean:all && npm install && npm run build",
     "lint": "eslint **/*.ts",
     "lint:fix": "eslint --fix **/*.ts",
     "format": "prettier **/*.ts --write",
+    "docs": "npm run docs:clean && npm run docs:generate && npm run docs:serve",
+    "docs:clean": "rm -rf ./api-reference",
+    "docs:generate": "typedoc",
+    "docs:serve": "http-server api-reference/typescript",
+    "docs:check": "typedoc --emit none --treatWarningsAsErrors",
     "test": "vitest"
   },
   "workspaces": [
@@ -30,8 +36,11 @@
     "eslint": "^9.37.0",
     "globals": "^16.4.0",
     "gts": "^5.3.1",
+    "http-server": "^14.1.1",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.3.0",
+    "typedoc": "^0.28.16",
+    "typedoc-theme-fresh": "^0.2.3",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.46.0",
     "vitest": "^3.2.4"

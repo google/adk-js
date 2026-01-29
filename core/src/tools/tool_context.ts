@@ -36,20 +36,15 @@ export class ToolContext extends CallbackContext {
    * @param params.toolConfirmation The tool confirmation of the current tool
    *     call.
    */
-  constructor({
-    invocationContext,
-    eventActions,
-    functionCallId,
-    toolConfirmation,
-  }: {
-    invocationContext: InvocationContext,
-    eventActions?: EventActions,
-    functionCallId?: string,
-    toolConfirmation?: ToolConfirmation,
+  constructor(params: {
+    invocationContext: InvocationContext;
+    eventActions?: EventActions;
+    functionCallId?: string;
+    toolConfirmation?: ToolConfirmation;
   }) {
-    super({invocationContext, eventActions});
-    this.functionCallId = functionCallId;
-    this.toolConfirmation = toolConfirmation;
+    super(params);
+    this.functionCallId = params.functionCallId;
+    this.toolConfirmation = params.toolConfirmation;
   }
 
   get actions(): EventActions {
@@ -63,7 +58,7 @@ export class ToolContext extends CallbackContext {
 
     const authHandler = new AuthHandler(authConfig);
     this.eventActions.requestedAuthConfigs[this.functionCallId] =
-        authHandler.generateAuthRequest();
+      authHandler.generateAuthRequest();
   }
 
   /**
@@ -72,7 +67,7 @@ export class ToolContext extends CallbackContext {
    * @param authConfig The auth config to get the auth credential for.
    * @return The auth credential for the given auth config.
    */
-  getAuthResponse(authConfig: AuthConfig): AuthCredential|undefined {
+  getAuthResponse(authConfig: AuthConfig): AuthCredential | undefined {
     const authHandler = new AuthHandler(authConfig);
 
     return authHandler.getAuthResponse(this.state);
@@ -117,15 +112,15 @@ export class ToolContext extends CallbackContext {
   /**
    * Requests confirmation for the current tool call.
    */
-  requestConfirmation({hint, payload}: {hint?: string, payload?: unknown}) {
+  requestConfirmation({hint, payload}: {hint?: string; payload?: unknown}) {
     if (!this.functionCallId) {
       throw new Error('functionCallId is not set.');
     }
     this.eventActions.requestedToolConfirmations[this.functionCallId] =
-        new ToolConfirmation({
-          hint: hint,
-          confirmed: false,
-          payload: payload,
-        });
+      new ToolConfirmation({
+        hint: hint,
+        confirmed: false,
+        payload: payload,
+      });
   }
 }

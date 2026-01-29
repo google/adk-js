@@ -37,9 +37,29 @@ export interface BaseToolParams {
 }
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all BaseTool instances.
+ */
+const BASE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseTool');
+
+/**
+ * Type guard to check if an object is an instance of BaseTool.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BaseTool, false otherwise.
+ */
+export function isBaseTool(obj: unknown): obj is BaseTool {
+  return typeof obj === 'object' && obj !== null &&
+      BASE_TOOL_SIGNATURE_SYMBOL in obj &&
+      obj[BASE_TOOL_SIGNATURE_SYMBOL] === true;
+}
+
+/**
  * The base class for all tools.
  */
 export abstract class BaseTool {
+  /** A unique symbol to identify ADK base tool class. */
+  readonly[BASE_TOOL_SIGNATURE_SYMBOL] = true;
+
   readonly name: string;
   readonly description: string;
   readonly isLongRunning: boolean;

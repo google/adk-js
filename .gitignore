@@ -3,4 +3,5 @@ node_modules/
 *.log
 .DS_Store
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json

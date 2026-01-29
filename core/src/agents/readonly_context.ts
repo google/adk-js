@@ -19,7 +19,7 @@ export class ReadonlyContext {
   /**
    * The user content that started this invocation.
    */
-  get userContent(): Content|undefined {
+  get userContent(): Content | undefined {
     return this.invocationContext.userContent;
   }
 
@@ -41,7 +41,9 @@ export class ReadonlyContext {
    * The state of the current session.
    */
   get state(): Readonly<State> {
-    return new State(this.invocationContext.session.state, {}) as
-        Readonly<State>;
+    return new State(
+      this.invocationContext.session.state,
+      {},
+    ) as Readonly<State>;
   }
 }

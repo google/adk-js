@@ -5,11 +5,13 @@
  */
 import {GenerateContentConfig} from '@google/genai';
 
-import {LlmRequest} from '../models/llm_request.js';
 import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';
 
-import {BaseTool, RunAsyncToolRequest, ToolProcessLlmRequest} from './base_tool.js';
-import {ToolContext} from './tool_context.js';
+import {
+  BaseTool,
+  RunAsyncToolRequest,
+  ToolProcessLlmRequest,
+} from './base_tool.js';
 
 /**
  * A built-in tool that is automatically invoked by Gemini 2 models to retrieve
@@ -18,7 +20,7 @@ import {ToolContext} from './tool_context.js';
  * This tool operates internally within the model and does not require or
  * perform local code execution.
  */
-class GoogleSearchTool extends BaseTool {
+export class GoogleSearchTool extends BaseTool {
   constructor() {
     super({name: 'google_search', description: 'Google Search Tool'});
   }
@@ -29,20 +31,21 @@ class GoogleSearchTool extends BaseTool {
     return Promise.resolve();
   }
 
-  override async processLlmRequest({toolContext, llmRequest}:
-                                       ToolProcessLlmRequest):
-      Promise<void> {
+  override async processLlmRequest({
+    toolContext,
+    llmRequest,
+  }: ToolProcessLlmRequest): Promise<void> {
     if (!llmRequest.model) {
       return;
     }
 
-    llmRequest.config = llmRequest.config || {} as GenerateContentConfig;
+    llmRequest.config = llmRequest.config || ({} as GenerateContentConfig);
     llmRequest.config.tools = llmRequest.config.tools || [];
 
     if (isGemini1Model(llmRequest.model)) {
       if (llmRequest.config.tools.length > 0) {
         throw new Error(
-            'Google search tool can not be used with other tools in Gemini 1.x.',
+          'Google search tool can not be used with other tools in Gemini 1.x.',
         );
       }
 
@@ -62,12 +65,12 @@ class GoogleSearchTool extends BaseTool {
     }
 
     throw new Error(
-        `Google search tool is not supported for model ${llmRequest.model}`,
+      `Google search tool is not supported for model ${llmRequest.model}`,
     );
   }
 }
 
 /**
- * A global instance of GoogleSearchTool.
+ * A global instance of {@link GoogleSearchTool}.
  */
 export const GOOGLE_SEARCH = new GoogleSearchTool();

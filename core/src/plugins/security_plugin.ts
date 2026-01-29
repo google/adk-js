@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FunctionCall, FunctionResponse} from '@google/genai';
+import {FunctionCall} from '@google/genai';
 
 import {Event} from '../events/event.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -14,11 +14,11 @@ import {ToolContext} from '../tools/tool_context.js';
 
 // Constants
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
-    'adk_request_confirmation';
+  'adk_request_confirmation';
 
 const TOOL_CALL_SECURITY_CHECK_STATES = 'orcas_tool_call_security_check_states';
 const INTERMEDIATE_REQUIRE_TOOL_CALL_CONFIRMATION_ERROR =
-    'This tool call needs external confirmation before completion.';
+  'This tool call needs external confirmation before completion.';
 
 // --------------------------------------------------------------------------
 // #START Policy Engine Interface
@@ -69,7 +69,7 @@ export class InMemoryPolicyEngine implements BasePolicyEngine {
 export class SecurityPlugin extends BasePlugin {
   private readonly policyEngine: BasePolicyEngine;
 
-  constructor(params?: {policyEngine?: BasePolicyEngine;}) {
+  constructor(params?: {policyEngine?: BasePolicyEngine}) {
     super('security_plugin');
     this.policyEngine = params?.policyEngine ?? new InMemoryPolicyEngine();
   }
@@ -79,10 +79,10 @@ export class SecurityPlugin extends BasePlugin {
     toolArgs,
     toolContext,
   }: {
-    tool: BaseTool,
-    toolArgs: {[key: string]: unknown},
-    toolContext: ToolContext
-  }): Promise<{[key: string]: unknown}|undefined> {
+    tool: BaseTool;
+    toolArgs: {[key: string]: unknown};
+    toolContext: ToolContext;
+  }): Promise<{[key: string]: unknown} | undefined> {
     const toolCallCheckState = this.getToolCallCheckState(toolContext);
 
     // We only check the tool call policy ONCE, when the tool call is handled
@@ -113,31 +113,34 @@ export class SecurityPlugin extends BasePlugin {
     return;
   }
 
-  private getToolCallCheckState(toolContext: ToolContext): string
-      |ToolConfirmation|undefined {
+  private getToolCallCheckState(
+    toolContext: ToolContext,
+  ): string | ToolConfirmation | undefined {
     const {functionCallId} = toolContext;
     if (!functionCallId) {
       return;
     }
 
     const toolCallStates =
-        (toolContext.state.get(TOOL_CALL_SECURITY_CHECK_STATES) as
-         {[key: string]: string | ToolConfirmation}) ??
-        {};
+      (toolContext.state.get(TOOL_CALL_SECURITY_CHECK_STATES) as {
+        [key: string]: string | ToolConfirmation;
+      }) ?? {};
     return toolCallStates[functionCallId];
   }
 
   private setToolCallCheckState(
-      toolContext: ToolContext, state: string|ToolConfirmation): void {
+    toolContext: ToolContext,
+    state: string | ToolConfirmation,
+  ): void {
     const {functionCallId} = toolContext;
     if (!functionCallId) {
       return;
     }
 
     const toolCallStates =
-        (toolContext.state.get(TOOL_CALL_SECURITY_CHECK_STATES) as
-         {[key: string]: string | ToolConfirmation}) ??
-        {};
+      (toolContext.state.get(TOOL_CALL_SECURITY_CHECK_STATES) as {
+        [key: string]: string | ToolConfirmation;
+      }) ?? {};
     toolCallStates[functionCallId] = state;
     toolContext.state.set(TOOL_CALL_SECURITY_CHECK_STATES, toolCallStates);
   }
@@ -147,12 +150,14 @@ export class SecurityPlugin extends BasePlugin {
     toolArgs,
     toolContext,
   }: {
-    tool: BaseTool,
-    toolArgs: {[key: string]: any},
-    toolContext: ToolContext
-  }): Promise<{[key: string]: unknown}|undefined> {
-    const policyCheckResult =
-        await this.policyEngine.evaluate({tool, toolArgs});
+    tool: BaseTool;
+    toolArgs: {[key: string]: any};
+    toolContext: ToolContext;
+  }): Promise<{[key: string]: unknown} | undefined> {
+    const policyCheckResult = await this.policyEngine.evaluate({
+      tool,
+      toolArgs,
+    });
 
     this.setToolCallCheckState(toolContext, policyCheckResult.outcome);
 
@@ -160,12 +165,14 @@ export class SecurityPlugin extends BasePlugin {
       case PolicyOutcome.DENY:
         return {
           error: `This tool call is rejected by policy engine. Reason: ${
-              policyCheckResult.reason}`,
+            policyCheckResult.reason
+          }`,
         };
       case PolicyOutcome.CONFIRM:
         toolContext.requestConfirmation({
           hint: `Policy engine requires confirmation calling tool: ${
-              tool.name}. Reason: ${policyCheckResult.reason}`,
+            tool.name
+          }. Reason: ${policyCheckResult.reason}`,
         });
         return {partial: INTERMEDIATE_REQUIRE_TOOL_CALL_CONFIRMATION_ERROR};
       case PolicyOutcome.ALLOW:
@@ -176,22 +183,25 @@ export class SecurityPlugin extends BasePlugin {
   }
 }
 
-
 /**
  * Gets the ask user confirmation function calls from the event.
  * @param event The event to get the function calls from.
  * @returns The ask user confirmation function calls.
  */
-export function getAskUserConfirmationFunctionCalls(event: Event):
-    FunctionCall[] {
+export function getAskUserConfirmationFunctionCalls(
+  event: Event,
+): FunctionCall[] {
   if (!event.content || !event.content.parts) {
     return [];
   }
   const results: FunctionCall[] = [];
 
   for (const part of event.content.parts) {
-    if (part && part.functionCall &&
-        part.functionCall.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME) {
+    if (
+      part &&
+      part.functionCall &&
+      part.functionCall.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME
+    ) {
       results.push(part.functionCall);
     }
   }

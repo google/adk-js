@@ -3,14 +3,28 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {GenerateContentConfig} from '@google/genai'
-
-import {InvocationContext} from '../agents/invocation_context.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
-import {CodeExecutionInput, CodeExecutionResult} from './code_execution_utils.js';
+import {CodeExecutionResult} from './code_execution_utils.js';
+
+/**
+ * A unique symbol to identify BuiltInCodeExecutor classes.
+ * Defined once and shared by all BuiltInCodeExecutor instances.
+ */
+const BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for('google.adk.builtInCodeExecutor');
+
+/**
+ * Type guard to check if an object is an instance of BuiltInCodeExecutor.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BuiltInCodeExecutor, false otherwise.
+ */
+export function isBuiltInCodeExecutor(obj: unknown): obj is BuiltInCodeExecutor {
+  return typeof obj === 'object' && obj !== null &&
+      BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
+      obj[BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true;
+}
 
 /**
  * A code executor that uses the Model's built-in code executor.
@@ -19,6 +33,9 @@ import {CodeExecutionInput, CodeExecutionResult} from './code_execution_utils.js
  * other models.
  */
 export class BuiltInCodeExecutor extends BaseCodeExecutor {
+  /** A unique symbol to identify BuiltInCodeExecutor class. */
+  readonly [BUILT_IN_CODE_EXECUTOR_SIGNATURE_SYMBOL] = true;
+
   executeCode(params: ExecuteCodeParams): Promise<CodeExecutionResult> {
     return Promise.resolve({
       stdout: '',

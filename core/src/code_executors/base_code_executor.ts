@@ -19,10 +19,29 @@ export interface ExecuteCodeParams {
 }
 
 /**
+ * A unique symbol to identify BaseCodeExecutor classes.
+ * Defined once and shared by all BaseCodeExecutor instances.
+ */
+const BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseCodeExecutor');
+
+/**
+ * Type guard to check if an object is an instance of BaseCodeExecutor.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BaseCodeExecutor, false otherwise.
+ */
+export function isBaseCodeExecutor(obj: unknown): obj is BaseCodeExecutor {
+  return typeof obj === 'object' && obj !== null &&
+      BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL in obj &&
+      obj[BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL] === true;
+}
+
+/**
  * The code executor allows the agent to execute code blocks from model
  * responses and incorporate the execution results into the final response.
  */
 export abstract class BaseCodeExecutor {
+  /** A unique symbol to identify BaseCodeExecutor class. */
+  readonly [BASE_CODE_EXECUTOR_SIGNATURE_SYMBOL] = true;
   /**
    * If true, extract and process data files from the model request
    * and attach them to the code executor.

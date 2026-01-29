@@ -15,6 +15,8 @@ const MCPToolSchema = z.object({
 type MCPToolSchema = z.infer<typeof MCPToolSchema>;
 
 function toGeminiType(mcpType: string): Type {
+  if (!mcpType) return Type.TYPE_UNSPECIFIED;
+
   switch (mcpType.toLowerCase()) {
     case 'text':
     case 'string':

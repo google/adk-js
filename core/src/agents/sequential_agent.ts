@@ -8,19 +8,45 @@ import {FunctionTool} from '../tools/function_tool.js';
 
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
-import {LlmAgent} from './llm_agent.js';
+import {isLlmAgent} from './llm_agent.js';
 import {ReadonlyContext} from './readonly_context.js';
 
 const TASK_COMPLETED_TOOL_NAME = 'task_completed';
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all SequentialAgent instances.
+ */
+const SEQUENTIAL_AGENT_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.sequentialAgent',
+);
+
+/**
+ * Type guard to check if an object is an instance of SequentialAgent.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of SequentialAgent, false otherwise.
+ */
+export function isSequentialAgent(obj: unknown): obj is SequentialAgent {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    SEQUENTIAL_AGENT_SIGNATURE_SYMBOL in obj &&
+    obj[SEQUENTIAL_AGENT_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * A shell agent that runs its sub-agents in a sequential order.
  */
 export class SequentialAgent extends BaseAgent {
-  protected async *
-      runAsyncImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
+  /**
+   * A unique symbol to identify ADK sequential agent class.
+   */
+  readonly [SEQUENTIAL_AGENT_SIGNATURE_SYMBOL] = true;
+
+  protected async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     for (const subAgent of this.subAgents) {
       for await (const event of subAgent.runAsync(context)) {
         yield event;
@@ -37,28 +63,31 @@ export class SequentialAgent extends BaseAgent {
    * the model can call this function to signal that it's finished the task and
    * we can move on to the next agent.
    *
-   * @param context: The invocation context of the agent.
+   * @param context The invocation context of the agent.
    */
-  protected async *
-      runLiveImpl(
-          context: InvocationContext,
-          ): AsyncGenerator<Event, void, void> {
+  protected async *runLiveImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
     for (const subAgent of this.subAgents) {
-      if (subAgent instanceof LlmAgent) {
-        const agentTools =
-            await subAgent.canonicalTools(new ReadonlyContext(context));
-        const taskCompletedToolAlreadyAdded =
-            agentTools.some(tool => tool.name === TASK_COMPLETED_TOOL_NAME);
+      if (isLlmAgent(subAgent)) {
+        const agentTools = await subAgent.canonicalTools(
+          new ReadonlyContext(context),
+        );
+        const taskCompletedToolAlreadyAdded = agentTools.some(
+          (tool) => tool.name === TASK_COMPLETED_TOOL_NAME,
+        );
 
         if (!taskCompletedToolAlreadyAdded) {
-          subAgent.tools.push(new FunctionTool({
-            name: TASK_COMPLETED_TOOL_NAME,
-            description: `Signals that the model has successfully completed the user's question or task.`,
-            execute: () => 'Task completion signaled.'
-          }));
-          subAgent.instruction +=
-              `If you finished the user's request according to its description, call the ${
-                  TASK_COMPLETED_TOOL_NAME} function to exit so the next agents can take over. When calling this function, do not generate any text other than the function call.`;
+          subAgent.tools.push(
+            new FunctionTool({
+              name: TASK_COMPLETED_TOOL_NAME,
+              description: `Signals that the model has successfully completed the user's question or task.`,
+              execute: () => 'Task completion signaled.',
+            }),
+          );
+          subAgent.instruction += `If you finished the user's request according to its description, call the ${
+            TASK_COMPLETED_TOOL_NAME
+          } function to exit so the next agents can take over. When calling this function, do not generate any text other than the function call.`;
         }
       }
     }

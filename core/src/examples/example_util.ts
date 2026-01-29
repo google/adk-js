@@ -6,12 +6,15 @@
 
 import {FunctionCall, Part} from '@google/genai';
 
-import {BaseExampleProvider} from './base_example_provider.js';
+import {
+  BaseExampleProvider,
+  isBaseExampleProvider,
+} from './base_example_provider.js';
 import {Example} from './example.js';
 
 const EXAMPLES_INTRO =
-    '<EXAMPLES>\nBegin few-shot\nThe following are examples of user queries and' +
-    ' model responses using the available tools.\n\n';
+  '<EXAMPLES>\nBegin few-shot\nThe following are examples of user queries and' +
+  ' model responses using the available tools.\n\n';
 const EXAMPLES_END = 'End few-shot\n<EXAMPLES>';
 const EXAMPLE_START = 'EXAMPLE {}:\nBegin example\n';
 const EXAMPLE_END = 'End example\n\n';
@@ -28,20 +31,22 @@ const FUNCTION_RESPONSE_SUFFIX = '\n```\n';
  * instruction.
  */
 export function convertExamplesToText(
-    examples: Example[], model?: string): string {
+  examples: Example[],
+  model?: string,
+): string {
   let examplesStr = '';
   for (const [exampleNum, example] of examples.entries()) {
-    let output =
-        `${EXAMPLE_START.replace('{}', String(exampleNum + 1))}${USER_PREFIX}`;
+    let output = `${EXAMPLE_START.replace('{}', String(exampleNum + 1))}${USER_PREFIX}`;
     if (example.input?.parts) {
-      output += example.input.parts.filter((part: Part) => part.text)
-                    .map((part: Part) => part.text!)
-                    .join('\n') +
-          '\n';
+      output +=
+        example.input.parts
+          .filter((part: Part) => part.text)
+          .map((part: Part) => part.text!)
+          .join('\n') + '\n';
     }
 
     const gemini2 = !model || model.includes('gemini-2');
-    let previousRole: string|undefined;
+    let previousRole: string | undefined;
     for (const content of example.output) {
       const role = content.role === 'model' ? MODEL_PREFIX : USER_PREFIX;
       if (role !== previousRole) {
@@ -67,7 +72,8 @@ export function convertExamplesToText(
         } else if (part.functionResponse) {
           const prefix = gemini2 ? FUNCTION_PREFIX : FUNCTION_RESPONSE_PREFIX;
           output += `${prefix}${JSON.stringify(part.functionResponse)}${
-              FUNCTION_RESPONSE_SUFFIX}`;
+            FUNCTION_RESPONSE_SUFFIX
+          }`;
         } else if (part.text) {
           output += `${part.text}\n`;
         }
@@ -82,12 +88,14 @@ export function convertExamplesToText(
 }
 
 export function buildExampleSi(
-    examples: Example[]|BaseExampleProvider, query: string,
-    model?: string): string {
+  examples: Example[] | BaseExampleProvider,
+  query: string,
+  model?: string,
+): string {
   if (Array.isArray(examples)) {
     return convertExamplesToText(examples, model);
   }
-  if (examples instanceof BaseExampleProvider) {
+  if (isBaseExampleProvider(examples)) {
     return convertExamplesToText(examples.getExamples(query), model);
   }
 

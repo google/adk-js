@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {AgentTool, BaseAgent, BaseTool, FunctionTool, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent} from '@google/adk';
+import {BaseAgent, BaseTool, isBaseAgent, isParallelAgent, isSequentialAgent, isLlmAgent, isLoopAgent, isBaseTool, isFunctionTool, isAgentTool} from '@google/adk';
 import {Digraph, Edge, Node, RootGraph, Subgraph, toDot} from 'ts-graphviz';
 
 const DARK_GREEN = '#0F5223';
@@ -21,7 +21,7 @@ export async function buildGraph(
       subgraph: Subgraph,
       agent: BaseAgent,
       ): Promise<Subgraph> {
-    if (agent instanceof LoopAgent) {
+    if (isLoopAgent(agent)) {
       if (parentAgent) {
         drawEdge(parentAgent.name, agent.subAgents[0].name);
       }
@@ -42,7 +42,7 @@ export async function buildGraph(
         );
         currLength++;
       }
-    } else if (agent instanceof SequentialAgent) {
+    } else if (isSequentialAgent(agent)) {
       if (parentAgent) {
         drawEdge(parentAgent.name, agent.subAgents[0].name);
       }
@@ -62,7 +62,7 @@ export async function buildGraph(
 
         currLength++;
       }
-    } else if (agent instanceof ParallelAgent) {
+    } else if (isParallelAgent(agent)) {
       for (const subAgent of agent.subAgents) {
         await buildGraph(subgraph, subAgent, highlightsPairs, agent);
         if (parentAgent) {
@@ -179,7 +179,7 @@ export async function buildGraph(
     }
   }
 
-  if (rootAgent instanceof LlmAgent) {
+  if (isLlmAgent(rootAgent)) {
     for (const tool of await rootAgent.canonicalTools()) {
       await drawNode(tool);
       drawEdge(rootAgent.name, getNodeName(tool));
@@ -188,23 +188,23 @@ export async function buildGraph(
 }
 
 function getNodeName(toolOrAgent: BaseAgent|BaseTool): string {
-  if (toolOrAgent instanceof BaseAgent) {
-    if (toolOrAgent instanceof SequentialAgent) {
+  if (isBaseAgent(toolOrAgent)) {
+    if (isSequentialAgent(toolOrAgent)) {
       return `${toolOrAgent.name} (Sequential Agent)`;
     }
 
-    if (toolOrAgent instanceof LoopAgent) {
+    if (isLoopAgent(toolOrAgent)) {
       return `${toolOrAgent.name} (Loop Agent)`;
     }
 
-    if (toolOrAgent instanceof ParallelAgent) {
+    if (isParallelAgent(toolOrAgent)) {
       return `${toolOrAgent.name} (Parallel Agent)`;
     }
 
     return toolOrAgent.name;
   }
 
-  if (toolOrAgent instanceof BaseTool) {
+  if (isBaseTool(toolOrAgent)) {
     return toolOrAgent.name;
   }
 
@@ -213,19 +213,19 @@ function getNodeName(toolOrAgent: BaseAgent|BaseTool): string {
 
 // TODO: Support BaseRetrievalTool
 function getNodeCaption(toolOrAgent: BaseAgent|BaseTool): string {
-  if (toolOrAgent instanceof BaseAgent) {
+  if (isBaseAgent(toolOrAgent)) {
     return `🤖 ${toolOrAgent.name}`;
   }
 
-  if (toolOrAgent instanceof FunctionTool) {
+  if (isFunctionTool(toolOrAgent)) {
     return `🔧 ${toolOrAgent.name}`;
   }
 
-  if (toolOrAgent instanceof AgentTool) {
+  if (isAgentTool(toolOrAgent)) {
     return `🤖 ${toolOrAgent.name}`;
   }
 
-  if (toolOrAgent instanceof BaseTool) {
+  if (isBaseTool(toolOrAgent)) {
     return `🔧 ${toolOrAgent.name}`;
   }
 
@@ -238,15 +238,15 @@ function getNodeCaption(toolOrAgent: BaseAgent|BaseTool): string {
 
 // TODO: Support BaseRetrievalTool
 function getNodeShape(toolOrAgent: BaseAgent|BaseTool): string {
-  if (toolOrAgent instanceof BaseAgent) {
+  if (isBaseAgent(toolOrAgent)) {
     return 'ellipse';
   }
 
-  if (toolOrAgent instanceof FunctionTool) {
+  if (isFunctionTool(toolOrAgent)) {
     return 'box';
   }
 
-  if (toolOrAgent instanceof BaseTool) {
+  if (isBaseTool(toolOrAgent)) {
     return 'box';
   }
 
@@ -259,15 +259,15 @@ function getNodeShape(toolOrAgent: BaseAgent|BaseTool): string {
 
 // TODO: Support BaseRetrievalTool
 function shouldBuildAgentCluster(toolOrAgent: BaseAgent|BaseTool): boolean {
-  if (toolOrAgent instanceof SequentialAgent) {
+  if (isSequentialAgent(toolOrAgent)) {
     return true;
   }
 
-  if (toolOrAgent instanceof LoopAgent) {
+  if (isLoopAgent(toolOrAgent)) {
     return true;
   }
 
-  if (toolOrAgent instanceof ParallelAgent) {
+  if (isParallelAgent(toolOrAgent)) {
     return true;
   }
 

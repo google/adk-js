@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
-import {maybeSetOtelProviders} from '../../src/telemetry/setup.js';
-import type {OTelHooks} from '../../src/telemetry/setup.js';
-import {trace} from '@opentelemetry/api';
-import {metrics} from '@opentelemetry/api';
+import {metrics, trace} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
+
+import type {OTelHooks} from '../../src/telemetry/setup.js';
+import {maybeSetOtelProviders} from '../../src/telemetry/setup.js';
 
 // Mock OpenTelemetry modules
 vi.mock('@opentelemetry/exporter-trace-otlp-http');
@@ -35,67 +34,86 @@ describe('maybeSetOtelProviders', () => {
   /**
    * Test initializing correct providers in maybeSetOtelProviders
    * when providing OTel env variables.
-   * 
+   *
    * This test is parameterized to test different combinations of env variables
    * and verify that the correct providers are set up.
    */
   const testCases: Array<{
-    envVars: Record<string, string>;
-    shouldSetupTrace: boolean;
+    envVars: Record<string, string>; shouldSetupTrace: boolean;
     shouldSetupMetrics: boolean;
     shouldSetupLogs: boolean;
     description: string;
-  }> = [
-    {
-      envVars: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'some-endpoint' },
-      shouldSetupTrace: true,
-      shouldSetupMetrics: false,
-      shouldSetupLogs: false,
-      description: 'should set up trace provider when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set',
-    },
-    {
-      envVars: { OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: 'some-endpoint' },
-      shouldSetupTrace: false,
-      shouldSetupMetrics: true,
-      shouldSetupLogs: false,
-      description: 'should set up metrics provider when OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is set',
-    },
-    {
-      envVars: { OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'some-endpoint' },
-      shouldSetupTrace: false,
-      shouldSetupMetrics: false,
-      shouldSetupLogs: true,
-      description: 'should set up logs provider when OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set',
-    },
-    {
-      envVars: { OTEL_EXPORTER_OTLP_ENDPOINT: 'some-endpoint' },
-      shouldSetupTrace: true,
-      shouldSetupMetrics: true,
-      shouldSetupLogs: true,
-      description: 'should set up all providers when OTEL_EXPORTER_OTLP_ENDPOINT is set',
-    },
-  ];
+  }> =
+      [
+        {
+          envVars: {OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'some-endpoint'},
+          shouldSetupTrace: true,
+          shouldSetupMetrics: false,
+          shouldSetupLogs: false,
+          description:
+              'should set up trace provider when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set',
+        },
+        {
+          envVars: {OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: 'some-endpoint'},
+          shouldSetupTrace: false,
+          shouldSetupMetrics: true,
+          shouldSetupLogs: false,
+          description:
+              'should set up metrics provider when OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is set',
+        },
+        {
+          envVars: {OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'some-endpoint'},
+          shouldSetupTrace: false,
+          shouldSetupMetrics: false,
+          shouldSetupLogs: true,
+          description:
+              'should set up logs provider when OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set',
+        },
+        {
+          envVars: {OTEL_EXPORTER_OTLP_ENDPOINT: 'some-endpoint'},
+          shouldSetupTrace: true,
+          shouldSetupMetrics: true,
+          shouldSetupLogs: true,
+          description:
+              'should set up all providers when OTEL_EXPORTER_OTLP_ENDPOINT is set',
+        },
+      ];
 
-  testCases.forEach(({ envVars, shouldSetupTrace, shouldSetupMetrics, shouldSetupLogs, description }) => {
-    it(description, async () => {
-      // Arrange
-      Object.entries(envVars).forEach(([key, value]) => {
-        vi.stubEnv(key, value);
-      });
+  testCases.forEach(
+      ({
+        envVars,
+        shouldSetupTrace,
+        shouldSetupMetrics,
+        shouldSetupLogs,
+        description,
+      }) => {
+        it(description, async () => {
+          // Arrange
+          Object.entries(envVars).forEach(([key, value]) => {
+            vi.stubEnv(key, value);
+          });
 
-      const traceProviderMock = vi.mocked(trace.setGlobalTracerProvider);
-      const meterProviderMock = vi.mocked(metrics.setGlobalMeterProvider);
-      const logsProviderMock = vi.mocked(logs.setGlobalLoggerProvider);
+          const traceProviderMock = vi.mocked(trace.setGlobalTracerProvider);
+          const meterProviderMock = vi.mocked(metrics.setGlobalMeterProvider);
+          const logsProviderMock = vi.mocked(logs.setGlobalLoggerProvider);
 
-      // Act
-      await maybeSetOtelProviders();
+          // Act
+          await maybeSetOtelProviders();
 
-      // Assert
-      expect(traceProviderMock).toHaveBeenCalledTimes(shouldSetupTrace ? 1 : 0);
-      expect(meterProviderMock).toHaveBeenCalledTimes(shouldSetupMetrics ? 1 : 0);
-      expect(logsProviderMock).toHaveBeenCalledTimes(shouldSetupLogs ? 1 : 0);
-    });
-  });
+          // Assert
+          expect(traceProviderMock)
+              .toHaveBeenCalledTimes(
+                  shouldSetupTrace ? 1 : 0,
+              );
+          expect(meterProviderMock)
+              .toHaveBeenCalledTimes(
+                  shouldSetupMetrics ? 1 : 0,
+              );
+          expect(logsProviderMock)
+              .toHaveBeenCalledTimes(shouldSetupLogs ? 1 : 0);
+        });
+      },
+  );
 
   it('should not set up any providers when no env vars are set', async () => {
     // Act
@@ -109,10 +127,29 @@ describe('maybeSetOtelProviders', () => {
 
   it('should set up providers with custom hooks', async () => {
     // Arrange
-    const mockSpanProcessor = { forceFlush: vi.fn() };
-    const mockMetricReader = { forceFlush: vi.fn() };
-    const mockLogProcessor = { forceFlush: vi.fn() };
-    
+    const mockSpanProcessor = {
+      forceFlush: vi.fn(),
+      onStart: vi.fn(),
+      onEnd: vi.fn(),
+      shutdown: vi.fn(),
+    };
+    const mockMetricReader = {
+      forceFlush: vi.fn(),
+      setMetricProducer: vi.fn(),
+      selectAggregation: vi.fn(),
+      selectAggregationTemporality: vi.fn(),
+      selectCardinalityLimit: vi.fn(),
+      collect: vi.fn(),
+      shutdown: vi.fn(),
+    } as unknown as any;
+    const mockLogProcessor = {
+      forceFlush: vi.fn(),
+      onStart: vi.fn(),
+      onEnd: vi.fn(),
+      shutdown: vi.fn(),
+      onEmit: vi.fn(),
+    };
+
     const hooks: OTelHooks = {
       spanProcessors: [mockSpanProcessor],
       metricReaders: [mockMetricReader],

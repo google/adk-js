@@ -19,5 +19,5 @@ export interface TranscriptionEntry {
   /*
    * The data that can be used for transcription.
    */
-  data: Blob|Content;
+  data: Blob | Content;
 }

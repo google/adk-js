@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./core/src/index.ts"],
+  "exclude": ["**/*_test.ts", "**/test"],
+  "out": "api-reference/typescript/",
+  "name": "ADK for TypeScript: API Reference",
+  "readme": "none",
+  "excludePrivate": true,
+  "tsconfig": "./tsconfig.json",
+  "plugin": ["typedoc-theme-fresh"],
+  "theme": "fresh",
+  "excludeExternals": true
+}

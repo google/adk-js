@@ -8,8 +8,12 @@ import {OpenAPIV3} from 'openapi-types';
 
 type Oauth2Flow = OpenAPIV3.OAuth2SecurityScheme['flows'];
 
-export interface OpenIdConnectWithConfig extends OpenAPIV3
-                                                     .OpenIdSecurityScheme {
+/**
+ * OpenIdConnectWithConfig extends OpenIdSecurityScheme with additional
+ * configuration options.
+ */
+export interface OpenIdConnectWithConfig
+  extends OpenAPIV3.OpenIdSecurityScheme {
   authorizationEndpoint: string;
   tokenEndpoint: string;
   userinfoEndpoint?: string;
@@ -23,7 +27,9 @@ export interface OpenIdConnectWithConfig extends OpenAPIV3
  * AuthSchemes contains SecuritySchemes from OpenAPI 3.0 and an extra flattened
  * OpenIdConnectWithConfig.
  */
-export type AuthScheme = OpenAPIV3.SecuritySchemeObject|OpenIdConnectWithConfig;
+export type AuthScheme =
+  | OpenAPIV3.SecuritySchemeObject
+  | OpenIdConnectWithConfig;
 
 /**
  * Represents the OAuth2 flow (or grant type).
@@ -38,8 +44,9 @@ export enum OAuthGrantType {
 /**
  * Converts an OAuthFlows object to a OAuthGrantType.
  */
-export function getOAuthGrantTypeFromFlow(flow: Oauth2Flow): OAuthGrantType|
-    undefined {
+export function getOAuthGrantTypeFromFlow(
+  flow: Oauth2Flow,
+): OAuthGrantType | undefined {
   if (flow.clientCredentials) {
     return OAuthGrantType.CLIENT_CREDENTIALS;
   }

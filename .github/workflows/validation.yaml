@@ -28,3 +28,6 @@ jobs:
 
     - name: Run tests
       run: npm run test
+
+    - name: Check documentation can be built
+      run: npm run docs:check

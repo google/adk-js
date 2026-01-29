@@ -105,69 +105,74 @@ export class AdkWebServer {
     app.get(
         '/apps/:appName/users/:userId/sessions/:sessionId/events/:eventId/graph',
         async (req: Request, res: Response) => {
-          const appName = req.params['appName'];
-          const userId = req.params['userId'];
-          const sessionId = req.params['sessionId'];
-          const eventId = req.params['eventId'];
+          try {
+            const appName = req.params['appName'];
+            const userId = req.params['userId'];
+            const sessionId = req.params['sessionId'];
+            const eventId = req.params['eventId'];
 
-          const session = await this.sessionService.getSession({
-            appName,
-            userId,
-            sessionId,
-          });
+            const session = await this.sessionService.getSession({
+              appName,
+              userId,
+              sessionId,
+            });
 
-          if (!session) {
-            res.status(404).json({error: `Session not found: ${sessionId}`});
-            return;
-          }
+            if (!session) {
+              res.status(404).json({error: `Session not found: ${sessionId}`});
+              return;
+            }
 
-          const sessionEvents = session.events || [];
-          const event = sessionEvents.find((e) => e.id === eventId);
+            const sessionEvents = session.events || [];
+            const event = sessionEvents.find((e) => e.id === eventId);
 
-          if (!event) {
-            res.status(404).json({error: `Event not found: ${eventId}`});
-            return;
-          }
+            if (!event) {
+              res.status(404).json({error: `Event not found: ${eventId}`});
+              return;
+            }
 
-          const functionCalls = getFunctionCalls(event);
-          const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
-          const rootAgent = await agentFile.load();
+            const functionCalls = getFunctionCalls(event);
+            const functionResponses = getFunctionResponses(event);
+            await using agentFile = await this.agentLoader.getAgentFile(appName);
+            const rootAgent = await agentFile.load();
 
-          if (functionCalls.length > 0) {
-            const functionCallHighlights: Array<[string, string]> = [];
-            for (const functionCall of functionCalls) {
-              functionCallHighlights.push([
-                event.author!,
-                functionCall.name!,
-              ]);
+            if (functionCalls.length > 0) {
+              const functionCallHighlights: Array<[string, string]> = [];
+              for (const functionCall of functionCalls) {
+                functionCallHighlights.push([
+                  event.author!,
+                  functionCall.name!,
+                ]);
+              }
+
+              return res.send({
+                dotSrc:
+                    await getAgentGraphAsDot(rootAgent, functionCallHighlights)
+              });
+            }
+
+            if (functionResponses.length > 0) {
+              const functionCallHighlights: Array<[string, string]> = [];
+
+              for (const functionResponse of functionResponses) {
+                functionCallHighlights.push([
+                  functionResponse.name!,
+                  event.author!,
+                ]);
+              }
+
+              return res.send({
+                dotSrc:
+                    await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
+              });
             }
 
             return res.send({
-              dotSrc:
-                  await getAgentGraphAsDot(rootAgent, functionCallHighlights)
+              dotSrc: await getAgentGraphAsDot(rootAgent!, [[event.author!, '']])
             });
+          } catch (e) {
+            res.status(500).json({error: (e as Error).message});
+            return;
           }
-
-          if (functionResponses.length > 0) {
-            const functionCallHighlights: Array<[string, string]> = [];
-
-            for (const functionResponse of functionResponses) {
-              functionCallHighlights.push([
-                functionResponse.name!,
-                event.author!,
-              ]);
-            }
-
-            return res.send({
-              dotSrc:
-                  await getAgentGraphAsDot(rootAgent!, functionCallHighlights)
-            });
-          }
-
-          return res.send({
-            dotSrc: await getAgentGraphAsDot(rootAgent!, [[event.author!, '']])
-          });
         });
 
     // ------------------------- Session related endpoints ---------------------
