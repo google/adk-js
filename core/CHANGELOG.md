@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/google/adk-js/compare/adk-v0.2.5...adk-v0.3.0) (2026-01-30)
+
+
+### Features
+
+* add setLogger() for custom logger support ([#96](https://github.com/google/adk-js/issues/96)) ([7e96728](https://github.com/google/adk-js/commit/7e967282757ed66f5a9f45a6ba0b2abbed78856f))
+
+
+### Bug Fixes
+
+* use getter for rootAgent to match Python SDK behavior ([#95](https://github.com/google/adk-js/issues/95)) ([23b1d7f](https://github.com/google/adk-js/commit/23b1d7f27ce8175ecf0ca14f2c974234fca0ae7d))
+
 ## [0.2.5](https://github.com/google/adk-js/compare/v0.2.4...adk-v0.2.5) (2026-01-28)
 
 ### Bug Fixes
