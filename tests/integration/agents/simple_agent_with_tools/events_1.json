@@ -1,0 +1,103 @@
+[
+  {
+    "author": "weather_time_agent",
+    "id": "PdsWXrXL",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1769756179120,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_weather",
+            "args": {
+              "city": "New York"
+            },
+            "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363"
+          },
+          "thoughtSignature": "CogCAXLI2nz/J7ZDzLD1o37nYm2ve591UARCEDb1J1LvYudwED6ymKVLHzrhHiVlkk4WhCgrRbnUBCvsK0fUt+l0DyESOft0oNztWHtDSRLR9XiKbBf/EaJ1ZnCIp5PjpWJFEd4+JF+Nbb/dZNGBqxWLz1VWHzmWqZPZfILUo6Ipa2bTkmOpaQ3BskhkomuRCj2hyhFZVCR7JvyHEwjeRbff2B4U6h4D3k5Lj6lLAam3qOKvUng6OlHeHAXZTRpvbiLVUXfBokjmE4pfkbwXgEIkhcDiMrzEv3qszOJffZxxo4PlaW0kA2HxNSAmiNSl0q8En8exc7hL02WALEw/qNd9WDy3KpDnsjAy"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 162,
+      "candidatesTokenCount": 16,
+      "totalTokenCount": 235,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 162
+        }
+      ],
+      "thoughtsTokenCount": 57
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-edde5296-4725-4da6-8d76-69637d19f52a",
+    "author": "weather_time_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363",
+            "name": "get_weather",
+            "response": {
+              "status": "success",
+              "report": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "ojHww4FD",
+    "longRunningToolIds": [],
+    "timestamp": 1769756180326
+  },
+  {
+    "invocationId": "e-edde5296-4725-4da6-8d76-69637d19f52a",
+    "author": "weather_time_agent",
+    "id": "BJCzJkly",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1769756180327,
+    "content": {
+      "parts": [
+        {
+          "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 220,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 242,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 220
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

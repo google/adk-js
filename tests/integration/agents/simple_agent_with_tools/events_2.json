@@ -1,0 +1,104 @@
+[
+  {
+    "invocationId": "e-c1c35107-bfc2-4c7c-92a8-3a1c8cc51d76",
+    "author": "weather_time_agent",
+    "id": "0dPtEk7v",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1769756181033,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_current_time",
+            "args": {
+              "city": "New York"
+            },
+            "id": "adk-096349a5-1131-4d5a-8e24-f483faa88bdc"
+          },
+          "thoughtSignature": "CuQBAXLI2nzoEApelB21Ar2RC8oIaLi7bvMiTkvz3yquQl823WSLwA/IAgKtPl1UwoON8y2+IFoASGhzopTeHteIrOAr87cborxiPzm5bs5H/jEsvtudChuIyVPXdS1is3CG2Z5sUhbgSv01T+KhHTS6BfHUClwDwzoQGhvzW14jy3N9Bw+z9j0oFMxavGe10uTgBZSlR87JUtG88ensZO+BI7v2+sUicBzpdL/7oV20ZT+8VCWb71IfFh5AYHA2cHfTUpqrKNz8D13olMBOoN2lRi+KtUe8sHuhAsJLxRVvZmPQGUu+"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 163,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 228,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 163
+        }
+      ],
+      "thoughtsTokenCount": 47
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-c1c35107-bfc2-4c7c-92a8-3a1c8cc51d76",
+    "author": "weather_time_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-096349a5-1131-4d5a-8e24-f483faa88bdc",
+            "name": "get_current_time",
+            "response": {
+              "status": "success",
+              "report": "The current time in New York is 1/30/2026, 1:56:20 AM America/New_York"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "D1QZgnxO",
+    "longRunningToolIds": [],
+    "timestamp": 1769756181970
+  },
+  {
+    "invocationId": "e-c1c35107-bfc2-4c7c-92a8-3a1c8cc51d76",
+    "author": "weather_time_agent",
+    "id": "QMs8hDIN",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1769756181970,
+    "content": {
+      "parts": [
+        {
+          "text": "The current time in New York is 1/30/2026, 1:56:20 AM America/New_York"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 235,
+      "candidatesTokenCount": 33,
+      "totalTokenCount": 268,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 235
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]
