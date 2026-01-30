@@ -89,8 +89,11 @@ export abstract class BaseAgent {
 
   /**
    * Root agent of this agent.
+   * Computed dynamically by traversing up the parent chain.
    */
-  readonly rootAgent: BaseAgent;
+  get rootAgent(): BaseAgent {
+    return getRootAgent(this);
+  }
 
   /**
    * The parent agent of this agent.
@@ -143,7 +146,6 @@ export abstract class BaseAgent {
     this.description = config.description;
     this.parentAgent = config.parentAgent;
     this.subAgents = config.subAgents || [];
-    this.rootAgent = getRootAgent(this);
     this.beforeAgentCallback = getCannonicalCallback(
       config.beforeAgentCallback,
     );
