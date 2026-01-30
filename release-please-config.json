@@ -7,8 +7,7 @@
   "packages": {
     ".": {
       "component": "main",
-      "skip-changelog": true,
-      "skip-github-release": true
+      "skip-changelog": true
     },
     "core": {
       "changelog-path": "CHANGELOG.md",
@@ -39,11 +38,7 @@
     {
       "type": "linked-versions",
       "groupName": "adk",
-      "components": [
-        "main",
-        "adk",
-        "devtools"
-      ]
+      "components": ["main", "adk", "devtools"]
     }
   ],
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
