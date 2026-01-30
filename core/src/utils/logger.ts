@@ -96,6 +96,17 @@ class SimpleLogger implements Logger {
   }
 }
 
+/**
+ * A no-op logger that discards all log messages.
+ */
+class NoOpLogger implements Logger {
+  log(_level: LogLevel, ..._args: unknown[]): void {}
+  debug(..._args: unknown[]): void {}
+  info(..._args: unknown[]): void {}
+  warn(..._args: unknown[]): void {}
+  error(..._args: unknown[]): void {}
+}
+
 const LOG_LEVEL_STR: Record<LogLevel, string> = {
   [LogLevel.DEBUG]: 'DEBUG',
   [LogLevel.INFO]: 'INFO',
@@ -116,7 +127,46 @@ function getColoredPrefix(level: LogLevel): string {
   return `${CONSOLE_COLOR_MAP[level]}[ADK ${LOG_LEVEL_STR[level]}]:${RESET_COLOR}`;
 }
 
+let currentLogger: Logger = new SimpleLogger();
+
+/**
+ * Sets a custom logger for ADK, or null to disable logging.
+ */
+export function setLogger(customLogger: Logger | null): void {
+  currentLogger = customLogger ?? new NoOpLogger();
+}
+
+/**
+ * Gets the current logger instance.
+ */
+export function getLogger(): Logger {
+  return currentLogger;
+}
+
+/**
+ * Resets the logger to the default SimpleLogger.
+ */
+export function resetLogger(): void {
+  currentLogger = new SimpleLogger();
+}
+
 /**
  * The logger instance for ADK.
  */
-export const logger = new SimpleLogger();
+export const logger: Logger = {
+  log(level: LogLevel, ...args: unknown[]): void {
+    currentLogger.log(level, ...args);
+  },
+  debug(...args: unknown[]): void {
+    currentLogger.debug(...args);
+  },
+  info(...args: unknown[]): void {
+    currentLogger.info(...args);
+  },
+  warn(...args: unknown[]): void {
+    currentLogger.warn(...args);
+  },
+  error(...args: unknown[]): void {
+    currentLogger.error(...args);
+  },
+};
