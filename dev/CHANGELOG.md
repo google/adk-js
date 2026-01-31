@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.5](https://github.com/google/adk-js/compare/devtools-v0.3.0...devtools-v0.2.5) (2026-01-31)
+
+
+### Features
+
+* support Zod v3 and v4. ([#46](https://github.com/google/adk-js/issues/46)) ([accb7ca](https://github.com/google/adk-js/commit/accb7ca3bdec1295c81a4966177a2d5ed1103313))
+
+
+### Miscellaneous Chores
+
+* support release-please for release automation ([2c55c5d](https://github.com/google/adk-js/commit/2c55c5d09f56b18f7adea61d0106c7f77112bde1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^0.3.0 to ^0.2.5
+
 ## [0.3.0](https://github.com/google/adk-js/compare/devtools-v0.2.5...devtools-v0.3.0) (2026-01-30)
 
 
