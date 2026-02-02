@@ -35,6 +35,8 @@
   ],
   "devDependencies": {
     "@eslint/js": "^9.37.0",
+    "@secretlint/secretlint-rule-pattern": "^11.3.1",
+    "@secretlint/secretlint-rule-preset-recommend": "^11.3.1",
     "@types/node": "^20.12.7",
     "concurrently": "^9.2.1",
     "esbuild": "^0.25.9",
@@ -46,6 +48,7 @@
     "lint-staged": "^16.2.7",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.3.0",
+    "secretlint": "^11.3.1",
     "typedoc": "^0.28.16",
     "typedoc-theme-fresh": "^0.2.3",
     "typescript": "^5.9.2",
@@ -53,6 +56,9 @@
     "vitest": "^3.2.4"
   },
   "lint-staged": {
+    "*": [
+      "secretlint"
+    ],
     "**/*.{js,jsx,ts,tsx}": [
       "eslint --fix",
       "prettier --write"
