@@ -14,15 +14,15 @@
     "LICENSE",
     "dist"
   ],
-  "type": "commonjs",
-  "main": "./dist/cli/cli.cjs",
+  "type": "module",
+  "module": "./dist/cli/cli.mjs",
   "bin": {
-    "adk": "./dist/cli/cli.cjs"
+    "adk": "./dist/cli/cli.mjs"
   },
   "exports": {
     ".": {
       "types": "./dist/cli/cli.d.ts",
-      "require": "./dist/cli/cli.cjs"
+      "import": "./dist/cli/cli.mjs"
     }
   },
   "scripts": {
@@ -55,6 +55,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "esbuild": "^0.25.9",
+    "esbuild-shim-plugin": "^1.0.3",
     "express": "^4.21.2",
     "ts-graphviz": "^1.0.1",
     "zod": "^4.2.1"

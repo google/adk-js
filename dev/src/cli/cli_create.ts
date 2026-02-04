@@ -14,7 +14,7 @@ import {
   listFiles,
   removeFolder,
   saveToFile,
-} from '../utils/file_utils';
+} from '../utils/file_utils.js';
 
 const execPromise = promisify(exec);
 const dirname = process.cwd();

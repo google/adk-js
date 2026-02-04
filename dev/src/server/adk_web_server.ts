@@ -25,7 +25,7 @@ import express, {Request, Response} from 'express';
 import * as http from 'http';
 import * as path from 'path';
 
-import {AgentLoader} from '../utils/agent_loader.js';
+import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {
   ApiServerSpanExporter,
   hrTimeToNanoseconds,
@@ -43,6 +43,7 @@ interface ServerOptions {
   memoryService?: BaseMemoryService;
   artifactService?: BaseArtifactService;
   agentLoader?: AgentLoader;
+  agentFileLoadOptions?: AgentFileOptions;
   serveDebugUI?: boolean;
   allowOrigins?: string;
   otelToCloud?: boolean;
@@ -78,7 +79,8 @@ export class AdkWebServer {
     this.artifactService =
       options.artifactService ?? new InMemoryArtifactService();
     this.agentLoader =
-      options.agentLoader ?? new AgentLoader(options.agentsDir);
+      options.agentLoader ??
+      new AgentLoader(options.agentsDir, options.agentFileLoadOptions);
     this.serveDebugUI = options.serveDebugUI ?? false;
     this.allowOrigins = options.allowOrigins;
     this.otelToCloud = options.otelToCloud ?? false;

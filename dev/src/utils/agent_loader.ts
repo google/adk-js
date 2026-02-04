@@ -6,14 +6,39 @@
 
 import {BaseAgent, isBaseAgent} from '@google/adk';
 import esbuild from 'esbuild';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
+import {pathToFileURL} from 'node:url';
 
-import {getTempDir, isFile} from './file_utils.js';
+import {getTempDir, isFile, isFileExists, loadFileData} from './file_utils.js';
 
-const JS_FILES_EXTENSIONST_TO_COMPILE = ['.ts', '.mts'];
-const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts'];
+/**
+ * Supported file extensions for JavaScript and TypeScript.
+ */
+const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts', '.cts'];
 
+/**
+ * Supported JS/TS file module types.
+ */
+export enum FileModuleType {
+  CJS = 'cjs',
+  ESM = 'esm',
+}
+
+/**
+ * Map of file module types to their file extensions.
+ */
+const FILE_MODULE_TYPE_EXTENSION_MAP = {
+  [FileModuleType.CJS]: '.cjs',
+  [FileModuleType.ESM]: '.mjs',
+};
+
+/**
+ * Metadata for a file.
+ */
 interface FileMetadata {
   path: string;
   name: string;
@@ -22,18 +47,18 @@ interface FileMetadata {
   isDirectory: boolean;
 }
 
+/**
+ * Error class for agent file loading.
+ */
 class AgentFileLoadingError extends Error {}
-
-export enum AgentFileBundleMode {
-  ANY = 'any',
-  TS = 'ts',
-}
 
 /**
  * Options for loading an agent file.
  */
 export interface AgentFileOptions {
-  bundle?: AgentFileBundleMode;
+  compile?: boolean;
+  bundle?: boolean;
+  moduleType?: FileModuleType;
 }
 
 /**
@@ -42,7 +67,8 @@ export interface AgentFileOptions {
  * Compile and bundle only .ts files.
  */
 const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
-  bundle: AgentFileBundleMode.TS,
+  compile: true,
+  bundle: true,
 };
 
 /**
@@ -76,35 +102,35 @@ export class AgentFile {
     }
 
     let filePath = this.filePath;
-    const fileExt = path.extname(filePath);
+    const shouldCompile = this.options.compile || this.options.bundle;
 
-    if (
-      this.options.bundle === AgentFileBundleMode.ANY ||
-      JS_FILES_EXTENSIONST_TO_COMPILE.includes(fileExt)
-    ) {
+    if (shouldCompile) {
+      const moduleType =
+        this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
       const compiledFilePath = path.join(
         getTempDir('adk_agent_loader'),
-        parsedPath.name + '.cjs',
+        parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
 
       await esbuild.build({
         entryPoints: [filePath],
         outfile: compiledFilePath,
-        target: 'node10.4',
+        target: 'node16',
         platform: 'node',
-        format: 'cjs',
+        format: moduleType,
         packages: 'bundle',
-        bundle: true,
-        minify: true,
+        bundle: this.options.bundle,
+        minify: this.options.bundle,
         allowOverwrite: true,
+        plugins: [shimPlugin()],
       });
 
       this.cleanupFilePath = compiledFilePath;
       filePath = compiledFilePath;
     }
 
-    const jsModule = await import(filePath);
+    const jsModule = await import(pathToFileURL(filePath).href);
 
     if (jsModule) {
       if (isBaseAgent(jsModule.rootAgent)) {
@@ -314,4 +340,46 @@ async function getFileMetadata(filePath: string): Promise<FileMetadata> {
     isFile,
     isDirectory: fileStats.isDirectory(),
   };
+}
+
+async function getFileModuleType(filePath: string): Promise<FileModuleType> {
+  const {ext} = path.parse(filePath);
+
+  if (['.cjs', '.cts'].includes(ext)) {
+    return FileModuleType.CJS;
+  }
+  if (['.mts', '.mjs'].includes(ext)) {
+    return FileModuleType.ESM;
+  }
+
+  if (['.js', '.ts'].includes(ext)) {
+    return getTypeFromPackageJson(path.dirname(filePath));
+  }
+
+  return FileModuleType.CJS;
+}
+
+async function getTypeFromPackageJson(dir: string): Promise<FileModuleType> {
+  const packagePath = path.join(dir, 'package.json');
+
+  if (await isFileExists(packagePath)) {
+    try {
+      const packageJson = (await loadFileData(packagePath)) as {
+        type?: 'commonjs' | 'module';
+      };
+
+      return packageJson.type === 'module'
+        ? FileModuleType.ESM
+        : FileModuleType.CJS;
+    } catch {
+      return FileModuleType.CJS;
+    }
+  }
+
+  const parentDir = path.dirname(dir);
+  if (parentDir === dir) {
+    return FileModuleType.CJS;
+  }
+
+  return getTypeFromPackageJson(parentDir);
 }

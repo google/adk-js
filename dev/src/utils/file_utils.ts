@@ -12,7 +12,20 @@ import * as path from 'node:path';
 export async function isFolderExists(folderPath: string): Promise<boolean> {
   try {
     await fs.access(folderPath);
-    return true;
+    const stat = await fs.stat(folderPath);
+
+    return stat.isDirectory();
+  } catch (_e: unknown) {
+    return false;
+  }
+}
+
+/** Check if the given file exists. */
+export async function isFileExists(folderPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(folderPath);
+
+    return stat.isFile();
   } catch (_e: unknown) {
     return false;
   }
@@ -121,11 +134,11 @@ export async function tryToFindFileRecursively(
   for (let i = 0; i < maxIterations; i++) {
     const filePath = path.join(currentFolder, fileName);
 
-    if (await isFolderExists(filePath)) {
+    if (await isFileExists(filePath)) {
       return filePath;
     }
 
-    currentFolder = path.join(currentFolder, '../');
+    currentFolder = path.dirname(currentFolder);
   }
 
   throw new Error(

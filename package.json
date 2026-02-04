@@ -59,11 +59,11 @@
     "*": [
       "secretlint"
     ],
-    "**/*.{js,jsx,ts,tsx}": [
+    "**/*.{js,ts}": [
       "eslint --fix",
       "prettier --write"
     ],
-    "**/*.{json,css,md}": [
+    "**/*.{json,md}": [
       "prettier --write"
     ]
   }

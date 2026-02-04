@@ -16,6 +16,7 @@ import dotenv from 'dotenv';
 import * as os from 'os';
 import * as path from 'path';
 import {AdkWebServer} from '../server/adk_web_server.js';
+import {FileModuleType} from '../utils/agent_loader.js';
 import {getTempDir} from '../utils/file_utils.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
@@ -60,6 +61,30 @@ function getArtifactServiceFromUri(uri: string): BaseArtifactService {
   throw new Error(`Unsupported artifact service URI: ${uri}`);
 }
 
+function getAgentFileOptions(options: {
+  compile?: boolean;
+  bundle?: boolean;
+  file_type?: string;
+}) {
+  return {
+    compile: getBoolean(options['compile']),
+    bundle: getBoolean(options['bundle']),
+    moduleType: options['file_type'] as FileModuleType | undefined,
+  };
+}
+
+function getBoolean(option?: string | boolean): boolean {
+  if (typeof option === 'boolean') {
+    return option;
+  }
+
+  if (typeof option === 'string') {
+    return option === 'true' || option === '1';
+  }
+
+  return false;
+}
+
 const AGENT_DIR_ARGUMENT = new Argument(
   '[agents_dir]',
   'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)',
@@ -91,6 +116,16 @@ const OTEL_TO_CLOUD_OPTION = new Option(
   '--otel_to_cloud [boolean]',
   'Optional. Whether to send otel traces to cloud.',
 ).default(false);
+const COMPILE_AGENT_FILE = new Option(
+  '--compile [boolean]',
+  'Optional. Whether to compile ts agent file to js before execution',
+).default(true);
+const BUNDLE_AGENT_FILE = new Option(
+  '--bundle [boolean]',
+  'Optional. Whether to compile ts agent file to js before execution',
+).default(true);
+const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
+AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
 
 const program = new Command('ADK CLI');
 
@@ -111,6 +146,9 @@ program
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
   .addOption(OTEL_TO_CLOUD_OPTION)
+  .addOption(COMPILE_AGENT_FILE)
+  .addOption(BUNDLE_AGENT_FILE)
+  .addOption(AGENT_FILE_MODULE_TYPE)
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -124,6 +162,7 @@ program
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
       otelToCloud: options['otel_to_cloud'] ? true : false,
+      agentFileLoadOptions: getAgentFileOptions(options),
     });
 
     server.start();
@@ -140,6 +179,9 @@ program
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
   .addOption(OTEL_TO_CLOUD_OPTION)
+  .addOption(COMPILE_AGENT_FILE)
+  .addOption(BUNDLE_AGENT_FILE)
+  .addOption(AGENT_FILE_MODULE_TYPE)
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -153,6 +195,7 @@ program
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
       otelToCloud: options['otel_to_cloud'] ? true : false,
+      agentFileLoadOptions: getAgentFileOptions(options),
     });
     server.start();
   });
@@ -216,6 +259,9 @@ program
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
   .addOption(OTEL_TO_CLOUD_OPTION)
+  .addOption(COMPILE_AGENT_FILE)
+  .addOption(BUNDLE_AGENT_FILE)
+  .addOption(AGENT_FILE_MODULE_TYPE)
   .action((agentPath: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
@@ -223,12 +269,13 @@ program
       agentPath,
       inputFile: options['replay'],
       savedSessionFile: options['resume'],
-      saveSession: !!options['save_session'],
+      saveSession: getBoolean(options['save_session']),
       sessionId: options['session_id'],
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
         : undefined,
       otelToCloud: options['otel_to_cloud'] ? true : false,
+      agentFileLoadOptions: getAgentFileOptions(options),
     });
   });
 
@@ -273,6 +320,9 @@ DEPLOY_COMMAND.command('cloud_run')
   .addOption(VERBOSE_OPTION)
   .addOption(LOG_LEVEL_OPTION)
   .addOption(ARTIFACT_SERVICE_URI_OPTION)
+  .addOption(COMPILE_AGENT_FILE)
+  .addOption(BUNDLE_AGENT_FILE)
+  .addOption(AGENT_FILE_MODULE_TYPE)
   .action((agentPath: string, options: Record<string, string>) => {
     const extraGcloudArgs = [];
     for (const arg of process.argv.slice(5)) {
@@ -294,13 +344,18 @@ DEPLOY_COMMAND.command('cloud_run')
       serviceName: options['service_name'],
       tempFolder: options['temp_folder'],
       port: parseInt(options['port'], 10),
-      withUi: !!options['with_ui'],
+      withUi: getBoolean(options['with_ui']),
       logLevel: options['log_level'],
       adkVersion: options['adk_version'],
       allowOrigins: options['allow_origins'],
       extraGcloudArgs,
       artifactServiceUri: options['artifact_service_uri'],
+      agentFileLoadOptions: getAgentFileOptions(options),
     });
   });
 
-program.parse(process.argv);
+try {
+  program.parse(process.argv);
+} catch (e) {
+  console.error(e);
+}

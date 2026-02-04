@@ -18,7 +18,7 @@ import {
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
-import {AgentFile} from '../utils/agent_loader';
+import {AgentFile, AgentFileOptions} from '../utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
@@ -154,6 +154,7 @@ export interface RunAgentOptions {
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
   otelToCloud?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
@@ -165,6 +166,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     const memoryService = options.memoryService || new InMemoryMemoryService();
     await using agentFile = new AgentFile(
       path.join(dirname, options.agentPath),
+      options.agentFileLoadOptions,
     );
     const rootAgent = await agentFile.load();
 

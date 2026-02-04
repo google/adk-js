@@ -18,8 +18,8 @@ import type {Application, Request, Response} from 'express';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
-import {AdkWebServer} from '../../src/server/adk_web_server';
-import {AgentLoader} from '../../src/utils/agent_loader';
+import {AdkWebServer} from '../../src/server/adk_web_server.js';
+import {AgentLoader} from '../../src/utils/agent_loader.js';
 
 /**
  * Simple http client for testing the AdkWebServer. No addtional npm

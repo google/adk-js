@@ -3,14 +3,18 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-const esbuild = require('esbuild');
-const {exec} = require('node:child_process');
-const {promisify} = require('node:util');
+import esbuild from 'esbuild';
+import {exec} from 'node:child_process';
+import {promisify} from 'node:util';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import {shimPlugin} from 'esbuild-shim-plugin';
+
 const execAsync = promisify(exec);
 
 const licenseHeaderText = `/**
   * @license
-  * Copyright 2025 Google LLC
+  * Copyright 2026 Google LLC
   * SPDX-License-Identifier: Apache-2.0
   */
 `;
@@ -22,16 +26,17 @@ async function main() {
   await Promise.all([
     esbuild.build({
       entryPoints: ['./src/cli/cli.ts'],
-      outfile: 'dist/cli/cli.cjs',
-      target: 'node10.4',
+      outfile: 'dist/cli/cli.mjs',
+      target: 'node16',
       platform: 'node',
-      format: 'cjs',
+      format: 'esm',
       bundle: true,
       minify: true,
       sourcemap: false,
       packages: 'external',
       logLevel: 'info',
       banner: {js: licenseHeaderText},
+      plugins: [shimPlugin()],
     }),
     execAsync('cp -r ./src/browser ./dist/browser'),
   ]);

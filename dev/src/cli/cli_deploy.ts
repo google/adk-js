@@ -9,7 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {promisify} from 'node:util';
 
-import {AgentFileBundleMode, AgentLoader} from '../utils/agent_loader.js';
+import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {
   isFile,
   isFolderExists,
@@ -42,6 +42,7 @@ export interface DeployToCloudRunOptions extends CreateDockerFileContentOptions 
   adkVersion: string;
   extraGcloudArgs?: string[];
   otelToCloud?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
 }
 
 function validateGcloudExtraArgs(
@@ -279,9 +280,10 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
 
   // Request to bundle any js or ts file into a single cjs file to be able to
   // copy file with all it's dependencies correctly.
-  const agentLoader = new AgentLoader(options.agentPath, {
-    bundle: AgentFileBundleMode.ANY,
-  });
+  const agentLoader = new AgentLoader(
+    options.agentPath,
+    options.agentFileLoadOptions,
+  );
 
   const isFileProvided = await isFile(options.agentPath);
   const agentDir = isFileProvided
