@@ -49,7 +49,7 @@ import {
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
 import {State} from '../sessions/state.js';
-import {BaseTool} from '../tools/base_tool.js';
+import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
@@ -324,7 +324,7 @@ async function convertToolUnionToTools(
   toolUnion: ToolUnion,
   context?: ReadonlyContext,
 ): Promise<BaseTool[]> {
-  if (toolUnion instanceof BaseTool) {
+  if (isBaseTool(toolUnion)) {
     return [toolUnion];
   }
   return await toolUnion.getTools(context);
@@ -398,10 +398,7 @@ class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     const agent = invocationContext.agent;
-    if (
-      !(agent instanceof LlmAgent) ||
-      !(agent.rootAgent instanceof LlmAgent)
-    ) {
+    if (!isLlmAgent(agent) || !isLlmAgent(agent.rootAgent)) {
       return;
     }
     const rootAgent: LlmAgent = agent.rootAgent;
@@ -501,7 +498,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
-    if (!(invocationContext.agent instanceof LlmAgent)) {
+    if (!isLlmAgent(invocationContext.agent)) {
       return;
     }
 
@@ -750,7 +747,7 @@ class CodeExecutionRequestProcessor extends BaseLlmRequestProcessor {
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
-    if (!(invocationContext.agent instanceof LlmAgent)) {
+    if (!isLlmAgent(invocationContext.agent)) {
       return;
     }
 
