@@ -308,6 +308,7 @@ export class AdkWebServer {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
           const sessionId = req.params['sessionId'];
+          const state = req.body['state'] || {};
 
           const existingSession = await this.sessionService.getSession({
             appName,
@@ -325,7 +326,7 @@ export class AdkWebServer {
           const createdSession = await this.sessionService.createSession({
             appName,
             userId,
-            state: {},
+            state,
             sessionId,
           });
 
@@ -342,10 +343,12 @@ export class AdkWebServer {
         try {
           const appName = req.params['appName'];
           const userId = req.params['userId'];
+          const state = req.body['state'] || {};
 
           const createdSession = await this.sessionService.createSession({
             appName,
             userId,
+            state,
           });
 
           res.json(createdSession);
@@ -591,7 +594,7 @@ export class AdkWebServer {
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage} = req.body;
+      const {appName, userId, sessionId, newMessage, stateDelta} = req.body;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -613,6 +616,7 @@ export class AdkWebServer {
           userId,
           sessionId,
           newMessage,
+          stateDelta,
         })) {
           events.push(e);
         }
@@ -624,7 +628,8 @@ export class AdkWebServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, streaming} = req.body;
+      const {appName, userId, sessionId, newMessage, streaming, stateDelta} =
+        req.body;
 
       const session = await this.sessionService.getSession({
         appName,
@@ -655,6 +660,7 @@ export class AdkWebServer {
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
+          stateDelta,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
