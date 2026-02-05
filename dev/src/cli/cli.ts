@@ -17,11 +17,12 @@ import * as os from 'os';
 import * as path from 'path';
 import {AdkWebServer} from '../server/adk_web_server.js';
 import {getTempDir} from '../utils/file_utils.js';
+import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {deployToCloudRun} from './cli_deploy.js';
 import {runAgent} from './cli_run.js';
 
-dotenv.config();
+dotenv.config({quiet: true});
 
 const LOG_LEVEL_MAP: Record<string, LogLevel> = {
   'debug': LogLevel.DEBUG,
@@ -92,6 +93,12 @@ const OTEL_TO_CLOUD_OPTION = new Option(
 ).default(false);
 
 const program = new Command('ADK CLI');
+
+program
+  .addOption(new Option('-v, --version', 'Get ADK CLI version'))
+  .action(() => {
+    console.log(version);
+  });
 
 program
   .command('web')
