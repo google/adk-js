@@ -25,8 +25,8 @@ const licenseHeaderText = `/**
 async function main() {
   await Promise.all([
     esbuild.build({
-      entryPoints: ['./src/cli/cli.ts'],
-      outfile: 'dist/cli/cli.mjs',
+      entryPoints: ['./src/cli_entrypoint.ts'],
+      outfile: 'dist/cli_entrypoint.mjs',
       target: 'node16',
       platform: 'node',
       format: 'esm',

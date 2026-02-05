@@ -15,14 +15,14 @@
     "dist"
   ],
   "type": "module",
-  "module": "./dist/cli/cli.mjs",
+  "module": "./dist/cli_entrypoint.mjs",
   "bin": {
-    "adk": "./dist/cli/cli.mjs"
+    "adk": "./dist/cli_entrypoint.mjs"
   },
   "exports": {
     ".": {
-      "types": "./dist/cli/cli.d.ts",
-      "import": "./dist/cli/cli.mjs"
+      "types": "./dist/cli_entrypoint.d.ts",
+      "import": "./dist/cli_entrypoint.mjs"
     }
   },
   "scripts": {
