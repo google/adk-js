@@ -11,6 +11,9 @@ import {MetricReader} from '@opentelemetry/sdk-metrics';
 import type {OTelHooks} from '../../src/telemetry/setup.js';
 import {maybeSetOtelProviders} from '../../src/telemetry/setup.js';
 
+vi.hoisted(() => {
+  vi.resetModules();
+});
 // Mock OpenTelemetry modules
 vi.mock('@opentelemetry/exporter-trace-otlp-http');
 vi.mock('@opentelemetry/exporter-metrics-otlp-http');

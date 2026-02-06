@@ -32,6 +32,7 @@ export default defineConfig({
         lines: 53,
       },
     },
+    globalSetup: ['./tests/global_setup.ts'],
   },
   resolve: {alias: {'@google/adk': path.resolve(__dirname, './core/src')}},
 });

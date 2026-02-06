@@ -12,6 +12,9 @@ import {
 } from '../../src/telemetry/google_cloud.js';
 import type {OtelExportersConfig} from '../../src/telemetry/setup.js';
 
+vi.hoisted(() => {
+  vi.resetModules();
+});
 // Mock Google Cloud modules
 vi.mock('google-auth-library');
 vi.mock('@google-cloud/opentelemetry-cloud-trace-exporter');

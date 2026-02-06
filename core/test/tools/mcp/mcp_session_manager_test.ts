@@ -10,6 +10,10 @@ import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/st
 import {describe, expect, it, vi} from 'vitest';
 import {MCPSessionManager} from '../../../src/tools/mcp/mcp_session_manager.js';
 
+vi.hoisted(() => {
+  vi.resetModules();
+});
+
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
     Client: vi.fn().mockImplementation(() => ({

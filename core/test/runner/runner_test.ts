@@ -186,7 +186,6 @@ describe('Runner.determineAgentForResumption', () => {
   }
 
   it('should find agent when last event is function response', async () => {
-    console.log('should find agent when last event is function response');
     const functionCall: FunctionCall = {
       id: 'func_123',
       name: 'test_func',
@@ -216,8 +215,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should return root agent when session has no non-user events', async () => {
-    console.log('should return root agent when session has no non-user events');
-
     const nonUserEvent = createEvent({
       invocationId: 'inv1',
       author: 'user',
@@ -230,8 +227,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should return root agent when it is found in session events', async () => {
-    console.log('should return root agent when it is found in session events');
-
     const rootEvent = createEvent({
       invocationId: 'inv1',
       author: 'root_agent',
@@ -244,8 +239,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should return transferable sub agent when found', async () => {
-    console.log('should return transferable sub agent when found');
-
     const subAgent1Event = createEvent({
       invocationId: 'inv1',
       author: 'sub_agent1',
@@ -258,8 +251,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should skip non-transferable agent and return root agent', async () => {
-    console.log('should skip non-transferable agent and return root agent');
-
     const nonTransferableResponse = createEvent({
       invocationId: 'inv1',
       author: 'non_transferable',
@@ -275,8 +266,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should skip unknown agent and return root agent', async () => {
-    console.log('should skip unknown agent and return root agent');
-
     const unknownEvent = createEvent({
       invocationId: 'inv1',
       author: 'unknown_agent',
@@ -298,7 +287,6 @@ describe('Runner.determineAgentForResumption', () => {
   });
 
   it('should prioritize function response scenario', async () => {
-    console.log('should prioritize function response scenario');
     const functionCall: FunctionCall = {
       id: 'func_456',
       name: 'test_func',

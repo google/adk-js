@@ -21,6 +21,9 @@ import {
 } from '../../src/telemetry/tracing.js';
 import {BaseTool} from '../../src/tools/base_tool.js';
 
+vi.hoisted(() => {
+  vi.resetModules();
+});
 // Mock OpenTelemetry API
 vi.mock('@opentelemetry/api');
 
