@@ -25,6 +25,7 @@
     "docs:serve": "http-server api-reference/typescript",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
     "test": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:unit": "vitest core/** dev/**",
     "test:integration": "vitest tests/integration/**",
     "prepare": "husky"
@@ -38,6 +39,7 @@
     "@secretlint/secretlint-rule-pattern": "^11.3.1",
     "@secretlint/secretlint-rule-preset-recommend": "^11.3.1",
     "@types/node": "^20.12.7",
+    "@vitest/coverage-v8": "^3.2.4",
     "concurrently": "^9.2.1",
     "esbuild": "^0.25.9",
     "eslint": "^9.37.0",

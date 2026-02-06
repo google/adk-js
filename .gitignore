@@ -6,3 +6,4 @@ node_modules/
 .vscode/*
 !.vscode/settings.json
 tests/**/package-lock.json
+coverage/
