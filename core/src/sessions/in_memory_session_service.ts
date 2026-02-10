@@ -22,6 +22,13 @@ import {createSession, Session} from './session.js';
 import {State} from './state.js';
 
 /**
+ * Checks if the given URI is an in-memory memory service URI.
+ */
+export function isInMemoryConnectionString(uri?: string): boolean {
+  return uri === 'memory://';
+}
+
+/**
  * An in-memory implementation of the session service.
  */
 export class InMemorySessionService extends BaseSessionService {

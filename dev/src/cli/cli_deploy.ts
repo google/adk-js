@@ -3,7 +3,6 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import {exec, spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -31,6 +30,7 @@ export interface CreateDockerFileContentOptions {
   withUi: boolean;
   logLevel: string;
   allowOrigins?: string;
+  sessionServiceUri?: string;
   artifactServiceUri?: string;
   otelToCloud?: boolean;
 }
@@ -184,6 +184,10 @@ function createDockerFileContent(
     adkServerOptions.push(
       `--artifact_service_uri=${options.artifactServiceUri}`,
     );
+  }
+
+  if (options.sessionServiceUri) {
+    adkServerOptions.push(`--session_service_uri=${options.sessionServiceUri}`);
   }
 
   if (options.otelToCloud) {
