@@ -246,14 +246,7 @@ describe('DatabaseSessionService', () => {
       config: {numRecentEvents: 2},
     });
     expect(recent?.events.length).toBe(2);
-    // Should return oldest first as per implementation order (ASC) but restricted by limit?
-    // Looking at implementation: findAll with limit and order ASC.
-    // If limit is 2, it returns the *first* 2 events by timestamp (ASC).
-    // Wait, usually "recent" implies latest.
-    // The implementation does: order: [['timestamp', 'ASC']], limit: numRecentEvents
-    // This will return the 2 *oldest* events.
-    // Ideally it should probable be DESC for "recent", but let's test current behavior first.
-    expect(recent?.events[0].id).toBe(e1.id);
+    expect(recent?.events[0].id).toBe(e3.id);
     expect(recent?.events[1].id).toBe(e2.id);
 
     // Test afterTimestamp
@@ -261,11 +254,21 @@ describe('DatabaseSessionService', () => {
       appName: 'test-app',
       userId: 'user1',
       sessionId: 's1',
-      config: {afterTimestamp: now - 500},
+      config: {afterTimestamp: now - 100},
     });
     expect(after?.events.length).toBe(2);
-    expect(after?.events[0].id).toBe(e2.id);
-    expect(after?.events[1].id).toBe(e3.id);
+    expect(after?.events[0].id).toBe(e3.id);
+    expect(after?.events[1].id).toBe(e2.id);
+
+    // Test afterTimestamp
+    const after2 = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+      config: {afterTimestamp: now},
+    });
+    expect(after2?.events.length).toBe(1);
+    expect(after2?.events[0].id).toBe(e3.id);
   });
 
   it('should filter sessions by userId in listSessions', async () => {
@@ -342,12 +345,6 @@ describe('DatabaseSessionService', () => {
     const tamperSequelize = new Sequelize('sqlite::memory:', {logging: false});
     const subService = new DatabaseSessionService(tamperSequelize);
     await subService.init();
-
-    // Manually set bad version
-    // We need to access the model directly or via raw query,
-    // but the models are bound to the instance.
-    // Since we can't easily import the class bound to *that* instance (sequelize-typescript works globally often but context matters),
-    // we can just use raw query.
     await tamperSequelize.query(
       `UPDATE adk_internal_metadata SET value = '999' WHERE key = 'schema_version'`,
     );

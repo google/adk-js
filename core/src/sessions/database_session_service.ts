@@ -344,7 +344,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const storageEvents = await StorageEvent.findAll({
       where: eventWhere,
       limit: config?.numRecentEvents,
-      order: [['timestamp', 'ASC']],
+      order: [['timestamp', 'DESC']],
     });
 
     const appStateModel = await StorageAppState.findByPk(appName);
