@@ -9,6 +9,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+import {logger} from '../utils/logger.js';
+
 import {
   BaseArtifactService,
   DeleteArtifactRequest,
@@ -37,7 +39,10 @@ interface FileArtifactVersion {
 export class FileArtifactService implements BaseArtifactService {
   private readonly rootDir: string;
 
-  constructor(rootDir: string) {
+  constructor(rootDirOrUri: string) {
+    const rootDir = rootDirOrUri.startsWith('file://')
+      ? fileURLToPath(rootDirOrUri)
+      : rootDirOrUri;
     this.rootDir = path.resolve(rootDir);
   }
 
@@ -163,7 +168,7 @@ export class FileArtifactService implements BaseArtifactService {
             },
           };
         } catch {
-          console.warn(`Binary artifact ${filename} missing at ${contentPath}`);
+          logger.warn(`Binary artifact ${filename} missing at ${contentPath}`);
           return undefined;
         }
       }
@@ -172,11 +177,11 @@ export class FileArtifactService implements BaseArtifactService {
         const text = await fs.readFile(contentPath, 'utf-8');
         return {text};
       } catch {
-        console.warn(`Text artifact ${filename} missing at ${contentPath}`);
+        logger.warn(`Text artifact ${filename} missing at ${contentPath}`);
         return undefined;
       }
     } catch (e) {
-      console.error('Error loading artifact', e);
+      logger.error('Error loading artifact', e);
       return undefined;
     }
   }
@@ -236,7 +241,7 @@ export class FileArtifactService implements BaseArtifactService {
       await fs.rm(artifactDir, {recursive: true, force: true});
     } catch (e) {
       // ignore if not found or other errors
-      console.debug(`Failed to delete artifact ${filename}`, e);
+      logger.debug(`Failed to delete artifact ${filename}`, e);
     }
   }
 
