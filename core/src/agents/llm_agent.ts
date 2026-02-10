@@ -92,7 +92,7 @@ import {StreamingMode} from './run_config.js';
 /**
  * Input/output schema type for agent.
  */
-export type AgentSchema =
+export type LlmAgentSchema =
   | z3.ZodObject<z3.ZodRawShape>
   | z4.ZodObject<z4.ZodRawShape>
   | Schema;
@@ -275,7 +275,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   includeContents?: 'default' | 'none';
 
   /** The input schema when agent is used as a tool. */
-  inputSchema?: AgentSchema;
+  inputSchema?: LlmAgentSchema;
 
   /**
    * The output schema when agent replies.
@@ -284,7 +284,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    *   When this is set, agent can ONLY reply and CANNOT use any tools, such as
    *   function tools, RAGs, agent transfer, etc.
    */
-  outputSchema?: AgentSchema;
+  outputSchema?: LlmAgentSchema;
 
   /**
    * The key in session state to store the output of the agent.
