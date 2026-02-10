@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -179,6 +179,14 @@ export function createNewEventId(): string {
   return id;
 }
 
+/**
+ * List of keys to preserve during snake_case to camelCase conversion.
+ *
+ * Example: `content.parts.functionCall.args`
+ * will be converted to be `content.parts.function_call.args` but the object
+ * inside of the `content.parts.function_call.args` will skip the conversion as it
+ * can contain data in any notation.
+ */
 const PRESERVE_KEYS_CAMEL_CASE = [
   'actions.stateDelta',
   'actions.artifactDelta',
@@ -189,6 +197,14 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'content.parts.functionResponse.response',
 ];
 
+/**
+ * List of keys to preserve during camelCase to snake_case conversion.
+ *
+ * Example: `content.parts.function_call.args`
+ * will be converted to be `content.parts.functionCall.args` but the object
+ * inside of the `content.parts.functionCall.args` will skip the conversion as it
+ * can contain data in any notation.
+ */
 const PRESERVE_KEYS_SNAKE_CASE = [
   'actions.state_delta',
   'actions.artifact_delta',
