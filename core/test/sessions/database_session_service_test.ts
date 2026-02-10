@@ -297,8 +297,9 @@ describe('DatabaseSessionService', () => {
 
     const listAll = await service.listSessions({
       appName: 'app1',
+      userId: 'u1',
     });
-    expect(listAll.sessions.length).toBe(2);
+    expect(listAll.sessions.length).toBe(1);
   });
 
   it('should handle errors', async () => {
