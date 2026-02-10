@@ -151,6 +151,7 @@ const MODELS = [
 ];
 
 const SUPPORTED_PROTOCOLS = [
+  'postgres://',
   'postgresql://',
   'sqlite://',
   'mysql://',
@@ -159,15 +160,20 @@ const SUPPORTED_PROTOCOLS = [
   'db2://',
   'snowflake://',
   'oracle://',
+  'jdbc:',
 ];
 
-/**
- * Checks if the given URI is a database connection string.
- */
 export function isDatabaseConnectionString(uri?: string): boolean {
-  return (
-    !!uri && SUPPORTED_PROTOCOLS.some((protocol) => uri.startsWith(protocol))
-  );
+  if (!uri) {
+    return false;
+  }
+
+  // Check for standard URI protocols
+  if (SUPPORTED_PROTOCOLS.some((protocol) => uri.startsWith(protocol))) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
