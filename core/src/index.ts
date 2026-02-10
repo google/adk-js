@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export * from './artifacts/gcs_artifact_service.js';
+export {FileArtifactService} from './artifacts/file_artifact_service.js';
+export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
 export * from './common.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';

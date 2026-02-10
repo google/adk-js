@@ -5,6 +5,7 @@
  */
 
 import {BaseArtifactService} from './base_artifact_service.js';
+import {FileArtifactService} from './file_artifact_service.js';
 import {GcsArtifactService} from './gcs_artifact_service.js';
 import {
   InMemoryArtifactService,
@@ -20,6 +21,12 @@ export function getArtifactServiceFromUri(uri: string): BaseArtifactService {
     const bucket = uri.split('://')[1];
 
     return new GcsArtifactService(bucket);
+  }
+
+  if (uri.startsWith('file://')) {
+    const rootDir = uri.split('://')[1];
+
+    return new FileArtifactService(rootDir);
   }
 
   throw new Error(`Unsupported artifact service URI: ${uri}`);
