@@ -15,6 +15,10 @@ import {
   SaveArtifactRequest,
 } from './base_artifact_service.js';
 
+export function isInMemoryConnectionString(uri: string): boolean {
+  return uri === 'memory://';
+}
+
 /**
  * An in-memory implementation of the ArtifactService.
  */
