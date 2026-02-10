@@ -357,4 +357,92 @@ describe('DatabaseSessionService', () => {
       'ADK Database schema version 999 is not compatible',
     );
   });
+
+  describe('Alignment Verification', () => {
+    it('should trim temp state from event before persistence', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-temp',
+      });
+
+      const event = createEvent({
+        timestamp: Date.now(),
+        actions: createEventActions({
+          stateDelta: {
+            'keep': 'me',
+            [State.TEMP_PREFIX + 'hide']: 'me',
+          },
+        }),
+      });
+
+      await service.appendEvent({session, event});
+
+      const [results] = await sequelize.query(
+        "SELECT event_data FROM events WHERE session_id = 's-temp'",
+      );
+      const eventData = JSON.parse(
+        (results[0] as unknown as {event_data: string}).event_data,
+      );
+
+      expect(eventData.actions?.stateDelta?.['keep']).toBe('me');
+      expect(
+        eventData.actions?.stateDelta?.[State.TEMP_PREFIX + 'hide'],
+      ).toBeUndefined();
+    });
+
+    it('should align session updateTime with event timestamp', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-time',
+      });
+
+      const timestamp = 1234567890000;
+      const event = createEvent({timestamp});
+
+      await service.appendEvent({session, event});
+
+      expect(session.lastUpdateTime).toBe(timestamp);
+
+      const [results] = await sequelize.query(
+        "SELECT update_time FROM sessions WHERE id = 's-time'",
+      );
+      const dbTime = new Date(
+        (results[0] as unknown as {update_time: string}).update_time,
+      ).getTime();
+      expect(dbTime).toBe(timestamp);
+    });
+
+    it('should reload stale session on appendEvent', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-stale',
+        state: {'initial': 'val'},
+      });
+
+      const futureTime = Date.now() + 10000;
+      const futureDate = new Date(futureTime);
+      await sequelize.query(
+        `UPDATE sessions SET state = '{"concurrent":"update"}', update_time = :time WHERE id = 's-stale'`,
+        {replacements: {time: futureDate}},
+      );
+
+      expect(session.lastUpdateTime).toBeLessThan(futureTime);
+
+      const event = createEvent({
+        timestamp: futureTime + 1000,
+        actions: createEventActions({
+          stateDelta: {'new': 'val'},
+        }),
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.state['concurrent']).toBe('update');
+      expect(session.state['initial']).toBeUndefined();
+      expect(session.state['new']).toBe('val');
+    });
+  });
 });

@@ -438,82 +438,115 @@ export class DatabaseSessionService extends BaseSessionService {
   }: AppendEventRequest): Promise<Event> {
     await this.init();
 
-    const storageSession = await StorageSession.findOne({
-      where: {
-        appName: session.appName,
-        userId: session.userId,
-        id: session.id,
-      },
-    });
-
-    if (!storageSession) {
-      throw new Error(`Session ${session.id} not found for appendEvent`);
+    if (event.partial) {
+      return event;
     }
 
-    const [appStateModel] = await StorageAppState.findOrCreate({
-      where: {appName: session.appName},
-      defaults: {appName: session.appName, state: {}},
-    });
-    const [userStateModel] = await StorageUserState.findOrCreate({
-      where: {appName: session.appName, userId: session.userId},
-      defaults: {appName: session.appName, userId: session.userId, state: {}},
-    });
+    const trimmedEvent = this.trimTempDeltaState(event);
 
-    if (event.actions && event.actions.stateDelta) {
-      const appDelta: Record<string, unknown> = {};
-      const userDelta: Record<string, unknown> = {};
-      const sessionDelta: Record<string, unknown> = {};
+    await this.sequelize.transaction(async (transaction) => {
+      const storageSession = await StorageSession.findOne({
+        where: {
+          appName: session.appName,
+          userId: session.userId,
+          id: session.id,
+        },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
 
-      for (const [key, value] of Object.entries(event.actions.stateDelta)) {
-        if (key.startsWith(State.TEMP_PREFIX)) continue;
+      if (!storageSession) {
+        throw new Error(`Session ${session.id} not found for appendEvent`);
+      }
 
-        if (key.startsWith(State.APP_PREFIX)) {
-          appDelta[key.replace(State.APP_PREFIX, '')] = value;
-        } else if (key.startsWith(State.USER_PREFIX)) {
-          userDelta[key.replace(State.USER_PREFIX, '')] = value;
-        } else {
-          sessionDelta[key] = value;
+      const [appStateModel] = await StorageAppState.findOrCreate({
+        where: {appName: session.appName},
+        defaults: {appName: session.appName, state: {}},
+        transaction,
+      });
+      const [userStateModel] = await StorageUserState.findOrCreate({
+        where: {appName: session.appName, userId: session.userId},
+        defaults: {appName: session.appName, userId: session.userId, state: {}},
+        transaction,
+      });
+
+      // Stale session check
+      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
+        // Reload state
+        const events = await StorageEvent.findAll({
+          where: {
+            appName: session.appName,
+            userId: session.userId,
+            sessionId: session.id,
+          },
+          order: [['timestamp', 'ASC']],
+          transaction,
+        });
+
+        const mergedState = mergeStates(
+          appStateModel.state,
+          userStateModel.state,
+          storageSession.state,
+        );
+        session.state = mergedState;
+        session.events = events.map((e) => e.eventData);
+      }
+
+      if (event.actions && event.actions.stateDelta) {
+        const appDelta: Record<string, unknown> = {};
+        const userDelta: Record<string, unknown> = {};
+        const sessionDelta: Record<string, unknown> = {};
+
+        for (const [key, value] of Object.entries(event.actions.stateDelta)) {
+          if (key.startsWith(State.APP_PREFIX)) {
+            appDelta[key.replace(State.APP_PREFIX, '')] = value;
+          } else if (key.startsWith(State.USER_PREFIX)) {
+            userDelta[key.replace(State.USER_PREFIX, '')] = value;
+          } else {
+            sessionDelta[key] = value;
+          }
+        }
+
+        if (Object.keys(appDelta).length > 0) {
+          appStateModel.state = {...appStateModel.state, ...appDelta};
+          await appStateModel.save({transaction});
+        }
+        if (Object.keys(userDelta).length > 0) {
+          userStateModel.state = {...userStateModel.state, ...userDelta};
+          await userStateModel.save({transaction});
+        }
+        if (Object.keys(sessionDelta).length > 0) {
+          storageSession.state = {...storageSession.state, ...sessionDelta};
+          // We don't save storageSession here yet, will do it at the end with timestamp update
         }
       }
 
-      if (Object.keys(appDelta).length > 0) {
-        appStateModel.state = {...appStateModel.state, ...appDelta};
-        await appStateModel.save();
-      }
-      if (Object.keys(userDelta).length > 0) {
-        userStateModel.state = {...userStateModel.state, ...userDelta};
-        await userStateModel.save();
-      }
-      if (Object.keys(sessionDelta).length > 0) {
-        storageSession.state = {...storageSession.state, ...sessionDelta};
-        await storageSession.save();
-      }
-    }
+      await StorageEvent.create(
+        {
+          id: trimmedEvent.id,
+          appName: session.appName,
+          userId: session.userId,
+          sessionId: session.id,
+          invocationId: trimmedEvent.invocationId,
+          timestamp: new Date(trimmedEvent.timestamp),
+          eventData: trimmedEvent,
+        },
+        {transaction},
+      );
 
-    await StorageEvent.create({
-      id: event.id,
-      appName: session.appName,
-      userId: session.userId,
-      sessionId: session.id,
-      invocationId: event.invocationId,
-      timestamp: new Date(event.timestamp),
-      eventData: event,
+      // Update session timestamp to match event timestamp
+      storageSession.setDataValue('updateTime', new Date(event.timestamp));
+      await storageSession.save({transaction});
+
+      const newMergedState = mergeStates(
+        appStateModel.state,
+        userStateModel.state,
+        storageSession.state,
+      );
+      session.state = newMergedState;
+      session.events.push(event);
+      session.lastUpdateTime = storageSession.updateTime.getTime();
     });
-
-    // Update session timestamp
-    storageSession.changed('updateTime', true);
-    await storageSession.save();
-
-    const newMergedState = mergeStates(
-      appStateModel.state,
-      userStateModel.state,
-      storageSession.state,
-    );
-    session.state = newMergedState;
-    session.events.push(event);
-    session.lastUpdateTime = storageSession.updateTime
-      ? storageSession.updateTime.getTime()
-      : Date.now();
 
     return event;
   }
