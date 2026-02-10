@@ -17,7 +17,7 @@ describe('FileArtifactService', () => {
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
     service = new FileArtifactService(rootDir);
-    await service.init();
+    await fs.mkdir(rootDir, {recursive: true});
   });
 
   afterEach(async () => {
@@ -148,6 +148,14 @@ describe('FileArtifactService', () => {
         version: 1,
       });
       expect(v1?.text).to.equal('v1');
+
+      const v = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(v?.text).to.equal('v1');
     });
   });
 
