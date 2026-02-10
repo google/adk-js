@@ -54,7 +54,7 @@ export interface ListSessionsRequest {
   /** The name of the application. */
   appName: string;
   /** The ID of the user. */
-  userId: string;
+  userId?: string;
 }
 
 /**
