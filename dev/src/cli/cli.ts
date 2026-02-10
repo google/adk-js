@@ -111,7 +111,7 @@ const LOG_LEVEL_OPTION = new Option(
   'Optional. The log level of the server',
 ).default('info');
 const SESSION_SERVICE_URI_OPTION = new Option(
-  '--session_service_uri <string>, Optional. The URI of the session service. Supported URIs: in-memory:// for in-memory session service.',
+  '--session_service_uri <string>, Optional. The URI of the session service. Supported URIs: memory:// for in-memory session service.',
 );
 const ARTIFACT_SERVICE_URI_OPTION = new Option(
   '--artifact_service_uri <string>, Optional. The URI of the artifact service. Supported URIs: gs://<bucket name> for GCS artifact service.',
@@ -166,7 +166,7 @@ program
       sessionService: getSessionServiceFromUri(
         options['session_service_uri'] ||
           process.env.DATABASE_URL ||
-          'in-memory://',
+          'memory://',
       ),
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
@@ -205,7 +205,7 @@ program
       sessionService: getSessionServiceFromUri(
         options['session_service_uri'] ||
           process.env.DATABASE_URL ||
-          'in-memory://',
+          'memory://',
       ),
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
@@ -291,7 +291,7 @@ program
       sessionService: getSessionServiceFromUri(
         options['session_service_uri'] ||
           process.env.DATABASE_URL ||
-          'in-memory://',
+          'memory://',
       ),
       artifactService: options['artifact_service_uri']
         ? getArtifactServiceFromUri(options['artifact_service_uri'])
