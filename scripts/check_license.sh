@@ -1,13 +1,5 @@
 #!/bin/bash
 
-# The pattern uses \s+ to handle whitespace/newlines 
-# and \d{4} to match any 4-digit year.
-PATTERN="\/\*\*
- \* @license
- \* Copyright \d{4} Google LLC
- \* SPDX-License-Identifier: Apache-2.0
- \*/"
-
 echo "🔍 Checking for license headers..."
 
 MISSING_FILES=""
