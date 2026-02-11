@@ -165,22 +165,26 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action((agentsDir: string, options: Record<string, string>) => {
-      setLogLevel(getLogLevelFromOptions(options));
+    .action(async (agentsDir: string, options: Record<string, string>) => {
+      try {
+        setLogLevel(getLogLevelFromOptions(options));
 
-      const server = new AdkApiServer({
-        agentsDir: getAbsolutePath(agentsDir),
-        host: options['host'],
-        port: parseInt(options['port'], 10),
-        serveDebugUI: true,
-        allowOrigins: options['allow_origins'],
-        sessionService: getSessionServiceFromOptions(options),
-        artifactService: getArtifactServiceFromOptions(options),
-        otelToCloud: options['otel_to_cloud'] ? true : false,
-        agentFileLoadOptions: getAgentFileOptions(options),
-      });
+        const server = new AdkApiServer({
+          agentsDir: getAbsolutePath(agentsDir),
+          host: options['host'],
+          port: parseInt(options['port'], 10),
+          serveDebugUI: true,
+          allowOrigins: options['allow_origins'],
+          sessionService: getSessionServiceFromOptions(options),
+          artifactService: getArtifactServiceFromOptions(options),
+          otelToCloud: options['otel_to_cloud'] ? true : false,
+          agentFileLoadOptions: getAgentFileOptions(options),
+        });
 
-      server.start();
+        await server.start();
+      } catch (e: unknown) {
+        console.error(e);
+      }
     });
 
   program
@@ -198,21 +202,25 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action((agentsDir: string, options: Record<string, string>) => {
-      setLogLevel(getLogLevelFromOptions(options));
+    .action(async (agentsDir: string, options: Record<string, string>) => {
+      try {
+        setLogLevel(getLogLevelFromOptions(options));
 
-      const server = new AdkApiServer({
-        agentsDir: getAbsolutePath(agentsDir),
-        host: options['host'],
-        port: parseInt(options['port'], 10),
-        serveDebugUI: false,
-        allowOrigins: options['allow_origins'],
-        sessionService: getSessionServiceFromOptions(options),
-        artifactService: getArtifactServiceFromOptions(options),
-        otelToCloud: options['otel_to_cloud'] ? true : false,
-        agentFileLoadOptions: getAgentFileOptions(options),
-      });
-      server.start();
+        const server = new AdkApiServer({
+          agentsDir: getAbsolutePath(agentsDir),
+          host: options['host'],
+          port: parseInt(options['port'], 10),
+          serveDebugUI: false,
+          allowOrigins: options['allow_origins'],
+          sessionService: getSessionServiceFromOptions(options),
+          artifactService: getArtifactServiceFromOptions(options),
+          otelToCloud: options['otel_to_cloud'] ? true : false,
+          agentFileLoadOptions: getAgentFileOptions(options),
+        });
+        await server.start();
+      } catch (e: unknown) {
+        console.error(e);
+      }
     });
 
   program
@@ -237,16 +245,20 @@ export function createProgram(): Command {
       '--language <string>',
       'Optional. Either ts or js as the language to output.',
     )
-    .action((agentName: string, options: Record<string, string>) => {
-      createAgent({
-        agentName,
-        forceYes: !!options['yes'],
-        model: options['model'],
-        apiKey: options['api_key'],
-        project: options['project'],
-        region: options['region'],
-        language: options['language'],
-      });
+    .action(async (agentName: string, options: Record<string, string>) => {
+      try {
+        await createAgent({
+          agentName,
+          forceYes: !!options['yes'],
+          model: options['model'],
+          apiKey: options['api_key'],
+          project: options['project'],
+          region: options['region'],
+          language: options['language'],
+        });
+      } catch (e: unknown) {
+        console.error(e);
+      }
     });
 
   program
@@ -278,29 +290,31 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action((agentPath: string, options: Record<string, string>) => {
-      setLogLevel(getLogLevelFromOptions(options));
+    .action(async (agentPath: string, options: Record<string, string>) => {
+      try {
+        setLogLevel(getLogLevelFromOptions(options));
 
-      runAgent({
-        agentPath,
-        inputFile: options['replay'],
-        savedSessionFile: options['resume'],
-        saveSession: getBoolean(options['save_session']),
-        sessionId: options['session_id'],
-        sessionService: getSessionServiceFromOptions(options),
-        artifactService: getArtifactServiceFromOptions(options),
-        otelToCloud: options['otel_to_cloud'] ? true : false,
-        agentFileLoadOptions: getAgentFileOptions(options),
-      });
+        await runAgent({
+          agentPath,
+          inputFile: options['replay'],
+          savedSessionFile: options['resume'],
+          saveSession: getBoolean(options['save_session']),
+          sessionId: options['session_id'],
+          sessionService: getSessionServiceFromOptions(options),
+          artifactService: getArtifactServiceFromOptions(options),
+          otelToCloud: options['otel_to_cloud'] ? true : false,
+          agentFileLoadOptions: getAgentFileOptions(options),
+        });
+      } catch (e: unknown) {
+        console.error(e);
+      }
     });
 
-  const DEPLOY_COMMAND = program
-    .command('deploy')
-    .description('Deploy agent')
-    .allowUnknownOption()
-    .allowExcessArguments();
+  const DEPLOY_COMMAND = program.command('deploy').description('Deploy agent');
 
   DEPLOY_COMMAND.command('cloud_run')
+    .allowUnknownOption()
+    .allowExcessArguments()
     .addArgument(AGENT_DIR_ARGUMENT)
     .addOption(PORT_OPTION)
     .option(
@@ -339,36 +353,40 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action((agentPath: string, options: Record<string, string>) => {
-      const extraGcloudArgs = [];
-      for (const arg of process.argv.slice(5)) {
-        let argName = arg.replace(/^-+/, '');
-        if (argName.includes('=')) {
-          argName = argName.split('=')[0];
-        }
-        if (argName in options) {
-          continue;
+    .action(async (agentPath: string, options: Record<string, string>) => {
+      try {
+        const extraGcloudArgs = [];
+        for (const arg of process.argv.slice(5)) {
+          let argName = arg.replace(/^-+/, '');
+          if (argName.includes('=')) {
+            argName = argName.split('=')[0];
+          }
+          if (argName in options) {
+            continue;
+          }
+
+          extraGcloudArgs.push(arg);
         }
 
-        extraGcloudArgs.push(arg);
+        await deployToCloudRun({
+          agentPath: getAbsolutePath(agentPath),
+          project: options['project'],
+          region: options['region'],
+          serviceName: options['service_name'],
+          tempFolder: options['temp_folder'],
+          port: parseInt(options['port'], 10),
+          withUi: getBoolean(options['with_ui']),
+          logLevel: options['log_level'],
+          adkVersion: options['adk_version'],
+          allowOrigins: options['allow_origins'],
+          sessionServiceUri: options['session_service_uri'],
+          artifactServiceUri: options['artifact_service_uri'],
+          agentFileLoadOptions: getAgentFileOptions(options),
+          extraGcloudArgs,
+        });
+      } catch (e: unknown) {
+        console.error(e);
       }
-
-      deployToCloudRun({
-        agentPath: getAbsolutePath(agentPath),
-        project: options['project'],
-        region: options['region'],
-        serviceName: options['service_name'],
-        tempFolder: options['temp_folder'],
-        port: parseInt(options['port'], 10),
-        withUi: getBoolean(options['with_ui']),
-        logLevel: options['log_level'],
-        adkVersion: options['adk_version'],
-        allowOrigins: options['allow_origins'],
-        sessionServiceUri: options['session_service_uri'],
-        artifactServiceUri: options['artifact_service_uri'],
-        agentFileLoadOptions: getAgentFileOptions(options),
-        extraGcloudArgs,
-      });
     });
 
   return program;

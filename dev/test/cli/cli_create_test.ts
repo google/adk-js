@@ -39,18 +39,10 @@ vi.mock('node:child_process', () => ({
       on: (event: string, cb: () => void) => {
         if (event === 'exit') cb();
       },
-    } as any;
+    };
   }),
   execSync: vi.fn(),
 }));
-
-vi.mock('node:util', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as object),
-    promisify: (fn: any) => fn,
-  };
-});
 
 vi.mock('../../src/utils/file_utils.js', () => ({
   createFolder: vi.fn(),

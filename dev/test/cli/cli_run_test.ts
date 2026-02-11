@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent, BaseSessionService} from '@google/adk';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {runAgent} from '../../src/cli/cli_run.js';
@@ -20,10 +21,8 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   saveToFile: vi.fn(),
 }));
 
-vi.mock('@google/adk', async (importOriginal) => {
-  const actual = await importOriginal();
+vi.mock('@google/adk', () => {
   return {
-    ...(actual as any),
     Runner: vi.fn().mockImplementation(() => ({
       runAsync: vi.fn().mockImplementation(async function* () {
         yield {
@@ -57,9 +56,9 @@ vi.mock('node:readline', () => ({
 }));
 
 describe('cli_run', () => {
-  let mockAgentFile: any;
-  let mockRootAgent: any;
-  let mockRl: any;
+  let mockAgentFile: AgentFile;
+  let mockRootAgent: BaseAgent;
+  let mockRl: readline.Interface;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -67,19 +66,21 @@ describe('cli_run', () => {
 
     mockRootAgent = {
       name: 'test-agent',
-    };
+    } as unknown as BaseAgent;
 
     mockAgentFile = {
       load: vi.fn().mockResolvedValue(mockRootAgent),
       [Symbol.asyncDispose]: vi.fn(),
-    };
+    } as unknown as AgentFile;
 
     (AgentFile as unknown as Mock).mockImplementation(() => mockAgentFile);
 
     mockRl = {
-      question: vi.fn((prompt, cb) => cb('exit')), // Default to exit immediately
+      question: vi.fn((query: string, cb: (answer: string) => void) => {
+        cb('exit');
+      }),
       close: vi.fn(),
-    };
+    } as unknown as readline.Interface;
     (readline.createInterface as Mock).mockReturnValue(mockRl);
   });
 
@@ -99,21 +100,22 @@ describe('cli_run', () => {
     expect(mockRl.question).toHaveBeenCalled();
   });
 
-  const createMockSessionService = () => ({
-    createSession: vi.fn().mockResolvedValue({
-      id: 'session-123',
-      appName: 'test-agent',
-      userId: 'test_user',
-      events: [],
-    }),
-    appendEvent: vi.fn(),
-    getSession: vi.fn().mockResolvedValue({
-      id: 'session-123',
-      appName: 'test-agent',
-      userId: 'test_user',
-      events: [],
-    }),
-  });
+  const createMockSessionService = () =>
+    ({
+      createSession: vi.fn().mockResolvedValue({
+        id: 'session-123',
+        appName: 'test-agent',
+        userId: 'test_user',
+        events: [],
+      }),
+      appendEvent: vi.fn(),
+      getSession: vi.fn().mockResolvedValue({
+        id: 'session-123',
+        appName: 'test-agent',
+        userId: 'test_user',
+        events: [],
+      }),
+    }) as unknown as BaseSessionService;
 
   it('should run from input file', async () => {
     const inputFileContent = {
@@ -126,7 +128,7 @@ describe('cli_run', () => {
     await runAgent({
       agentPath: 'agent.ts',
       inputFile: 'input.json',
-      sessionService: mockSessionService as any,
+      sessionService: mockSessionService,
     });
 
     expect(loadFileData).toHaveBeenCalledWith(
@@ -142,7 +144,7 @@ describe('cli_run', () => {
     await runAgent({
       agentPath: 'agent.ts',
       inputFile: 'input.json',
-      sessionService: mockSessionService as any,
+      sessionService: mockSessionService,
     });
     expect(loadFileData).toHaveBeenCalled();
   });
@@ -163,7 +165,7 @@ describe('cli_run', () => {
     await runAgent({
       agentPath: 'agent.ts',
       savedSessionFile: 'session.json',
-      sessionService: mockSessionService as any,
+      sessionService: mockSessionService,
     });
 
     expect(loadFileData).toHaveBeenCalledWith('session.json');
@@ -177,7 +179,7 @@ describe('cli_run', () => {
       agentPath: 'agent.ts',
       saveSession: true,
       sessionId: 'my-session',
-      sessionService: mockSessionService as any,
+      sessionService: mockSessionService,
     });
 
     expect(saveToFile).toHaveBeenCalledWith(
@@ -187,9 +189,11 @@ describe('cli_run', () => {
   });
 
   it('should prompt for session id if not provided when saving', async () => {
-    mockRl.question
-      .mockImplementationOnce((prompt: string, cb: any) => cb('exit')) // For the runInteractively loop
-      .mockImplementationOnce((prompt: string, cb: any) =>
+    (mockRl.question as Mock)
+      .mockImplementationOnce((prompt: string, cb: (answer: string) => void) =>
+        cb('exit'),
+      ) // For the runInteractively loop
+      .mockImplementationOnce((prompt: string, cb: (answer: string) => void) =>
         cb('prompted-session-id'),
       ); // For saveSession
     const mockSessionService = createMockSessionService();
@@ -197,7 +201,7 @@ describe('cli_run', () => {
     await runAgent({
       agentPath: 'agent.ts',
       saveSession: true,
-      sessionService: mockSessionService as any,
+      sessionService: mockSessionService,
     });
 
     expect(saveToFile).toHaveBeenCalledWith(
