@@ -4,34 +4,57 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CLOSE_HOURS_AFTER_STALE_THRESHOLD, GITHUB_BASE_URL, GRAPHQL_COMMENT_LIMIT, GRAPHQL_EDIT_LIMIT,
-    GRAPHQL_TIMELINE_LIMIT, LLM_MODEL_NAME, OWNER, REPO,
-    REQUEST_CLARIFICATION_LABEL, STALE_HOURS_THRESHOLD, STALE_LABEL_NAME, } from "./settings.js";
-import { deleteRequest, errorResponse, getRequest, patchRequest, postRequest, RequestException } from "./utils.js";
-import fs from "node:fs";
-import path from "node:path";
-import { DateTime } from "luxon";
-import { parseISO } from "date-fns";
-import { LlmAgent, FunctionTool } from "@google/adk";
-import { z } from "zod";
+import {FunctionTool, LlmAgent} from '@google/adk';
+import {parseISO} from 'date-fns';
+import {DateTime} from 'luxon';
+import fs from 'node:fs';
+import path from 'node:path';
+import {z} from 'zod';
+import {
+  CLOSE_HOURS_AFTER_STALE_THRESHOLD,
+  GITHUB_BASE_URL,
+  GRAPHQL_COMMENT_LIMIT,
+  GRAPHQL_EDIT_LIMIT,
+  GRAPHQL_TIMELINE_LIMIT,
+  LLM_MODEL_NAME,
+  OWNER,
+  REPO,
+  REQUEST_CLARIFICATION_LABEL,
+  STALE_HOURS_THRESHOLD,
+  STALE_LABEL_NAME,
+} from './settings.js';
+import {
+  deleteRequest,
+  errorResponse,
+  getRequest,
+  patchRequest,
+  postRequest,
+  RequestException,
+} from './utils.js';
 
-export const BOT_ALERT_SIGNATURE = "**Notification:** The author has updated the issue description";
-export const BOT_NAME = "adk-bot";
+export const BOT_ALERT_SIGNATURE =
+  '**Notification:** The author has updated the issue description';
+export const BOT_NAME = 'adk-bot';
 
 // --- Global Cache ---
 let maintainersCache: string[] | null = null;
 
 export interface HistoryEvent {
-  type: "created" | "commented" | "edited_description" | "renamed_title" | "reopened";
+  type:
+    | 'created'
+    | 'commented'
+    | 'edited_description'
+    | 'renamed_title'
+    | 'reopened';
   actor: string | null;
   time: Date;
   data: string | null;
 }
 
 export interface IssueState {
-  last_action_role: "author" | "maintainer" | "other_user";
+  last_action_role: 'author' | 'maintainer' | 'other_user';
   last_activity_time: Date;
-  last_action_type: HistoryEvent["type"];
+  last_action_type: HistoryEvent['type'];
   last_comment_text: string | null;
   last_actor_name: string | null;
 }
@@ -47,11 +70,11 @@ export interface IssueState {
 export function replayHistoryToFindState(
   history: HistoryEvent[],
   maintainers: string[],
-  issueAuthor: string
+  issueAuthor: string,
 ): IssueState {
-  let last_action_role: IssueState["last_action_role"] = "author";
+  let last_action_role: IssueState['last_action_role'] = 'author';
   let last_activity_time: Date = history[0]?.time ?? new Date(0);
-  let last_action_type: HistoryEvent["type"] = "created";
+  let last_action_type: HistoryEvent['type'] = 'created';
   let last_comment_text: string | null = null;
   let last_actor_name: string | null = issueAuthor;
 
@@ -60,11 +83,11 @@ export function replayHistoryToFindState(
     const etype = event.type;
 
     // Determine role
-    let role: IssueState["last_action_role"] = "other_user";
+    let role: IssueState['last_action_role'] = 'other_user';
     if (actor === issueAuthor) {
-      role = "author";
+      role = 'author';
     } else if (actor && maintainers.includes(actor)) {
-      role = "maintainer";
+      role = 'maintainer';
     }
 
     last_action_role = role;
@@ -73,7 +96,7 @@ export function replayHistoryToFindState(
     last_actor_name = actor;
 
     // Only store text if it's a comment
-    if (etype === "commented") {
+    if (etype === 'commented') {
       last_comment_text = event.data ?? null;
     } else {
       last_comment_text = null;
@@ -90,11 +113,11 @@ export function replayHistoryToFindState(
 }
 
 export interface IssueGraphQLData {
-  author?: { login: string } | null;
+  author?: {login: string} | null;
   createdAt: string;
   comments?: {
     nodes: Array<{
-      author?: { login: string } | null;
+      author?: {login: string} | null;
       body?: string;
       createdAt: string;
       lastEditedAt?: string | null;
@@ -102,22 +125,22 @@ export interface IssueGraphQLData {
   };
   userContentEdits?: {
     nodes: Array<{
-      editor?: { login: string } | null;
+      editor?: {login: string} | null;
       editedAt: string;
     } | null>;
   };
   timelineItems?: {
     nodes: Array<
       | {
-          __typename: "LabeledEvent";
+          __typename: 'LabeledEvent';
           createdAt: string;
-          actor?: { login: string } | null;
-          label?: { name: string } | null;
+          actor?: {login: string} | null;
+          label?: {name: string} | null;
         }
       | {
-          __typename: "RenamedTitleEvent" | "ReopenedEvent";
+          __typename: 'RenamedTitleEvent' | 'ReopenedEvent';
           createdAt: string;
-          actor?: { login: string } | null;
+          actor?: {login: string} | null;
         }
       | null
     >;
@@ -133,7 +156,7 @@ export interface IssueGraphQLData {
  *   - lastBotAlertTime: Date of last bot alert for silent edits, or null
  */
 export function buildHistoryTimeline(
-  data: IssueGraphQLData
+  data: IssueGraphQLData,
 ): [HistoryEvent[], Date[], Date | null] {
   const issueAuthor = data.author?.login ?? null;
   const history: HistoryEvent[] = [];
@@ -142,7 +165,7 @@ export function buildHistoryTimeline(
 
   // 1. Baseline: Issue creation
   history.push({
-    type: "created",
+    type: 'created',
     actor: issueAuthor,
     time: parseISO(data.createdAt),
     data: null,
@@ -153,7 +176,7 @@ export function buildHistoryTimeline(
     if (!c) continue;
 
     const actor = c.author?.login ?? null;
-    const cBody = c.body ?? "";
+    const cBody = c.body ?? '';
     const cTime = parseISO(c.createdAt);
 
     // Track bot alerts for spam prevention
@@ -164,11 +187,11 @@ export function buildHistoryTimeline(
       continue;
     }
 
-    if (actor && !actor.endsWith("[bot]") && actor !== BOT_NAME) {
+    if (actor && !actor.endsWith('[bot]') && actor !== BOT_NAME) {
       const actualTime = c.lastEditedAt ? parseISO(c.lastEditedAt) : cTime;
 
       history.push({
-        type: "commented",
+        type: 'commented',
         actor,
         time: actualTime,
         data: cBody,
@@ -181,9 +204,9 @@ export function buildHistoryTimeline(
     if (!e) continue;
     const actor = e.editor?.login ?? null;
 
-    if (actor && !actor.endsWith("[bot]") && actor !== BOT_NAME) {
+    if (actor && !actor.endsWith('[bot]') && actor !== BOT_NAME) {
       history.push({
-        type: "edited_description",
+        type: 'edited_description',
         actor,
         time: parseISO(e.editedAt),
         data: null,
@@ -199,15 +222,16 @@ export function buildHistoryTimeline(
     const actor = t.actor?.login ?? null;
     const timeVal = parseISO(t.createdAt);
 
-    if (etype === "LabeledEvent") {
+    if (etype === 'LabeledEvent') {
       if (t.label?.name === STALE_LABEL_NAME) {
         labelEvents.push(timeVal);
       }
       continue;
     }
 
-    if (actor && !actor.endsWith("[bot]") && actor !== BOT_NAME) {
-      const prettyType = etype === "RenamedTitleEvent" ? "renamed_title" : "reopened";
+    if (actor && !actor.endsWith('[bot]') && actor !== BOT_NAME) {
+      const prettyType =
+        etype === 'RenamedTitleEvent' ? 'renamed_title' : 'reopened';
 
       history.push({
         type: prettyType,
@@ -225,31 +249,31 @@ export function buildHistoryTimeline(
 }
 
 interface IssueComment {
-  author: { login: string } | null;
+  author: {login: string} | null;
   body: string;
   createdAt: string;
   lastEditedAt: string | null;
 }
 
 interface IssueEdit {
-  editor: { login: string } | null;
+  editor: {login: string} | null;
   editedAt: string;
 }
 
 interface TimelineItem {
-  __typename: "LabeledEvent" | "RenamedTitleEvent" | "ReopenedEvent";
+  __typename: 'LabeledEvent' | 'RenamedTitleEvent' | 'ReopenedEvent';
   createdAt: string;
-  actor: { login: string } | null;
-  label?: { name: string }; 
+  actor: {login: string} | null;
+  label?: {name: string};
 }
 
 interface Issue {
-  author: { login: string } | null;
+  author: {login: string} | null;
   createdAt: string;
-  labels: { nodes: { name: string }[] };
-  comments: { nodes: IssueComment[] };
-  userContentEdits: { nodes: IssueEdit[] };
-  timelineItems: { nodes: TimelineItem[] };
+  labels: {nodes: {name: string}[]};
+  comments: {nodes: IssueComment[]};
+  userContentEdits: {nodes: IssueEdit[]};
+  timelineItems: {nodes: TimelineItem[]};
 }
 
 interface GraphqlResponse {
@@ -258,7 +282,7 @@ interface GraphqlResponse {
       issue?: Issue;
     };
   };
-  errors?: { message: string }[];
+  errors?: {message: string}[];
 }
 
 /**
@@ -326,10 +350,10 @@ async function fetchGraphqlData(item_number: number): Promise<Issue> {
     timelineLimit: GRAPHQL_TIMELINE_LIMIT,
   };
 
-  const response = await postRequest<GraphqlResponse, { query: string; variables: Record<string, unknown> }>(
-    `${GITHUB_BASE_URL}/graphql`,
-    { query, variables }
-  );
+  const response = await postRequest<
+    GraphqlResponse,
+    {query: string; variables: Record<string, unknown>}
+  >(`${GITHUB_BASE_URL}/graphql`, {query, variables});
 
   if (response.errors && response.errors.length > 0) {
     throw new RequestException(`GraphQL Error: ${response.errors[0].message}`);
@@ -360,29 +384,31 @@ export async function getCachedMaintainers(): Promise<string[]> {
     return maintainersCache;
   }
 
-  console.info("Initializing Maintainers Cache...");
+  console.info('Initializing Maintainers Cache...');
 
   try {
     const url = `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/collaborators`;
-    const params = { permission: "push" };
+    const params = {permission: 'push'};
 
     const data = await getRequest<GitHubUser[]>(url, params);
 
-    maintainersCache = data.map(u => u.login);
+    maintainersCache = data.map((u) => u.login);
 
     console.info(`Cached ${maintainersCache.length} maintainers.`);
     return maintainersCache;
   } catch (error: unknown) {
-    console.error(`FATAL: Failed to verify repository maintainers. Error:`, error);
-    throw new Error("Maintainer verification failed. Processing aborted.");
+    console.error(
+      `FATAL: Failed to verify repository maintainers. Error:`,
+      error,
+    );
+    throw new Error('Maintainer verification failed. Processing aborted.');
   }
 }
-
 
 /**
  * Async function to retrieve the comprehensive state of a GitHub issue.
  */
-async function getIssueState({ item_number }: { item_number: number }) {
+async function getIssueState({item_number}: {item_number: number}) {
   try {
     // Maintainers cache
     const maintainers = await getCachedMaintainers();
@@ -390,36 +416,45 @@ async function getIssueState({ item_number }: { item_number: number }) {
     //  Fetch issue data via GraphQL
     const rawData = await fetchGraphqlData(item_number);
 
-    const issueAuthor = rawData.author?.login ?? "unknown";;
-    const labelsList: string[] = rawData.labels?.nodes.map(l => l.name) || [];
+    const issueAuthor = rawData.author?.login ?? 'unknown';
+    const labelsList: string[] = rawData.labels?.nodes.map((l) => l.name) || [];
 
     //  Parse & sort history
-    const [ history, labelEvents, lastBotAlertTime ] = buildHistoryTimeline(rawData);
+    const [history, labelEvents, lastBotAlertTime] =
+      buildHistoryTimeline(rawData);
 
     //  Replay history to determine state
     const state = replayHistoryToFindState(history, maintainers, issueAuthor);
 
     //  Calculate time-based metrics
     const currentTime = DateTime.utc();
-    const daysSinceActivity = currentTime.diff(DateTime.fromJSDate(state.last_activity_time), "days").days;
+    const daysSinceActivity = currentTime.diff(
+      DateTime.fromJSDate(state.last_activity_time),
+      'days',
+    ).days;
 
     // Stale label logic
     const isStale = labelsList.includes(STALE_LABEL_NAME);
     let daysSinceStaleLabel = 0.0;
     if (isStale && labelEvents.length) {
-      const latestLabelTime = new Date(Math.max(...labelEvents.map(d => d.getTime())));
-      daysSinceStaleLabel = currentTime.diff(DateTime.fromJSDate(latestLabelTime), "days").days;
+      const latestLabelTime = new Date(
+        Math.max(...labelEvents.map((d) => d.getTime())),
+      );
+      daysSinceStaleLabel = currentTime.diff(
+        DateTime.fromJSDate(latestLabelTime),
+        'days',
+      ).days;
     }
 
     // Silent edit alert logic
     let maintainerAlertNeeded = false;
     if (
-      ["author", "other_user"].includes(state.last_action_role) &&
-      state.last_action_type === "edited_description"
+      ['author', 'other_user'].includes(state.last_action_role) &&
+      state.last_action_type === 'edited_description'
     ) {
       if (lastBotAlertTime && lastBotAlertTime > state.last_activity_time) {
         console.info(
-          `#${item_number}: Silent edit detected, but Bot already alerted. No spam.`
+          `#${item_number}: Silent edit detected, but Bot already alerted. No spam.`,
         );
       } else {
         maintainerAlertNeeded = true;
@@ -428,12 +463,12 @@ async function getIssueState({ item_number }: { item_number: number }) {
     }
 
     console.debug(
-      `#${item_number} VERDICT: Role=${state.last_action_role}, Idle=${daysSinceActivity.toFixed(2)}d`
+      `#${item_number} VERDICT: Role=${state.last_action_role}, Idle=${daysSinceActivity.toFixed(2)}d`,
     );
 
     //  Return comprehensive state
     return {
-      status: "success",
+      status: 'success',
       last_action_role: state.last_action_role,
       last_action_type: state.last_action_type,
       last_actor_name: state.last_actor_name,
@@ -457,58 +492,64 @@ async function getIssueState({ item_number }: { item_number: number }) {
 
     const message = e instanceof Error ? e.message : String(e);
     return errorResponse(`Analysis Error: ${message}`);
-  } 
+  }
 }
 
 export const get_issue_state = new FunctionTool({
-  name: "get_issue_state",
-  description: "Retrieves the comprehensive state of a GitHub issue, including staleness, activity, and maintainer alerts.",
+  name: 'get_issue_state',
+  description:
+    'Retrieves the comprehensive state of a GitHub issue, including staleness, activity, and maintainer alerts.',
   parameters: z.object({
-    item_number: z.number().describe("The GitHub issue number to analyze."),
+    item_number: z.number().describe('The GitHub issue number to analyze.'),
   }),
   execute: getIssueState,
 });
 
 interface CloseIssuePayload {
-  state: "closed";
+  state: 'closed';
 }
 
 interface SuccessResponse {
-  status: "success";
+  status: 'success';
 }
 /**
  * Async function to close a GitHub issue as stale.
  */
-async function closeAsStale({ item_number }: { item_number: number }): Promise<SuccessResponse | ReturnType<typeof errorResponse>> {
+async function closeAsStale({
+  item_number,
+}: {
+  item_number: number;
+}): Promise<SuccessResponse | ReturnType<typeof errorResponse>> {
   const days_str = formatDays(CLOSE_HOURS_AFTER_STALE_THRESHOLD);
 
   const comment = `This has been automatically closed because it has been marked as stale for over ${days_str} days.`;
 
   try {
     // Post closure comment — typed payload
-    await postRequest<{ id: number }>( 
+    await postRequest<{id: number}>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
-      { body: comment }
+      {body: comment},
     );
 
     // Close the issue — typed payload
-    await patchRequest<{ number: number }, CloseIssuePayload>(
+    await patchRequest<{number: number}, CloseIssuePayload>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}`,
-      { state: "closed" }
+      {state: 'closed'},
     );
 
-    return { status: "success" };
+    return {status: 'success'};
   } catch (error: unknown) {
     return errorResponse(`Error closing issue: ${error}`);
   }
 }
 
-
 export const close_as_stale = new FunctionTool({
-  name: "close_as_stale",
-  description: "Closes a GitHub issue that has been marked as stale.",
+  name: 'close_as_stale',
+  description: 'Closes a GitHub issue that has been marked as stale.',
   parameters: z.object({
-    item_number: z.number().describe("The GitHub issue number to close as stale."),
+    item_number: z
+      .number()
+      .describe('The GitHub issue number to close as stale.'),
   }),
   execute: closeAsStale,
 });
@@ -516,16 +557,16 @@ export const close_as_stale = new FunctionTool({
 /**
  * Async function to alert maintainers of an issue description edit.
  */
-async function alertMaintainerOfEdit({ item_number }: { item_number: number }) {
+async function alertMaintainerOfEdit({item_number}: {item_number: number}) {
   const comment = `${BOT_ALERT_SIGNATURE}. Maintainers, please review.`;
 
   try {
-    await postRequest<{ id: number }, { body: string }>(
+    await postRequest<{id: number}, {body: string}>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
-      { body: comment }
+      {body: comment},
     );
 
-    return { status: "success" };
+    return {status: 'success'};
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     return errorResponse(`Error posting alert: ${message}`);
@@ -533,10 +574,13 @@ async function alertMaintainerOfEdit({ item_number }: { item_number: number }) {
 }
 
 export const alert_maintainer_of_edit = new FunctionTool({
-  name: "alert_maintainer_of_edit",
-  description: "Posts a comment alerting maintainers of a silent description update.",
+  name: 'alert_maintainer_of_edit',
+  description:
+    'Posts a comment alerting maintainers of a silent description update.',
   parameters: z.object({
-    item_number: z.number().describe("The GitHub issue number to alert maintainers about."),
+    item_number: z
+      .number()
+      .describe('The GitHub issue number to alert maintainers about.'),
   }),
   execute: alertMaintainerOfEdit,
 });
@@ -554,7 +598,7 @@ function formatDays(hours: number): string {
   return days % 1 === 0 ? `${days}` : days.toFixed(1);
 }
 
-async function addStaleLabelAndComment({ item_number }: { item_number: number }) {
+async function addStaleLabelAndComment({item_number}: {item_number: number}) {
   const stale_days_str = formatDays(STALE_HOURS_THRESHOLD);
   const close_days_str = formatDays(CLOSE_HOURS_AFTER_STALE_THRESHOLD);
 
@@ -562,18 +606,18 @@ async function addStaleLabelAndComment({ item_number }: { item_number: number })
 
   try {
     // Add comment
-    await postRequest<{ id: number }, { body: string }>( 
+    await postRequest<{id: number}, {body: string}>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
-      { body: comment }
+      {body: comment},
     );
 
     // Add stale label
-    await postRequest<{ name: string }[], string[]>(
+    await postRequest<{name: string}[], string[]>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/labels`,
-      [STALE_LABEL_NAME]
+      [STALE_LABEL_NAME],
     );
 
-    return { status: "success" };
+    return {status: 'success'};
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     return errorResponse(`Error marking issue as stale: ${message}`);
@@ -581,10 +625,12 @@ async function addStaleLabelAndComment({ item_number }: { item_number: number })
 }
 
 const add_stale_label_and_comment = new FunctionTool({
-  name: "add_stale_label_and_comment",
-  description: "Marks a GitHub issue as stale with a comment and label.",
+  name: 'add_stale_label_and_comment',
+  description: 'Marks a GitHub issue as stale with a comment and label.',
   parameters: z.object({
-    item_number: z.number().describe("The GitHub issue number to mark as stale."),
+    item_number: z
+      .number()
+      .describe('The GitHub issue number to mark as stale.'),
   }),
   execute: addStaleLabelAndComment,
 });
@@ -602,7 +648,7 @@ async function addLabelToIssue({
 
   try {
     await postRequest<number[], string[]>(url, [label_name]);
-    return { status: "success" };
+    return {status: 'success'};
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     return errorResponse(`Error adding label: ${message}`);
@@ -610,13 +656,13 @@ async function addLabelToIssue({
 }
 
 const add_label_to_issue = new FunctionTool({
-  name: "add_label_to_issue",
-  description: "Adds a label to a GitHub issue.",
+  name: 'add_label_to_issue',
+  description: 'Adds a label to a GitHub issue.',
   parameters: z.object({
     item_number: z
       .number()
-      .describe("The GitHub issue number to which the label should be added."),
-    label_name: z.string().describe("The name of the label to add."),
+      .describe('The GitHub issue number to which the label should be added.'),
+    label_name: z.string().describe('The name of the label to add.'),
   }),
   execute: addLabelToIssue,
 });
@@ -634,20 +680,22 @@ export async function removeLabelFromIssue({
 
   try {
     await deleteRequest(url);
-    return { status: "success" };
+    return {status: 'success'};
   } catch (error: unknown) {
     return errorResponse(`Error removing label: ${error}`);
   }
 }
 
 export const remove_label_from_issue = new FunctionTool({
-  name: "remove_label_from_issue",
-  description: "Removes a label from a GitHub issue.",
+  name: 'remove_label_from_issue',
+  description: 'Removes a label from a GitHub issue.',
   parameters: z.object({
     item_number: z
       .number()
-      .describe("The GitHub issue number from which the label should be removed."),
-    label_name: z.string().describe("The name of the label to remove."),
+      .describe(
+        'The GitHub issue number from which the label should be removed.',
+      ),
+    label_name: z.string().describe('The name of the label to remove.'),
   }),
   execute: removeLabelFromIssue,
 });
@@ -660,24 +708,24 @@ export const remove_label_from_issue = new FunctionTool({
  */
 function loadPromptTemplate(filename: string): string {
   const filePath = path.join(__dirname, filename);
-  return fs.readFileSync(filePath, "utf-8");
+  return fs.readFileSync(filePath, 'utf-8');
 }
 
 function formatPrompt(
   template: string,
-  vars: Record<string, string | number>
+  vars: Record<string, string | number>,
 ): string {
   return template.replace(/\{(\w+)\}/g, (_, key) =>
-    String(vars[key] ?? `{${key}}`)
+    String(vars[key] ?? `{${key}}`),
   );
 }
 
-const PROMPT_TEMPLATE = loadPromptTemplate("PROMPT_INSTRUCTION.txt");
+const PROMPT_TEMPLATE = loadPromptTemplate('PROMPT_INSTRUCTION.txt');
 
 export const rootAgent = new LlmAgent({
   model: LLM_MODEL_NAME,
-  name: "adk_repository_auditor_agent",
-  description: "Audits open issues.",
+  name: 'adk_repository_auditor_agent',
+  description: 'Audits open issues.',
   instruction: formatPrompt(PROMPT_TEMPLATE, {
     OWNER,
     REPO,

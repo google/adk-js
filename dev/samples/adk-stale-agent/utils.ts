@@ -4,15 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { STALE_HOURS_THRESHOLD } from "./settings.js";
-import axios, { AxiosInstance, AxiosError } from "axios";
-import axiosRetry from "axios-retry";
-import { GITHUB_TOKEN } from "./settings.js";
+import axios, {AxiosError, AxiosInstance} from 'axios';
+import axiosRetry from 'axios-retry';
+import {GITHUB_TOKEN, STALE_HOURS_THRESHOLD} from './settings.js';
 
 export class RequestException extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "RequestException";
+    this.name = 'RequestException';
   }
 }
 
@@ -40,7 +39,7 @@ const httpClient: AxiosInstance = axios.create({
   timeout: 60_000, // 60 seconds
   headers: {
     Authorization: `token ${GITHUB_TOKEN}`,
-    Accept: "application/vnd.github.v3+json",
+    Accept: 'application/vnd.github.v3+json',
   },
 });
 
@@ -50,23 +49,20 @@ const httpClient: AxiosInstance = axios.create({
 
 axiosRetry(httpClient, {
   retries: 6,
-  retryDelay: axiosRetry.exponentialDelay, 
+  retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error: AxiosError) => {
     const status = error.response?.status;
-    return (
-      status !== undefined &&
-      [429, 500, 502, 503, 504].includes(status)
-    );
+    return status !== undefined && [429, 500, 502, 503, 504].includes(status);
   },
 });
 
 export async function getRequest<T>(
   url: string,
-  params?: Record<string, unknown>
+  params?: Record<string, unknown>,
 ): Promise<T> {
   incrementApiCallCount();
   try {
-    const response = await httpClient.get<T>(url, { params });
+    const response = await httpClient.get<T>(url, {params});
     return response.data;
   } catch (error: unknown) {
     console.error(`GET request failed for ${url}:`, error);
@@ -76,7 +72,7 @@ export async function getRequest<T>(
 
 export async function postRequest<T, P = Record<string, unknown>>(
   url: string,
-  payload: P
+  payload: P,
 ): Promise<T> {
   incrementApiCallCount();
   try {
@@ -90,7 +86,7 @@ export async function postRequest<T, P = Record<string, unknown>>(
 
 export async function patchRequest<T, P = Record<string, unknown>>(
   url: string,
-  payload: P
+  payload: P,
 ): Promise<T> {
   incrementApiCallCount();
   try {
@@ -103,16 +99,16 @@ export async function patchRequest<T, P = Record<string, unknown>>(
 }
 
 export async function deleteRequest<T = unknown>(
-  url: string
-): Promise<T | { status: string; message: string }> {
+  url: string,
+): Promise<T | {status: string; message: string}> {
   incrementApiCallCount();
   try {
     const response = await httpClient.delete<T>(url);
 
     if (response.status === 204) {
       return {
-        status: "success",
-        message: "Deletion successful.",
+        status: 'success',
+        message: 'Deletion successful.',
       };
     }
 
@@ -128,7 +124,7 @@ export function errorResponse(errorMessage: string): {
   message: string;
 } {
   return {
-    status: "error",
+    status: 'error',
     message: errorMessage,
   };
 }
@@ -159,7 +155,7 @@ interface GitHubSearchIssuesResponse {
 export async function getOldOpenIssueNumbers(
   owner: string,
   repo: string,
-  daysOld?: number
+  daysOld?: number,
 ): Promise<number[]> {
   if (daysOld == null) {
     daysOld = STALE_HOURS_THRESHOLD / 24;
@@ -169,15 +165,17 @@ export async function getOldOpenIssueNumbers(
   const cutoffMs = daysOld * 24 * 60 * 60 * 1000;
   const cutoffDate = new Date(nowUtc.getTime() - cutoffMs);
 
-  const cutoffStr = cutoffDate.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const cutoffStr = cutoffDate.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
   const query = `repo:${owner}/${repo} is:issue state:open created:<${cutoffStr}`;
 
-  console.log(`Searching for issues in '${owner}/${repo}' created before ${cutoffStr}...`);
+  console.log(
+    `Searching for issues in '${owner}/${repo}' created before ${cutoffStr}...`,
+  );
 
   const issueNumbers: number[] = [];
   let page = 1;
-  const url = "https://api.github.com/search/issues";
+  const url = 'https://api.github.com/search/issues';
 
   while (true) {
     try {
@@ -195,7 +193,7 @@ export async function getOldOpenIssueNumbers(
 
       for (const item of items) {
         // Exclude pull requests
-        if (!("pull_request" in item)) {
+        if (!('pull_request' in item)) {
           issueNumbers.push(item.number);
         }
       }
