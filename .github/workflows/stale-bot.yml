@@ -2,7 +2,6 @@ name: ADK Stale Issue Auditor (JS)
 
 on:
   workflow_dispatch:
-
   schedule:
     - cron: '*/5 * * * *'
 
@@ -23,20 +22,23 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' 
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
         run: |
           npm install
-          npm install axios
-          npm install axios-retry
-          npm install -D ts-node typescript @types/node
-          npm install luxon
-          npm install --save-dev @types/luxon
-          npm install date-fns
-          npm install @google/adk
-          npm install -D @google/adk-devtools
+          npm install axios axios-retry luxon date-fns
+          npm install --save-dev ts-node typescript @types/node @types/luxon
+          npm install @google/adk @google/adk-devtools
+
+      - name: Build @google/adk (required)
+        run: |
+          # If @google/adk is local or needs building
+          cd node_modules/@google/adk || true
+          npm install || true
+          npm run build || true
+          cd ../../../
 
       - name: Run Auditor Agent Script
         env:
@@ -55,6 +57,5 @@ jobs:
           GRAPHQL_EDIT_LIMIT: ${{ secrets.GRAPHQL_EDIT_LIMIT }}
           GRAPHQL_TIMELINE_LIMIT: ${{ secrets.GRAPHQL_TIMELINE_LIMIT }}
           SLEEP_BETWEEN_CHUNKS: ${{ secrets.SLEEP_BETWEEN_CHUNKS }}
-    
 
         run: npx tsx dev/samples/adk-stale-agent/main.ts
