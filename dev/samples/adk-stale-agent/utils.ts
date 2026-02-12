@@ -1,16 +1,8 @@
-// Copyright 2026 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 import { STALE_HOURS_THRESHOLD } from "./settings.js";
 import axios, { AxiosInstance, AxiosError } from "axios";
@@ -44,8 +36,6 @@ export function incrementApiCallCount(): void {
   _apiCallCount += 1;
 }
 
-const logger = console;
-
 const httpClient: AxiosInstance = axios.create({
   timeout: 60_000, // 60 seconds
   headers: {
@@ -70,54 +60,54 @@ axiosRetry(httpClient, {
   },
 });
 
-export async function getRequest<T = any>(
+export async function getRequest<T>(
   url: string,
-  params?: Record<string, any>
+  params?: Record<string, unknown>
 ): Promise<T> {
   incrementApiCallCount();
   try {
     const response = await httpClient.get<T>(url, { params });
     return response.data;
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`GET request failed for ${url}:`, error);
     throw error;
   }
 }
 
-export async function postRequest<T = any>(
+export async function postRequest<T, P = Record<string, unknown>>(
   url: string,
-  payload: any
+  payload: P
 ): Promise<T> {
   incrementApiCallCount();
   try {
     const response = await httpClient.post<T>(url, payload);
     return response.data;
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`POST request failed for ${url}:`, error);
     throw error;
   }
 }
 
-export async function patchRequest<T = any>(
+export async function patchRequest<T, P = Record<string, unknown>>(
   url: string,
-  payload: any
+  payload: P
 ): Promise<T> {
   incrementApiCallCount();
   try {
     const response = await httpClient.patch<T>(url, payload);
     return response.data;
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`PATCH request failed for ${url}:`, error);
     throw error;
   }
 }
 
-export async function deleteRequest<T = any>(
+export async function deleteRequest<T = unknown>(
   url: string
 ): Promise<T | { status: string; message: string }> {
   incrementApiCallCount();
   try {
-    const response = await httpClient.delete(url);
+    const response = await httpClient.delete<T>(url);
 
     if (response.status === 204) {
       return {
@@ -126,8 +116,8 @@ export async function deleteRequest<T = any>(
       };
     }
 
-    return response.data as T;
-  } catch (error) {
+    return response.data;
+  } catch (error: unknown) {
     console.error(`DELETE request failed for ${url}:`, error);
     throw error;
   }
@@ -141,6 +131,17 @@ export function errorResponse(errorMessage: string): {
     status: "error",
     message: errorMessage,
   };
+}
+
+// --- GitHub search issues response ---
+interface GitHubIssueItem {
+  number: number;
+  pull_request?: unknown; // present if it's a PR
+}
+
+interface GitHubSearchIssuesResponse {
+  total_count: number;
+  items: GitHubIssueItem[];
 }
 
 /**
@@ -172,9 +173,7 @@ export async function getOldOpenIssueNumbers(
 
   const query = `repo:${owner}/${repo} is:issue state:open created:<${cutoffStr}`;
 
-  console.log(
-    `Searching for issues in '${owner}/${repo}' created before ${cutoffStr}...`
-  );
+  console.log(`Searching for issues in '${owner}/${repo}' created before ${cutoffStr}...`);
 
   const issueNumbers: number[] = [];
   let page = 1;
@@ -188,27 +187,24 @@ export async function getOldOpenIssueNumbers(
         page,
       };
 
-      const data = await getRequest(url, params );
+      const data = await getRequest<GitHubSearchIssuesResponse>(url, params);
+
       const items = data.items ?? [];
 
-      if (items.length === 0) {
-        break;
-      }
+      if (items.length === 0) break;
 
       for (const item of items) {
-        // Exclude pull requests (GitHub search returns PRs as issues)
+        // Exclude pull requests
         if (!("pull_request" in item)) {
           issueNumbers.push(item.number);
         }
       }
 
-      if (items.length < 100) {
-        break;
-      }
+      if (items.length < 100) break;
 
       page += 1;
-    } catch (error) {
-      console.error(`GitHub search failed on page ${page}: ${error}`);
+    } catch (error: unknown) {
+      console.error(`GitHub search failed on page ${page}:`, error);
       break;
     }
   }

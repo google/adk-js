@@ -1,16 +1,8 @@
-// Copyright 2026 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 import { CLOSE_HOURS_AFTER_STALE_THRESHOLD, GITHUB_BASE_URL, GRAPHQL_COMMENT_LIMIT, GRAPHQL_EDIT_LIMIT,
     GRAPHQL_TIMELINE_LIMIT, LLM_MODEL_NAME, OWNER, REPO,
@@ -97,6 +89,40 @@ export function replayHistoryToFindState(
   };
 }
 
+export interface IssueGraphQLData {
+  author?: { login: string } | null;
+  createdAt: string;
+  comments?: {
+    nodes: Array<{
+      author?: { login: string } | null;
+      body?: string;
+      createdAt: string;
+      lastEditedAt?: string | null;
+    } | null>;
+  };
+  userContentEdits?: {
+    nodes: Array<{
+      editor?: { login: string } | null;
+      editedAt: string;
+    } | null>;
+  };
+  timelineItems?: {
+    nodes: Array<
+      | {
+          __typename: "LabeledEvent";
+          createdAt: string;
+          actor?: { login: string } | null;
+          label?: { name: string } | null;
+        }
+      | {
+          __typename: "RenamedTitleEvent" | "ReopenedEvent";
+          createdAt: string;
+          actor?: { login: string } | null;
+        }
+      | null
+    >;
+  };
+}
 /**
  * Parses raw GraphQL issue data into a normalized, chronological history.
  *
@@ -107,9 +133,9 @@ export function replayHistoryToFindState(
  *   - lastBotAlertTime: Date of last bot alert for silent edits, or null
  */
 export function buildHistoryTimeline(
-  data: any
+  data: IssueGraphQLData
 ): [HistoryEvent[], Date[], Date | null] {
-  const issueAuthor = data?.author?.login ?? null;
+  const issueAuthor = data.author?.login ?? null;
   const history: HistoryEvent[] = [];
   const labelEvents: Date[] = [];
   let lastBotAlertTime: Date | null = null;
@@ -123,12 +149,12 @@ export function buildHistoryTimeline(
   });
 
   // 2. Process comments
-  for (const c of data?.comments?.nodes ?? []) {
+  for (const c of data.comments?.nodes ?? []) {
     if (!c) continue;
 
-    const actor = c?.author?.login ?? null;
-    const cBody = c?.body ?? "";
-    const cTime = parseISO(c?.createdAt);
+    const actor = c.author?.login ?? null;
+    const cBody = c.body ?? "";
+    const cTime = parseISO(c.createdAt);
 
     // Track bot alerts for spam prevention
     if (cBody.includes(BOT_ALERT_SIGNATURE)) {
@@ -139,8 +165,7 @@ export function buildHistoryTimeline(
     }
 
     if (actor && !actor.endsWith("[bot]") && actor !== BOT_NAME) {
-      const eTimeStr = c?.lastEditedAt;
-      const actualTime = eTimeStr ? parseISO(eTimeStr) : cTime;
+      const actualTime = c.lastEditedAt ? parseISO(c.lastEditedAt) : cTime;
 
       history.push({
         type: "commented",
@@ -152,30 +177,30 @@ export function buildHistoryTimeline(
   }
 
   // 3. Process userContentEdits ("Ghost Edits")
-  for (const e of data?.userContentEdits?.nodes ?? []) {
+  for (const e of data.userContentEdits?.nodes ?? []) {
     if (!e) continue;
-    const actor = e?.editor?.login ?? null;
+    const actor = e.editor?.login ?? null;
 
     if (actor && !actor.endsWith("[bot]") && actor !== BOT_NAME) {
       history.push({
         type: "edited_description",
         actor,
-        time: parseISO(e?.editedAt),
+        time: parseISO(e.editedAt),
         data: null,
       });
     }
   }
 
   // 4. Process timeline items
-  for (const t of data?.timelineItems?.nodes ?? []) {
+  for (const t of data.timelineItems?.nodes ?? []) {
     if (!t) continue;
 
-    const etype = t?.__typename;
-    const actor = t?.actor?.login ?? null;
-    const timeVal = parseISO(t?.createdAt);
+    const etype = t.__typename;
+    const actor = t.actor?.login ?? null;
+    const timeVal = parseISO(t.createdAt);
 
     if (etype === "LabeledEvent") {
-      if (t?.label?.name === STALE_LABEL_NAME) {
+      if (t.label?.name === STALE_LABEL_NAME) {
         labelEvents.push(timeVal);
       }
       continue;
@@ -199,6 +224,43 @@ export function buildHistoryTimeline(
   return [history, labelEvents, lastBotAlertTime];
 }
 
+interface IssueComment {
+  author: { login: string } | null;
+  body: string;
+  createdAt: string;
+  lastEditedAt: string | null;
+}
+
+interface IssueEdit {
+  editor: { login: string } | null;
+  editedAt: string;
+}
+
+interface TimelineItem {
+  __typename: "LabeledEvent" | "RenamedTitleEvent" | "ReopenedEvent";
+  createdAt: string;
+  actor: { login: string } | null;
+  label?: { name: string }; 
+}
+
+interface Issue {
+  author: { login: string } | null;
+  createdAt: string;
+  labels: { nodes: { name: string }[] };
+  comments: { nodes: IssueComment[] };
+  userContentEdits: { nodes: IssueEdit[] };
+  timelineItems: { nodes: TimelineItem[] };
+}
+
+interface GraphqlResponse {
+  data?: {
+    repository?: {
+      issue?: Issue;
+    };
+  };
+  errors?: { message: string }[];
+}
+
 /**
  * Fetches raw GitHub issue data using GraphQL, including comments, edits, and timeline events.
  * Throws RequestException if the issue is not found or GraphQL errors occur.
@@ -207,7 +269,7 @@ export function buildHistoryTimeline(
  * @returns The raw 'issue' object from the GraphQL response
  * @throws RequestException
  */
-async function fetchGraphqlData(item_number: number): Promise<any> {
+async function fetchGraphqlData(item_number: number): Promise<Issue> {
   const query = `
     query($owner: String!, $name: String!, $number: Int!, $commentLimit: Int!, $timelineLimit: Int!, $editLimit: Int!) {
       repository(owner: $owner, name: $name) {
@@ -264,22 +326,25 @@ async function fetchGraphqlData(item_number: number): Promise<any> {
     timelineLimit: GRAPHQL_TIMELINE_LIMIT,
   };
 
-  const response = await postRequest(`${GITHUB_BASE_URL}/graphql`, {
-    query,
-    variables,
-  });
+  const response = await postRequest<GraphqlResponse, { query: string; variables: Record<string, unknown> }>(
+    `${GITHUB_BASE_URL}/graphql`,
+    { query, variables }
+  );
 
-  // Check for GraphQL errors
-  if ("errors" in response) {
+  if (response.errors && response.errors.length > 0) {
     throw new RequestException(`GraphQL Error: ${response.errors[0].message}`);
   }
 
-  const data = response?.data?.repository?.issue;
-  if (!data) {
+  const issue = response?.data?.repository?.issue;
+  if (!issue) {
     throw new RequestException(`Issue #${item_number} not found.`);
   }
 
-  return data;
+  return issue;
+}
+
+interface GitHubUser {
+  login: string;
 }
 
 /**
@@ -290,7 +355,7 @@ async function fetchGraphqlData(item_number: number): Promise<any> {
  *
  * @returns {Promise<string[]>} List of GitHub usernames
  */
-async function getCachedMaintainers(): Promise<string[]> {
+export async function getCachedMaintainers(): Promise<string[]> {
   if (maintainersCache) {
     return maintainersCache;
   }
@@ -301,24 +366,18 @@ async function getCachedMaintainers(): Promise<string[]> {
     const url = `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/collaborators`;
     const params = { permission: "push" };
 
-    const data = await getRequest(url, params);
+    const data = await getRequest<GitHubUser[]>(url, params);
 
-    if (Array.isArray(data)) {
-      maintainersCache = data
-        .filter((u: any) => "login" in u)
-        .map((u: any) => u.login);
+    maintainersCache = data.map(u => u.login);
 
-      console.info(`Cached ${maintainersCache.length} maintainers.`);
-      return maintainersCache;
-    } else {
-      console.error(`Invalid API response format: Expected array, got ${typeof data}`);
-      throw new Error(`GitHub API returned non-array data: ${JSON.stringify(data)}`);
-    }
-  } catch (e: any) {
-    console.error(`FATAL: Failed to verify repository maintainers. Error: ${e}`);
+    console.info(`Cached ${maintainersCache.length} maintainers.`);
+    return maintainersCache;
+  } catch (error: unknown) {
+    console.error(`FATAL: Failed to verify repository maintainers. Error:`, error);
     throw new Error("Maintainer verification failed. Processing aborted.");
   }
 }
+
 
 /**
  * Async function to retrieve the comprehensive state of a GitHub issue.
@@ -331,8 +390,8 @@ async function getIssueState({ item_number }: { item_number: number }) {
     //  Fetch issue data via GraphQL
     const rawData = await fetchGraphqlData(item_number);
 
-    const issueAuthor = rawData.author?.login;
-    const labelsList: string[] = rawData.labels?.nodes?.map((l: any) => l.name) || [];
+    const issueAuthor = rawData.author?.login ?? "unknown";;
+    const labelsList: string[] = rawData.labels?.nodes.map(l => l.name) || [];
 
     //  Parse & sort history
     const [ history, labelEvents, lastBotAlertTime ] = buildHistoryTimeline(rawData);
@@ -389,13 +448,16 @@ async function getIssueState({ item_number }: { item_number: number }) {
       maintainers,
       issue_author: issueAuthor,
     };
-  } catch (e: any) {
-    if (e.name === "RequestException") {
-      return errorResponse(`Network Error: ${e}`);
+  } catch (e: unknown) {
+    if (e instanceof RequestException) {
+      return errorResponse(`Network Error: ${e.message}`);
     }
+
     console.error(`Unexpected error analyzing #${item_number}:`, e);
-    return errorResponse(`Analysis Error: ${e}`);
-  }
+
+    const message = e instanceof Error ? e.message : String(e);
+    return errorResponse(`Analysis Error: ${message}`);
+  } 
 }
 
 export const get_issue_state = new FunctionTool({
@@ -407,32 +469,40 @@ export const get_issue_state = new FunctionTool({
   execute: getIssueState,
 });
 
+interface CloseIssuePayload {
+  state: "closed";
+}
+
+interface SuccessResponse {
+  status: "success";
+}
 /**
  * Async function to close a GitHub issue as stale.
  */
-async function closeAsStale({ item_number }: { item_number: number }) {
+async function closeAsStale({ item_number }: { item_number: number }): Promise<SuccessResponse | ReturnType<typeof errorResponse>> {
   const days_str = formatDays(CLOSE_HOURS_AFTER_STALE_THRESHOLD);
 
   const comment = `This has been automatically closed because it has been marked as stale for over ${days_str} days.`;
 
   try {
-    // Post closure comment
-    await postRequest(
+    // Post closure comment — typed payload
+    await postRequest<{ id: number }>( 
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
       { body: comment }
     );
 
-    // Close the issue
-    await patchRequest(
+    // Close the issue — typed payload
+    await patchRequest<{ number: number }, CloseIssuePayload>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}`,
       { state: "closed" }
     );
 
     return { status: "success" };
-  } catch (e: any) {
-    return errorResponse(`Error closing issue: ${e}`);
+  } catch (error: unknown) {
+    return errorResponse(`Error closing issue: ${error}`);
   }
 }
+
 
 export const close_as_stale = new FunctionTool({
   name: "close_as_stale",
@@ -450,13 +520,15 @@ async function alertMaintainerOfEdit({ item_number }: { item_number: number }) {
   const comment = `${BOT_ALERT_SIGNATURE}. Maintainers, please review.`;
 
   try {
-    await postRequest(
+    await postRequest<{ id: number }, { body: string }>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
       { body: comment }
     );
+
     return { status: "success" };
-  } catch (e: any) {
-    return errorResponse(`Error posting alert: ${e}`);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return errorResponse(`Error posting alert: ${message}`);
   }
 }
 
@@ -490,20 +562,21 @@ async function addStaleLabelAndComment({ item_number }: { item_number: number })
 
   try {
     // Add comment
-    await postRequest(
+    await postRequest<{ id: number }, { body: string }>( 
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/comments`,
       { body: comment }
     );
 
     // Add stale label
-    await postRequest(
+    await postRequest<{ name: string }[], string[]>(
       `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/labels`,
       [STALE_LABEL_NAME]
     );
 
     return { status: "success" };
-  } catch (e: any) {
-    return errorResponse(`Error marking issue as stale: ${e}`);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return errorResponse(`Error marking issue as stale: ${message}`);
   }
 }
 
@@ -528,10 +601,11 @@ async function addLabelToIssue({
   const url = `${GITHUB_BASE_URL}/repos/${OWNER}/${REPO}/issues/${item_number}/labels`;
 
   try {
-    await postRequest(url, [label_name]);
+    await postRequest<number[], string[]>(url, [label_name]);
     return { status: "success" };
-  } catch (e: any) {
-    return errorResponse(`Error adding label: ${e}`);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return errorResponse(`Error adding label: ${message}`);
   }
 }
 
@@ -561,8 +635,8 @@ export async function removeLabelFromIssue({
   try {
     await deleteRequest(url);
     return { status: "success" };
-  } catch (e: any) {
-    return errorResponse(`Error removing label: ${e}`);
+  } catch (error: unknown) {
+    return errorResponse(`Error removing label: ${error}`);
   }
 }
 
