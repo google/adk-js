@@ -31,6 +31,20 @@ export class ReadonlyContext {
   }
 
   /**
+   * The user ID of the current session.
+   */
+  get userId(): string {
+    return this.invocationContext.userId;
+  }
+
+  /**
+   * The ID of the current session.
+   */
+  get sessionId(): string {
+    return this.invocationContext.session.id;
+  }
+
+  /**
    * The current agent name.
    */
   get agentName(): string {
