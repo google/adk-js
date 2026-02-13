@@ -20,14 +20,17 @@ class TestGemini extends Gemini {
 }
 
 describe('GoogleLlm', () => {
-  afterEach(() => {
+  const clearEnv = () => {
     delete process.env['GOOGLE_CLOUD_PROJECT'];
     delete process.env['GOOGLE_CLOUD_LOCATION'];
     delete process.env['GOOGLE_GENAI_API_KEY'];
     delete process.env['GEMINI_API_KEY'];
     delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
     delete process.env['GOOGLE_CLOUD_AGENT_ENGINE_ID'];
-  });
+  };
+
+  beforeEach(clearEnv);
+  afterEach(clearEnv);
 
   it('should throw error if apiKey is missing in constructor', () => {
     expect(() => new TestGemini({model: 'gemini-1.5-flash'})).toThrow(

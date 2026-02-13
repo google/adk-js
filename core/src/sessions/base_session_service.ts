@@ -114,6 +114,27 @@ export abstract class BaseSessionService {
   abstract getSession(request: GetSessionRequest): Promise<Session | undefined>;
 
   /**
+   * Gets a session or creates one if it doesn't exist.
+   *
+   * @param request The request to get or create a session.
+   * @return A promise that resolves to the session instance.
+   */
+  async getOrCreateSession(request: CreateSessionRequest): Promise<Session> {
+    if (!request.sessionId) {
+      return this.createSession(request);
+    }
+    const session = await this.getSession({
+      appName: request.appName,
+      userId: request.userId,
+      sessionId: request.sessionId,
+    });
+    if (session) {
+      return session;
+    }
+    return this.createSession(request);
+  }
+
+  /**
    * Lists sessions for a user.
    *
    * @param request The request to list sessions.
