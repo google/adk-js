@@ -145,7 +145,15 @@ describe('LlmAgent.callLlm', () => {
   async function callLlmUnderTest(): Promise<LlmResponse[]> {
     const responses: LlmResponse[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for await (const response of (agent as any).callLlmAsync(
+    const responseGenerator = (agent as any).callLlmAsync(
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for await (const response of (agent as any).runAndHandleError(
+      responseGenerator,
       invocationContext,
       llmRequest,
       modelResponseEvent,

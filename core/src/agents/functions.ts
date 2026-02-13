@@ -206,6 +206,7 @@ export function generateRequestConfirmationEvent({
       parts: parts,
       role: functionResponseEvent.content!.role,
     },
+    actions: functionResponseEvent.actions,
     longRunningToolIds: Array.from(longRunningToolIds),
   });
 }
