@@ -1,16 +1,29 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import {FunctionCall, FunctionResponse} from '@google/genai';
 
 /**
+ * The types of events that can be emitted by the agent.
+ */
+export enum AgentEventType {
+  THOUGHT = 'thought',
+  CONTENT = 'content',
+  TOOL_CALL = 'tool_call',
+  TOOL_RESULT = 'tool_result',
+  ERROR = 'error',
+  ACTIVITY = 'activity',
+  FINISHED = 'finished',
+}
+
+/**
  * Represents a reasoning trace (thought) from the agent.
  */
 export interface AgentThoughtEvent {
-  type: 'thought';
+  type: AgentEventType.THOUGHT;
   content: string;
 }
 
@@ -18,7 +31,7 @@ export interface AgentThoughtEvent {
  * Represents partial content (text delta) intended for the user.
  */
 export interface AgentContentEvent {
-  type: 'content';
+  type: AgentEventType.CONTENT;
   content: string;
 }
 
@@ -26,7 +39,7 @@ export interface AgentContentEvent {
  * Represents a request to execute a tool.
  */
 export interface AgentToolCallEvent {
-  type: 'tool_call';
+  type: AgentEventType.TOOL_CALL;
   call: FunctionCall;
 }
 
@@ -34,7 +47,7 @@ export interface AgentToolCallEvent {
  * Represents the result of a tool execution.
  */
 export interface AgentToolResultEvent {
-  type: 'tool_result';
+  type: AgentEventType.TOOL_RESULT;
   result: FunctionResponse;
 }
 
@@ -42,7 +55,7 @@ export interface AgentToolResultEvent {
  * Represents a runtime error.
  */
 export interface AgentErrorEvent {
-  type: 'error';
+  type: AgentEventType.ERROR;
   error: Error;
 }
 
@@ -50,7 +63,7 @@ export interface AgentErrorEvent {
  * Represents a generic activity or status update.
  */
 export interface AgentActivityEvent {
-  type: 'activity';
+  type: AgentEventType.ACTIVITY;
   kind: string;
   detail: Record<string, unknown>;
 }
@@ -59,7 +72,7 @@ export interface AgentActivityEvent {
  * Represents the final completion of the agent's task.
  */
 export interface AgentFinishedEvent {
-  type: 'finished';
+  type: AgentEventType.FINISHED;
   output: unknown;
 }
 
