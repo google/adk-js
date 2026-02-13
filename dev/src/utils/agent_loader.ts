@@ -158,7 +158,7 @@ export class AgentFile {
       }
     }
 
-    this.dispose();
+    await this.dispose();
     throw new AgentFileLoadingError(
       `Failed to load agent ${
         filePath

@@ -93,6 +93,12 @@ export interface RunConfig {
    *   - Less than or equal to 0: This allows for unbounded number of llm calls.
    */
   maxLlmCalls?: number;
+
+  /**
+   * If true, the agent loop will suspend on ANY tool call, allowing the client
+   * to intercept and execute tools (Client-Side Tool Execution).
+   */
+  pauseOnToolCalls?: boolean;
 }
 
 export function createRunConfig(params: Partial<RunConfig> = {}) {
@@ -102,6 +108,7 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     enableAffectiveDialog: false,
     streamingMode: StreamingMode.NONE,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
+    pauseOnToolCalls: false,
     ...params,
   };
 }
