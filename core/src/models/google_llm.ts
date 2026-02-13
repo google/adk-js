@@ -11,9 +11,11 @@ import {
   FinishReason,
   GenerateContentResponse,
   GoogleGenAI,
+  HttpOptions,
   Part,
 } from '@google/genai';
 
+import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
@@ -60,7 +62,7 @@ export interface GeminiParams {
  */
 export class Gemini extends BaseLlm {
   private readonly apiKey?: string;
-  private readonly vertexai: boolean;
+  protected readonly vertexai: boolean;
   private readonly project?: string;
   private readonly location?: string;
   private readonly headers?: Record<string, string>;
@@ -82,50 +84,23 @@ export class Gemini extends BaseLlm {
 
     super({model});
 
-    this.project = project;
-    this.location = location;
-    this.apiKey = apiKey;
+    const params = geminiInitParams({
+      model,
+      vertexai,
+      project,
+      location,
+      apiKey,
+    });
+    if (!params.vertexai && !params.apiKey) {
+      throw new Error(
+        'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
+      );
+    }
+    this.project = params.project;
+    this.location = params.location;
+    this.apiKey = params.apiKey;
     this.headers = headers;
-
-    const canReadEnv = typeof process === 'object';
-
-    this.vertexai = !!vertexai;
-    if (!this.vertexai && canReadEnv) {
-      const vertexAIfromEnv = process.env['GOOGLE_GENAI_USE_VERTEXAI'];
-      if (vertexAIfromEnv) {
-        this.vertexai =
-          vertexAIfromEnv.toLowerCase() === 'true' || vertexAIfromEnv === '1';
-      }
-    }
-
-    if (this.vertexai) {
-      if (canReadEnv && !this.project) {
-        this.project = process.env['GOOGLE_CLOUD_PROJECT'];
-      }
-      if (canReadEnv && !this.location) {
-        this.location = process.env['GOOGLE_CLOUD_LOCATION'];
-      }
-      if (!this.project) {
-        throw new Error(
-          'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.',
-        );
-      }
-      if (!this.location) {
-        throw new Error(
-          'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.',
-        );
-      }
-    } else {
-      if (!this.apiKey && canReadEnv) {
-        this.apiKey =
-          process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
-      }
-      if (!this.apiKey) {
-        throw new Error(
-          'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
-        );
-      }
-    }
+    this.vertexai = !!params.vertexai;
   }
 
   /**
@@ -249,27 +224,26 @@ export class Gemini extends BaseLlm {
     }
   }
 
+  protected getHttpOptions(): HttpOptions {
+    return {headers: {...this.trackingHeaders, ...this.headers}};
+  }
+
   get apiClient(): GoogleGenAI {
     if (this._apiClient) {
       return this._apiClient;
     }
-
-    const combinedHeaders = {
-      ...this.trackingHeaders,
-      ...this.headers,
-    };
 
     if (this.vertexai) {
       this._apiClient = new GoogleGenAI({
         vertexai: this.vertexai,
         project: this.project,
         location: this.location,
-        httpOptions: {headers: combinedHeaders},
+        httpOptions: this.getHttpOptions(),
       });
     } else {
       this._apiClient = new GoogleGenAI({
         apiKey: this.apiKey,
-        httpOptions: {headers: combinedHeaders},
+        httpOptions: this.getHttpOptions(),
       });
     }
     return this._apiClient;
@@ -292,14 +266,18 @@ export class Gemini extends BaseLlm {
     return this._liveApiVersion;
   }
 
+  protected getLiveHttpOptions(): HttpOptions {
+    return {
+      headers: this.trackingHeaders,
+      apiVersion: this.liveApiVersion,
+    };
+  }
+
   get liveApiClient(): GoogleGenAI {
     if (!this._liveApiClient) {
       this._liveApiClient = new GoogleGenAI({
         apiKey: this.apiKey,
-        httpOptions: {
-          headers: this.trackingHeaders,
-          apiVersion: this.liveApiVersion,
-        },
+        httpOptions: this.getLiveHttpOptions(),
       });
     }
     return this._liveApiClient;
@@ -376,4 +354,44 @@ function removeDisplayNameIfPresent(
   if (dataObj && (dataObj as FileData).displayName) {
     (dataObj as FileData).displayName = undefined;
   }
+}
+
+export function geminiInitParams({
+  model,
+  vertexai,
+  project,
+  location,
+  apiKey,
+}: GeminiParams) {
+  const params: GeminiParams = {model, vertexai, project, location, apiKey};
+
+  params.vertexai = !!vertexai;
+  if (!params.vertexai && !isBrowser()) {
+    params.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');
+  }
+
+  if (params.vertexai) {
+    if (!isBrowser() && !params.project) {
+      params.project = process.env['GOOGLE_CLOUD_PROJECT'];
+    }
+    if (!isBrowser() && !params.location) {
+      params.location = process.env['GOOGLE_CLOUD_LOCATION'];
+    }
+    if (!params.project) {
+      throw new Error(
+        'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.',
+      );
+    }
+    if (!params.location) {
+      throw new Error(
+        'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.',
+      );
+    }
+  } else {
+    if (!params.apiKey && !isBrowser()) {
+      params.apiKey =
+        process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
+    }
+  }
+  return params;
 }

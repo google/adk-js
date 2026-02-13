@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {getBooleanEnvVar} from './env_aware_utils.js';
+
 /**
  * The Google LLM variant to use.
  * see
@@ -28,20 +30,4 @@ export function getGoogleLlmVariant() {
   return getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI')
     ? GoogleLLMVariant.VERTEX_AI
     : GoogleLLMVariant.GEMINI_API;
-}
-
-/**
- * Gets the boolean value of the given environment variable.
- *
- * @param envVar The environment variable to get the value of.
- * @return The boolean value of the environment variable.
- */
-function getBooleanEnvVar(envVar: string): boolean {
-  if (!process.env) {
-    return false;
-  }
-
-  const envVarValue = (process.env[envVar] || '').toLowerCase();
-
-  return ['true', '1'].includes(envVarValue);
 }

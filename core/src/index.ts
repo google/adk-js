@@ -7,6 +7,7 @@
 export * from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
 export * from './common.js';
+export * from './events/agent_event.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';

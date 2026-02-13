@@ -76,3 +76,19 @@ export function isBase64Encoded(data: string): boolean {
     return false;
   }
 }
+
+/**
+ * Gets the boolean value of the given environment variable.
+ *
+ * @param envVar The environment variable to get the value of.
+ * @return The boolean value of the environment variable.
+ */
+export function getBooleanEnvVar(envVar: string): boolean {
+  if (!process.env) {
+    return false;
+  }
+
+  const envVarValue = (process.env[envVar] || '').toLowerCase();
+
+  return ['true', '1'].includes(envVarValue);
+}

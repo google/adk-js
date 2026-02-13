@@ -6,6 +6,7 @@
 
 import {logger} from '../utils/logger.js';
 
+import {ApigeeLlm} from './apigee_llm.js';
 import {BaseLlm} from './base_llm.js';
 import {Gemini} from './google_llm.js';
 
@@ -129,3 +130,4 @@ export class LLMRegistry {
 
 /** Registers default LLM factories, e.g. for Gemini models. */
 LLMRegistry.register(Gemini);
+LLMRegistry.register(ApigeeLlm);
