@@ -1,0 +1,33 @@
+name: auto-assignment
+on:
+  issues:
+    types:
+      - opened
+      
+  pull_request:
+    types:
+      - opened
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const path = require('path');
+            const { pathToFileURL } = require('url');
+
+            const filePath = path.resolve('./scripts/auto-assignment.js');
+            const fileUrl = pathToFileURL(filePath).href;
+
+            const module = await import(fileUrl);
+            const script = module.default;
+
+            await script({ github, context });
