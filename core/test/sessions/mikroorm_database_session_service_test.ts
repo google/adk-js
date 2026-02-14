@@ -8,13 +8,13 @@ import {createEvent, createEventActions, Event, State} from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {MikroOrmDatabaseSessionService} from '../../src/sessions/mikroorm_database_session_service.js';
+import {DatabaseSessionService} from '../../src/sessions/database_session_service.js';
 
-describe('MikroOrmDatabaseSessionService', () => {
-  let service: MikroOrmDatabaseSessionService;
+describe('DatabaseSessionService', () => {
+  let service: DatabaseSessionService;
 
   beforeEach(async () => {
-    service = new MikroOrmDatabaseSessionService({
+    service = new DatabaseSessionService({
       dbName: ':memory:',
       driver: SqliteDriver,
       allowGlobalContext: true, // simplified for tests
@@ -342,7 +342,7 @@ describe('MikroOrmDatabaseSessionService', () => {
   });
 
   it('should fail with incompatible schema version', async () => {
-    const internalService = new MikroOrmDatabaseSessionService({
+    const internalService = new DatabaseSessionService({
       dbName: ':memory:',
       driver: SqliteDriver,
       allowGlobalContext: true,

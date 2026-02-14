@@ -4,16 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {cloneDeep} from 'lodash-es';
-import {Op, WhereOptions} from 'sequelize';
 import {
-  Column,
-  DataType,
-  Model,
-  Sequelize,
-  SequelizeOptions,
-  Table,
-} from 'sequelize-typescript';
+  FilterQuery,
+  LockMode,
+  Options as MikroDBOptions,
+  MikroORM,
+} from '@mikro-orm/core';
+import {MariaDbDriver} from '@mikro-orm/mariadb';
+import {MsSqlDriver} from '@mikro-orm/mssql';
+import {MySqlDriver} from '@mikro-orm/mysql';
+import {PostgreSqlDriver} from '@mikro-orm/postgresql';
+import {SqliteDriver} from '@mikro-orm/sqlite';
+import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -26,186 +28,47 @@ import {
   ListSessionsRequest,
   ListSessionsResponse,
 } from './base_session_service.js';
+import {
+  ENTITIES,
+  SCHEMA_VERSION_1_JSON,
+  SCHEMA_VERSION_KEY,
+  StorageAppState,
+  StorageEvent,
+  StorageMetadata,
+  StorageSession,
+  StorageUserState,
+} from './db/schema.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
 
-const SCHEMA_VERSION_KEY = 'schema_version';
-const SCHEMA_VERSION_1_JSON = '1';
-
-@Table({
-  tableName: 'adk_internal_metadata',
-  timestamps: false,
-})
-class StorageMetadata extends Model {
-  @Column({primaryKey: true, type: DataType.STRING})
-  declare key: string;
-
-  @Column({type: DataType.STRING})
-  declare value: string;
-}
-
-@Table({
-  tableName: 'app_states',
-  timestamps: false,
-})
-class StorageAppState extends Model {
-  @Column({primaryKey: true, type: DataType.STRING, field: 'app_name'})
-  declare appName: string;
-
-  @Column({type: DataType.JSON})
-  declare state: Record<string, unknown>;
-
-  @Column({
-    type: DataType.DATE(6),
-    defaultValue: DataType.NOW,
-    field: 'update_time',
-  })
-  declare updateTime: Date;
-}
-
-@Table({
-  tableName: 'user_states',
-  timestamps: false,
-})
-class StorageUserState extends Model {
-  @Column({primaryKey: true, type: DataType.STRING, field: 'app_name'})
-  declare appName: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'user_id'})
-  declare userId: string;
-
-  @Column({type: DataType.JSON})
-  declare state: Record<string, unknown>;
-
-  @Column({
-    type: DataType.DATE(6),
-    defaultValue: DataType.NOW,
-    field: 'update_time',
-  })
-  declare updateTime: Date;
-}
-
-@Table({
-  tableName: 'sessions',
-  timestamps: false,
-})
-class StorageSession extends Model {
-  @Column({primaryKey: true, type: DataType.STRING})
-  declare id: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'app_name'})
-  declare appName: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'user_id'})
-  declare userId: string;
-
-  @Column({type: DataType.JSON})
-  declare state: Record<string, unknown>;
-
-  @Column({
-    type: DataType.DATE(6),
-    defaultValue: DataType.NOW,
-    field: 'create_time',
-  })
-  declare createTime: Date;
-
-  @Column({
-    type: DataType.DATE(6),
-    defaultValue: DataType.NOW,
-    field: 'update_time',
-  })
-  declare updateTime: Date;
-}
-
-@Table({tableName: 'events', timestamps: false})
-class StorageEvent extends Model {
-  @Column({primaryKey: true, type: DataType.STRING})
-  declare id: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'app_name'})
-  declare appName: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'user_id'})
-  declare userId: string;
-
-  @Column({primaryKey: true, type: DataType.STRING, field: 'session_id'})
-  declare sessionId: string;
-
-  @Column({type: DataType.STRING, field: 'invocation_id'})
-  declare invocationId: string;
-
-  @Column({type: DataType.DATE(6)})
-  declare timestamp: Date;
-
-  @Column({type: DataType.JSON, field: 'event_data'})
-  //TODO: @kalenkevich - Support snake_case notation for event_data
-  declare eventData: Event;
-}
-
-const MODELS = [
-  StorageMetadata,
-  StorageAppState,
-  StorageUserState,
-  StorageSession,
-  StorageEvent,
-];
-
-const SUPPORTED_PROTOCOLS = [
-  'postgres://',
-  'postgresql://',
-  'sqlite://',
-  'mysql://',
-  'mssql://',
-  'mariadb://',
-  'db2://',
-  'snowflake://',
-  'oracle://',
-  'jdbc:',
-];
-
-export function isDatabaseConnectionString(uri?: string): boolean {
-  if (!uri) {
-    return false;
-  }
-
-  // Check for standard URI protocols
-  if (SUPPORTED_PROTOCOLS.some((protocol) => uri.startsWith(protocol))) {
-    return true;
-  }
-
-  return false;
-}
-
 /**
- * A session service that uses a SQL database for storage via Sequelize.
+ * A session service that uses a SQL database for storage via MikroORM.
  */
 export class DatabaseSessionService extends BaseSessionService {
-  private sequelize: Sequelize;
+  private orm?: MikroORM;
   private initialized = false;
+  private options: MikroDBOptions;
 
-  constructor(instanceOrOptionsOrUrl: Sequelize | SequelizeOptions | string) {
+  constructor(connectionStringOrOptions: MikroDBOptions | string) {
     super();
-
-    if (typeof instanceOrOptionsOrUrl === 'string') {
-      this.sequelize = new Sequelize(instanceOrOptionsOrUrl, {
-        models: MODELS,
-        logging: false,
-      });
-    } else if (instanceOrOptionsOrUrl instanceof Sequelize) {
-      this.sequelize = instanceOrOptionsOrUrl;
-      this.sequelize.addModels(MODELS);
+    if (typeof connectionStringOrOptions === 'string') {
+      this.options = getConnectionOptionsFromUri(connectionStringOrOptions);
     } else {
-      this.sequelize = new Sequelize({
-        ...instanceOrOptionsOrUrl,
-        models: MODELS,
-        logging: false,
-      });
+      if (!connectionStringOrOptions.driver) {
+        throw new Error('Driver is required when passing options object.');
+      }
+
+      this.options = {
+        ...connectionStringOrOptions,
+        entities: ENTITIES,
+      };
     }
   }
 
   async init() {
     if (!this.initialized) {
-      await this.sequelize.sync();
+      this.orm = await MikroORM.init(this.options);
+      await this.orm.schema.updateSchema();
       await this.validateSchemaVersion();
       this.initialized = true;
     }
@@ -214,8 +77,9 @@ export class DatabaseSessionService extends BaseSessionService {
   // This is requred to keep parity with Python ADK implementation.
   // Python ADK validates schema version before any database operations.
   private async validateSchemaVersion() {
-    const existing = await StorageMetadata.findOne({
-      where: {key: SCHEMA_VERSION_KEY},
+    const em = this.orm!.em.fork();
+    const existing = await em.findOne(StorageMetadata, {
+      key: SCHEMA_VERSION_KEY,
     });
 
     if (existing) {
@@ -227,10 +91,11 @@ export class DatabaseSessionService extends BaseSessionService {
       return;
     }
 
-    await StorageMetadata.findOrCreate({
-      where: {key: SCHEMA_VERSION_KEY},
-      defaults: {key: SCHEMA_VERSION_KEY, value: SCHEMA_VERSION_1_JSON},
+    const newVersion = em.create(StorageMetadata, {
+      key: SCHEMA_VERSION_KEY,
+      value: SCHEMA_VERSION_1_JSON,
     });
+    await em.persist(newVersion).flush();
   }
 
   async createSession({
@@ -240,25 +105,37 @@ export class DatabaseSessionService extends BaseSessionService {
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
     await this.init();
+    const em = this.orm!.em.fork();
 
     const id = sessionId || randomUUID();
 
-    const existing = await StorageSession.findOne({
-      where: {id, appName, userId},
+    const existing = await em.findOne(StorageSession, {
+      id,
+      appName,
+      userId,
     });
     if (existing) {
       throw new Error(`Session with id ${id} already exists.`);
     }
 
-    const [appStateModel] = await StorageAppState.findOrCreate({
-      where: {appName},
-      defaults: {appName, state: {}},
-    });
+    let appStateModel = await em.findOne(StorageAppState, {appName});
+    if (!appStateModel) {
+      appStateModel = em.create(StorageAppState, {
+        appName,
+        state: {},
+      });
+      em.persist(appStateModel);
+    }
 
-    const [userStateModel] = await StorageUserState.findOrCreate({
-      where: {appName, userId},
-      defaults: {appName, userId, state: {}},
-    });
+    let userStateModel = await em.findOne(StorageUserState, {appName, userId});
+    if (!userStateModel) {
+      userStateModel = em.create(StorageUserState, {
+        appName,
+        userId,
+        state: {},
+      });
+      em.persist(userStateModel);
+    }
 
     const appStateDelta: Record<string, unknown> = {};
     const userStateDelta: Record<string, unknown> = {};
@@ -278,22 +155,23 @@ export class DatabaseSessionService extends BaseSessionService {
 
     if (Object.keys(appStateDelta).length > 0) {
       appStateModel.state = {...appStateModel.state, ...appStateDelta};
-      await appStateModel.save();
     }
     if (Object.keys(userStateDelta).length > 0) {
       userStateModel.state = {...userStateModel.state, ...userStateDelta};
-      await userStateModel.save();
     }
 
-    const now = Date.now();
-    // In database implementation, we persist the session state
-    const storageSession = await StorageSession.create({
+    const now = new Date();
+    const storageSession = em.create(StorageSession, {
       id,
       appName,
       userId,
       state: sessionState,
-      // timestamps handled by sequelize
+      createTime: now,
+      updateTime: now,
     });
+    em.persist(storageSession);
+
+    await em.flush();
 
     const mergedState = mergeStates(
       appStateModel.state,
@@ -307,9 +185,7 @@ export class DatabaseSessionService extends BaseSessionService {
       userId,
       state: mergedState,
       events: [],
-      lastUpdateTime: storageSession.createTime
-        ? storageSession.createTime.getTime()
-        : now,
+      lastUpdateTime: storageSession.createTime.getTime(),
     });
   }
 
@@ -320,36 +196,37 @@ export class DatabaseSessionService extends BaseSessionService {
     config,
   }: GetSessionRequest): Promise<Session | undefined> {
     await this.init();
+    const em = this.orm!.em.fork();
 
-    const storageSession = await StorageSession.findOne({
-      where: {appName, userId, id: sessionId},
+    const storageSession = await em.findOne(StorageSession, {
+      appName,
+      userId,
+      id: sessionId,
     });
 
     if (!storageSession) {
       return undefined;
     }
 
-    const eventWhere: WhereOptions<StorageEvent> = {
+    const eventWhere: FilterQuery<StorageEvent> = {
       appName,
       userId,
       sessionId,
     };
 
     if (config?.afterTimestamp) {
-      eventWhere.timestamp = {
-        [Op.gt]: config.afterTimestamp,
-      };
+      eventWhere.timestamp = {$gt: new Date(config.afterTimestamp)};
     }
 
-    const storageEvents = await StorageEvent.findAll({
-      where: eventWhere,
+    const storageEvents = await em.find(StorageEvent, eventWhere, {
+      orderBy: {timestamp: 'DESC'},
       limit: config?.numRecentEvents,
-      order: [['timestamp', 'DESC']],
     });
 
-    const appStateModel = await StorageAppState.findByPk(appName);
-    const userStateModel = await StorageUserState.findOne({
-      where: {appName, userId},
+    const appStateModel = await em.findOne(StorageAppState, {appName});
+    const userStateModel = await em.findOne(StorageUserState, {
+      appName,
+      userId,
     });
 
     const mergedState = mergeStates(
@@ -364,9 +241,7 @@ export class DatabaseSessionService extends BaseSessionService {
       userId,
       state: mergedState,
       events: storageEvents.map((se) => se.eventData),
-      lastUpdateTime: storageSession.updateTime
-        ? storageSession.updateTime.getTime()
-        : Date.now(),
+      lastUpdateTime: storageSession.updateTime.getTime(),
     });
   }
 
@@ -375,28 +250,23 @@ export class DatabaseSessionService extends BaseSessionService {
     userId,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
     await this.init();
+    const em = this.orm!.em.fork();
 
-    const where: WhereOptions<StorageSession> = {appName};
+    const where: FilterQuery<StorageSession> = {appName};
     if (userId) {
       where.userId = userId;
     }
 
-    const storageSessions = await StorageSession.findAll({where});
-    const appStateModel = await StorageAppState.findByPk(appName);
+    const storageSessions = await em.find(StorageSession, where);
+    const appStateModel = await em.findOne(StorageAppState, {appName});
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
 
     if (userId) {
-      const u = await StorageUserState.findOne({
-        where: {appName, userId},
-      });
+      const u = await em.findOne(StorageUserState, {appName, userId});
       if (u) userStateMap[userId] = u.state;
     } else {
-      // NOTE: This might need adjustment if findOrCreate/findAll uses different WHERE structure for snake_case column mapping in some seq versions,
-      // but usually with field option it should work with camelCase in where.
-      const allUserStates = await StorageUserState.findAll({
-        where: {appName},
-      });
+      const allUserStates = await em.find(StorageUserState, {appName});
       for (const u of allUserStates) {
         userStateMap[u.userId] = u.state;
       }
@@ -411,7 +281,7 @@ export class DatabaseSessionService extends BaseSessionService {
         userId: ss.userId,
         state: merged,
         events: [],
-        lastUpdateTime: ss.updateTime ? ss.updateTime.getTime() : Date.now(),
+        lastUpdateTime: ss.updateTime.getTime(),
       });
     });
 
@@ -424,12 +294,10 @@ export class DatabaseSessionService extends BaseSessionService {
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
     await this.init();
-    await StorageSession.destroy({
-      where: {appName, userId, id: sessionId},
-    });
-    await StorageEvent.destroy({
-      where: {appName, userId, sessionId},
-    });
+    const em = this.orm!.em.fork();
+
+    await em.nativeDelete(StorageSession, {appName, userId, id: sessionId});
+    await em.nativeDelete(StorageEvent, {appName, userId, sessionId});
   }
 
   override async appendEvent({
@@ -437,6 +305,7 @@ export class DatabaseSessionService extends BaseSessionService {
     event,
   }: AppendEventRequest): Promise<Event> {
     await this.init();
+    const em = this.orm!.em.fork();
 
     if (event.partial) {
       return event;
@@ -444,44 +313,57 @@ export class DatabaseSessionService extends BaseSessionService {
 
     const trimmedEvent = this.trimTempDeltaState(event);
 
-    await this.sequelize.transaction(async (transaction) => {
-      const storageSession = await StorageSession.findOne({
-        where: {
+    await em.transactional(async (txEm) => {
+      const storageSession = await txEm.findOne(
+        StorageSession,
+        {
           appName: session.appName,
           userId: session.userId,
           id: session.id,
         },
-        transaction,
-        lock: transaction.LOCK.UPDATE,
-      });
+        {lockMode: LockMode.PESSIMISTIC_WRITE},
+      );
 
       if (!storageSession) {
         throw new Error(`Session ${session.id} not found for appendEvent`);
       }
 
-      const [appStateModel] = await StorageAppState.findOrCreate({
-        where: {appName: session.appName},
-        defaults: {appName: session.appName, state: {}},
-        transaction,
+      let appStateModel = await txEm.findOne(StorageAppState, {
+        appName: session.appName,
       });
-      const [userStateModel] = await StorageUserState.findOrCreate({
-        where: {appName: session.appName, userId: session.userId},
-        defaults: {appName: session.appName, userId: session.userId, state: {}},
-        transaction,
+      if (!appStateModel) {
+        appStateModel = txEm.create(StorageAppState, {
+          appName: session.appName,
+          state: {},
+        });
+        txEm.persist(appStateModel);
+      }
+
+      let userStateModel = await txEm.findOne(StorageUserState, {
+        appName: session.appName,
+        userId: session.userId,
       });
+      if (!userStateModel) {
+        userStateModel = txEm.create(StorageUserState, {
+          appName: session.appName,
+          userId: session.userId,
+          state: {},
+        });
+        txEm.persist(userStateModel);
+      }
 
       // Stale session check
       if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
         // Reload state
-        const events = await StorageEvent.findAll({
-          where: {
+        const events = await txEm.find(
+          StorageEvent,
+          {
             appName: session.appName,
             userId: session.userId,
             sessionId: session.id,
           },
-          order: [['timestamp', 'ASC']],
-          transaction,
-        });
+          {orderBy: {timestamp: 'ASC'}},
+        );
 
         const mergedState = mergeStates(
           appStateModel.state,
@@ -509,34 +391,28 @@ export class DatabaseSessionService extends BaseSessionService {
 
         if (Object.keys(appDelta).length > 0) {
           appStateModel.state = {...appStateModel.state, ...appDelta};
-          await appStateModel.save({transaction});
         }
         if (Object.keys(userDelta).length > 0) {
           userStateModel.state = {...userStateModel.state, ...userDelta};
-          await userStateModel.save({transaction});
         }
         if (Object.keys(sessionDelta).length > 0) {
           storageSession.state = {...storageSession.state, ...sessionDelta};
-          // We don't save storageSession here yet, will do it at the end with timestamp update
         }
       }
 
-      await StorageEvent.create(
-        {
-          id: trimmedEvent.id,
-          appName: session.appName,
-          userId: session.userId,
-          sessionId: session.id,
-          invocationId: trimmedEvent.invocationId,
-          timestamp: new Date(trimmedEvent.timestamp),
-          eventData: trimmedEvent,
-        },
-        {transaction},
-      );
+      const newStorageEvent = txEm.create(StorageEvent, {
+        id: trimmedEvent.id,
+        appName: session.appName,
+        userId: session.userId,
+        sessionId: session.id,
+        invocationId: trimmedEvent.invocationId,
+        timestamp: new Date(trimmedEvent.timestamp),
+        eventData: trimmedEvent,
+      });
+      txEm.persist(newStorageEvent);
 
       // Update session timestamp to match event timestamp
-      storageSession.setDataValue('updateTime', new Date(event.timestamp));
-      await storageSession.save({transaction});
+      storageSession.updateTime = new Date(event.timestamp);
 
       const newMergedState = mergeStates(
         appStateModel.state,
@@ -550,6 +426,43 @@ export class DatabaseSessionService extends BaseSessionService {
 
     return event;
   }
+}
+
+/**
+ * Parses a database connection URI and returns MikroORM Options.
+ *
+ * @param uri The database connection URI (e.g., "postgres://user:password@host:port/database")
+ * @returns MikroORM Options configured for the database
+ * @throws Error if the URI is invalid or unsupported
+ */
+export function getConnectionOptionsFromUri(uri: string): MikroDBOptions {
+  let driver: unknown | undefined;
+
+  if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
+    driver = PostgreSqlDriver;
+  } else if (uri.startsWith('mysql://')) {
+    driver = MySqlDriver;
+  } else if (uri.startsWith('mariadb://')) {
+    driver = MariaDbDriver;
+  } else if (uri.startsWith('sqlite://')) {
+    driver = SqliteDriver;
+  } else if (uri.startsWith('mssql://')) {
+    driver = MsSqlDriver;
+  } else {
+    throw new Error(`Unsupported database URI: ${uri}`);
+  }
+
+  const {host, port, username, password, pathname} = new URL(uri);
+
+  return {
+    entities: ENTITIES,
+    dbName: pathname.slice(1),
+    host,
+    port: port ? parseInt(port) : undefined,
+    user: username,
+    password,
+    driver,
+  } as MikroDBOptions;
 }
 
 function mergeStates(
