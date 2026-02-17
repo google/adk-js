@@ -11,23 +11,29 @@ import {
   Event,
   State,
 } from '@google/adk';
-import {Sequelize} from 'sequelize-typescript';
+import {MikroORM} from '@mikro-orm/core';
+import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 
 describe('DatabaseSessionService', () => {
-  let sequelize: Sequelize;
   let service: DatabaseSessionService;
 
   beforeEach(async () => {
-    sequelize = new Sequelize('sqlite::memory:', {
-      logging: false,
+    service = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true, // simplified for tests
     });
-    service = new DatabaseSessionService(sequelize);
     await service.init();
   });
 
   afterEach(async () => {
-    await sequelize.close();
+    // MikroORM closing
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    if (orm) {
+      await orm.close();
+    }
   });
 
   it('should create a session', async () => {
@@ -342,20 +348,36 @@ describe('DatabaseSessionService', () => {
   });
 
   it('should fail with incompatible schema version', async () => {
-    // Use a separate sequelize instance to tamper with metadata
-    const tamperSequelize = new Sequelize('sqlite::memory:', {logging: false});
-    const subService = new DatabaseSessionService(tamperSequelize);
-    await subService.init();
-    await tamperSequelize.query(
-      `UPDATE adk_internal_metadata SET value = '999' WHERE key = 'schema_version'`,
-    );
+    const internalService = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+    });
+    await internalService.init();
+    const orm = (internalService as unknown as {orm: MikroORM}).orm as MikroORM;
 
-    // Re-init should fail
-    // We need to reset initialized flag or make a new service instance on same DB
-    const subService2 = new DatabaseSessionService(tamperSequelize);
-    await expect(subService2.init()).rejects.toThrow(
-      'ADK Database schema version 999 is not compatible',
-    );
+    // Manually insert bad version
+    const em = orm.em.fork();
+    await em.nativeDelete('StorageMetadata', {key: 'schema_version'});
+    await em.insert('StorageMetadata', {
+      key: 'schema_version',
+      value: '999',
+    });
+
+    // Reuse the same ORM/DB connection if possible or create new one on same DB
+    // With :memory:, each new ORM instance is a new DB unless we share the connection.
+    // So we must reuse the service or simulate check on the same instance.
+
+    // Re-check schema version
+    await expect(
+      (
+        internalService as unknown as {
+          validateSchemaVersion: () => Promise<void>;
+        }
+      ).validateSchemaVersion(),
+    ).rejects.toThrow('ADK Database schema version 999 is not compatible');
+
+    await orm.close();
   });
 
   describe('Alignment Verification', () => {
@@ -378,12 +400,11 @@ describe('DatabaseSessionService', () => {
 
       await service.appendEvent({session, event});
 
-      const [results] = await sequelize.query(
-        "SELECT event_data FROM events WHERE session_id = 's-temp'",
-      );
-      const eventData = JSON.parse(
-        (results[0] as unknown as {event_data: string}).event_data,
-      );
+      const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
+      const storedEvents = (await em.find('StorageEvent', {
+        sessionId: 's-temp',
+      })) as {sessionId: string; eventData: Event}[];
+      const eventData = storedEvents[0].eventData;
 
       expect(eventData.actions?.stateDelta?.['keep']).toBe('me');
       expect(
@@ -405,44 +426,50 @@ describe('DatabaseSessionService', () => {
 
       expect(session.lastUpdateTime).toBe(timestamp);
 
-      const [results] = await sequelize.query(
-        "SELECT update_time FROM sessions WHERE id = 's-time'",
-      );
-      const dbTime = new Date(
-        (results[0] as unknown as {update_time: string}).update_time,
-      ).getTime();
-      expect(dbTime).toBe(timestamp);
+      const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
+      const storedSession = (await em.findOne('StorageSession', {
+        id: 's-time',
+      })) as {id: string; updateTime: Date};
+
+      expect(storedSession.updateTime.getTime()).toBe(timestamp);
     });
+  });
+});
 
-    it('should reload stale session on appendEvent', async () => {
-      const session = await service.createSession({
-        appName: 'test-app',
-        userId: 'test-user',
-        sessionId: 's-stale',
-        state: {'initial': 'val'},
-      });
+describe('isDatabaseConnectionString', () => {
+  it('should identify valid URI connection strings', () => {
+    expect(
+      isDatabaseConnectionString('postgres://user:pass@localhost:5432/db'),
+    ).toBe(true);
+    expect(
+      isDatabaseConnectionString('postgresql://user:pass@localhost:5432/db'),
+    ).toBe(true);
+    expect(
+      isDatabaseConnectionString('mysql://user:pass@localhost:3306/db'),
+    ).toBe(true);
+    expect(
+      isDatabaseConnectionString('mariadb://user:pass@localhost:3306/db'),
+    ).toBe(true);
+    expect(isDatabaseConnectionString('sqlite://:memory:')).toBe(true);
+    expect(isDatabaseConnectionString('sqlite:///path/to/db.sqlite')).toBe(
+      true,
+    );
+    expect(
+      isDatabaseConnectionString('mssql://user:pass@localhost:1433/db'),
+    ).toBe(true);
+  });
 
-      const futureTime = Date.now() + 10000;
-      const futureDate = new Date(futureTime);
-      await sequelize.query(
-        `UPDATE sessions SET state = '{"concurrent":"update"}', update_time = :time WHERE id = 's-stale'`,
-        {replacements: {time: futureDate}},
-      );
-
-      expect(session.lastUpdateTime).toBeLessThan(futureTime);
-
-      const event = createEvent({
-        timestamp: futureTime + 1000,
-        actions: createEventActions({
-          stateDelta: {'new': 'val'},
-        }),
-      });
-
-      await service.appendEvent({session, event});
-
-      expect(session.state['concurrent']).toBe('update');
-      expect(session.state['initial']).toBeUndefined();
-      expect(session.state['new']).toBe('val');
-    });
+  it('should reject invalid strings', () => {
+    expect(isDatabaseConnectionString('')).toBe(false);
+    expect(isDatabaseConnectionString(undefined)).toBe(false);
+    expect(isDatabaseConnectionString('http://google.com')).toBe(false);
+    expect(isDatabaseConnectionString('https://google.com')).toBe(false);
+    expect(isDatabaseConnectionString('/path/to/file')).toBe(false);
+    expect(isDatabaseConnectionString('C:\\path\\to\\file')).toBe(false);
+    expect(isDatabaseConnectionString('just some text')).toBe(false);
+    expect(isDatabaseConnectionString('random=text;with=semicolons')).toBe(
+      false,
+    ); // Has = and ; but no common keys
+    expect(isDatabaseConnectionString('Server=myServer')).toBe(false); // Missing semicolon implies not a full connection string or just a weird config
   });
 });

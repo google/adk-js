@@ -124,6 +124,18 @@ export class AgentFile {
         minify: this.options.bundle,
         allowOverwrite: true,
         plugins: [shimPlugin()],
+        // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
+        external: [
+          'sqlite3',
+          'better-sqlite3',
+          'mysql',
+          'mysql2',
+          'oracledb',
+          'pg-native',
+          'pg-query-stream',
+          'tedious',
+          'libsql',
+        ],
       });
 
       this.cleanupFilePath = compiledFilePath;

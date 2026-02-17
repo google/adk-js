@@ -410,6 +410,7 @@ export class DatabaseSessionService extends BaseSessionService {
         eventData: trimmedEvent,
       });
       txEm.persist(newStorageEvent);
+      await txEm.commit();
 
       // Update session timestamp to match event timestamp
       storageSession.updateTime = new Date(event.timestamp);
@@ -426,6 +427,27 @@ export class DatabaseSessionService extends BaseSessionService {
 
     return event;
   }
+}
+
+/**
+ * Checks if a URI is a database connection URI.
+ *
+ * @param uri The URI to check.
+ * @returns True if the URI is a database connection URI, false otherwise.
+ */
+export function isDatabaseConnectionString(uri?: string): boolean {
+  if (!uri) {
+    return false;
+  }
+
+  return (
+    uri.startsWith('postgres://') ||
+    uri.startsWith('postgresql://') ||
+    uri.startsWith('mysql://') ||
+    uri.startsWith('mariadb://') ||
+    uri.startsWith('mssql://') ||
+    uri.startsWith('sqlite://')
+  );
 }
 
 /**
@@ -453,11 +475,12 @@ export function getConnectionOptionsFromUri(uri: string): MikroDBOptions {
   }
 
   const {host, port, username, password, pathname} = new URL(uri);
+  const hostName = host.split(':')[0];
 
   return {
     entities: ENTITIES,
     dbName: pathname.slice(1),
-    host,
+    host: hostName,
     port: port ? parseInt(port) : undefined,
     user: username,
     password,
