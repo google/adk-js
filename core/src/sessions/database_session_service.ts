@@ -66,12 +66,14 @@ export class DatabaseSessionService extends BaseSessionService {
   }
 
   async init() {
-    if (!this.initialized) {
-      this.orm = await MikroORM.init(this.options);
-      await this.orm.schema.updateSchema();
-      await this.validateSchemaVersion();
-      this.initialized = true;
+    if (this.initialized) {
+      return;
     }
+
+    this.orm = await MikroORM.init(this.options);
+    await this.orm.schema.updateSchema();
+    await this.validateSchemaVersion();
+    this.initialized = true;
   }
 
   // This is requred to keep parity with Python ADK implementation.
