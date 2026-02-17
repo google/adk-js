@@ -134,6 +134,11 @@ export {State} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
+export type {
+  BaseToolParams,
+  RunAsyncToolRequest,
+  ToolProcessLlmRequest,
+} from './tools/base_tool.js';
 export {BaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
@@ -154,7 +159,6 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
-export * from './artifacts/base_artifact_service.js';
-export * from './memory/base_memory_service.js';
-export * from './sessions/base_session_service.js';
-export * from './tools/base_tool.js';
+export {BaseArtifactService} from './artifacts/base_artifact_service.js';
+export {BaseMemoryService} from './memory/base_memory_service.js';
+export {BaseSessionService} from './sessions/base_session_service.js';

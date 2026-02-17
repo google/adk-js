@@ -15,7 +15,6 @@ import {MsSqlDriver} from '@mikro-orm/mssql';
 import {MySqlDriver} from '@mikro-orm/mysql';
 import {PostgreSqlDriver} from '@mikro-orm/postgresql';
 import {SqliteDriver} from '@mikro-orm/sqlite';
-import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -27,6 +26,8 @@ import {
   GetSessionRequest,
   ListSessionsRequest,
   ListSessionsResponse,
+  mergeStates,
+  trimTempDeltaState,
 } from './base_session_service.js';
 import {
   ENTITIES,
@@ -313,7 +314,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return event;
     }
 
-    const trimmedEvent = this.trimTempDeltaState(event);
+    const trimmedEvent = trimTempDeltaState(event);
 
     await em.transactional(async (txEm) => {
       const storageSession = await txEm.findOne(
@@ -488,19 +489,4 @@ export function getConnectionOptionsFromUri(uri: string): MikroDBOptions {
     password,
     driver,
   } as MikroDBOptions;
-}
-
-function mergeStates(
-  appState: Record<string, unknown>,
-  userState: Record<string, unknown>,
-  sessionState: Record<string, unknown>,
-) {
-  const merged = cloneDeep(sessionState);
-  for (const [k, v] of Object.entries(appState)) {
-    merged[State.APP_PREFIX + k] = v;
-  }
-  for (const [k, v] of Object.entries(userState)) {
-    merged[State.USER_PREFIX + k] = v;
-  }
-  return merged;
 }

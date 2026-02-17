@@ -17,6 +17,7 @@ import {
   GetSessionRequest,
   ListSessionsRequest,
   ListSessionsResponse,
+  mergeStates,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
@@ -50,7 +51,7 @@ export class InMemorySessionService extends BaseSessionService {
    */
   private appState: Record<string, Record<string, unknown>> = {};
 
-  createSession({
+  async createSession({
     appName,
     userId,
     state,
@@ -74,12 +75,17 @@ export class InMemorySessionService extends BaseSessionService {
 
     this.sessions[appName][userId][session.id] = session;
 
-    return Promise.resolve(
-      this.mergeState(appName, userId, cloneDeep(session)),
+    const copiedSession = cloneDeep(session);
+    copiedSession.state = mergeStates(
+      this.appState[appName],
+      this.userState[appName]?.[userId],
+      copiedSession.state,
     );
+
+    return copiedSession;
   }
 
-  getSession({
+  async getSession({
     appName,
     userId,
     sessionId,
@@ -116,7 +122,13 @@ export class InMemorySessionService extends BaseSessionService {
       }
     }
 
-    return Promise.resolve(this.mergeState(appName, userId, copiedSession));
+    copiedSession.state = mergeStates(
+      this.appState[appName],
+      this.userState[appName]?.[userId],
+      copiedSession.state,
+    );
+
+    return copiedSession;
   }
 
   listSessions({
@@ -212,28 +224,5 @@ export class InMemorySessionService extends BaseSessionService {
     storageSession.lastUpdateTime = event.timestamp;
 
     return event;
-  }
-
-  private mergeState(
-    appName: string,
-    userId: string,
-    copiedSession: Session,
-  ): Session {
-    if (this.appState[appName]) {
-      for (const key of Object.keys(this.appState[appName])) {
-        copiedSession.state[State.APP_PREFIX + key] =
-          this.appState[appName][key];
-      }
-    }
-
-    if (!this.userState[appName] || !this.userState[appName][userId]) {
-      return copiedSession;
-    }
-
-    for (const key of Object.keys(this.userState[appName][userId])) {
-      copiedSession.state[State.USER_PREFIX + key] =
-        this.userState[appName][userId][key];
-    }
-    return copiedSession;
   }
 }

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {cloneDeep} from 'lodash-es';
+
 import {Event} from '../events/event.js';
 
 import {Session} from './session.js';
@@ -163,7 +165,7 @@ export abstract class BaseSessionService {
       return event;
     }
 
-    event = this.trimTempDeltaState(event);
+    event = trimTempDeltaState(event);
 
     this.updateSessionState({session, event});
     session.events.push(event);
@@ -187,24 +189,47 @@ export abstract class BaseSessionService {
       session.state[key] = value;
     }
   }
+}
 
-  /**
-   * Removes temporary state delta keys from the event.
-   */
-  protected trimTempDeltaState(event: Event): Event {
-    if (!event.actions || !event.actions.stateDelta) {
-      return event;
-    }
-
-    const stateDelta = event.actions.stateDelta;
-    const filteredStateDelta: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(stateDelta)) {
-      if (!key.startsWith(State.TEMP_PREFIX)) {
-        filteredStateDelta[key] = value;
-      }
-    }
-
-    event.actions.stateDelta = filteredStateDelta;
+/**
+ * Removes temporary state delta keys from the event.
+ */
+export function trimTempDeltaState(event: Event): Event {
+  if (!event.actions || !event.actions.stateDelta) {
     return event;
   }
+
+  const stateDelta = event.actions.stateDelta;
+  const filteredStateDelta: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(stateDelta)) {
+    if (!key.startsWith(State.TEMP_PREFIX)) {
+      filteredStateDelta[key] = value;
+    }
+  }
+
+  event.actions.stateDelta = filteredStateDelta;
+  return event;
+}
+
+/**
+ * Merges app state, user state, and session state.
+ *
+ * @param appState The application state.
+ * @param userState The user state.
+ * @param sessionState The session state.
+ * @return The merged state.
+ */
+export function mergeStates(
+  appState: Record<string, unknown> = {},
+  userState: Record<string, unknown> = {},
+  sessionState: Record<string, unknown> = {},
+) {
+  const merged = cloneDeep(sessionState);
+  for (const [k, v] of Object.entries(appState)) {
+    merged[State.APP_PREFIX + k] = v;
+  }
+  for (const [k, v] of Object.entries(userState)) {
+    merged[State.USER_PREFIX + k] = v;
+  }
+  return merged;
 }
