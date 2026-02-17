@@ -64,17 +64,17 @@ export function getConnectionOptionsFromUri(uri: string): MikroORMOptions {
  * @returns Promise<void>
  * @throws Error if the URI is invalid or unsupported
  */
-export async function createDatabase(
-  urlOrOptions: MikroORM | MikroORMOptions | string,
+export async function ensureDatabaseCreated(
+  ormOrUrlOrOptions: MikroORM | MikroORMOptions | string,
 ): Promise<void> {
   let orm: MikroORM;
 
-  if (urlOrOptions instanceof MikroORM) {
-    orm = urlOrOptions;
-  } else if (typeof urlOrOptions === 'string') {
-    orm = await MikroORM.init(getConnectionOptionsFromUri(urlOrOptions));
+  if (ormOrUrlOrOptions instanceof MikroORM) {
+    orm = ormOrUrlOrOptions;
+  } else if (typeof ormOrUrlOrOptions === 'string') {
+    orm = await MikroORM.init(getConnectionOptionsFromUri(ormOrUrlOrOptions));
   } else {
-    orm = await MikroORM.init(urlOrOptions);
+    orm = await MikroORM.init(ormOrUrlOrOptions);
   }
 
   // creates database if it doesn't exist
@@ -90,7 +90,7 @@ export async function createDatabase(
  * @param orm The MikroORM instance.
  * @throws Error if the schema version is not compatible.
  */
-export async function validateSchemaVersion(orm: MikroORM) {
+export async function validateDatabaseSchemaVersion(orm: MikroORM) {
   const em = orm.em.fork();
   const existing = await em.findOne(StorageMetadata, {
     key: SCHEMA_VERSION_KEY,

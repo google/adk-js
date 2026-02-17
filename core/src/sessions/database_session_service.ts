@@ -25,9 +25,9 @@ import {
   trimTempDeltaState,
 } from './base_session_service.js';
 import {
-  createDatabase,
+  ensureDatabaseCreated,
   getConnectionOptionsFromUri,
-  validateSchemaVersion,
+  validateDatabaseSchemaVersion,
 } from './db/operations.js';
 import {
   ENTITIES,
@@ -38,10 +38,6 @@ import {
 } from './db/schema.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
-
-type DatabaseSessionServiceOptions = MikroDBOptions & {
-  createDatabase?: boolean;
-};
 
 /**
  * Checks if a URI is a database connection URI.
@@ -70,11 +66,9 @@ export function isDatabaseConnectionString(uri?: string): boolean {
 export class DatabaseSessionService extends BaseSessionService {
   private orm?: MikroORM;
   private initialized = false;
-  private options: DatabaseSessionServiceOptions;
+  private options: MikroDBOptions;
 
-  constructor(
-    connectionStringOrOptions: DatabaseSessionServiceOptions | string,
-  ) {
+  constructor(connectionStringOrOptions: MikroDBOptions | string) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.options = getConnectionOptionsFromUri(connectionStringOrOptions);
@@ -96,10 +90,8 @@ export class DatabaseSessionService extends BaseSessionService {
     }
 
     this.orm = await MikroORM.init(this.options);
-    if (this.options.createDatabase) {
-      await createDatabase(this.orm!);
-    }
-    await validateSchemaVersion(this.orm!);
+    await ensureDatabaseCreated(this.orm!);
+    await validateDatabaseSchemaVersion(this.orm!);
     this.initialized = true;
   }
 
