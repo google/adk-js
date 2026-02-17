@@ -159,6 +159,6 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
-export {BaseArtifactService} from './artifacts/base_artifact_service.js';
-export {BaseMemoryService} from './memory/base_memory_service.js';
+export type {BaseArtifactService} from './artifacts/base_artifact_service.js';
+export type {BaseMemoryService} from './memory/base_memory_service.js';
 export {BaseSessionService} from './sessions/base_session_service.js';
