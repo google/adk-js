@@ -13,6 +13,9 @@ import {
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 
@@ -378,6 +381,34 @@ describe('DatabaseSessionService', () => {
     ).rejects.toThrow('ADK Database schema version 999 is not compatible');
 
     await orm.close();
+  });
+
+  it('should create database file if it does not exist', async () => {
+    const tmpDir = os.tmpdir();
+    const dbPath = path.join(tmpDir, `adk-test-${Date.now()}.sqlite`);
+
+    // Ensure file doesn't exist
+    if (fs.existsSync(dbPath)) {
+      fs.unlinkSync(dbPath);
+    }
+
+    const fileService = new DatabaseSessionService({
+      dbName: dbPath,
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+    });
+
+    await fileService.init();
+
+    expect(fs.existsSync(dbPath)).toBe(true);
+
+    const orm = (fileService as unknown as {orm: MikroORM}).orm;
+    await orm.close();
+
+    // Cleanup
+    if (fs.existsSync(dbPath)) {
+      fs.unlinkSync(dbPath);
+    }
   });
 
   describe('Alignment Verification', () => {
