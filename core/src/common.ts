@@ -46,6 +46,14 @@ export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
+export type {
+  BaseArtifactService,
+  DeleteArtifactRequest,
+  ListArtifactKeysRequest,
+  ListVersionsRequest,
+  LoadArtifactRequest,
+  SaveArtifactRequest,
+} from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
 export {AuthCredentialTypes} from './auth/auth_credential.js';
 export type {
@@ -97,6 +105,11 @@ export {
   isBaseExampleProvider,
 } from './examples/base_example_provider.js';
 export type {Example} from './examples/example.js';
+export type {
+  BaseMemoryService,
+  SearchMemoryRequest,
+  SearchMemoryResponse,
+} from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
@@ -127,6 +140,16 @@ export type {
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {Runner} from './runner/runner.js';
 export type {RunnerConfig} from './runner/runner.js';
+export {BaseSessionService} from './sessions/base_session_service.js';
+export type {
+  AppendEventRequest,
+  CreateSessionRequest,
+  DeleteSessionRequest,
+  GetSessionConfig,
+  GetSessionRequest,
+  ListSessionsRequest,
+  ListSessionsResponse,
+} from './sessions/base_session_service.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {Session} from './sessions/session.js';
@@ -158,7 +181,3 @@ export {isGemini2OrAbove} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
-
-export type {BaseArtifactService} from './artifacts/base_artifact_service.js';
-export type {BaseMemoryService} from './memory/base_memory_service.js';
-export {BaseSessionService} from './sessions/base_session_service.js';
