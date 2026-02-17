@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {Entity, JsonType, PrimaryKey, Property} from '@mikro-orm/core';
 import {
   Event,
@@ -52,7 +58,7 @@ export class StorageAppState {
     onCreate: () => new Date(),
     onUpdate: () => new Date(),
   })
-  updateTime?: Date;
+  updateTime: Date = new Date();
 }
 
 @Entity({tableName: 'user_states'})

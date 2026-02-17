@@ -181,3 +181,8 @@ export {isGemini2OrAbove} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
+
+export * from './artifacts/base_artifact_service.js';
+export * from './memory/base_memory_service.js';
+export * from './sessions/base_session_service.js';
+export * from './tools/base_tool.js';

@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
 import {MariaDbDriver} from '@mikro-orm/mariadb';
 import {MsSqlDriver} from '@mikro-orm/mssql';

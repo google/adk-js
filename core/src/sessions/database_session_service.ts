@@ -105,7 +105,7 @@ export class DatabaseSessionService extends BaseSessionService {
     const em = this.orm!.em.fork();
 
     const id = sessionId || randomUUID();
-
+    const now = new Date();
     const existing = await em.findOne(StorageSession, {
       id,
       appName,
@@ -120,6 +120,7 @@ export class DatabaseSessionService extends BaseSessionService {
       appStateModel = em.create(StorageAppState, {
         appName,
         state: {},
+        updateTime: now,
       });
       em.persist(appStateModel);
     }
@@ -157,7 +158,6 @@ export class DatabaseSessionService extends BaseSessionService {
       userStateModel.state = {...userStateModel.state, ...userStateDelta};
     }
 
-    const now = new Date();
     const storageSession = em.create(StorageSession, {
       id,
       appName,
@@ -336,6 +336,7 @@ export class DatabaseSessionService extends BaseSessionService {
         appStateModel = txEm.create(StorageAppState, {
           appName: session.appName,
           state: {},
+          updateTime: new Date(),
         });
         txEm.persist(appStateModel);
       }
