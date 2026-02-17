@@ -10,11 +10,6 @@ import {
   Options as MikroDBOptions,
   MikroORM,
 } from '@mikro-orm/core';
-import {MariaDbDriver} from '@mikro-orm/mariadb';
-import {MsSqlDriver} from '@mikro-orm/mssql';
-import {MySqlDriver} from '@mikro-orm/mysql';
-import {PostgreSqlDriver} from '@mikro-orm/postgresql';
-import {SqliteDriver} from '@mikro-orm/sqlite';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -30,17 +25,44 @@ import {
   trimTempDeltaState,
 } from './base_session_service.js';
 import {
+  createDatabase,
+  getConnectionOptionsFromUri,
+  validateSchemaVersion,
+} from './db/operations.js';
+import {
   ENTITIES,
-  SCHEMA_VERSION_1_JSON,
-  SCHEMA_VERSION_KEY,
   StorageAppState,
   StorageEvent,
-  StorageMetadata,
   StorageSession,
   StorageUserState,
 } from './db/schema.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
+
+type DatabaseSessionServiceOptions = MikroDBOptions & {
+  createDatabase?: boolean;
+};
+
+/**
+ * Checks if a URI is a database connection URI.
+ *
+ * @param uri The URI to check.
+ * @returns True if the URI is a database connection URI, false otherwise.
+ */
+export function isDatabaseConnectionString(uri?: string): boolean {
+  if (!uri) {
+    return false;
+  }
+
+  return (
+    uri.startsWith('postgres://') ||
+    uri.startsWith('postgresql://') ||
+    uri.startsWith('mysql://') ||
+    uri.startsWith('mariadb://') ||
+    uri.startsWith('mssql://') ||
+    uri.startsWith('sqlite://')
+  );
+}
 
 /**
  * A session service that uses a SQL database for storage via MikroORM.
@@ -48,9 +70,11 @@ import {State} from './state.js';
 export class DatabaseSessionService extends BaseSessionService {
   private orm?: MikroORM;
   private initialized = false;
-  private options: MikroDBOptions;
+  private options: DatabaseSessionServiceOptions;
 
-  constructor(connectionStringOrOptions: MikroDBOptions | string) {
+  constructor(
+    connectionStringOrOptions: DatabaseSessionServiceOptions | string,
+  ) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
       this.options = getConnectionOptionsFromUri(connectionStringOrOptions);
@@ -71,39 +95,12 @@ export class DatabaseSessionService extends BaseSessionService {
       return;
     }
 
-    this.orm = await MikroORM.init({...this.options, connect: false});
-    await this.orm.schema.ensureDatabase();
-    if (!(await this.orm.isConnected())) {
-      await this.orm.connect();
+    this.orm = await MikroORM.init(this.options);
+    if (this.options.createDatabase) {
+      await createDatabase(this.orm!);
     }
-    await this.orm.schema.updateSchema();
-    await this.validateSchemaVersion();
+    await validateSchemaVersion(this.orm!);
     this.initialized = true;
-  }
-
-  // This is requred to keep parity with Python ADK implementation.
-  // Python ADK validates schema version before any database operations.
-  private async validateSchemaVersion() {
-    const em = this.orm!.em.fork();
-    const existing = await em.findOne(StorageMetadata, {
-      key: SCHEMA_VERSION_KEY,
-    });
-
-    if (existing) {
-      if (existing.value !== SCHEMA_VERSION_1_JSON) {
-        throw new Error(
-          `ADK Database schema version ${existing.value} is not compatible.`,
-        );
-      }
-      return;
-    }
-
-    const newVersion = em.create(StorageMetadata, {
-      key: SCHEMA_VERSION_KEY,
-      value: SCHEMA_VERSION_1_JSON,
-    });
-
-    await em.persist(newVersion).flush();
   }
 
   async createSession({
@@ -439,63 +436,4 @@ export class DatabaseSessionService extends BaseSessionService {
 
     return event;
   }
-}
-
-/**
- * Checks if a URI is a database connection URI.
- *
- * @param uri The URI to check.
- * @returns True if the URI is a database connection URI, false otherwise.
- */
-export function isDatabaseConnectionString(uri?: string): boolean {
-  if (!uri) {
-    return false;
-  }
-
-  return (
-    uri.startsWith('postgres://') ||
-    uri.startsWith('postgresql://') ||
-    uri.startsWith('mysql://') ||
-    uri.startsWith('mariadb://') ||
-    uri.startsWith('mssql://') ||
-    uri.startsWith('sqlite://')
-  );
-}
-
-/**
- * Parses a database connection URI and returns MikroORM Options.
- *
- * @param uri The database connection URI (e.g., "postgres://user:password@host:port/database")
- * @returns MikroORM Options configured for the database
- * @throws Error if the URI is invalid or unsupported
- */
-export function getConnectionOptionsFromUri(uri: string): MikroDBOptions {
-  let driver: unknown | undefined;
-
-  if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
-    driver = PostgreSqlDriver;
-  } else if (uri.startsWith('mysql://')) {
-    driver = MySqlDriver;
-  } else if (uri.startsWith('mariadb://')) {
-    driver = MariaDbDriver;
-  } else if (uri.startsWith('sqlite://')) {
-    driver = SqliteDriver;
-  } else if (uri.startsWith('mssql://')) {
-    driver = MsSqlDriver;
-  } else {
-    throw new Error(`Unsupported database URI: ${uri}`);
-  }
-
-  const {host, port, username, password, pathname} = new URL(uri);
-  const hostName = host.split(':')[0];
-
-  return {
-    entities: ENTITIES,
-    dbName: pathname.slice(1),
-    host: hostName,
-    port: port ? parseInt(port) : undefined,
-    user: username,
-    password,
-    driver,
-  } as MikroDBOptions;
 }

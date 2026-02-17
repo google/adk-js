@@ -9,6 +9,7 @@ export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
 export * from './common.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
+export {createDatabase} from './sessions/db/operations.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';

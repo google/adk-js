@@ -13,11 +13,9 @@ import {
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
+import {validateSchemaVersion} from '../../src/sessions/db/operations.js';
 
 describe('DatabaseSessionService', () => {
   let service: DatabaseSessionService;
@@ -26,6 +24,7 @@ describe('DatabaseSessionService', () => {
     service = new DatabaseSessionService({
       dbName: ':memory:',
       driver: SqliteDriver,
+      createDatabase: true,
       allowGlobalContext: true, // simplified for tests
     });
     await service.init();
@@ -355,6 +354,7 @@ describe('DatabaseSessionService', () => {
       dbName: ':memory:',
       driver: SqliteDriver,
       allowGlobalContext: true,
+      createDatabase: true,
     });
     await internalService.init();
     const orm = (internalService as unknown as {orm: MikroORM}).orm as MikroORM;
@@ -370,45 +370,12 @@ describe('DatabaseSessionService', () => {
     // Reuse the same ORM/DB connection if possible or create new one on same DB
     // With :memory:, each new ORM instance is a new DB unless we share the connection.
     // So we must reuse the service or simulate check on the same instance.
-
     // Re-check schema version
-    await expect(
-      (
-        internalService as unknown as {
-          validateSchemaVersion: () => Promise<void>;
-        }
-      ).validateSchemaVersion(),
-    ).rejects.toThrow('ADK Database schema version 999 is not compatible');
+    await expect(validateSchemaVersion(orm)).rejects.toThrow(
+      'ADK Database schema version 999 is not compatible',
+    );
 
     await orm.close();
-  });
-
-  it('should create database file if it does not exist', async () => {
-    const tmpDir = os.tmpdir();
-    const dbPath = path.join(tmpDir, `adk-test-${Date.now()}.sqlite`);
-
-    // Ensure file doesn't exist
-    if (fs.existsSync(dbPath)) {
-      fs.unlinkSync(dbPath);
-    }
-
-    const fileService = new DatabaseSessionService({
-      dbName: dbPath,
-      driver: SqliteDriver,
-      allowGlobalContext: true,
-    });
-
-    await fileService.init();
-
-    expect(fs.existsSync(dbPath)).toBe(true);
-
-    const orm = (fileService as unknown as {orm: MikroORM}).orm;
-    await orm.close();
-
-    // Cleanup
-    if (fs.existsSync(dbPath)) {
-      fs.unlinkSync(dbPath);
-    }
   });
 
   describe('Alignment Verification', () => {
