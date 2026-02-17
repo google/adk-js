@@ -98,6 +98,7 @@ export class DatabaseSessionService extends BaseSessionService {
       key: SCHEMA_VERSION_KEY,
       value: SCHEMA_VERSION_1_JSON,
     });
+
     await em.persist(newVersion).flush();
   }
 
@@ -221,10 +222,14 @@ export class DatabaseSessionService extends BaseSessionService {
       eventWhere.timestamp = {$gt: new Date(config.afterTimestamp)};
     }
 
+    // Get latest numRecentEvents events or all events in DESC order
     const storageEvents = await em.find(StorageEvent, eventWhere, {
       orderBy: {timestamp: 'DESC'},
       limit: config?.numRecentEvents,
     });
+    // Reverse the events to maintain the original order as we get events in DESC order
+    // to get the latest events first.
+    storageEvents.reverse();
 
     const appStateModel = await em.findOne(StorageAppState, {appName});
     const userStateModel = await em.findOne(StorageUserState, {

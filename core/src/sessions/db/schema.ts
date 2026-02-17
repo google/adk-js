@@ -1,8 +1,33 @@
-import {Entity, PrimaryKey, Property} from '@mikro-orm/core';
-import {Event} from '../../events/event.js';
+import {Entity, JsonType, PrimaryKey, Property} from '@mikro-orm/core';
+import {
+  Event,
+  transformToCamelCaseEvent,
+  transformToSnakeCaseEvent,
+} from '../../events/event.js';
 
 export const SCHEMA_VERSION_KEY = 'schema_version';
 export const SCHEMA_VERSION_1_JSON = '1';
+
+/**
+ * Custom type for serializing and deserializing ADK Event objects.
+ *
+ * This type handles the conversion between camelCase (TypeScript ADK) and
+ * snake_case (Python ADK) for Event objects, ensuring that nested
+ * properties are converted correctly while preserving specific keys.
+ */
+class CamelCaseToSnakeCaseJsonType extends JsonType {
+  convertToDatabaseValue(value: Event): string {
+    return JSON.stringify(transformToSnakeCaseEvent(value));
+  }
+
+  convertToJSValue(value: string | Record<string, unknown>): Event {
+    if (typeof value === 'string') {
+      return transformToCamelCaseEvent(JSON.parse(value));
+    }
+
+    return transformToCamelCaseEvent(value);
+  }
+}
 
 @Entity({tableName: 'adk_internal_metadata'})
 export class StorageMetadata {
@@ -103,7 +128,7 @@ export class StorageEvent {
   @Property({type: 'datetime'})
   timestamp!: Date;
 
-  @Property({type: 'json', fieldName: 'event_data'})
+  @Property({type: CamelCaseToSnakeCaseJsonType, fieldName: 'event_data'})
   eventData!: Event;
 
   [PrimaryKey.name]?: [string, string, string, string];

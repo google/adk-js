@@ -252,8 +252,8 @@ describe('DatabaseSessionService', () => {
       config: {numRecentEvents: 2},
     });
     expect(recent?.events.length).toBe(2);
-    expect(recent?.events[0].id).toBe(e3.id);
-    expect(recent?.events[1].id).toBe(e2.id);
+    expect(recent?.events[0].id).toBe(e2.id);
+    expect(recent?.events[1].id).toBe(e3.id);
 
     // Test afterTimestamp
     const after = await service.getSession({
@@ -263,8 +263,8 @@ describe('DatabaseSessionService', () => {
       config: {afterTimestamp: now - 100},
     });
     expect(after?.events.length).toBe(2);
-    expect(after?.events[0].id).toBe(e3.id);
-    expect(after?.events[1].id).toBe(e2.id);
+    expect(after?.events[0].id).toBe(e2.id);
+    expect(after?.events[1].id).toBe(e3.id);
 
     // Test afterTimestamp
     const after2 = await service.getSession({
