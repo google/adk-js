@@ -197,8 +197,9 @@ function getFileName({
   filename,
   version,
 }: LoadArtifactRequest): string {
-  if (filename.startsWith('user:')) {
-    return `${appName}/${userId}/user/${filename}/${version}`;
-  }
-  return `${appName}/${userId}/${sessionId}/${filename}/${version}`;
+  const prefix = filename.startsWith('user:')
+    ? `${appName}/${userId}/user/${filename}`
+    : `${appName}/${userId}/${sessionId}/${filename}`;
+
+  return version !== undefined ? `${prefix}/${version}` : prefix;
 }
