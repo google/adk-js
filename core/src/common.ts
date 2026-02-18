@@ -23,7 +23,7 @@ export {InvocationContext} from './agents/invocation_context.js';
 export type {InvocationContextParams} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
-export {LlmAgent, LlmAgentSchema, isLlmAgent} from './agents/llm_agent.js';
+export {LlmAgent, isLlmAgent} from './agents/llm_agent.js';
 export type {
   AfterModelCallback,
   AfterToolCallback,
@@ -31,6 +31,7 @@ export type {
   BeforeToolCallback,
   InstructionProvider,
   LlmAgentConfig,
+  LlmAgentSchema,
   SingleAfterModelCallback,
   SingleAfterToolCallback,
   SingleBeforeModelCallback,

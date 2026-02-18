@@ -18,10 +18,8 @@ import {
   Session,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {z} from 'zod';
 import {z as z3} from 'zod/v3';
-
-import {AgentSchema} from '../../src/agents/llm_agent.js';
+import {z as z4} from 'zod/v4';
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
@@ -245,11 +243,11 @@ describe('LlmAgent Schema Initialization', () => {
     expect(agent.inputSchema).toEqual(inputSchema);
   });
 
-  it('should initialize inputSchema from Zod object', () => {
-    const zodSchema = z.object({foo: z.string()}) as unknown as AgentSchema;
+  it('should initialize inputSchema from Zod v4 object', () => {
+    const zodSchema = z4.object({foo: z4.string()});
     const agent = new LlmAgent({
       name: 'test',
-      inputSchema: zodSchema as unknown as Schema,
+      inputSchema: zodSchema,
     });
     expect(agent.inputSchema).toBeDefined();
     expect((agent.inputSchema as Schema).type).toBe('OBJECT');
@@ -257,10 +255,12 @@ describe('LlmAgent Schema Initialization', () => {
   });
 
   it('should initialize inputSchema from Zod v3 object', () => {
-    const zodSchema = z3.object({foo: z3.string()}) as unknown as AgentSchema;
+    const zodSchema = z3.object({
+      foo: z3.string(),
+    });
     const agent = new LlmAgent({
       name: 'test',
-      inputSchema: zodSchema as unknown as Schema,
+      inputSchema: zodSchema,
     });
     expect(agent.inputSchema).toBeDefined();
     expect((agent.inputSchema as Schema).type).toBe('OBJECT');
@@ -276,11 +276,11 @@ describe('LlmAgent Schema Initialization', () => {
     expect(agent.outputSchema).toEqual(outputSchema);
   });
 
-  it('should initialize outputSchema from Zod object', () => {
-    const zodSchema = z.object({bar: z.number()}) as unknown as AgentSchema;
+  it('should initialize outputSchema from Zod z4 object', () => {
+    const zodSchema = z4.object({bar: z4.number()});
     const agent = new LlmAgent({
       name: 'test',
-      outputSchema: zodSchema as unknown as Schema,
+      outputSchema: zodSchema,
     });
     expect(agent.outputSchema).toBeDefined();
     expect((agent.outputSchema as Schema).type).toBe('OBJECT');
@@ -288,10 +288,12 @@ describe('LlmAgent Schema Initialization', () => {
   });
 
   it('should initialize outputSchema from Zod v3 object', () => {
-    const zodSchema = z3.object({bar: z3.number()}) as unknown as AgentSchema;
+    const zodSchema = z3.object({
+      bar: z3.number(),
+    });
     const agent = new LlmAgent({
       name: 'test',
-      outputSchema: zodSchema as unknown as Schema,
+      outputSchema: zodSchema,
     });
     expect(agent.outputSchema).toBeDefined();
     expect((agent.outputSchema as Schema).type).toBe('OBJECT');

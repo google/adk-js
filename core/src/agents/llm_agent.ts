@@ -277,13 +277,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /** The input schema when agent is used as a tool. */
   inputSchema?: LlmAgentSchema;
 
-  /**
-   * The output schema when agent replies.
-   *
-   * NOTE:
-   *   When this is set, agent can ONLY reply and CANNOT use any tools, such as
-   *   function tools, RAGs, agent transfer, etc.
-   */
+  /** The output schema when agent replies. */
   outputSchema?: LlmAgentSchema;
 
   /**
