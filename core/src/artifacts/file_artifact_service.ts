@@ -76,6 +76,10 @@ export class FileArtifactService implements BaseArtifactService {
     artifact,
     customMetadata,
   }: SaveArtifactRequest): Promise<number> {
+    if (!artifact.inlineData && !artifact.text) {
+      throw new Error('Artifact must have either inlineData or text content.');
+    }
+
     const artifactDir = getArtifactDir(
       this.rootDir,
       userId,
@@ -98,13 +102,11 @@ export class FileArtifactService implements BaseArtifactService {
     let mimeType: string | undefined;
     if (artifact.inlineData) {
       const data = artifact.inlineData.data || '';
-      // We need to store binary data in base64 format.
+      // GenAI SDK Part data is in Base64 format. See https://googleapis.github.io/js-genai/release_docs/interfaces/types.Part.html
       await fs.writeFile(contentPath, Buffer.from(data, 'base64'));
       mimeType = artifact.inlineData.mimeType || 'application/octet-stream';
     } else if (artifact.text !== undefined) {
       await fs.writeFile(contentPath, artifact.text, 'utf-8');
-    } else {
-      throw new Error('Artifact must have either inlineData or text content.');
     }
 
     const canonicalUri = await getCanonicalUri(
@@ -143,7 +145,11 @@ export class FileArtifactService implements BaseArtifactService {
 
       try {
         await fs.access(artifactDir);
-      } catch {
+      } catch (e: unknown) {
+        logger.warn(
+          `[FileArtifactService] loadArtifact: Artifact ${filename} not found`,
+          e,
+        );
         return undefined;
       }
 
@@ -398,8 +404,8 @@ function isUserScoped(
   return !sessionId || filename.startsWith(USER_NAMESPACE_PREFIX);
 }
 
-function getUserArtifactsDir(baseRoot: string): string {
-  return path.join(baseRoot, 'artifacts');
+function getUserArtifactsDir(userRoot: string): string {
+  return path.join(userRoot, 'artifacts');
 }
 
 function getSessionArtifactsDir(baseRoot: string, sessionId: string): string {

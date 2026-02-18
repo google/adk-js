@@ -5,397 +5,111 @@
  */
 
 import {GcsArtifactService} from '@google/adk';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {describe, vi} from 'vitest';
+import {runArtifactServiceTests} from './artifact_service_test_utils.js';
 
-const mocks = vi.hoisted(() => {
-  const file = {
-    save: vi.fn(),
-    download: vi.fn(),
-    getMetadata: vi.fn(),
-    delete: vi.fn(),
-    publicUrl: vi.fn(),
-    name: 'mock-file',
-  };
-  const bucket = {
-    file: vi.fn(() => file),
-    getFiles: vi.fn(),
-  };
-  const storage = {
-    bucket: vi.fn(() => bucket),
-  };
-  return {
-    Storage: vi.fn(() => storage),
-    storage,
-    bucket,
-    file,
-  };
+const {StorageMock, storageMock} = vi.hoisted(() => {
+  class FakeGcsFile {
+    constructor(
+      public name: string,
+      private bucket: FakeGcsBucket,
+    ) {}
+
+    async save(
+      data: string | Buffer,
+      options?: {contentType?: string; metadata?: Record<string, unknown>},
+    ): Promise<void> {
+      this.bucket.files.set(this.name, {
+        data: Buffer.isBuffer(data) ? data : Buffer.from(data),
+        metadata: options?.metadata || {},
+        contentType: options?.contentType,
+      });
+    }
+
+    async download(): Promise<[Buffer]> {
+      const file = this.bucket.files.get(this.name);
+      if (!file) {
+        throw new Error(`File not found: ${this.name}`);
+      }
+      return [file.data];
+    }
+
+    async getMetadata(): Promise<
+      [{contentType?: string; metadata?: Record<string, unknown>}]
+    > {
+      const file = this.bucket.files.get(this.name);
+      if (!file) {
+        throw new Error(`File not found: ${this.name}`);
+      }
+      return [{contentType: file.contentType, metadata: file.metadata}];
+    }
+
+    async delete(): Promise<void> {
+      this.bucket.files.delete(this.name);
+    }
+
+    publicUrl(): string {
+      return `https://storage.googleapis.com/${this.bucket.name}/${this.name}`;
+    }
+  }
+
+  class FakeGcsBucket {
+    files = new Map<
+      string,
+      {
+        data: Buffer;
+        metadata: Record<string, unknown>;
+        contentType?: string;
+      }
+    >();
+
+    constructor(public name: string) {}
+
+    file(name: string): FakeGcsFile {
+      return new FakeGcsFile(name, this);
+    }
+
+    async getFiles(options?: {prefix?: string}): Promise<[FakeGcsFile[]]> {
+      let files = Array.from(this.files.keys()).map((name) => this.file(name));
+      if (options?.prefix) {
+        files = files.filter((f) => f.name.startsWith(options.prefix!));
+      }
+      return [files];
+    }
+  }
+
+  class FakeStorage {
+    buckets = new Map<string, FakeGcsBucket>();
+
+    bucket(name: string): FakeGcsBucket {
+      if (!this.buckets.has(name)) {
+        this.buckets.set(name, new FakeGcsBucket(name));
+      }
+      return this.buckets.get(name)!;
+    }
+  }
+
+  const storageMock = new FakeStorage();
+  const StorageMock = vi.fn(() => storageMock);
+  return {StorageMock, storageMock};
 });
 
 vi.mock('@google-cloud/storage', () => {
   return {
-    Storage: mocks.Storage,
+    Storage: StorageMock,
   };
 });
 
 describe('GcsArtifactService', () => {
-  let service: GcsArtifactService;
-  const {bucket, file} = mocks;
+  const bucketName = 'test-bucket';
 
-  beforeEach(() => {
-    vi.resetAllMocks();
-    service = new GcsArtifactService('test-bucket');
-
-    // Re-apply mocks after reset
-    file.save.mockResolvedValue(undefined);
-    file.delete.mockResolvedValue(undefined);
-    file.publicUrl.mockReturnValue('https://example.com/artifact');
-    file.getMetadata.mockResolvedValue([{}]);
-    file.download.mockResolvedValue([Buffer.from('')]);
-    bucket.file.mockReturnValue(file);
-    bucket.getFiles.mockResolvedValue([[]]);
-  });
-
-  const appName = 'test-app';
-  const userId = 'test-user';
-  const sessionId = 'test-session';
-
-  describe('saveArtifact', () => {
-    it('saves a text artifact', async () => {
-      const filename = 'test.txt';
-      const text = 'hello world';
-
-      // Mock no existing versions
-      bucket.getFiles.mockResolvedValueOnce([[]]);
-
-      const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        artifact: {text},
-      });
-
-      expect(version).toBe(0);
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/0`),
-      );
-      expect(file.save).toHaveBeenCalledWith(
-        text,
-        expect.objectContaining({
-          contentType: 'text/plain',
-          metadata: {},
-        }),
-      );
-    });
-
-    it('saves a binary artifact', async () => {
-      const filename = 'test.png';
-      const data = 'base64data';
-      const mimeType = 'image/png';
-
-      bucket.getFiles.mockResolvedValueOnce([[]]);
-
-      const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        artifact: {inlineData: {data, mimeType}},
-      });
-
-      expect(version).toBe(0);
-      expect(file.save).toHaveBeenCalledWith(
-        JSON.stringify(data),
-        expect.objectContaining({
-          contentType: mimeType,
-        }),
-      );
-    });
-
-    it('increments version number', async () => {
-      const filename = 'test.txt';
-
-      // Mock existing version 0
-      bucket.getFiles.mockResolvedValueOnce([[{name: `.../${filename}/0`}]]);
-
-      const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        artifact: {text: 'new version'},
-      });
-
-      expect(version).toBe(1);
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/1`),
-      );
-    });
-
-    it('throws error if artifact has no content', async () => {
-      await expect(
-        service.saveArtifact({
-          appName,
-          userId,
-          sessionId,
-          filename: 'test.txt',
-          artifact: {} as Record<string, unknown>,
-        }),
-      ).rejects.toThrow('Artifact must have either inlineData or text');
-    });
-  });
-
-  describe('loadArtifact', () => {
-    it('loads text artifact', async () => {
-      const filename = 'test.txt';
-      const text = 'hello world';
-
-      bucket.getFiles.mockResolvedValueOnce([[{name: `.../${filename}/0`}]]);
-
-      file.getMetadata.mockResolvedValue([{contentType: 'text/plain'}]);
-      file.download.mockResolvedValue([Buffer.from(text)]);
-
-      const part = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        version: 0,
-      });
-
-      expect(part).toEqual({text});
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/0`),
-      );
-    });
-
-    it('loads binary artifact', async () => {
-      const filename = 'test.png';
-      const data = 'base64data';
-      const mimeType = 'image/png';
-
-      bucket.getFiles.mockResolvedValueOnce([[{name: `.../${filename}/0`}]]);
-
-      file.getMetadata.mockResolvedValue([{contentType: mimeType}]);
-      file.download.mockResolvedValue([Buffer.from(data)]);
-
-      const part = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        version: 0,
-      });
-
-      expect(part).toEqual({
-        inlineData: {
-          data: Buffer.from(data).toString('base64'),
-          mimeType,
-        },
-      });
-    });
-
-    it('returns undefined if no versions found', async () => {
-      bucket.getFiles.mockResolvedValueOnce([[]]);
-
-      const part = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename: 'missing.txt',
-      });
-
-      expect(part).toBeUndefined();
-    });
-
-    it('loads latest version if version not specified', async () => {
-      const filename = 'test.txt';
-
-      bucket.getFiles.mockResolvedValueOnce([
-        [{name: `.../${filename}/0`}, {name: `.../${filename}/1`}],
-      ]);
-
-      file.getMetadata.mockResolvedValue([{contentType: 'text/plain'}]);
-      file.download.mockResolvedValue([Buffer.from('v1')]);
-
-      await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-      });
-
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/1`),
-      );
-    });
-  });
-
-  describe('listArtifactKeys', () => {
-    it('lists and sorts keys from session and user scopes', async () => {
-      // sessionPrefix files
-      const sessionFiles = [
-        {name: `path/to/${sessionId}/file1.txt`},
-        {name: `path/to/${sessionId}/file2.txt`},
-      ];
-      // userPrefix files
-      const userFiles = [{name: `path/to/user/file3.txt`}];
-
-      bucket.getFiles
-        .mockResolvedValueOnce([sessionFiles])
-        .mockResolvedValueOnce([userFiles]);
-
-      const keys = await service.listArtifactKeys({
-        appName,
-        userId,
-        sessionId,
-      });
-
-      expect(keys).toEqual(['file1.txt', 'file2.txt', 'file3.txt']);
-      expect(bucket.getFiles).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('deleteArtifact', () => {
-    it('deletes all versions of an artifact', async () => {
-      const filename = 'test.txt';
-
-      bucket.getFiles.mockResolvedValueOnce([
-        [{name: `.../${filename}/0`}, {name: `.../${filename}/1`}],
-      ]);
-
-      await service.deleteArtifact({
-        appName,
-        userId,
-        sessionId,
-        filename,
-      });
-
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/0`),
-      );
-      expect(bucket.file).toHaveBeenCalledWith(
-        expect.stringContaining(`${filename}/1`),
-      );
-      expect(file.delete).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('listVersions', () => {
-    it('lists versions', async () => {
-      const filename = 'test.txt';
-
-      bucket.getFiles.mockResolvedValueOnce([
-        [{name: `.../${filename}/0`}, {name: `.../${filename}/2`}],
-      ]);
-
-      const versions = await service.listVersions({
-        appName,
-        userId,
-        sessionId,
-        filename,
-      });
-
-      expect(versions).toEqual([0, 2]);
-      expect(bucket.getFiles).toHaveBeenCalledWith({
-        prefix: `${appName}/${userId}/${sessionId}/${filename}`,
-      });
-    });
-  });
-
-  describe('listArtifactVersions', () => {
-    it('lists artifact versions with metadata', async () => {
-      const filename = 'test.txt';
-
-      // Mock listVersions
-      bucket.getFiles.mockResolvedValueOnce([[{name: `.../${filename}/0`}]]);
-
-      // Mock getMetadata for getArtifactVersion
-      file.getMetadata.mockResolvedValue([
-        {
-          contentType: 'text/plain',
-          metadata: {foo: 'bar'},
-        },
-      ]);
-      file.publicUrl.mockReturnValue('http://url');
-
-      const versions = await service.listArtifactVersions({
-        appName,
-        userId,
-        sessionId,
-        filename,
-      });
-
-      expect(versions).toHaveLength(1);
-      expect(versions[0]).toEqual({
-        version: 0,
-        mimeType: 'text/plain',
-        customMetadata: {foo: 'bar'},
-        canonicalUri: 'http://url',
-      });
-    });
-  });
-
-  describe('getArtifactVersion', () => {
-    it('gets specific version metadata', async () => {
-      const filename = 'test.txt';
-
-      file.getMetadata.mockResolvedValue([
-        {
-          contentType: 'text/plain',
-          metadata: {foo: 'bar'},
-        },
-      ]);
-      file.publicUrl.mockReturnValue('http://url');
-
-      const version = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
-        filename,
-        version: 0,
-      });
-
-      expect(version).toEqual({
-        version: 0,
-        mimeType: 'text/plain',
-        customMetadata: {foo: 'bar'},
-        canonicalUri: 'http://url',
-      });
-    });
-
-    it('gets latest version metadata', async () => {
-      const filename = 'test.txt';
-
-      bucket.getFiles.mockResolvedValueOnce([[{name: `.../${filename}/5`}]]);
-
-      file.getMetadata.mockResolvedValue([
-        {
-          contentType: 'text/plain',
-        },
-      ]);
-
-      const version = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
-        filename,
-      });
-
-      expect(version?.version).toBe(5);
-    });
-
-    it('returns undefined if no versions', async () => {
-      bucket.getFiles.mockResolvedValueOnce([[]]);
-
-      const version = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
-        filename: 'missing.txt',
-      });
-
-      expect(version).toBeUndefined();
-    });
-  });
+  runArtifactServiceTests(
+    async () => {
+      storageMock.buckets.clear();
+      return new GcsArtifactService(bucketName);
+    },
+    async () => {
+      storageMock.buckets.clear();
+    },
+  );
 });

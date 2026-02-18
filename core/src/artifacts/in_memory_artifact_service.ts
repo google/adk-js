@@ -37,6 +37,12 @@ export class InMemoryArtifactService implements BaseArtifactService {
     artifact,
     customMetadata,
   }: SaveArtifactRequest): Promise<number> {
+    if (!artifact.inlineData && !artifact.text) {
+      return Promise.reject(
+        new Error('Artifact must have either inlineData or text content.'),
+      );
+    }
+
     const path = artifactPath(appName, userId, sessionId, filename);
 
     if (!this.artifacts[path]) {
