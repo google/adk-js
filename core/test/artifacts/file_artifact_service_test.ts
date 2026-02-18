@@ -255,4 +255,133 @@ describe('FileArtifactService', () => {
       expect(versions).to.deep.equal([0, 1]);
     });
   });
+
+  describe('customMetadata', () => {
+    it('saves and retrieves custom metadata', async () => {
+      const filename = 'meta.txt';
+      const customMetadata = {foo: 'bar', baz: 123};
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: 'meta'},
+        customMetadata,
+      });
+
+      const versionMetadata = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version,
+      });
+
+      expect(versionMetadata).toBeDefined();
+      expect(versionMetadata?.customMetadata).toEqual(customMetadata);
+    });
+  });
+
+  describe('listArtifactVersions', () => {
+    it('lists artifact versions with metadata', async () => {
+      const filename = 'vers-meta.txt';
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '1'},
+        customMetadata: {v: 1},
+      });
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '2'},
+        customMetadata: {v: 2},
+      });
+
+      const versions = await service.listArtifactVersions({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+
+      expect(versions).toHaveLength(2);
+      expect(versions[0].version).toBe(0);
+      expect(versions[0].customMetadata).toEqual({v: 1});
+      expect(versions[1].version).toBe(1);
+      expect(versions[1].customMetadata).toEqual({v: 2});
+    });
+  });
+
+  describe('getArtifactVersion', () => {
+    it('gets specific artifact version metadata', async () => {
+      const filename = 'get-vers.txt';
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '1'},
+        customMetadata: {v: 1},
+      });
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '2'},
+        customMetadata: {v: 2},
+      });
+
+      const v0 = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version: 0,
+      });
+      expect(v0?.customMetadata).toEqual({v: 1});
+
+      const v1 = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version: 1,
+      });
+      expect(v1?.customMetadata).toEqual({v: 2});
+
+      const latest = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(latest?.customMetadata).toEqual({v: 2});
+    });
+
+    it('returns undefined for non-existent version', async () => {
+      const filename = 'missing-vers.txt';
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: '1'},
+      });
+
+      const missing = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version: 99,
+      });
+      expect(missing).toBeUndefined();
+    });
+  });
 });

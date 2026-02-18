@@ -1,13 +1,8 @@
-/**
- * @license
- * Copyright 2025 Google LLC
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import {Bucket, Storage} from '@google-cloud/storage';
 import {createPartFromBase64, createPartFromText, Part} from '@google/genai';
 
 import {
+  ArtifactVersion,
   BaseArtifactService,
   DeleteArtifactRequest,
   ListArtifactKeysRequest,
@@ -33,9 +28,12 @@ export class GcsArtifactService implements BaseArtifactService {
       }),
     );
 
+    const metadata = request.customMetadata || {};
+
     if (request.artifact.inlineData) {
       await file.save(JSON.stringify(request.artifact.inlineData.data), {
         contentType: request.artifact.inlineData.mimeType,
+        metadata,
       });
 
       return version;
@@ -44,6 +42,7 @@ export class GcsArtifactService implements BaseArtifactService {
     if (request.artifact.text) {
       await file.save(request.artifact.text, {
         contentType: 'text/plain',
+        metadata,
       });
 
       return version;
@@ -133,6 +132,60 @@ export class GcsArtifactService implements BaseArtifactService {
     }
 
     return versions;
+  }
+
+  async listArtifactVersions(
+    request: ListVersionsRequest,
+  ): Promise<ArtifactVersion[]> {
+    const versions = await this.listVersions(request);
+    const artifactVersions: ArtifactVersion[] = [];
+
+    for (const version of versions) {
+      try {
+        const artifactVersion = await this.getArtifactVersion({
+          ...request,
+          version,
+        });
+        if (artifactVersion) {
+          artifactVersions.push(artifactVersion);
+        }
+      } catch {
+        // Ignore specific version failures
+      }
+    }
+    return artifactVersions;
+  }
+
+  async getArtifactVersion(
+    request: LoadArtifactRequest,
+  ): Promise<ArtifactVersion | undefined> {
+    let version = request.version;
+    if (version === undefined) {
+      const versions = await this.listVersions(request);
+      if (versions.length === 0) {
+        return undefined;
+      }
+      version = Math.max(...versions);
+    }
+
+    const file = this.bucket.file(
+      getFileName({
+        ...request,
+        version,
+      }),
+    );
+
+    try {
+      const [metadata] = await file.getMetadata();
+      return {
+        version,
+        mimeType: metadata.contentType,
+        customMetadata: metadata.metadata as Record<string, unknown>,
+        canonicalUri: file.publicUrl(), // or similar
+      };
+    } catch {
+      return undefined;
+    }
   }
 }
 

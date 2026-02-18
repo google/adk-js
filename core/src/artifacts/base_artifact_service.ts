@@ -20,6 +20,10 @@ export interface SaveArtifactRequest {
   filename: string;
   /** The artifact to save. */
   artifact: Part;
+  /**
+   * Optional custom metadata to save with the artifact.
+   */
+  customMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -82,6 +86,20 @@ export interface ListVersionsRequest {
 }
 
 /**
+ * Metadata for a file artifact version.
+ */
+export interface ArtifactVersion {
+  /** The version number. */
+  version: number;
+  /** The canonical URI of the artifact. */
+  canonicalUri?: string;
+  /** Custom metadata associated with the artifact. */
+  customMetadata?: Record<string, unknown>;
+  /** The MIME type of the artifact. */
+  mimeType?: string;
+}
+
+/**
  *  Interface for artifact services.
  */
 export interface BaseArtifactService {
@@ -135,4 +153,24 @@ export interface BaseArtifactService {
    *     artifact.
    */
   listVersions(request: ListVersionsRequest): Promise<number[]>;
+
+  /**
+   * Lists metadata for each artifact version.
+   *
+   * @param request The request to list artifact versions.
+   * @return A promise that resolves to a list of artifact version metadata.
+   */
+  listArtifactVersions(
+    request: ListVersionsRequest,
+  ): Promise<ArtifactVersion[]>;
+
+  /**
+   * Gets metadata for a specific artifact version.
+   *
+   * @param request The request to get an artifact version.
+   * @return A promise that resolves to the artifact version metadata or undefined.
+   */
+  getArtifactVersion(
+    request: LoadArtifactRequest,
+  ): Promise<ArtifactVersion | undefined>;
 }

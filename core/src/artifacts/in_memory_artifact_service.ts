@@ -7,6 +7,7 @@
 import {Part} from '@google/genai';
 
 import {
+  ArtifactVersion,
   BaseArtifactService,
   DeleteArtifactRequest,
   ListArtifactKeysRequest,
@@ -23,7 +24,10 @@ export function isInMemoryConnectionString(uri: string): boolean {
  * An in-memory implementation of the ArtifactService.
  */
 export class InMemoryArtifactService implements BaseArtifactService {
-  private readonly artifacts: Record<string, Part[]> = {};
+  private readonly artifacts: Record<
+    string,
+    {part: Part; metadata: ArtifactVersion}[]
+  > = {};
 
   saveArtifact({
     appName,
@@ -31,6 +35,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
     sessionId,
     filename,
     artifact,
+    customMetadata,
   }: SaveArtifactRequest): Promise<number> {
     const path = artifactPath(appName, userId, sessionId, filename);
 
@@ -39,7 +44,11 @@ export class InMemoryArtifactService implements BaseArtifactService {
     }
 
     const version = this.artifacts[path].length;
-    this.artifacts[path].push(artifact);
+    const metadata: ArtifactVersion = {
+      version,
+      customMetadata,
+    };
+    this.artifacts[path].push({part: artifact, metadata});
 
     return Promise.resolve(version);
   }
@@ -62,7 +71,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
       version = versions.length - 1;
     }
 
-    return Promise.resolve(versions[version]);
+    return Promise.resolve(versions[version].part);
   }
 
   listArtifactKeys({
@@ -121,6 +130,47 @@ export class InMemoryArtifactService implements BaseArtifactService {
     }
 
     return Promise.resolve(versions);
+  }
+
+  listArtifactVersions({
+    appName,
+    userId,
+    sessionId,
+    filename,
+  }: ListVersionsRequest): Promise<ArtifactVersion[]> {
+    const path = artifactPath(appName, userId, sessionId, filename);
+    const artifacts = this.artifacts[path];
+
+    if (!artifacts) {
+      return Promise.resolve([]);
+    }
+
+    return Promise.resolve(artifacts.map((a) => a.metadata));
+  }
+
+  getArtifactVersion({
+    appName,
+    userId,
+    sessionId,
+    filename,
+    version,
+  }: LoadArtifactRequest): Promise<ArtifactVersion | undefined> {
+    const path = artifactPath(appName, userId, sessionId, filename);
+    const versions = this.artifacts[path];
+
+    if (!versions) {
+      return Promise.resolve(undefined);
+    }
+
+    if (version === undefined) {
+      version = versions.length - 1;
+    }
+
+    if (versions[version]) {
+      return Promise.resolve(versions[version].metadata);
+    }
+
+    return Promise.resolve(undefined);
   }
 }
 
