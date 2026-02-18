@@ -98,7 +98,7 @@ export class FileArtifactService implements BaseArtifactService {
     let mimeType: string | undefined;
     if (artifact.inlineData) {
       const data = artifact.inlineData.data || '';
-      // Write file inlineData as base64
+      // We need to store binary data in base64 format.
       await fs.writeFile(contentPath, Buffer.from(data, 'base64'));
       mimeType = artifact.inlineData.mimeType || 'application/octet-stream';
     } else if (artifact.text !== undefined) {
@@ -157,6 +157,9 @@ export class FileArtifactService implements BaseArtifactService {
         versionToLoad = versions[versions.length - 1];
       } else {
         if (!versions.includes(version)) {
+          logger.warn(
+            `[FileArtifactService] loadArtifact: Artifact ${filename} version ${version} not found`,
+          );
           return undefined;
         }
         versionToLoad = version;
@@ -179,7 +182,9 @@ export class FileArtifactService implements BaseArtifactService {
             await fs.access(uriPath);
             contentPath = uriPath;
           } catch {
-            // ignore, check local path
+            logger.warn(
+              `[FileArtifactService] loadArtifact: Artifact ${filename} missing at ${uriPath}, falling back to content path ${contentPath}`,
+            );
           }
         }
       }
@@ -194,7 +199,9 @@ export class FileArtifactService implements BaseArtifactService {
             },
           };
         } catch {
-          logger.warn(`Binary artifact ${filename} missing at ${contentPath}`);
+          logger.warn(
+            `[FileArtifactService] loadArtifact: Artifact ${filename} missing at ${contentPath}`,
+          );
           return undefined;
         }
       }
@@ -203,11 +210,16 @@ export class FileArtifactService implements BaseArtifactService {
         const text = await fs.readFile(contentPath, 'utf-8');
         return {text};
       } catch {
-        logger.warn(`Text artifact ${filename} missing at ${contentPath}`);
+        logger.warn(
+          `[FileArtifactService] loadArtifact: Text artifact ${filename} missing at ${contentPath}`,
+        );
         return undefined;
       }
     } catch (e) {
-      logger.error('Error loading artifact', e);
+      logger.error(
+        `[FileArtifactService] loadArtifact: Error loading artifact ${filename}`,
+        e,
+      );
       return undefined;
     }
   }
@@ -227,7 +239,7 @@ export class FileArtifactService implements BaseArtifactService {
         filenames.add(metadata.fileName);
       } else {
         const rel = path.relative(sessionRoot, artifactDir);
-        filenames.add(rel.split(path.sep).join('/'));
+        filenames.add(asPosixPath(rel));
       }
     }
 
@@ -239,9 +251,7 @@ export class FileArtifactService implements BaseArtifactService {
         filenames.add(metadata.fileName);
       } else {
         const rel = path.relative(artifactsRoot, artifactDir);
-        filenames.add(
-          `${USER_NAMESPACE_PREFIX}${rel.split(path.sep).join('/')}`,
-        );
+        filenames.add(`${USER_NAMESPACE_PREFIX}${asPosixPath(rel)}`);
       }
     }
 
@@ -262,7 +272,10 @@ export class FileArtifactService implements BaseArtifactService {
       );
       await fs.rm(artifactDir, {recursive: true, force: true});
     } catch (e) {
-      logger.warn(`Failed to delete artifact ${filename}`, e);
+      logger.warn(
+        `[FileArtifactService] deleteArtifact: Failed to delete artifact ${filename}`,
+        e,
+      );
     }
   }
 
@@ -280,7 +293,10 @@ export class FileArtifactService implements BaseArtifactService {
       );
       return await getArtifactVersionsFromDir(artifactDir);
     } catch (e) {
-      logger.warn(`Failed to list versions for artifact ${filename}`, e);
+      logger.warn(
+        `[FileArtifactService] listVersions: Failed to list versions for artifact ${filename}`,
+        e,
+      );
       return [];
     }
   }
@@ -311,16 +327,15 @@ export class FileArtifactService implements BaseArtifactService {
           artifactVersions.push(metadata);
         } catch (e) {
           logger.warn(
-            `Failed to read artifact version ${artifactDir}/${version}`,
+            `[FileArtifactService] listArtifactVersions: Failed to read artifact version ${version} at ${artifactDir}`,
             e,
           );
-          // Ignore version if metadata is readable
         }
       }
       return artifactVersions;
     } catch (e) {
       logger.warn(
-        `Failed to list artifact versions for userId: ${userId} sessionId: ${sessionId} filename: ${filename}`,
+        `[FileArtifactService] listArtifactVersions: Failed to list artifact versions for userId: ${userId} sessionId: ${sessionId} filename: ${filename}`,
         e,
       );
       return [];
@@ -364,7 +379,7 @@ export class FileArtifactService implements BaseArtifactService {
       return await readMetadata(metadataPath);
     } catch (e) {
       logger.warn(
-        `Failed to get artifact version for userId: ${userId} sessionId: ${sessionId} filename: ${filename} version: ${version}`,
+        `[FileArtifactService] getArtifactVersion: Failed to get artifact version for userId: ${userId} sessionId: ${sessionId} filename: ${filename} version: ${version}`,
         e,
       );
       return undefined;
@@ -464,7 +479,10 @@ async function getArtifactVersionsFromDir(
       .filter((v) => !isNaN(v));
     return versions.sort((a, b) => a - b);
   } catch (e) {
-    logger.error(`Failed to list artifact versions from ${artifactDir}`, e);
+    logger.warn(
+      `[FileArtifactService] getArtifactVersionsFromDir: Failed to list artifact versions from ${artifactDir}`,
+      e,
+    );
     return [];
   }
 }
@@ -550,7 +568,10 @@ async function getLatestMetadata(
   try {
     return await readMetadata(metadataPath);
   } catch (e) {
-    logger.error(`Failed to read metadata from ${metadataPath}`, e);
+    logger.warn(
+      `[FileArtifactService] getLatestMetadata: Failed to read metadata from ${metadataPath}`,
+      e,
+    );
     return undefined;
   }
 }
@@ -596,8 +617,23 @@ function fileUriToPath(uri: string): string | undefined {
   try {
     return fileURLToPath(uri);
   } catch (e) {
-    logger.warn(`Failed to convert file URI to path: ${uri}`, e);
+    logger.warn(
+      `[FileArtifactService] fileUriToPath: Failed to convert file URI to path: ${uri}`,
+      e,
+    );
 
     return undefined;
   }
+}
+
+/**
+ * Converts a path to a POSIX path.
+ *
+ * Used for ensuring paths use forward slashes (/), regardless of the operating system.
+ *
+ * @param p The path.
+ * @returns The POSIX path.
+ */
+function asPosixPath(p: string): string {
+  return p.split(path.sep).join('/');
 }

@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {Bucket, Storage} from '@google-cloud/storage';
 import {createPartFromBase64, createPartFromText, Part} from '@google/genai';
 
@@ -141,18 +147,16 @@ export class GcsArtifactService implements BaseArtifactService {
     const artifactVersions: ArtifactVersion[] = [];
 
     for (const version of versions) {
-      try {
-        const artifactVersion = await this.getArtifactVersion({
-          ...request,
-          version,
-        });
-        if (artifactVersion) {
-          artifactVersions.push(artifactVersion);
-        }
-      } catch {
-        // Ignore specific version failures
+      const artifactVersion = await this.getArtifactVersion({
+        ...request,
+        version,
+      });
+
+      if (artifactVersion) {
+        artifactVersions.push(artifactVersion);
       }
     }
+
     return artifactVersions;
   }
 
@@ -175,17 +179,14 @@ export class GcsArtifactService implements BaseArtifactService {
       }),
     );
 
-    try {
-      const [metadata] = await file.getMetadata();
-      return {
-        version,
-        mimeType: metadata.contentType,
-        customMetadata: metadata.metadata as Record<string, unknown>,
-        canonicalUri: file.publicUrl(), // or similar
-      };
-    } catch {
-      return undefined;
-    }
+    const [metadata] = await file.getMetadata();
+
+    return {
+      version,
+      mimeType: metadata.contentType,
+      customMetadata: metadata.metadata as Record<string, unknown>,
+      canonicalUri: file.publicUrl(),
+    };
   }
 }
 

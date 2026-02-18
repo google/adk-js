@@ -8,6 +8,7 @@ import {Part} from '@google/genai';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {
+  ArtifactVersion,
   BaseArtifactService,
   DeleteArtifactRequest,
   ListVersionsRequest,
@@ -57,6 +58,30 @@ export class ForwardingArtifactService implements BaseArtifactService {
     }
 
     return this.toolContext.invocationContext.artifactService.listVersions(
+      request,
+    );
+  }
+
+  listArtifactVersions(
+    request: ListVersionsRequest,
+  ): Promise<ArtifactVersion[]> {
+    if (!this.toolContext.invocationContext.artifactService) {
+      throw new Error('Artifact service is not initialized.');
+    }
+
+    return this.toolContext.invocationContext.artifactService.listArtifactVersions(
+      request,
+    );
+  }
+
+  getArtifactVersion(
+    request: LoadArtifactRequest,
+  ): Promise<ArtifactVersion | undefined> {
+    if (!this.toolContext.invocationContext.artifactService) {
+      throw new Error('Artifact service is not initialized.');
+    }
+
+    return this.toolContext.invocationContext.artifactService.getArtifactVersion(
       request,
     );
   }
