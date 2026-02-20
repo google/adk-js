@@ -3,6 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as winston from 'winston';
 
 /** Log levels for the logger. */
 export enum LogLevel {
@@ -25,74 +26,80 @@ export interface Logger {
   warn(...args: unknown[]): void;
 
   error(...args: unknown[]): void;
+
+  setLogLevel(level: LogLevel): void;
 }
 
-let logLevel = LogLevel.INFO;
-
-/**
- * Sets the log level for the logger.
- */
-export function setLogLevel(level: LogLevel) {
-  logLevel = level;
-}
-
-/**
- * Simple logger class for ADK.
- */
 class SimpleLogger implements Logger {
-  log(level: LogLevel, ...args: unknown[]) {
-    if (level < logLevel) {
-      return;
-    }
+  private readonly logger: winston.Logger;
+  private logLevel: LogLevel = LogLevel.INFO;
 
-    switch (level) {
-      case LogLevel.DEBUG:
-        this.debug(...args);
-        break;
-      case LogLevel.INFO:
-        this.info(...args);
-        break;
-      case LogLevel.WARN:
-        this.warn(...args);
-        break;
-      case LogLevel.ERROR:
-        this.error(...args);
-        break;
-      default:
-        throw new Error(`Unsupported log level: ${level}`);
-    }
+  constructor() {
+    this.logger = winston.createLogger({
+      levels: {
+        'debug': LogLevel.DEBUG,
+        'info': LogLevel.INFO,
+        'warn': LogLevel.WARN,
+        'error': LogLevel.ERROR,
+      },
+      format: winston.format.combine(
+        winston.format.label({label: 'ADK'}),
+        winston.format((info) => {
+          info.level = info.level.toUpperCase();
+          return info;
+        })(),
+        winston.format.colorize(),
+        winston.format.timestamp(),
+        winston.format.printf((info) => {
+          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
+        }),
+      ),
+      transports: [new winston.transports.Console()],
+    });
   }
 
-  debug(...args: unknown[]) {
-    if (logLevel > LogLevel.DEBUG) {
-      return;
-    }
-
-    console.debug(getColoredPrefix(LogLevel.DEBUG), ...args);
+  setLogLevel(level: LogLevel): void {
+    this.logLevel = level;
   }
 
-  info(...args: unknown[]) {
-    if (logLevel > LogLevel.INFO) {
+  log(level: LogLevel, ...messages: unknown[]): void {
+    if (this.logLevel > level) {
       return;
     }
 
-    console.info(getColoredPrefix(LogLevel.INFO), ...args);
+    this.logger.log(level.toString(), messages.join(' '));
   }
 
-  warn(...args: unknown[]) {
-    if (logLevel > LogLevel.WARN) {
+  debug(...messages: unknown[]): void {
+    if (this.logLevel > LogLevel.DEBUG) {
       return;
     }
 
-    console.warn(getColoredPrefix(LogLevel.WARN), ...args);
+    this.logger.debug(messages.join(' '));
   }
 
-  error(...args: unknown[]) {
-    if (logLevel > LogLevel.ERROR) {
+  info(...messages: unknown[]): void {
+    if (this.logLevel > LogLevel.INFO) {
       return;
     }
 
-    console.error(getColoredPrefix(LogLevel.ERROR), ...args);
+    this.logger.info(messages.join(' '));
+  }
+
+  warn(...messages: unknown[]): void {
+    if (this.logLevel > LogLevel.WARN) {
+      return;
+    }
+
+    this.logger.warn(messages.join(' '));
+  }
+
+  error(...messages: unknown[]): void {
+    if (this.logLevel > LogLevel.ERROR) {
+      return;
+    }
+
+    this.logger.error(messages.join(' '));
   }
 }
 
@@ -100,31 +107,12 @@ class SimpleLogger implements Logger {
  * A no-op logger that discards all log messages.
  */
 class NoOpLogger implements Logger {
+  setLogLevel(_level: LogLevel): void {}
   log(_level: LogLevel, ..._args: unknown[]): void {}
   debug(..._args: unknown[]): void {}
   info(..._args: unknown[]): void {}
   warn(..._args: unknown[]): void {}
   error(..._args: unknown[]): void {}
-}
-
-const LOG_LEVEL_STR: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: 'DEBUG',
-  [LogLevel.INFO]: 'INFO',
-  [LogLevel.WARN]: 'WARN',
-  [LogLevel.ERROR]: 'ERROR',
-};
-
-const CONSOLE_COLOR_MAP: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: '\x1b[34m', // Blue
-  [LogLevel.INFO]: '\x1b[32m', // Green
-  [LogLevel.WARN]: '\x1b[33m', // Yellow
-  [LogLevel.ERROR]: '\x1b[31m', // Red
-};
-
-const RESET_COLOR = '\x1b[0m';
-
-function getColoredPrefix(level: LogLevel): string {
-  return `${CONSOLE_COLOR_MAP[level]}[ADK ${LOG_LEVEL_STR[level]}]:${RESET_COLOR}`;
 }
 
 let currentLogger: Logger = new SimpleLogger();
@@ -151,9 +139,19 @@ export function resetLogger(): void {
 }
 
 /**
+ * Sets the log level for the logger.
+ */
+export function setLogLevel(level: LogLevel) {
+  logger.setLogLevel(level);
+}
+
+/**
  * The logger instance for ADK.
  */
 export const logger: Logger = {
+  setLogLevel(level: LogLevel): void {
+    currentLogger.setLogLevel(level);
+  },
   log(level: LogLevel, ...args: unknown[]): void {
     currentLogger.log(level, ...args);
   },

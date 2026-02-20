@@ -63,6 +63,7 @@
     "esbuild-shim-plugin": "^1.0.3",
     "express": "^4.21.2",
     "ts-graphviz": "^1.0.1",
+    "winston": "^3.19.0",
     "zod": "^4.2.1"
   }
 }
