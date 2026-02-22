@@ -99,6 +99,34 @@ export interface RunConfig {
    * to intercept and execute tools (Client-Side Tool Execution).
    */
   pauseOnToolCalls?: boolean;
+
+  /**
+   * Controls whether multiple tool calls from a single LLM response are
+   * executed concurrently (true) or sequentially (false).
+   *
+   * When true (default): tool calls run via Promise.allSettled, matching
+   * adk-python's asyncio.gather pattern. Individual failures don't affect
+   * other calls.
+   *
+   * When false: tool calls execute one-by-one in order. Use this when tools
+   * have interdependencies, mutate shared state, or require deterministic
+   * ordering.
+   */
+  parallelToolExecution?: boolean;
+
+  /**
+   * Maximum number of tool calls to execute concurrently when
+   * `parallelToolExecution` is true.
+   *
+   * When set to a positive integer, tool calls are dispatched in batches of
+   * this size — each batch runs via Promise.allSettled, and the next batch
+   * starts only after the current one settles. This provides back-pressure
+   * for rate-limited APIs or resource-constrained environments.
+   *
+   * When undefined or <= 0, all tool calls run concurrently (no limit).
+   * Ignored when `parallelToolExecution` is false.
+   */
+  maxConcurrentToolCalls?: number;
 }
 
 export function createRunConfig(params: Partial<RunConfig> = {}) {
@@ -109,6 +137,7 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     streamingMode: StreamingMode.NONE,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
     pauseOnToolCalls: false,
+    parallelToolExecution: true,
     ...params,
   };
 }

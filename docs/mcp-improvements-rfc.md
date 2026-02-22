@@ -78,15 +78,7 @@ filtering), LLM portability (raw JSON Schema pass-through).
 
 ### Behavior (N steps, M tools)
 
-| Operation | Before | After |
-|-----------|--------|-------|
-| `new Client()` + `connect()` | N | 1 |
-| `tools/list` RPC | N | 1 |
-| `MCPTool` allocations | N × M | M |
-| Server instructions in system prompt | never | every step (XML-tagged) |
-| Recovery from transport failure | none | automatic (retry-once) |
-| Tool filtering | never | every `getTools()` with context |
-| Schema fidelity (enum, format, pattern) | lost | preserved |
+(See TL;DR table above for summary)
 
 ### Code (representative)
 

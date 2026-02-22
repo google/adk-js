@@ -285,6 +285,572 @@ describe('handleFunctionCallList', () => {
   });
 });
 
+describe('parallel tool execution', () => {
+  let invocationContext: InvocationContext;
+  let pluginManager: PluginManager;
+
+  beforeEach(() => {
+    pluginManager = new PluginManager();
+    const agent = new LlmAgent({name: 'test_agent', model: 'test_model'});
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {} as Session,
+      agent,
+      pluginManager,
+    });
+  });
+
+  function makeDelayedTool(name: string, delayMs: number, result: string) {
+    return new FunctionTool({
+      name,
+      description: name,
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return {result};
+      },
+    });
+  }
+
+  function makeFailingTool(name: string, delayMs: number) {
+    return new FunctionTool({
+      name,
+      description: name,
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        throw new Error(`${name} failed`);
+      },
+    });
+  }
+
+  it('should execute multiple tools concurrently (faster than sequential)', async () => {
+    const DELAY = 100;
+    const toolA = makeDelayedTool('toolA', DELAY, 'A done');
+    const toolB = makeDelayedTool('toolB', DELAY, 'B done');
+    const toolC = makeDelayedTool('toolC', DELAY, 'C done');
+
+    const toolsDict = {toolA, toolB, toolC};
+    const calls: FunctionCall[] = [
+      {id: 'id-a', name: 'toolA', args: {}},
+      {id: 'id-b', name: 'toolB', args: {}},
+      {id: 'id-c', name: 'toolC', args: {}},
+    ];
+
+    const start = Date.now();
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const elapsed = Date.now() - start;
+
+    expect(event).not.toBeNull();
+    const parts = event!.content!.parts!;
+    expect(parts).toHaveLength(3);
+
+    const responses = parts.map(
+      (p) => (p.functionResponse!.response as Record<string, string>).result,
+    );
+    expect(responses).toContain('A done');
+    expect(responses).toContain('B done');
+    expect(responses).toContain('C done');
+
+    // Parallel: should take ~DELAY, not ~3*DELAY.
+    // Use 2*DELAY as threshold to account for test runner overhead.
+    expect(elapsed).toBeLessThan(DELAY * 2);
+  });
+
+  it('should isolate errors — failed tool does not prevent other tools from returning', async () => {
+    const toolA = makeDelayedTool('toolA', 50, 'A done');
+    const toolB = makeFailingTool('toolB', 50);
+    const toolC = makeDelayedTool('toolC', 50, 'C done');
+
+    const toolsDict = {toolA, toolB, toolC};
+    const calls: FunctionCall[] = [
+      {id: 'id-a', name: 'toolA', args: {}},
+      {id: 'id-b', name: 'toolB', args: {}},
+      {id: 'id-c', name: 'toolC', args: {}},
+    ];
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const parts = event!.content!.parts!;
+    expect(parts).toHaveLength(3);
+
+    const responseA = parts.find((p) => p.functionResponse!.name === 'toolA');
+    expect(
+      (responseA!.functionResponse!.response as Record<string, string>).result,
+    ).toBe('A done');
+
+    const responseB = parts.find((p) => p.functionResponse!.name === 'toolB');
+    expect(
+      (responseB!.functionResponse!.response as Record<string, string>).error,
+    ).toContain('toolB failed');
+
+    const responseC = parts.find((p) => p.functionResponse!.name === 'toolC');
+    expect(
+      (responseC!.functionResponse!.response as Record<string, string>).result,
+    ).toBe('C done');
+  });
+
+  it('should preserve result order matching input function call order', async () => {
+    // Tool A is slow, B is fast — results should still be in [A, B] order
+    const toolA = makeDelayedTool('toolA', 100, 'A done');
+    const toolB = makeDelayedTool('toolB', 10, 'B done');
+
+    const toolsDict = {toolA, toolB};
+    const calls: FunctionCall[] = [
+      {id: 'id-a', name: 'toolA', args: {}},
+      {id: 'id-b', name: 'toolB', args: {}},
+    ];
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const parts = event!.content!.parts!;
+    expect(parts[0].functionResponse!.name).toBe('toolA');
+    expect(parts[1].functionResponse!.name).toBe('toolB');
+  });
+
+  it('should run callbacks concurrently for each parallel tool call', async () => {
+    const callbackOrder: string[] = [];
+
+    const toolA = makeDelayedTool('toolA', 50, 'A done');
+    const toolB = makeDelayedTool('toolB', 50, 'B done');
+
+    const beforeCallback: SingleBeforeToolCallback = async ({tool}) => {
+      callbackOrder.push(`before:${tool.name}`);
+      return undefined;
+    };
+    const afterCallback: SingleAfterToolCallback = async ({tool}) => {
+      callbackOrder.push(`after:${tool.name}`);
+      return undefined;
+    };
+
+    const toolsDict = {toolA, toolB};
+    const calls: FunctionCall[] = [
+      {id: 'id-a', name: 'toolA', args: {}},
+      {id: 'id-b', name: 'toolB', args: {}},
+    ];
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict,
+      beforeToolCallbacks: [beforeCallback],
+      afterToolCallbacks: [afterCallback],
+    });
+
+    // Both before callbacks should fire, both after callbacks should fire
+    expect(callbackOrder).toContain('before:toolA');
+    expect(callbackOrder).toContain('before:toolB');
+    expect(callbackOrder).toContain('after:toolA');
+    expect(callbackOrder).toContain('after:toolB');
+    expect(callbackOrder).toHaveLength(4);
+  });
+
+  it('single function call behaves identically to previous sequential implementation', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'id-1', name: 'testTool', args: {}}],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    expect(event!.content!.parts!).toHaveLength(1);
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'tool executed',
+    });
+  });
+
+  it('should fall back to sequential when parallelToolExecution is false', async () => {
+    const executionOrder: string[] = [];
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'A',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('A-start');
+        await new Promise((r) => setTimeout(r, 50));
+        executionOrder.push('A-end');
+        return {result: 'A done'};
+      },
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'B',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('B-start');
+        await new Promise((r) => setTimeout(r, 50));
+        executionOrder.push('B-end');
+        return {result: 'B done'};
+      },
+    });
+
+    invocationContext.runConfig = {
+      parallelToolExecution: false,
+      maxLlmCalls: 500,
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'id-a', name: 'toolA', args: {}},
+        {id: 'id-b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    // Sequential: A must finish before B starts
+    expect(executionOrder).toEqual(['A-start', 'A-end', 'B-start', 'B-end']);
+  });
+
+  it('sequential mode: error in one tool does not stop subsequent tools', async () => {
+    const toolA = makeFailingTool('toolA', 10);
+    const toolB = makeDelayedTool('toolB', 10, 'B done');
+
+    invocationContext.runConfig = {
+      parallelToolExecution: false,
+      maxLlmCalls: 500,
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'id-a', name: 'toolA', args: {}},
+        {id: 'id-b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const parts = event!.content!.parts!;
+    expect(parts).toHaveLength(2);
+
+    const respA = parts.find((p) => p.functionResponse!.name === 'toolA');
+    expect(
+      (respA!.functionResponse!.response as Record<string, string>).error,
+    ).toContain('toolA failed');
+
+    const respB = parts.find((p) => p.functionResponse!.name === 'toolB');
+    expect(
+      (respB!.functionResponse!.response as Record<string, string>).result,
+    ).toBe('B done');
+  });
+
+  it('defaults to parallel when runConfig is undefined', async () => {
+    invocationContext.runConfig = undefined;
+
+    const DELAY = 80;
+    const toolA = makeDelayedTool('toolA', DELAY, 'A done');
+    const toolB = makeDelayedTool('toolB', DELAY, 'B done');
+
+    const start = Date.now();
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'id-a', name: 'toolA', args: {}},
+        {id: 'id-b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const elapsed = Date.now() - start;
+
+    expect(event).not.toBeNull();
+    expect(event!.content!.parts!).toHaveLength(2);
+    expect(elapsed).toBeLessThan(DELAY * 2);
+  });
+
+  it('parallel mode: tool-not-found produces error event without crashing others', async () => {
+    const toolA = makeDelayedTool('toolA', 10, 'A done');
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'id-a', name: 'toolA', args: {}},
+        {id: 'id-missing', name: 'missingTool', args: {}},
+      ],
+      toolsDict: {toolA},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const parts = event!.content!.parts!;
+    expect(parts).toHaveLength(2);
+
+    const respA = parts.find((p) => p.functionResponse!.name === 'toolA');
+    expect(
+      (respA!.functionResponse!.response as Record<string, string>).result,
+    ).toBe('A done');
+
+    const respMissing = parts.find(
+      (p) => p.functionResponse!.name === 'missingTool',
+    );
+    expect(
+      (respMissing!.functionResponse!.response as Record<string, string>).error,
+    ).toContain('missingTool');
+  });
+
+  it('returns null when all function calls are filtered out', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'id-a', name: 'testTool', args: {}}],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      filters: new Set(['some-other-id']),
+    });
+
+    expect(event).toBeNull();
+  });
+
+  it('sequential mode takes longer than parallel for same workload', async () => {
+    const DELAY = 60;
+    const toolA = makeDelayedTool('toolA', DELAY, 'A');
+    const toolB = makeDelayedTool('toolB', DELAY, 'B');
+    const toolC = makeDelayedTool('toolC', DELAY, 'C');
+    const tools = {toolA, toolB, toolC};
+    const calls: FunctionCall[] = [
+      {id: 'a', name: 'toolA', args: {}},
+      {id: 'b', name: 'toolB', args: {}},
+      {id: 'c', name: 'toolC', args: {}},
+    ];
+
+    // Parallel run
+    invocationContext.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
+    const pStart = Date.now();
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict: tools,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const pElapsed = Date.now() - pStart;
+
+    // Sequential run
+    invocationContext.runConfig = {parallelToolExecution: false, maxLlmCalls: 500};
+    const sStart = Date.now();
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: calls,
+      toolsDict: tools,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    const sElapsed = Date.now() - sStart;
+
+    // Sequential should take at least 2x longer than parallel
+    expect(sElapsed).toBeGreaterThan(pElapsed * 1.5);
+  });
+
+  it('maxConcurrentToolCalls limits batch size in parallel mode', async () => {
+    const concurrencyTracker: number[] = [];
+    let activeCalls = 0;
+
+    function makeTrackedTool(name: string, delayMs: number) {
+      return new FunctionTool({
+        name,
+        description: name,
+        parameters: z.object({}),
+        execute: async () => {
+          activeCalls++;
+          concurrencyTracker.push(activeCalls);
+          await new Promise((r) => setTimeout(r, delayMs));
+          activeCalls--;
+          return {result: `${name} done`};
+        },
+      });
+    }
+
+    const tools = ['t1', 't2', 't3', 't4', 't5'].reduce(
+      (acc, name) => ({...acc, [name]: makeTrackedTool(name, 50)}),
+      {} as Record<string, BaseTool>,
+    );
+
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxConcurrentToolCalls: 2,
+      maxLlmCalls: 500,
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: Object.keys(tools).map((name) => ({
+        id: name,
+        name,
+        args: {},
+      })),
+      toolsDict: tools,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    expect(event!.content!.parts!).toHaveLength(5);
+    // Peak concurrency should never exceed the batch size of 2
+    expect(Math.max(...concurrencyTracker)).toBeLessThanOrEqual(2);
+  });
+
+  it('maxConcurrentToolCalls is ignored in sequential mode', async () => {
+    const executionOrder: string[] = [];
+
+    function makeOrderTool(name: string) {
+      return new FunctionTool({
+        name,
+        description: name,
+        parameters: z.object({}),
+        execute: async () => {
+          executionOrder.push(`${name}-start`);
+          await new Promise((r) => setTimeout(r, 20));
+          executionOrder.push(`${name}-end`);
+          return {result: name};
+        },
+      });
+    }
+
+    const toolA = makeOrderTool('toolA');
+    const toolB = makeOrderTool('toolB');
+    const toolC = makeOrderTool('toolC');
+
+    invocationContext.runConfig = {
+      parallelToolExecution: false,
+      maxConcurrentToolCalls: 2,
+      maxLlmCalls: 500,
+    };
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'a', name: 'toolA', args: {}},
+        {id: 'b', name: 'toolB', args: {}},
+        {id: 'c', name: 'toolC', args: {}},
+      ],
+      toolsDict: {toolA, toolB, toolC},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(executionOrder).toEqual([
+      'toolA-start', 'toolA-end',
+      'toolB-start', 'toolB-end',
+      'toolC-start', 'toolC-end',
+    ]);
+  });
+
+  it('warns on stateDelta key conflicts in parallel mode', async () => {
+    const warnSpy = vi.spyOn(console, 'warn');
+
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'sets counter',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['counter'] = 1;
+        return {result: 'A'};
+      },
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'also sets counter',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['counter'] = 2;
+        return {result: 'B'};
+      },
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'a', name: 'toolA', args: {}},
+        {id: 'b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+
+    const warnCalls = warnSpy.mock.calls
+      .map((args) => args.join(' '))
+      .filter((msg) => msg.includes('stateDelta'));
+    expect(warnCalls.length).toBeGreaterThan(0);
+    expect(warnCalls[0]).toContain('counter');
+
+    warnSpy.mockRestore();
+  });
+
+  it('no stateDelta warning when parallel tools write different keys', async () => {
+    const warnSpy = vi.spyOn(console, 'warn');
+
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'sets key_a',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['key_a'] = 1;
+        return {result: 'A'};
+      },
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'sets key_b',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['key_b'] = 2;
+        return {result: 'B'};
+      },
+    });
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'a', name: 'toolA', args: {}},
+        {id: 'b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const stateDeltaWarns = warnSpy.mock.calls
+      .map((args) => args.join(' '))
+      .filter((msg) => msg.includes('stateDelta'));
+    expect(stateDeltaWarns).toHaveLength(0);
+
+    warnSpy.mockRestore();
+  });
+});
+
 describe('generateAuthEvent', () => {
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
