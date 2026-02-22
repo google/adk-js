@@ -1684,6 +1684,11 @@ export class LlmAgent extends BaseAgent {
     for (const toolUnion of this.tools) {
       const toolContext = new ToolContext({invocationContext});
 
+      // Let toolsets process the request (e.g. append MCP server instructions).
+      if (!isBaseTool(toolUnion)) {
+        await toolUnion.processLlmRequest(toolContext, llmRequest);
+      }
+
       // process all tools from this tool union
       const tools = await convertToolUnionToTools(
         toolUnion,
