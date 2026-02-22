@@ -7,6 +7,7 @@
 import {FunctionDeclaration} from '@google/genai';
 import {CallToolResult, Tool} from '@modelcontextprotocol/sdk/types.js';
 
+import {logger} from '../../utils/logger.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 
 import {MCPSessionManager} from './mcp_session_manager.js';
@@ -50,8 +51,11 @@ export class MCPTool extends BaseTool {
     try {
       const session = await this.mcpSessionManager.createSession();
       return (await session.callTool(params)) as CallToolResult;
-    } catch {
-      // Invalidate the cached session and retry once with a fresh connection.
+    } catch (originalError) {
+      logger.warn(
+        `MCP tool call failed, retrying with fresh session: ${this.mcpTool.name}`,
+        {error: originalError},
+      );
       await this.mcpSessionManager.close();
       const session = await this.mcpSessionManager.createSession();
       return (await session.callTool(params)) as CallToolResult;

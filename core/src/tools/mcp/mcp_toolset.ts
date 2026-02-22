@@ -97,7 +97,7 @@ export class MCPToolset extends BaseToolset {
    * string concatenation per step.
    */
   override async processLlmRequest(
-    toolContext: ToolContext, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _toolContext: ToolContext,
     llmRequest: LlmRequest,
   ): Promise<void> {
     const instructions = this.mcpSessionManager.getInstructions();

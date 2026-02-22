@@ -130,6 +130,14 @@ export class MCPSessionManager {
     }
   }
 
+  /**
+   * Establishes a new MCP connection. The `sessionPromise` field is cleared
+   * in `finally` so that a failed attempt does not block future retries.
+   * On success, `cachedClient` is set *before* `finally` runs (within the
+   * try block), so concurrent callers that pass the `if (!cachedClient)`
+   * check in `createSession` will see the cached value even after the
+   * `finally` clears `sessionPromise`.
+   */
   private async doConnect(): Promise<Client> {
     try {
       const client = new Client({name: 'MCPClient', version: '1.0.0'});

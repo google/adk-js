@@ -95,22 +95,16 @@ export interface RunConfig {
   maxLlmCalls?: number;
 
   /**
-   * If true, the agent loop will suspend on ANY tool call, allowing the client
-   * to intercept and execute tools (Client-Side Tool Execution).
-   */
-  pauseOnToolCalls?: boolean;
-
-  /**
    * Controls whether multiple tool calls from a single LLM response are
    * executed concurrently (true) or sequentially (false).
    *
-   * When true (default): tool calls run via Promise.allSettled, matching
+   * When true: tool calls run via Promise.allSettled, matching
    * adk-python's asyncio.gather pattern. Individual failures don't affect
    * other calls.
    *
-   * When false: tool calls execute one-by-one in order. Use this when tools
-   * have interdependencies, mutate shared state, or require deterministic
-   * ordering.
+   * When false (default): tool calls execute one-by-one in order. This
+   * preserves backward compatibility for tools with interdependencies,
+   * shared state mutations, or deterministic ordering requirements.
    */
   parallelToolExecution?: boolean;
 
@@ -136,8 +130,7 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     enableAffectiveDialog: false,
     streamingMode: StreamingMode.NONE,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
-    pauseOnToolCalls: false,
-    parallelToolExecution: true,
+    parallelToolExecution: false,
     ...params,
   };
 }

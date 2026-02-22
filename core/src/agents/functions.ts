@@ -513,7 +513,7 @@ export async function handleFunctionCallList({
   }
 
   const parallel =
-    invocationContext.runConfig?.parallelToolExecution ?? true;
+    invocationContext.runConfig?.parallelToolExecution ?? false;
 
   const functionResponseEvents: Event[] = [];
 
@@ -595,23 +595,36 @@ export async function handleFunctionCallList({
       }
     }
 
-    // Warn on stateDelta key conflicts from concurrent tool calls
     if (functionResponseEvents.length > 1) {
-      const seenKeys = new Set<string>();
-      const conflictKeys: string[] = [];
+      const seenKeys = new Map<string, unknown>();
+      const conflicts: Record<string, unknown[]> = {};
       for (const event of functionResponseEvents) {
         if (event.actions?.stateDelta) {
-          for (const key of Object.keys(event.actions.stateDelta)) {
+          for (const [key, value] of Object.entries(
+            event.actions.stateDelta,
+          )) {
             if (seenKeys.has(key)) {
-              conflictKeys.push(key);
+              if (!conflicts[key]) {
+                conflicts[key] = [seenKeys.get(key)];
+              }
+              conflicts[key].push(value);
             }
-            seenKeys.add(key);
+            seenKeys.set(key, value);
           }
         }
       }
+      const conflictKeys = Object.keys(conflicts);
       if (conflictKeys.length > 0) {
+        const details = conflictKeys
+          .map(
+            (k) =>
+              `${k}: [${conflicts[k].map((v) => JSON.stringify(v)).join(' → ')}]`,
+          )
+          .join('; ');
         logger.warn(
-          `Parallel tool calls wrote to the same stateDelta key(s): [${conflictKeys.join(', ')}]. Last-write-wins applies — consider sequential mode if ordering matters.`,
+          `Parallel tool calls wrote to the same stateDelta key(s): [${conflictKeys.join(', ')}]. ` +
+            `Conflicting values: ${details}. ` +
+            `Last-write-wins applies — consider sequential mode if ordering matters.`,
         );
       }
     }

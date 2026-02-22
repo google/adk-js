@@ -325,6 +325,7 @@ describe('parallel tool execution', () => {
   }
 
   it('should execute multiple tools concurrently (faster than sequential)', async () => {
+    invocationContext.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
     const DELAY = 100;
     const toolA = makeDelayedTool('toolA', DELAY, 'A done');
     const toolB = makeDelayedTool('toolB', DELAY, 'B done');
@@ -562,14 +563,29 @@ describe('parallel tool execution', () => {
     ).toBe('B done');
   });
 
-  it('defaults to parallel when runConfig is undefined', async () => {
+  it('defaults to sequential when runConfig is undefined', async () => {
     invocationContext.runConfig = undefined;
 
-    const DELAY = 80;
-    const toolA = makeDelayedTool('toolA', DELAY, 'A done');
-    const toolB = makeDelayedTool('toolB', DELAY, 'B done');
+    const executionOrder: string[] = [];
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'tool A',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('A');
+        return {result: 'A done'};
+      },
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'tool B',
+      parameters: z.object({}),
+      execute: async () => {
+        executionOrder.push('B');
+        return {result: 'B done'};
+      },
+    });
 
-    const start = Date.now();
     const event = await handleFunctionCallList({
       invocationContext,
       functionCalls: [
@@ -580,14 +596,14 @@ describe('parallel tool execution', () => {
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
     });
-    const elapsed = Date.now() - start;
 
     expect(event).not.toBeNull();
     expect(event!.content!.parts!).toHaveLength(2);
-    expect(elapsed).toBeLessThan(DELAY * 2);
+    expect(executionOrder).toEqual(['A', 'B']);
   });
 
   it('parallel mode: tool-not-found produces error event without crashing others', async () => {
+    invocationContext.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
     const toolA = makeDelayedTool('toolA', 10, 'A done');
 
     const event = await handleFunctionCallList({
@@ -766,6 +782,7 @@ describe('parallel tool execution', () => {
   });
 
   it('warns on stateDelta key conflicts in parallel mode', async () => {
+    invocationContext.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
     const warnSpy = vi.spyOn(console, 'warn');
 
     const toolA = new FunctionTool({
@@ -810,6 +827,7 @@ describe('parallel tool execution', () => {
   });
 
   it('no stateDelta warning when parallel tools write different keys', async () => {
+    invocationContext.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
     const warnSpy = vi.spyOn(console, 'warn');
 
     const toolA = new FunctionTool({

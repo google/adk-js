@@ -466,7 +466,7 @@ describe('agent calling multiple tools (integration)', () => {
       tools: [toolA, toolB],
     });
 
-    await runAgent(agent, 'go');
+    await runAgent(agent, 'go', {parallelToolExecution: true});
 
     // In parallel, both tools start before either finishes
     expect(tracker.indexOf('toolA-start')).toBeLessThan(
