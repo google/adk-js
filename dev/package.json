@@ -36,6 +36,8 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.1.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",

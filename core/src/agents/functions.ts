@@ -34,6 +34,7 @@ export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
 // Export these items for testing purposes only
 export const functionsExportedForTestingOnly = {
   handleFunctionCallList,
+  executeSingleFunctionCall,
   generateAuthEvent,
   generateRequestConfirmationEvent,
 };
@@ -313,9 +314,177 @@ export async function handleFunctionCallsAsync({
 }
 
 /**
+ * Executes a single function call through the full callback pipeline.
+ *
+ * Extracted from the former sequential loop to enable parallel execution
+ * via Promise.allSettled. Mirrors adk-python's _execute_single_function_call_async.
+ *
+ * Pipeline: plugin before → canonical before → tool exec → plugin after → canonical after → build event.
+ */
+async function executeSingleFunctionCall({
+  invocationContext,
+  functionCall,
+  toolsDict,
+  beforeToolCallbacks,
+  afterToolCallbacks,
+  toolConfirmation,
+}: {
+  invocationContext: InvocationContext;
+  functionCall: FunctionCall;
+  toolsDict: Record<string, BaseTool>;
+  beforeToolCallbacks: SingleBeforeToolCallback[];
+  afterToolCallbacks: SingleAfterToolCallback[];
+  toolConfirmation?: ToolConfirmation;
+}): Promise<Event | null> {
+  const {tool, toolContext} = getToolAndContext({
+    invocationContext,
+    functionCall,
+    toolsDict,
+    toolConfirmation,
+  });
+
+  logger.debug(`execute_tool ${tool.name}`);
+  const functionArgs = functionCall.args ?? {};
+
+  let functionResponse = null;
+  let functionResponseError: string | unknown | undefined;
+
+  // Step 1: plugin before_tool_callback
+  functionResponse =
+    await invocationContext.pluginManager.runBeforeToolCallback({
+      tool: tool,
+      toolArgs: functionArgs,
+      toolContext: toolContext,
+    });
+
+  // Step 2: canonical beforeToolCallbacks
+  // TODO - b/425992518: validate the callback response type matches.
+  if (functionResponse == null) {
+    for (const callback of beforeToolCallbacks) {
+      functionResponse = await callback({
+        tool: tool,
+        args: functionArgs,
+        context: toolContext,
+      });
+      if (functionResponse) {
+        break;
+      }
+    }
+  }
+
+  // Step 3: call the tool
+  if (functionResponse == null) {
+    try {
+      functionResponse = await callToolAsync(tool, functionArgs, toolContext);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        const onToolErrorResponse =
+          await invocationContext.pluginManager.runOnToolErrorCallback({
+            tool: tool,
+            toolArgs: functionArgs,
+            toolContext: toolContext,
+            error: e,
+          });
+
+        if (onToolErrorResponse) {
+          functionResponse = onToolErrorResponse;
+        } else {
+          functionResponseError = e.message;
+        }
+      } else {
+        functionResponseError = e;
+      }
+    }
+  }
+
+  // Step 4: plugin after_tool_callback
+  let alteredFunctionResponse =
+    await invocationContext.pluginManager.runAfterToolCallback({
+      tool: tool,
+      toolArgs: functionArgs,
+      toolContext: toolContext,
+      result: functionResponse,
+    });
+
+  // Step 5: canonical afterToolCallbacks
+  if (alteredFunctionResponse == null) {
+    for (const callback of afterToolCallbacks) {
+      alteredFunctionResponse = await callback({
+        tool: tool,
+        args: functionArgs,
+        context: toolContext,
+        response: functionResponse,
+      });
+      if (alteredFunctionResponse) {
+        break;
+      }
+    }
+  }
+
+  // Step 6: apply altered response
+  if (alteredFunctionResponse != null) {
+    functionResponse = alteredFunctionResponse;
+  }
+
+  // TODO - b/425992518: state event polluting runtime, consider fix.
+  if (tool.isLongRunning && !functionResponse) {
+    return null;
+  }
+
+  if (functionResponseError) {
+    functionResponse = {error: functionResponseError};
+  } else if (
+    typeof functionResponse !== 'object' ||
+    functionResponse == null
+  ) {
+    functionResponse = {result: functionResponse};
+  }
+
+  const functionResponseEvent = createEvent({
+    invocationId: invocationContext.invocationId,
+    author: invocationContext.agent.name,
+    content: createUserContent({
+      functionResponse: {
+        id: toolContext.functionCallId,
+        name: tool.name,
+        response: functionResponse,
+      },
+    }),
+    actions: toolContext.actions,
+    branch: invocationContext.branch,
+  });
+
+  // TODO - b/436079721: implement [traceToolCall]
+  logger.debug('traceToolCall', {
+    tool: tool.name,
+    args: functionArgs,
+    functionResponseEvent: functionResponseEvent.id,
+  });
+
+  return functionResponseEvent;
+}
+
+/**
  * The underlying implementation of handleFunctionCalls, but takes a list of
  * function calls instead of an event.
  * This is also used by llm_agent execution flow in preprocessing.
+ *
+ * Execution mode is controlled by `RunConfig.parallelToolExecution`:
+ * - true (default): tool calls run concurrently via Promise.allSettled,
+ *   matching adk-python's asyncio.gather pattern. Individual failures
+ *   do not affect other calls — failed tools produce error response events.
+ * - false: tool calls execute sequentially in order, preserving original
+ *   behavior for tools with interdependencies or ordering requirements.
+ *
+ * When parallel, `RunConfig.maxConcurrentToolCalls` controls back-pressure:
+ * - undefined/0: all tool calls dispatch at once (no limit).
+ * - positive int: tool calls dispatch in batches of this size.
+ *
+ * In parallel mode, overlapping `stateDelta` keys across tools are detected
+ * and logged as a warning (last-write-wins applies).
+ *
+ * NOTE: In parallel mode, beforeToolCallback / afterToolCallback may fire
+ * concurrently. Callbacks must not depend on execution order across calls.
  */
 export async function handleFunctionCallList({
   invocationContext,
@@ -334,165 +503,158 @@ export async function handleFunctionCallList({
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
 }): Promise<Event | null> {
-  const functionResponseEvents: Event[] = [];
-
   // Note: only function ids INCLUDED in the filters will be executed.
   const filteredFunctionCalls = functionCalls.filter((functionCall) => {
     return !filters || (functionCall.id && filters.has(functionCall.id));
   });
 
-  for (const functionCall of filteredFunctionCalls) {
-    let toolConfirmation = undefined;
-    if (toolConfirmationDict && functionCall.id) {
-      toolConfirmation = toolConfirmationDict[functionCall.id];
+  if (!filteredFunctionCalls.length) {
+    return null;
+  }
+
+  const parallel =
+    invocationContext.runConfig?.parallelToolExecution ?? false;
+
+  const functionResponseEvents: Event[] = [];
+
+  if (parallel) {
+    // Concurrent execution — mirrors Python ADK's asyncio.gather.
+    const makeTask = (functionCall: FunctionCall) => {
+      const toolConfirmation =
+        toolConfirmationDict && functionCall.id
+          ? toolConfirmationDict[functionCall.id]
+          : undefined;
+
+      return () =>
+        executeSingleFunctionCall({
+          invocationContext,
+          functionCall,
+          toolsDict,
+          beforeToolCallbacks,
+          afterToolCallbacks,
+          toolConfirmation,
+        });
+    };
+
+    const maxConcurrency =
+      invocationContext.runConfig?.maxConcurrentToolCalls;
+    const useBatching =
+      maxConcurrency &&
+      maxConcurrency > 0 &&
+      filteredFunctionCalls.length > maxConcurrency;
+
+    let results: PromiseSettledResult<Event | null>[];
+
+    if (useBatching) {
+      results = [];
+      for (
+        let i = 0;
+        i < filteredFunctionCalls.length;
+        i += maxConcurrency
+      ) {
+        const batch = filteredFunctionCalls.slice(i, i + maxConcurrency);
+        const batchResults = await Promise.allSettled(
+          batch.map((fc) => makeTask(fc)()),
+        );
+        results.push(...batchResults);
+      }
+    } else {
+      results = await Promise.allSettled(
+        filteredFunctionCalls.map((fc) => makeTask(fc)()),
+      );
     }
 
-    const {tool, toolContext} = getToolAndContext({
-      invocationContext,
-      functionCall,
-      toolsDict,
-      toolConfirmation,
-    });
-
-    // TODO - b/436079721: implement [tracer.start_as_current_span]
-    logger.debug(`execute_tool ${tool.name}`);
-    const functionArgs = functionCall.args ?? {};
-
-    // Step 1: Check if plugin before_tool_callback overrides the function
-    // response.
-    let functionResponse = null;
-    let functionResponseError: string | unknown | undefined;
-    functionResponse =
-      await invocationContext.pluginManager.runBeforeToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-      });
-
-    // Step 2: If no overrides are provided from the plugins, further run the
-    // canonical callback.
-    // TODO - b/425992518: validate the callback response type matches.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of beforeToolCallbacks) {
-        functionResponse = await callback({
-          tool: tool,
-          args: functionArgs,
-          context: toolContext,
-        });
-        if (functionResponse) {
-          break;
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        if (result.value) {
+          functionResponseEvents.push(result.value);
         }
+      } else {
+        const fc = filteredFunctionCalls[i];
+        logger.warn(`Parallel tool call failed: ${fc.name}`, {
+          error: result.reason,
+        });
+        const errorMessage =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        functionResponseEvents.push(
+          createEvent({
+            invocationId: invocationContext.invocationId,
+            author: invocationContext.agent.name,
+            content: createUserContent({
+              functionResponse: {
+                id: fc.id || undefined,
+                name: fc.name!,
+                response: {error: errorMessage},
+              },
+            }),
+            branch: invocationContext.branch,
+          }),
+        );
       }
     }
 
-    // Step 3: Otherwise, proceed calling the tool normally.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      try {
-        functionResponse = await callToolAsync(tool, functionArgs, toolContext);
-      } catch (e: unknown) {
-        if (e instanceof Error) {
-          const onToolErrorResponse =
-            await invocationContext.pluginManager.runOnToolErrorCallback({
-              tool: tool,
-              toolArgs: functionArgs,
-              toolContext: toolContext,
-              error: e,
-            });
-
-          // Set function response to the result of the error callback and
-          // continue execution, do not shortcut
-          if (onToolErrorResponse) {
-            functionResponse = onToolErrorResponse;
-          } else {
-            // If the error callback returns undefined, use the error message
-            // as the function response error.
-            functionResponseError = e.message;
+    if (functionResponseEvents.length > 1) {
+      const seenKeys = new Map<string, unknown>();
+      const conflicts: Record<string, unknown[]> = {};
+      for (const event of functionResponseEvents) {
+        if (event.actions?.stateDelta) {
+          for (const [key, value] of Object.entries(
+            event.actions.stateDelta,
+          )) {
+            if (seenKeys.has(key)) {
+              if (!conflicts[key]) {
+                conflicts[key] = [seenKeys.get(key)];
+              }
+              conflicts[key].push(value);
+            }
+            seenKeys.set(key, value);
           }
-        } else {
-          // If the error is not an Error, use the error object as the function
-          // response error.
-          functionResponseError = e;
         }
       }
+      const conflictKeys = Object.keys(conflicts);
+      if (conflictKeys.length > 0) {
+        const details = conflictKeys
+          .map(
+            (k) =>
+              `${k}: [${conflicts[k].map((v) => JSON.stringify(v)).join(' → ')}]`,
+          )
+          .join('; ');
+        logger.warn(
+          `Parallel tool calls wrote to the same stateDelta key(s): [${conflictKeys.join(', ')}]. ` +
+            `Conflicting values: ${details}. ` +
+            `Last-write-wins applies — consider sequential mode if ordering matters.`,
+        );
+      }
     }
+  } else {
+    // Sequential execution — preserves original ordering guarantees.
+    for (const functionCall of filteredFunctionCalls) {
+      const toolConfirmation =
+        toolConfirmationDict && functionCall.id
+          ? toolConfirmationDict[functionCall.id]
+          : undefined;
 
-    // Step 4: Check if plugin after_tool_callback overrides the function
-    // response.
-    let alteredFunctionResponse =
-      await invocationContext.pluginManager.runAfterToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-        result: functionResponse,
+      const event = await executeSingleFunctionCall({
+        invocationContext,
+        functionCall,
+        toolsDict,
+        beforeToolCallbacks,
+        afterToolCallbacks,
+        toolConfirmation,
       });
 
-    // Step 5: If no overrides are provided from the plugins, further run the
-    // canonical after_tool_callbacks.
-    if (alteredFunctionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of afterToolCallbacks) {
-        alteredFunctionResponse = await callback({
-          tool: tool,
-          args: functionArgs,
-          context: toolContext,
-          response: functionResponse,
-        });
-        if (alteredFunctionResponse) {
-          break;
-        }
+      if (event) {
+        functionResponseEvents.push(event);
       }
     }
-
-    // Step 6: If alternative response exists from after_tool_callback, use it
-    // instead of the original function response.
-    if (alteredFunctionResponse != null) {
-      functionResponse = alteredFunctionResponse;
-    }
-
-    // TODO - b/425992518: state event polluting runtime, consider fix.
-    // Allow long running function to return None as response.
-    if (tool.isLongRunning && !functionResponse) {
-      continue;
-    }
-
-    if (functionResponseError) {
-      functionResponse = {error: functionResponseError};
-    } else if (
-      typeof functionResponse !== 'object' ||
-      functionResponse == null
-    ) {
-      functionResponse = {result: functionResponse};
-    }
-
-    // Builds the function response event.
-    const functionResponseEvent = createEvent({
-      invocationId: invocationContext.invocationId,
-      author: invocationContext.agent.name,
-      content: createUserContent({
-        functionResponse: {
-          id: toolContext.functionCallId,
-          name: tool.name,
-          response: functionResponse,
-        },
-      }),
-      actions: toolContext.actions,
-      branch: invocationContext.branch,
-    });
-
-    // TODO - b/436079721: implement [traceToolCall]
-    logger.debug('traceToolCall', {
-      tool: tool.name,
-      args: functionArgs,
-      functionResponseEvent: functionResponseEvent.id,
-    });
-    functionResponseEvents.push(functionResponseEvent);
   }
 
   if (!functionResponseEvents.length) {
     return null;
   }
+
   const mergedEvent = mergeParallelFunctionResponseEvents(
     functionResponseEvents,
   );

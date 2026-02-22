@@ -103,3 +103,22 @@ The following friction points were identified during end-to-end integration. Add
 3.  **Strict Naming:** Relax `BaseAgent` naming validation to allow hyphens (kebab-case), aligning with common CLI command naming conventions.
 4.  **Execution Control (Client-Side Tools):** Support a native configuration (e.g., `pauseOnToolCalls`) to suspend execution on _any_ tool call. This simplifies implementing "Client-Side Tool Execution" patterns without requiring a custom security plugin for every tool.
 5.  **Session Ergonomics:** Add a `getOrCreateSession` helper to `SessionService` to reduce boilerplate when initializing agent loops.
+
+## 7. Completed Improvements (Q1 2026)
+
+These foundational improvements align ADK-JS with Python patterns and fix critical gaps:
+
+### 7.1. Parallel Tool Orchestration (RFC implemented)
+- **Status:** Complete (63 tests)
+- **Impact:** Replaces sequential tool loop with `Promise.allSettled` (configurable).
+- **Parity:** Matches Python's `asyncio.gather`.
+- **Reference:** `docs/parallel-tool-orchestration-rfc.md`
+
+### 7.2. MCP Connection Layer (RFC implemented)
+- **Status:** Complete (59 tests)
+- **Impact:**
+  - Session/Tool caching (N connections → 1).
+  - Server instructions injection (XML-tagged).
+  - Retry-once resilience.
+  - Raw JSON Schema pass-through.
+- **Reference:** `docs/mcp-improvements-rfc.md`

@@ -5,13 +5,9 @@
  */
 
 import {FunctionDeclaration} from '@google/genai';
-import {
-  CallToolRequest,
-  CallToolResult,
-  Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import {CallToolResult, Tool} from '@modelcontextprotocol/sdk/types.js';
 
-import {toGeminiSchema} from '../../utils/gemini_schema_util.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 
 import {MCPSessionManager} from './mcp_session_manager.js';
@@ -20,10 +16,10 @@ import {MCPSessionManager} from './mcp_session_manager.js';
  * Represents a tool exposed via the Model Context Protocol (MCP).
  *
  * This class acts as a wrapper around a tool definition received from an MCP
- * server. It translates the MCP tool's schema into a format compatible with
- * the Gemini AI platform (FunctionDeclaration) and handles the remote
- * execution of the tool by communicating with the MCP server through an
- * {@link MCPSessionManager}.
+ * server. It passes the MCP tool's JSON Schema directly to the LLM via
+ * {@link FunctionDeclaration.parametersJsonSchema} — no lossy conversion.
+ * This preserves full schema fidelity (enum, format, pattern, etc.) and
+ * works with any LLM that reads standard JSON Schema, not just Gemini.
  *
  * When an LLM decides to call this tool, the `runAsync` method will be
  * invoked, which in turn establishes an MCP session, sends a `callTool`
@@ -44,19 +40,25 @@ export class MCPTool extends BaseTool {
     return {
       name: this.mcpTool.name,
       description: this.mcpTool.description,
-      parameters: toGeminiSchema(this.mcpTool.inputSchema),
-      // TODO: need revisit, refer to this
-      // https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-result
-      response: toGeminiSchema(this.mcpTool.outputSchema),
+      parametersJsonSchema: this.mcpTool.inputSchema,
+      responseJsonSchema: this.mcpTool.outputSchema,
     };
   }
 
   override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
-    const session = await this.mcpSessionManager.createSession();
+    const params = {name: this.mcpTool.name, arguments: request.args};
 
-    const callRequest: CallToolRequest = {} as CallToolRequest;
-    callRequest.params = {name: this.mcpTool.name, arguments: request.args};
-
-    return (await session.callTool(callRequest.params)) as CallToolResult;
+    try {
+      const session = await this.mcpSessionManager.createSession();
+      return (await session.callTool(params)) as CallToolResult;
+    } catch (originalError) {
+      logger.warn(
+        `MCP tool call failed, retrying with fresh session: ${this.mcpTool.name}`,
+        {error: originalError},
+      );
+      await this.mcpSessionManager.close();
+      const session = await this.mcpSessionManager.createSession();
+      return (await session.callTool(params)) as CallToolResult;
+    }
   }
 }
