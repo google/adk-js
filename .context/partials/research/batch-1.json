@@ -1,0 +1,395 @@
+{
+  "batch": 1,
+  "answers": [
+    {
+      "id": "q1",
+      "answer": "The minimum setup to create and run a basic LlmAgent using @google/adk requires: 1) Install the package via npm: `npm install @google/adk`, 2) Set the API key environment variable GOOGLE_GENAI_API_KEY or GEMINI_API_KEY, 3) Import LlmAgent and InMemoryRunner from @google/adk, 4) Create an LlmAgent with a name and model, 5) Create an InMemoryRunner with the agent, 6) Call runner.runAsync() with userId, sessionId, and newMessage. Example: `const agent = new LlmAgent({name: 'my_agent', model: 'gemini-2.5-flash'}); const runner = new InMemoryRunner({agent}); const session = await runner.sessionService.getOrCreateSession({appName: runner.appName, userId: 'user1', sessionId: 'session1'}); for await (const event of runner.runAsync({userId: 'user1', sessionId: session.id, newMessage: {role: 'user', parts: [{text: 'Hello'}]}})) { console.log(event); }`",
+      "citations": [
+        "core/package.json:2",
+        "core/src/models/google_llm.ts:38",
+        "core/src/models/google_llm.ts:393",
+        "core/src/runner/in_memory_runner.ts:15-34",
+        "core/src/agents/llm_agent.ts:209-321",
+        "dev/samples/sequential_agent.ts:24-30"
+      ],
+      "code_snippets": [
+        "// Package installation: @google/adk version 0.3.0",
+        "// API key from env: process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY']",
+        "const agent = new LlmAgent({\n  name: 'roll_agent',\n  description: 'Handles rolling dice of different sizes.',\n  model: 'gemini-2.5-flash',\n  instruction: 'You are responsible for rolling dice...',\n  tools: [rollDiceTool],\n});",
+        "export class InMemoryRunner extends Runner {\n  constructor({\n    agent,\n    appName = 'InMemoryRunner',\n    plugins = [],\n  }: {\n    agent: BaseAgent;\n    appName?: string;\n    plugins?: BasePlugin[];\n  }) {\n    super({\n      appName,\n      agent,\n      plugins,\n      artifactService: new InMemoryArtifactService(),\n      sessionService: new InMemorySessionService(),\n      memoryService: new InMemoryMemoryService(),\n    });\n  }\n}"
+      ]
+    },
+    {
+      "id": "q2",
+      "answer": "ADK-JS supports the following environment variables: 1) GOOGLE_GENAI_API_KEY or GEMINI_API_KEY - API key for Gemini API authentication (used by Gemini class when apiKey is not provided in constructor), 2) GOOGLE_CLOUD_PROJECT - GCP project ID for Vertex AI mode, 3) GOOGLE_CLOUD_LOCATION - GCP region for Vertex AI (e.g., 'us-central1'), 4) GOOGLE_GENAI_USE_VERTEXAI - boolean flag to switch from Gemini API to Vertex AI mode, 5) ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS - controls whether request/response content is included in OpenTelemetry traces (defaults to 'true', set to 'false' or '0' to disable). Note: ADK_LOG_LEVEL is mentioned in questions.json but not actually implemented in the codebase - logging level is controlled programmatically via setLogLevel().",
+      "citations": [
+        "core/src/models/google_llm.ts:38",
+        "core/src/models/google_llm.ts:393",
+        "core/src/models/google_llm.ts:375",
+        "core/src/models/google_llm.ts:378",
+        "core/src/models/google_llm.ts:370",
+        "core/src/utils/variant_utils.ts:30",
+        "core/src/telemetry/tracing.ts:405",
+        "core/src/telemetry/tracing.ts:408",
+        "core/src/utils/logger.ts:30-37"
+      ],
+      "code_snippets": [
+        "// API key resolution:\napiKey = process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];",
+        "// Vertex AI configuration:\nparams.project = process.env['GOOGLE_CLOUD_PROJECT'];\nparams.location = process.env['GOOGLE_CLOUD_LOCATION'];\nparams.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');",
+        "// Telemetry content capture:\nexport function shouldAddRequestResponseToSpans(): boolean {\n  const envValue = process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS || 'true';\n  return envValue !== 'false' && envValue !== '0';\n}"
+      ]
+    },
+    {
+      "id": "q3",
+      "answer": "adk-js is a monorepo with two npm workspaces: 1) core (@google/adk) - The main package containing the Agent Development Kit core functionality, located in the 'core' directory. It includes all agent types (LlmAgent, LoopAgent, SequentialAgent, ParallelAgent), models (Gemini, ApigeeLlm), tools, sessions, artifacts, memory, plugins, telemetry, and auth. Built outputs: dist/esm (ES modules), dist/cjs (CommonJS), dist/web (browser bundle), dist/types (TypeScript definitions). 2) dev (@google/adk-devtools) - Development tools package in the 'dev' directory, providing the CLI tool (adk command), web server (AdkWebServer), agent loader, and dev utilities. The root package.json defines workspaces: ['core', 'dev'] and coordinates builds across both packages.",
+      "citations": [
+        "package.json:33-36",
+        "core/package.json:2-3",
+        "core/package.json:17-29",
+        "dev/package.json:2-3",
+        "dev/package.json:16-26",
+        "core/src/index.ts:1-17",
+        "core/src/common.ts:1-146"
+      ],
+      "code_snippets": [
+        "// Root package.json workspaces:\n\"workspaces\": [\n  \"core\",\n  \"dev\"\n]",
+        "// core/package.json exports:\n\"name\": \"@google/adk\",\n\"main\": \"./dist/cjs/index.js\",\n\"module\": \"./dist/esm/index.js\",\n\"browser\": \"./dist/web/index_web.js\",\n\"exports\": {\n  \".\": {\n    \"types\": \"./dist/types/index.d.ts\",\n    \"import\": \"./dist/esm/index.js\",\n    \"require\": \"./dist/cjs/index.js\",\n    \"default\": \"./dist/esm/index.js\"\n  }\n}",
+        "// dev/package.json bin:\n\"name\": \"@google/adk-devtools\",\n\"bin\": {\n  \"adk\": \"./dist/cli/cli.mjs\"\n}"
+      ]
+    },
+    {
+      "id": "q4",
+      "answer": "The key runtime dependencies of @google/adk are: 1) @google/genai (^1.37.0) - Official Google Generative AI SDK, provides the GoogleGenAI client for Gemini API and Vertex AI integration, used for LLM communication. 2) @modelcontextprotocol/sdk (^1.26.0) - Model Context Protocol SDK for MCP tool integration (MCPToolset, MCPTool, MCPSessionManager). 3) google-auth-library (^10.3.0) - Google authentication library for Vertex AI and service account credentials. 4) zod (^4.2.1) - Schema validation library used for tool parameter validation (zodObjectToSchema) and input/output schemas. 5) lodash-es (^4.17.23) - Utility library for deep cloning and object manipulation. 6) zod-to-json-schema (^3.25.1) - Converts Zod schemas to JSON Schema format for Gemini API compatibility.",
+      "citations": [
+        "core/package.json:42-49",
+        "core/src/models/google_llm.ts:1-10",
+        "core/src/tools/mcp/mcp_toolset.ts:1-10",
+        "core/src/tools/function_tool.ts:1-20",
+        "core/src/utils/simple_zod_to_json.ts:1-10"
+      ],
+      "code_snippets": [
+        "// core/package.json dependencies:\n\"dependencies\": {\n  \"@google/genai\": \"^1.37.0\",\n  \"@modelcontextprotocol/sdk\": \"^1.26.0\",\n  \"google-auth-library\": \"^10.3.0\",\n  \"lodash-es\": \"^4.17.23\",\n  \"zod\": \"^4.2.1\",\n  \"zod-to-json-schema\": \"^3.25.1\"\n}"
+      ]
+    },
+    {
+      "id": "q5",
+      "answer": "To configure ADK-JS to use Vertex AI instead of the Gemini API: 1) Set the GOOGLE_GENAI_USE_VERTEXAI environment variable to 'true' or '1' (checked via getBooleanEnvVar), 2) Set GOOGLE_CLOUD_PROJECT to your GCP project ID, 3) Set GOOGLE_CLOUD_LOCATION to your GCP region (e.g., 'us-central1'), 4) Ensure Application Default Credentials (ADC) are configured via gcloud CLI or service account key file. The Gemini class constructor checks these environment variables when vertexai is not explicitly set. In Vertex AI mode, the google-auth-library is used for authentication instead of API keys. If project or location is not provided via constructor or environment variables, an error is thrown. The GoogleLLMVariant enum distinguishes between GEMINI_API and VERTEX_AI modes, affecting request preprocessing (e.g., label removal for Gemini API).",
+      "citations": [
+        "core/src/models/google_llm.ts:370",
+        "core/src/models/google_llm.ts:375-387",
+        "core/src/utils/variant_utils.ts:30",
+        "core/package.json:45"
+      ],
+      "code_snippets": [
+        "// Vertex AI initialization in Gemini class:\nparams.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');\nif (params.vertexai) {\n  if (!params.project) {\n    params.project = process.env['GOOGLE_CLOUD_PROJECT'];\n  }\n  if (!params.location) {\n    params.location = process.env['GOOGLE_CLOUD_LOCATION'];\n  }\n  if (!params.project) {\n    throw new Error(\n      'VertexAI project must be provided via constructor or GOOGLE_CLOUD_PROJECT environment variable.',\n    );\n  }\n  if (!params.location) {\n    throw new Error(\n      'VertexAI location must be provided via constructor or GOOGLE_CLOUD_LOCATION environment variable.',\n    );\n  }\n}",
+        "// variant_utils.ts:\nexport function getGoogleLLMVariant(): GoogleLLMVariant {\n  return getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI')\n    ? GoogleLLMVariant.VERTEX_AI\n    : GoogleLLMVariant.GEMINI_API;\n}"
+      ]
+    },
+    {
+      "id": "q6",
+      "answer": "The public exports from @google/adk are defined in two entry points: 1) common.ts - Contains all the core browser-compatible exports (agents, tools, models, sessions, events, plugins, etc.), exported from ~140 items. 2) index.ts - Main entry point that re-exports everything from common.ts plus Node.js-specific exports: GcsArtifactService, getArtifactServiceFromUri, AgentEvent, getSessionServiceFromUri, Google Cloud telemetry (google_cloud.ts, setup.ts), and MCP tools (MCPSessionManager, MCPTool, MCPToolset). 3) index_web.ts - Browser entry point that only exports from common.ts. The dual ESM/CJS build is configured via build.js using esbuild, creating dist/esm (ES modules), dist/cjs (CommonJS), and dist/web (browser bundle). The package.json exports field maps to these: 'import' -> esm, 'require' -> cjs, 'browser' -> web, with TypeScript types from dist/types.",
+      "citations": [
+        "core/src/index.ts:1-17",
+        "core/src/common.ts:1-146",
+        "core/src/index_web.ts:1-8",
+        "core/package.json:17-29"
+      ],
+      "code_snippets": [
+        "// index.ts (Node.js entry):\nexport * from './artifacts/gcs_artifact_service.js';\nexport {getArtifactServiceFromUri} from './artifacts/registry.js';\nexport * from './common.js';\nexport * from './events/agent_event.js';\nexport {getSessionServiceFromUri} from './sessions/registry.js';\nexport * from './telemetry/google_cloud.js';\nexport * from './telemetry/setup.js';\nexport * from './tools/mcp/mcp_session_manager.js';\nexport * from './tools/mcp/mcp_tool.js';\nexport * from './tools/mcp/mcp_toolset.js';",
+        "// index_web.ts (Browser entry):\nexport * from './common.js';",
+        "// package.json exports:\n\"exports\": {\n  \".\": {\n    \"types\": \"./dist/types/index.d.ts\",\n    \"import\": \"./dist/esm/index.js\",\n    \"require\": \"./dist/cjs/index.js\",\n    \"default\": \"./dist/esm/index.js\"\n  }\n}"
+      ]
+    },
+    {
+      "id": "q7",
+      "answer": "ADK-JS supports browser environments via the index_web.ts entry point, which is mapped in package.json's 'browser' field to './dist/web/index_web.js'. The browser build only exports from common.ts, excluding Node.js-specific capabilities: GcsArtifactService (requires @google-cloud/storage), getArtifactServiceFromUri and getSessionServiceFromUri registries, Google Cloud telemetry exports (TraceExporter, MetricExporter, setupTelemetry), and MCP tools (MCPSessionManager, MCPTool, MCPToolset which require Node.js SDK client). The browser bundle still includes core functionality: all agent types (LlmAgent, LoopAgent, ParallelAgent, SequentialAgent), InMemoryRunner with in-memory services, FunctionTool and AgentTool, Gemini model (API key mode only, not Vertex AI), sessions/events/state, and BasePlugin. The build uses esbuild to create a browser-compatible bundle with appropriate polyfills.",
+      "citations": [
+        "core/src/index_web.ts:1-8",
+        "core/src/index.ts:7-16",
+        "core/package.json:21"
+      ],
+      "code_snippets": [
+        "// index_web.ts - browser entry point:\nexport * from './common.js';",
+        "// Excluded in browser (from index.ts only):\nexport * from './artifacts/gcs_artifact_service.js'; // Node.js only\nexport {getArtifactServiceFromUri} from './artifacts/registry.js'; // Node.js only\nexport * from './events/agent_event.js';\nexport {getSessionServiceFromUri} from './sessions/registry.js'; // Node.js only\nexport * from './telemetry/google_cloud.js'; // Node.js only\nexport * from './telemetry/setup.js'; // Node.js only\nexport * from './tools/mcp/mcp_session_manager.js'; // Node.js only\nexport * from './tools/mcp/mcp_tool.js'; // Node.js only\nexport * from './tools/mcp/mcp_toolset.js'; // Node.js only"
+      ]
+    },
+    {
+      "id": "q8",
+      "answer": "ADK-JS requires TypeScript version ^5.9.2 (specified in root package.json devDependencies). The compiler settings in tsconfig.json extend from gts (Google TypeScript Style) with: target: ES2020, module: nodenext, lib: ['ES2022', 'DOM'], moduleResolution: nodenext, esModuleInterop: true, skipLibCheck: true. The gts base config includes strict mode enabled. For consumers, this means: 1) TypeScript projects should use ES2020+ target to consume the library, 2) Both CommonJS and ESM module systems are supported via the dual build, 3) The nodenext module resolution ensures proper ESM/CJS interop, 4) Type definitions are provided in dist/types, 5) Strict mode is enabled, so consumers may need compatible strict settings. The ES2020 target ensures modern JavaScript features (optional chaining, nullish coalescing, BigInt, Promise.allSettled) are available.",
+      "citations": [
+        "tsconfig.json:1-12",
+        "package.json:56",
+        "core/tsconfig.json:1-9",
+        "core/package.json:18"
+      ],
+      "code_snippets": [
+        "// Root tsconfig.json:\n{\n  \"extends\": \"./node_modules/gts/tsconfig-google.json\",\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"module\": \"nodenext\",\n    \"lib\": [\"ES2022\", \"DOM\"],\n    \"moduleResolution\": \"nodenext\",\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"types\": [\"vitest/globals\"]\n  }\n}",
+        "// package.json:\n\"typescript\": \"^5.9.2\""
+      ]
+    },
+    {
+      "id": "q9",
+      "answer": "The agent hierarchy is structured with BaseAgent as the abstract root class defining the core agent contract. Concrete implementations extend BaseAgent: 1) LlmAgent - Agent powered by language models, extends BaseAgent directly. 2) LoopAgent - Runs sub-agents in a loop until maxIterations or escalate, extends BaseAgent. 3) SequentialAgent - Runs sub-agents sequentially (inherits from LoopAgent with maxIterations=1). 4) ParallelAgent - Runs sub-agents concurrently with isolated branches, extends BaseAgent. The inheritance chain: BaseAgent (abstract) -> {LlmAgent, LoopAgent, ParallelAgent}, and LoopAgent -> SequentialAgent. All agents must implement runAsyncImpl(context): AsyncGenerator<Event> and runLiveImpl(context): AsyncGenerator<Event>. The BaseAgent.runAsync() method is a template method that calls runAsyncImpl(), wrapping it with beforeAgentCallback and afterAgentCallback execution. Each agent type uses a unique Symbol for type checking (isLlmAgent, isLoopAgent, etc.) instead of instanceof.",
+      "citations": [
+        "core/src/agents/base_agent.ts:74-148",
+        "core/src/agents/llm_agent.ts:1246-1360",
+        "core/src/agents/loop_agent.ts:44-96",
+        "core/src/agents/parallel_agent.ts:31-65",
+        "core/src/agents/sequential_agent.ts:1-30"
+      ],
+      "code_snippets": [
+        "// BaseAgent abstract class:\nexport abstract class BaseAgent {\n  readonly [BASE_AGENT_SIGNATURE_SYMBOL] = true;\n  readonly name: string;\n  readonly description?: string;\n  parentAgent?: BaseAgent;\n  readonly subAgents: BaseAgent[];\n  \n  async *runAsync(parentContext: InvocationContext): AsyncGenerator<Event, void, void> {\n    // Template method pattern\n    const beforeEvent = await this.handleBeforeAgentCallback(context);\n    if (beforeEvent) yield beforeEvent;\n    \n    for await (const event of this.runAsyncImpl(context)) {\n      yield event;\n    }\n    \n    const afterEvent = await this.handleAfterAgentCallback(context);\n    if (afterEvent) yield afterEvent;\n  }\n  \n  protected abstract runAsyncImpl(context: InvocationContext): AsyncGenerator<Event, void, void>;\n}",
+        "// LlmAgent extends BaseAgent:\nexport class LlmAgent extends BaseAgent {\n  readonly [LLM_AGENT_SIGNATURE_SYMBOL] = true;\n  // ... LLM-specific fields\n  protected async *runAsyncImpl(context: InvocationContext): AsyncGenerator<Event> { ... }\n}",
+        "// LoopAgent extends BaseAgent:\nexport class LoopAgent extends BaseAgent {\n  readonly [LOOP_AGENT_SIGNATURE_SYMBOL] = true;\n  protected async *runAsyncImpl(context: InvocationContext): AsyncGenerator<Event> {\n    for (iteration = 0; iteration < maxIterations; iteration++) {\n      for (const subAgent of this.subAgents) {\n        for await (const event of subAgent.runAsync(context)) {\n          yield event;\n          if (event.actions.escalate) return;\n        }\n      }\n    }\n  }\n}"
+      ]
+    },
+    {
+      "id": "q10",
+      "answer": "ADK-JS uses a Symbol-based type guard pattern for runtime type checking. Each class defines a unique Symbol via Symbol.for() with a namespaced key: BASE_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseAgent'), LLM_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.llmAgent'), LOOP_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.loopAgent'), etc. Each class has a readonly property set to true for its symbol. Type guard functions check: 1) typeof obj === 'object', 2) obj !== null, 3) SIGNATURE_SYMBOL in obj, 4) obj[SIGNATURE_SYMBOL] === true. This pattern was chosen over instanceof because: 1) Symbol.for() creates global symbols that work across different module instances and bundler boundaries, 2) instanceof fails when classes are loaded from different npm packages or duplicated in node_modules, 3) Symbols survive serialization/deserialization better than prototype chains, 4) It's more reliable in complex build scenarios (webpack, rollup, esbuild), 5) Works correctly with duck typing and structural typing patterns.",
+      "citations": [
+        "core/src/agents/base_agent.ts:55-69",
+        "core/src/agents/llm_agent.ts:1203-1220",
+        "core/src/agents/loop_agent.ts:28-42",
+        "core/src/tools/base_tool.ts:18-32"
+      ],
+      "code_snippets": [
+        "// Symbol definition and type guard pattern:\nconst BASE_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseAgent');\n\nexport function isBaseAgent(obj: unknown): obj is BaseAgent {\n  return (\n    typeof obj === 'object' &&\n    obj !== null &&\n    BASE_AGENT_SIGNATURE_SYMBOL in obj &&\n    obj[BASE_AGENT_SIGNATURE_SYMBOL] === true\n  );\n}\n\nexport abstract class BaseAgent {\n  readonly [BASE_AGENT_SIGNATURE_SYMBOL] = true;\n  // ...\n}",
+        "// Similar pattern for LlmAgent:\nconst LLM_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.llmAgent');\n\nexport function isLlmAgent(obj: unknown): obj is LlmAgent {\n  return (\n    typeof obj === 'object' &&\n    obj !== null &&\n    LLM_AGENT_SIGNATURE_SYMBOL in obj &&\n    obj[LLM_AGENT_SIGNATURE_SYMBOL] === true\n  );\n}\n\nexport class LlmAgent extends BaseAgent {\n  readonly [LLM_AGENT_SIGNATURE_SYMBOL] = true;\n}"
+      ]
+    },
+    {
+      "id": "q11",
+      "answer": "The complete request processing pipeline in LlmAgent consists of request processors executed in order: 1) BasicLlmRequestProcessor - Sets the model name on llmRequest.model from agent.canonicalModel.model, 2) IdentityLlmRequestProcessor - Adds agent name as a label (adk_agent_name) to GenerateContentConfig, 3) InstructionsLlmRequestProcessor - Builds and injects instruction and globalInstruction (with session state template substitution via injectSessionState), appends to llmRequest via appendInstructions(), 4) ContentRequestProcessor - Populates llmRequest.contents based on includeContents setting ('default' calls getContents for full history, 'none' calls getCurrentTurnContents for current turn only), 5) AgentTransferLlmRequestProcessor - Adds transfer_to_agent FunctionTool to toolsDict if transfers are allowed (based on disallowTransferToParent/disallowTransferToPeers), 6) RequestConfirmationLlmRequestProcessor - Handles tool confirmation flow by injecting confirmation requests as function responses, 7) CodeExecutionRequestProcessor - Pre-processes code execution including CSV extraction, inline data replacement, and data file optimization. These run sequentially via the runAsync generators before the LLM call.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:336-349",
+        "core/src/agents/llm_agent.ts:375-389",
+        "core/src/agents/llm_agent.ts:391-444",
+        "core/src/agents/llm_agent.ts:446-476",
+        "core/src/agents/llm_agent.ts:478-580",
+        "core/src/agents/llm_agent.ts:582-743",
+        "core/src/agents/llm_agent.ts:745-883"
+      ],
+      "code_snippets": [
+        "// Request processor instantiation:\nconst BASIC_LLM_REQUEST_PROCESSOR = new BasicLlmRequestProcessor();\nconst IDENTITY_LLM_REQUEST_PROCESSOR = new IdentityLlmRequestProcessor();\nconst INSTRUCTIONS_LLM_REQUEST_PROCESSOR = new InstructionsLlmRequestProcessor();\nconst CONTENT_REQUEST_PROCESSOR = new ContentRequestProcessor();\nconst AGENT_TRANSFER_LLM_REQUEST_PROCESSOR = new AgentTransferLlmRequestProcessor();\nconst REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR = new RequestConfirmationLlmRequestProcessor();\nconst CODE_EXECUTION_REQUEST_PROCESSOR = new CodeExecutionRequestProcessor();",
+        "// Execution order in LlmAgent.getRequestProcessors():\nreturn [\n  BASIC_LLM_REQUEST_PROCESSOR,\n  IDENTITY_LLM_REQUEST_PROCESSOR,\n  INSTRUCTIONS_LLM_REQUEST_PROCESSOR,\n  ...(this.requestProcessors ?? []),\n  REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,\n  CONTENT_REQUEST_PROCESSOR,\n  CODE_EXECUTION_REQUEST_PROCESSOR,\n  AGENT_TRANSFER_LLM_REQUEST_PROCESSOR,\n];"
+      ]
+    },
+    {
+      "id": "q12",
+      "answer": "InvocationContext serves as the central context object for an agent invocation, carrying all necessary references and state. It contains: 1) Service references: artifactService (BaseArtifactService), sessionService (BaseSessionService), memoryService (BaseMemoryService), credentialService (BaseCredentialService), 2) Current execution state: invocationId (unique identifier), agent (current BaseAgent), session (Session object with state and events), userContent (initial user message), branch (for parallel agent isolation), 3) Runtime configuration: runConfig (RunConfig with streaming mode, maxLlmCalls, pauseOnToolCalls, etc.), pluginManager (PluginManager instance), transcriptionCache, liveRequestQueue, activeStreamingTools, 4) Control flags: endInvocation (boolean to terminate execution early). The InvocationContext also includes an InvocationCostManager that tracks numberOfLlmCalls and enforces maxLlmCalls limit via incrementAndEnforceLlmCallsLimit(). When endInvocation is set to true by callbacks or tools, the agent execution terminates immediately. The context is passed through the agent tree and provides access to all services without tight coupling.",
+      "citations": [
+        "core/src/agents/invocation_context.ts:23-150",
+        "core/src/agents/invocation_context.ts:51-73",
+        "core/src/agents/base_agent.ts:187-189",
+        "core/src/agents/base_agent.ts:196-198"
+      ],
+      "code_snippets": [
+        "// InvocationContextParams interface:\nexport interface InvocationContextParams {\n  artifactService?: BaseArtifactService;\n  sessionService?: BaseSessionService;\n  memoryService?: BaseMemoryService;\n  credentialService?: BaseCredentialService;\n  invocationId: string;\n  branch?: string;\n  agent: BaseAgent;\n  userContent?: Content;\n  session: Session;\n  endInvocation?: boolean;\n  transcriptionCache?: TranscriptionEntry[];\n  runConfig?: RunConfig;\n  liveRequestQueue?: LiveRequestQueue;\n  activeStreamingTools?: Record<string, ActiveStreamingTool>;\n  pluginManager: PluginManager;\n}",
+        "// InvocationCostManager tracks LLM calls:\nclass InvocationCostManager {\n  private numberOfLlmCalls: number = 0;\n\n  incrementAndEnforceLlmCallsLimit(runConfig?: RunConfig) {\n    this.numberOfLlmCalls++;\n    if (\n      runConfig &&\n      runConfig.maxLlmCalls! > 0 &&\n      this.numberOfLlmCalls > runConfig.maxLlmCalls!\n    ) {\n      throw new Error(\n        `Max number of llm calls limit of ${runConfig.maxLlmCalls!} exceeded`,\n      );\n    }\n  }\n}",
+        "// Usage in runAsync:\nif (context.endInvocation) {\n  return; // Terminate execution\n}"
+      ]
+    },
+    {
+      "id": "q13",
+      "answer": "The context hierarchy consists of three layers, each adding capabilities: 1) ReadonlyContext - Base layer providing read-only access to invocation data. Contains: invocationContext reference, userContent, invocationId, userId, sessionId, agentName, and state (as Readonly<State> with empty delta). 2) CallbackContext extends ReadonlyContext - Adds mutable state and artifact operations. Additional capabilities: state (delta-aware State instance with stateDelta tracking), eventActions (EventActions for stateDelta, artifactDelta, transferToAgent, escalate, etc.), loadArtifact(filename, version?), saveArtifact(filename, artifact) which updates eventActions.artifactDelta. 3) ToolContext extends CallbackContext - Adds tool-specific capabilities. Additional fields: functionCallId (function call identifier), toolConfirmation (ToolConfirmation object). Additional methods: requestCredential(authConfig) - triggers auth flow via eventActions.requestedAuthConfigs, getAuthResponse(authConfig) - retrieves AuthCredential from state, listArtifacts() - lists artifact keys for session, searchMemory(query) - searches memory service. The inheritance chain: ReadonlyContext <- CallbackContext <- ToolContext ensures progressive capability enhancement.",
+      "citations": [
+        "core/src/agents/readonly_context.ts:16-63",
+        "core/src/agents/callback_context.ts:18-90",
+        "core/src/tools/tool_context.ts:24-107"
+      ],
+      "code_snippets": [
+        "// ReadonlyContext - base layer:\nexport class ReadonlyContext {\n  constructor(readonly invocationContext: InvocationContext) {}\n  \n  get userContent(): Content | undefined { return this.invocationContext.userContent; }\n  get invocationId(): string { return this.invocationContext.invocationId; }\n  get userId(): string { return this.invocationContext.userId; }\n  get sessionId(): string { return this.invocationContext.session.id; }\n  get agentName(): string { return this.invocationContext.agent.name; }\n  get state(): Readonly<State> {\n    return new State(this.invocationContext.session.state, {}) as Readonly<State>;\n  }\n}",
+        "// CallbackContext - adds mutation:\nexport class CallbackContext extends ReadonlyContext {\n  readonly eventActions: EventActions;\n  private readonly _state: State;\n  \n  constructor({ invocationContext, eventActions }) {\n    super(invocationContext);\n    this.eventActions = eventActions || createEventActions();\n    this._state = new State(invocationContext.session.state, this.eventActions.stateDelta);\n  }\n  \n  override get state() { return this._state; }\n  loadArtifact(filename: string, version?: number): Promise<Part | undefined> { ... }\n  async saveArtifact(filename: string, artifact: Part): Promise<number> {\n    const version = await this.invocationContext.artifactService.saveArtifact(...);\n    this.eventActions.artifactDelta[filename] = version;\n    return version;\n  }\n}",
+        "// ToolContext - adds tool capabilities:\nexport class ToolContext extends CallbackContext {\n  readonly functionCallId?: string;\n  toolConfirmation?: ToolConfirmation;\n  \n  requestCredential(authConfig: AuthConfig) {\n    this.eventActions.requestedAuthConfigs[this.functionCallId] = ...\n  }\n  getAuthResponse(authConfig: AuthConfig): AuthCredential | undefined { ... }\n  listArtifacts(): Promise<string[]> { ... }\n  searchMemory(query: string): Promise<SearchMemoryResponse> { ... }\n}"
+      ]
+    },
+    {
+      "id": "q14",
+      "answer": "AsyncGenerator is used throughout ADK-JS for streaming execution patterns: 1) Agent execution: BaseAgent.runAsync() and runAsyncImpl() return AsyncGenerator<Event, void, void>, allowing agents to yield events incrementally. The template method pattern in runAsync() wraps runAsyncImpl() with callbacks. 2) LLM streaming: BaseLlm.generateContentAsync() returns AsyncGenerator<LlmResponse> for streaming model responses. The Gemini class yields partial responses (partial: true) during streaming, then a final complete response. 3) Request/Response processors: BaseLlmRequestProcessor.runAsync() and BaseLlmResponseProcessor.runAsync() are AsyncGenerators that can yield events during pre/post-processing. 4) Tool execution pipeline: handleFunctionCallsAsync yields events for each tool call and response. 5) Streaming pipeline composition: For-await-of loops compose generators: `for await (const event of subAgent.runAsync(context)) { yield event; }`. 6) OpenTelemetry context binding: runAsyncGeneratorWithOtelContext() wraps generators to preserve trace context across async boundaries. Benefits: Memory efficient streaming, backpressure support, composable pipelines, cancellation via generator.return(), and real-time event delivery to clients.",
+      "citations": [
+        "core/src/agents/base_agent.ts:169-210",
+        "core/src/agents/base_agent.ts:245-247",
+        "core/src/agents/llm_agent.ts:1610-1650",
+        "core/src/models/base_llm.ts:15-30",
+        "core/src/telemetry/tracing.ts:90-130"
+      ],
+      "code_snippets": [
+        "// BaseAgent runAsync pattern:\nasync *runAsync(parentContext: InvocationContext): AsyncGenerator<Event, void, void> {\n  const span = tracer.startSpan(`invoke_agent ${this.name}`);\n  try {\n    yield* runAsyncGeneratorWithOtelContext<BaseAgent, Event>(\n      ctx,\n      this,\n      async function* () {\n        const beforeEvent = await this.handleBeforeAgentCallback(context);\n        if (beforeEvent) yield beforeEvent;\n        \n        if (context.endInvocation) return;\n        \n        for await (const event of this.runAsyncImpl(context)) {\n          yield event; // Stream events from implementation\n        }\n        \n        const afterEvent = await this.handleAfterAgentCallback(context);\n        if (afterEvent) yield afterEvent;\n      },\n    );\n  } finally {\n    span.end();\n  }\n}",
+        "// BaseLlm generateContentAsync:\nabstract generateContentAsync(\n  request: LlmRequest,\n): AsyncGenerator<LlmResponse, void, void>;",
+        "// Streaming composition in LlmAgent:\nfor await (const llmResponse of this.generateContentWithPlugins(context, llmRequest)) {\n  if (llmResponse.partial) {\n    yield createEvent({ ...llmResponse, partial: true }); // Stream partial\n  } else {\n    finalLlmResponse = llmResponse; // Accumulate final\n  }\n}",
+        "// Generator wrapping for OpenTelemetry:\nexport async function* runAsyncGeneratorWithOtelContext<T, U>(\n  ctx: Context,\n  thisArg: T,\n  generator: () => AsyncGenerator<U>,\n): AsyncGenerator<U> {\n  const boundGenerator = context.bind(ctx, generator);\n  for await (const item of boundGenerator.call(thisArg)) {\n    yield item;\n  }\n}"
+      ]
+    },
+    {
+      "id": "q15",
+      "answer": "ADK-JS uses several design patterns: 1) Template Method: BaseAgent.runAsync() defines the execution skeleton (beforeCallback -> runAsyncImpl -> afterCallback), with runAsyncImpl() as the abstract method implemented by subclasses (LlmAgent, LoopAgent, etc.). 2) Strategy: BaseLlm interface allows swapping LLM implementations (Gemini, ApigeeLlm), BaseSessionService/BaseArtifactService/BaseMemoryService enable pluggable storage backends. 3) Registry/Factory: LLMRegistry maintains a map of model name patterns to BaseLlm constructors, resolve() matches model names via regex, newLlm() creates instances with LRU caching. 4) Observer/Hook: BasePlugin defines 14 lifecycle hooks (onUserMessageCallback, beforeRunCallback, onEventCallback, etc.), PluginManager orchestrates execution with early-exit semantics. 5) Chain of Responsibility: Request/response processors run sequentially, each can modify the request/response or yield events. 6) Decorator: Request processors wrap LLM calls with pre-processing (instructions, content, tools), response processors wrap with post-processing (code execution, output saving). 7) Builder: createRunConfig(), createEvent(), createEventActions() use builder pattern with defaults.",
+      "citations": [
+        "core/src/agents/base_agent.ts:169-210",
+        "core/src/models/registry.ts:20-120",
+        "core/src/plugins/base_plugin.ts:1-150",
+        "core/src/plugins/plugin_manager.ts:1-200",
+        "core/src/agents/llm_agent.ts:336-883"
+      ],
+      "code_snippets": [
+        "// Template Method in BaseAgent:\nasync *runAsync(parentContext: InvocationContext): AsyncGenerator<Event> {\n  // Template defines skeleton\n  const beforeEvent = await this.handleBeforeAgentCallback(context);\n  if (beforeEvent) yield beforeEvent;\n  \n  // Hook point - subclasses implement\n  for await (const event of this.runAsyncImpl(context)) {\n    yield event;\n  }\n  \n  const afterEvent = await this.handleAfterAgentCallback(context);\n  if (afterEvent) yield afterEvent;\n}\n\nprotected abstract runAsyncImpl(context: InvocationContext): AsyncGenerator<Event>;",
+        "// Strategy pattern with BaseLlm:\nexport abstract class BaseLlm {\n  abstract generateContentAsync(request: LlmRequest): AsyncGenerator<LlmResponse>;\n}\n\nexport class Gemini extends BaseLlm { ... }\nexport class ApigeeLlm extends Gemini { ... }",
+        "// Registry/Factory pattern:\nexport class LLMRegistry {\n  private static modelRegistries = new Map<RegExp, BaseLlmType>();\n  private static cache = new LRUCache<string, BaseLlm>(100);\n  \n  static register(supportedModels: (string | RegExp)[], llmType: BaseLlmType) {\n    for (const pattern of supportedModels) {\n      this.modelRegistries.set(new RegExp(pattern), llmType);\n    }\n  }\n  \n  static resolve(model: string): BaseLlmType | undefined {\n    for (const [pattern, llmType] of this.modelRegistries) {\n      if (pattern.test(model)) return llmType;\n    }\n  }\n  \n  static newLlm(model: string): BaseLlm {\n    if (this.cache.has(model)) return this.cache.get(model)!;\n    const llmType = this.resolve(model);\n    const instance = new llmType({ model });\n    this.cache.set(model, instance);\n    return instance;\n  }\n}"
+      ]
+    },
+    {
+      "id": "q16",
+      "answer": "The delta/event-sourcing pattern works through State and EventActions: 1) State class maintains value (current committed state) and delta (pending changes not yet persisted). get(key) checks delta first, then value. set(key, value) updates both value and delta. hasDelta() returns true if delta is non-empty. update(delta) merges new changes into both dictionaries. 2) EventActions tracks changes per event: stateDelta (session state updates), artifactDelta (artifact version updates), transferToAgent (agent routing), escalate (exit signal), requestedAuthConfigs (auth requests), requestedToolConfirmations (confirmation requests). 3) Event sourcing flow: CallbackContext wraps State with eventActions.stateDelta, state.set() updates stateDelta, events carry stateDelta to session, BaseSessionService.appendEvent() applies stateDelta to session.state via updateSessionState() which filters out 'temp:' prefixed keys. 4) Benefits: Atomic state updates per event, rollback capability by not applying delta, temp state for ephemeral data, artifact versioning via delta tracking, event replay for debugging. The pattern ensures state changes are explicit and traceable through the event log.",
+      "citations": [
+        "core/src/sessions/state.ts:11-84",
+        "core/src/events/event_actions.ts:16-62",
+        "core/src/agents/callback_context.ts:18-36",
+        "core/src/sessions/base_session_service.ts:150-180"
+      ],
+      "code_snippets": [
+        "// State class with value/delta tracking:\nexport class State {\n  static readonly APP_PREFIX = 'app:';\n  static readonly USER_PREFIX = 'user:';\n  static readonly TEMP_PREFIX = 'temp:';\n\n  constructor(\n    private value: Record<string, unknown> = {},\n    private delta: Record<string, unknown> = {},\n  ) {}\n\n  get<T>(key: string, defaultValue?: T): T | undefined {\n    if (key in this.delta) return this.delta[key] as T; // Delta first\n    if (key in this.value) return this.value[key] as T;\n    return defaultValue;\n  }\n\n  set(key: string, value: unknown) {\n    this.value[key] = value;\n    this.delta[key] = value; // Track change\n  }\n\n  hasDelta(): boolean {\n    return Object.keys(this.delta).length > 0;\n  }\n}",
+        "// EventActions interface:\nexport interface EventActions {\n  skipSummarization?: boolean;\n  stateDelta: {[key: string]: unknown}; // State changes\n  artifactDelta: {[key: string]: number}; // Artifact versions\n  transferToAgent?: string;\n  escalate?: boolean;\n  requestedAuthConfigs: {[key: string]: AuthConfig};\n  requestedToolConfirmations: {[key: string]: ToolConfirmation};\n}",
+        "// CallbackContext creates delta-aware State:\nexport class CallbackContext extends ReadonlyContext {\n  private readonly _state: State;\n  readonly eventActions: EventActions;\n\n  constructor({ invocationContext, eventActions }) {\n    super(invocationContext);\n    this.eventActions = eventActions || createEventActions();\n    this._state = new State(\n      invocationContext.session.state,\n      this.eventActions.stateDelta, // Link delta to eventActions\n    );\n  }\n}",
+        "// updateSessionState filters temp: keys:\nfunction updateSessionState(session: Session, event: Event) {\n  for (const [key, value] of Object.entries(event.actions.stateDelta)) {\n    if (!key.startsWith(State.TEMP_PREFIX)) { // Skip temp:\n      session.state[key] = value;\n    }\n  }\n}"
+      ]
+    },
+    {
+      "id": "q17",
+      "answer": "LlmAgentConfig extends BaseAgentConfig with the following options: 1) model (string | BaseLlm) - LLM to use, inherits from ancestor if not set, 2) instruction (string | InstructionProvider) - Agent behavior guidance with {key} template syntax for state injection, 3) globalInstruction (string | InstructionProvider) - Instructions for entire agent tree (only root's takes effect), 4) tools (ToolUnion[]) - Array of BaseTool or BaseToolset instances, 5) generateContentConfig (GenerateContentConfig) - Model parameters (temperature, safety settings, etc.), 6) disallowTransferToParent (boolean) - Prevents transfer to parent agent, 7) disallowTransferToPeers (boolean) - Prevents transfer to peer agents, 8) includeContents ('default' | 'none') - Controls conversation history inclusion, 9) inputSchema (Schema) - Schema when agent is used as tool, 10) outputSchema (Schema) - Output schema (disallows tools/transfers), 11) outputKey (string) - Session state key to store output, 12) beforeModelCallback / afterModelCallback (callback or array), 13) beforeToolCallback / afterToolCallback (callback or array), 14) requestProcessors (BaseLlmRequestProcessor[]) - Custom pre-LLM processors, 15) responseProcessors (BaseLlmResponseProcessor[]) - Custom post-LLM processors, 16) codeExecutor (BaseCodeExecutor) - Code execution handler. Inherits from BaseAgentConfig: name, description, parentAgent, subAgents, beforeAgentCallback, afterAgentCallback.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:209-321",
+        "core/src/agents/base_agent.ts:42-49"
+      ],
+      "code_snippets": [
+        "// LlmAgentConfig interface:\nexport interface LlmAgentConfig extends BaseAgentConfig {\n  model?: string | BaseLlm;\n  instruction?: string | InstructionProvider;\n  globalInstruction?: string | InstructionProvider;\n  tools?: ToolUnion[];\n  generateContentConfig?: GenerateContentConfig;\n  disallowTransferToParent?: boolean;\n  disallowTransferToPeers?: boolean;\n  includeContents?: 'default' | 'none';\n  inputSchema?: Schema;\n  outputSchema?: Schema;\n  outputKey?: string;\n  beforeModelCallback?: BeforeModelCallback;\n  afterModelCallback?: AfterModelCallback;\n  beforeToolCallback?: BeforeToolCallback;\n  afterToolCallback?: AfterToolCallback;\n  requestProcessors?: BaseLlmRequestProcessor[];\n  responseProcessors?: BaseLlmResponseProcessor[];\n  codeExecutor?: BaseCodeExecutor;\n}",
+        "// BaseAgentConfig (inherited):\nexport interface BaseAgentConfig {\n  name: string;\n  description?: string;\n  parentAgent?: BaseAgent;\n  subAgents?: BaseAgent[];\n  beforeAgentCallback?: BeforeAgentCallback;\n  afterAgentCallback?: AfterAgentCallback;\n}"
+      ]
+    },
+    {
+      "id": "q18",
+      "answer": "Agent transfer works via the built-in transfer_to_agent FunctionTool added by AgentTransferLlmRequestProcessor. The transfer mechanism: 1) Tool definition: FunctionTool with name 'transfer_to_agent', parameter agentName (string), description guides when to transfer. 2) Transfer target determination: getTransferTargets() returns available agents based on: parentAgent (if !disallowTransferToParent), peer agents (if !disallowTransferToPeers && parentAgent exists), sub-agents (always available). 3) Execution: transferToAgent() validates the target name exists in transfer targets, sets event.actions.transferToAgent to the agent name, which signals Runner to route to that agent. 4) Routing: AgentTransferLlmRequestProcessor injects this tool into llmRequest.toolsDict if shouldAddTransferTool() returns true (checks disallow flags). When the model calls transfer_to_agent, the function sets transferToAgent action, the event is yielded, and Runner.determineAgentForResumption() uses this to find the next agent. The disallowTransferToParent flag also prevents replying to end-user (prevents one-way transfers). Transfers enable dynamic agent routing based on LLM decisions about which agent is best suited for the task.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:478-580",
+        "core/src/agents/functions.ts:200-280",
+        "core/src/runner/runner.ts:300-400"
+      ],
+      "code_snippets": [
+        "// AgentTransferLlmRequestProcessor:\nclass AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {\n  private readonly toolName = 'transfer_to_agent' as const;\n  private readonly tool = new FunctionTool({\n    name: this.toolName,\n    description:\n      'Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.',\n    parameters: z.object({\n      agentName: z.string().describe('the agent name to transfer to.'),\n    }),\n    execute: async ({agentName}, toolContext) => {\n      return transferToAgent(agentName, this.agent, toolContext);\n    },\n  });\n  \n  async *runAsync(context, llmRequest) {\n    if (this.shouldAddTransferTool(this.agent)) {\n      llmRequest.toolsDict[this.toolName] = this.tool;\n    }\n  }\n  \n  private shouldAddTransferTool(agent: LlmAgent): boolean {\n    return !agent.outputSchema && // No output schema\n      (agent.parentAgent !== undefined || agent.subAgents.length > 0);\n  }\n}",
+        "// Transfer target determination:\nfunction getTransferTargets(agent: LlmAgent): string[] {\n  const targets: string[] = [];\n  \n  // Parent agent\n  if (agent.parentAgent && !agent.disallowTransferToParent) {\n    targets.push(agent.parentAgent.name);\n  }\n  \n  // Peer agents\n  if (agent.parentAgent && !agent.disallowTransferToPeers) {\n    for (const peer of agent.parentAgent.subAgents) {\n      if (peer.name !== agent.name) {\n        targets.push(peer.name);\n      }\n    }\n  }\n  \n  // Sub-agents (always available)\n  for (const subAgent of agent.subAgents) {\n    targets.push(subAgent.name);\n  }\n  \n  return targets;\n}",
+        "// Transfer execution:\nasync function transferToAgent(\n  agentName: string,\n  agent: LlmAgent,\n  toolContext: ToolContext,\n): Promise<Record<string, unknown>> {\n  const targets = getTransferTargets(agent);\n  if (!targets.includes(agentName)) {\n    throw new Error(`Invalid transfer target: ${agentName}`);\n  }\n  \n  toolContext.eventActions.transferToAgent = agentName;\n  return {result: `Transferred to agent: ${agentName}`};\n}"
+      ]
+    },
+    {
+      "id": "q19",
+      "answer": "LoopAgent runs sub-agents sequentially in a loop until maxIterations is reached or an escalate action occurs. Configuration: maxIterations (number, default Number.MAX_SAFE_INTEGER) - Maximum loop iterations. Behavior: 1) Iteration counter starts at 0, 2) For each iteration < maxIterations: runs each sub-agent in sequence via subAgent.runAsync(context), yields all events from sub-agent, checks event.actions.escalate - if true, sets shouldExit flag and returns immediately (exits entire loop), 3) Increments iteration counter after all sub-agents complete, 4) Continues loop until maxIterations reached or escalate detected. The escalate pattern allows sub-agents to signal that the loop should terminate early (e.g., when a task is complete or an error occurs). LoopAgent is useful for iterative workflows where agents should repeat until a condition is met. SequentialAgent is a specialized LoopAgent with maxIterations=1, running sub-agents exactly once in sequence. Unlike ParallelAgent which creates isolated branches, LoopAgent runs sub-agents in the same context, allowing them to see each other's history.",
+      "citations": [
+        "core/src/agents/loop_agent.ts:15-96"
+      ],
+      "code_snippets": [
+        "// LoopAgent implementation:\nexport interface LoopAgentConfig extends BaseAgentConfig {\n  maxIterations?: number;\n}\n\nexport class LoopAgent extends BaseAgent {\n  private readonly maxIterations: number;\n\n  constructor(config: LoopAgentConfig) {\n    super(config);\n    this.maxIterations = config.maxIterations ?? Number.MAX_SAFE_INTEGER;\n  }\n\n  protected async *runAsyncImpl(\n    context: InvocationContext,\n  ): AsyncGenerator<Event, void, void> {\n    let iteration = 0;\n\n    while (iteration < this.maxIterations) {\n      for (const subAgent of this.subAgents) {\n        let shouldExit = false;\n        for await (const event of subAgent.runAsync(context)) {\n          yield event;\n\n          if (event.actions.escalate) {\n            shouldExit = true; // Escalate exits loop\n          }\n        }\n\n        if (shouldExit) {\n          return; // Exit entire loop\n        }\n      }\n\n      iteration++;\n    }\n\n    return;\n  }\n}"
+      ]
+    },
+    {
+      "id": "q20",
+      "answer": "ParallelAgent implements concurrent sub-agent execution using branch isolation and Promise.race-based merging. Implementation: 1) Branch creation: createBranchCtxForSubAgent() creates an isolated InvocationContext for each sub-agent. The branch name is constructed as '${parentAgent.name}.${subAgent.name}', and if the parent context already has a branch, it appends: '${parentContext.branch}.${agentName}.${subAgentName}'. This ensures each parallel agent sees only events from its own branch. 2) Concurrent execution: Maps each sub-agent to subAgent.runAsync(branchContext), creating an array of AsyncGenerators. 3) Event merging: mergeAgentRuns() uses a Promise.race pattern to yield events from whichever generator produces next. It maintains a Map of pending promises (one per generator), uses Promise.race() to find the next completed promise, yields that event, advances that specific generator, and repeats until all generators complete. The pattern guarantees that for each agent, it won't move on until the generated event is processed by upstream runner (backpressure). This enables multiple agents to work concurrently while maintaining event ordering guarantees per agent and proper branch isolation so peer agents cannot see each other's conversation history.",
+      "citations": [
+        "core/src/agents/parallel_agent.ts:41-100"
+      ],
+      "code_snippets": [
+        "// ParallelAgent implementation:\nexport class ParallelAgent extends BaseAgent {\n  protected async *runAsyncImpl(\n    context: InvocationContext,\n  ): AsyncGenerator<Event, void, void> {\n    const agentRuns = this.subAgents.map((subAgent) =>\n      subAgent.runAsync(createBranchCtxForSubAgent(this, subAgent, context)),\n    );\n\n    for await (const event of mergeAgentRuns(agentRuns)) {\n      yield event;\n    }\n  }\n}",
+        "// Branch context creation:\nfunction createBranchCtxForSubAgent(\n  agent: BaseAgent,\n  subAgent: BaseAgent,\n  originalContext: InvocationContext,\n): InvocationContext {\n  const invocationContext = new InvocationContext(originalContext);\n  const branchSuffix = `${agent.name}.${subAgent.name}`;\n  invocationContext.branch = invocationContext.branch\n    ? `${invocationContext.branch}.${branchSuffix}`\n    : branchSuffix;\n\n  return invocationContext;\n}",
+        "// Event merging with Promise.race:\nasync function* mergeAgentRuns(\n  agentRuns: AsyncGenerator<Event, void, void>[],\n): AsyncGenerator<Event, void, void> {\n  const pendingPromises = new Map<number, Promise<IteratorResult<Event>>>();\n  \n  // Initialize promises\n  for (let i = 0; i < agentRuns.length; i++) {\n    pendingPromises.set(i, agentRuns[i].next());\n  }\n  \n  while (pendingPromises.size > 0) {\n    // Race to find next completed\n    const {index, result} = await Promise.race(\n      Array.from(pendingPromises.entries()).map(([i, p]) => \n        p.then(result => ({index: i, result}))\n      )\n    );\n    \n    if (result.done) {\n      pendingPromises.delete(index); // Generator finished\n    } else {\n      yield result.value; // Yield event\n      pendingPromises.set(index, agentRuns[index].next()); // Advance generator\n    }\n  }\n}"
+      ]
+    },
+    {
+      "id": "q21",
+      "answer": "Agent naming rules enforced by validateAgentName(): 1) Must be a valid identifier: Starts with a letter (a-z, A-Z) or underscore (_), can contain letters, digits (0-9), underscores, and hyphens. Validated via regex: /^[\\p{ID_Start}$_][\\p{ID_Continue}$_-]*$/u (uses Unicode property escapes). 2) Cannot be 'user': Reserved for end-user input to distinguish user messages from agent messages in events. Validation implementation: isIdentifier(name) checks the regex pattern, validateAgentName(name) calls isIdentifier() and throws if invalid with descriptive error message, checks if name === 'user' and throws specific error. The validation happens in BaseAgent constructor before setting this.name, ensuring all agents have valid names from creation. This prevents conflicts in event authoring, agent transfer targets, and session event filtering. The naming constraint enables unambiguous agent identification in the agent tree and event history.",
+      "citations": [
+        "core/src/agents/base_agent.ts:413-439",
+        "core/src/agents/base_agent.ts:150"
+      ],
+      "code_snippets": [
+        "// Agent name validation:\nfunction validateAgentName(name: string): string {\n  if (!isIdentifier(name)) {\n    throw new Error(\n      `Found invalid agent name: \"${\n        name\n      }\". Agent name must be a valid identifier. It should start with a letter (a-z, A-Z) or an underscore (_), and can only contain letters, digits (0-9), underscores, and hyphens.`,\n    );\n  }\n\n  if (name === 'user') {\n    throw new Error(\n      `Agent name cannot be 'user'. 'user' is reserved for end-user's input.`,\n    );\n  }\n\n  return name;\n}\n\nfunction isIdentifier(str: string): boolean {\n  return /^[\\p{ID_Start}$_][\\p{ID_Continue}$_-]*$/u.test(str);\n}",
+        "// Usage in BaseAgent constructor:\nconstructor(config: BaseAgentConfig) {\n  this.name = validateAgentName(config.name);\n  // ...\n}"
+      ]
+    },
+    {
+      "id": "q22",
+      "answer": "beforeAgentCallback and afterAgentCallback provide hooks into agent execution lifecycle: 1) Signature: SingleAgentCallback = (context: CallbackContext) => Promise<Content | undefined> | (Content | undefined). Can be single callback or array. 2) beforeAgentCallback: Runs before runAsyncImpl(), receives CallbackContext with mutable state and eventActions. Early-exit semantics: If callback returns Content, that content is yielded as an event and runAsyncImpl() is SKIPPED (sets context.endInvocation = true). Use cases: Pre-validation, access control, caching, request transformation. 3) afterAgentCallback: Runs after runAsyncImpl(), receives same CallbackContext. Early-exit: If returns Content, that content REPLACES the agent's response and is appended to event history. Use cases: Response post-processing, logging, response validation. 4) Array behavior: Callbacks execute in order until one returns non-undefined value. Remaining callbacks are skipped. 5) Callback execution order: Plugin beforeAgentCallbacks (via PluginManager) run first, then agent's beforeAgentCallback. After agent execution: agent's afterAgentCallback, then plugin afterAgentCallbacks. This enables layered interception and modification of agent behavior.",
+      "citations": [
+        "core/src/agents/base_agent.ts:22-37",
+        "core/src/agents/base_agent.ts:122-147",
+        "core/src/agents/base_agent.ts:169-210",
+        "core/src/agents/base_agent.ts:302-370"
+      ],
+      "code_snippets": [
+        "// Callback type definitions:\nexport type SingleAgentCallback = (\n  context: CallbackContext,\n) => Promise<Content | undefined> | (Content | undefined);\n\nexport type BeforeAgentCallback = SingleAgentCallback | SingleAgentCallback[];\nexport type AfterAgentCallback = SingleAgentCallback | SingleAgentCallback[];",
+        "// BaseAgentConfig:\nexport interface BaseAgentConfig {\n  beforeAgentCallback?: BeforeAgentCallback;\n  afterAgentCallback?: AfterAgentCallback;\n}",
+        "// Execution in runAsync():\nasync *runAsync(parentContext: InvocationContext): AsyncGenerator<Event, void, void> {\n  const context = this.createInvocationContext(parentContext);\n  \n  // Before callback\n  const beforeAgentCallbackEvent = await this.handleBeforeAgentCallback(context);\n  if (beforeAgentCallbackEvent) {\n    yield beforeAgentCallbackEvent;\n  }\n  \n  if (context.endInvocation) {\n    return; // Early exit if callback returned content\n  }\n  \n  // Run agent implementation\n  for await (const event of this.runAsyncImpl(context)) {\n    yield event;\n  }\n  \n  if (context.endInvocation) {\n    return;\n  }\n  \n  // After callback\n  const afterAgentCallbackEvent = await this.handleAfterAgentCallback(context);\n  if (afterAgentCallbackEvent) {\n    yield afterAgentCallbackEvent;\n  }\n}",
+        "// handleBeforeAgentCallback with early-exit:\nasync handleBeforeAgentCallback(\n  invocationContext: InvocationContext,\n): Promise<Event | undefined> {\n  const callbackContext = new CallbackContext({ invocationContext });\n  \n  // Run plugin callbacks first\n  const pluginResult = await invocationContext.pluginManager.runBeforeAgentCallbacks(\n    callbackContext,\n  );\n  if (pluginResult) {\n    invocationContext.endInvocation = true; // Early exit\n    return createEvent({\n      author: this.name,\n      content: pluginResult,\n      actions: callbackContext.eventActions,\n    });\n  }\n  \n  // Run agent callbacks\n  for (const callback of this.beforeAgentCallback) {\n    const result = await callback(callbackContext);\n    if (result !== undefined) {\n      invocationContext.endInvocation = true; // Early exit\n      return createEvent({\n        author: this.name,\n        content: result,\n        actions: callbackContext.eventActions,\n      });\n    }\n  }\n  \n  return undefined;\n}"
+      ]
+    },
+    {
+      "id": "q23",
+      "answer": "The instruction system supports multiple formats: 1) String instructions with template syntax: Use {key} to inject session state values. Example: 'Hello {user_name}, your score is {app:score}'. injectSessionState() replaces {key} with state.get(key). Supports optional keys with '?' suffix: {key?} returns empty string if not found. Supports prefixes: {app:key}, {user:key}, {temp:key}. Can inject artifacts: {artifact.filename}. 2) InstructionProvider functions: Type signature: (context: ReadonlyContext) => string | Promise<string>. Receives ReadonlyContext with access to session, state, userId, etc. Allows dynamic instruction generation. No state injection (already resolved by function). 3) instruction vs globalInstruction: instruction applies to specific agent. globalInstruction applies to ENTIRE agent tree. Only the root agent's globalInstruction is used. Both are appended to LLM request via appendInstructions() in InstructionsLlmRequestProcessor. canonicalInstruction() and canonicalGlobalInstruction() resolve the instruction (string or function) and return {instruction: string, requireStateInjection: boolean}. If requireStateInjection is true, injectSessionState() is called to replace templates.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:89-92",
+        "core/src/agents/llm_agent.ts:216-226",
+        "core/src/agents/llm_agent.ts:391-444",
+        "core/src/agents/llm_agent.ts:1452-1490",
+        "core/src/agents/instructions.ts:35-105"
+      ],
+      "code_snippets": [
+        "// InstructionProvider type:\nexport type InstructionProvider = (\n  context: ReadonlyContext,\n) => string | Promise<string>;",
+        "// LlmAgentConfig:\nexport interface LlmAgentConfig extends BaseAgentConfig {\n  instruction?: string | InstructionProvider;\n  globalInstruction?: string | InstructionProvider;\n}",
+        "// InstructionsLlmRequestProcessor:\nclass InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {\n  async *runAsync(context, llmRequest) {\n    const readonlyContext = new ReadonlyContext(context);\n    \n    // Global instruction (root agent only)\n    const rootAgent = context.agent.rootAgent;\n    if (isLlmAgent(rootAgent)) {\n      const {instruction: globalInstruction, requireStateInjection} =\n        await rootAgent.canonicalGlobalInstruction(readonlyContext);\n      \n      let instructionWithState = globalInstruction;\n      if (requireStateInjection) {\n        instructionWithState = await injectSessionState(\n          globalInstruction,\n          readonlyContext,\n        );\n      }\n      appendInstructions(llmRequest, instructionWithState);\n    }\n    \n    // Agent instruction\n    const {instruction, requireStateInjection: reqStateInjection} =\n      await agent.canonicalInstruction(readonlyContext);\n    \n    let instructionWithState = instruction;\n    if (reqStateInjection) {\n      instructionWithState = await injectSessionState(\n        instruction,\n        readonlyContext,\n      );\n    }\n    appendInstructions(llmRequest, instructionWithState);\n  }\n}",
+        "// injectSessionState template syntax:\nexport async function injectSessionState(\n  template: string,\n  readonlyContext: ReadonlyContext,\n): Promise<string> {\n  // Matches {key}, {app:key}, {user:key}, {temp:key}, {artifact.file}, {key?}\n  const pattern = /\\{+[^{}]*}+/g;\n  \n  async function replaceMatchedKeyWithItsValue(match: RegExpMatchArray) {\n    let key = match[0].replace(/^\\{+/, '').replace(/\\}+$/, '').trim();\n    const isOptional = key.endsWith('?');\n    if (isOptional) key = key.slice(0, -1);\n    \n    // Handle artifact injection\n    if (key.startsWith('artifact.')) {\n      const fileName = key.substring('artifact.'.length);\n      const artifact = await artifactService.loadArtifact({...fileName});\n      if (!artifact) throw new Error(`Artifact ${fileName} not found.`);\n      return String(artifact);\n    }\n    \n    // Handle state variable\n    if (key in session.state) {\n      return String(session.state[key]);\n    }\n    \n    if (isOptional) return '';\n    throw new Error(`Context variable not found: \\`${key}\\`.`);\n  }\n  \n  // Replace all matches\n  for (const match of template.matchAll(pattern)) {\n    const replacement = await replaceMatchedKeyWithItsValue(match);\n    // ... replace in template\n  }\n}"
+      ]
+    },
+    {
+      "id": "q24",
+      "answer": "The outputKey configuration stores agent output in session state for later access: 1) Configuration: outputKey (string) - Session state key where output will be saved. outputSchema (Schema) - Optional JSON schema for structured output. When outputSchema is set, tools and transfers are disabled (enforced by shouldAddTransferTool() and tool filtering). 2) Saving logic in maybeSaveOutputToState(): Checks if outputKey is set, otherwise logs and returns. Waits for isFinalResponse(event) - no function calls, no function responses, not partial. Extracts text from event.content.parts. If outputSchema is set: Attempts JSON.parse() of the text. If parse fails, logs error and skips save. If parse succeeds, stores parsed object. If no outputSchema: Stores raw text string. Sets event.actions.stateDelta[outputKey] = result. 3) State persistence: The stateDelta is applied to session.state by BaseSessionService.appendEvent() via updateSessionState(). 4) Usage: Tools and callbacks can access via state.get(outputKey). Enables agent coordination: one agent stores output, another reads it. Example: extraction agent with outputKey='extracted_data' and outputSchema={type:'object',...} stores structured data for downstream agents.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:279-285",
+        "core/src/agents/llm_agent.ts:1564-1615",
+        "core/src/agents/llm_agent.ts:1617-1645"
+      ],
+      "code_snippets": [
+        "// LlmAgentConfig:\nexport interface LlmAgentConfig extends BaseAgentConfig {\n  outputSchema?: Schema;\n  outputKey?: string;\n}",
+        "// maybeSaveOutputToState implementation:\nprivate maybeSaveOutputToState(event: Event) {\n  // Skip if streaming\n  if (event.partial) {\n    logger.debug(\n      `Skipping output save for agent ${this.name}: event is partial`,\n    );\n    return;\n  }\n\n  if (!this.outputKey) {\n    logger.debug(\n      `Skipping output save for agent ${this.name}: outputKey is not set`,\n    );\n    return;\n  }\n\n  if (!isFinalResponse(event)) {\n    logger.debug(\n      `Skipping output save for agent ${this.name}: event is not final response`,\n    );\n    return;\n  }\n\n  // Extract text from content\n  const text = event.content?.parts\n    ?.map((part) => part.text || '')\n    .join('')\n    .trim();\n\n  if (!text) {\n    logger.warn(\n      `No text content found in final response for agent ${this.name}`,\n    );\n    return;\n  }\n\n  let result: unknown = text;\n\n  // If outputSchema is set, try to parse as JSON\n  if (this.outputSchema) {\n    try {\n      result = JSON.parse(text);\n    } catch (error) {\n      logger.error(\n        `Failed to parse output as JSON for agent ${this.name}:`,\n        error,\n      );\n      return;\n    }\n  }\n\n  // Save to state\n  event.actions.stateDelta[this.outputKey] = result;\n  logger.debug(\n    `Saved output to state for agent ${this.name} with key ${this.outputKey}`,\n  );\n}",
+        "// Called in runAsyncImpl after response:\nif (isFinalResponse(event)) {\n  this.maybeSaveOutputToState(event);\n}",
+        "// outputSchema disables tools:\nprivate shouldAddTransferTool(agent: LlmAgent): boolean {\n  return !agent.outputSchema && // No tools when outputSchema set\n    (agent.parentAgent !== undefined || agent.subAgents.length > 0);\n}"
+      ]
+    },
+    {
+      "id": "q25",
+      "answer": "Model inheritance allows child agents to inherit the LLM from ancestor agents via the canonicalModel getter. Inheritance logic: 1) Check if this.model is a BaseLlm instance: If yes, return it directly. 2) Check if this.model is a non-empty string: If yes, call LLMRegistry.newLlm(this.model) to create instance. 3) Traverse parent chain: If model is undefined or empty string, set ancestorAgent = this.parentAgent. While ancestorAgent exists: check if ancestorAgent is LlmAgent via isLlmAgent(), if yes return ancestorAgent.canonicalModel (recursive call up the chain). Set ancestorAgent = ancestorAgent.parentAgent to continue traversal. 4) If no model found after traversing entire chain: Throw error 'No model found for ${this.name}'. Benefits: Sub-agents can omit model configuration and inherit from parent. Allows setting model once at root and having all descendants use it. Enables easy model switching for entire agent tree. Example: rootAgent with model='gemini-2.5-flash', childAgents without model specified will use gemini-2.5-flash. The LLMRegistry.newLlm() uses LRU cache to avoid creating duplicate instances for the same model string.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:1420-1442",
+        "core/src/models/registry.ts:50-80"
+      ],
+      "code_snippets": [
+        "// canonicalModel getter:\nget canonicalModel(): BaseLlm {\n  // 1. Direct BaseLlm instance\n  if (isBaseLlm(this.model)) {\n    return this.model;\n  }\n\n  // 2. Model string -> create from registry\n  if (typeof this.model === 'string' && this.model) {\n    return LLMRegistry.newLlm(this.model);\n  }\n\n  // 3. Inherit from ancestor\n  let ancestorAgent = this.parentAgent;\n  while (ancestorAgent) {\n    if (isLlmAgent(ancestorAgent)) {\n      return ancestorAgent.canonicalModel; // Recursive call\n    }\n    ancestorAgent = ancestorAgent.parentAgent;\n  }\n  \n  // 4. No model found\n  throw new Error(`No model found for ${this.name}.`);\n}",
+        "// LLMRegistry.newLlm with caching:\nstatic newLlm(model: string): BaseLlm {\n  // Check cache first\n  if (this.cache.has(model)) {\n    return this.cache.get(model)!;\n  }\n  \n  // Resolve model type\n  const llmType = this.resolve(model);\n  if (!llmType) {\n    throw new Error(`No LLM type found for model: ${model}`);\n  }\n  \n  // Create instance\n  const instance = new llmType({ model });\n  this.cache.set(model, instance);\n  \n  return instance;\n}",
+        "// Example usage:\nconst rootAgent = new LlmAgent({\n  name: 'root',\n  model: 'gemini-2.5-flash',\n  subAgents: [\n    new LlmAgent({\n      name: 'child1',\n      // No model specified - inherits from root\n    }),\n    new LlmAgent({\n      name: 'child2',\n      model: 'gemini-2.0-flash', // Overrides parent\n    }),\n  ],\n});"
+      ]
+    },
+    {
+      "id": "q26",
+      "answer": "The includeContents option controls what conversation history is sent to the model: 1) Configuration: includeContents?: 'default' | 'none' (defaults to 'default'). 2) Processing in ContentRequestProcessor: If includeContents === 'default': Calls getContents(session.events, agentName, branch) which returns full conversation history filtered by: events with matching branch (or no branch), events authored by the current agent or 'user', function calls/responses relevant to the agent. If includeContents === 'none': Calls getCurrentTurnContents(session.events, agentName, branch) which returns only the current turn context without full history. This includes the most recent user message and any function responses from the current turn. 3) Use cases: 'default' (recommended): Agent needs conversation context, multi-turn dialogue, state tracking across turns. 'none': Stateless operations, single-shot tasks, when instruction contains all needed context, privacy/context isolation requirements. The filtered contents are set as llmRequest.contents before the LLM call. This affects token usage and model context window utilization significantly.",
+      "citations": [
+        "core/src/agents/llm_agent.ts:264",
+        "core/src/agents/llm_agent.ts:1319",
+        "core/src/agents/llm_agent.ts:1340",
+        "core/src/agents/llm_agent.ts:446-476",
+        "core/src/agents/content_processor_utils.ts:1-100"
+      ],
+      "code_snippets": [
+        "// LlmAgentConfig:\nexport interface LlmAgentConfig extends BaseAgentConfig {\n  includeContents?: 'default' | 'none';\n}",
+        "// LlmAgent constructor:\nthis.includeContents = config.includeContents ?? 'default';",
+        "// ContentRequestProcessor:\nclass ContentRequestProcessor implements BaseLlmRequestProcessor {\n  async *runAsync(\n    invocationContext: InvocationContext,\n    llmRequest: LlmRequest,\n  ): AsyncGenerator<Event, void, void> {\n    const agent = invocationContext.agent;\n    if (!agent || !isLlmAgent(agent)) {\n      return;\n    }\n\n    if (agent.includeContents === 'default') {\n      // Include full conversation history\n      llmRequest.contents = getContents(\n        invocationContext.session.events,\n        agent.name,\n        invocationContext.branch,\n      );\n    } else {\n      // Include current turn context only (no conversation history)\n      llmRequest.contents = getCurrentTurnContents(\n        invocationContext.session.events,\n        agent.name,\n        invocationContext.branch,\n      );\n    }\n\n    return;\n  }\n}",
+        "// getContents filters full history:\nexport function getContents(\n  events: Event[],\n  agentName: string,\n  branch?: string,\n): Content[] {\n  return events\n    .filter(event => {\n      // Filter by branch\n      if (branch && event.branch !== branch) return false;\n      // Include user messages and agent messages\n      if (event.author === 'user' || event.author === agentName) return true;\n      // Include relevant function responses\n      return hasFunctionResponseForAgent(event, agentName);\n    })\n    .map(event => event.content)\n    .filter(content => content !== undefined);\n}",
+        "// getCurrentTurnContents returns current turn only:\nexport function getCurrentTurnContents(\n  events: Event[],\n  agentName: string,\n  branch?: string,\n): Content[] {\n  // Find most recent user message\n  const lastUserEventIndex = findLastIndex(\n    events,\n    e => e.author === 'user' && (!branch || e.branch === branch),\n  );\n  \n  if (lastUserEventIndex === -1) return [];\n  \n  // Return events from last user message onwards\n  return events\n    .slice(lastUserEventIndex)\n    .filter(e => !branch || e.branch === branch)\n    .map(e => e.content)\n    .filter(c => c !== undefined);\n}"
+      ]
+    }
+  ]
+}
