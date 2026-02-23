@@ -16,6 +16,7 @@ import {
   Runner,
   toStructuredEvents,
 } from '@google/adk';
+import {Language, Outcome} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
@@ -57,8 +58,7 @@ class MockLlmAgent extends LlmAgent {
       // Simulate thought
       content: {
         role: 'model',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        parts: [{text: 'I am thinking', thought: true} as any],
+        parts: [{text: 'I am thinking', thought: true}],
       },
     });
   }
@@ -230,8 +230,7 @@ describe('Runner Streaming and Ephemeral', () => {
         author: 'model',
         content: {
           role: 'model',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          parts: [{text: 'Thinking...', thought: true} as any],
+          parts: [{text: 'Thinking...', thought: true}],
         },
       });
       const results = toStructuredEvents(event);
@@ -248,15 +247,14 @@ describe('Runner Streaming and Ephemeral', () => {
         content: {
           role: 'model',
           parts: [
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            {executableCode: {code: 'print("hi")', language: 'PYTHON' as any}},
+            {executableCode: {code: 'print("hi")', language: Language.PYTHON}},
           ],
         },
       });
       const results = toStructuredEvents(event);
       expect(results[0]).toEqual({
         type: EventType.CALL_CODE,
-        code: {code: 'print("hi")', language: 'PYTHON'},
+        code: {code: 'print("hi")', language: Language.PYTHON},
       });
     });
 
@@ -267,15 +265,14 @@ describe('Runner Streaming and Ephemeral', () => {
         content: {
           role: 'model',
           parts: [
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            {codeExecutionResult: {outcome: 'OUTCOME_OK' as any, output: 'hi'}},
+            {codeExecutionResult: {outcome: Outcome.OUTCOME_OK, output: 'hi'}},
           ],
         },
       });
       const results = toStructuredEvents(event);
       expect(results[0]).toEqual({
         type: EventType.CODE_RESULT,
-        result: {outcome: 'OUTCOME_OK', output: 'hi'},
+        result: {outcome: Outcome.OUTCOME_OK, output: 'hi'},
       });
     });
 

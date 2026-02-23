@@ -156,8 +156,7 @@ export function toStructuredEvents(event: Event): StructuredEvent[] {
         result: part.codeExecutionResult,
       });
     } else if (part.text) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((part as any).thought) {
+      if (part.thought) {
         structuredEvents.push({type: EventType.THOUGHT, content: part.text});
       } else {
         structuredEvents.push({type: EventType.CONTENT, content: part.text});
