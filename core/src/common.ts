@@ -78,7 +78,19 @@ export type {Event} from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';
-export type {StructuredEvent} from './events/structured_events.js';
+export type {
+  ActivityEvent,
+  CallCodeEvent,
+  CodeResultEvent,
+  ContentEvent,
+  ErrorEvent,
+  FinishedEvent,
+  StructuredEvent,
+  ThoughtEvent,
+  ToolCallEvent,
+  ToolConfirmationEvent,
+  ToolResultEvent,
+} from './events/structured_events.js';
 export {
   BaseExampleProvider,
   isBaseExampleProvider,

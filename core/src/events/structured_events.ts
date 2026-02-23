@@ -25,6 +25,7 @@ export enum EventType {
   CODE_RESULT = 'code_result',
   ERROR = 'error',
   ACTIVITY = 'activity',
+  TOOL_CONFIRMATION = 'tool_confirmation',
   FINISHED = 'finished',
 }
 
@@ -94,6 +95,14 @@ export interface ActivityEvent {
 }
 
 /**
+ * Represents a request for tool confirmation.
+ */
+export interface ToolConfirmationEvent {
+  type: EventType.TOOL_CONFIRMATION;
+  confirmations: Record<string, unknown>;
+}
+
+/**
  * Represents the final completion of the agent's task.
  */
 export interface FinishedEvent {
@@ -113,6 +122,7 @@ export type StructuredEvent =
   | CodeResultEvent
   | ErrorEvent
   | ActivityEvent
+  | ToolConfirmationEvent
   | FinishedEvent;
 
 /**
@@ -169,9 +179,8 @@ export function toStructuredEvents(event: Event): StructuredEvent[] {
     !isEmpty(event.actions.requestedToolConfirmations)
   ) {
     structuredEvents.push({
-      type: EventType.ACTIVITY,
-      kind: 'tool_confirmation_request',
-      detail: event.actions.requestedToolConfirmations as unknown as Record<
+      type: EventType.TOOL_CONFIRMATION,
+      confirmations: event.actions.requestedToolConfirmations as Record<
         string,
         unknown
       >,
