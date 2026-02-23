@@ -38,15 +38,17 @@ method returning an `AsyncGenerator` of raw ADK `Event` objects. This ensures
 that the core API remains non-lossy and consistent across languages.
 
 For client applications that require a simplified, structured view of the
-execution, the ADK provides an optional `parseEvent` utility. This utility
-converts raw events into a structured `StructuredEvent` union, categorizing
-them into:
+execution, the ADK provides an optional `toStructuredEvents` utility. This
+utility converts raw events into a list of `StructuredEvent` objects,
+categorizing them into:
 
 - **Reasoning Traces (`ThoughtEvent`):** Internal reasoning or thinking
   tokens.
 - **Content Deltas (`ContentEvent`):** Partial content intended for the user.
 - **Tool Lifecycle Events (`ToolCallEvent`, `ToolResultEvent`):** Explicit
   tool call and tool result events.
+- **Code Execution Events (`CallCodeEvent`, `CodeResultEvent`):** Explicit
+  code execution call and result events.
 - **Lifecycle Events (`ErrorEvent`, `ActivityEvent`, `FinishedEvent`):** Error
   states, activities, and final completion.
 
@@ -82,8 +84,9 @@ runtime facts.
 To prevent history leakage between runs, the Runner will implement strict
 session isolation.
 
-- **Stateless Execution:** A runStateless helper will handle ephemeral session
-  creation, ensuring a clean slate for each run.
+- **Ephemeral Execution:** A `runEphemeral` helper will handle temporary
+  session creation, ensuring a clean slate for each run while supporting
+  initial `stateDelta`.
 - **Resumable Invocations:** Support for hydrating agent state from persisted
   sessions to allow multi-turn conversations across separate CLI invocations.
 
@@ -96,7 +99,7 @@ improve discoverability and reduce integration friction.
 
 The index file will export the following core extensibility interfaces:
 BaseAgent, LlmAgent, Runner, BaseLlm, BaseTool, ToolConfirmation,
-InstructionProvider, EventType, StructuredEvent, and parseEvent.
+InstructionProvider, EventType, StructuredEvent, and toStructuredEvents.
 
 ## 5. Implementation Roadmap
 

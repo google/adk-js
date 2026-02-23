@@ -14,8 +14,8 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
-  parseEvent,
   Runner,
+  toStructuredEvents,
 } from '../../src/common.js';
 
 const TEST_APP_ID = 'test_app_id';
@@ -64,7 +64,7 @@ class MockLlmAgent extends LlmAgent {
   }
 }
 
-describe('Runner Streaming and Stateless', () => {
+describe('Runner Streaming and Ephemeral', () => {
   let sessionService: InMemorySessionService;
   let artifactService: InMemoryArtifactService;
   let rootAgent: MockLlmAgent;
@@ -111,10 +111,10 @@ describe('Runner Streaming and Stateless', () => {
     });
   });
 
-  describe('runStateless', () => {
+  describe('runEphemeral', () => {
     it('should run freely without managing session manually', async () => {
       const events = [];
-      for await (const event of runner.runStateless({
+      for await (const event of runner.runEphemeral({
         userId: TEST_USER_ID,
         newMessage: {role: 'user', parts: [{text: 'Hello'}]},
       })) {
@@ -126,7 +126,7 @@ describe('Runner Streaming and Stateless', () => {
     });
 
     it('should cleanup session after run', async () => {
-      const generator = runner.runStateless({
+      const generator = runner.runEphemeral({
         userId: TEST_USER_ID,
         newMessage: {role: 'user', parts: [{text: 'Hello'}]},
       });
@@ -137,7 +137,7 @@ describe('Runner Streaming and Stateless', () => {
 
       const spy = vi.spyOn(sessionService, 'deleteSession');
 
-      const generator2 = runner.runStateless({
+      const generator2 = runner.runEphemeral({
         userId: TEST_USER_ID,
         newMessage: {role: 'user', parts: [{text: 'Hello'}]},
       });
@@ -147,20 +147,35 @@ describe('Runner Streaming and Stateless', () => {
 
       expect(spy).toHaveBeenCalled();
     });
+
+    it('should initialize with stateDelta', async () => {
+      const createSpy = vi.spyOn(sessionService, 'createSession');
+      const events = [];
+      for await (const event of runner.runEphemeral({
+        userId: TEST_USER_ID,
+        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+        stateDelta: {foo: 'bar'},
+      })) {
+        events.push(event);
+      }
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: TEST_USER_ID,
+        }),
+      );
+    });
   });
 
-  describe('parseEvent', () => {
+  describe('toStructuredEvents', () => {
     it('should convert error events', () => {
       const event = createEvent({
-        invocationId: 'id',
-        author: 'model',
-        content: {role: 'system', parts: [{text: 'Test Error'}]},
+        errorCode: '500',
+        errorMessage: 'Test Error',
       });
-      const generator = parseEvent(event);
-      const result = generator.next().value;
-      expect(result).toEqual({
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
         type: EventType.ERROR,
-        error: new Error('Agent error: Test Error'),
+        error: new Error('Test Error'),
       });
     });
 
@@ -170,9 +185,8 @@ describe('Runner Streaming and Stateless', () => {
         author: 'model',
         content: {role: 'model', parts: [{text: 'Hello'}]},
       });
-      const generator = parseEvent(event);
-      const result = generator.next().value;
-      expect(result).toEqual({
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
         type: EventType.CONTENT,
         content: 'Hello',
       });
@@ -187,9 +201,8 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{functionCall: {name: 'tool', args: {}}}],
         },
       });
-      const generator = parseEvent(event);
-      const result = generator.next().value;
-      expect(result).toEqual({
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
         type: EventType.TOOL_CALL,
         call: {name: 'tool', args: {}},
       });
@@ -204,9 +217,8 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{functionResponse: {name: 'tool', response: {}}}],
         },
       });
-      const generator = parseEvent(event);
-      const result = generator.next().value;
-      expect(result).toEqual({
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
         type: EventType.TOOL_RESULT,
         result: {name: 'tool', response: {}},
       });
@@ -222,12 +234,59 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{text: 'Thinking...', thought: true} as any],
         },
       });
-      const generator = parseEvent(event);
-      const result = generator.next().value;
-      expect(result).toEqual({
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
         type: EventType.THOUGHT,
         content: 'Thinking...',
       });
+    });
+
+    it('should convert code execution events', () => {
+      const event = createEvent({
+        invocationId: 'id',
+        author: 'model',
+        content: {
+          role: 'model',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          parts: [
+            {executableCode: {code: 'print("hi")', language: 'PYTHON' as any}},
+          ],
+        },
+      });
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
+        type: EventType.CALL_CODE,
+        code: {code: 'print("hi")', language: 'PYTHON'},
+      });
+    });
+
+    it('should convert code result events', () => {
+      const event = createEvent({
+        invocationId: 'id',
+        author: 'model',
+        content: {
+          role: 'model',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          parts: [
+            {codeExecutionResult: {outcome: 'OUTCOME_OK' as any, output: 'hi'}},
+          ],
+        },
+      });
+      const results = toStructuredEvents(event);
+      expect(results[0]).toEqual({
+        type: EventType.CODE_RESULT,
+        result: {outcome: 'OUTCOME_OK', output: 'hi'},
+      });
+    });
+
+    it('should include finished event when final', () => {
+      const event = createEvent({
+        invocationId: 'id',
+        author: 'model',
+        content: {role: 'model', parts: [{text: 'Bye'}]},
+      });
+      const results = toStructuredEvents(event);
+      expect(results).toContainEqual({type: EventType.FINISHED, output: null});
     });
   });
 });

@@ -77,6 +77,8 @@ export {
 export type {Event} from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
+export {EventType, toStructuredEvents} from './events/structured_events.js';
+export type {StructuredEvent} from './events/structured_events.js';
 export {
   BaseExampleProvider,
   isBaseExampleProvider,
@@ -132,8 +134,6 @@ export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
-export {EventType, parseEvent} from './utils/event_type.js';
-export type {StructuredEvent} from './utils/event_type.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';
