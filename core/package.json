@@ -40,6 +40,7 @@
     "prepublishOnly": "npm run build:bundle"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^0.3.10",
     "@google/genai": "^1.37.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "google-auth-library": "^10.3.0",
