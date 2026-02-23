@@ -31,9 +31,9 @@ and event-driven execution loops.
 Interactive CLIs rely on real-time feedback. Users expect to see the agent
 thinking, calling tools, and streaming partial content tokens.
 
-**The runStream API:**
+**The runAsync API:**
 
-To maintain parity with ADK Python, the Runner interface exposes a `runStream`
+To maintain parity with ADK Python, the Runner interface exposes a `runAsync`
 method returning an `AsyncGenerator` of raw ADK `Event` objects. This ensures
 that the core API remains non-lossy and consistent across languages.
 
@@ -106,7 +106,7 @@ InstructionProvider, EventType, StructuredEvent, and toStructuredEvents.
 1. **Phase 1: API Surface Refactoring:** Update exports, standardize on native
    events, and implement the optional parsing utility.
 1. **Phase 2: Streaming Implementation:** Refactor the LLM agent loop to
-   support the runStream generator.
+   support the `runAsync` generator.
 1. **Phase 3: HITL and Resumption:** Implement tool approval pauses (Explicit
    Suspension) and the resume capability in the Runner.
 1. **Phase 4: Adapter Validation:** Implement the ADK adapters within a

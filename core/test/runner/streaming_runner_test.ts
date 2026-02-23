@@ -83,7 +83,7 @@ describe('Runner Streaming and Ephemeral', () => {
     });
   });
 
-  describe('runStream', () => {
+  describe('runAsync', () => {
     it('should yield native Events', async () => {
       const session = await sessionService.createSession({
         appName: TEST_APP_ID,
@@ -92,7 +92,7 @@ describe('Runner Streaming and Ephemeral', () => {
       });
 
       const events = [];
-      for await (const event of runner.runStream({
+      for await (const event of runner.runAsync({
         userId: session.userId,
         sessionId: session.id,
         newMessage: {role: 'user', parts: [{text: 'Hello'}]},
@@ -247,8 +247,8 @@ describe('Runner Streaming and Ephemeral', () => {
         author: 'model',
         content: {
           role: 'model',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           parts: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             {executableCode: {code: 'print("hi")', language: 'PYTHON' as any}},
           ],
         },
@@ -266,8 +266,8 @@ describe('Runner Streaming and Ephemeral', () => {
         author: 'model',
         content: {
           role: 'model',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           parts: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             {codeExecutionResult: {outcome: 'OUTCOME_OK' as any, output: 'hi'}},
           ],
         },
