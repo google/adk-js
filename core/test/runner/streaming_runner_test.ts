@@ -103,10 +103,10 @@ describe('Runner Streaming and Stateless', () => {
       // Check that it returned events with valid properties
       expect(events.length).toBeGreaterThan(0);
       expect(
-        events.some((e) => e.content?.parts[0].text === 'Test LLM response'),
+        events.some((e) => e.content?.parts?.[0]?.text === 'Test LLM response'),
       ).toBe(true);
       expect(
-        events.some((e) => e.content?.parts[0].text === 'I am thinking'),
+        events.some((e) => e.content?.parts?.[0]?.text === 'I am thinking'),
       ).toBe(true);
     });
   });
