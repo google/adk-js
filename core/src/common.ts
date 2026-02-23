@@ -66,8 +66,6 @@ export type {
   CodeExecutionResult,
   File,
 } from './code_executors/code_execution_utils.js';
-export {AgentEventType} from './events/agent_event.js';
-export type {AgentEvent} from './events/agent_event.js';
 export {
   createEvent,
   getFunctionCalls,
@@ -112,7 +110,7 @@ export type {
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
-export {Runner, convertEventToAgentEvents} from './runner/runner.js';
+export {Runner} from './runner/runner.js';
 export type {RunnerConfig} from './runner/runner.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
@@ -134,6 +132,8 @@ export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
+export {EventType, parseEvent} from './utils/event_type.js';
+export type {StructuredEvent} from './utils/event_type.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';

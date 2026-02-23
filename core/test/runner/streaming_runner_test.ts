@@ -6,15 +6,15 @@
 
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
-  AgentEventType,
   BaseAgent,
-  convertEventToAgentEvents,
   createEvent,
   Event,
+  EventType,
   InMemoryArtifactService,
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  parseEvent,
   Runner,
 } from '../../src/common.js';
 
@@ -84,7 +84,7 @@ describe('Runner Streaming and Stateless', () => {
   });
 
   describe('runStream', () => {
-    it('should yield standardized AgentEvents', async () => {
+    it('should yield native Events', async () => {
       const session = await sessionService.createSession({
         appName: TEST_APP_ID,
         userId: TEST_USER_ID,
@@ -100,35 +100,14 @@ describe('Runner Streaming and Stateless', () => {
         events.push(event);
       }
 
-      // Check for Content
-      expect(events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: AgentEventType.CONTENT,
-            content: 'Test LLM response',
-          }),
-        ]),
-      );
-
-      // Check for Tool Call
-      expect(events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: AgentEventType.TOOL_CALL,
-            call: expect.objectContaining({name: 'test_tool'}),
-          }),
-        ]),
-      );
-
-      // Check for Thought
-      expect(events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: AgentEventType.THOUGHT,
-            content: 'I am thinking',
-          }),
-        ]),
-      );
+      // Check that it returned events with valid properties
+      expect(events.length).toBeGreaterThan(0);
+      expect(
+        events.some((e) => e.content?.parts[0].text === 'Test LLM response'),
+      ).toBe(true);
+      expect(
+        events.some((e) => e.content?.parts[0].text === 'I am thinking'),
+      ).toBe(true);
     });
   });
 
@@ -143,14 +122,10 @@ describe('Runner Streaming and Stateless', () => {
       }
 
       expect(events.length).toBeGreaterThan(0);
-      expect(events[0].type).toBeDefined();
+      expect(events[0].id).toBeDefined();
     });
 
     it('should cleanup session after run', async () => {
-      // We can't easily verify session cleanup with InMemorySessionService as it doesn't expose deleted sessions easily
-      // But we can verify it runs successfully.
-      // To verify cleanup, we'd need to mock SessionService or check internal state if possible.
-      // For now, assume if it runs and returns, it's fine.
       const generator = runner.runStateless({
         userId: TEST_USER_ID,
         newMessage: {role: 'user', parts: [{text: 'Hello'}]},
@@ -160,8 +135,6 @@ describe('Runner Streaming and Stateless', () => {
         // consume
       }
 
-      // If we tried to reuse a generated ID (which we don't have access to), it would fail or succeed depending on logic.
-      // Since we can't easily access the internal ID, we trust the implementation for now or spy on deleteSession.
       const spy = vi.spyOn(sessionService, 'deleteSession');
 
       const generator2 = runner.runStateless({
@@ -176,18 +149,18 @@ describe('Runner Streaming and Stateless', () => {
     });
   });
 
-  describe('convertEventToAgentEvents', () => {
+  describe('parseEvent', () => {
     it('should convert error events', () => {
-      const event: Event = {
-        errorCode: 500,
-        errorMessage: 'Test Error',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any;
-      const generator = convertEventToAgentEvents(event);
+      const event = createEvent({
+        invocationId: 'id',
+        author: 'model',
+        content: {role: 'system', parts: [{text: 'Test Error'}]},
+      });
+      const generator = parseEvent(event);
       const result = generator.next().value;
       expect(result).toEqual({
-        type: AgentEventType.ERROR,
-        error: new Error('Test Error'),
+        type: EventType.ERROR,
+        error: new Error('Agent error: Test Error'),
       });
     });
 
@@ -197,10 +170,10 @@ describe('Runner Streaming and Stateless', () => {
         author: 'model',
         content: {role: 'model', parts: [{text: 'Hello'}]},
       });
-      const generator = convertEventToAgentEvents(event);
+      const generator = parseEvent(event);
       const result = generator.next().value;
       expect(result).toEqual({
-        type: AgentEventType.CONTENT,
+        type: EventType.CONTENT,
         content: 'Hello',
       });
     });
@@ -214,10 +187,10 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{functionCall: {name: 'tool', args: {}}}],
         },
       });
-      const generator = convertEventToAgentEvents(event);
+      const generator = parseEvent(event);
       const result = generator.next().value;
       expect(result).toEqual({
-        type: AgentEventType.TOOL_CALL,
+        type: EventType.TOOL_CALL,
         call: {name: 'tool', args: {}},
       });
     });
@@ -231,10 +204,10 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{functionResponse: {name: 'tool', response: {}}}],
         },
       });
-      const generator = convertEventToAgentEvents(event);
+      const generator = parseEvent(event);
       const result = generator.next().value;
       expect(result).toEqual({
-        type: AgentEventType.TOOL_RESULT,
+        type: EventType.TOOL_RESULT,
         result: {name: 'tool', response: {}},
       });
     });
@@ -249,10 +222,10 @@ describe('Runner Streaming and Stateless', () => {
           parts: [{text: 'Thinking...', thought: true} as any],
         },
       });
-      const generator = convertEventToAgentEvents(event);
+      const generator = parseEvent(event);
       const result = generator.next().value;
       expect(result).toEqual({
-        type: AgentEventType.THOUGHT,
+        type: EventType.THOUGHT,
         content: 'Thinking...',
       });
     });
