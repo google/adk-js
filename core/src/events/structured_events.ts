@@ -107,7 +107,7 @@ export interface ToolConfirmationEvent {
  */
 export interface FinishedEvent {
   type: EventType.FINISHED;
-  output: unknown;
+  output?: unknown;
 }
 
 /**
@@ -188,7 +188,7 @@ export function toStructuredEvents(event: Event): StructuredEvent[] {
   }
 
   if (isFinalResponse(event)) {
-    structuredEvents.push({type: EventType.FINISHED, output: null});
+    structuredEvents.push({type: EventType.FINISHED, output: undefined});
   }
 
   return structuredEvents;

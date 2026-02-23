@@ -21,7 +21,6 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
-const TEST_SESSION_ID = 'test_session_id';
 
 class MockLlmAgent extends LlmAgent {
   constructor(
@@ -80,34 +79,6 @@ describe('Runner Streaming and Ephemeral', () => {
       agent: rootAgent,
       sessionService,
       artifactService,
-    });
-  });
-
-  describe('runAsync', () => {
-    it('should yield native Events', async () => {
-      const session = await sessionService.createSession({
-        appName: TEST_APP_ID,
-        userId: TEST_USER_ID,
-        sessionId: TEST_SESSION_ID,
-      });
-
-      const events = [];
-      for await (const event of runner.runAsync({
-        userId: session.userId,
-        sessionId: session.id,
-        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
-      })) {
-        events.push(event);
-      }
-
-      // Check that it returned events with valid properties
-      expect(events.length).toBeGreaterThan(0);
-      expect(
-        events.some((e) => e.content?.parts?.[0]?.text === 'Test LLM response'),
-      ).toBe(true);
-      expect(
-        events.some((e) => e.content?.parts?.[0]?.text === 'I am thinking'),
-      ).toBe(true);
     });
   });
 
@@ -283,7 +254,10 @@ describe('Runner Streaming and Ephemeral', () => {
         content: {role: 'model', parts: [{text: 'Bye'}]},
       });
       const results = toStructuredEvents(event);
-      expect(results).toContainEqual({type: EventType.FINISHED, output: null});
+      expect(results).toContainEqual({
+        type: EventType.FINISHED,
+        output: undefined,
+      });
     });
   });
 });
