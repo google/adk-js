@@ -24,7 +24,7 @@ import type {Application, Request, Response} from 'express';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
-import {AdkWebServer} from '../../src/server/adk_web_server.js';
+import {AdkApiServer} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 
 /**
@@ -201,7 +201,7 @@ describe('AdkWebServer', () => {
   let sessionService: BaseSessionService;
   let memoryService: BaseMemoryService;
   let artifactService: BaseArtifactService;
-  let server: AdkWebServer;
+  let server: AdkApiServer;
   let client: MockHttpClient;
 
   beforeEach(async () => {
@@ -220,7 +220,7 @@ describe('AdkWebServer', () => {
     sessionService = new InMemorySessionService();
     memoryService = new InMemoryMemoryService();
     artifactService = new InMemoryArtifactService();
-    server = new AdkWebServer({
+    server = new AdkApiServer({
       agentLoader,
       sessionService,
       memoryService,
@@ -740,7 +740,7 @@ describe('AdkWebServer', () => {
 
   describe('Debug UI', () => {
     it('should redirect to dev-ui when enabled', async () => {
-      const debugServer = new AdkWebServer({
+      const debugServer = new AdkApiServer({
         agentLoader,
         sessionService,
         memoryService,

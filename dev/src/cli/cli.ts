@@ -17,7 +17,7 @@ import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
 import * as os from 'os';
 import * as path from 'path';
-import {AdkWebServer} from '../server/adk_web_server.js';
+import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
 import {getTempDir} from '../utils/file_utils.js';
 import {version} from '../version.js';
@@ -164,7 +164,7 @@ program
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
-    const server = new AdkWebServer({
+    const server = new AdkApiServer({
       agentsDir: getAbsolutePath(agentsDir),
       host: options['host'],
       port: parseInt(options['port'], 10),
@@ -197,7 +197,7 @@ program
   .action((agentsDir: string, options: Record<string, string>) => {
     setLogLevel(getLogLevelFromOptions(options));
 
-    const server = new AdkWebServer({
+    const server = new AdkApiServer({
       agentsDir: getAbsolutePath(agentsDir),
       host: options['host'],
       port: parseInt(options['port'], 10),

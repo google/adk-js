@@ -50,7 +50,7 @@ interface ServerOptions {
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
-export class AdkWebServer {
+export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
   readonly app: express.Application;
