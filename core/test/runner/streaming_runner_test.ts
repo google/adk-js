@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   BaseAgent,
   createEvent,
@@ -16,7 +15,8 @@ import {
   LlmAgent,
   Runner,
   toStructuredEvents,
-} from '../../src/common.js';
+} from '@google/adk';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
