@@ -1886,7 +1886,7 @@ export class LlmAgent extends BaseAgent {
     return agentToRun;
   }
 
-  private async *callLlmAsync(
+  protected async *callLlmAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
     modelResponseEvent: Event,
@@ -2012,7 +2012,7 @@ export class LlmAgent extends BaseAgent {
     return undefined;
   }
 
-  private async *runAndHandleError<T extends LlmResponse | Event>(
+  protected async *runAndHandleError<T extends LlmResponse | Event>(
     responseGenerator: AsyncGenerator<T, void, void>,
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,

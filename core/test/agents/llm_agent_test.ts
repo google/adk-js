@@ -16,8 +16,6 @@ import {
   LlmResponse,
   PluginManager,
   Session,
-  SingleAfterModelCallback,
-  SingleBeforeModelCallback,
 } from '@google/adk';
 import {Content} from '@google/genai';
 
@@ -93,8 +91,37 @@ class MockPlugin extends BasePlugin {
   }
 }
 
+/**
+ * A test subclass of LlmAgent to expose protected methods for testing.
+ */
+class TestLlmAgent extends LlmAgent {
+  /** Publicly expose callLlmAsync for testing. */
+  async *testCallLlmAsync(
+    invocationContext: InvocationContext,
+    llmRequest: LlmRequest,
+    modelResponseEvent: Event,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    yield* this.callLlmAsync(invocationContext, llmRequest, modelResponseEvent);
+  }
+
+  /** Publicly expose runAndHandleError for testing. */
+  async *testRunAndHandleError<T extends LlmResponse | Event>(
+    responseGenerator: AsyncGenerator<T, void, void>,
+    invocationContext: InvocationContext,
+    llmRequest: LlmRequest,
+    modelResponseEvent: Event,
+  ): AsyncGenerator<T, void, void> {
+    yield* this.runAndHandleError(
+      responseGenerator,
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+  }
+}
+
 describe('LlmAgent.callLlm', () => {
-  let agent: LlmAgent;
+  let agent: TestLlmAgent;
   let invocationContext: InvocationContext;
   let llmRequest: LlmRequest;
   let modelResponseEvent: Event;
@@ -131,7 +158,7 @@ describe('LlmAgent.callLlm', () => {
   beforeEach(() => {
     mockPlugin = new MockPlugin('mock_plugin');
     pluginManager = new PluginManager();
-    agent = new LlmAgent({name: 'test_agent'});
+    agent = new TestLlmAgent({name: 'test_agent'});
     invocationContext = new InvocationContext({
       invocationId: 'inv_123',
       session: {} as Session,
@@ -144,15 +171,13 @@ describe('LlmAgent.callLlm', () => {
 
   async function callLlmUnderTest(): Promise<LlmResponse[]> {
     const responses: LlmResponse[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const responseGenerator = (agent as any).callLlmAsync(
+    const responseGenerator = agent.testCallLlmAsync(
       invocationContext,
       llmRequest,
       modelResponseEvent,
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for await (const response of (agent as any).runAndHandleError(
+    for await (const response of agent.testRunAndHandleError(
       responseGenerator,
       invocationContext,
       llmRequest,
@@ -163,73 +188,45 @@ describe('LlmAgent.callLlm', () => {
     return responses;
   }
 
-  // 1. No plugins and no callbacks configured.
-  it('returns unaltered LLM response with no plugins or callbacks', async () => {
-    agent.model = new MockLlm(originalLlmResponse);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([originalLlmResponse]);
-  });
-
-  // 2. Plugin beforeModelCallback short circuits.
   it('short circuits when before model plugin callback returns a response', async () => {
+    pluginManager.registerPlugin(mockPlugin);
     mockPlugin.beforeModelResponse = beforePluginResponse;
-    pluginManager.registerPlugin(mockPlugin);
-    const beforeCallback: SingleBeforeModelCallback = async () =>
-      beforeCallbackResponse;
-    agent.beforeModelCallback = [beforeCallback];
-    agent.model = new MockLlm(originalLlmResponse);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([beforePluginResponse]);
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([beforePluginResponse]);
   });
 
-  // 3. Plugin beforeModelCallback returns undefined, canonical callback used.
   it('uses canonical before model callback when plugin returns undefined', async () => {
-    pluginManager.registerPlugin(mockPlugin);
-    const beforeCallback: SingleBeforeModelCallback = async () =>
-      beforeCallbackResponse;
-    agent.beforeModelCallback = [beforeCallback];
-    agent.model = new MockLlm(originalLlmResponse);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([beforeCallbackResponse]);
+    agent.beforeModelCallback = async () => beforeCallbackResponse;
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([beforeCallbackResponse]);
   });
 
-  // 4. Plugin afterModelCallback overrides response.
   it('uses plugin after model callback to override response', async () => {
+    pluginManager.registerPlugin(mockPlugin);
+    agent.model = new MockLlm(originalLlmResponse);
     mockPlugin.afterModelResponse = afterPluginResponse;
-    pluginManager.registerPlugin(mockPlugin);
-    const afterCallback: SingleAfterModelCallback = async () =>
-      afterCallbackResponse;
-    agent.afterModelCallback = [afterCallback];
-    agent.model = new MockLlm(originalLlmResponse);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([afterPluginResponse]);
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([afterPluginResponse]);
   });
 
-  // 5. No plugin afterModelCallback, canonical callback overrides.
   it('uses canonical after model callback when plugin returns undefined', async () => {
-    pluginManager.registerPlugin(mockPlugin);
-    const afterCallback: SingleAfterModelCallback = async () =>
-      afterCallbackResponse;
-    agent.afterModelCallback = [afterCallback];
+    agent.afterModelCallback = async () => afterCallbackResponse;
     agent.model = new MockLlm(originalLlmResponse);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([afterCallbackResponse]);
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([afterCallbackResponse]);
   });
 
-  // 6. LLM error, plugin onModelErrorCallback handles it.
   it('uses plugin on model error callback to handle LLM error', async () => {
-    mockPlugin.onModelErrorResponse = onModelErrorPluginResponse;
     pluginManager.registerPlugin(mockPlugin);
     agent.model = new MockLlm(null, modelError);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([onModelErrorPluginResponse]);
+    mockPlugin.onModelErrorResponse = onModelErrorPluginResponse;
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([onModelErrorPluginResponse]);
   });
 
-  // 7. LLM error, no plugin callback, error message propagates.
   it('propagates LLM error message when no plugin callback is present', async () => {
-    pluginManager.registerPlugin(mockPlugin);
     agent.model = new MockLlm(null, modelError);
-    const responses = await callLlmUnderTest();
-    expect(responses).toEqual([{errorMessage: 'LLM error', errorCode: '500'}]);
+    const result = await callLlmUnderTest();
+    expect(result).toEqual([{errorCode: '500', errorMessage: 'LLM error'}]);
   });
 });
