@@ -14,6 +14,8 @@ import {
 import {context, trace} from '@opentelemetry/api';
 import {cloneDeep} from 'lodash-es';
 import {z} from 'zod';
+import {z as z3} from 'zod/v3';
+import {z as z4} from 'zod/v4';
 
 import {
   BaseCodeExecutor,
@@ -62,6 +64,7 @@ import {
   traceCallLlm,
   tracer,
 } from '../telemetry/tracing.js';
+import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {
   BaseLlmRequestProcessor,
@@ -85,6 +88,14 @@ import {injectSessionState} from './instructions.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 import {StreamingMode} from './run_config.js';
+
+/**
+ * Input/output schema type for agent.
+ */
+export type LlmAgentSchema =
+  | z3.ZodObject<z3.ZodRawShape>
+  | z4.ZodObject<z4.ZodRawShape>
+  | Schema;
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (
@@ -264,16 +275,10 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   includeContents?: 'default' | 'none';
 
   /** The input schema when agent is used as a tool. */
-  inputSchema?: Schema;
+  inputSchema?: LlmAgentSchema;
 
-  /**
-   * The output schema when agent replies.
-   *
-   * NOTE:
-   *   When this is set, agent can ONLY reply and CANNOT use any tools, such as
-   *   function tools, RAGs, agent transfer, etc.
-   */
-  outputSchema?: Schema;
+  /** The output schema when agent replies. */
+  outputSchema?: LlmAgentSchema;
 
   /**
    * The key in session state to store the output of the agent.
@@ -1338,8 +1343,12 @@ export class LlmAgent extends BaseAgent {
     this.disallowTransferToParent = config.disallowTransferToParent ?? false;
     this.disallowTransferToPeers = config.disallowTransferToPeers ?? false;
     this.includeContents = config.includeContents ?? 'default';
-    this.inputSchema = config.inputSchema;
-    this.outputSchema = config.outputSchema;
+    this.inputSchema = isZodObject(config.inputSchema)
+      ? zodObjectToSchema(config.inputSchema)
+      : config.inputSchema;
+    this.outputSchema = isZodObject(config.outputSchema)
+      ? zodObjectToSchema(config.outputSchema)
+      : config.outputSchema;
     this.outputKey = config.outputKey;
     this.beforeModelCallback = config.beforeModelCallback;
     this.afterModelCallback = config.afterModelCallback;
@@ -1397,22 +1406,6 @@ export class LlmAgent extends BaseAgent {
         );
         this.disallowTransferToParent = true;
         this.disallowTransferToPeers = true;
-      }
-
-      if (this.subAgents && this.subAgents.length > 0) {
-        throw new Error(
-          `Invalid config for agent ${
-            this.name
-          }: if outputSchema is set, subAgents must be empty to disable agent transfer.`,
-        );
-      }
-
-      if (this.tools && this.tools.length > 0) {
-        throw new Error(
-          `Invalid config for agent ${
-            this.name
-          }: if outputSchema is set, tools must be empty`,
-        );
       }
     }
   }

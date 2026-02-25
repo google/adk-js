@@ -31,6 +31,7 @@ export type {
   BeforeToolCallback,
   InstructionProvider,
   LlmAgentConfig,
+  LlmAgentSchema,
   SingleAfterModelCallback,
   SingleAfterToolCallback,
   SingleBeforeModelCallback,

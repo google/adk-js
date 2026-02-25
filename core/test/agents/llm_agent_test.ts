@@ -17,7 +17,9 @@ import {
   PluginManager,
   Session,
 } from '@google/adk';
-import {Content} from '@google/genai';
+import {Content, Schema, Type} from '@google/genai';
+import {z as z3} from 'zod/v3';
+import {z as z4} from 'zod/v4';
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
@@ -228,5 +230,157 @@ describe('LlmAgent.callLlm', () => {
     agent.model = new MockLlm(null, modelError);
     const result = await callLlmUnderTest();
     expect(result).toEqual([{errorCode: '500', errorMessage: 'LLM error'}]);
+  });
+});
+
+describe('LlmAgent Schema Initialization', () => {
+  it('should initialize inputSchema from Schema object', () => {
+    const inputSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {foo: {type: Type.STRING}},
+    };
+    const agent = new LlmAgent({name: 'test', inputSchema});
+    expect(agent.inputSchema).toEqual(inputSchema);
+  });
+
+  it('should initialize inputSchema from Zod v4 object', () => {
+    const zodSchema = z4.object({foo: z4.string()});
+    const agent = new LlmAgent({
+      name: 'test',
+      inputSchema: zodSchema,
+    });
+    expect(agent.inputSchema).toBeDefined();
+    expect((agent.inputSchema as Schema).type).toBe('OBJECT');
+    expect((agent.inputSchema as Schema).properties?.foo?.type).toBe('STRING');
+  });
+
+  it('should initialize inputSchema from Zod v3 object', () => {
+    const zodSchema = z3.object({
+      foo: z3.string(),
+    });
+    const agent = new LlmAgent({
+      name: 'test',
+      inputSchema: zodSchema,
+    });
+    expect(agent.inputSchema).toBeDefined();
+    expect((agent.inputSchema as Schema).type).toBe('OBJECT');
+    expect((agent.inputSchema as Schema).properties?.foo?.type).toBe('STRING');
+  });
+
+  it('should initialize outputSchema from Schema object', () => {
+    const outputSchema: Schema = {
+      type: Type.OBJECT,
+      properties: {bar: {type: Type.NUMBER}},
+    };
+    const agent = new LlmAgent({name: 'test', outputSchema});
+    expect(agent.outputSchema).toEqual(outputSchema);
+  });
+
+  it('should initialize outputSchema from Zod z4 object', () => {
+    const zodSchema = z4.object({bar: z4.number()});
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: zodSchema,
+    });
+    expect(agent.outputSchema).toBeDefined();
+    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
+    expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
+  });
+
+  it('should initialize outputSchema from Zod v3 object', () => {
+    const zodSchema = z3.object({
+      bar: z3.number(),
+    });
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: zodSchema,
+    });
+    expect(agent.outputSchema).toBeDefined();
+    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
+    expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
+  });
+
+  it('should enforce transfer restrictions when outputSchema is present', () => {
+    const outputSchema: Schema = {type: Type.OBJECT};
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema,
+      disallowTransferToParent: false,
+      disallowTransferToPeers: false,
+    });
+    expect(agent.disallowTransferToParent).toBe(true);
+    expect(agent.disallowTransferToPeers).toBe(true);
+  });
+});
+
+describe('LlmAgent Output Processing', () => {
+  let agent: LlmAgent;
+  let invocationContext: InvocationContext;
+  let validationSchema: Schema;
+
+  beforeEach(() => {
+    validationSchema = {
+      type: Type.OBJECT,
+      properties: {
+        answer: {type: Type.STRING},
+      },
+    };
+    agent = new LlmAgent({
+      name: 'test_agent',
+      outputSchema: validationSchema,
+      outputKey: 'result',
+    });
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+    });
+  });
+
+  it('should save parsed JSON output to state based on outputKey', async () => {
+    const jsonOutput = JSON.stringify({answer: '42'});
+    const response: LlmResponse = {
+      content: {parts: [{text: jsonOutput}]},
+    };
+    agent.model = new MockLlm(response);
+
+    const generator = agent.runAsync(invocationContext);
+    const events: Event[] = [];
+    for await (const event of generator) {
+      events.push(event);
+    }
+
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent).toBeDefined();
+    expect(lastEvent.content?.parts?.[0].text).toEqual(jsonOutput);
+    expect(lastEvent.actions?.stateDelta).toBeDefined();
+    expect(lastEvent.actions?.stateDelta?.['result']).toEqual({answer: '42'});
+  });
+
+  it('should not save output if invalid JSON', async () => {
+    const invalidJson = '{answer: 42'; // Missing closing brace
+    const response: LlmResponse = {
+      content: {parts: [{text: invalidJson}]},
+    };
+    agent.model = new MockLlm(response);
+
+    const generator = agent.runAsync(invocationContext);
+    const events: Event[] = [];
+    for await (const event of generator) {
+      events.push(event);
+    }
+
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
   });
 });
