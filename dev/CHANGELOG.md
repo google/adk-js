@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/google/adk-js/compare/devtools-v0.3.0...devtools-v0.4.0) (2026-02-25)
+
+
+### Features
+
+* Add ADK CLI version command. ([#115](https://github.com/google/adk-js/issues/115)) ([871be23](https://github.com/google/adk-js/commit/871be23acd020571b47129c96cc25730cd2d8e19))
+* add database session service ([b3c38fe](https://github.com/google/adk-js/commit/b3c38feeb006cf40d0c7b71abe3afd052febb9b1))
+* flip ADK CLI to be ESM native instead of CommonJS. ([#113](https://github.com/google/adk-js/issues/113)) ([1eb443e](https://github.com/google/adk-js/commit/1eb443eff054bde1aa9e85faaeb08de902620991))
+
+
+### Bug Fixes
+
+* handle state and state delta request body params in ADK API server. ([#117](https://github.com/google/adk-js/issues/117)) ([9aeb1f6](https://github.com/google/adk-js/commit/9aeb1f65c73dd122fdc1256a1fc19f74bdb2cbf3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^0.3.0 to ^0.4.0
+
 ## [0.3.0](https://github.com/google/adk-js/compare/devtools-v0.2.5...devtools-v0.3.0) (2026-01-30)
 
 ### Features

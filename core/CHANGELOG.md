@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/google/adk-js/compare/adk-v0.3.0...adk-v0.4.0) (2026-02-25)
+
+
+### Features
+
+* Add ApigeeLlm to the typescript ADK ([#125](https://github.com/google/adk-js/issues/125)) ([9e42b25](https://github.com/google/adk-js/commit/9e42b257d10117b4900374b257029ec6572eca0e))
+* add database session service ([b3c38fe](https://github.com/google/adk-js/commit/b3c38feeb006cf40d0c7b71abe3afd052febb9b1))
+* flip ADK CLI to be ESM native instead of CommonJS. ([#113](https://github.com/google/adk-js/issues/113)) ([1eb443e](https://github.com/google/adk-js/commit/1eb443eff054bde1aa9e85faaeb08de902620991))
+
+
+### Bug Fixes
+
+* use isBaseTool | isLlmAgent instead of instanceof keyword. ([#116](https://github.com/google/adk-js/issues/116)) ([cc4d67b](https://github.com/google/adk-js/commit/cc4d67ba2f69932030b03efea2c9186680028cb8))
+
 ## [0.3.0](https://github.com/google/adk-js/compare/adk-v0.2.5...adk-v0.3.0) (2026-01-30)
 
 ### Features
