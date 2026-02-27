@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isPlainObject} from 'lodash-es';
+
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 // TODO: b/425992518 - Replace 'any' with a proper AuthConfig.
@@ -85,6 +87,25 @@ export function createEventActions(
  * 2. For other properties (skipSummarization,transferToAgent, escalate), the
  * last one wins.
  */
+function deepMergeStateDelta(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): void {
+  for (const [key, srcValue] of Object.entries(source)) {
+    const targetValue = target[key];
+
+    if (isPlainObject(targetValue) && isPlainObject(srcValue)) {
+      const nestedTarget = {...(targetValue as Record<string, unknown>)};
+      deepMergeStateDelta(nestedTarget, srcValue as Record<string, unknown>);
+      target[key] = nestedTarget;
+      continue;
+    }
+
+    // Preserve explicit undefined writes as last-write-wins for clear semantics.
+    target[key] = srcValue;
+  }
+}
+
 export function mergeEventActions(
   sources: Array<Partial<EventActions>>,
   target?: EventActions,
@@ -99,7 +120,7 @@ export function mergeEventActions(
     if (!source) continue;
 
     if (source.stateDelta) {
-      Object.assign(result.stateDelta, source.stateDelta);
+      deepMergeStateDelta(result.stateDelta, source.stateDelta);
     }
     if (source.artifactDelta) {
       Object.assign(result.artifactDelta, source.artifactDelta);
