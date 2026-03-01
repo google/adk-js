@@ -172,6 +172,7 @@ export type {
   ToolOptions,
 } from './tools/function_tool.js';
 export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
+export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
