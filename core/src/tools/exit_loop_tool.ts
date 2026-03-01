@@ -15,17 +15,6 @@ import { BaseTool, RunAsyncToolRequest } from './base_tool.js';
  * `escalate` and `skipSummarization` flags on the event actions,
  * causing the LoopAgent to stop iterating and exit the loop.
  *
- * Usage example in an LlmAgent:
- *
- * ```ts
- * import {LlmAgent, EXIT_LOOP} from '@google/adk';
- *
- * const subAgent = new LlmAgent({
- *   name: 'agent1',
- *   tools: [EXIT_LOOP],
- * });
- * ```
- *
  * Refer to:
  * https://github.com/google/adk-python/blob/main/src/google/adk/tools/exit_loop_tool.py
  * https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/tools/ExitLoopTool.java
