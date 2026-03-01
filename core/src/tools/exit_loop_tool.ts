@@ -22,7 +22,7 @@ import { BaseTool, RunAsyncToolRequest } from './base_tool.js';
  *
  * const subAgent = new LlmAgent({
  *   name: 'agent1',
- *   tools: [EXImy_agentT_LOOP],
+ *   tools: [EXIT_LOOP],
  * });
  * ```
  *
