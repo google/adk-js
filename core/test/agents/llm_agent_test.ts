@@ -9,15 +9,20 @@ import {
   BaseLlmConnection,
   BasePlugin,
   CallbackContext,
+  createEvent,
   Event,
+  FunctionTool,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   PluginManager,
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   Session,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
+import {z} from 'zod';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
@@ -57,6 +62,29 @@ class MockLlm extends BaseLlm {
     }
     if (this.response) {
       yield this.response;
+    }
+  }
+
+  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    return new MockLlmConnection();
+  }
+}
+
+class MultiStepMockLlm extends BaseLlm {
+  private readonly responses: LlmResponse[];
+  private callCount = 0;
+
+  constructor(responses: LlmResponse[]) {
+    super({model: 'mock-llm'});
+    this.responses = responses;
+  }
+
+  async *generateContentAsync(
+    _request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    const response = this.responses[this.callCount++];
+    if (response) {
+      yield response;
     }
   }
 
@@ -119,6 +147,25 @@ class TestLlmAgent extends LlmAgent {
       llmRequest,
       modelResponseEvent,
     );
+  }
+}
+
+class TransferTargetAgent extends LlmAgent {
+  private readonly responseText: string;
+
+  constructor(name: string, responseText: string) {
+    super({name});
+    this.responseText = responseText;
+  }
+
+  protected override async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      content: {role: 'model', parts: [{text: this.responseText}]},
+    });
   }
 }
 
@@ -382,5 +429,436 @@ describe('LlmAgent Output Processing', () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
+  });
+});
+
+describe('LlmAgent tool streaming postprocess', () => {
+  function buildInvocationContext(agent: LlmAgent): InvocationContext {
+    return new InvocationContext({
+      invocationId: 'inv_tools',
+      session: {
+        id: 'sess_tools',
+        state: {
+          hasDelta: () => false,
+          get: () => undefined,
+          set: () => {},
+        },
+        events: [],
+      } as unknown as Session,
+      agent,
+      pluginManager: new PluginManager(),
+    });
+  }
+
+  it('yields individual tool responses before confirmation event', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'requests confirmation',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.requestConfirmation({hint: 'approve toolA'});
+        return {result: 'A'};
+      },
+    });
+
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'normal tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'B'}),
+    });
+
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    };
+
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm(llmResponse),
+      tools: [toolA, toolB],
+    });
+    const invocationContext = buildInvocationContext(agent);
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxConcurrentToolCalls: 2,
+      maxLlmCalls: 500,
+    };
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const functionResponseEvents = events.filter(
+      (event) => event.content?.parts?.[0]?.functionResponse,
+    );
+    expect(functionResponseEvents).toHaveLength(2);
+    expect(
+      functionResponseEvents.every(
+        (event) => event.content?.parts?.length === 1,
+      ),
+    ).toBe(true);
+
+    const confirmationEventIndex = events.findIndex((event) =>
+      event.content?.parts?.some(
+        (part) =>
+          part.functionCall?.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+      ),
+    );
+    expect(confirmationEventIndex).toBeGreaterThan(-1);
+
+    const lastFunctionResponseIndex = events.reduce((lastIndex, event, idx) => {
+      return event.content?.parts?.[0]?.functionResponse ? idx : lastIndex;
+    }, -1);
+    expect(confirmationEventIndex).toBeGreaterThan(lastFunctionResponseIndex);
+  });
+
+  it('uses merged transferToAgent (last input tool wins) after streamed tool responses', async () => {
+    const transferSlow = new FunctionTool({
+      name: 'transferSlow',
+      description: 'slow transfer setter',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        context!.actions.transferToAgent = 'agent_a';
+        return {result: 'slow'};
+      },
+    });
+    const transferFast = new FunctionTool({
+      name: 'transferFast',
+      description: 'fast transfer setter',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        context!.actions.transferToAgent = 'agent_b';
+        return {result: 'fast'};
+      },
+    });
+
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-slow', name: 'transferSlow', args: {}}},
+          {functionCall: {id: 'id-fast', name: 'transferFast', args: {}}},
+        ],
+      },
+    };
+
+    const childA = new TransferTargetAgent('agent_a', 'from A');
+    const childB = new TransferTargetAgent('agent_b', 'from B');
+
+    const root = new LlmAgent({
+      name: 'root_agent',
+      model: new MockLlm(llmResponse),
+      tools: [transferSlow, transferFast],
+      subAgents: [childA, childB],
+    });
+
+    const invocationContext = buildInvocationContext(root);
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+
+    const events: Event[] = [];
+    for await (const event of root.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const transferredAgentEvent = events.find(
+      (event) =>
+        event.author === 'agent_b' &&
+        event.content?.parts?.some((part) => part.text === 'from B'),
+    );
+    expect(transferredAgentEvent).toBeDefined();
+  });
+
+  it('yields streamed tool responses before merged auth event', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'requests auth',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.requestCredential({
+          authScheme: {type: 'apiKey', in: 'header', name: 'x-api-key'},
+          credentialKey: 'toolA-key',
+        });
+        return {result: 'A'};
+      },
+    });
+
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'normal tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'B'}),
+    });
+
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    };
+
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm(llmResponse),
+      tools: [toolA, toolB],
+    });
+    const invocationContext = buildInvocationContext(agent);
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxConcurrentToolCalls: 2,
+      maxLlmCalls: 500,
+    };
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const functionResponseEvents = events.filter(
+      (event) => event.content?.parts?.[0]?.functionResponse,
+    );
+    expect(functionResponseEvents).toHaveLength(2);
+
+    const authEventIndex = events.findIndex((event) =>
+      event.content?.parts?.some(
+        (part) => part.functionCall?.name === 'adk_request_credential',
+      ),
+    );
+    expect(authEventIndex).toBeGreaterThan(-1);
+
+    const lastFunctionResponseIndex = events.reduce((lastIndex, event, idx) => {
+      return event.content?.parts?.[0]?.functionResponse ? idx : lastIndex;
+    }, -1);
+    expect(authEventIndex).toBeGreaterThan(lastFunctionResponseIndex);
+  });
+
+  async function buildInvocationContextWithSession(agent: LlmAgent): Promise<{
+    ctx: InvocationContext;
+    sessionService: InMemorySessionService;
+    sessionId: string;
+  }> {
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_sentinel',
+      session,
+      agent,
+      pluginManager: new PluginManager(),
+      sessionService,
+    });
+    return {ctx, sessionService, sessionId: session.id};
+  }
+
+  it('does not dispatch tools when pauseOnToolCalls is set', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'normal tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'A'}),
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'normal tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'B'}),
+    });
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm(llmResponse),
+      tools: [toolA, toolB],
+    });
+    const invocationContext = buildInvocationContext(agent);
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      pauseOnToolCalls: true,
+      maxLlmCalls: 500,
+    };
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    // Only the model event with function calls is yielded; no tool responses
+    const functionResponseEvents = events.filter((e) =>
+      e.content?.parts?.some((p) => p.functionResponse),
+    );
+    expect(functionResponseEvents).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts?.some((p) => p.functionCall)).toBe(true);
+  });
+
+  it('completion sentinel is appended to session but not yielded in event stream', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'tool A',
+      parameters: z.object({}),
+      execute: async () => ({result: 'A'}),
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'tool B',
+      parameters: z.object({}),
+      execute: async () => ({result: 'B'}),
+    });
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm(llmResponse),
+      tools: [toolA, toolB],
+    });
+    const {ctx, sessionService, sessionId} =
+      await buildInvocationContextWithSession(agent);
+    ctx.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
+
+    const yieldedEvents: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      yieldedEvents.push(event);
+    }
+
+    // No yielded event should carry the internal sentinel metadata
+    const sentinelInYield = yieldedEvents.some(
+      (e) => e.actions?.customMetadata?.['parallelToolBatchCompletion'],
+    );
+    expect(sentinelInYield).toBe(false);
+
+    // Session must contain the sentinel
+    const session = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId,
+    });
+    const sentinelInSession = session!.events.some(
+      (e) => e.actions?.customMetadata?.['parallelToolBatchCompletion'],
+    );
+    expect(sentinelInSession).toBe(true);
+  });
+
+  it('single tool call does not append a completion sentinel to session', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'tool A',
+      parameters: z.object({}),
+      execute: async () => ({result: 'A'}),
+    });
+    const llmResponse: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'id-a', name: 'toolA', args: {}}}],
+      },
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm(llmResponse),
+      tools: [toolA],
+    });
+    const {ctx, sessionService, sessionId} =
+      await buildInvocationContextWithSession(agent);
+    ctx.runConfig = {parallelToolExecution: true, maxLlmCalls: 500};
+
+    for await (const _ of agent.runAsync(ctx)) {
+      // consume
+    }
+
+    const session = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId,
+    });
+    const hasSentinel = session!.events.some(
+      (e) => e.actions?.customMetadata?.['parallelToolBatchCompletion'],
+    );
+    expect(hasSentinel).toBe(false);
+  });
+
+  it('outer loop calls LLM again after parallel tool batch completes', async () => {
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'tool A',
+      parameters: z.object({}),
+      execute: async () => ({result: 'A done'}),
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'tool B',
+      parameters: z.object({}),
+      execute: async () => ({result: 'B done'}),
+    });
+    // Step 1: model emits 2 parallel function calls
+    const step1Response: LlmResponse = {
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    };
+    // Step 2: model returns a final text answer
+    const step2Response: LlmResponse = {
+      content: {role: 'model', parts: [{text: 'final answer'}]},
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MultiStepMockLlm([step1Response, step2Response]),
+      tools: [toolA, toolB],
+    });
+    const invocationContext = buildInvocationContext(agent);
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    // Expect both tool responses streamed from step 1
+    const functionResponseEvents = events.filter((e) =>
+      e.content?.parts?.some((p) => p.functionResponse),
+    );
+    expect(functionResponseEvents).toHaveLength(2);
+
+    // Expect final text event produced by step 2 LLM call
+    const finalTextEvent = events.find((e) =>
+      e.content?.parts?.some((p) => p.text === 'final answer'),
+    );
+    expect(finalTextEvent).toBeDefined();
   });
 });

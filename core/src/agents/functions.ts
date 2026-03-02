@@ -34,6 +34,7 @@ export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
 // Export these items for testing purposes only
 export const functionsExportedForTestingOnly = {
   handleFunctionCallList,
+  handleFunctionCallsAsync,
   executeSingleFunctionCall,
   generateAuthEvent,
   generateRequestConfirmationEvent,
@@ -284,7 +285,7 @@ function buildResponseEvent(
  *   - If the tool is long-running and the response is null, continue. !!state
  * - Merge all function response events into a single event.
  */
-export async function handleFunctionCallsAsync({
+export async function* handleFunctionCallsAsync({
   invocationContext,
   functionCallEvent,
   toolsDict,
@@ -300,17 +301,71 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
-}): Promise<Event | null> {
+}): AsyncGenerator<Event, void, void> {
   const functionCalls = getFunctionCalls(functionCallEvent);
-  return await handleFunctionCallList({
-    invocationContext: invocationContext,
-    functionCalls: functionCalls,
-    toolsDict: toolsDict,
-    beforeToolCallbacks: beforeToolCallbacks,
-    afterToolCallbacks: afterToolCallbacks,
-    filters: filters,
-    toolConfirmationDict: toolConfirmationDict,
+  // Note: only function ids INCLUDED in the filters will be executed.
+  const filteredFunctionCalls = functionCalls.filter((functionCall) => {
+    return !filters || (functionCall.id && filters.has(functionCall.id));
   });
+
+  if (!filteredFunctionCalls.length) {
+    return;
+  }
+
+  const parallel = invocationContext.runConfig?.parallelToolExecution ?? false;
+
+  const executeSingle = (fc: FunctionCall) =>
+    executeSingleFunctionCall({
+      invocationContext,
+      functionCall: fc,
+      toolsDict,
+      beforeToolCallbacks,
+      afterToolCallbacks,
+      toolConfirmation: resolveToolConfirmation(fc, toolConfirmationDict),
+    });
+
+  const functionResponseEvents: Event[] = [];
+  if (parallel) {
+    for await (const event of dispatchParallelStreaming(
+      filteredFunctionCalls,
+      executeSingle,
+      invocationContext,
+    )) {
+      functionResponseEvents.push(event);
+      yield event;
+    }
+  } else {
+    for await (const event of dispatchSequentialStreaming(
+      filteredFunctionCalls,
+      executeSingle,
+      invocationContext,
+    )) {
+      functionResponseEvents.push(event);
+      yield event;
+    }
+  }
+
+  if (functionResponseEvents.length > 1) {
+    const mergedEvent = mergeParallelFunctionResponseEvents(
+      functionResponseEvents,
+    );
+    tracer.startActiveSpan('execute_tool (merged)', (span) => {
+      try {
+        logger.debug('execute_tool (merged)');
+        // TODO - b/436079721: implement [traceMergedToolCalls]
+        logger.debug('traceMergedToolCalls', {
+          responseEventId: mergedEvent.id,
+          functionResponseEvent: mergedEvent.id,
+        });
+        traceMergedToolCalls({
+          responseEventId: mergedEvent.id,
+          functionResponseEvent: mergedEvent,
+        });
+      } finally {
+        span.end();
+      }
+    });
+  }
 }
 
 /**
@@ -754,6 +809,95 @@ async function dispatchSequential(
     }
   }
   return events;
+}
+
+async function* dispatchParallelStreaming(
+  functionCalls: FunctionCall[],
+  executeSingle: (fc: FunctionCall) => Promise<Event | null>,
+  invocationContext: InvocationContext,
+): AsyncGenerator<Event, void, void> {
+  if (functionCalls.length > 1) {
+    logger.info(
+      `parallel_tool_execution: ${functionCalls.length} tools ` +
+        `[${functionCalls.map((fc) => fc.name).join(', ')}]`,
+    );
+  }
+
+  const tasks = functionCalls.map((fc) => () => executeSingle(fc));
+  const maxConcurrency = Math.floor(
+    invocationContext.runConfig?.maxConcurrentToolCalls ?? 0,
+  );
+
+  const allEvents: Event[] = [];
+  if (maxConcurrency > 0 && functionCalls.length > maxConcurrency) {
+    for (let i = 0; i < tasks.length; i += maxConcurrency) {
+      const batch = tasks.slice(i, i + maxConcurrency);
+      const batchCalls = functionCalls.slice(i, i + maxConcurrency);
+      const batchResults = await Promise.allSettled(batch.map((t) => t()));
+      for (const [batchIndex, result] of batchResults.entries()) {
+        if (result.status === 'fulfilled') {
+          if (result.value) {
+            allEvents.push(result.value);
+            yield result.value;
+          }
+        } else {
+          const fc = batchCalls[batchIndex];
+          logger.warn(`Parallel tool call failed: ${fc.name}`, {
+            error: result.reason,
+          });
+          const errorEvent = createErrorResponseEvent(
+            invocationContext,
+            fc,
+            result.reason,
+          );
+          allEvents.push(errorEvent);
+          yield errorEvent;
+        }
+      }
+    }
+  } else {
+    const results = await Promise.allSettled(tasks.map((t) => t()));
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        if (result.value) {
+          allEvents.push(result.value);
+          yield result.value;
+        }
+      } else {
+        const fc = functionCalls[i];
+        logger.warn(`Parallel tool call failed: ${fc.name}`, {
+          error: result.reason,
+        });
+        const errorEvent = createErrorResponseEvent(
+          invocationContext,
+          fc,
+          result.reason,
+        );
+        allEvents.push(errorEvent);
+        yield errorEvent;
+      }
+    }
+  }
+
+  detectStateDeltaConflicts(allEvents);
+}
+
+async function* dispatchSequentialStreaming(
+  functionCalls: FunctionCall[],
+  executeSingle: (fc: FunctionCall) => Promise<Event | null>,
+  invocationContext: InvocationContext,
+): AsyncGenerator<Event, void, void> {
+  for (const fc of functionCalls) {
+    try {
+      const event = await executeSingle(fc);
+      if (event) {
+        yield event;
+      }
+    } catch (e) {
+      logger.warn(`Sequential tool call failed: ${fc.name}`, {error: e});
+      yield createErrorResponseEvent(invocationContext, fc, e);
+    }
+  }
 }
 
 // TODO - b/425992518: consider inline, which is much cleaner.

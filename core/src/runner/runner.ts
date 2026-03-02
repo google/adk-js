@@ -20,7 +20,12 @@ import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
-import {createEvent, Event, getFunctionCalls} from '../events/event.js';
+import {
+  createEvent,
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -347,6 +352,10 @@ export class Runner {
     session: Session,
     rootAgent: BaseAgent,
   ): BaseAgent {
+    if (hasIncompleteParallelToolBatch(session.events)) {
+      return rootAgent;
+    }
+
     // =========================================================================
     // Case 1: If the last event is a function response, this returns the
     // agent that made the original function call.
@@ -428,14 +437,46 @@ function findEventByLastFunctionResponseId(events: Event[]): Event | null {
     return null;
   }
 
-  const lastEvent = events[events.length - 1];
-  const functionCallId = lastEvent.content?.parts?.find(
+  let latestCompletionMarkerEvent: Event | null = null;
+  let latestFunctionResponseEvent: Event | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (
+      !latestCompletionMarkerEvent &&
+      getParallelBatchCompletionMetadata(event)
+    ) {
+      latestCompletionMarkerEvent = event;
+    }
+    if (
+      !latestFunctionResponseEvent &&
+      getFunctionResponses(event).length > 0
+    ) {
+      latestFunctionResponseEvent = event;
+    }
+    if (latestCompletionMarkerEvent && latestFunctionResponseEvent) {
+      break;
+    }
+  }
+
+  const completionMarker = latestCompletionMarkerEvent
+    ? getParallelBatchCompletionMetadata(latestCompletionMarkerEvent)
+    : null;
+  if (completionMarker) {
+    const functionCallEvent = events.find(
+      (event) => event.id === completionMarker.functionCallEventId,
+    );
+    return functionCallEvent ?? null;
+  }
+
+  const functionCallId = latestFunctionResponseEvent?.content?.parts?.find(
     (part) => part.functionResponse,
   )?.functionResponse?.id;
   if (!functionCallId) {
     return null;
   }
 
+  let matchingFunctionCallEventIndex = -1;
+  let matchingFunctionCallEvent: Event | null = null;
   // TODO - b/425992518: inefficient search, fix.
   for (let i = events.length - 2; i >= 0; i--) {
     const event = events[i];
@@ -447,9 +488,134 @@ function findEventByLastFunctionResponseId(events: Event[]): Event | null {
 
     for (const functionCall of functionCalls) {
       if (functionCall.id === functionCallId) {
-        return event;
+        matchingFunctionCallEventIndex = i;
+        matchingFunctionCallEvent = event;
+        break;
+      }
+    }
+    if (matchingFunctionCallEvent) {
+      break;
+    }
+  }
+  if (!matchingFunctionCallEvent) {
+    return null;
+  }
+
+  const expectedResponseCount = getExpectedResponseCount(
+    matchingFunctionCallEvent,
+  );
+  if (expectedResponseCount > 1) {
+    const hasCompletionSentinel = events
+      .slice(matchingFunctionCallEventIndex + 1)
+      .some((event) => {
+        const marker = getParallelBatchCompletionMetadata(event);
+        return (
+          marker?.functionCallEventId === matchingFunctionCallEvent?.id &&
+          marker.expectedResponseCount === expectedResponseCount
+        );
+      });
+    if (!hasCompletionSentinel) {
+      const observedResponseCount = getObservedResponseCount(
+        events,
+        matchingFunctionCallEventIndex,
+        matchingFunctionCallEvent,
+      );
+      if (observedResponseCount < expectedResponseCount) {
+        return null;
       }
     }
   }
+
+  return matchingFunctionCallEvent;
+}
+
+type ParallelBatchCompletionMetadata = {
+  functionCallEventId: string;
+  expectedResponseCount: number;
+};
+
+function getParallelBatchCompletionMetadata(
+  event: Event,
+): ParallelBatchCompletionMetadata | null {
+  const maybeMarker = event.actions?.customMetadata?.[
+    'parallelToolBatchCompletion'
+  ] as Partial<ParallelBatchCompletionMetadata> | undefined;
+  if (
+    maybeMarker &&
+    typeof maybeMarker.functionCallEventId === 'string' &&
+    typeof maybeMarker.expectedResponseCount === 'number'
+  ) {
+    return {
+      functionCallEventId: maybeMarker.functionCallEventId,
+      expectedResponseCount: maybeMarker.expectedResponseCount,
+    };
+  }
   return null;
+}
+
+function getExpectedResponseCount(functionCallEvent: Event): number {
+  const functionCalls = getFunctionCalls(functionCallEvent);
+  if (!functionCalls.length) {
+    return 0;
+  }
+  const longRunningToolIds = new Set(
+    functionCallEvent.longRunningToolIds ?? [],
+  );
+  return functionCalls.filter((functionCall) => {
+    return !!functionCall.id && !longRunningToolIds.has(functionCall.id);
+  }).length;
+}
+
+function getObservedResponseCount(
+  events: Event[],
+  functionCallEventIndex: number,
+  functionCallEvent: Event,
+): number {
+  const functionCallIds = new Set(
+    getFunctionCalls(functionCallEvent).map((functionCall) => functionCall.id),
+  );
+  const observedIds = new Set<string>();
+  for (const event of events.slice(functionCallEventIndex + 1)) {
+    for (const response of getFunctionResponses(event)) {
+      if (response.id && functionCallIds.has(response.id)) {
+        observedIds.add(response.id);
+      }
+    }
+  }
+  return observedIds.size;
+}
+
+function hasIncompleteParallelToolBatch(events: Event[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const functionCallEvent = events[i];
+    const expectedResponseCount = getExpectedResponseCount(functionCallEvent);
+    if (expectedResponseCount <= 1) {
+      continue;
+    }
+
+    const hasCompletionSentinel = events.slice(i + 1).some((event) => {
+      const marker = getParallelBatchCompletionMetadata(event);
+      return (
+        marker?.functionCallEventId === functionCallEvent.id &&
+        marker.expectedResponseCount === expectedResponseCount
+      );
+    });
+    if (hasCompletionSentinel) {
+      return false;
+    }
+
+    const observedResponseCount = getObservedResponseCount(
+      events,
+      i,
+      functionCallEvent,
+    );
+    if (
+      observedResponseCount > 0 &&
+      observedResponseCount < expectedResponseCount
+    ) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }

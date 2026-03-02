@@ -8,6 +8,7 @@ import {
   BaseAgent,
   BasePlugin,
   createEvent,
+  createEventActions,
   Event,
   InMemoryArtifactService,
   InMemorySessionService,
@@ -48,6 +49,33 @@ class MockLlmAgent extends LlmAgent {
   }
 }
 
+class StreamedFunctionResponseAgent extends LlmAgent {
+  constructor(name: string) {
+    super({
+      name,
+      model: 'gemini-2.5-flash',
+    });
+  }
+
+  protected override async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    const responses: FunctionResponse[] = [
+      {id: 'fc-a', name: 'toolA', response: {result: 'A'}},
+      {id: 'fc-b', name: 'toolB', response: {result: 'B'}},
+      {id: 'fc-c', name: 'toolC', response: {result: 'C'}},
+    ];
+
+    for (const functionResponse of responses) {
+      yield createEvent({
+        invocationId: context.invocationId,
+        author: this.name,
+        content: {role: 'user', parts: [{functionResponse}]},
+      });
+    }
+  }
+}
+
 class MockPlugin extends BasePlugin {
   static ON_USER_CALLBACK_MSG =
     'Modified user message ON_USER_CALLBACK_MSG from MockPlugin';
@@ -60,6 +88,8 @@ class MockPlugin extends BasePlugin {
   enableEventCallback = false;
   enableBeforeRunCallback = false;
   afterRunCallbackCalled = false;
+  onEventCallbackInvocationCount = 0;
+  onEventFunctionResponseCount = 0;
 
   constructor() {
     super('mock_plugin');
@@ -84,6 +114,10 @@ class MockPlugin extends BasePlugin {
     invocationContext: InvocationContext;
     event: Event;
   }): Promise<Event | undefined> {
+    this.onEventCallbackInvocationCount++;
+    if (event.content?.parts?.some((part) => part.functionResponse)) {
+      this.onEventFunctionResponseCount++;
+    }
     if (!this.enableEventCallback) {
       return undefined;
     }
@@ -212,6 +246,207 @@ describe('Runner.determineAgentForResumption', () => {
     const events = await runTest([callEvent, responseEvent]);
 
     expect(events[0].author).toBe('sub_agent1');
+  });
+
+  it('should resolve author from partial responses when completion sentinel exists', async () => {
+    const partialCallEvent = createEvent({
+      invocationId: 'inv-parallel-call',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func_1',
+              name: 'tool_1',
+              args: {},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func_2',
+              name: 'tool_2',
+              args: {},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func_3',
+              name: 'tool_3',
+              args: {},
+            },
+          },
+        ],
+      },
+    });
+
+    const partialResponseEvent = createEvent({
+      invocationId: 'inv-partial-response',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func_1',
+              name: 'tool_1',
+              response: {result: 'partial'},
+            },
+          },
+        ],
+      },
+    });
+
+    const completionSentinelEvent = createEvent({
+      invocationId: 'inv-completion-sentinel',
+      author: 'sub_agent2',
+      actions: createEventActions({
+        customMetadata: {
+          parallelToolBatchCompletion: {
+            functionCallEventId: partialCallEvent.id,
+            expectedResponseCount: 3,
+          },
+        },
+      }),
+    });
+
+    const events = await runTest([
+      partialCallEvent,
+      partialResponseEvent,
+      completionSentinelEvent,
+    ]);
+    expect(events[0].author).toBe('sub_agent2');
+  });
+
+  it('should not resume from partial parallel responses without a completion sentinel', async () => {
+    const partialCallEvent = createEvent({
+      invocationId: 'inv-parallel-call',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'func_1',
+              name: 'tool_1',
+              args: {},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func_2',
+              name: 'tool_2',
+              args: {},
+            },
+          },
+          {
+            functionCall: {
+              id: 'func_3',
+              name: 'tool_3',
+              args: {},
+            },
+          },
+        ],
+      },
+    });
+
+    const partialResponseEvent = createEvent({
+      invocationId: 'inv-partial-response',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func_1',
+              name: 'tool_1',
+              response: {result: 'partial'},
+            },
+          },
+        ],
+      },
+    });
+
+    // Desired behavior after sentinel support:
+    // without a completion sentinel for the parallel batch, resumption should
+    // not continue from partial responses.
+    const events = await runTest([partialCallEvent, partialResponseEvent]);
+    expect(events[0].author).toBe('root_agent');
+  });
+
+  it('should resume to originating agent when all parallel responses are present but no sentinel', async () => {
+    const partialCallEvent = createEvent({
+      invocationId: 'inv-parallel-call',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'func_1', name: 'tool_1', args: {}}},
+          {functionCall: {id: 'func_2', name: 'tool_2', args: {}}},
+          {functionCall: {id: 'func_3', name: 'tool_3', args: {}}},
+        ],
+      },
+    });
+
+    const responseEvent1 = createEvent({
+      invocationId: 'inv-response-1',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func_1',
+              name: 'tool_1',
+              response: {result: 'r1'},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent2 = createEvent({
+      invocationId: 'inv-response-2',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func_2',
+              name: 'tool_2',
+              response: {result: 'r2'},
+            },
+          },
+        ],
+      },
+    });
+
+    const responseEvent3 = createEvent({
+      invocationId: 'inv-response-3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'func_3',
+              name: 'tool_3',
+              response: {result: 'r3'},
+            },
+          },
+        ],
+      },
+    });
+
+    // All 3 responses present with no sentinel — batch is complete, should route to originating agent
+    const events = await runTest([
+      partialCallEvent,
+      responseEvent1,
+      responseEvent2,
+      responseEvent3,
+    ]);
+    expect(events[0].author).toBe('sub_agent2');
   });
 
   it('should return root agent when session has no non-user events', async () => {
@@ -416,6 +651,86 @@ describe('Runner with plugins', () => {
   it('should call afterRunCallback', async () => {
     await runTest();
     expect(plugin.afterRunCallbackCalled).toBe(true);
+  });
+
+  it('should invoke onEventCallback once per streamed function-response event', async () => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    plugin = new MockPlugin();
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new StreamedFunctionResponseAgent('stream_agent'),
+      sessionService,
+      artifactService,
+      plugins: [plugin],
+    });
+
+    await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(plugin.onEventFunctionResponseCount).toBe(3);
+    expect(plugin.onEventCallbackInvocationCount).toBe(3);
+  });
+
+  it('should append each streamed function-response event independently', async () => {
+    class CountingSessionService extends InMemorySessionService {
+      appendEventCallCount = 0;
+      functionResponseAppendCount = 0;
+
+      override async appendEvent(params: {
+        session: Parameters<
+          InMemorySessionService['appendEvent']
+        >[0]['session'];
+        event: Parameters<InMemorySessionService['appendEvent']>[0]['event'];
+      }) {
+        this.appendEventCallCount++;
+        if (
+          params.event.content?.parts?.some((part) => part.functionResponse)
+        ) {
+          this.functionResponseAppendCount++;
+        }
+        return await super.appendEvent(params);
+      }
+    }
+
+    const countingSessionService = new CountingSessionService();
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new StreamedFunctionResponseAgent('stream_agent'),
+      sessionService: countingSessionService,
+      artifactService: new InMemoryArtifactService(),
+    });
+
+    await countingSessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // consume
+    }
+
+    // 1 append for user input + 3 appends for streamed function responses.
+    expect(countingSessionService.appendEventCallCount).toBe(4);
+    expect(countingSessionService.functionResponseAppendCount).toBe(3);
   });
 });
 

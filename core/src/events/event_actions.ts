@@ -61,6 +61,11 @@ export interface EventActions {
    * call id.
    */
   requestedToolConfirmations: {[key: string]: ToolConfirmation};
+
+  /**
+   * Optional metadata for framework-level runtime coordination.
+   */
+  customMetadata?: {[key: string]: unknown};
 }
 
 /**
@@ -74,6 +79,7 @@ export function createEventActions(
     artifactDelta: {},
     requestedAuthConfigs: {},
     requestedToolConfirmations: {},
+    customMetadata: {},
     ...state,
   };
 }
@@ -133,6 +139,9 @@ export function mergeEventActions(
         result.requestedToolConfirmations,
         source.requestedToolConfirmations,
       );
+    }
+    if (source.customMetadata) {
+      Object.assign(result.customMetadata ?? {}, source.customMetadata);
     }
 
     if (source.skipSummarization !== undefined) {

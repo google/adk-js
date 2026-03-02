@@ -6,6 +6,7 @@
 import {
   BasePlugin,
   BaseTool,
+  createEvent,
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
@@ -25,6 +26,18 @@ const {
   generateAuthEvent,
   generateRequestConfirmationEvent,
 } = functionsExportedForTestingOnly;
+const handleFunctionCallsAsync = (
+  functionsExportedForTestingOnly as unknown as {
+    handleFunctionCallsAsync: (args: {
+      invocationContext: InvocationContext;
+      functionCallEvent: Event;
+      toolsDict: Record<string, BaseTool>;
+      beforeToolCallbacks: SingleBeforeToolCallback[];
+      afterToolCallbacks: SingleAfterToolCallback[];
+      filters?: Set<string>;
+    }) => AsyncGenerator<Event, void, void>;
+  }
+).handleFunctionCallsAsync;
 
 // Tool for testing
 const testTool = new FunctionTool({
@@ -366,6 +379,10 @@ describe('parallel tool execution', () => {
         throw new Error(`${name} failed`);
       },
     });
+  }
+
+  function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   it('should execute multiple tools concurrently (faster than sequential)', async () => {
@@ -1281,6 +1298,361 @@ describe('parallel tool execution', () => {
     // The merged event must carry the invocationId from the source events.
     // Without the fix, createEvent defaults invocationId to '' when not passed.
     expect(event!.invocationId).toBe('inv_123');
+  });
+
+  it('handleFunctionCallsAsync streams per batch when maxConcurrentToolCalls is set', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxConcurrentToolCalls: 2,
+      maxLlmCalls: 500,
+    };
+
+    const toolA = makeDelayedTool('toolA', 80, 'A done');
+    const toolB = makeDelayedTool('toolB', 80, 'B done');
+    const toolC = makeDelayedTool('toolC', 80, 'C done');
+
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+          {functionCall: {id: 'id-c', name: 'toolC', args: {}}},
+        ],
+      },
+    });
+
+    const iterator = handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {toolA, toolB, toolC},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const first = await iterator.next();
+    const second = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(second.done).toBe(false);
+    const firstEvent = first.value as Event;
+    const secondEvent = second.value as Event;
+    expect(firstEvent.content!.parts![0].functionResponse!.name).toBe('toolA');
+    expect(secondEvent.content!.parts![0].functionResponse!.name).toBe('toolB');
+
+    const thirdPending = iterator.next();
+    const earlyResolution = await Promise.race([
+      thirdPending.then(() => 'resolved'),
+      sleep(30).then(() => 'timeout'),
+    ]);
+    expect(earlyResolution).toBe('timeout');
+
+    const third = await thirdPending;
+    expect(third.done).toBe(false);
+    const thirdEvent = third.value as Event;
+    expect(thirdEvent.content!.parts![0].functionResponse!.name).toBe('toolC');
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  it('handleFunctionCallsAsync with unlimited parallel has no early streaming', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+
+    const toolA = makeDelayedTool('toolA', 80, 'A done');
+    const toolB = makeDelayedTool('toolB', 10, 'B done');
+    const toolC = makeDelayedTool('toolC', 10, 'C done');
+
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+          {functionCall: {id: 'id-c', name: 'toolC', args: {}}},
+        ],
+      },
+    });
+
+    const iterator = handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {toolA, toolB, toolC},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const firstPending = iterator.next();
+    const earlyResolution = await Promise.race([
+      firstPending.then(() => 'resolved'),
+      sleep(30).then(() => 'timeout'),
+    ]);
+    expect(earlyResolution).toBe('timeout');
+
+    const first = await firstPending;
+    const second = await iterator.next();
+    const third = await iterator.next();
+
+    expect(first.done).toBe(false);
+    expect(second.done).toBe(false);
+    expect(third.done).toBe(false);
+    const firstEvent = first.value as Event;
+    const secondEvent = second.value as Event;
+    const thirdEvent = third.value as Event;
+    expect(firstEvent.content!.parts![0].functionResponse!.name).toBe('toolA');
+    expect(secondEvent.content!.parts![0].functionResponse!.name).toBe('toolB');
+    expect(thirdEvent.content!.parts![0].functionResponse!.name).toBe('toolC');
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  it('handleFunctionCallsAsync filters out null results from long-running tools', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+
+    const longRunningTool = new FunctionTool({
+      name: 'longTool',
+      description: 'long running tool',
+      parameters: z.object({}),
+      isLongRunning: true,
+      execute: async () => undefined,
+    });
+    const normalTool = makeDelayedTool('normalTool', 10, 'normal done');
+
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-long', name: 'longTool', args: {}}},
+          {functionCall: {id: 'id-normal', name: 'normalTool', args: {}}},
+        ],
+      },
+    });
+
+    const streamed: Event[] = [];
+    for await (const event of handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {longTool: longRunningTool, normalTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    })) {
+      streamed.push(event);
+    }
+
+    expect(streamed).toHaveLength(1);
+    expect(streamed[0].content!.parts![0].functionResponse!.name).toBe(
+      'normalTool',
+    );
+  });
+
+  it('handleFunctionCallsAsync with maxConcurrentToolCalls=1 behaves like sequential streaming', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxConcurrentToolCalls: 1,
+      maxLlmCalls: 500,
+    };
+
+    const toolA = makeDelayedTool('toolA', 60, 'A done');
+    const toolB = makeDelayedTool('toolB', 60, 'B done');
+    const toolC = makeDelayedTool('toolC', 60, 'C done');
+
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+          {functionCall: {id: 'id-c', name: 'toolC', args: {}}},
+        ],
+      },
+    });
+
+    const iterator = handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {toolA, toolB, toolC},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(
+      (first.value as Event).content!.parts![0].functionResponse!.name,
+    ).toBe('toolA');
+
+    const secondPending = iterator.next();
+    const earlyResolution = await Promise.race([
+      secondPending.then(() => 'resolved'),
+      sleep(20).then(() => 'timeout'),
+    ]);
+    expect(earlyResolution).toBe('timeout');
+
+    const second = await secondPending;
+    const third = await iterator.next();
+    expect(
+      (second.value as Event).content!.parts![0].functionResponse!.name,
+    ).toBe('toolB');
+    expect(
+      (third.value as Event).content!.parts![0].functionResponse!.name,
+    ).toBe('toolC');
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  it('handleFunctionCallsAsync: failed tool does not block streaming of other results', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+    const goodTool = makeDelayedTool('goodTool', 10, 'good result');
+    const badTool = makeFailingTool('badTool', 5);
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-good', name: 'goodTool', args: {}}},
+          {functionCall: {id: 'id-bad', name: 'badTool', args: {}}},
+        ],
+      },
+    });
+
+    const streamed: Event[] = [];
+    for await (const event of handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {goodTool, badTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    })) {
+      streamed.push(event);
+    }
+
+    expect(streamed).toHaveLength(2);
+    expect(streamed[0].content!.parts![0].functionResponse!.name).toBe(
+      'goodTool',
+    );
+    expect(
+      (
+        streamed[1].content!.parts![0].functionResponse!.response as Record<
+          string,
+          string
+        >
+      ).error,
+    ).toContain('badTool failed');
+  });
+
+  it('handleFunctionCallsAsync in parallel mode: all events yielded despite stateDelta key conflicts', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+    const toolA = new FunctionTool({
+      name: 'toolA',
+      description: 'sets counter to 1',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['counter'] = 1;
+        return {result: 'A'};
+      },
+    });
+    const toolB = new FunctionTool({
+      name: 'toolB',
+      description: 'sets counter to 2',
+      parameters: z.object({}),
+      execute: async (_args, context) => {
+        context!.actions.stateDelta['counter'] = 2;
+        return {result: 'B'};
+      },
+    });
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    });
+
+    const streamed: Event[] = [];
+    for await (const event of handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    })) {
+      streamed.push(event);
+    }
+
+    // Both events streamed despite the conflict; conflict is a warning not an error
+    expect(streamed).toHaveLength(2);
+    expect(streamed[0].content!.parts![0].functionResponse!.name).toBe('toolA');
+    expect(streamed[1].content!.parts![0].functionResponse!.name).toBe('toolB');
+  });
+
+  it('handleFunctionCallsAsync in sequential mode yields each response individually', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: false,
+      maxLlmCalls: 500,
+    };
+    const toolA = makeDelayedTool('toolA', 60, 'A done');
+    const toolB = makeDelayedTool('toolB', 60, 'B done');
+    const functionCallEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'id-a', name: 'toolA', args: {}}},
+          {functionCall: {id: 'id-b', name: 'toolB', args: {}}},
+        ],
+      },
+    });
+
+    const iterator = handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // toolA resolves first; toolB has not started yet
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(
+      (first.value as Event).content!.parts![0].functionResponse!.name,
+    ).toBe('toolA');
+
+    // toolB hasn't started yet so second should not resolve within 20ms
+    const secondPending = iterator.next();
+    const earlyResolution = await Promise.race([
+      secondPending.then(() => 'resolved'),
+      sleep(20).then(() => 'timeout'),
+    ]);
+    expect(earlyResolution).toBe('timeout');
+
+    const second = await secondPending;
+    expect(second.done).toBe(false);
+    expect(
+      (second.value as Event).content!.parts![0].functionResponse!.name,
+    ).toBe('toolB');
+    expect((await iterator.next()).done).toBe(true);
   });
 });
 

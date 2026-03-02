@@ -81,6 +81,7 @@ import {
   getLongRunningFunctionCalls,
   handleFunctionCallList,
   handleFunctionCallsAsync,
+  mergeParallelFunctionResponseEvents,
   populateClientFunctionCallId,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
 } from './functions.js';
@@ -1808,23 +1809,64 @@ export class LlmAgent extends BaseAgent {
     // Call functions
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
-    const functionResponseEvent = await handleFunctionCallsAsync({
+    const functionResponseEvents: Event[] = [];
+    for await (const functionResponseEvent of handleFunctionCallsAsync({
       invocationContext: invocationContext,
       functionCallEvent: mergedEvent,
       toolsDict: llmRequest.toolsDict,
       beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
       afterToolCallbacks: this.canonicalAfterToolCallbacks,
-    });
+    })) {
+      functionResponseEvents.push(functionResponseEvent);
+      yield functionResponseEvent;
+    }
 
-    if (!functionResponseEvent) {
+    if (!functionResponseEvents.length) {
       return;
+    }
+
+    const mergedFunctionResponseEvent = mergeParallelFunctionResponseEvents(
+      functionResponseEvents,
+    );
+
+    // Persist an internal completion marker for streamed parallel tool batches.
+    // This allows resumption logic to distinguish complete vs partial batches.
+    if ((getFunctionCalls(mergedEvent)?.length ?? 0) > 1) {
+      const functionCallIds = new Set(
+        getFunctionCalls(mergedEvent)
+          .map((fc) => fc.id)
+          .filter(Boolean),
+      );
+      const longRunningIds = new Set(mergedEvent.longRunningToolIds ?? []);
+      const expectedResponseCount = Array.from(functionCallIds).filter(
+        (id): id is string => !!id && !longRunningIds.has(id),
+      ).length;
+      const completionEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: invocationContext.agent.name,
+        branch: invocationContext.branch,
+        actions: createEventActions({
+          customMetadata: {
+            parallelToolBatchCompletion: {
+              functionCallEventId: mergedEvent.id,
+              expectedResponseCount,
+            },
+          },
+        }),
+      });
+      if (invocationContext.sessionService) {
+        await invocationContext.sessionService.appendEvent({
+          session: invocationContext.session,
+          event: completionEvent,
+        });
+      }
     }
 
     // Yiels an authentication event if any.
     // TODO - b/425992518: transaction log session, simplify.
     const authEvent = generateAuthEvent(
       invocationContext,
-      functionResponseEvent,
+      mergedFunctionResponseEvent,
     );
     if (authEvent) {
       yield authEvent;
@@ -1834,7 +1876,7 @@ export class LlmAgent extends BaseAgent {
     const toolConfirmationEvent = generateRequestConfirmationEvent({
       invocationContext: invocationContext,
       functionCallEvent: mergedEvent,
-      functionResponseEvent: functionResponseEvent,
+      functionResponseEvent: mergedFunctionResponseEvent,
     });
     if (toolConfirmationEvent) {
       yield toolConfirmationEvent;
@@ -1842,11 +1884,8 @@ export class LlmAgent extends BaseAgent {
       return;
     }
 
-    // Yields the function response event.
-    yield functionResponseEvent;
-
     // If model instruct to transfer to an agent, run the transferred agent.
-    const nextAgentName = functionResponseEvent.actions.transferToAgent;
+    const nextAgentName = mergedFunctionResponseEvent.actions.transferToAgent;
     if (nextAgentName) {
       const nextAgent = this.getAgentByName(invocationContext, nextAgentName);
       for await (const event of nextAgent.runAsync(invocationContext)) {
