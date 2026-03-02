@@ -1257,6 +1257,31 @@ describe('parallel tool execution', () => {
       (respB!.functionResponse!.response as Record<string, string>).result,
     ).toBe('B done');
   });
+
+  it('merged event preserves invocationId from all source events', async () => {
+    invocationContext.runConfig = {
+      parallelToolExecution: true,
+      maxLlmCalls: 500,
+    };
+    const toolA = makeDelayedTool('toolA', 10, 'A done');
+    const toolB = makeDelayedTool('toolB', 10, 'B done');
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'id-a', name: 'toolA', args: {}},
+        {id: 'id-b', name: 'toolB', args: {}},
+      ],
+      toolsDict: {toolA, toolB},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    // The merged event must carry the invocationId from the source events.
+    // Without the fix, createEvent defaults invocationId to '' when not passed.
+    expect(event!.invocationId).toBe('inv_123');
+  });
 });
 
 describe('generateAuthEvent', () => {

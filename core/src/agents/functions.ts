@@ -815,6 +815,7 @@ export function mergeParallelFunctionResponseEvents(
 
   return createEvent({
     author: baseEvent.author,
+    invocationId: baseEvent.invocationId,
     branch: baseEvent.branch,
     content: {role: 'user', parts: mergedParts},
     actions: mergedActions,
