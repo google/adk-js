@@ -16,6 +16,7 @@ import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
 import * as os from 'os';
 import * as path from 'path';
+import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
 import {getTempDir} from '../utils/file_utils.js';
@@ -387,6 +388,33 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         console.error(e);
       }
+    });
+
+  const CONFORMANCE_COMMAND = program
+    .command('integration')
+    .description('Run ADK integration and conformance tests');
+
+  CONFORMANCE_COMMAND.command('conformance')
+    .description('Run ADK conformance tests')
+    .addOption(VERBOSE_OPTION)
+    .addOption(LOG_LEVEL_OPTION)
+    .option(
+      '--agents_dir [dir]',
+      'Directory of conformance test agent definitions. Recursively searched for .yaml files with agent definitions.',
+      process.cwd(),
+    )
+    .option(
+      '--tests_dir [dir]',
+      'Directory of conformance test definitions. Recursively searched for .yaml files with test definitions.',
+      process.cwd(),
+    )
+    .option('--force', 'Force run skipped tests.')
+    .action(async (options: Record<string, string>) => {
+      runIntegrationTests({
+        agentsDir: options['agents_dir'],
+        testsDir: options['tests_dir'],
+        forceRunAll: getBoolean(options['force']),
+      });
     });
 
   return program;

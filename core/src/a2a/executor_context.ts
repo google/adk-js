@@ -1,0 +1,56 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {RequestContext} from '@a2a-js/sdk/server';
+import {Content} from '@google/genai';
+import {Event} from '../events/event.js';
+import {Session} from '../sessions/session.js';
+
+/**
+ * The A2A Agent Executor context.
+ */
+export interface ExecutorContext {
+  userId: string;
+  sessionId: string;
+  agentName: string;
+  readonlyState: Record<string, unknown>;
+  events: Event[];
+  userContent: Content;
+  requestContext: RequestContext;
+}
+
+/**
+ * Creates an A2A Agent Executor context from the given parameters.
+ * @param userId The ID of the user.
+ * @param session The session.
+ * @param agentName The name of the agent.
+ * @param userContent The content of the user.
+ * @param requestContext The request context.
+ * @returns The A2A Agent Executor context.
+ */
+export function createExecutorContext({
+  userId,
+  session,
+  agentName,
+  userContent,
+  requestContext,
+}: {
+  userId: string;
+  session?: Session;
+  agentName: string;
+  userContent: Content;
+  requestContext: RequestContext;
+}): ExecutorContext {
+  return {
+    userId,
+    sessionId: session?.id || requestContext.contextId,
+    agentName,
+    readonlyState: session?.state || {},
+    events: session?.events || [],
+    userContent,
+    requestContext,
+  };
+}
