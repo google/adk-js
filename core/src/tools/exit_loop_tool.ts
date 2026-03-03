@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { FunctionDeclaration } from '@google/genai';
+import {FunctionDeclaration} from '@google/genai';
 
-import { BaseTool, RunAsyncToolRequest } from './base_tool.js';
+import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 
 /**
  * Tool for exiting execution of a {@link LoopAgent}.
@@ -15,33 +15,31 @@ import { BaseTool, RunAsyncToolRequest } from './base_tool.js';
  * `escalate` and `skipSummarization` flags on the event actions,
  * causing the LoopAgent to stop iterating and exit the loop.
  *
- * Refer to:
- * https://github.com/google/adk-python/blob/main/src/google/adk/tools/exit_loop_tool.py
- * https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/tools/ExitLoopTool.java
  */
+
 export class ExitLoopTool extends BaseTool {
-    constructor() {
-        super({
-            name: 'exit_loop',
-            description:
-                'Exits the loop.\n\nCall this function only when you are instructed to do so.',
-        });
-    }
+  constructor() {
+    super({
+      name: 'exit_loop',
+      description:
+        'Exits the loop.\n\nCall this function only when you are instructed to do so.',
+    });
+  }
 
-    override _getDeclaration(): FunctionDeclaration {
-        return {
-            name: this.name,
-            description: this.description,
-        };
-    }
+  override _getDeclaration(): FunctionDeclaration {
+    return {
+      name: this.name,
+      description: this.description,
+    };
+  }
 
-    override async runAsync({
-        toolContext,
-    }: RunAsyncToolRequest): Promise<unknown> {
-        toolContext.actions.escalate = true;
-        toolContext.actions.skipSummarization = true;
-        return '';
-    }
+  override async runAsync({
+    toolContext,
+  }: RunAsyncToolRequest): Promise<unknown> {
+    toolContext.actions.escalate = true;
+    toolContext.actions.skipSummarization = true;
+    return '';
+  }
 }
 
 /**
