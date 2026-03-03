@@ -12,6 +12,7 @@ export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';
+export * from './tools/mcp/mcp_instruction_provider.js';
 export * from './tools/mcp/mcp_session_manager.js';
 export * from './tools/mcp/mcp_tool.js';
 export * from './tools/mcp/mcp_toolset.js';

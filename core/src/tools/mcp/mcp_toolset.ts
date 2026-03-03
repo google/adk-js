@@ -39,6 +39,7 @@ import {MCPTool} from './mcp_tool.js';
  */
 export class MCPToolset extends BaseToolset {
   private readonly mcpSessionManager: MCPSessionManager;
+  private _cachedTools: BaseTool[] | null = null;
 
   constructor(
     connectionParams: MCPConnectionParams,
@@ -48,7 +49,19 @@ export class MCPToolset extends BaseToolset {
     this.mcpSessionManager = new MCPSessionManager(connectionParams);
   }
 
+  /**
+   * Returns the tools exposed by the MCP server.
+   *
+   * The tool list is fetched from the server on the first call and then cached
+   * for the lifetime of this toolset, so repeated calls across agent loop
+   * iterations do not incur additional MCP round-trips. Call {@link close} to
+   * invalidate the cache and allow re-discovery on the next call.
+   */
   async getTools(): Promise<BaseTool[]> {
+    if (this._cachedTools) {
+      return this._cachedTools;
+    }
+
     const session = await this.mcpSessionManager.createSession();
 
     const listResult = (await session.listTools()) as ListToolsResult;
@@ -58,10 +71,36 @@ export class MCPToolset extends BaseToolset {
     }
 
     // TODO: respect context (e.g. tool filter)
-    return listResult.tools.map(
+    this._cachedTools = listResult.tools.map(
       (tool) => new MCPTool(tool, this.mcpSessionManager),
     );
+    return this._cachedTools;
   }
 
-  async close(): Promise<void> {}
+  /**
+   * Returns the server-level instructions string that the MCP server
+   * advertises during the initialization handshake, or `undefined` if the
+   * server did not provide any.
+   *
+   * These instructions are intended to be injected into the agent's system
+   * prompt so the LLM understands how to best use this server's tools.
+   * Inject them via the agent's `instruction` field:
+   *
+   * ```ts
+   * const toolset = new MCPToolset(params);
+   * const agent = new LlmAgent({
+   *   instruction: async () => (await toolset.getServerInstructions()) ?? '',
+   *   tools: [toolset],
+   * });
+   * ```
+   */
+  async getServerInstructions(): Promise<string | undefined> {
+    const session = await this.mcpSessionManager.createSession();
+    return session.getInstructions();
+  }
+
+  async close(): Promise<void> {
+    this._cachedTools = null;
+    await this.mcpSessionManager.close();
+  }
 }
