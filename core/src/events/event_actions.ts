@@ -141,7 +141,10 @@ export function mergeEventActions(
       );
     }
     if (source.customMetadata) {
-      Object.assign(result.customMetadata ?? {}, source.customMetadata);
+      result.customMetadata = Object.assign(
+        result.customMetadata ?? {},
+        source.customMetadata,
+      );
     }
 
     if (source.skipSummarization !== undefined) {

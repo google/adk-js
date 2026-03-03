@@ -5,11 +5,14 @@
  */
 
 import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
-import {isEmpty, isPlainObject} from 'lodash-es';
+import {cloneDeep, isEmpty, isPlainObject} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
-import {mergeEventActions} from '../events/event_actions.js';
+import {
+  createEventActions,
+  mergeEventActions,
+} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {ToolContext} from '../tools/tool_context.js';
@@ -208,6 +211,13 @@ export function generateRequestConfirmationEvent({
       parts: parts,
       role: functionResponseEvent.content!.role,
     },
+    // Carry only requestedToolConfirmations — not the full actions — to avoid
+    // double-applying stateDelta/artifactDelta/transferToAgent that were
+    // already applied by the streamed individual tool response events.
+    actions: createEventActions({
+      requestedToolConfirmations:
+        functionResponseEvent.actions.requestedToolConfirmations,
+    }),
     longRunningToolIds: Array.from(longRunningToolIds),
   });
 }
@@ -391,9 +401,7 @@ async function executeSingleFunctionCall({
   afterToolCallbacks: SingleAfterToolCallback[];
   toolConfirmation?: ToolConfirmation;
 }): Promise<Event | null> {
-  const functionArgs = functionCall.args
-    ? structuredClone(functionCall.args)
-    : {};
+  const functionArgs = functionCall.args ? cloneDeep(functionCall.args) : {};
 
   let tool: BaseTool;
   let toolContext: ToolContext;
@@ -407,7 +415,7 @@ async function executeSingleFunctionCall({
   } catch (e) {
     toolContext = new ToolContext({
       invocationContext,
-      functionCallId: functionCall.id || undefined,
+      functionCallId: functionCall.id,
       toolConfirmation,
     });
 
@@ -435,7 +443,7 @@ async function executeSingleFunctionCall({
         author: invocationContext.agent.name,
         content: createUserContent({
           functionResponse: {
-            id: functionCall.id || undefined,
+            id: functionCall.id,
             name: functionCall.name || 'unknown',
             response,
           },
@@ -584,7 +592,7 @@ function createErrorResponseEvent(
     author: invocationContext.agent.name,
     content: createUserContent({
       functionResponse: {
-        id: functionCall.id || undefined,
+        id: functionCall.id,
         name: functionCall.name!,
         response: {error: errorMessage},
       },
@@ -623,11 +631,18 @@ function detectStateDeltaConflicts(events: Event[]): void {
   const conflictKeys = Object.keys(conflicts);
   if (!conflictKeys.length) return;
 
+  const deepMergedKeys: string[] = [];
+  const lastWriteWinsKeys: string[] = [];
   const details = conflictKeys
     .map((k) => {
       const values = conflicts[k];
       const allPlainObjects = values.every((v) => isPlainObject(v));
       const resolution = allPlainObjects ? 'deep-merged' : 'last-write-wins';
+      if (allPlainObjects) {
+        deepMergedKeys.push(k);
+      } else {
+        lastWriteWinsKeys.push(k);
+      }
       const serialized = values
         .map((v) => {
           try {
@@ -640,12 +655,19 @@ function detectStateDeltaConflicts(events: Event[]): void {
       return `${k} (${resolution}): [${serialized}]`;
     })
     .join('; ');
-  logger.warn(
-    `Parallel tool calls wrote to the same stateDelta key(s): [${conflictKeys.join(', ')}]. ` +
-      `Values: ${details}. ` +
-      `Plain-object conflicts are deep-merged; all others use last-write-wins. ` +
-      `Consider sequential mode if ordering matters.`,
-  );
+
+  if (lastWriteWinsKeys.length) {
+    logger.warn(
+      `Parallel tool calls wrote to the same stateDelta key(s) with last-write-wins: [${lastWriteWinsKeys.join(', ')}]. ` +
+        `Values: ${details}. ` +
+        `Consider sequential mode if ordering matters.`,
+    );
+  } else {
+    logger.debug(
+      `Parallel tool calls wrote to the same stateDelta key(s) (safely deep-merged): [${deepMergedKeys.join(', ')}]. ` +
+        `Values: ${details}.`,
+    );
+  }
 }
 
 /**
@@ -920,7 +942,7 @@ function getToolAndContext({
 
   const toolContext = new ToolContext({
     invocationContext: invocationContext,
-    functionCallId: functionCall.id || undefined,
+    functionCallId: functionCall.id,
     toolConfirmation,
   });
 

@@ -340,6 +340,46 @@ describe('handleFunctionCallList', () => {
       result: 'error handled gracefully',
     });
   });
+
+  // PR #167 Fix 1 — structuredClone → cloneDeep
+  // structuredClone throws DataCloneError on function values;
+  // cloneDeep from lodash-es copies them by reference without throwing.
+  it('args containing non-serializable values do not throw (cloneDeep, not structuredClone)', async () => {
+    const capturedArgs: Record<string, unknown>[] = [];
+    const captureCallback: SingleBeforeToolCallback = async ({args}) => {
+      capturedArgs.push(args as Record<string, unknown>);
+      return undefined;
+    };
+
+    const fnArg = () => 'sentinel';
+    await expect(
+      handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: 'id-1', name: 'testTool', args: {fn: fnArg}}],
+        toolsDict: {testTool},
+        beforeToolCallbacks: [captureCallback],
+        afterToolCallbacks: [],
+      }),
+    ).resolves.toBeDefined();
+
+    expect(typeof capturedArgs[0]?.['fn']).toBe('function');
+  });
+
+  // PR #167 Fix 2 — functionCall.id || undefined → functionCall.id
+  // The redundant `|| undefined` guard was removed; the id must round-trip verbatim.
+  it('functionCall.id is preserved verbatim in functionResponse.id', async () => {
+    const specificId = 'fc-exact-id-42';
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: specificId, name: 'testTool', args: {}}],
+      toolsDict: {testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    expect(event!.content!.parts![0].functionResponse!.id).toBe(specificId);
+  });
 });
 
 describe('parallel tool execution', () => {
@@ -1877,5 +1917,47 @@ describe('generateRequestConfirmationEvent', () => {
         'call_1',
     );
     expect(call1).toBeDefined();
+  });
+
+  // PR #167 Fix 3 — actions on confirmation event
+  // The confirmation event must carry ONLY requestedToolConfirmations.
+  // Copying the full actions object caused stateDelta / artifactDelta /
+  // transferToAgent to be double-applied by appendEvent in the streaming path.
+  it('carries only requestedToolConfirmations — stateDelta/artifactDelta/transferToAgent are not copied', () => {
+    const functionCallEvent = {
+      content: {
+        parts: [
+          {
+            functionCall: {name: 'myTool', args: {}, id: 'fc-1'},
+          },
+        ],
+      },
+    } as unknown as Event;
+
+    const functionResponseEvent = {
+      actions: {
+        stateDelta: {counter: 1},
+        artifactDelta: {report: 1},
+        transferToAgent: 'other_agent',
+        requestedToolConfirmations: {'fc-1': {message: 'please confirm'}},
+      },
+      content: {role: 'model'},
+    } as unknown as Event;
+
+    const event = generateRequestConfirmationEvent({
+      invocationContext,
+      functionCallEvent,
+      functionResponseEvent,
+    });
+
+    expect(event).toBeDefined();
+    expect(event!.actions!.requestedToolConfirmations).toEqual({
+      'fc-1': {message: 'please confirm'},
+    });
+    // stateDelta and artifactDelta must be empty — not copied from functionResponseEvent
+    expect(event!.actions!.stateDelta).toEqual({});
+    expect(event!.actions!.artifactDelta).toEqual({});
+    // transferToAgent must not be set on the confirmation event
+    expect(event!.actions!.transferToAgent).toBeUndefined();
   });
 });
