@@ -44,7 +44,7 @@
     "@google/genai": "^1.37.0",
     "@mikro-orm/core": "^6.6.6",
     "@mikro-orm/reflection": "^6.6.6",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "google-auth-library": "^10.3.0",
     "lodash-es": "^4.17.23",
     "zod": "^4.2.1",
