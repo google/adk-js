@@ -410,11 +410,11 @@ export function createProgram(): Command {
     )
     .option('--force', 'Force run skipped tests.')
     .action(async (options: Record<string, string>) => {
-      runIntegrationTests(
-        options['agents_dir'],
-        options['tests_dir'],
-        getBoolean(options['force']),
-      );
+      runIntegrationTests({
+        agentsDir: options['agents_dir'],
+        testsDir: options['tests_dir'],
+        forceRunAll: getBoolean(options['force']),
+      });
     });
 
   return program;

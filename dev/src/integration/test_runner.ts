@@ -11,24 +11,19 @@ import {
   Runner,
   Session,
 } from '@google/adk';
-import {
-  Blob,
-  CodeExecutionResult,
-  Content,
-  ExecutableCode,
-  FileData,
-  FinishReason,
-  GenerateContentResponseUsageMetadata,
-  GroundingMetadata,
-  PartMediaResolution,
-  VideoMetadata,
-} from '@google/genai';
+import {Content} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 import * as assert from 'node:assert';
 import {AgentRegistry} from './agent_registry.js';
 import {DummyLlm} from './dummy_llm.js';
 import {ReplayPlugin} from './replay_plugin.js';
-import {TestInfo, UserMessage} from './test_types.js';
+import {
+  FilteredEvent,
+  FilteredEventActions,
+  FilteredPart,
+  TestInfo,
+  UserMessage,
+} from './test_types.js';
 
 const SKIPPED_TESTS = [
   {
@@ -199,22 +194,6 @@ function removeEmptyAndUndefinedFields(obj: Record<string, unknown>) {
   }
 }
 
-// an ADK EventActions missing some filtered fields.
-// Excluded is:
-// - requestedAuthConfigs
-// - requestedToolConfirmations
-interface FilteredEventActions {
-  skipSummarization?: boolean;
-  stateDelta?: {
-    [key: string]: unknown;
-  };
-  artifactDelta: {
-    [key: string]: number;
-  };
-  transferToAgent?: string;
-  escalate?: boolean;
-}
-
 function filterEventActionsStateDelta(actions?: FilteredEventActions) {
   if (!actions?.stateDelta) {
     return;
@@ -224,65 +203,12 @@ function filterEventActionsStateDelta(actions?: FilteredEventActions) {
   delete actions.stateDelta['_adk_replay_config'];
 }
 
-// A filtered GenAI Part missing some filtered fields
-// Excluded is:
-// - thought_signature
-// - function_call
-// - function_response
-//
-// Copying from the original type: Only one of these is expected to be set.
-// More than one is invalid and an error.
-interface FilteredPart {
-  mediaResolution?: PartMediaResolution;
-  codeExecutionResult?: CodeExecutionResult;
-  executableCode?: ExecutableCode;
-  fileData?: FileData;
-  inlineData?: Blob;
-  text?: string;
-  thought?: boolean;
-  videoMetadata?: VideoMetadata;
-}
-
 function filterPartFields(part: FilteredPart) {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   delete (part as any).thoughtSignature;
   delete (part as any).functionCall;
   delete (part as any).functionResponse;
   /* eslint-enable @typescript-eslint/no-explicit-any */
-}
-
-// A filtered GenAI Content.
-// Not missing any fields, just holds FilteredPart instead of Part.
-interface FilteredContent {
-  parts?: FilteredPart[];
-  role?: string;
-}
-
-// An ADK Event missing some filtered fields and holds a FilteredContent instead of a Content
-// Excluded is:
-// - id
-// - timestamp
-// - invocationId
-// - longRunningToolIds
-interface FilteredEvent {
-  // From ADK Event
-  author?: string;
-  branch?: string;
-  actions: FilteredEventActions;
-
-  // From ADK LlmResponse, inherited by Event
-  content?: FilteredContent;
-  groundingMetadata?: GroundingMetadata;
-  partial?: boolean;
-  turnComplete?: boolean;
-  errorCode?: string;
-  errorMessage?: string;
-  interrupted?: boolean;
-  customMetadata?: {
-    [key: string]: unknown;
-  };
-  usageMetadata?: GenerateContentResponseUsageMetadata;
-  finishReason?: FinishReason;
 }
 
 function filterEventFields(event: FilteredEvent) {

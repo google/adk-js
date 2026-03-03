@@ -11,13 +11,17 @@ import {AgentRegistry} from './agent_registry.js';
 import {IntegrationRegistry} from './integration_registry.js';
 import {TestRunner} from './test_runner.js';
 
-export async function runIntegrationTests(
-  agents_dir: string,
-  tests_dir: string,
-  forceRunAll: boolean,
-) {
-  console.log(`Loading agents from ${agents_dir}`);
-  const agentConfigs = await batchLoadYamlAgentConfig(agents_dir);
+export async function runIntegrationTests({
+  agentsDir,
+  testsDir,
+  forceRunAll,
+}: {
+  agentsDir: string;
+  testsDir: string;
+  forceRunAll: boolean;
+}) {
+  console.log(`Loading agents from ${agentsDir}`);
+  const agentConfigs = await batchLoadYamlAgentConfig(agentsDir);
   console.log(agentConfigs.size, 'agents found');
 
   console.log('Registering conformance integrations.');
@@ -32,8 +36,8 @@ export async function runIntegrationTests(
   }
   console.log(agentRegistry.summary());
 
-  console.log(`Loading tests from ${tests_dir}`);
-  const testSpecs = await batchLoadYamlTestDefs(tests_dir);
+  console.log(`Loading tests from ${testsDir}`);
+  const testSpecs = await batchLoadYamlTestDefs(testsDir);
   console.log(testSpecs.size, 'tests found.');
 
   console.log('Running tests.');
