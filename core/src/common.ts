@@ -164,6 +164,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   ToolExecuteArgument,
@@ -172,7 +173,6 @@ export type {
   ToolOptions,
 } from './tools/function_tool.js';
 export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
-export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {ToolContext} from './tools/tool_context.js';
