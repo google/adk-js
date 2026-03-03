@@ -115,10 +115,38 @@ describe('batchLoadYamlTestDefs', () => {
     (fs.readFile as Mock).mockResolvedValue('{}');
 
     const tests = await batchLoadYamlTestDefs(rootDir);
-
     expect(tests.size).toBe(2);
     expect(tests.has('t1')).toBe(true);
     expect(tests.has('t2')).toBe(true);
+  });
+
+  it('should load and parse test definitions with Windows-style paths', async () => {
+    const rootDir = 'C:\\root\\tests';
+    const mockFiles = ['C:\\root\\tests\\category\\test1\\spec.yaml'];
+
+    (fg.stream as unknown as Mock).mockReturnValue(mockFiles);
+
+    (fs.readFile as Mock).mockImplementation(async (filePath: string) => {
+      if (filePath.includes('spec.yaml')) return SPEC_YAML;
+      if (filePath.includes('generated-session.yaml')) return SESSION_YAML;
+      if (filePath.includes('generated-recordings.yaml'))
+        return RECORDINGS_YAML;
+      throw new Error(`File not found: ${filePath}`);
+    });
+
+    const tests = await batchLoadYamlTestDefs(rootDir);
+
+    expect(fg.stream).toHaveBeenCalledWith('**/spec.{yaml,yml}', {
+      cwd: rootDir,
+      absolute: true,
+    });
+
+    expect(tests.size).toBe(1);
+    const expectedKey = 'category/test1';
+    const test = tests.get(expectedKey);
+    expect(test).toBeDefined();
+    expect(test?.name).toBe(expectedKey);
+    expect(test?.spec.agent).toBe('test-agent');
   });
 
   it('should throw an error if a required file is missing', async () => {

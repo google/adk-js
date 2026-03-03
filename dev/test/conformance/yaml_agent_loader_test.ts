@@ -66,7 +66,7 @@ tools:
         - toolA
 `;
 
-describe('BatchYamlAgentLoader', () => {
+describe('batchLoadYamlAgentConfig', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -154,6 +154,42 @@ describe('BatchYamlAgentLoader', () => {
           },
         },
       ],
+    });
+  });
+
+  it('should load and parse yaml files with Windows-style paths', async () => {
+    const rootDir = 'C:\\root\\dir';
+    const mockFiles = [
+      'C:\\root\\dir\\agent1.yaml',
+      'C:\\root\\dir\\subdir\\agent2.yml',
+    ];
+
+    (fg.stream as unknown as Mock).mockReturnValue(mockFiles);
+
+    (fs.readFile as Mock).mockImplementation(async (filePath: string) => {
+      if (filePath.includes('agent1.yaml')) return AGENT_ONE_YAML;
+      if (filePath.includes('agent2.yml')) return AGENT_TWO_YAML;
+      throw new Error(`File not found: ${filePath}`);
+    });
+
+    const agents = await batchLoadYamlAgentConfig(rootDir);
+
+    expect(fg.stream).toHaveBeenCalledWith('**/*.{yaml,yml}', {
+      cwd: rootDir,
+      absolute: true,
+    });
+
+    expect(agents.size).toBe(2);
+
+    expect(agents.get('agent1')).toMatchObject({
+      name: 'agent_one',
+      model: 'gemini-pro',
+    });
+
+    const agent2Key = 'subdir/agent2';
+    expect(agents.get(agent2Key)).toMatchObject({
+      name: 'agent_two',
+      model: 'gemini-flash',
     });
   });
 

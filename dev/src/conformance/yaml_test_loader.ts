@@ -33,35 +33,43 @@ export async function batchLoadYamlTestDefs(
   const tests = new Map<string, TestInfo>();
 
   for await (const file of files) {
+    // Normalize paths to POSIX to ensure consistent behavior across platforms
+    // and when handling Windows paths.
+    const normalizedFile = (file as string).replaceAll('\\', '/');
+
     // Test directory
-    const baseDir = path.dirname(file as string);
+    const baseDir = path.posix.dirname(normalizedFile);
 
     // Spec file
-    const specFile = path.join(baseDir, 'spec.yaml');
-    const filePath = specFile as string;
+    const specFile = path.posix.join(baseDir, 'spec.yaml');
+    const filePath = specFile;
     const content = await fs.readFile(filePath, 'utf-8');
     const testSpec = camelcaseKeys(parse(content), {
       deep: true,
     }) as TestSpec;
 
     // Session file
-    const sessionFile = path.join(baseDir, 'generated-session.yaml');
+    const sessionFile = path.posix.join(baseDir, 'generated-session.yaml');
     const sessionContent = await fs.readFile(sessionFile, 'utf-8');
     const session = camelcaseKeys(parse(sessionContent), {
       deep: true,
     }) as Session;
 
     // Recordings file
-    const recordingsFile = path.join(baseDir, 'generated-recordings.yaml');
+    const recordingsFile = path.posix.join(
+      baseDir,
+      'generated-recordings.yaml',
+    );
     const recordingsContent = await fs.readFile(recordingsFile, 'utf-8');
     const recordings = camelcaseKeys(parse(recordingsContent), {
       deep: true,
     }) as Recordings;
 
     // Make test names unique by including relative file path from given root dir
-    const relativePath = path.relative(directory, baseDir);
-    const parsedPath = path.parse(relativePath);
-    const name = path.join(parsedPath.dir, parsedPath.name);
+    const normalizedDir = directory.replaceAll('\\', '/');
+    const relativePath = path.posix.relative(normalizedDir, baseDir);
+    const parsedPath = path.posix.parse(relativePath);
+    const name = path.posix.join(parsedPath.dir, parsedPath.name);
 
     tests.set(name, {
       name: name,

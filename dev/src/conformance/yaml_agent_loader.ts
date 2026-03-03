@@ -26,19 +26,21 @@ export async function batchLoadYamlAgentConfig(
   const agents = new Map<string, YamlAgentConfig>();
 
   for await (const file of files) {
-    const filePath = file as string;
+    const filePath = (file as string).replaceAll('\\', '/');
     const content = await fs.readFile(filePath, 'utf-8');
     const agentConfig = camelcaseKeys(parse(content), {
       deep: true,
     }) as YamlAgentConfig;
 
     // Allow retrieval of root agents based on filename
-    agentConfig.isRootAgent = path.basename(filePath) === 'root_agent.yaml';
+    agentConfig.isRootAgent =
+      path.posix.basename(filePath) === 'root_agent.yaml';
 
     // Make agent names unique by including relative file path from given root dir
-    const relativePath = path.relative(directory, filePath);
-    const parsedPath = path.parse(relativePath);
-    const name = path.join(parsedPath.dir, parsedPath.name);
+    const normalizedDir = directory.replaceAll('\\', '/');
+    const relativePath = path.posix.relative(normalizedDir, filePath);
+    const parsedPath = path.posix.parse(relativePath);
+    const name = path.posix.join(parsedPath.dir, parsedPath.name);
     agents.set(name, agentConfig);
   }
 
@@ -76,8 +78,9 @@ function rewriteConfigPath(
   baseAgentName: string,
   relativeConfigPath: string,
 ): string {
-  const dir = path.dirname(baseAgentName);
-  const agentPath = path.join(dir, relativeConfigPath);
-  const parsed = path.parse(agentPath);
-  return path.join(parsed.dir, parsed.name);
+  const normalizedRelativeConfigPath = relativeConfigPath.replaceAll('\\', '/');
+  const dir = path.posix.dirname(baseAgentName);
+  const agentPath = path.posix.join(dir, normalizedRelativeConfigPath);
+  const parsed = path.posix.parse(agentPath);
+  return path.posix.join(parsed.dir, parsed.name);
 }
