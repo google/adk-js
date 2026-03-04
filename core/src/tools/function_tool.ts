@@ -10,8 +10,8 @@ import {z as z4} from 'zod/v4';
 
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 
+import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
-import {ToolContext} from './tool_context.js';
 
 /**
  * Input parameters of the function tool.
@@ -39,7 +39,7 @@ export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
  */
 export type ToolExecuteFunction<TParameters extends ToolInputParameters> = (
   input: ToolExecuteArgument<TParameters>,
-  tool_context?: ToolContext,
+  tool_context?: Context,
 ) => Promise<unknown> | unknown;
 
 /**

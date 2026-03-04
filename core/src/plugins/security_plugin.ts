@@ -6,11 +6,11 @@
 
 import {FunctionCall} from '@google/genai';
 
+import {Context} from '../agents/context.js';
 import {Event} from '../events/event.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-import {ToolContext} from '../tools/tool_context.js';
 
 // Constants
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
@@ -81,7 +81,7 @@ export class SecurityPlugin extends BasePlugin {
   }: {
     tool: BaseTool;
     toolArgs: {[key: string]: unknown};
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<{[key: string]: unknown} | undefined> {
     const toolCallCheckState = this.getToolCallCheckState(toolContext);
 
@@ -114,7 +114,7 @@ export class SecurityPlugin extends BasePlugin {
   }
 
   private getToolCallCheckState(
-    toolContext: ToolContext,
+    toolContext: Context,
   ): string | ToolConfirmation | undefined {
     const {functionCallId} = toolContext;
     if (!functionCallId) {
@@ -129,7 +129,7 @@ export class SecurityPlugin extends BasePlugin {
   }
 
   private setToolCallCheckState(
-    toolContext: ToolContext,
+    toolContext: Context,
     state: string | ToolConfirmation,
   ): void {
     const {functionCallId} = toolContext;
@@ -152,7 +152,7 @@ export class SecurityPlugin extends BasePlugin {
   }: {
     tool: BaseTool;
     toolArgs: {[key: string]: unknown};
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<{[key: string]: unknown} | undefined> {
     const policyCheckResult = await this.policyEngine.evaluate({
       tool,

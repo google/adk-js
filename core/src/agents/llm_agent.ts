@@ -55,9 +55,9 @@ import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-import {ToolContext} from '../tools/tool_context.js';
 import {base64Decode} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
+import {Context} from './context.js';
 
 import {
   runAsyncGeneratorWithOtelContext,
@@ -70,7 +70,6 @@ import {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './base_llm_processor.js';
-import {CallbackContext} from './callback_context.js';
 import {
   getContents,
   getCurrentTurnContents,
@@ -111,7 +110,7 @@ export type InstructionProvider = (
  *     will be skipped and the provided content will be returned to user.
  */
 export type SingleBeforeModelCallback = (params: {
-  context: CallbackContext;
+  context: Context;
   request: LlmRequest;
 }) => LlmResponse | undefined | Promise<LlmResponse | undefined>;
 
@@ -135,7 +134,7 @@ export type BeforeModelCallback =
  *     user.
  */
 export type SingleAfterModelCallback = (params: {
-  context: CallbackContext;
+  context: Context;
   response: LlmResponse;
 }) => LlmResponse | undefined | Promise<LlmResponse | undefined>;
 
@@ -154,14 +153,14 @@ export type AfterModelCallback =
  *
  * @param params.tool The tool to be called.
  * @param params.args The arguments to the tool.
- * @param params.context ToolContext for the tool call.
+ * @param params.context Context for the tool call.
  * @returns The tool response. When present, the returned tool response will
  *     be used and the framework will skip calling the actual tool.
  */
 export type SingleBeforeToolCallback = (params: {
   tool: BaseTool;
   args: Record<string, unknown>;
-  context: ToolContext;
+  context: Context;
 }) =>
   | Record<string, unknown>
   | undefined
@@ -182,14 +181,14 @@ export type BeforeToolCallback =
  *
  * @param params.tool The tool to be called.
  * @param params.args The arguments to the tool.
- * @param params.context ToolContext for the tool call.
+ * @param params.context Context for the tool call.
  * @param params.response The response from the tool.
  * @returns When present, the returned record will be used as tool result.
  */
 export type SingleAfterToolCallback = (params: {
   tool: BaseTool;
   args: Record<string, unknown>;
-  context: ToolContext;
+  context: Context;
   response: Record<string, unknown>;
 }) =>
   | Record<string, unknown>
@@ -489,7 +488,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     parameters: z.object({
       agentName: z.string().describe('the agent name to transfer to.'),
     }),
-    execute: function (args: {agentName: string}, toolContext?: ToolContext) {
+    execute: function (args: {agentName: string}, toolContext?: Context) {
       if (!toolContext) {
         throw new Error('toolContext is required.');
       }
@@ -519,7 +518,7 @@ class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
       ),
     ]);
 
-    const toolContext = new ToolContext({invocationContext});
+    const toolContext = new Context({invocationContext});
     await this.tool.processLlmRequest({toolContext, llmRequest});
   }
 
@@ -1675,7 +1674,7 @@ export class LlmAgent extends BaseAgent {
     // TODO - b/425992518: check if tool preprocessors can be simplified.
     // Run pre-processors for tools.
     for (const toolUnion of this.tools) {
-      const toolContext = new ToolContext({invocationContext});
+      const toolContext = new Context({invocationContext});
 
       // process all tools from this tool union
       const tools = await convertToolUnionToTools(
@@ -1942,9 +1941,9 @@ export class LlmAgent extends BaseAgent {
     llmRequest: LlmRequest,
     modelResponseEvent: Event,
   ): Promise<LlmResponse | undefined> {
-    // TODO - b/425992518: Clean up eventActions from CallbackContext here as
+    // TODO - b/425992518: Clean up eventActions from Context here as
     // modelResponseEvent.actions is always empty.
-    const callbackContext = new CallbackContext({
+    const callbackContext = new Context({
       invocationContext,
       eventActions: modelResponseEvent.actions,
     });
@@ -1977,7 +1976,7 @@ export class LlmAgent extends BaseAgent {
     llmResponse: LlmResponse,
     modelResponseEvent: Event,
   ): Promise<LlmResponse | undefined> {
-    const callbackContext = new CallbackContext({
+    const callbackContext = new Context({
       invocationContext,
       eventActions: modelResponseEvent.actions,
     });
@@ -2018,7 +2017,7 @@ export class LlmAgent extends BaseAgent {
     } catch (modelError: unknown) {
       // Return an LlmResponse with error details.
       // Note: this will cause agent to work better if there's a loop.
-      const callbackContext = new CallbackContext({
+      const callbackContext = new Context({
         invocationContext,
         eventActions: modelResponseEvent.actions,
       });

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ToolContext} from '../../tools/tool_context.js';
+import {Context} from '../../agents/context.js';
 import {AuthCredential} from '../auth_credential.js';
 import {AuthConfig} from '../auth_tool.js';
 
@@ -26,7 +26,7 @@ export interface BaseCredentialService {
    */
   loadCredential(
     authConfig: AuthConfig,
-    toolContext: ToolContext,
+    toolContext: Context,
   ): Promise<AuthCredential | undefined>;
 
   /*
@@ -40,8 +40,5 @@ export interface BaseCredentialService {
    *     trying to save the credential.
    * @return A promise that resolves when the credential is saved to the store.
    */
-  saveCredential(
-    authConfig: AuthConfig,
-    toolContext: ToolContext,
-  ): Promise<void>;
+  saveCredential(authConfig: AuthConfig, toolContext: Context): Promise<void>;
 }

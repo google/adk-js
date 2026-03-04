@@ -12,9 +12,9 @@ import {createEvent, Event, getFunctionCalls} from '../events/event.js';
 import {mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-import {ToolContext} from '../tools/tool_context.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
+import {Context} from './context.js';
 
 import {
   traceMergedToolCalls,
@@ -214,7 +214,7 @@ export function generateRequestConfirmationEvent({
 async function callToolAsync(
   tool: BaseTool,
   args: Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
-  toolContext: ToolContext,
+  toolContext: Context,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
@@ -241,7 +241,7 @@ async function callToolAsync(
 function buildResponseEvent(
   tool: BaseTool,
   functionResult: unknown,
-  toolContext: ToolContext,
+  toolContext: Context,
   invocationContext: InvocationContext,
 ): Event {
   let responseResult: Record<string, unknown>;
@@ -530,14 +530,14 @@ function getToolAndContext({
   functionCall: FunctionCall;
   toolsDict: Record<string, BaseTool>;
   toolConfirmation?: ToolConfirmation;
-}): {tool: BaseTool; toolContext: ToolContext} {
+}): {tool: BaseTool; toolContext: Context} {
   if (!functionCall.name || !(functionCall.name in toolsDict)) {
     throw new Error(
       `Function ${functionCall.name} is not found in the toolsDict.`,
     );
   }
 
-  const toolContext = new ToolContext({
+  const toolContext = new Context({
     invocationContext: invocationContext,
     functionCallId: functionCall.id || undefined,
     toolConfirmation,

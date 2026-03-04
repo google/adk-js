@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ToolContext} from '../../tools/tool_context.js';
+import {Context} from '../../agents/context.js';
 import {AuthCredential} from '../auth_credential.js';
 import {AuthConfig} from '../auth_tool.js';
 
@@ -22,7 +22,7 @@ export class InMemoryCredentialService implements BaseCredentialService {
 
   loadCredential(
     authConfig: AuthConfig,
-    toolContext: ToolContext,
+    toolContext: Context,
   ): Promise<AuthCredential | undefined> {
     const credentialBucket = this.getBucketForCurrentContext(toolContext);
 
@@ -31,7 +31,7 @@ export class InMemoryCredentialService implements BaseCredentialService {
 
   async saveCredential(
     authConfig: AuthConfig,
-    toolContext: ToolContext,
+    toolContext: Context,
   ): Promise<void> {
     const credentialBucket = this.getBucketForCurrentContext(toolContext);
 
@@ -42,7 +42,7 @@ export class InMemoryCredentialService implements BaseCredentialService {
   }
 
   private getBucketForCurrentContext(
-    toolContext: ToolContext,
+    toolContext: Context,
   ): Record<string, AuthCredential> {
     const {appName, userId} = toolContext.invocationContext.session;
 

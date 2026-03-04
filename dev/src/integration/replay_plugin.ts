@@ -7,10 +7,9 @@
 import {
   BasePlugin,
   BaseTool,
-  CallbackContext,
+  Context,
   LlmRequest,
   LlmResponse,
-  ToolContext,
 } from '@google/adk';
 import {Recording} from './test_types.js';
 
@@ -25,7 +24,7 @@ export class ReplayPlugin extends BasePlugin {
   override async beforeModelCallback({
     callbackContext,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     const agentName = callbackContext.agentName;
@@ -53,7 +52,7 @@ export class ReplayPlugin extends BasePlugin {
   override async beforeToolCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     const agentName = params.toolContext.invocationContext.agent.name;
     const toolName = params.tool.name;

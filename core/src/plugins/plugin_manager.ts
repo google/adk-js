@@ -7,13 +7,12 @@
 import {Content} from '@google/genai';
 
 import {BaseAgent} from '../agents/base_agent.js';
-import {CallbackContext} from '../agents/callback_context.js';
+import {Context} from '../agents/context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
-import {ToolContext} from '../tools/tool_context.js';
 import {logger} from '../utils/logger.js';
 
 import {BasePlugin} from './base_plugin.js';
@@ -189,7 +188,7 @@ export class PluginManager {
     callbackContext,
   }: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.runCallbacks(
       this.plugins,
@@ -207,7 +206,7 @@ export class PluginManager {
     callbackContext,
   }: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.runCallbacks(
       this.plugins,
@@ -227,7 +226,7 @@ export class PluginManager {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
       this.plugins,
@@ -248,7 +247,7 @@ export class PluginManager {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
@@ -267,7 +266,7 @@ export class PluginManager {
     llmRequest,
     error,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
@@ -286,7 +285,7 @@ export class PluginManager {
     callbackContext,
     llmRequest,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
@@ -304,7 +303,7 @@ export class PluginManager {
     callbackContext,
     llmResponse,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
@@ -326,7 +325,7 @@ export class PluginManager {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(

@@ -5,7 +5,7 @@
  */
 
 import type {Event, LlmResponse} from '@google/adk';
-import {BasePlugin, CallbackContext, LlmAgent} from '@google/adk';
+import {BasePlugin, Context, LlmAgent} from '@google/adk';
 import {GenerateContentResponse} from '@google/genai';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -33,7 +33,7 @@ export class ModelEventCapturePlugin extends BasePlugin {
   private readonly modelResponses: GenerateContentResponse[] = [];
 
   async afterModelCallback(params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     this.modelResponses.push(toGenAIResponse(params.llmResponse));

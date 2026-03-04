@@ -17,7 +17,7 @@ export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './agents/base_llm_processor.js';
-export {CallbackContext} from './agents/callback_context.js';
+export {Context} from './agents/context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export type {InvocationContextParams} from './agents/invocation_context.js';
@@ -174,7 +174,6 @@ export type {
 export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
-export {ToolContext} from './tools/tool_context.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';

@@ -7,8 +7,8 @@
 import {ReadonlyContext} from '../agents/readonly_context.js';
 import {LlmRequest} from '../models/llm_request.js';
 
+import {Context} from '../agents/context.js';
 import {BaseTool} from './base_tool.js';
-import {ToolContext} from './tool_context.js';
 
 /**
  * Function to decide whether a tool should be exposed to LLM. Toolset
@@ -85,7 +85,7 @@ export abstract class BaseToolset {
    * @param llmRequest The outgoing LLM request, mutable this method.
    */
   async processLlmRequest(
-    toolContext: ToolContext, // eslint-disable-line @typescript-eslint/no-unused-vars
+    toolContext: Context, // eslint-disable-line @typescript-eslint/no-unused-vars
     llmRequest: LlmRequest, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): Promise<void> {}
 }

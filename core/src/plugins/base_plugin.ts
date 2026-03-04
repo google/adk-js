@@ -7,13 +7,12 @@
 import {Content} from '@google/genai';
 
 import {BaseAgent} from '../agents/base_agent.js';
-import {CallbackContext} from '../agents/callback_context.js';
+import {Context} from '../agents/context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
-import {ToolContext} from '../tools/tool_context.js';
 
 /**
  * Base class for creating plugins.
@@ -63,7 +62,7 @@ import {ToolContext} from '../tools/tool_context.js';
  *     {tool, toolArgs, toolContext}: {
  *       tool: BaseTool,
  *       toolArgs: Record<string, unknown>,
- *       toolContext: ToolContext,
+ *       toolContext: Context,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
  *     this.logger.info(
@@ -78,7 +77,7 @@ import {ToolContext} from '../tools/tool_context.js';
  *     {tool, toolArgs, toolContext, result}: {
  *       tool: BaseTool,
  *       toolArgs: Record<string, unknown>,
- *       toolContext: ToolContext,
+ *       toolContext: Context,
  *       result: Record<string, unknown>,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
@@ -201,7 +200,7 @@ export abstract class BasePlugin {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeAgentCallback(params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return;
   }
@@ -221,7 +220,7 @@ export abstract class BasePlugin {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterAgentCallback(params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return;
   }
@@ -241,7 +240,7 @@ export abstract class BasePlugin {
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeModelCallback(params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return;
@@ -261,7 +260,7 @@ export abstract class BasePlugin {
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async afterModelCallback(params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return;
@@ -283,7 +282,7 @@ export abstract class BasePlugin {
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onModelErrorCallback(params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
@@ -308,7 +307,7 @@ export abstract class BasePlugin {
   async beforeToolCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return;
   }
@@ -332,7 +331,7 @@ export abstract class BasePlugin {
   async afterToolCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return;
@@ -342,7 +341,7 @@ export abstract class BasePlugin {
    * Callback executed when a tool call encounters an error.
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return;
@@ -366,7 +365,7 @@ export abstract class BasePlugin {
   async onToolErrorCallback(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return;

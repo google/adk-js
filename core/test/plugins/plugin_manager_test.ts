@@ -8,13 +8,12 @@ import {
   BaseAgent,
   BasePlugin,
   BaseTool,
-  CallbackContext,
+  Context,
   Event,
   InvocationContext,
   LlmRequest,
   LlmResponse,
   PluginManager,
-  ToolContext,
 } from '@google/adk';
 import {Content} from '@google/genai';
 
@@ -71,7 +70,7 @@ class TestPlugin extends BasePlugin {
 
   override async beforeAgentCallback(_params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('beforeAgentCallback')) as
       | Content
@@ -80,7 +79,7 @@ class TestPlugin extends BasePlugin {
 
   override async afterAgentCallback(_params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('afterAgentCallback')) as
       | Content
@@ -90,7 +89,7 @@ class TestPlugin extends BasePlugin {
   override async beforeToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('beforeToolCallback')) as
       | Record<string, unknown>
@@ -100,7 +99,7 @@ class TestPlugin extends BasePlugin {
   override async afterToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('afterToolCallback')) as
@@ -111,7 +110,7 @@ class TestPlugin extends BasePlugin {
   override async onToolErrorCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('onToolErrorCallback')) as
@@ -120,7 +119,7 @@ class TestPlugin extends BasePlugin {
   }
 
   override async beforeModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('beforeModelCallback')) as
@@ -129,7 +128,7 @@ class TestPlugin extends BasePlugin {
   }
 
   override async afterModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('afterModelCallback')) as
@@ -138,7 +137,7 @@ class TestPlugin extends BasePlugin {
   }
 
   override async onModelErrorCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
@@ -154,10 +153,10 @@ describe('PluginManager', () => {
   let plugin2: TestPlugin;
   const mockInvocationContext = {} as InvocationContext;
   const mockUserMessage = {} as Content;
-  const mockCallbackContext = {} as CallbackContext;
+  const mockCallbackContext = {} as Context;
   const mockAgent = {} as BaseAgent;
   const mockTool = {} as BaseTool;
-  const mockToolContext = {} as ToolContext;
+  const mockToolContext = {} as Context;
   const mockLlmRequest = {} as LlmRequest;
   const mockLlmResponse = {} as LlmResponse;
   const mockEvent = {} as Event;
