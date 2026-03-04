@@ -34,35 +34,31 @@ export class Context extends ReadonlyContext {
   toolConfirmation?: ToolConfirmation;
 
   /**
-   * @param invocationContext The invocation context.
-   * @param eventActions The event actions of the current call.
-   * @param functionCallId The function call id of the current tool call.
+   * @param options The configuration options for the Context.
+   * @param options.invocationContext The invocation context.
+   * @param options.eventActions The event actions of the current call.
+   * @param options.functionCallId The function call id of the current tool call.
    *     This id was returned in the function call event from LLM to identify a
    *     function call. If LLM didn't return this id, ADK will assign one to it.
    *     This id is used to map function call response to the original function
    *     call.
-   * @param toolConfirmation The tool confirmation of the current tool
+   * @param options.toolConfirmation The tool confirmation of the current tool
    *     call.
    */
-  constructor({
-    invocationContext,
-    eventActions,
-    functionCallId,
-    toolConfirmation,
-  }: {
+  constructor(options: {
     invocationContext: InvocationContext;
     eventActions?: EventActions;
     functionCallId?: string;
     toolConfirmation?: ToolConfirmation;
   }) {
-    super(invocationContext);
-    this.eventActions = eventActions || createEventActions();
+    super(options.invocationContext);
+    this.eventActions = options.eventActions || createEventActions();
     this._state = new State(
-      invocationContext.session.state,
+      options.invocationContext.session.state,
       this.eventActions.stateDelta,
     );
-    this.functionCallId = functionCallId;
-    this.toolConfirmation = toolConfirmation;
+    this.functionCallId = options.functionCallId;
+    this.toolConfirmation = options.toolConfirmation;
   }
 
   /**
