@@ -1,3 +1,4 @@
+#! /usr/bin/env node
 /**
  * @license
  * Copyright 2025 Google LLC
@@ -10,7 +11,7 @@ import {
   LogLevel,
   getArtifactServiceFromUri,
   getSessionServiceFromUri,
-  setLogLevel,
+  setLogLevel as setAdkCoreLogLevel,
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
@@ -166,11 +167,13 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action(async (agentsDir: string, options: Record<string, string>) => {
-      try {
-        setLogLevel(getLogLevelFromOptions(options));
+    .action((agentsDir: string, options: Record<string, string>) => {
+      const logLevel = getLogLevelFromOptions(options);
+      setAdkCoreLogLevel(logLevel);
 
+      try {
         const server = new AdkApiServer({
+          logLevel,
           agentsDir: getAbsolutePath(agentsDir),
           host: options['host'],
           port: parseInt(options['port'], 10),
@@ -182,9 +185,9 @@ export function createProgram(): Command {
           agentFileLoadOptions: getAgentFileOptions(options),
         });
 
-        await server.start();
-      } catch (e: unknown) {
-        console.error(e);
+        server.start();
+      } catch (error) {
+        console.error('Error starting web server:', error);
       }
     });
 
@@ -204,10 +207,12 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .action(async (agentsDir: string, options: Record<string, string>) => {
-      try {
-        setLogLevel(getLogLevelFromOptions(options));
+      const logLevel = getLogLevelFromOptions(options);
+      setAdkCoreLogLevel(logLevel);
 
+      try {
         const server = new AdkApiServer({
+          logLevel,
           agentsDir: getAbsolutePath(agentsDir),
           host: options['host'],
           port: parseInt(options['port'], 10),
@@ -219,8 +224,8 @@ export function createProgram(): Command {
           agentFileLoadOptions: getAgentFileOptions(options),
         });
         await server.start();
-      } catch (e: unknown) {
-        console.error(e);
+      } catch (error) {
+        console.error('Error starting API server:', error);
       }
     });
 
@@ -257,8 +262,8 @@ export function createProgram(): Command {
           region: options['region'],
           language: options['language'],
         });
-      } catch (e: unknown) {
-        console.error(e);
+      } catch (error) {
+        console.error('Error creating agent:', error);
       }
     });
 
@@ -292,9 +297,9 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .action(async (agentPath: string, options: Record<string, string>) => {
-      try {
-        setLogLevel(getLogLevelFromOptions(options));
+      setAdkCoreLogLevel(getLogLevelFromOptions(options));
 
+      try {
         await runAgent({
           agentPath,
           inputFile: options['replay'],
@@ -306,17 +311,21 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
         });
-      } catch (e: unknown) {
-        console.error(e);
+      } catch (error) {
+        console.error('Error running agent:', error);
       }
     });
 
-  const DEPLOY_COMMAND = program.command('deploy').description('Deploy agent');
+  const DEPLOY_COMMAND = program
+    .command('deploy')
+    .description('Deploy agent')
+    .allowUnknownOption()
+    .allowExcessArguments();
 
   DEPLOY_COMMAND.command('cloud_run')
+    .addArgument(AGENT_DIR_ARGUMENT)
     .allowUnknownOption()
     .allowExcessArguments()
-    .addArgument(AGENT_DIR_ARGUMENT)
     .addOption(PORT_OPTION)
     .option(
       '--project [string]',
@@ -355,20 +364,20 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .action(async (agentPath: string, options: Record<string, string>) => {
-      try {
-        const extraGcloudArgs = [];
-        for (const arg of process.argv.slice(5)) {
-          let argName = arg.replace(/^-+/, '');
-          if (argName.includes('=')) {
-            argName = argName.split('=')[0];
-          }
-          if (argName in options) {
-            continue;
-          }
-
-          extraGcloudArgs.push(arg);
+      const extraGcloudArgs = [];
+      for (const arg of process.argv.slice(5)) {
+        let argName = arg.replace(/^-+/, '');
+        if (argName.includes('=')) {
+          argName = argName.split('=')[0];
+        }
+        if (argName in options) {
+          continue;
         }
 
+        extraGcloudArgs.push(arg);
+      }
+
+      try {
         await deployToCloudRun({
           agentPath: getAbsolutePath(agentPath),
           project: options['project'],
@@ -385,8 +394,8 @@ export function createProgram(): Command {
           agentFileLoadOptions: getAgentFileOptions(options),
           extraGcloudArgs,
         });
-      } catch (e: unknown) {
-        console.error(e);
+      } catch (error) {
+        console.error('Error deploying agent:', error);
       }
     });
 
