@@ -9,20 +9,19 @@ import {
   FilePart as A2AFilePart,
   Part as A2APart,
   TextPart as A2ATextPart,
+  Message,
 } from '@a2a-js/sdk';
 import {
   CodeExecutionResult as GenAICodeExecutionResult,
+  Content as GenAIContent,
   ExecutableCode as GenAIExecutableCode,
   FunctionCall as GenAIFunctionCall,
   FunctionResponse as GenAIFunctionResponse,
   Part as GenAIPart,
+  createModelContent,
+  createUserContent,
 } from '@google/genai';
-
-enum MetadataKeys {
-  TYPE = 'adk_type',
-  LONG_RUNNING = 'adk_is_long_running',
-  THOUGHT = 'adk_thought',
-}
+import {A2AMetadataKeys} from './metadata_converter_utils.js';
 
 /**
  * The types of data parts.
@@ -38,7 +37,7 @@ enum DataPartType {
  * Converts GenAI Parts to A2A Parts.
  */
 export function toA2AParts(
-  parts: GenAIPart[],
+  parts: GenAIPart[] = [],
   longRunningToolIDs: string[] = [],
 ): A2APart[] {
   return parts.map((part) => toA2APart(part, longRunningToolIDs));
@@ -68,9 +67,9 @@ export function toA2APart(
 export function toA2ATextPart(part: GenAIPart): A2APart {
   const a2aPart: A2APart = {kind: 'text', text: part.text || ''};
 
-  if ('thought' in part && part['thought']) {
+  if (part.thought) {
     a2aPart.metadata = {
-      [MetadataKeys.THOUGHT]: true,
+      [A2AMetadataKeys.THOUGHT]: true,
     };
   }
 
@@ -113,7 +112,7 @@ export function toA2ADataPart(
   part: GenAIPart,
   longRunningToolIDs: string[] = [],
 ): A2APart {
-  let type: string;
+  let dataPartType: DataPartType;
   let data:
     | GenAIFunctionCall
     | GenAIFunctionResponse
@@ -121,39 +120,39 @@ export function toA2ADataPart(
     | GenAICodeExecutionResult;
 
   if (part.functionCall) {
-    type = DataPartType.FUNCTION_CALL;
+    dataPartType = DataPartType.FUNCTION_CALL;
     data = part.functionCall;
   } else if (part.functionResponse) {
-    type = DataPartType.FUNCTION_RESPONSE;
+    dataPartType = DataPartType.FUNCTION_RESPONSE;
     data = part.functionResponse;
   } else if (part.executableCode) {
-    type = DataPartType.CODE_EXECUTABLE_CODE;
+    dataPartType = DataPartType.CODE_EXECUTABLE_CODE;
     data = part.executableCode;
   } else if (part.codeExecutionResult) {
-    type = DataPartType.CODE_EXEC_RESULT;
+    dataPartType = DataPartType.CODE_EXEC_RESULT;
     data = part.codeExecutionResult;
   } else {
     throw new Error(`Unknown part type: ${JSON.stringify(part)}`);
   }
 
   const metadata: Record<string, unknown> = {
-    [MetadataKeys.TYPE]: type,
+    [A2AMetadataKeys.DATA_PART_TYPE]: dataPartType,
   };
 
   if (
     part.functionCall &&
-    part.functionCall.name &&
-    longRunningToolIDs.includes(part.functionCall.name)
+    part.functionCall.id &&
+    longRunningToolIDs.includes(part.functionCall.id)
   ) {
-    metadata[MetadataKeys.LONG_RUNNING] = true;
+    metadata[A2AMetadataKeys.IS_LONG_RUNNING] = true;
   }
 
   if (
     part.functionResponse &&
-    part.functionResponse.name &&
-    longRunningToolIDs.includes(part.functionResponse.name)
+    part.functionResponse.id &&
+    longRunningToolIDs.includes(part.functionResponse.id)
   ) {
-    metadata[MetadataKeys.LONG_RUNNING] = true;
+    metadata[A2AMetadataKeys.IS_LONG_RUNNING] = true;
   }
 
   return {
@@ -161,6 +160,14 @@ export function toA2ADataPart(
     data: data as unknown as Record<string, unknown>,
     metadata,
   };
+}
+
+export function toGenAIContent(a2aMessage: Message): GenAIContent {
+  const parts = toGenAIParts(a2aMessage.parts);
+
+  return a2aMessage.role === 'user'
+    ? createUserContent(parts)
+    : createModelContent(parts);
 }
 
 /**
@@ -195,7 +202,7 @@ export function toGenAIPart(a2aPart: A2APart): GenAIPart {
 export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
   return {
     text: a2aPart.text,
-    thought: !!a2aPart.metadata?.[MetadataKeys.THOUGHT],
+    thought: !!a2aPart.metadata?.[A2AMetadataKeys.THOUGHT],
   };
 }
 
@@ -233,7 +240,7 @@ export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
   }
 
   const data = a2aPart.data as Record<string, unknown>;
-  const type = a2aPart.metadata?.[MetadataKeys.TYPE];
+  const type = a2aPart.metadata?.[A2AMetadataKeys.DATA_PART_TYPE];
 
   if (type === DataPartType.FUNCTION_CALL) {
     return {functionCall: data};

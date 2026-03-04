@@ -10,10 +10,10 @@ import {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
+import {createEvent, createEventActions} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
+import {A2AEvent} from '../../src/a2a/a2a_event.js';
 import {toA2AMessage, toAdkEvent} from '../../src/a2a/event_converter_utils.js';
-import {createEvent} from '../../src/events/event.js';
-import {createEventActions} from '../../src/events/event_actions.js';
 import * as envAwareUtils from '../../src/utils/env_aware_utils.js';
 
 vi.mock('../../src/utils/env_aware_utils.js', async (importOriginal) => {
@@ -27,10 +27,6 @@ vi.mock('../../src/utils/env_aware_utils.js', async (importOriginal) => {
 
 describe('event_converter_utils', () => {
   describe('toA2AMessage', () => {
-    it('returns undefined if no event is provided', () => {
-      expect(toA2AMessage()).toBeUndefined();
-    });
-
     it('converts a simple user event to an A2A message', () => {
       vi.mocked(envAwareUtils.randomUUID).mockReturnValue('test-uuid-1');
       const event = createEvent({
@@ -42,14 +38,22 @@ describe('event_converter_utils', () => {
         },
       });
 
-      const message = toA2AMessage(event);
+      const message = toA2AMessage(event, {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      });
       expect(message).toBeDefined();
-      expect(message).toEqual({
+      expect(message).toMatchObject({
         kind: 'message',
         messageId: 'test-uuid-1',
         role: 'user',
         parts: [{kind: 'text', text: 'hello'}],
-        metadata: {},
+        metadata: {
+          'adk_app_name': 'test-app',
+          'adk_user_id': 'test-user',
+          'adk_session_id': 'test-session',
+        },
       });
     });
 
@@ -72,17 +76,23 @@ describe('event_converter_utils', () => {
         },
       });
 
-      const message = toA2AMessage(event);
+      const message = toA2AMessage(event, {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+      });
       expect(message).toBeDefined();
-      expect(message).toEqual({
+      expect(message).toMatchObject({
         kind: 'message',
         messageId: 'test-uuid-2',
         role: 'agent',
         parts: [{kind: 'text', text: 'response'}],
         metadata: {
-          'a2a:escalate': true,
-          'a2a:transfer_to_agent': 'human',
-          'custom_key': 'custom_value',
+          'adk_escalate': true,
+          'adk_transfer_to_agent': 'human',
+          'adk_custom_metadata': {
+            'custom_key': 'custom_value',
+          },
         },
       });
     });
@@ -90,7 +100,29 @@ describe('event_converter_utils', () => {
 
   describe('toAdkEvent', () => {
     it('returns undefined for unknown event type', () => {
-      expect(toAdkEvent({kind: 'unknown'}, 'inv', 'agent')).toBeUndefined();
+      expect(
+        toAdkEvent({kind: 'unknown'} as unknown as A2AEvent, 'inv', 'agent'),
+      ).toBe(undefined);
+    });
+
+    it('populates AdkEvent fields from metadata', () => {
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg1',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hello'}],
+        metadata: {
+          'adk_branch': 'test-branch',
+          'adk_error_code': '404',
+          'adk_error_message': 'not found',
+        },
+      };
+
+      const event = toAdkEvent(message, 'inv1', 'agent1');
+      expect(event).toBeDefined();
+      expect(event!.branch).toBe('test-branch');
+      expect(event!.errorCode).toBe('404');
+      expect(event!.errorMessage).toBe('not found');
     });
 
     describe('Message', () => {
@@ -104,13 +136,12 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.author).toBe('user');
-        expect(event.content?.role).toBe('user');
-        expect(event.content?.parts).toEqual([
+        expect(event!.author).toBe('user');
+        expect(event!.content?.role).toBe('user');
+        expect(event!.content?.parts).toEqual([
           {text: 'hello from user', thought: false},
         ]);
-        expect(event.turnComplete).toBe(true);
+        expect(event!.turnComplete).toBe(true);
       });
 
       it('converts agent message to AdkEvent', () => {
@@ -120,25 +151,26 @@ describe('event_converter_utils', () => {
           role: 'agent',
           parts: [{kind: 'text', text: 'hello from agent'}],
           metadata: {
-            'a2a:escalate': true,
-            'a2a:transfer_to_agent': 'agent2',
-            'a2a:task_id': 'task1',
-            'a2a:context_id': 'context1',
+            'adk_escalate': true,
+            'adk_transfer_to_agent': 'agent2',
+            'adk_custom_metadata': {
+              'a2a:task_id': 'task1',
+              'a2a:context_id': 'context1',
+            },
           },
         };
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.author).toBe('agent1');
-        expect(event.content?.role).toBe('model');
-        expect(event.content?.parts).toEqual([
+        expect(event!.author).toBe('agent1');
+        expect(event!.content?.role).toBe('model');
+        expect(event!.content?.parts).toEqual([
           {text: 'hello from agent', thought: false},
         ]);
-        expect(event.turnComplete).toBe(true);
-        expect(event.actions?.escalate).toBe(true);
-        expect(event.actions?.transferToAgent).toBe('agent2');
-        expect(event.customMetadata).toEqual({
+        expect(event!.turnComplete).toBe(true);
+        expect(event!.actions?.escalate).toBe(true);
+        expect(event!.actions?.transferToAgent).toBe('agent2');
+        expect(event!.customMetadata).toEqual({
           'a2a:task_id': 'task1',
           'a2a:context_id': 'context1',
         });
@@ -165,11 +197,10 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.author).toBe('agent1');
-        expect(event.content?.role).toBe('model');
-        expect(event.content?.parts).toEqual([{text: 'done', thought: false}]);
-        expect(event.turnComplete).toBe(true);
+        expect(event!.author).toBe('agent1');
+        expect(event!.content?.role).toBe('model');
+        expect(event!.content?.parts).toEqual([{text: 'done', thought: false}]);
+        expect(event!.turnComplete).toBe(true);
       });
 
       it('converts final status update (failed without message parts)', () => {
@@ -184,11 +215,7 @@ describe('event_converter_utils', () => {
         };
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
-        expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.author).toBe('agent1');
-        expect(event.content).toBeUndefined();
-        expect(event.turnComplete).toBe(true);
+        expect(event).toBeUndefined();
       });
 
       it('converts final status update (failed with text part)', () => {
@@ -210,10 +237,9 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(finalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.errorMessage).toBe('error occurred');
-        expect(event.content).toBeUndefined();
-        expect(event.turnComplete).toBe(true);
+        expect(event!.errorMessage).toBe('error occurred');
+        expect(event!.content).toBeUndefined();
+        expect(event!.turnComplete).toBe(true);
       });
 
       it('converts non-final status update with partial message', () => {
@@ -235,12 +261,10 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(nonFinalUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.partial).toBe(true);
-        expect(event.turnComplete).toBe(false);
-        // Thought metadata is added to partial message parts internally
-        expect(event.content?.parts).toEqual([
-          {text: 'thinking loudly...', thought: false, 'a2a:thought': true},
+        expect(event!.partial).toBe(true);
+        expect(event!.turnComplete).toBe(false);
+        expect(event!.content?.parts).toEqual([
+          {text: 'thinking loudly...', thought: false},
         ]);
       });
 
@@ -274,29 +298,84 @@ describe('event_converter_utils', () => {
         expect(toAdkEvent(artifactUpdate, 'inv1', 'agent1')).toBeUndefined();
       });
 
+      it('sets partial to true when append is true', () => {
+        const artifactUpdate: TaskArtifactUpdateEvent = {
+          kind: 'artifact-update',
+          taskId: 'task1',
+          contextId: 'context1',
+          append: true,
+          lastChunk: true,
+          artifact: {
+            artifactId: 'art1',
+            parts: [{kind: 'text', text: 'part'}],
+          },
+        };
+
+        const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
+        expect(event?.partial).toBe(true);
+      });
+
+      it('sets partial to true when lastChunk is false', () => {
+        const artifactUpdate: TaskArtifactUpdateEvent = {
+          kind: 'artifact-update',
+          taskId: 'task1',
+          contextId: 'context1',
+          append: false,
+          lastChunk: false,
+          artifact: {
+            artifactId: 'art1',
+            parts: [{kind: 'text', text: 'part'}],
+          },
+        };
+
+        const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
+        expect(event?.partial).toBe(true);
+      });
+
+      it('sets partial to false when append is false and lastChunk is true', () => {
+        const artifactUpdate: TaskArtifactUpdateEvent = {
+          kind: 'artifact-update',
+          taskId: 'task1',
+          contextId: 'context1',
+          append: false,
+          lastChunk: true,
+          artifact: {
+            artifactId: 'art1',
+            parts: [{kind: 'text', text: 'part'}],
+          },
+        };
+
+        const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
+        expect(event?.partial).toBe(false);
+      });
+
       it('converts artifact update', () => {
         const artifactUpdate: TaskArtifactUpdateEvent = {
           kind: 'artifact-update',
           taskId: 'task1',
           contextId: 'context1',
           metadata: {
-            'a2a:task_id': 'task2',
+            'adk_custom_metadata': {
+              'a2a:task_id': 'task2',
+            },
           },
           artifact: {
             artifactId: 'art1',
             parts: [
               {
                 kind: 'data',
-                data: {name: 'testTool', args: {}},
+                data: {id: 'testTool', name: 'testTool', args: {}},
                 metadata: {
-                  'a2a:is_long_running': true,
+                  'adk_is_long_running': true,
                   'adk_type': 'function_call',
                 },
               },
             ],
             metadata: {
-              'a2a:partial': true,
-              'a2a:task_id': 'task2',
+              'adk_partial': true,
+              'adk_custom_metadata': {
+                'a2a:task_id': 'task2',
+              },
               'adk_type': 'function_call',
             },
           },
@@ -304,12 +383,11 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(artifactUpdate, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.partial).toBe(true);
-        expect(event.longRunningToolIds).toEqual(['testTool']);
-        expect(event.customMetadata).toEqual({'a2a:task_id': 'task2'});
-        expect(event.content?.parts).toEqual([
-          {functionCall: {name: 'testTool', args: {}}},
+        expect(event!.partial).toBe(true);
+        expect(event!.longRunningToolIds).toEqual(['testTool']);
+        expect(event!.customMetadata).toEqual({'a2a:task_id': 'task2'});
+        expect(event!.content?.parts).toEqual([
+          {functionCall: {id: 'testTool', name: 'testTool', args: {}}},
         ]);
       });
     });
@@ -336,9 +414,9 @@ describe('event_converter_utils', () => {
               parts: [
                 {
                   kind: 'data',
-                  data: {name: 'artTool', args: {}},
+                  data: {id: 'artTool', name: 'artTool', args: {}},
                   metadata: {
-                    'a2a:is_long_running': true,
+                    'adk_is_long_running': true,
                     'adk_type': 'function_call',
                   },
                 },
@@ -355,21 +433,22 @@ describe('event_converter_utils', () => {
             },
           },
           metadata: {
-            'a2a:task_id': 't1',
-            'a2a:context_id': 'c1',
+            'adk_custom_metadata': {
+              'a2a:task_id': 't1',
+              'a2a:context_id': 'c1',
+            },
           },
         };
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.turnComplete).toBe(true);
-        expect(event.longRunningToolIds).toEqual([]); // No long running for non-input-required
-        expect(event.content?.parts).toEqual([
-          {functionCall: {name: 'artTool', args: {}}},
+        expect(event!.turnComplete).toBe(true);
+        expect(event!.longRunningToolIds).toEqual(['artTool']);
+        expect(event!.content?.parts).toEqual([
+          {functionCall: {id: 'artTool', name: 'artTool', args: {}}},
           {text: 'task complete', thought: false},
         ]);
-        expect(event.customMetadata).toEqual({
+        expect(event!.customMetadata).toEqual({
           'a2a:task_id': 't1',
           'a2a:context_id': 'c1',
         });
@@ -393,10 +472,9 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.turnComplete).toBe(true);
-        expect(event.errorMessage).toBe('task failed miserably');
-        expect(event.content).toBeUndefined(); // parts is ignored
+        expect(event!.turnComplete).toBe(true);
+        expect(event!.errorMessage).toBe('task failed miserably');
+        expect(event!.content).toBeUndefined();
       });
 
       it('converts input-required task and extracts longRunningToolIds', () => {
@@ -413,9 +491,9 @@ describe('event_converter_utils', () => {
               parts: [
                 {
                   kind: 'data',
-                  data: {name: 'inputTool', args: {}},
+                  data: {id: 'inputTool', name: 'inputTool', args: {}},
                   metadata: {
-                    'a2a:is_long_running': true,
+                    'adk_is_long_running': true,
                     'adk_type': 'function_call',
                   },
                 },
@@ -426,9 +504,8 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(task, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        if (!event) return;
-        expect(event.turnComplete).toBe(true);
-        expect(event.longRunningToolIds).toEqual(['inputTool']);
+        expect(event!.turnComplete).toBe(true);
+        expect(event!.longRunningToolIds).toEqual(['inputTool']);
       });
     });
   });

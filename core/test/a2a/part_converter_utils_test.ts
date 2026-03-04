@@ -79,11 +79,19 @@ describe('part_converter_utils', () => {
   describe('toA2ADataPart', () => {
     it('converts functionCall', () => {
       const genAiPart: GenAIPart = {
-        functionCall: {name: 'getWeather', args: {location: 'London'}},
+        functionCall: {
+          id: 'function_call_id',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
       };
       const expected: A2APart = {
         kind: 'data',
-        data: {name: 'getWeather', args: {location: 'London'}},
+        data: {
+          id: 'function_call_id',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
         metadata: {'adk_type': 'function_call'},
       };
       expect(toA2ADataPart(genAiPart)).toEqual(expected);
@@ -91,23 +99,39 @@ describe('part_converter_utils', () => {
 
     it('adds long_running metadata to functionCall if ID matches', () => {
       const genAiPart: GenAIPart = {
-        functionCall: {name: 'getWeather', args: {location: 'London'}},
+        functionCall: {
+          id: 'function_call_id',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
       };
       const expected: A2APart = {
         kind: 'data',
-        data: {name: 'getWeather', args: {location: 'London'}},
+        data: {
+          id: 'function_call_id',
+          name: 'getWeather',
+          args: {location: 'London'},
+        },
         metadata: {'adk_type': 'function_call', 'adk_is_long_running': true},
       };
-      expect(toA2ADataPart(genAiPart, ['getWeather'])).toEqual(expected);
+      expect(toA2ADataPart(genAiPart, ['function_call_id'])).toEqual(expected);
     });
 
     it('converts functionResponse', () => {
       const genAiPart: GenAIPart = {
-        functionResponse: {name: 'getWeather', response: {temp: 20}},
+        functionResponse: {
+          id: 'function_response_id',
+          name: 'getWeather',
+          response: {temp: 20},
+        },
       };
       const expected: A2APart = {
         kind: 'data',
-        data: {name: 'getWeather', response: {temp: 20}},
+        data: {
+          id: 'function_response_id',
+          name: 'getWeather',
+          response: {temp: 20},
+        },
         metadata: {'adk_type': 'function_response'},
       };
       expect(toA2ADataPart(genAiPart)).toEqual(expected);
@@ -115,17 +139,27 @@ describe('part_converter_utils', () => {
 
     it('adds long_running metadata to functionResponse if ID matches', () => {
       const genAiPart: GenAIPart = {
-        functionResponse: {name: 'getWeather', response: {temp: 20}},
+        functionResponse: {
+          id: 'function_response_id',
+          name: 'getWeather',
+          response: {temp: 20},
+        },
       };
       const expected: A2APart = {
         kind: 'data',
-        data: {name: 'getWeather', response: {temp: 20}},
+        data: {
+          id: 'function_response_id',
+          name: 'getWeather',
+          response: {temp: 20},
+        },
         metadata: {
           'adk_type': 'function_response',
           'adk_is_long_running': true,
         },
       };
-      expect(toA2ADataPart(genAiPart, ['getWeather'])).toEqual(expected);
+      expect(toA2ADataPart(genAiPart, ['function_response_id'])).toEqual(
+        expected,
+      );
     });
 
     it('converts executableCode', () => {
@@ -192,10 +226,12 @@ describe('part_converter_utils', () => {
     });
 
     it('delegates data part', () => {
-      const genAiPart: GenAIPart = {functionCall: {name: 'foo', args: {}}};
+      const genAiPart: GenAIPart = {
+        functionCall: {id: 'foo', name: 'getWeather', args: {}},
+      };
       expect(toA2APart(genAiPart)).toEqual({
         kind: 'data',
-        data: {name: 'foo', args: {}},
+        data: {id: 'foo', name: 'getWeather', args: {}},
         metadata: {'adk_type': 'function_call'},
       });
     });
@@ -205,17 +241,29 @@ describe('part_converter_utils', () => {
     it('maps an array of parts', () => {
       const genAiParts: GenAIPart[] = [
         {text: 'hello'},
-        {functionCall: {name: 'longFoo', args: {}}},
+        {
+          functionCall: {
+            id: 'long_running_function_call_id',
+            name: 'getWeather',
+            args: {},
+          },
+        },
       ];
       const expected: A2APart[] = [
         {kind: 'text', text: 'hello'},
         {
           kind: 'data',
-          data: {name: 'longFoo', args: {}},
+          data: {
+            id: 'long_running_function_call_id',
+            name: 'getWeather',
+            args: {},
+          },
           metadata: {'adk_type': 'function_call', 'adk_is_long_running': true},
         },
       ];
-      expect(toA2AParts(genAiParts, ['longFoo'])).toEqual(expected);
+      expect(toA2AParts(genAiParts, ['long_running_function_call_id'])).toEqual(
+        expected,
+      );
     });
   });
 
@@ -273,21 +321,27 @@ describe('part_converter_utils', () => {
     it('converts functionCall', () => {
       const a2aPart: A2ADataPart = {
         kind: 'data',
-        data: {name: 'foo', args: {}},
+        data: {id: 'function_call_id', name: 'foo', args: {}},
         metadata: {'adk_type': 'function_call'},
       };
-      const expected: GenAIPart = {functionCall: {name: 'foo', args: {}}};
+      const expected: GenAIPart = {
+        functionCall: {id: 'function_call_id', name: 'foo', args: {}},
+      };
       expect(toGenAIPartData(a2aPart)).toEqual(expected);
     });
 
     it('converts functionResponse', () => {
       const a2aPart: A2ADataPart = {
         kind: 'data',
-        data: {name: 'foo', response: {ok: true}},
+        data: {id: 'function_response_id', name: 'foo', response: {ok: true}},
         metadata: {'adk_type': 'function_response'},
       };
       const expected: GenAIPart = {
-        functionResponse: {name: 'foo', response: {ok: true}},
+        functionResponse: {
+          id: 'function_response_id',
+          name: 'foo',
+          response: {ok: true},
+        },
       };
       expect(toGenAIPartData(a2aPart)).toEqual(expected);
     });

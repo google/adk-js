@@ -5,6 +5,7 @@
  */
 
 import {
+  CitationMetadata,
   Content,
   FinishReason,
   GenerateContentResponse,
@@ -28,6 +29,11 @@ export interface LlmResponse {
    * The grounding metadata of the response.
    */
   groundingMetadata?: GroundingMetadata;
+
+  /**
+   * The citation metadata of the response.
+   */
+  citationMetadata?: CitationMetadata;
 
   /**
    * Indicates whether the text content is part of a unfinished text stream.
@@ -108,6 +114,7 @@ export function createLlmResponse(
       return {
         content: candidate.content,
         groundingMetadata: candidate.groundingMetadata,
+        citationMetadata: candidate.citationMetadata,
         usageMetadata: usageMetadata,
         finishReason: candidate.finishReason,
       };
@@ -117,6 +124,7 @@ export function createLlmResponse(
       errorCode: candidate.finishReason,
       errorMessage: candidate.finishMessage,
       usageMetadata: usageMetadata,
+      citationMetadata: candidate.citationMetadata,
       finishReason: candidate.finishReason,
     };
   }
