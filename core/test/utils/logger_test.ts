@@ -22,6 +22,7 @@ describe('setLogger', () => {
     it('routes log messages to custom logger', () => {
       const messages: Array<{level: string; args: unknown[]}> = [];
       const customLogger: Logger = {
+        setLogLevel: () => {},
         log: (level, ...args) => messages.push({level: LogLevel[level], args}),
         debug: (...args) => messages.push({level: 'DEBUG', args}),
         info: (...args) => messages.push({level: 'INFO', args}),
@@ -42,6 +43,7 @@ describe('setLogger', () => {
     it('calls correct method for each log level', () => {
       const calls: string[] = [];
       const customLogger: Logger = {
+        setLogLevel: () => calls.push('setLogLevel'),
         log: () => calls.push('log'),
         debug: () => calls.push('debug'),
         info: () => calls.push('info'),
@@ -63,15 +65,10 @@ describe('setLogger', () => {
 
   describe('null logger (disable logging)', () => {
     it('disables all logging when null is passed', () => {
-      const consoleSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
       setLogger(null);
       const logger = getLogger();
 
-      logger.info('this should not appear');
-
-      expect(consoleSpy).not.toHaveBeenCalled();
-      consoleSpy.mockRestore();
+      expect(logger.constructor.name).toBe('NoOpLogger');
     });
 
     it('handles all log levels silently', () => {
@@ -94,6 +91,7 @@ describe('setLogger', () => {
 
       const messages: string[] = [];
       const customLogger: Logger = {
+        setLogLevel: () => {},
         log: () => {},
         debug: () => {},
         info: (...args) => messages.push(String(args[0])),
@@ -112,6 +110,7 @@ describe('setLogger', () => {
   describe('getLogger', () => {
     it('returns the current logger instance', () => {
       const customLogger: Logger = {
+        setLogLevel: () => {},
         log: () => {},
         debug: () => {},
         info: () => {},
@@ -134,16 +133,12 @@ describe('setLogger', () => {
 
   describe('resetLogger', () => {
     it('restores the default logger', () => {
-      const consoleSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
       setLogger(null);
       resetLogger();
 
       const logger = getLogger();
-      logger.info('after reset');
 
-      expect(consoleSpy).toHaveBeenCalled();
-      consoleSpy.mockRestore();
+      expect(logger.constructor.name).toBe('SimpleLogger');
     });
   });
 });

@@ -15,6 +15,8 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  Logger,
+  LogLevel,
   Runner,
   StreamingMode,
 } from '@google/adk';
@@ -33,6 +35,7 @@ import {
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
 
+import {ApiServerLogger} from './adk_api_server_logger.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
 interface ServerOptions {
@@ -47,6 +50,8 @@ interface ServerOptions {
   serveDebugUI?: boolean;
   allowOrigins?: string;
   otelToCloud?: boolean;
+  logger?: Logger;
+  logLevel?: LogLevel;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
@@ -69,6 +74,7 @@ export class AdkApiServer {
   private readonly traceDict: Record<string, Record<string, unknown>> = {};
   private readonly sessionTraceDict: Record<string, string[]> = {};
   private memoryExporter: InMemoryExporter;
+  private readonly logger: Logger;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -86,6 +92,8 @@ export class AdkApiServer {
     this.otelToCloud = options.otelToCloud ?? false;
     this.registerProcessors = options.registerProcessors;
     this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
+    this.logger = options.logger ?? new ApiServerLogger('ADK API Server');
+    this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
 
     this.app = express();
 
@@ -140,45 +148,73 @@ export class AdkApiServer {
       }),
     );
 
+    app.use((req: Request, res: Response, next: express.NextFunction) => {
+      this.logger.info(`${req.method} ${req.originalUrl}`);
+      next();
+    });
+
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {
         const apps = await this.agentLoader.listAgents();
         res.json(apps);
       } catch (e: unknown) {
-        res.status(500).json({error: (e as Error).message});
+        const error = `Failed to list apps: ${e}`;
+
+        res.status(500).json({error});
+        this.logger.error(error);
+
+        return;
       }
     });
 
     app.get('/debug/trace/:eventId', (req: Request, res: Response) => {
-      const eventId = req.params['eventId'];
-      const eventDict = this.traceDict[eventId];
+      try {
+        const eventId = req.params['eventId'];
+        const eventDict = this.traceDict[eventId];
 
-      if (!eventDict) {
-        return res.status(404).json({error: 'Trace not found'});
+        if (!eventDict) {
+          return res.status(404).json({error: 'Trace not found'});
+        }
+
+        return res.json(eventDict);
+      } catch (e) {
+        const error = `Failed to get trace: ${e}`;
+
+        res.status(500).json({error});
+        this.logger.error(error);
+
+        return;
       }
-
-      return res.json(eventDict);
     });
 
     app.get(
       '/debug/trace/session/:sessionId',
       (req: Request, res: Response) => {
-        const sessionId = req.params['sessionId'];
-        const spans = this.memoryExporter.getFinishedSpans(sessionId);
-        if (spans.length === 0) {
-          return res.json([]);
-        }
-        const spanData = spans.map((span) => ({
-          name: span.name,
-          span_id: span.spanContext().spanId,
-          trace_id: span.spanContext().traceId,
-          start_time: hrTimeToNanoseconds(span.startTime),
-          end_time: hrTimeToNanoseconds(span.endTime),
-          attributes: {...span.attributes},
-          parent_span_id: span.parentSpanContext?.spanId || null,
-        }));
+        try {
+          const sessionId = req.params['sessionId'];
+          const spans = this.memoryExporter.getFinishedSpans(sessionId);
+          if (spans.length === 0) {
+            return res.json([]);
+          }
+          const spanData = spans.map((span) => ({
+            name: span.name,
+            span_id: span.spanContext().spanId,
+            trace_id: span.spanContext().traceId,
+            start_time: hrTimeToNanoseconds(span.startTime),
+            end_time: hrTimeToNanoseconds(span.endTime),
+            attributes: {...span.attributes},
+            parent_span_id: span.parentSpanContext?.spanId || null,
+          }));
 
-        return res.json(spanData);
+          return res.json(spanData);
+        } catch (e) {
+          const error = `Failed to get trace: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
+
+          return;
+        }
       },
     );
 
@@ -251,7 +287,10 @@ export class AdkApiServer {
             dotSrc: await getAgentGraphAsDot(rootAgent!, [[event.author!, '']]),
           });
         } catch (e) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to get agent graph: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
           return;
         }
       },
@@ -279,7 +318,10 @@ export class AdkApiServer {
 
           res.json(session);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to get session: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -298,7 +340,10 @@ export class AdkApiServer {
 
           res.json(sessions);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to list sessions: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -334,7 +379,10 @@ export class AdkApiServer {
 
           res.json(createdSession);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to create session: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -355,7 +403,10 @@ export class AdkApiServer {
 
           res.json(createdSession);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to create session: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -387,7 +438,10 @@ export class AdkApiServer {
 
           res.status(204).json({});
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to delete session: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -418,7 +472,10 @@ export class AdkApiServer {
 
           res.json(artifact);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to load artifact: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -450,7 +507,10 @@ export class AdkApiServer {
 
           res.json(artifact);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to load artifact version: ${(e as Error).message}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -471,7 +531,10 @@ export class AdkApiServer {
 
           res.json(artifactKeys);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to list artifacts: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -494,7 +557,10 @@ export class AdkApiServer {
 
           res.json(artifactVersions);
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to list artifact versions: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -517,7 +583,10 @@ export class AdkApiServer {
 
           res.status(204).json({});
         } catch (e: unknown) {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to delete artifact: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       },
     );
@@ -625,7 +694,10 @@ export class AdkApiServer {
 
         res.json(events);
       } catch (e: unknown) {
-        res.status(500).json({error: (e as Error).message});
+        const error = `Failed to run agent: ${e}`;
+
+        res.status(500).json({error});
+        this.logger.error(error);
       }
     });
 
@@ -640,7 +712,10 @@ export class AdkApiServer {
       });
 
       if (!session) {
-        res.status(404).json({error: `Session not found: ${sessionId}`});
+        const error = `Session not found: ${sessionId}`;
+
+        res.status(404).json({error});
+        this.logger.error(error);
         return;
       }
 
@@ -670,9 +745,15 @@ export class AdkApiServer {
         res.end();
       } catch (e: unknown) {
         if (res.headersSent) {
-          res.end(`data: ${JSON.stringify({error: (e as Error).message})}\n\n`);
+          const error = (e as Error).message;
+
+          res.end(`data: ${JSON.stringify({error})}\n\n`);
+          this.logger.error(error);
         } else {
-          res.status(500).json({error: (e as Error).message});
+          const error = `Failed to run agent: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
         }
       }
     });
