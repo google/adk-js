@@ -5,10 +5,10 @@
  */
 
 import {
+  Context,
   createEventActions,
   EXIT_LOOP,
   ExitLoopTool,
-  ToolContext,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -27,7 +27,7 @@ describe('ExitLoopTool', () => {
   it('sets escalate and skipSummarization flags on runAsync', async () => {
     const tool = new ExitLoopTool();
     const mockActions = createEventActions();
-    const mockContext = {actions: mockActions} as unknown as ToolContext;
+    const mockContext = {actions: mockActions} as unknown as Context;
 
     const result = await tool.runAsync({
       args: {},
