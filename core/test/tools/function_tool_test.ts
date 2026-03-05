@@ -4,16 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionTool, ToolContext} from '@google/adk';
+import {Context, FunctionTool} from '@google/adk';
 import {Type} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
 describe('FunctionTool', () => {
-  let emptyContext: ToolContext;
+  let emptyContext: Context;
   beforeEach(() => {
-    emptyContext = {} as ToolContext;
+    emptyContext = {} as Context;
   });
 
   describe('zod v3', () => {

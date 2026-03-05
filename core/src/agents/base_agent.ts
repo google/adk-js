@@ -14,14 +14,14 @@ import {
   traceAgentInvocation,
   tracer,
 } from '../telemetry/tracing.js';
-import {CallbackContext} from './callback_context.js';
+import {Context} from './context.js';
 import {InvocationContext} from './invocation_context.js';
 
 /**
  * A single callback function for an agent.
  */
 export type SingleAgentCallback = (
-  context: CallbackContext,
+  context: Context,
 ) => Promise<Content | undefined> | (Content | undefined);
 
 /**
@@ -317,7 +317,7 @@ export abstract class BaseAgent {
       return undefined;
     }
 
-    const callbackContext = new CallbackContext({invocationContext});
+    const callbackContext = new Context({invocationContext});
     for (const callback of this.beforeAgentCallback) {
       const content = await callback(callbackContext);
 
@@ -360,7 +360,7 @@ export abstract class BaseAgent {
       return undefined;
     }
 
-    const callbackContext = new CallbackContext({invocationContext});
+    const callbackContext = new Context({invocationContext});
     for (const callback of this.afterAgentCallback) {
       const content = await callback(callbackContext);
 

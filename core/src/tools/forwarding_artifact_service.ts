@@ -16,7 +16,7 @@ import {
   SaveArtifactRequest,
 } from '../artifacts/base_artifact_service.js';
 
-import {ToolContext} from './tool_context.js';
+import {Context} from '../agents/context.js';
 
 /**
  * Artifact service that forwards to the parent tool context.
@@ -24,7 +24,7 @@ import {ToolContext} from './tool_context.js';
 export class ForwardingArtifactService implements BaseArtifactService {
   private readonly invocationContext: InvocationContext;
 
-  constructor(private readonly toolContext: ToolContext) {
+  constructor(private readonly toolContext: Context) {
     this.invocationContext = toolContext.invocationContext;
   }
 

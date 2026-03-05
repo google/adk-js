@@ -10,6 +10,7 @@ import {
   BasePlugin,
   CallbackContext,
   createEvent,
+  Context,
   Event,
   FunctionTool,
   InMemorySessionService,
@@ -99,21 +100,21 @@ class MockPlugin extends BasePlugin {
   onModelErrorResponse?: LlmResponse;
 
   override async beforeModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return this.beforeModelResponse;
   }
 
   override async afterModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return this.afterModelResponse;
   }
 
   override async onModelErrorCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {

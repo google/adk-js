@@ -9,21 +9,21 @@ import {FunctionDeclaration, Tool} from '@google/genai';
 import {LlmRequest} from '../models/llm_request.js';
 import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 
-import {ToolContext} from './tool_context.js';
+import {Context} from '../agents/context.js';
 
 /**
  * The parameters for `runAsync`.
  */
 export interface RunAsyncToolRequest {
   args: Record<string, unknown>;
-  toolContext: ToolContext;
+  toolContext: Context;
 }
 
 /**
  * The parameters for `processLlmRequest`.
  */
 export interface ToolProcessLlmRequest {
-  toolContext: ToolContext;
+  toolContext: Context;
   llmRequest: LlmRequest;
 }
 

@@ -8,13 +8,12 @@ import {
   BaseAgent,
   BasePlugin,
   BaseTool,
-  CallbackContext,
+  Context,
   createEvent,
   Event,
   InvocationContext,
   LlmRequest,
   LlmResponse,
-  ToolContext,
 } from '@google/adk';
 import {Content} from '@google/genai';
 
@@ -70,14 +69,14 @@ class FullOverridePlugin extends BasePlugin {
 
   override async beforeAgentCallback(_params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return {parts: [{text: 'overridden_before_agent'}]};
   }
 
   override async afterAgentCallback(_params: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     return {parts: [{text: 'overridden_after_agent'}]};
   }
@@ -85,7 +84,7 @@ class FullOverridePlugin extends BasePlugin {
   override async beforeToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return {value: 'overridden_before_tool'};
   }
@@ -93,7 +92,7 @@ class FullOverridePlugin extends BasePlugin {
   override async afterToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return {value: 'overridden_after_tool'};
@@ -102,14 +101,14 @@ class FullOverridePlugin extends BasePlugin {
   override async onToolErrorCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return {value: 'overridden_on_tool_error'};
   }
 
   override async beforeModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return {
@@ -118,7 +117,7 @@ class FullOverridePlugin extends BasePlugin {
   }
 
   override async afterModelCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return {
@@ -127,7 +126,7 @@ class FullOverridePlugin extends BasePlugin {
   }
 
   override async onModelErrorCallback(_params: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
@@ -140,10 +139,10 @@ class FullOverridePlugin extends BasePlugin {
 describe('BasePlugin', () => {
   const mockInvocationContext = {} as InvocationContext;
   const mockUserMessage = {} as Content;
-  const mockCallbackContext = {} as CallbackContext;
+  const mockCallbackContext = {} as Context;
   const mockAgent = {} as BaseAgent;
   const mockTool = {} as BaseTool;
-  const mockToolContext = {} as ToolContext;
+  const mockToolContext = {} as Context;
   const mockLlmRequest = {} as LlmRequest;
   const mockLlmResponse = {} as LlmResponse;
   const mockEvent = {} as Event;

@@ -7,7 +7,7 @@
 import {Content} from '@google/genai';
 
 import {BaseAgent} from '../agents/base_agent.js';
-import {CallbackContext} from '../agents/callback_context.js';
+import {Context} from '../agents/context.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {
   Event,
@@ -18,7 +18,6 @@ import {
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
-import {ToolContext} from '../tools/tool_context.js';
 import {logger} from '../utils/logger.js';
 
 import {BasePlugin} from './base_plugin.js';
@@ -136,7 +135,7 @@ export class LoggingPlugin extends BasePlugin {
     callbackContext,
   }: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     this.log('🤖 AGENT STARTING');
     this.log(`   Agent Name: ${callbackContext.agentName}`);
@@ -151,7 +150,7 @@ export class LoggingPlugin extends BasePlugin {
     callbackContext,
   }: {
     agent: BaseAgent;
-    callbackContext: CallbackContext;
+    callbackContext: Context;
   }): Promise<Content | undefined> {
     this.log('🤖 AGENT COMPLETED');
     this.log(`   Agent Name: ${callbackContext.agentName}`);
@@ -163,7 +162,7 @@ export class LoggingPlugin extends BasePlugin {
     callbackContext,
     llmRequest,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM REQUEST');
@@ -190,7 +189,7 @@ export class LoggingPlugin extends BasePlugin {
     callbackContext,
     llmResponse,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     this.log('🧠 LLM RESPONSE');
@@ -225,7 +224,7 @@ export class LoggingPlugin extends BasePlugin {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL STARTING');
     this.log(`   Tool Name: ${tool.name}`);
@@ -242,7 +241,7 @@ export class LoggingPlugin extends BasePlugin {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL COMPLETED');
@@ -257,7 +256,7 @@ export class LoggingPlugin extends BasePlugin {
     callbackContext,
     error,
   }: {
-    callbackContext: CallbackContext;
+    callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
@@ -276,7 +275,7 @@ export class LoggingPlugin extends BasePlugin {
   }: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
-    toolContext: ToolContext;
+    toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     this.log('🔧 TOOL ERROR');

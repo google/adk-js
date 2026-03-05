@@ -6,7 +6,7 @@
 
 import {
   BasePlugin,
-  CallbackContext,
+  Context,
   FunctionTool,
   LongRunningFunctionTool,
   SingleAgentCallback,
@@ -85,7 +85,7 @@ export function registerConformanceIntegrations(registry: IntegrationRegistry) {
  */
 
 export function shortcutAgentExecution(
-  callbackContext: CallbackContext,
+  callbackContext: Context,
 ): Content | undefined {
   if (callbackContext.state.get('conversationLimitReached') === 'True') {
     return {
@@ -99,14 +99,14 @@ export function shortcutAgentExecution(
 }
 
 export async function beforeAgentCallback1(
-  callbackContext: CallbackContext,
+  callbackContext: Context,
 ): Promise<Content | undefined> {
   callbackContext.state.set('beforeAgentCallbackStateKey', 'value1');
   return undefined;
 }
 
 export async function beforeAgentCallback2(
-  callbackContext: CallbackContext,
+  callbackContext: Context,
 ): Promise<Content | undefined> {
   const current = callbackContext.state.get('beforeAgentCallbackStateKey');
   callbackContext.state.set('beforeAgentCallbackStateKey', current + '+value2');
@@ -114,14 +114,14 @@ export async function beforeAgentCallback2(
 }
 
 export async function afterAgentCallback1(
-  callbackContext: CallbackContext,
+  callbackContext: Context,
 ): Promise<Content | undefined> {
   callbackContext.state.set('afterAgentCallbackStateKey', 'value1');
   return undefined;
 }
 
 export async function afterAgentCallback2(
-  callbackContext: CallbackContext,
+  callbackContext: Context,
 ): Promise<Content | undefined> {
   const current = callbackContext.state.get('afterAgentCallbackStateKey');
   callbackContext.state.set('afterAgentCallbackStateKey', current + '+value2');
