@@ -41,6 +41,7 @@ export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './agents/processors/base_llm_processor.js';
+export {CompactorRequestProcessor} from './agents/processors/compactor_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
 export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
@@ -75,6 +76,7 @@ export type {
   CodeExecutionResult,
   File,
 } from './code_executors/code_execution_utils.js';
+export * from './context/index.js';
 export {
   createEvent,
   getFunctionCalls,
