@@ -766,7 +766,7 @@ export class AdkApiServer {
 
         console.log(`
 +-----------------------------------------------------------------------------+
-| ADK Web Server started                                                      |
+| ADK API Server started                                                      |
 |                                                                             |
 | For local testing, access at http://${url}.${''.padStart(39 - url.length)}|
 +-----------------------------------------------------------------------------+`);
@@ -789,7 +789,7 @@ export class AdkApiServer {
 
         console.log(`
 +-----------------------------------------------------------------------------+
-| ADK Web Server stopped                                                      |
+| ADK API Server stopped                                                      |
 +-----------------------------------------------------------------------------+`);
         resolve();
       });

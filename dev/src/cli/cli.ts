@@ -15,7 +15,6 @@ import {
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
-import * as os from 'os';
 import * as path from 'path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
@@ -101,7 +100,7 @@ const AGENT_DIR_ARGUMENT = new Argument(
 const HOST_OPTION = new Option(
   '-h, --host <string>',
   'Optional. The binding host of the server',
-).default(os.hostname());
+).default('localhost');
 const PORT_OPTION = new Option(
   '-p, --port <number>',
   'Optional. The port of the server',
