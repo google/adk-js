@@ -4,12 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {AGENT_CARD_PATH} from '@a2a-js/sdk';
+import {DefaultRequestHandler, InMemoryTaskStore} from '@a2a-js/sdk/server';
 import {
+  agentCardHandler,
+  jsonRpcHandler,
+  restHandler,
+  UserBuilder,
+} from '@a2a-js/sdk/server/express';
+import {
+  A2AAgentExecutor,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   Event,
+  getA2AAgentCard,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
@@ -24,8 +34,8 @@ import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
-import * as http from 'http';
-import * as path from 'path';
+import * as http from 'node:http';
+import * as path from 'node:path';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {
@@ -34,7 +44,6 @@ import {
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-
 import {ApiServerLogger} from './adk_api_server_logger.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
@@ -52,6 +61,7 @@ interface ServerOptions {
   otelToCloud?: boolean;
   logger?: Logger;
   logLevel?: LogLevel;
+  a2a?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
@@ -75,6 +85,7 @@ export class AdkApiServer {
   private readonly sessionTraceDict: Record<string, string[]> = {};
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
+  private readonly a2a: boolean;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -94,10 +105,8 @@ export class AdkApiServer {
     this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
     this.logger = options.logger ?? new ApiServerLogger('ADK API Server');
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
-
+    this.a2a = options.a2a ?? false;
     this.app = express();
-
-    this.init();
   }
 
   private async setupTelemetry(): Promise<void> {
@@ -114,9 +123,67 @@ export class AdkApiServer {
     }
   }
 
-  private init() {
+  private async initA2A() {
+    const agentNames = await this.agentLoader.listAgents();
+    const serverUrl = this.getServerUrl();
+
+    for (const agentName of agentNames) {
+      const agentFile = await this.agentLoader.getAgentFile(agentName);
+      const agent = await agentFile.load();
+      const agentCard = await getA2AAgentCard(agent, [
+        {
+          url: `${serverUrl}/a2a/${agentName}/rest`,
+          transport: 'rest',
+        },
+        {
+          url: `${serverUrl}/a2a/${agentName}/jsonrpc`,
+          transport: 'jsonrpc',
+        },
+      ]);
+
+      const agentExecutor = new A2AAgentExecutor({
+        runnerConfig: {
+          agent,
+          appName: agent.name,
+          sessionService: this.sessionService,
+          memoryService: this.memoryService,
+          artifactService: this.artifactService,
+        },
+        runConfig: {
+          // ??? Should we enable streaming mode for model while running agent via A2A?
+          streamingMode: StreamingMode.SSE,
+        },
+      });
+      const requestHandler = new DefaultRequestHandler(
+        agentCard,
+        new InMemoryTaskStore(),
+        agentExecutor,
+      );
+
+      this.app.use(
+        `/a2a/${agentName}/${AGENT_CARD_PATH}`,
+        agentCardHandler({agentCardProvider: requestHandler}),
+      );
+      this.app.use(
+        `/a2a/${agentName}/rest`,
+        restHandler({
+          requestHandler,
+          userBuilder: UserBuilder.noAuthentication,
+        }),
+      );
+      this.app.use(
+        `/a2a/${agentName}/jsonrpc`,
+        jsonRpcHandler({
+          requestHandler,
+          userBuilder: UserBuilder.noAuthentication,
+        }),
+      );
+    }
+  }
+
+  private async init() {
     const app = this.app;
-    this.setupTelemetry();
+    await this.setupTelemetry();
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {
@@ -141,12 +208,17 @@ export class AdkApiServer {
         }),
       );
     }
+
     app.use(express.urlencoded({limit: '50mb', extended: true}));
     app.use(
       express.json({
         limit: '50mb',
       }),
     );
+
+    if (this.a2a) {
+      await this.initA2A();
+    }
 
     app.use((req: Request, res: Response, next: express.NextFunction) => {
       this.logger.info(`${req.method} ${req.originalUrl}`);
@@ -745,32 +817,34 @@ export class AdkApiServer {
         res.end();
       } catch (e: unknown) {
         if (res.headersSent) {
-          const error = (e as Error).message;
-
-          res.end(`data: ${JSON.stringify({error})}\n\n`);
-          this.logger.error(error);
+          res.end(`data: ${JSON.stringify({error: (e as Error).message})}\n\n`);
         } else {
-          const error = `Failed to run agent: ${e}`;
-
-          res.status(500).json({error});
-          this.logger.error(error);
+          res.status(500).json({error: (e as Error).message});
         }
       }
     });
   }
 
-  start(): Promise<void> {
+  async start(): Promise<void> {
+    await this.init();
+
     return new Promise((resolve) => {
       this.server = this.app.listen(this.port, () => {
-        const url = `${this.host}:${this.port}`;
-
+        const url = this.getServerUrl();
         console.log(`
 +-----------------------------------------------------------------------------+
-| ADK API Server started                                                      |
+| ADK API Server started                                                      |                                                   |
 |                                                                             |
-| For local testing, access at http://${url}.${''.padStart(39 - url.length)}|
+| For local testing, access at ${url}.${''.padStart(39 - url.length)}     |
 +-----------------------------------------------------------------------------+`);
         resolve();
+      });
+
+      this.server.on('close', () => {
+        console.log(`
++-----------------------------------------------------------------------------+
+| ADK API Server stopped                                                      |
++-----------------------------------------------------------------------------+`);
       });
     });
   }
@@ -794,6 +868,10 @@ export class AdkApiServer {
         resolve();
       });
     });
+  }
+
+  private getServerUrl(): string {
+    return `http://${this.host}:${this.port}`;
   }
 
   private async getRunner(agent: BaseAgent, appName: string): Promise<Runner> {

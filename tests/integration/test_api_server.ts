@@ -8,9 +8,6 @@ import {ChildProcessWithoutNullStreams, spawn} from 'child_process';
 import * as path from 'path';
 import {AdkApiClient} from '../../dev/src/server/adk_api_client.js';
 
-/**
- * Interface representing the test ADK API server.
- */
 export interface TestAdkApiServer {
   host: string;
   port: number;
@@ -18,14 +15,12 @@ export interface TestAdkApiServer {
   stop: () => Promise<void>;
 }
 
-/**
- * Interface representing the parameters for creating the test ADK API server.
- */
 export interface TestApiServerParams {
   agentsDir: string;
   port?: number;
   sessionServiceUri?: string;
   artifactServiceUri?: string;
+  a2a?: boolean;
 }
 
 /**
@@ -102,6 +97,9 @@ function getAdkCliArgs(params: TestApiServerParams): string[] {
   }
   if (params.artifactServiceUri) {
     args.push('--artifact_service_uri', params.artifactServiceUri);
+  }
+  if (params.a2a) {
+    args.push('--a2a');
   }
 
   return args;
