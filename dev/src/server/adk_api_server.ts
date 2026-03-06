@@ -833,7 +833,7 @@ export class AdkApiServer {
         const url = this.getServerUrl();
         console.log(`
 +-----------------------------------------------------------------------------+
-| ADK API Server started                                                      |                                                   |
+| ADK API Server started                                                      |
 |                                                                             |
 | For local testing, access at ${url}.${''.padStart(39 - url.length)}     |
 +-----------------------------------------------------------------------------+`);
