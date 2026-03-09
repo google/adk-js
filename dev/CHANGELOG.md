@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/google/adk-js/compare/devtools-v0.4.0...devtools-v0.5.0) (2026-03-09)
+
+
+### Features
+
+* integrate with ADK conformance tests ([#168](https://github.com/google/adk-js/issues/168)) ([3a7c012](https://github.com/google/adk-js/commit/3a7c012e035f665dbf200640c10caa6e6dd82aa3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^0.4.0 to ^0.5.0
+
 ## [0.4.0](https://github.com/google/adk-js/compare/devtools-v0.3.0...devtools-v0.4.0) (2026-02-25)
 
 ### Features

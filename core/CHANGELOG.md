@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/google/adk-js/compare/adk-v0.4.0...adk-v0.5.0) (2026-03-09)
+
+
+### Features
+
+* Add ability to prefix toolsets to avoid tool name conflicts ([#184](https://github.com/google/adk-js/issues/184)) ([95837b2](https://github.com/google/adk-js/commit/95837b2d6e89a3455f104c352c5ef7e9077b989a))
+* implement ExitLoopTool similar to Python and Java ADK equivalent ([#170](https://github.com/google/adk-js/issues/170)) ([258998f](https://github.com/google/adk-js/commit/258998f7fbd086e2c6ecf894e15576f8a94481d4))
+* integrate with ADK conformance tests ([#168](https://github.com/google/adk-js/issues/168)) ([3a7c012](https://github.com/google/adk-js/commit/3a7c012e035f665dbf200640c10caa6e6dd82aa3))
+
+
+### Bug Fixes
+
+* Lazy load MikroORM drivers to avoid errors when not used. ([#183](https://github.com/google/adk-js/issues/183)) ([9cb726f](https://github.com/google/adk-js/commit/9cb726ffc23d5da79f46605af11e3a4765dec3c0))
+
 ## [0.4.0](https://github.com/google/adk-js/compare/adk-v0.3.0...adk-v0.4.0) (2026-02-25)
 
 ### Features
