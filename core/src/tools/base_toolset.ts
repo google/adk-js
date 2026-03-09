@@ -21,11 +21,28 @@ export type ToolPredicate = (
 ) => boolean;
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all BaseTool instances.
+ */
+const BASE_TOOLSET_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseToolset');
+
+export function isBaseToolset(obj: unknown): obj is BaseToolset {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BASE_TOOLSET_SIGNATURE_SYMBOL in obj &&
+    obj[BASE_TOOLSET_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * Base class for toolset.
  *
  * A toolset is a collection of tools that can be used by an agent.
  */
 export abstract class BaseToolset {
+  readonly [BASE_TOOLSET_SIGNATURE_SYMBOL] = true;
+
   constructor(readonly toolFilter: ToolPredicate | string[]) {}
 
   /**

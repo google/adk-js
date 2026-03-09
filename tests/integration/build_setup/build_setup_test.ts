@@ -61,9 +61,17 @@ describe('Build setup', () => {
           await execAsync('npm install', {cwd: projectPath});
 
           if (buildSetup.startsWith('ts_')) {
-            const buildResult = await execAsync('npm run build', {
-              cwd: projectPath,
-            });
+            let buildResult;
+            try {
+              buildResult = await execAsync('npm run build', {
+                cwd: projectPath,
+              });
+            } catch (error: unknown) {
+              console.error(`Build failed for ${buildSetup}:`);
+              console.error(`stdout:\n${(error as {stdout: string}).stdout}`);
+              console.error(`stderr:\n${(error as {stderr: string}).stderr}`);
+              throw error;
+            }
             expect(buildResult.stderr).toBe('');
             expect(buildResult.stdout).toContain('\nBuild complete');
           }
@@ -83,11 +91,15 @@ describe('Build setup', () => {
       );
 
       afterAll(async () => {
-        await fs.rm(`${projectPath}/node_modules`, {recursive: true});
-        await fs.unlink(`${projectPath}/package-lock.json`);
+        await fs
+          .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
+          .catch(() => {});
+        await fs.unlink(`${projectPath}/package-lock.json`).catch(() => {});
 
         if (buildSetup.startsWith('ts_')) {
-          await fs.rm(`${projectPath}/dist`, {recursive: true});
+          await fs
+            .rm(`${projectPath}/dist`, {recursive: true, force: true})
+            .catch(() => {});
         }
       });
     },

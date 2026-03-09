@@ -24,32 +24,26 @@ export interface ExecutorContext {
 
 /**
  * Creates an A2A Agent Executor context from the given parameters.
- * @param userId The ID of the user.
  * @param session The session.
- * @param agentName The name of the agent.
  * @param userContent The content of the user.
  * @param requestContext The request context.
  * @returns The A2A Agent Executor context.
  */
 export function createExecutorContext({
-  userId,
   session,
-  agentName,
   userContent,
   requestContext,
 }: {
-  userId: string;
-  session?: Session;
-  agentName: string;
+  session: Session;
   userContent: Content;
   requestContext: RequestContext;
 }): ExecutorContext {
   return {
-    userId,
-    sessionId: session?.id || requestContext.contextId,
-    agentName,
-    readonlyState: session?.state || {},
-    events: session?.events || [],
+    userId: session.userId,
+    sessionId: session.id,
+    agentName: session.appName,
+    readonlyState: session.state,
+    events: session.events,
     userContent,
     requestContext,
   };
