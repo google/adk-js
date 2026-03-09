@@ -4,14 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  BaseAgent,
+  BaseSummarizer,
+  Event,
+  InvocationContext,
+  PluginManager,
+  Session,
+  TokenBasedContextCompactor,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../agents/base_agent.js';
-import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
-import {PluginManager} from '../plugins/plugin_manager.js';
-import {Session} from '../sessions/session.js';
-import {BaseSummarizer} from './summarizers/base_summarizer.js';
-import {TokenBasedContextCompactor} from './token_based_context_compactor.js';
 
 class MockSummarizer implements BaseSummarizer {
   async summarize(events: Event[]): Promise<string> {
