@@ -5,5 +5,6 @@
  */
 
 export * from './base_context_compactor.js';
-export * from './llm_context_compactor.js';
+export * from './summarizers/index.js';
+export * from './token_based_context_compactor.js';
 export * from './truncating_context_compactor.js';

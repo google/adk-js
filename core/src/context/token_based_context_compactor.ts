@@ -1,0 +1,145 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {InvocationContext} from '../agents/invocation_context.js';
+import {CompactedEvent} from '../events/compacted_event.js';
+import {Event, stringifyContent} from '../events/event.js';
+import {BaseContextCompactor} from './base_context_compactor.js';
+import {BaseSummarizer} from './summarizers/base_summarizer.js';
+
+export interface TokenBasedContextCompactorOptions {
+  /** The maximum number of tokens to retain in the session history before compaction. */
+  tokenThreshold: number;
+  /**
+   * The minimum number of raw events to keep at the end of the session.
+   * Compaction will not affect these tail events (unless needed for tool splits).
+   */
+  eventRetentionSize: number;
+  /** The summarizer used to create the compacted event content. */
+  summarizer: BaseSummarizer;
+}
+
+/**
+ * A context compactor that uses token count to determine when to compact events.
+ * Oldest events are summarized into a CompactedEvent when the session
+ * history exceeds the token threshold.
+ */
+export class TokenBasedContextCompactor implements BaseContextCompactor {
+  private readonly tokenThreshold: number;
+  private readonly eventRetentionSize: number;
+  private readonly summarizer: BaseSummarizer;
+
+  constructor(options: TokenBasedContextCompactorOptions) {
+    this.tokenThreshold = options.tokenThreshold;
+    this.eventRetentionSize = options.eventRetentionSize;
+    this.summarizer = options.summarizer;
+  }
+
+  shouldCompact(
+    invocationContext: InvocationContext,
+  ): boolean | Promise<boolean> {
+    const events = invocationContext.session.events;
+    if (events.length <= this.eventRetentionSize) {
+      return false;
+    }
+
+    let totalTokens = 0;
+    for (const event of events) {
+      totalTokens += this.getEventTokens(event);
+    }
+
+    return totalTokens > this.tokenThreshold;
+  }
+
+  async compact(invocationContext: InvocationContext): Promise<void> {
+    const events = invocationContext.session.events;
+
+    if (events.length <= this.eventRetentionSize) {
+      return;
+    }
+
+    // Determine the baseline index to retain.
+    // e.g. length = 10, eventRetentionSize = 2 => index = 8.
+    let retainStartIndex = Math.max(0, events.length - this.eventRetentionSize);
+
+    // Prevent splitting between a tool call and its response.
+    // Adjust retainStartIndex backward to include the function call.
+    while (retainStartIndex > 0) {
+      const eventToRetain = events[retainStartIndex];
+      const previousEvent = events[retainStartIndex - 1];
+
+      // If the event we are about to retain contains function responses,
+      // but the previous event is the function call, we must retain the previous event too.
+      if (
+        this.hasFunctionResponse(eventToRetain) &&
+        this.hasFunctionCall(previousEvent)
+      ) {
+        retainStartIndex--;
+      } else {
+        // No conflict, safe to split here.
+        break;
+      }
+    }
+
+    if (retainStartIndex === 0) {
+      // Cannot compact if we have to retain everything
+      return;
+    }
+
+    // Extract events to compact.
+    const eventsToCompact = events.splice(0, retainStartIndex);
+
+    const compactedContent = await this.summarizer.summarize(eventsToCompact);
+
+    // Create the new CompactedEvent
+    const startTime = eventsToCompact[0].timestamp;
+    const endTime = eventsToCompact[eventsToCompact.length - 1].timestamp;
+
+    const compactedEvent: CompactedEvent = {
+      // use standard required params
+      id: '',
+      invocationId: '',
+      author: 'system',
+      actions: {
+        stateDelta: {},
+        artifactDelta: {},
+        requestedAuthConfigs: [],
+        requestedToolConfirmations: {},
+      },
+      timestamp: Date.now(),
+
+      // compacted event fields
+      isCompacted: true,
+      startTime,
+      endTime,
+      compactedContent,
+    };
+
+    // Prepend the new compacted event to the session history.
+    invocationContext.session.events.unshift(compactedEvent);
+  }
+
+  private getEventTokens(event: Event): number {
+    if (event.usageMetadata?.promptTokenCount !== undefined) {
+      return event.usageMetadata.promptTokenCount;
+    }
+    // Estimate: 4 chars per token.
+    const contentStr = stringifyContent(event);
+    return Math.ceil(contentStr.length / 4);
+  }
+
+  private hasFunctionCall(event: Event): boolean {
+    return !!event.content?.parts?.some(
+      (part) => part.functionCall !== undefined,
+    );
+  }
+
+  private hasFunctionResponse(event: Event): boolean {
+    return !!event.content?.parts?.some(
+      (part) => part.functionResponse !== undefined,
+    );
+  }
+}

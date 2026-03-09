@@ -77,6 +77,8 @@ export type {
   File,
 } from './code_executors/code_execution_utils.js';
 export * from './context/index.js';
+export {isCompactedEvent} from './events/compacted_event.js';
+export type {CompactedEvent} from './events/compacted_event.js';
 export {
   createEvent,
   getFunctionCalls,
