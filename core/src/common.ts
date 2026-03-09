@@ -13,10 +13,6 @@ export type {
   BeforeAgentCallback,
   SingleAgentCallback,
 } from './agents/base_agent.js';
-export {
-  BaseLlmRequestProcessor,
-  BaseLlmResponseProcessor,
-} from './agents/base_llm_processor.js';
 export {Context} from './agents/context.js';
 export {functionsExportedForTestingOnly} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
@@ -41,6 +37,10 @@ export type {
 export {LoopAgent, isLoopAgent} from './agents/loop_agent.js';
 export type {LoopAgentConfig} from './agents/loop_agent.js';
 export {ParallelAgent, isParallelAgent} from './agents/parallel_agent.js';
+export {
+  BaseLlmRequestProcessor,
+  BaseLlmResponseProcessor,
+} from './agents/processors/base_llm_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
 export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
