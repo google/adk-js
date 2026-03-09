@@ -66,12 +66,13 @@ export function isDatabaseConnectionString(uri?: string): boolean {
 export class DatabaseSessionService extends BaseSessionService {
   private orm?: MikroORM;
   private initialized = false;
-  private options: MikroDBOptions;
+  private options?: MikroDBOptions;
+  private connectionString?: string;
 
   constructor(connectionStringOrOptions: MikroDBOptions | string) {
     super();
     if (typeof connectionStringOrOptions === 'string') {
-      this.options = getConnectionOptionsFromUri(connectionStringOrOptions);
+      this.connectionString = connectionStringOrOptions;
     } else {
       if (!connectionStringOrOptions.driver) {
         throw new Error('Driver is required when passing options object.');
@@ -89,7 +90,11 @@ export class DatabaseSessionService extends BaseSessionService {
       return;
     }
 
-    this.orm = await MikroORM.init(this.options);
+    if (this.connectionString && (!this.options || !this.options.driver)) {
+      this.options = await getConnectionOptionsFromUri(this.connectionString);
+    }
+
+    this.orm = await MikroORM.init(this.options!);
     await ensureDatabaseCreated(this.orm!);
     await validateDatabaseSchemaVersion(this.orm!);
     this.initialized = true;

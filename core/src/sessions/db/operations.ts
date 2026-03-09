@@ -5,11 +5,6 @@
  */
 
 import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
-import {MariaDbDriver} from '@mikro-orm/mariadb';
-import {MsSqlDriver} from '@mikro-orm/mssql';
-import {MySqlDriver} from '@mikro-orm/mysql';
-import {PostgreSqlDriver} from '@mikro-orm/postgresql';
-import {SqliteDriver} from '@mikro-orm/sqlite';
 import {
   ENTITIES,
   SCHEMA_VERSION_1_JSON,
@@ -24,18 +19,25 @@ import {
  * @returns MikroORM Options configured for the database
  * @throws Error if the URI is invalid or unsupported
  */
-export function getConnectionOptionsFromUri(uri: string): MikroORMOptions {
+export async function getConnectionOptionsFromUri(
+  uri: string,
+): Promise<MikroORMOptions> {
   let driver: unknown | undefined;
 
   if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
+    const {PostgreSqlDriver} = await import('@mikro-orm/postgresql');
     driver = PostgreSqlDriver;
   } else if (uri.startsWith('mysql://')) {
+    const {MySqlDriver} = await import('@mikro-orm/mysql');
     driver = MySqlDriver;
   } else if (uri.startsWith('mariadb://')) {
+    const {MariaDbDriver} = await import('@mikro-orm/mariadb');
     driver = MariaDbDriver;
   } else if (uri.startsWith('sqlite://')) {
+    const {SqliteDriver} = await import('@mikro-orm/sqlite');
     driver = SqliteDriver;
   } else if (uri.startsWith('mssql://')) {
+    const {MsSqlDriver} = await import('@mikro-orm/mssql');
     driver = MsSqlDriver;
   } else {
     throw new Error(`Unsupported database URI: ${uri}`);
@@ -78,7 +80,9 @@ export async function ensureDatabaseCreated(
   if (ormOrUrlOrOptions instanceof MikroORM) {
     orm = ormOrUrlOrOptions;
   } else if (typeof ormOrUrlOrOptions === 'string') {
-    orm = await MikroORM.init(getConnectionOptionsFromUri(ormOrUrlOrOptions));
+    orm = await MikroORM.init(
+      await getConnectionOptionsFromUri(ormOrUrlOrOptions),
+    );
   } else {
     orm = await MikroORM.init(ormOrUrlOrOptions);
   }

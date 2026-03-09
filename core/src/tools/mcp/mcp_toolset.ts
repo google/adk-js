@@ -43,8 +43,9 @@ export class MCPToolset extends BaseToolset {
   constructor(
     connectionParams: MCPConnectionParams,
     toolFilter: ToolPredicate | string[] = [],
+    prefix?: string,
   ) {
-    super(toolFilter);
+    super(toolFilter, prefix);
     this.mcpSessionManager = new MCPSessionManager(connectionParams);
   }
 
@@ -58,9 +59,14 @@ export class MCPToolset extends BaseToolset {
     }
 
     // TODO: respect context (e.g. tool filter)
-    return listResult.tools.map(
-      (tool) => new MCPTool(tool, this.mcpSessionManager),
-    );
+    return listResult.tools.map((tool) => {
+      // Create a cloned tool definition with the prefixed name
+      const toolWithPrefix = {
+        ...tool,
+        name: this.prefix ? `${this.prefix}_${tool.name}` : tool.name,
+      };
+      return new MCPTool(toolWithPrefix, this.mcpSessionManager);
+    });
   }
 
   async close(): Promise<void> {}

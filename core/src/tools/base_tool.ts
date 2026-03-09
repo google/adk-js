@@ -123,6 +123,10 @@ export abstract class BaseTool {
       return;
     }
 
+    if (this.name in llmRequest.toolsDict) {
+      throw new Error(`Duplicate tool name: ${this.name}`);
+    }
+
     llmRequest.toolsDict[this.name] = this;
 
     const tool = findToolWithFunctionDeclarations(llmRequest);

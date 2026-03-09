@@ -43,7 +43,10 @@ export function isBaseToolset(obj: unknown): obj is BaseToolset {
 export abstract class BaseToolset {
   readonly [BASE_TOOLSET_SIGNATURE_SYMBOL] = true;
 
-  constructor(readonly toolFilter: ToolPredicate | string[]) {}
+  constructor(
+    readonly toolFilter: ToolPredicate | string[],
+    readonly prefix?: string,
+  ) {}
 
   /**
    * Returns the tools that should be exposed to LLM.
