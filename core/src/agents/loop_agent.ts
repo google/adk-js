@@ -53,7 +53,7 @@ export class LoopAgent extends BaseAgent {
    */
   readonly [LOOP_AGENT_SIGNATURE_SYMBOL] = true;
 
-  private readonly maxIterations: number;
+  readonly maxIterations: number;
 
   constructor(config: LoopAgentConfig) {
     super(config);
