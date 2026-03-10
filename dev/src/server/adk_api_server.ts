@@ -124,33 +124,32 @@ export class AdkApiServer {
   }
 
   private async initA2A() {
-    const agentNames = await this.agentLoader.listAgents();
+    const appNames = await this.agentLoader.listAgents();
     const serverUrl = this.getServerUrl();
 
-    for (const agentName of agentNames) {
-      const agentFile = await this.agentLoader.getAgentFile(agentName);
+    for (const appName of appNames) {
+      const agentFile = await this.agentLoader.getAgentFile(appName);
       const agent = await agentFile.load();
       const agentCard = await getA2AAgentCard(agent, [
         {
-          url: `${serverUrl}/a2a/${agentName}/rest`,
+          url: `${serverUrl}/a2a/${appName}/rest`,
           transport: 'rest',
         },
         {
-          url: `${serverUrl}/a2a/${agentName}/jsonrpc`,
+          url: `${serverUrl}/a2a/${appName}/jsonrpc`,
           transport: 'jsonrpc',
         },
       ]);
 
       const agentExecutor = new A2AAgentExecutor({
-        runnerConfig: {
+        runner: {
           agent,
-          appName: agent.name,
+          appName,
           sessionService: this.sessionService,
           memoryService: this.memoryService,
           artifactService: this.artifactService,
         },
         runConfig: {
-          // ??? Should we enable streaming mode for model while running agent via A2A?
           streamingMode: StreamingMode.SSE,
         },
       });
@@ -161,18 +160,18 @@ export class AdkApiServer {
       );
 
       this.app.use(
-        `/a2a/${agentName}/${AGENT_CARD_PATH}`,
+        `/a2a/${appName}/${AGENT_CARD_PATH}`,
         agentCardHandler({agentCardProvider: requestHandler}),
       );
       this.app.use(
-        `/a2a/${agentName}/rest`,
+        `/a2a/${appName}/rest`,
         restHandler({
           requestHandler,
           userBuilder: UserBuilder.noAuthentication,
         }),
       );
       this.app.use(
-        `/a2a/${agentName}/jsonrpc`,
+        `/a2a/${appName}/jsonrpc`,
         jsonRpcHandler({
           requestHandler,
           userBuilder: UserBuilder.noAuthentication,
