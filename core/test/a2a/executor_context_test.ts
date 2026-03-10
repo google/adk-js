@@ -34,7 +34,7 @@ describe('createExecutorContext', () => {
     expect(context).toEqual({
       userId: 'user-1',
       sessionId: 'session-123',
-      agentName: 'agent-1',
+      appName: 'agent-1',
       readonlyState: {key: 'value'},
       events: mockSession.events,
       userContent: mockUserContent,

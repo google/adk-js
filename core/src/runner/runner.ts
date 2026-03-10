@@ -54,7 +54,28 @@ export interface RunnerConfig {
   credentialService?: BaseCredentialService;
 }
 
+/**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all Runner instances.
+ */
+const RUNNER_SIGNATURE_SYMBOL = Symbol.for('google.adk.runner');
+
+/**
+ * Type guard to check if an object is an instance of Runner.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of Runner, false otherwise.
+ */
+export function isRunner(obj: unknown): obj is Runner {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    RUNNER_SIGNATURE_SYMBOL in obj &&
+    obj[RUNNER_SIGNATURE_SYMBOL] === true
+  );
+}
+
 export class Runner {
+  readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
   readonly agent: BaseAgent;
   readonly pluginManager: PluginManager;

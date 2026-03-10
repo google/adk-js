@@ -15,7 +15,7 @@ import {Session} from '../sessions/session.js';
 export interface ExecutorContext {
   userId: string;
   sessionId: string;
-  agentName: string;
+  appName: string;
   readonlyState: Record<string, unknown>;
   events: Event[];
   userContent: Content;
@@ -41,7 +41,7 @@ export function createExecutorContext({
   return {
     userId: session.userId,
     sessionId: session.id,
-    agentName: session.appName,
+    appName: session.appName,
     readonlyState: session.state,
     events: session.events,
     userContent,

@@ -22,6 +22,19 @@ export enum MessageRole {
 }
 
 /**
+ * Task states.
+ */
+export enum TaskState {
+  SUBMITTED = 'submitted',
+  WORKING = 'working',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELED = 'canceled',
+  REJECTED = 'rejected',
+  INPUT_REQUIRED = 'input-required',
+}
+
+/**
  * A2A event.
  */
 export type A2AEvent =
@@ -83,7 +96,7 @@ export function getEventMetadata(event: A2AEvent): Record<string, unknown> {
 export function isFailedTaskStatusUpdateEvent(event: unknown): boolean {
   return (
     (isTaskStatusUpdateEvent(event) || isTask(event)) &&
-    event.status.state === 'failed'
+    event.status.state === TaskState.FAILED
   );
 }
 
@@ -93,7 +106,12 @@ export function isFailedTaskStatusUpdateEvent(event: unknown): boolean {
 export function isTerminalTaskStatusUpdateEvent(event: unknown): boolean {
   return (
     (isTaskStatusUpdateEvent(event) || isTask(event)) &&
-    ['completed', 'failed', 'canceled', 'rejected'].includes(event.status.state)
+    [
+      TaskState.COMPLETED,
+      TaskState.FAILED,
+      TaskState.CANCELED,
+      TaskState.REJECTED,
+    ].includes(event.status.state as TaskState)
   );
 }
 
@@ -103,7 +121,7 @@ export function isTerminalTaskStatusUpdateEvent(event: unknown): boolean {
 export function isInputRequiredTaskStatusUpdateEvent(event: unknown): boolean {
   return (
     (isTaskStatusUpdateEvent(event) || isTask(event)) &&
-    event.status.state === 'input-required'
+    event.status.state === TaskState.INPUT_REQUIRED
   );
 }
 
@@ -136,10 +154,12 @@ export function createTaskSubmittedEvent({
   taskId,
   contextId,
   message,
+  metadata,
 }: {
   taskId: string;
   contextId: string;
   message: Message;
+  metadata?: Record<string, unknown>;
 }): TaskStatusUpdateEvent {
   return {
     kind: 'status-update',
@@ -147,10 +167,11 @@ export function createTaskSubmittedEvent({
     contextId,
     final: false,
     status: {
-      state: 'submitted',
+      state: TaskState.SUBMITTED,
       message,
       timestamp: new Date().toISOString(),
     },
+    metadata,
   };
 }
 
@@ -161,10 +182,12 @@ export function createTask({
   contextId,
   message,
   taskId,
+  metadata,
 }: {
   taskId: string;
   contextId: string;
   message: Message;
+  metadata?: Record<string, unknown>;
 }): Task {
   return {
     kind: 'task',
@@ -172,9 +195,10 @@ export function createTask({
     contextId,
     history: [message],
     status: {
-      state: 'submitted',
+      state: TaskState.SUBMITTED,
       timestamp: new Date().toISOString(),
     },
+    metadata,
   };
 }
 
@@ -185,10 +209,12 @@ export function createTaskWorkingEvent({
   taskId,
   contextId,
   message,
+  metadata,
 }: {
   taskId: string;
   contextId: string;
-  message: Message;
+  message?: Message;
+  metadata?: Record<string, unknown>;
 }): TaskStatusUpdateEvent {
   return {
     kind: 'status-update',
@@ -196,10 +222,11 @@ export function createTaskWorkingEvent({
     contextId,
     final: false,
     status: {
-      state: 'working',
+      state: TaskState.WORKING,
       message,
       timestamp: new Date().toISOString(),
     },
+    metadata,
   };
 }
 
@@ -209,7 +236,7 @@ export function createTaskWorkingEvent({
 export function createTaskCompletedEvent({
   taskId,
   contextId,
-  metadata = {},
+  metadata,
 }: {
   taskId: string;
   contextId: string;
@@ -221,7 +248,7 @@ export function createTaskCompletedEvent({
     contextId,
     final: true,
     status: {
-      state: 'completed',
+      state: TaskState.COMPLETED,
       timestamp: new Date().toISOString(),
     },
     metadata,
@@ -257,8 +284,8 @@ export function createTaskArtifactUpdateEvent({
     artifact: {
       artifactId: artifactId || randomUUID(),
       parts,
-      metadata,
     },
+    metadata,
   };
 }
 
@@ -280,8 +307,9 @@ export function createTaskFailedEvent({
     kind: 'status-update',
     taskId,
     contextId,
+    final: true,
     status: {
-      state: 'failed',
+      state: TaskState.FAILED,
       message: {
         kind: 'message',
         messageId: randomUUID(),
@@ -298,7 +326,6 @@ export function createTaskFailedEvent({
       timestamp: new Date().toISOString(),
     },
     metadata,
-    final: true,
   };
 }
 
@@ -309,10 +336,12 @@ export function createTaskInputRequiredEvent({
   taskId,
   contextId,
   parts,
+  metadata,
 }: {
   taskId: string;
   contextId: string;
   parts: A2APart[];
+  metadata?: Record<string, unknown>;
 }): TaskStatusUpdateEvent {
   return {
     kind: 'status-update',
@@ -320,7 +349,7 @@ export function createTaskInputRequiredEvent({
     contextId,
     final: true,
     status: {
-      state: 'input-required',
+      state: TaskState.INPUT_REQUIRED,
       message: {
         kind: 'message',
         messageId: randomUUID(),
@@ -331,6 +360,7 @@ export function createTaskInputRequiredEvent({
       },
       timestamp: new Date().toISOString(),
     },
+    metadata,
   };
 }
 
@@ -341,10 +371,12 @@ export function createInputMissingErrorEvent({
   taskId,
   contextId,
   parts,
+  metadata,
 }: {
   parts: A2APart[];
   taskId: string;
   contextId: string;
+  metadata?: Record<string, unknown>;
 }): TaskStatusUpdateEvent {
   return {
     kind: 'status-update',
@@ -352,7 +384,7 @@ export function createInputMissingErrorEvent({
     contextId,
     final: true,
     status: {
-      state: 'input-required',
+      state: TaskState.INPUT_REQUIRED,
       message: {
         kind: 'message',
         messageId: randomUUID(),
@@ -363,5 +395,6 @@ export function createInputMissingErrorEvent({
       },
       timestamp: new Date().toISOString(),
     },
+    metadata,
   };
 }
