@@ -138,7 +138,7 @@ export type {
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
-export {Runner} from './runner/runner.js';
+export {Runner, isRunner} from './runner/runner.js';
 export type {RunnerConfig} from './runner/runner.js';
 export {BaseSessionService} from './sessions/base_session_service.js';
 export type {

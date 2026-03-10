@@ -13,9 +13,11 @@ import {
 import {afterAll, beforeAll, describe, expect, it, vi} from 'vitest';
 import {
   createInputMissingErrorEvent,
+  createTask,
   createTaskArtifactUpdateEvent,
   createTaskCompletedEvent,
   createTaskFailedEvent,
+  createTaskInputRequiredEvent,
   createTaskSubmittedEvent,
   createTaskWorkingEvent,
   getEventMetadata,
@@ -319,6 +321,54 @@ describe('a2a_event', () => {
       });
     });
 
+    it('createTaskWorkingEvent without message', () => {
+      expect(createTaskWorkingEvent({taskId: 't1', contextId: 'c1'})).toEqual({
+        kind: 'status-update',
+        taskId: 't1',
+        contextId: 'c1',
+        final: false,
+        status: {
+          state: 'working',
+          message: undefined,
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+      });
+    });
+
+    it('createTask', () => {
+      expect(createTask({taskId: 't1', contextId: 'c1', message})).toEqual({
+        kind: 'task',
+        id: 't1',
+        contextId: 'c1',
+        history: [message],
+        status: {
+          state: 'submitted',
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+      });
+    });
+
+    it('createTask with random UUID if taskId not provided', () => {
+      expect(
+        createTask({
+          taskId: '',
+          contextId: 'c1',
+          message,
+          metadata: {foo: 'bar'},
+        }),
+      ).toEqual({
+        kind: 'task',
+        id: 'mock-uuid',
+        contextId: 'c1',
+        history: [message],
+        status: {
+          state: 'submitted',
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+        metadata: {foo: 'bar'},
+      });
+    });
+
     it('createTaskCompletedEvent', () => {
       expect(createTaskCompletedEvent({taskId: 't1', contextId: 'c1'})).toEqual(
         {
@@ -330,7 +380,7 @@ describe('a2a_event', () => {
             state: 'completed',
             timestamp: '2024-01-01T00:00:00.000Z',
           },
-          metadata: {},
+          metadata: undefined,
         },
       );
     });
@@ -354,8 +404,8 @@ describe('a2a_event', () => {
         artifact: {
           artifactId: 'mock-uuid',
           parts: [{kind: 'text', text: 'part'}],
-          metadata: {m: 1},
         },
+        metadata: {m: 1},
       });
     });
 
@@ -404,6 +454,35 @@ describe('a2a_event', () => {
           },
           timestamp: '2024-01-01T00:00:00.000Z',
         },
+      });
+    });
+
+    it('createTaskInputRequiredEvent', () => {
+      expect(
+        createTaskInputRequiredEvent({
+          taskId: 't1',
+          contextId: 'c1',
+          parts: [{kind: 'text', text: 'input required'}],
+          metadata: {m: 1},
+        }),
+      ).toEqual({
+        kind: 'status-update',
+        taskId: 't1',
+        contextId: 'c1',
+        final: true,
+        status: {
+          state: 'input-required',
+          message: {
+            kind: 'message',
+            messageId: 'mock-uuid',
+            role: 'agent',
+            taskId: 't1',
+            contextId: 'c1',
+            parts: [{kind: 'text', text: 'input required'}],
+          },
+          timestamp: '2024-01-01T00:00:00.000Z',
+        },
+        metadata: {m: 1},
       });
     });
 
