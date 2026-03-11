@@ -32,6 +32,18 @@ import {Language, Outcome} from '@google/genai';
 import {beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {A2AEvent} from '../../src/a2a/a2a_event.js';
 
+// Mock @a2a-js/sdk/client
+vi.mock('@a2a-js/sdk/client', () => {
+  const Client = vi.fn().mockImplementation(() => ({
+    sendMessageStream: vi.fn(),
+    sendMessage: vi.fn(),
+  }));
+  const ClientFactory = vi.fn().mockImplementation(() => ({
+    createFromAgentCard: vi.fn(),
+  }));
+  return {Client, ClientFactory};
+});
+
 class MockAgent extends BaseAgent {
   protected runAsyncImpl(
     _context: InvocationContext,

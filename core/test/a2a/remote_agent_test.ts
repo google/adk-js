@@ -16,14 +16,15 @@ import {
   ClientFactory,
   DefaultAgentCardResolver,
 } from '@a2a-js/sdk/client';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
+  Event as AdkEvent,
+  createEvent,
+  InvocationContext,
   RemoteA2AAgent,
   RemoteA2AAgentConfig,
-} from '../../src/a2a/a2a_remote_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event as AdkEvent, createEvent} from '../../src/events/event.js';
-import {Session} from '../../src/sessions/session.js';
+  Session,
+} from '@google/adk';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 type A2AStreamEventData =
   | Message
