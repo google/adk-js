@@ -840,7 +840,7 @@ export class AdkApiServer {
 +-----------------------------------------------------------------------------+
 | ADK API Server started                                                      |
 |                                                                             |
-| For local testing, access at ${this.url}.${''.padStart(39 - this.url.length)}     |
+| For local testing, access at ${this.url}.${''.padStart(39 - this.url.length)}       |
 +-----------------------------------------------------------------------------+`);
         resolve();
       });
