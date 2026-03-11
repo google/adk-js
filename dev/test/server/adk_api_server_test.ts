@@ -20,98 +20,69 @@ import {
   Session,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
-import type {Application, Request, Response} from 'express';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 
 /**
- * Simple http client for testing the AdkWebServer. No addtional npm
- * dependencies are required. It uses ExpressJS app, mocks the request/response
- * objects and returns the server response.
+ * Http client for testing the AdkWebServer. It makes real http requests to the
+ * server.
  */
-class MockHttpClient {
-  constructor(private readonly app: Application) {}
+class HttpClient {
+  constructor(private readonly baseUrl: string) {}
 
   get<T>(url: string) {
-    return this.sendMockRequest<T>(url, {method: 'GET'});
+    return this.request<T>(url, {method: 'GET'});
   }
 
-  post<T>(url: string, body: unknown) {
-    return this.sendMockRequest<T>(url, {method: 'POST', body});
+  post<T>(url: string, body?: unknown) {
+    return this.request<T>(url, {method: 'POST', body});
   }
 
-  put<T>(url: string, body: unknown) {
-    return this.sendMockRequest<T>(url, {method: 'PUT', body});
+  put<T>(url: string, body?: unknown) {
+    return this.request<T>(url, {method: 'PUT', body});
   }
 
   delete<T>(url: string) {
-    return this.sendMockRequest<T>(url, {method: 'DELETE'});
+    return this.request<T>(url, {method: 'DELETE'});
   }
 
-  private sendMockRequest<T = unknown>(
+  private async request<T = unknown>(
     url: string,
     {method, body}: {method: string; body?: unknown},
   ): Promise<{status: number; data?: T; text?: string}> {
-    return new Promise((resolve, reject) => {
-      let statusCode: number = 200;
-      let streamText: string = '';
+    const options = {
+      method,
+      headers: body ? {'Content-Type': 'application/json'} : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      redirect: 'manual' as const,
+    };
 
-      const mockRequest = {method, url, body} as unknown as Request;
-      const mockResponse = {
-        status: (code: number) => {
-          statusCode = code;
-          return mockResponse;
-        },
-        send: (data: string | unknown) => {
-          if (typeof data === 'string') {
-            sendRespose(statusCode, undefined, data);
-          } else {
-            sendRespose(statusCode, data);
-          }
-        },
-        json: (data: unknown) => {
-          sendRespose(statusCode, data);
-        },
-        write: (streamChunk: string) => {
-          streamText += streamChunk;
-        },
-        end: () => {
-          sendRespose(statusCode, undefined, streamText);
-        },
-        setHeader: () => {},
-        flushHeaders: () => {},
-        redirect: (url: string) => {
-          statusCode = 302;
-          sendRespose(statusCode, undefined, url);
-        },
-      } as unknown as Response;
+    const response = await fetch(`${this.baseUrl}${url}`, options);
+    const contentType = response.headers.get('content-type');
+    let data: T | undefined = undefined;
+    let text: string | undefined = undefined;
 
-      const sendRespose = (
-        statusCode: number,
-        jsonData?: unknown,
-        text?: string,
-      ) => {
-        if (statusCode > 399) {
-          reject({
-            response: {
-              status: statusCode,
-            },
-            message: (jsonData as {error: string}).error,
-          });
-        }
+    if (contentType?.includes('application/json')) {
+      data = (await response.json().catch(() => undefined)) as T;
+    } else {
+      text = await response.text();
+    }
 
-        resolve({
-          status: statusCode,
-          data: jsonData as T,
-          text,
-        });
+    if (response.status > 399) {
+      throw {
+        response: {status: response.status},
+        message: (data as {error?: string})?.error || response.statusText,
       };
+    }
 
-      this.app(mockRequest, mockResponse);
-    });
+    return {
+      status: response.status,
+      data,
+      text,
+    };
   }
 }
 
@@ -196,13 +167,17 @@ const TEST_AGENT = new TestAgent({
   ],
 });
 
+function getRandormPort(): number {
+  return 40000 + Math.floor(Math.random() * 10000);
+}
+
 describe('AdkWebServer', () => {
   let agentLoader: AgentLoader;
   let sessionService: BaseSessionService;
   let memoryService: BaseMemoryService;
   let artifactService: BaseArtifactService;
   let server: AdkApiServer;
-  let client: MockHttpClient;
+  let client: HttpClient;
 
   beforeEach(async () => {
     agentLoader = {
@@ -225,10 +200,15 @@ describe('AdkWebServer', () => {
       sessionService,
       memoryService,
       artifactService,
-      port: 1234,
+      port: getRandormPort(),
     });
+    await server.start();
 
-    client = new MockHttpClient(server.app);
+    client = new HttpClient(server.url);
+  });
+
+  afterEach(async () => {
+    await server.stop();
   });
 
   describe('Sessions', () => {
@@ -745,13 +725,15 @@ describe('AdkWebServer', () => {
         sessionService,
         memoryService,
         artifactService,
-        port: 1235,
+        port: getRandormPort(),
         serveDebugUI: true,
       });
-      const debugClient = new MockHttpClient(debugServer.app);
+      await debugServer.start();
+      const debugClient = new HttpClient(debugServer.url);
 
       const response = await debugClient.get('/');
       expect(response.status).toBe(302);
+      await debugServer.stop();
     });
   });
 

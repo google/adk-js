@@ -33,6 +33,7 @@ export interface CreateDockerFileContentOptions {
   sessionServiceUri?: string;
   artifactServiceUri?: string;
   otelToCloud?: boolean;
+  a2a?: boolean;
 }
 
 export interface DeployToCloudRunOptions extends CreateDockerFileContentOptions {
@@ -43,6 +44,7 @@ export interface DeployToCloudRunOptions extends CreateDockerFileContentOptions 
   extraGcloudArgs?: string[];
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
+  a2a?: boolean;
 }
 
 function validateGcloudExtraArgs(
@@ -194,6 +196,10 @@ function createDockerFileContent(
     adkServerOptions.push('--otel_to_cloud');
   }
 
+  if (options.a2a) {
+    adkServerOptions.push('--a2a');
+  }
+
   return `
 FROM node:lts-alpine
 WORKDIR /app
@@ -325,6 +331,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       logLevel: options.logLevel,
       allowOrigins: options.allowOrigins,
       otelToCloud: options.otelToCloud,
+      a2a: options.a2a,
     });
 
     console.info('Deploying to Cloud Run...');

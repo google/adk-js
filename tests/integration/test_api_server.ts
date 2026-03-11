@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ChildProcessWithoutNullStreams, spawn} from 'child_process';
-import * as path from 'path';
+import {ChildProcessWithoutNullStreams, spawn} from 'node:child_process';
+import * as path from 'node:path';
 import {AdkApiClient} from '../../dev/src/server/adk_api_client.js';
 
 /**
@@ -26,6 +26,7 @@ export interface TestApiServerParams {
   port?: number;
   sessionServiceUri?: string;
   artifactServiceUri?: string;
+  a2a?: boolean;
 }
 
 /**
@@ -102,6 +103,9 @@ function getAdkCliArgs(params: TestApiServerParams): string[] {
   }
   if (params.artifactServiceUri) {
     args.push('--artifact_service_uri', params.artifactServiceUri);
+  }
+  if (params.a2a) {
+    args.push('--a2a');
   }
 
   return args;
