@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
 import {
   BaseArtifactService,
   BaseMemoryService,
@@ -844,6 +845,37 @@ describe('AdkWebServer', () => {
       } catch (e: unknown) {
         expect((e as {response: {status: number}}).response.status).toBe(404);
       }
+    });
+  });
+
+  describe('A2A', () => {
+    it('should return 404 for A2A endpoints when disabled', async () => {
+      try {
+        await client.get(`/a2a/testApp/${AGENT_CARD_PATH}`);
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(404);
+      }
+    });
+
+    it('should return Agent Card when enabled', async () => {
+      const a2aServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port: getRandormPort(),
+        a2a: true,
+      });
+      await a2aServer.start();
+      const a2aClient = new HttpClient(a2aServer.url);
+
+      const response = await a2aClient.get<AgentCard>(
+        `/a2a/testApp/${AGENT_CARD_PATH}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.data?.name).toBe('testAgent');
+
+      await a2aServer.stop();
     });
   });
 });

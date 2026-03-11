@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {exec, spawn} from 'node:child_process';
+import {exec, spawn, SpawnOptions} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {promisify} from 'node:util';
@@ -18,7 +18,19 @@ import {
 } from '../utils/file_utils.js';
 
 const execAsync = promisify(exec);
-const spawnAsync = promisify(spawn);
+const spawnAsync = (command: string, args: string[], options: SpawnOptions) => {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, options);
+    child.on('close', (code: number) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Command failed with exit code ${code}`));
+      }
+    });
+    child.on('error', reject);
+  });
+};
 
 const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
@@ -168,7 +180,7 @@ async function createPackageJson(sourceFolder: string, targetFolder: string) {
   console.info('Creating package.json complete', targetPackageJsonPath);
 }
 
-function createDockerFileContent(
+export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
   const adkCommand = options.withUi ? 'web' : 'api_server';
