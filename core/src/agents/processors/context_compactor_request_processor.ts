@@ -24,7 +24,6 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
     this.compactors = compactors;
   }
 
-  // eslint-disable-next-line require-yield
   async *runAsync(
     invocationContext: InvocationContext,
     _llmRequest: LlmRequest,
@@ -34,7 +33,14 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         compactor.shouldCompact(invocationContext),
       );
       if (shouldCompact) {
+        const oldEvents = new Set(invocationContext.session.events);
         await Promise.resolve(compactor.compact(invocationContext));
+        const newEvents = invocationContext.session.events.filter(
+          (e) => !oldEvents.has(e),
+        );
+        for (const e of newEvents) {
+          yield e;
+        }
         break; // Stop after one compactor has compacted the history.
       }
     }

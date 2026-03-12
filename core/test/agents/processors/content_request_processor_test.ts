@@ -7,6 +7,7 @@
 import {
   BaseAgent,
   CompactedEvent,
+  CONTENT_REQUEST_PROCESSOR,
   Event,
   EventActions,
   InvocationContext,
@@ -16,7 +17,6 @@ import {
   Session,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {CONTENT_REQUEST_PROCESSOR} from '../../../src/agents/processors/content_request_processor.js';
 
 function createMockEvent(id: string, timestamp: number, text: string): Event {
   return {

@@ -6,7 +6,11 @@ import {LlmRequest} from '../../../src/models/llm_request.js';
 
 describe('ContextCompactorRequestProcessor', () => {
   it('should run compactors in order and stop after first compaction', async () => {
-    const mockCtx = {} as InvocationContext;
+    const mockCtx = {
+      session: {
+        events: [],
+      },
+    } as unknown as InvocationContext;
     const mockReq = {} as LlmRequest;
 
     const compactor1: BaseContextCompactor = {
