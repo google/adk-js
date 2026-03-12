@@ -77,7 +77,6 @@ export type {
   CodeExecutionResult,
   File,
 } from './code_executors/code_execution_utils.js';
-export {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
 export {TokenBasedContextCompactor} from './context/token_based_context_compactor.js';
 export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
