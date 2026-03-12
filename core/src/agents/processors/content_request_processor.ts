@@ -38,9 +38,9 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
         : undefined;
 
     if (latestCompactedEvent) {
-      events = events.filter((event) => {
+      const remainingEvents = events.filter((event) => {
         if (event === latestCompactedEvent) {
-          return true;
+          return false;
         }
         // Elide all previous compacted events as they are overridden
         if (isCompactedEvent(event)) {
@@ -52,6 +52,7 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
         }
         return true;
       });
+      events = [latestCompactedEvent, ...remainingEvents];
     }
 
     if (agent.includeContents === 'default') {
