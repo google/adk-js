@@ -1,10 +1,18 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {
+  BaseAgent,
+  Event,
+  InvocationContext,
+  PluginManager,
+  Session,
+  TruncatingContextCompactor,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {PluginManager} from '../../src/common.js';
-import {TruncatingContextCompactor} from '../../src/context/truncating_context_compactor.js';
-import {Event} from '../../src/events/event.js';
-import {Session} from '../../src/sessions/session.js';
 
 function createDummyEvent(id: string): Event {
   return {

@@ -1,8 +1,16 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {
+  BaseContextCompactor,
+  ContextCompactorRequestProcessor,
+  InvocationContext,
+  LlmRequest,
+} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {InvocationContext} from '../../../src/agents/invocation_context.js';
-import {ContextCompactorRequestProcessor} from '../../../src/agents/processors/context_compactor_request_processor.js';
-import {BaseContextCompactor} from '../../../src/context/base_context_compactor.js';
-import {LlmRequest} from '../../../src/models/llm_request.js';
 
 describe('ContextCompactorRequestProcessor', () => {
   it('should run compactors in order and stop after first compaction', async () => {
