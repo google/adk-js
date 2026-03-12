@@ -41,7 +41,10 @@ export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './agents/processors/base_llm_processor.js';
-export {CONTENT_REQUEST_PROCESSOR} from './agents/processors/content_request_processor.js';
+export {
+  CONTENT_REQUEST_PROCESSOR,
+  ContentRequestProcessor,
+} from './agents/processors/content_request_processor.js';
 export {ContextCompactorRequestProcessor} from './agents/processors/context_compactor_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
 export {StreamingMode} from './agents/run_config.js';
@@ -77,9 +80,20 @@ export type {
   CodeExecutionResult,
   File,
 } from './code_executors/code_execution_utils.js';
-export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
-export {TokenBasedContextCompactor} from './context/token_based_context_compactor.js';
-export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
+export {BaseContextCompactor} from './context/base_context_compactor.js';
+export {BaseSummarizer} from './context/summarizers/base_summarizer.js';
+export {
+  LlmSummarizer,
+  LlmSummarizerOptions,
+} from './context/summarizers/llm_summarizer.js';
+export {
+  TokenBasedContextCompactor,
+  TokenBasedContextCompactorOptions,
+} from './context/token_based_context_compactor.js';
+export {
+  TruncatingContextCompactor,
+  TruncatingContextCompactorOptions,
+} from './context/truncating_context_compactor.js';
 export {isCompactedEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {

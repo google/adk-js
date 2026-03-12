@@ -24,7 +24,6 @@ function createDummyEvent(id: string): Event {
       artifactDelta: {},
       requestedAuthConfigs: {},
       requestedToolConfirmations: {},
-      customMetadata: {},
       skipSummarization: false,
     },
   };

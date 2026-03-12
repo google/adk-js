@@ -7,6 +7,7 @@
 import {
   BaseAgent,
   BaseSummarizer,
+  CompactedEvent,
   Event,
   InvocationContext,
   PluginManager,
@@ -14,7 +15,6 @@ import {
   TokenBasedContextCompactor,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {CompactedEvent} from '../../src/events/compacted_event.js';
 
 class MockSummarizer implements BaseSummarizer {
   async summarize(events: Event[]): Promise<CompactedEvent> {
