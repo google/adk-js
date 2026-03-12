@@ -16,9 +16,11 @@ export interface LlmSummarizerOptions {
 }
 
 const DEFAULT_PROMPT =
-  'Please summarize the following conversation events into a compact representation. ' +
-  'Focus on the key information, decisions, constraints, and context that are important for continuing the conversation.';
-
+  'The following is a conversation history between a user and an AI' +
+  ' agent. Please summarize the conversation, focusing on key' +
+  ' information and decisions made, as well as any unresolved' +
+  ' questions or tasks. The summary should be concise and capture the' +
+  ' essence of the interaction.';
 /**
  * A summarizer that uses an LLM to generate a compacted representation
  * of existing events.
