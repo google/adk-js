@@ -80,20 +80,14 @@ export type {
   CodeExecutionResult,
   File,
 } from './code_executors/code_execution_utils.js';
-export {BaseContextCompactor} from './context/base_context_compactor.js';
-export {BaseSummarizer} from './context/summarizers/base_summarizer.js';
-export {
-  LlmSummarizer,
-  LlmSummarizerOptions,
-} from './context/summarizers/llm_summarizer.js';
-export {
-  TokenBasedContextCompactor,
-  TokenBasedContextCompactorOptions,
-} from './context/token_based_context_compactor.js';
-export {
-  TruncatingContextCompactor,
-  TruncatingContextCompactorOptions,
-} from './context/truncating_context_compactor.js';
+export type {BaseContextCompactor} from './context/base_context_compactor.js';
+export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
+export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
+export type {LlmSummarizerOptions} from './context/summarizers/llm_summarizer.js';
+export {TokenBasedContextCompactor} from './context/token_based_context_compactor.js';
+export type {TokenBasedContextCompactorOptions} from './context/token_based_context_compactor.js';
+export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
+export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {isCompactedEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
