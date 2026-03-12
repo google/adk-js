@@ -32,7 +32,9 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
     const compactedEvents = events.filter(isCompactedEvent);
     const latestCompactedEvent =
       compactedEvents.length > 0
-        ? compactedEvents[compactedEvents.length - 1]
+        ? compactedEvents.reduce((latest, current) =>
+            current.endTime > latest.endTime ? current : latest,
+          )
         : undefined;
 
     if (latestCompactedEvent) {
@@ -40,11 +42,12 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
         if (event === latestCompactedEvent) {
           return true;
         }
-        // Elide events covered by the compacted event
-        if (
-          event.timestamp >= latestCompactedEvent.startTime &&
-          event.timestamp <= latestCompactedEvent.endTime
-        ) {
+        // Elide all previous compacted events as they are overridden
+        if (isCompactedEvent(event)) {
+          return false;
+        }
+        // Elide raw events covered by the compacted event
+        if (event.timestamp <= latestCompactedEvent.endTime) {
           return false;
         }
         return true;

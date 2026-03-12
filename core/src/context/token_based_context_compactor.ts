@@ -5,6 +5,7 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
+import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
 import {Event, stringifyContent} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
@@ -37,16 +38,43 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     this.summarizer = options.summarizer;
   }
 
+  private getActiveEvents(events: Event[]): Event[] {
+    let latestCompactedEvent: CompactedEvent | undefined = undefined;
+
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (isCompactedEvent(e)) {
+        if (!latestCompactedEvent || e.endTime > latestCompactedEvent.endTime) {
+          latestCompactedEvent = e as CompactedEvent;
+        }
+      }
+    }
+
+    if (!latestCompactedEvent) {
+      return events;
+    }
+
+    const activeRawEvents = events.filter(
+      (e) =>
+        !isCompactedEvent(e) && e.timestamp > latestCompactedEvent!.endTime,
+    );
+
+    return [latestCompactedEvent, ...activeRawEvents];
+  }
+
   shouldCompact(
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    if (events.length <= this.eventRetentionSize) {
+    const activeEvents = this.getActiveEvents(events);
+    const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
+
+    if (rawEvents.length <= this.eventRetentionSize) {
       return false;
     }
 
     let totalTokens = 0;
-    for (const event of events) {
+    for (const event of activeEvents) {
       totalTokens += this.getEventTokens(event);
     }
 
@@ -55,23 +83,24 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
+    const activeEvents = this.getActiveEvents(events);
+    const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
-    if (events.length <= this.eventRetentionSize) {
+    if (rawEvents.length <= this.eventRetentionSize) {
       return;
     }
 
-    // Determine the baseline index to retain.
-    // e.g. length = 10, eventRetentionSize = 2 => index = 8.
-    let retainStartIndex = Math.max(0, events.length - this.eventRetentionSize);
+    // Determine the baseline index to retain from the active raw events.
+    let retainStartIndex = Math.max(
+      0,
+      rawEvents.length - this.eventRetentionSize,
+    );
 
     // Prevent splitting between a tool call and its response.
-    // Adjust retainStartIndex backward to include the function call.
     while (retainStartIndex > 0) {
-      const eventToRetain = events[retainStartIndex];
-      const previousEvent = events[retainStartIndex - 1];
+      const eventToRetain = rawEvents[retainStartIndex];
+      const previousEvent = rawEvents[retainStartIndex - 1];
 
-      // If the event we are about to retain contains function responses,
-      // but the previous event is the function call, we must retain the previous event too.
       if (
         this.hasFunctionResponse(eventToRetain) &&
         this.hasFunctionCall(previousEvent)
@@ -88,8 +117,13 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Extract events to compact.
-    const eventsToCompact = events.splice(0, retainStartIndex);
+    // Extract raw events to compact.
+    const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
+    const compactedEventPresent = activeEvents.find(isCompactedEvent);
+
+    const eventsToCompact = compactedEventPresent
+      ? [compactedEventPresent, ...rawEventsToCompact]
+      : rawEventsToCompact;
 
     const compactedEvent = await this.summarizer.summarize(eventsToCompact);
 
@@ -103,8 +137,8 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
-    // Prepend the new compacted event to the session history.
-    invocationContext.session.events.unshift(compactedEvent);
+    // Append the new compacted event to the session history.
+    invocationContext.session.events.push(compactedEvent);
   }
 
   private getEventTokens(event: Event): number {

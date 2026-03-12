@@ -120,18 +120,18 @@ describe('TokenBasedContextCompactor', () => {
 
     await compactor.compact(context);
 
-    // Should leave retention=2 events. So 4 - 2 = 2 events truncated and replaced by 1 compacted
-    // Resulting length = 1 (compacted) + 2 (retained) = 3
-    expect(context.session.events.length).toBe(3);
-    const compacted = context.session.events[0];
+    // Should append 1 compacted event and keep all 4 initial events.
+    // Resulting length = 4 (initial) + 1 (compacted) = 5
+    expect(context.session.events.length).toBe(5);
+    const compacted = context.session.events[4];
     expect((compacted as unknown as {isCompacted: boolean}).isCompacted).toBe(
       true,
     );
     expect(
       (compacted as unknown as {compactedContent: string}).compactedContent,
     ).toBe('Mock summary of 2 events');
-    expect(context.session.events[1].id).toBe('3');
-    expect(context.session.events[2].id).toBe('4');
+    expect(context.session.events[2].id).toBe('3');
+    expect(context.session.events[3].id).toBe('4');
   });
 
   it('should not split tool call and responses', async () => {
@@ -153,15 +153,14 @@ describe('TokenBasedContextCompactor', () => {
     await compactor.compact(context);
 
     // Initial split index would be 2. Since events[1] is a call and events[2] is a resp, it drops split index to 1.
-    // So only events[0] is compacted.
-    expect(context.session.events.length).toBe(4); // 1 compacted + 3 retained
+    // So only events[0] is compacted, and the new CompactedEvent is appended.
+    expect(context.session.events.length).toBe(5); // 4 initial + 1 compacted
+    const compacted = context.session.events[4];
+    expect((compacted as unknown as {isCompacted: boolean}).isCompacted).toBe(
+      true,
+    );
     expect(
-      (context.session.events[0] as unknown as {isCompacted: boolean})
-        .isCompacted,
-    ).toBe(true);
-    expect(
-      (context.session.events[0] as unknown as {compactedContent: string})
-        .compactedContent,
+      (compacted as unknown as {compactedContent: string}).compactedContent,
     ).toBe('Mock summary of 1 events');
     expect(context.session.events[1].id).toBe('1');
     expect(context.session.events[2].id).toBe('2');
