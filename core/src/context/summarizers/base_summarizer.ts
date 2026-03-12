@@ -6,15 +6,17 @@
 
 import {Event} from '../../events/event.js';
 
+import {CompactedEvent} from '../../events/compacted_event.js';
+
 /**
- * Interface for summarizing a list of events into a single string representation.
+ * Interface for summarizing a list of events into a single CompactedEvent.
  */
 export interface BaseSummarizer {
   /**
-   * Summarizes the given events into a compact string.
+   * Summarizes the given events into a CompactedEvent.
    *
    * @param events The events to summarize.
-   * @returns A promise resolving to the summarized string representation of the events.
+   * @returns A promise resolving to the CompactedEvent representation of the events.
    */
-  summarize(events: Event[]): Promise<string>;
+  summarize(events: Event[]): Promise<CompactedEvent>;
 }

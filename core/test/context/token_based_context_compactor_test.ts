@@ -14,10 +14,30 @@ import {
   TokenBasedContextCompactor,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {CompactedEvent} from '../../src/events/compacted_event.js';
 
 class MockSummarizer implements BaseSummarizer {
-  async summarize(events: Event[]): Promise<string> {
-    return `Mock summary of ${events.length} events`;
+  async summarize(events: Event[]): Promise<CompactedEvent> {
+    return {
+      id: 'mock-id',
+      invocationId: '',
+      author: 'system',
+      actions: {
+        stateDelta: {},
+        artifactDelta: {},
+        requestedAuthConfigs: [],
+        requestedToolConfirmations: {},
+      },
+      timestamp: Date.now(),
+      isCompacted: true,
+      startTime: events[0].timestamp,
+      endTime: events[events.length - 1].timestamp,
+      compactedContent: `Mock summary of ${events.length} events`,
+      content: {
+        role: 'model',
+        parts: [{text: `Mock summary of ${events.length} events`}],
+      },
+    } as CompactedEvent;
   }
 }
 

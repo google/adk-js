@@ -4,19 +4,94 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event} from '../../events/event.js';
+import {CompactedEvent} from '../../events/compacted_event.js';
+import {createNewEventId, Event, stringifyContent} from '../../events/event.js';
+import {BaseLlm} from '../../models/base_llm.js';
+import {LlmRequest} from '../../models/llm_request.js';
 import {BaseSummarizer} from './base_summarizer.js';
+
+export interface LlmSummarizerOptions {
+  llm: BaseLlm;
+  prompt?: string;
+}
+
+const DEFAULT_PROMPT =
+  'Please summarize the following conversation events into a compact representation. ' +
+  'Focus on the key information, decisions, constraints, and context that are important for continuing the conversation.';
 
 /**
  * A summarizer that uses an LLM to generate a compacted representation
  * of existing events.
  */
 export class LlmSummarizer implements BaseSummarizer {
-  // TODO: Add LLM related configuration properties and initializations here.
+  private readonly llm: BaseLlm;
+  private readonly prompt: string;
 
-  async summarize(events: Event[]): Promise<string> {
-    // Basic placeholder implementation.
-    // Here we will eventually call an LLM with the events to get a summary.
-    return `Summarized ${events.length} events.`;
+  constructor(options: LlmSummarizerOptions) {
+    this.llm = options.llm;
+    this.prompt = options.prompt || DEFAULT_PROMPT;
+  }
+
+  async summarize(events: Event[]): Promise<CompactedEvent> {
+    if (events.length === 0) {
+      throw new Error('Cannot summarize an empty list of events.');
+    }
+
+    const startTime = events[0].timestamp;
+    const endTime = events[events.length - 1].timestamp;
+
+    // Format the events to be digestible by an LLM
+    let formattedEvents = '';
+    for (let i = 0; i < events.length; i++) {
+      formattedEvents += `[Event ${i + 1} - Author: ${events[i].author}]\n`;
+      formattedEvents += `${stringifyContent(events[i])}\n\n`;
+    }
+
+    const fullPrompt = `${this.prompt}\n\n${formattedEvents}`;
+
+    const request: LlmRequest = {
+      contents: [{role: 'user', parts: [{text: fullPrompt}]}],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const responseGen = this.llm.generateContentAsync(request, false);
+    let compactedContent = '';
+
+    const firstResponse = await responseGen.next();
+    if (firstResponse.done || !firstResponse.value.content?.parts?.[0]?.text) {
+      throw new Error('LLM failed to return a valid summary.');
+    }
+    compactedContent += firstResponse.value.content.parts[0].text;
+
+    // consume the rest of the stream
+    for await (const chunk of responseGen) {
+      if (chunk.content?.parts?.[0]?.text) {
+        compactedContent += chunk.content.parts[0].text;
+      }
+    }
+
+    return {
+      id: createNewEventId(),
+      invocationId: '', // Context processors usually do not own an invocation.
+      author: 'system',
+      actions: {
+        stateDelta: {},
+        artifactDelta: {},
+        requestedAuthConfigs: [],
+        requestedToolConfirmations: {},
+      },
+      timestamp: Date.now(),
+
+      content: {
+        role: 'model',
+        parts: [{text: compactedContent}],
+      },
+
+      isCompacted: true,
+      startTime,
+      endTime,
+      compactedContent,
+    } as CompactedEvent;
   }
 }

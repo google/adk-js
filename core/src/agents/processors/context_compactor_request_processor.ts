@@ -17,7 +17,7 @@ import {BaseLlmRequestProcessor} from './base_llm_processor.js';
  * It evaluates each compactor in priority order. The first one that indicates
  * it should compact will perform the compaction and iteration stops.
  */
-export class CompactorRequestProcessor implements BaseLlmRequestProcessor {
+export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor {
   private compactors: BaseContextCompactor[];
 
   constructor(compactors: BaseContextCompactor[]) {

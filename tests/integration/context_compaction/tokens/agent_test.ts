@@ -25,7 +25,6 @@ describe('Context Compaction with Tokens', () => {
         ],
         usageMetadata: {
           promptTokenCount: 25,
-          candidatesTokenCount: 10,
           totalTokenCount: 35,
         },
       },
@@ -40,7 +39,6 @@ describe('Context Compaction with Tokens', () => {
         ],
         usageMetadata: {
           promptTokenCount: 25,
-          candidatesTokenCount: 10,
           totalTokenCount: 35,
         },
       },
@@ -55,7 +53,6 @@ describe('Context Compaction with Tokens', () => {
         ],
         usageMetadata: {
           promptTokenCount: 25,
-          candidatesTokenCount: 10,
           totalTokenCount: 35,
         },
       },
@@ -99,9 +96,13 @@ describe('Context Compaction with Tokens', () => {
     }
 
     // Assert that compaction occurred
-    const hasCompactedEvent = session.events.some(isCompactedEvent);
-
-    // Depending on ADK's core implementation completeness for CompactorRequestProcessor,
+    const updatedSession = await runner.sessionService.getSession({
+      sessionId: session.id,
+      userId: 'test_user',
+      appName: 'compaction_agent',
+    });
+    const hasCompactedEvent = updatedSession!.events.some(isCompactedEvent);
+    // Depending on ADK's core implementation completeness for ContextCompactorRequestProcessor,
     // this might fail, but it demonstrates the agent capability.
     expect(hasCompactedEvent).toBe(true);
   });

@@ -5,7 +5,6 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {CompactedEvent} from '../events/compacted_event.js';
 import {Event, stringifyContent} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
@@ -92,31 +91,17 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     // Extract events to compact.
     const eventsToCompact = events.splice(0, retainStartIndex);
 
-    const compactedContent = await this.summarizer.summarize(eventsToCompact);
+    const compactedEvent = await this.summarizer.summarize(eventsToCompact);
 
-    // Create the new CompactedEvent
-    const startTime = eventsToCompact[0].timestamp;
-    const endTime = eventsToCompact[eventsToCompact.length - 1].timestamp;
-
-    const compactedEvent: CompactedEvent = {
-      // use standard required params
-      id: '',
-      invocationId: '',
-      author: 'system',
-      actions: {
+    // Provide default actions and metadata if the summarizer omits it
+    if (!compactedEvent.actions) {
+      compactedEvent.actions = {
         stateDelta: {},
         artifactDelta: {},
         requestedAuthConfigs: [],
         requestedToolConfirmations: {},
-      },
-      timestamp: Date.now(),
-
-      // compacted event fields
-      isCompacted: true,
-      startTime,
-      endTime,
-      compactedContent,
-    };
+      };
+    }
 
     // Prepend the new compacted event to the session history.
     invocationContext.session.events.unshift(compactedEvent);
