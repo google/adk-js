@@ -90,6 +90,7 @@ describe('CLI Entrypoint', () => {
       expect(args).toBeDefined();
       expect(args.port).toBe(8000);
       expect(args.serveDebugUI).toBe(true);
+      expect(args.a2a).toBe(false);
 
       // Verify start() called
       const instance = (AdkApiServer as unknown as Mock).mock.results[0].value;
@@ -127,6 +128,20 @@ describe('CLI Entrypoint', () => {
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.artifactService).toBeDefined();
     });
+
+    it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
+      await parse(['web', '--a2a']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.a2a).toBe(true);
+    });
+
+    it('should start AdkApiServer with a2a: true when --a2a true is set', async () => {
+      await parse(['web', '--a2a', 'true']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.a2a).toBe(true);
+    });
   });
 
   describe('command: api_server', () => {
@@ -135,9 +150,17 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.serveDebugUI).toBe(false);
+      expect(args.a2a).toBe(false);
 
       const instance = (AdkApiServer as unknown as Mock).mock.results[0].value;
       expect(instance.start).toHaveBeenCalled();
+    });
+
+    it('should start AdkApiServer with a2a: true when --a2a is set', async () => {
+      await parse(['api_server', '--a2a']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.a2a).toBe(true);
     });
   });
 
@@ -265,6 +288,14 @@ describe('CLI Entrypoint', () => {
         withUi: true,
         adkVersion: '1.0.0',
         extraGcloudArgs: ['--extra-arg=foo'],
+      });
+    });
+
+    it('should pass a2a flag to deployToCloudRun when --a2a is set', async () => {
+      await parse(['deploy', 'cloud_run', '--a2a']);
+
+      expect((deployToCloudRun as Mock).mock.calls[0][0]).toMatchObject({
+        a2a: true,
       });
     });
   });

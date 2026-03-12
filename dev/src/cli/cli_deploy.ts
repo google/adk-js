@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {exec, spawn} from 'node:child_process';
+import {exec, spawn, SpawnOptions} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {promisify} from 'node:util';
@@ -18,7 +18,19 @@ import {
 } from '../utils/file_utils.js';
 
 const execAsync = promisify(exec);
-const spawnAsync = promisify(spawn);
+const spawnAsync = (command: string, args: string[], options: SpawnOptions) => {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, options);
+    child.on('close', (code: number) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Command failed with exit code ${code}`));
+      }
+    });
+    child.on('error', reject);
+  });
+};
 
 const REQUIRED_NPM_PACKAGES = ['@google/adk'];
 
@@ -33,6 +45,7 @@ export interface CreateDockerFileContentOptions {
   sessionServiceUri?: string;
   artifactServiceUri?: string;
   otelToCloud?: boolean;
+  a2a?: boolean;
 }
 
 export interface DeployToCloudRunOptions extends CreateDockerFileContentOptions {
@@ -43,6 +56,7 @@ export interface DeployToCloudRunOptions extends CreateDockerFileContentOptions 
   extraGcloudArgs?: string[];
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
+  a2a?: boolean;
 }
 
 function validateGcloudExtraArgs(
@@ -166,7 +180,7 @@ async function createPackageJson(sourceFolder: string, targetFolder: string) {
   console.info('Creating package.json complete', targetPackageJsonPath);
 }
 
-function createDockerFileContent(
+export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
   const adkCommand = options.withUi ? 'web' : 'api_server';
@@ -192,6 +206,10 @@ function createDockerFileContent(
 
   if (options.otelToCloud) {
     adkServerOptions.push('--otel_to_cloud');
+  }
+
+  if (options.a2a) {
+    adkServerOptions.push('--a2a');
   }
 
   return `
@@ -325,6 +343,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       logLevel: options.logLevel,
       allowOrigins: options.allowOrigins,
       otelToCloud: options.otelToCloud,
+      a2a: options.a2a,
     });
 
     console.info('Deploying to Cloud Run...');

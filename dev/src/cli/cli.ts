@@ -135,6 +135,10 @@ const BUNDLE_AGENT_FILE = new Option(
   '--bundle [boolean]',
   'Optional. Whether to compile ts agent file to js before execution',
 ).default(true);
+const A2A_OPTION = new Option(
+  '--a2a [boolean]',
+  'Optional. Whether to enable A2A for web/api server. Default: false',
+).default(false);
 const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
 AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
 
@@ -166,7 +170,8 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
-    .action((agentsDir: string, options: Record<string, string>) => {
+    .addOption(A2A_OPTION)
+    .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
       setAdkCoreLogLevel(logLevel);
 
@@ -182,9 +187,10 @@ export function createProgram(): Command {
           artifactService: getArtifactServiceFromOptions(options),
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
+          a2a: getBoolean(options['a2a']),
         });
 
-        server.start();
+        await server.start();
       } catch (error) {
         console.error('Error starting web server:', error);
       }
@@ -205,6 +211,7 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
+    .addOption(A2A_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
       setAdkCoreLogLevel(logLevel);
@@ -221,6 +228,7 @@ export function createProgram(): Command {
           artifactService: getArtifactServiceFromOptions(options),
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
+          a2a: getBoolean(options['a2a']),
         });
         await server.start();
       } catch (error) {
@@ -362,6 +370,7 @@ export function createProgram(): Command {
     .addOption(COMPILE_AGENT_FILE)
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
+    .addOption(A2A_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
       for (const arg of process.argv.slice(5)) {
@@ -391,6 +400,7 @@ export function createProgram(): Command {
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
           agentFileLoadOptions: getAgentFileOptions(options),
+          a2a: getBoolean(options['a2a']),
           extraGcloudArgs,
         });
       } catch (error) {

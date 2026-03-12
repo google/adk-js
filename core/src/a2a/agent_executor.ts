@@ -34,7 +34,10 @@ import {
 } from './metadata_converter_utils.js';
 import {toA2AParts, toGenAIContent} from './part_converter_utils.js';
 
-type RunnerOrRunnerConfig =
+/**
+ * Represents a runner or a configuration for a runner.
+ */
+export type RunnerOrRunnerConfig =
   | Runner
   | RunnerConfig
   | (() => Runner | RunnerConfig)

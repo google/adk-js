@@ -4,6 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export {getA2AAgentCard} from './a2a/agent_card.js';
+export {A2AAgentExecutor} from './a2a/agent_executor.js';
+export type {
+  AfterEventCallback,
+  AfterExecuteCallback,
+  AgentExecutorConfig,
+  BeforeExecuteCallback,
+  RunnerOrRunnerConfig,
+} from './a2a/agent_executor.js';
+export type {ExecutorContext} from './a2a/executor_context.js';
 export {FileArtifactService} from './artifacts/file_artifact_service.js';
 export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
