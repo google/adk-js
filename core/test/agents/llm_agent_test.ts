@@ -8,7 +8,9 @@ import {
   BaseLlm,
   BaseLlmConnection,
   BasePlugin,
+  CONTENT_REQUEST_PROCESSOR,
   Context,
+  ContextCompactorRequestProcessor,
   Event,
   InvocationContext,
   LlmAgent,
@@ -382,5 +384,61 @@ describe('LlmAgent Output Processing', () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
+  });
+});
+
+describe('LlmAgent Configuration with contextCompactors', () => {
+  it('does not add ContextCompactorRequestProcessor if contextCompactors is not provided', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+    const compactorProcessors = agent.requestProcessors.filter(
+      (p) => p instanceof ContextCompactorRequestProcessor,
+    );
+    expect(compactorProcessors.length).toBe(0);
+  });
+
+  it('does not add ContextCompactorRequestProcessor if contextCompactors is empty array', () => {
+    const agent = new LlmAgent({name: 'test_agent', contextCompactors: []});
+    const compactorProcessors = agent.requestProcessors.filter(
+      (p) => p instanceof ContextCompactorRequestProcessor,
+    );
+    expect(compactorProcessors.length).toBe(0);
+  });
+
+  it('does not add ContextCompactorRequestProcessor if custom requestProcessors are provided', () => {
+    const mockCompactor = {
+      shouldCompact: () => false,
+      compact: () => {},
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      contextCompactors: [mockCompactor],
+      requestProcessors: [], // custom processors
+    });
+    const compactorProcessors = agent.requestProcessors.filter(
+      (p) => p instanceof ContextCompactorRequestProcessor,
+    );
+    expect(compactorProcessors.length).toBe(0);
+  });
+
+  it('adds ContextCompactorRequestProcessor immediately before CONTENT_REQUEST_PROCESSOR', () => {
+    const mockCompactor = {
+      shouldCompact: () => false,
+      compact: () => {},
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      contextCompactors: [mockCompactor],
+    });
+
+    const processorIndex = agent.requestProcessors.findIndex(
+      (p) => p instanceof ContextCompactorRequestProcessor,
+    );
+    expect(processorIndex).toBeGreaterThanOrEqual(0);
+
+    // Ensure it was placed right before CONTENT_REQUEST_PROCESSOR
+    const contentIndex = agent.requestProcessors.indexOf(
+      CONTENT_REQUEST_PROCESSOR,
+    );
+    expect(contentIndex).toBe(processorIndex + 1);
   });
 });
