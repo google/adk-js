@@ -68,7 +68,17 @@ interface ServerOptions {
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
-  readonly url: string;
+
+  get url(): string {
+    if (this.server) {
+      const address = this.server.address();
+      if (address && typeof address !== 'string') {
+        return `http://${this.host}:${address.port}`;
+      }
+    }
+    return `http://${this.host}:${this.port}`;
+  }
+
   readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
   private readonly runnerCache: Record<string, Runner> = {};
@@ -90,7 +100,7 @@ export class AdkApiServer {
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
-    this.port = options.port ?? 8000;
+    this.port = options.port ?? 0; // 0 means random free port
     this.sessionService =
       options.sessionService ?? new InMemorySessionService();
     this.memoryService = options.memoryService ?? new InMemoryMemoryService();
@@ -108,7 +118,6 @@ export class AdkApiServer {
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     this.a2a = options.a2a ?? false;
     this.app = express();
-    this.url = `http://${this.host}:${this.port}`;
   }
 
   private async setupTelemetry(): Promise<void> {

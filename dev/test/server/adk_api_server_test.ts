@@ -168,10 +168,6 @@ const TEST_AGENT = new TestAgent({
   ],
 });
 
-function getRandormPort(): number {
-  return 40000 + Math.floor(Math.random() * 10000);
-}
-
 describe('AdkWebServer', () => {
   let agentLoader: AgentLoader;
   let sessionService: BaseSessionService;
@@ -201,7 +197,6 @@ describe('AdkWebServer', () => {
       sessionService,
       memoryService,
       artifactService,
-      port: getRandormPort(),
     });
     await server.start();
 
@@ -726,7 +721,6 @@ describe('AdkWebServer', () => {
         sessionService,
         memoryService,
         artifactService,
-        port: getRandormPort(),
         serveDebugUI: true,
       });
       await debugServer.start();
@@ -863,7 +857,6 @@ describe('AdkWebServer', () => {
         sessionService,
         memoryService,
         artifactService,
-        port: getRandormPort(),
         a2a: true,
       });
       await a2aServer.start();
