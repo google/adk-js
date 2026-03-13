@@ -41,7 +41,7 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         for (const e of newEvents) {
           yield e;
         }
-        break; // Stop after one compactor has compacted the history.
+        return; // Stop after one compactor has compacted the history.
       }
     }
   }

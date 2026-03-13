@@ -4,8 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {CompactedEvent} from '../../events/compacted_event.js';
-import {createNewEventId, Event, stringifyContent} from '../../events/event.js';
+import {
+  CompactedEvent,
+  createCompactedEvent,
+} from '../../events/compacted_event.js';
+import {Event, stringifyContent} from '../../events/event.js';
 import {BaseLlm} from '../../models/base_llm.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {BaseSummarizer} from './base_summarizer.js';
@@ -73,27 +76,15 @@ export class LlmSummarizer implements BaseSummarizer {
       }
     }
 
-    return {
-      id: createNewEventId(),
-      invocationId: '', // Context processors usually do not own an invocation.
+    return createCompactedEvent({
       author: 'system',
-      actions: {
-        stateDelta: {},
-        artifactDelta: {},
-        requestedAuthConfigs: [],
-        requestedToolConfirmations: {},
-      },
-      timestamp: Date.now(),
-
       content: {
         role: 'model',
         parts: [{text: compactedContent}],
       },
-
-      isCompacted: true,
       startTime,
       endTime,
       compactedContent,
-    } as CompactedEvent;
+    });
   }
 }

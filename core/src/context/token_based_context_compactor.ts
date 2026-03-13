@@ -75,7 +75,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
     let totalTokens = 0;
     for (const event of activeEvents) {
-      totalTokens += this.getEventTokens(event);
+      totalTokens += getEventTokens(event);
     }
 
     return totalTokens > this.tokenThreshold;
@@ -102,8 +102,8 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       const previousEvent = rawEvents[retainStartIndex - 1];
 
       if (
-        this.hasFunctionResponse(eventToRetain) &&
-        this.hasFunctionCall(previousEvent)
+        hasFunctionResponse(eventToRetain) &&
+        hasFunctionCall(previousEvent)
       ) {
         retainStartIndex--;
       } else {
@@ -140,25 +140,25 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     // Append the new compacted event to the session history.
     invocationContext.session.events.push(compactedEvent);
   }
+}
 
-  private getEventTokens(event: Event): number {
-    if (event.usageMetadata?.promptTokenCount !== undefined) {
-      return event.usageMetadata.promptTokenCount;
-    }
-    // Estimate: 4 chars per token.
-    const contentStr = stringifyContent(event);
-    return Math.ceil(contentStr.length / 4);
+function getEventTokens(event: Event): number {
+  if (event.usageMetadata?.promptTokenCount !== undefined) {
+    return event.usageMetadata.promptTokenCount;
   }
+  // Estimate: 4 chars per token.
+  const contentStr = stringifyContent(event);
+  return Math.ceil(contentStr.length / 4);
+}
 
-  private hasFunctionCall(event: Event): boolean {
-    return !!event.content?.parts?.some(
-      (part) => part.functionCall !== undefined,
-    );
-  }
+function hasFunctionCall(event: Event): boolean {
+  return !!event.content?.parts?.some(
+    (part) => part.functionCall !== undefined,
+  );
+}
 
-  private hasFunctionResponse(event: Event): boolean {
-    return !!event.content?.parts?.some(
-      (part) => part.functionResponse !== undefined,
-    );
-  }
+function hasFunctionResponse(event: Event): boolean {
+  return !!event.content?.parts?.some(
+    (part) => part.functionResponse !== undefined,
+  );
 }

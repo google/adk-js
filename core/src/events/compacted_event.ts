@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event} from './event.js';
+import {Event, createEvent} from './event.js';
 
 /**
  * A specialized Event type that represents a synthesized summary of past events.
@@ -37,4 +37,16 @@ export interface CompactedEvent extends Event {
  */
 export function isCompactedEvent(event: Event): event is CompactedEvent {
   return 'isCompacted' in event && event.isCompacted === true;
+}
+
+export function createCompactedEvent(
+  params: Partial<CompactedEvent> = {},
+): CompactedEvent {
+  return {
+    ...createEvent(params),
+    isCompacted: params.isCompacted || true,
+    startTime: params.startTime!,
+    endTime: params.endTime!,
+    compactedContent: params.compactedContent!,
+  };
 }

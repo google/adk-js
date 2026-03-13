@@ -46,11 +46,6 @@ export class TruncatingContextCompactor implements BaseContextCompactor {
 
     const startIndexToRemove = Math.max(0, this.preserveLeadingEvents);
 
-    // Splice removes elements in place.
-    // E.g., array = [0, 1, 2, 3, 4], threshold=2, preserveLeading=1.
-    // excess = 5 - 2 - 1 = 2.
-    // remove 2 elements starting at index 1 -> removes [1, 2].
-    // result = [0, 3, 4].
     events.splice(startIndexToRemove, excess);
   }
 }

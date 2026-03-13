@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content} from '@google/genai';
+import {Content, createUserContent} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
 import {
@@ -507,14 +507,9 @@ function safeStringify(obj: unknown): string {
  * @returns The converted event.
  */
 function convertCompactedEvent(event: CompactedEvent): Event {
-  const content: Content = {
-    role: 'user',
-    parts: [
-      {
-        text: `[Previous Context Summary]:\n${event.compactedContent}`,
-      },
-    ],
-  };
+  const content = createUserContent(
+    `[Previous Context Summary]:\n${event.compactedContent}`,
+  );
 
   return createEvent({
     invocationId: event.invocationId,
