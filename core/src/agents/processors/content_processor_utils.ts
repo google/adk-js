@@ -3,21 +3,25 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content} from '@google/genai';
+import {Content, createUserContent} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
+import {
+  CompactedEvent,
+  isCompactedEvent,
+} from '../../events/compacted_event.js';
 import {
   createEvent,
   Event,
   getFunctionCalls,
   getFunctionResponses,
-} from '../events/event.js';
+} from '../../events/event.js';
 
 import {
   removeClientFunctionCallId,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_EUC_FUNCTION_CALL_NAME,
-} from './functions.js';
+} from '../functions.js';
 
 /**
  * Get the contents for the LLM request.
@@ -36,6 +40,11 @@ export function getContents(
   const filteredEvents: Event[] = [];
 
   for (const event of events) {
+    if (isCompactedEvent(event)) {
+      filteredEvents.push(convertCompactedEvent(event));
+      continue;
+    }
+
     // Skip events without content, or generated neither by user nor by model.
     // E.g. events purely for mutating session states.
     if (!event.content?.role || event.content.parts?.[0]?.text === '') {
@@ -488,4 +497,25 @@ function safeStringify(obj: unknown): string {
   } catch (_e: unknown) {
     return String(obj);
   }
+}
+
+/**
+ * Formats a CompactedEvent to a user-content event for the LLM context.
+ *
+ * @param event The CompactedEvent to convert.
+ *
+ * @returns The converted event.
+ */
+function convertCompactedEvent(event: CompactedEvent): Event {
+  const content = createUserContent(
+    `[Previous Context Summary]:\n${event.compactedContent}`,
+  );
+
+  return createEvent({
+    invocationId: event.invocationId,
+    author: 'user',
+    content,
+    branch: event.branch,
+    timestamp: event.timestamp,
+  });
 }

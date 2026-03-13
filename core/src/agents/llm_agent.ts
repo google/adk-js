@@ -53,11 +53,13 @@ import {
   populateClientFunctionCallId,
 } from './functions.js';
 
+import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext} from './invocation_context.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {CODE_EXECUTION_REQUEST_PROCESSOR} from './processors/code_execution_request_processor.js';
 import {CONTENT_REQUEST_PROCESSOR} from './processors/content_request_processor.js';
+import {ContextCompactorRequestProcessor} from './processors/context_compactor_request_processor.js';
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
@@ -295,6 +297,12 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   responseProcessors?: BaseLlmResponseProcessor[];
 
   /**
+   * A list of context compactors to evaluate in priority order.
+   * Modifies the session history to keep context overhead within limits.
+   */
+  contextCompactors?: BaseContextCompactor[];
+
+  /**
    * Instructs the agent to make a plan and execute it step by step.
    */
   codeExecutor?: BaseCodeExecutor;
@@ -389,6 +397,29 @@ export class LlmAgent extends BaseAgent {
       CONTENT_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
     ];
+
+    if (
+      !config.requestProcessors &&
+      config.contextCompactors &&
+      config.contextCompactors.length > 0
+    ) {
+      // Find where CONTENT_REQUEST_PROCESSOR is to place compaction immediately before it.
+      const contentIndex = this.requestProcessors.indexOf(
+        CONTENT_REQUEST_PROCESSOR,
+      );
+      if (contentIndex !== -1) {
+        this.requestProcessors.splice(
+          contentIndex,
+          0,
+          new ContextCompactorRequestProcessor(config.contextCompactors),
+        );
+      } else {
+        this.requestProcessors.push(
+          new ContextCompactorRequestProcessor(config.contextCompactors),
+        );
+      }
+    }
+
     this.responseProcessors = config.responseProcessors ?? [];
 
     // Preserve the agent transfer behavior.
