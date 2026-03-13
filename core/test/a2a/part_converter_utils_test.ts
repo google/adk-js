@@ -69,6 +69,27 @@ describe('part_converter_utils', () => {
       expect(toA2AFilePart(genAiPart)).toEqual(expected);
     });
 
+    it('converts fileData part with videoMetadata', () => {
+      const genAiPart: GenAIPart = {
+        fileData: {mimeType: 'video/mp4', fileUri: 'gs://bucket/video.mp4'},
+        videoMetadata: {
+          startOffset: '0s',
+          endOffset: '10s',
+        },
+      };
+      const expected: A2APart = {
+        kind: 'file',
+        file: {uri: 'gs://bucket/video.mp4', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            startOffset: '0s',
+            endOffset: '10s',
+          },
+        },
+      };
+      expect(toA2AFilePart(genAiPart)).toEqual(expected);
+    });
+
     it('throws on invalid file part', () => {
       expect(() => toA2AFilePart({text: 'not file'})).toThrow(
         'Not a file part',
@@ -192,8 +213,13 @@ describe('part_converter_utils', () => {
       expect(toA2ADataPart(genAiPart)).toEqual(expected);
     });
 
-    it('throws on unknown data part type', () => {
-      expect(() => toA2ADataPart({text: 'text'})).toThrow('Unknown part type');
+    it('returns empty data part on unknown data part type', () => {
+      const result = toA2ADataPart({text: 'text'});
+      expect(result).toEqual({
+        kind: 'data',
+        data: {},
+        metadata: {},
+      });
     });
   });
 
@@ -305,6 +331,27 @@ describe('part_converter_utils', () => {
       };
       const expected: GenAIPart = {
         fileData: {mimeType: 'image/png', fileUri: 'gs://bucket/file'},
+      };
+      expect(toGenAIPartFile(a2aPart)).toEqual(expected);
+    });
+
+    it('converts from file with videoMetadata', () => {
+      const a2aPart: A2AFilePart = {
+        kind: 'file',
+        file: {uri: 'gs://bucket/video.mp4', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            startOffset: '0s',
+            endOffset: '10s',
+          },
+        },
+      };
+      const expected: GenAIPart = {
+        fileData: {fileUri: 'gs://bucket/video.mp4', mimeType: 'video/mp4'},
+        videoMetadata: {
+          startOffset: '0s',
+          endOffset: '10s',
+        },
       };
       expect(toGenAIPartFile(a2aPart)).toEqual(expected);
     });
@@ -475,6 +522,20 @@ describe('part_converter_utils', () => {
         kind: 'file',
         file: {uri: 'gs://bucket/image.jpg', mimeType: 'image/jpeg'},
         metadata: {},
+      };
+      expect(toA2APart(toGenAIPart(a2aPart))).toEqual(a2aPart);
+    });
+
+    it('toA2APart(toGenAIPart(part)) equals part for file with videoMetadata', () => {
+      const a2aPart: A2APart = {
+        kind: 'file',
+        file: {uri: 'gs://bucket/video.mp4', mimeType: 'video/mp4'},
+        metadata: {
+          'adk_video_metadata': {
+            startOffset: '0s',
+            endOffset: '10s',
+          },
+        },
       };
       expect(toA2APart(toGenAIPart(a2aPart))).toEqual(a2aPart);
     });

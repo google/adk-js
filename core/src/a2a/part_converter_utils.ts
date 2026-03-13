@@ -12,14 +12,15 @@ import {
   Message,
 } from '@a2a-js/sdk';
 import {
+  createModelContent,
+  createUserContent,
   CodeExecutionResult as GenAICodeExecutionResult,
   Content as GenAIContent,
   ExecutableCode as GenAIExecutableCode,
   FunctionCall as GenAIFunctionCall,
   FunctionResponse as GenAIFunctionResponse,
   Part as GenAIPart,
-  createModelContent,
-  createUserContent,
+  VideoMetadata,
 } from '@google/genai';
 import {A2AMetadataKeys} from './metadata_converter_utils.js';
 
@@ -80,6 +81,11 @@ export function toA2ATextPart(part: GenAIPart): A2APart {
  * Converts a GenAI File Part to an A2A File Part.
  */
 export function toA2AFilePart(part: GenAIPart): A2APart {
+  const metadata: Record<string, unknown> = {};
+  if (part.videoMetadata) {
+    metadata[A2AMetadataKeys.VIDEO_METADATA] = part.videoMetadata;
+  }
+
   if (part.fileData) {
     return {
       kind: 'file',
@@ -87,7 +93,7 @@ export function toA2AFilePart(part: GenAIPart): A2APart {
         uri: part.fileData.fileUri || '',
         mimeType: part.fileData.mimeType,
       },
-      metadata: {},
+      metadata,
     };
   }
 
@@ -98,7 +104,7 @@ export function toA2AFilePart(part: GenAIPart): A2APart {
         bytes: part.inlineData.data || '',
         mimeType: part.inlineData.mimeType,
       },
-      metadata: {},
+      metadata,
     };
   }
 
@@ -132,7 +138,11 @@ export function toA2ADataPart(
     dataPartType = DataPartType.CODE_EXEC_RESULT;
     data = part.codeExecutionResult;
   } else {
-    throw new Error(`Unknown part type: ${JSON.stringify(part)}`);
+    return {
+      kind: 'data',
+      data: {},
+      metadata: {},
+    };
   }
 
   const metadata: Record<string, unknown> = {
@@ -210,22 +220,27 @@ export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
  * Converts an A2A File Part to a GenAI Part.
  */
 export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
+  const part: GenAIPart = {};
+  if (a2aPart.metadata?.[A2AMetadataKeys.VIDEO_METADATA]) {
+    part.videoMetadata = a2aPart.metadata[
+      A2AMetadataKeys.VIDEO_METADATA
+    ] as VideoMetadata;
+  }
+
   if ('bytes' in a2aPart.file) {
-    return {
-      inlineData: {
-        data: a2aPart.file.bytes,
-        mimeType: a2aPart.file.mimeType || '',
-      },
+    part.inlineData = {
+      data: a2aPart.file.bytes,
+      mimeType: a2aPart.file.mimeType || '',
     };
+    return part;
   }
 
   if ('uri' in a2aPart.file) {
-    return {
-      fileData: {
-        fileUri: a2aPart.file.uri,
-        mimeType: a2aPart.file.mimeType || '',
-      },
+    part.fileData = {
+      fileUri: a2aPart.file.uri,
+      mimeType: a2aPart.file.mimeType || '',
     };
+    return part;
   }
 
   throw new Error(`Not a file part: ${JSON.stringify(a2aPart)}`);

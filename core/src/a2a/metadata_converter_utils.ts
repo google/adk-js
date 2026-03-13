@@ -33,6 +33,7 @@ export enum A2AMetadataKeys {
   GROUNDING_METADATA = `${ADK_METADATA_KEY_PREFIX}grounding_metadata`,
   USAGE_METADATA = `${ADK_METADATA_KEY_PREFIX}usage_metadata`,
   CUSTOM_METADATA = `${ADK_METADATA_KEY_PREFIX}custom_metadata`,
+  VIDEO_METADATA = `${ADK_METADATA_KEY_PREFIX}video_metadata`,
 }
 
 /**
