@@ -225,10 +225,6 @@ export class AdkApiServer {
       }),
     );
 
-    if (this.a2a) {
-      await this.initA2A();
-    }
-
     app.use((req: Request, res: Response, next: express.NextFunction) => {
       this.logger.info(`${req.method} ${req.originalUrl}`);
       next();
@@ -844,7 +840,11 @@ export class AdkApiServer {
     await this.init();
 
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
+      this.server = this.app.listen(this.port, async () => {
+        if (this.a2a) {
+          await this.initA2A();
+        }
+
         console.log(`
 +-----------------------------------------------------------------------------+
 | ADK API Server started                                                      |
