@@ -54,9 +54,13 @@ export async function getConnectionOptionsFromUri(
   const {host, port, username, password, pathname} = new URL(uri);
   const hostName = host.split(':')[0];
 
+  const dbName = uri.startsWith('sqlite://')
+    ? uri.substring('sqlite://'.length)
+    : pathname.slice(1);
+
   return {
     entities: ENTITIES,
-    dbName: pathname.slice(1),
+    dbName,
     host: hostName,
     port: port ? parseInt(port) : undefined,
     user: username,
@@ -68,30 +72,15 @@ export async function getConnectionOptionsFromUri(
 /**
  * Creates a database and tables if they don't exist.
  *
- * @param url The database connection URI (e.g., "postgres://user:password@host:port/database")
+ * @param orm The MikroORM instance.
  * @returns Promise<void>
- * @throws Error if the URI is invalid or unsupported
  */
-export async function ensureDatabaseCreated(
-  ormOrUrlOrOptions: MikroORM | MikroORMOptions | string,
-): Promise<void> {
-  let orm: MikroORM;
-
-  if (ormOrUrlOrOptions instanceof MikroORM) {
-    orm = ormOrUrlOrOptions;
-  } else if (typeof ormOrUrlOrOptions === 'string') {
-    orm = await MikroORM.init(
-      await getConnectionOptionsFromUri(ormOrUrlOrOptions),
-    );
-  } else {
-    orm = await MikroORM.init(ormOrUrlOrOptions);
-  }
-
+export async function ensureDatabaseCreated(orm: MikroORM): Promise<void> {
   // creates database if it doesn't exist
   await orm.schema.ensureDatabase();
 
-  // creates tables if they don't exist
-  await orm.schema.updateSchema();
+  // creates tables if they don't exist. Safe mode prevents dropping columns or tables.
+  await orm.schema.updateSchema({safe: true});
 }
 
 /**
