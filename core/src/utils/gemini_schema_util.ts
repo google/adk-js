@@ -56,14 +56,17 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       }
     } else if (mcp.type && Array.isArray(mcp.type)) {
       const nonNullType = mcp.type.find(
-        (t: any) => typeof t === 'string' && t.toLowerCase() !== 'null', // eslint-disable-line @typescript-eslint/no-explicit-any
+        (t: unknown) => typeof t === 'string' && t.toLowerCase() !== 'null',
       );
-      const nullType = mcp.type.find(
-        (t: any) => typeof t === 'string' && t.toLowerCase() === 'null', // eslint-disable-line @typescript-eslint/no-explicit-any
+      const hasNullType = mcp.type.some(
+        (t: unknown) => typeof t === 'string' && t.toLowerCase() === 'null',
       );
       if (nonNullType) {
-        mcp.nullable = !!nullType;
-        mcp.type = nonNullType;
+        mcp = {
+          ...mcp,
+          type: nonNullType,
+          nullable: hasNullType,
+        };
       }
     }
 
