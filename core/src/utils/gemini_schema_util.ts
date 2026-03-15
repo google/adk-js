@@ -54,6 +54,17 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       if (nonNullOption) {
         mcp = nonNullOption;
       }
+    } else if (mcp.type && Array.isArray(mcp.type)) {
+      const nonNullType = mcp.type.find(
+        (t: any) => typeof t === 'string' && t.toLowerCase() !== 'null', // eslint-disable-line @typescript-eslint/no-explicit-any
+      );
+      const nullType = mcp.type.find(
+        (t: any) => typeof t === 'string' && t.toLowerCase() === 'null', // eslint-disable-line @typescript-eslint/no-explicit-any
+      );
+      if (nonNullType) {
+        mcp.nullable = !!nullType;
+        mcp.type = nonNullType;
+      }
     }
 
     // Infer unknown types
