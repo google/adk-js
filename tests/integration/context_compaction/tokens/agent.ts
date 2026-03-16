@@ -5,7 +5,7 @@
  */
 
 import {LlmAgent, LlmSummarizer, TokenBasedContextCompactor} from '@google/adk';
-import {GeminiWithMockResponses} from '../../agents/test_case_utils.js';
+import {GeminiWithMockResponses} from '../../test_case_utils.js';
 
 // Configure a TokenBasedContextCompactor
 // We use a small threshold so compaction triggers after just a couple of turns.

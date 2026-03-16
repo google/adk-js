@@ -14,6 +14,7 @@ import {AdkApiClient} from '../../dev/src/server/adk_api_client.js';
 export interface TestAdkApiServer {
   host: string;
   port: number;
+  url: string;
   start: () => Promise<AdkApiClient>;
   stop: () => Promise<void>;
 }
@@ -43,6 +44,7 @@ export function createTestApiServer(
   return {
     host: 'localhost',
     port,
+    url: `http://localhost:${port}`,
     start: async () => {
       serverProcess = spawn('node', getAdkCliArgs({...params, port}));
 

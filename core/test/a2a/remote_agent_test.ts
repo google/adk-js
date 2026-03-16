@@ -17,7 +17,10 @@ import {
   DefaultAgentCardResolver,
 } from '@a2a-js/sdk/client';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {RemoteA2AAgent} from '../../src/a2a/a2a_remote_agent.js';
+import {
+  RemoteA2AAgent,
+  RemoteA2AAgentConfig,
+} from '../../src/a2a/a2a_remote_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../../src/events/event.js';
 import {Session} from '../../src/sessions/session.js';
@@ -89,9 +92,10 @@ describe('A2ARemoteAgent', () => {
   };
 
   it('should throw if neither agentCard nor agentCardSource is provided', () => {
-    expect(() => new RemoteA2AAgent({name: 'test'})).toThrow(
-      'AgentCard must be provided',
-    );
+    expect(
+      () =>
+        new RemoteA2AAgent({name: 'test'} as unknown as RemoteA2AAgentConfig),
+    ).toThrow('AgentCard must be provided');
   });
 
   it('should resolve card from URL and send message streaming', async () => {

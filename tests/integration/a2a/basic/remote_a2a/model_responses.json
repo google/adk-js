@@ -1,0 +1,122 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_weather",
+                "args": {
+                  "city": "New York"
+                },
+                "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363"
+              },
+              "thoughtSignature": "CogCAXLI2nz/J7ZDzLD1o37nYm2ve591UARCEDb1J1LvYudwED6ymKVLHzrhHiVlkk4WhCgrRbnUBCvsK0fUt+l0DyESOft0oNztWHtDSRLR9XiKbBf/EaJ1ZnCIp5PjpWJFEd4+JF+Nbb/dZNGBqxWLz1VWHzmWqZPZfILUo6Ipa2bTkmOpaQ3BskhkomuRCj2hyhFZVCR7JvyHEwjeRbff2B4U6h4D3k5Lj6lLAam3qOKvUng6OlHeHAXZTRpvbiLVUXfBokjmE4pfkbwXgEIkhcDiMrzEv3qszOJffZxxo4PlaW0kA2HxNSAmiNSl0q8En8exc7hL02WALEw/qNd9WDy3KpDnsjAy"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 162,
+      "candidatesTokenCount": 16,
+      "totalTokenCount": 235,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 162
+        }
+      ],
+      "thoughtsTokenCount": 57
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 220,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 242,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 220
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_current_time",
+                "args": {
+                  "city": "New York"
+                },
+                "id": "adk-096349a5-1131-4d5a-8e24-f483faa88bdc"
+              },
+              "thoughtSignature": "CuQBAXLI2nzoEApelB21Ar2RC8oIaLi7bvMiTkvz3yquQl823WSLwA/IAgKtPl1UwoON8y2+IFoASGhzopTeHteIrOAr87cborxiPzm5bs5H/jEsvtudChuIyVPXdS1is3CG2Z5sUhbgSv01T+KhHTS6BfHUClwDwzoQGhvzW14jy3N9Bw+z9j0oFMxavGe10uTgBZSlR87JUtG88ensZO+BI7v2+sUicBzpdL/7oV20ZT+8VCWb71IfFh5AYHA2cHfTUpqrKNz8D13olMBOoN2lRi+KtUe8sHuhAsJLxRVvZmPQGUu+"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 163,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 228,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 163
+        }
+      ],
+      "thoughtsTokenCount": 47
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The current time in New York is 1/30/2026, 1:56:20 AM America/New_York"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 235,
+      "candidatesTokenCount": 33,
+      "totalTokenCount": 268,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 235
+        }
+      ]
+    }
+  }
+]
