@@ -1,0 +1,260 @@
+[
+  {
+    "author": "remote_a2a_agent",
+    "partial": false,
+    "usageMetadata": {
+      "promptTokenCount": 162,
+      "candidatesTokenCount": 16,
+      "totalTokenCount": 235,
+      "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 162}],
+      "thoughtsTokenCount": 57
+    },
+    "customMetadata": {
+      "a2a:response": {
+        "kind": "artifact-update",
+        "taskId": "2c70cc66-0ca2-4be9-9f53-d81eb2e6c6c2",
+        "contextId": "7d258520-f0cb-4342-a441-063211de32a6",
+        "lastChunk": true,
+        "artifact": {
+          "artifactId": "a76981d5-0a27-4201-bb9c-df94c02b7172",
+          "parts": [
+            {
+              "kind": "data",
+              "data": {
+                "name": "get_weather",
+                "args": {"city": "New York"},
+                "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363"
+              },
+              "metadata": {"adk_type": "function_call"}
+            }
+          ]
+        },
+        "metadata": {
+          "adk_app_name": "weather_time_agent",
+          "adk_user_id": "A2A_USER_7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_session_id": "7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_invocation_id": "e-afcf1141-3b45-4006-b022-5445e09d38b6",
+          "adk_author": "weather_time_agent",
+          "adk_usage_metadata": {
+            "promptTokenCount": 162,
+            "candidatesTokenCount": 16,
+            "totalTokenCount": 235,
+            "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 162}],
+            "thoughtsTokenCount": 57
+          },
+          "adk_is_long_running": false
+        }
+      }
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {},
+      "escalate": false
+    },
+    "id": "1xysFYYR",
+    "invocationId": "e-4caf4db5-0be4-4f83-9af8-e239a5d4877a",
+    "longRunningToolIds": [],
+    "timestamp": 1773699000112,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_weather",
+            "args": {"city": "New York"},
+            "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "author": "remote_a2a_agent",
+    "partial": false,
+    "customMetadata": {
+      "a2a:response": {
+        "kind": "artifact-update",
+        "taskId": "2c70cc66-0ca2-4be9-9f53-d81eb2e6c6c2",
+        "contextId": "7d258520-f0cb-4342-a441-063211de32a6",
+        "lastChunk": true,
+        "artifact": {
+          "artifactId": "e9be8f1d-d944-470a-ad81-15ca0ae686db",
+          "parts": [
+            {
+              "kind": "data",
+              "data": {
+                "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363",
+                "name": "get_weather",
+                "response": {
+                  "status": "success",
+                  "report": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+                }
+              },
+              "metadata": {"adk_type": "function_response"}
+            }
+          ]
+        },
+        "metadata": {
+          "adk_app_name": "weather_time_agent",
+          "adk_user_id": "A2A_USER_7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_session_id": "7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_invocation_id": "e-afcf1141-3b45-4006-b022-5445e09d38b6",
+          "adk_author": "weather_time_agent",
+          "adk_is_long_running": false
+        }
+      }
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {},
+      "escalate": false
+    },
+    "id": "a2XyCG7p",
+    "invocationId": "e-4caf4db5-0be4-4f83-9af8-e239a5d4877a",
+    "longRunningToolIds": [],
+    "timestamp": 1773699000112,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-60a55981-149e-4111-a8d1-dafe9ec17363",
+            "name": "get_weather",
+            "response": {
+              "status": "success",
+              "report": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "author": "remote_a2a_agent",
+    "partial": true,
+    "usageMetadata": {
+      "promptTokenCount": 220,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 242,
+      "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 220}]
+    },
+    "customMetadata": {
+      "a2a:response": {
+        "kind": "artifact-update",
+        "taskId": "2c70cc66-0ca2-4be9-9f53-d81eb2e6c6c2",
+        "contextId": "7d258520-f0cb-4342-a441-063211de32a6",
+        "append": true,
+        "lastChunk": false,
+        "artifact": {
+          "artifactId": "7878ba78-8c98-401d-aae4-c4a8db11d9be",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+            }
+          ]
+        },
+        "metadata": {
+          "adk_app_name": "weather_time_agent",
+          "adk_user_id": "A2A_USER_7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_session_id": "7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_invocation_id": "e-afcf1141-3b45-4006-b022-5445e09d38b6",
+          "adk_author": "weather_time_agent",
+          "adk_usage_metadata": {
+            "promptTokenCount": 220,
+            "candidatesTokenCount": 22,
+            "totalTokenCount": 242,
+            "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 220}]
+          },
+          "adk_partial": true,
+          "adk_is_long_running": false
+        }
+      }
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {},
+      "escalate": false
+    },
+    "id": "OgrUwIJ1",
+    "invocationId": "e-4caf4db5-0be4-4f83-9af8-e239a5d4877a",
+    "longRunningToolIds": [],
+    "timestamp": 1773699000112,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit).",
+          "thought": false
+        }
+      ]
+    }
+  },
+  {
+    "author": "remote_a2a_agent",
+    "partial": false,
+    "usageMetadata": {
+      "promptTokenCount": 220,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 242,
+      "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 220}]
+    },
+    "customMetadata": {
+      "a2a:response": {
+        "kind": "artifact-update",
+        "taskId": "2c70cc66-0ca2-4be9-9f53-d81eb2e6c6c2",
+        "contextId": "7d258520-f0cb-4342-a441-063211de32a6",
+        "lastChunk": true,
+        "artifact": {
+          "artifactId": "7878ba78-8c98-401d-aae4-c4a8db11d9be",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit)."
+            }
+          ]
+        },
+        "metadata": {
+          "adk_app_name": "weather_time_agent",
+          "adk_user_id": "A2A_USER_7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_session_id": "7d258520-f0cb-4342-a441-063211de32a6",
+          "adk_invocation_id": "e-afcf1141-3b45-4006-b022-5445e09d38b6",
+          "adk_author": "weather_time_agent",
+          "adk_usage_metadata": {
+            "promptTokenCount": 220,
+            "candidatesTokenCount": 22,
+            "totalTokenCount": 242,
+            "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 220}]
+          },
+          "adk_is_long_running": false
+        }
+      }
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {},
+      "escalate": false
+    },
+    "id": "5suFbI87",
+    "invocationId": "e-4caf4db5-0be4-4f83-9af8-e239a5d4877a",
+    "longRunningToolIds": [],
+    "timestamp": 1773699000112,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "text": "The weather in New York is sunny with a temperature of 25 degrees Celsius (77 degrees Fahrenheit).",
+          "thought": false
+        }
+      ]
+    }
+  }
+]

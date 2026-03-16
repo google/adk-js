@@ -5,11 +5,44 @@
  */
 
 import type {Event, LlmResponse} from '@google/adk';
-import {BasePlugin, Context, LlmAgent} from '@google/adk';
-import {GenerateContentResponse} from '@google/genai';
+import {
+  BaseAgent,
+  BasePlugin,
+  Context,
+  InMemoryRunner,
+  LlmAgent,
+} from '@google/adk';
+import {GenerateContentResponse, createUserContent} from '@google/genai';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {createRunner} from './test_case_utils.js';
+
+/**
+ * Creates a runner for the given agent.
+ * @param agent The agent to create a runner for.
+ * @returns A runner for the given agent.
+ */
+export async function createRunner(
+  agent: BaseAgent,
+  plugins: BasePlugin[] = [],
+) {
+  const userId = 'test_user';
+  const appName = agent.name;
+  const runner = new InMemoryRunner({agent: agent, appName, plugins});
+  const session = await runner.sessionService.createSession({
+    appName,
+    userId,
+  });
+
+  return {
+    run(prompt: string): AsyncGenerator<Event, void, undefined> {
+      return runner.runAsync({
+        userId,
+        sessionId: session.id,
+        newMessage: createUserContent(prompt),
+      });
+    },
+  };
+}
 
 function toGenAIResponse(response: LlmResponse): GenerateContentResponse {
   const result = new GenerateContentResponse();
@@ -73,11 +106,39 @@ export class AgentEventCapturePlugin extends BasePlugin {
 export async function runAndCapture(
   agent: LlmAgent,
   prompt: string,
-  capturePlugins?: BasePlugin[],
+  {
+    events,
+    modelResponses,
+  }: {
+    events?: string | boolean;
+    modelResponses?: string | boolean;
+  },
 ) {
-  const runner = await createRunner(agent, capturePlugins);
+  const plugins: BasePlugin[] = [];
+  if (events) {
+    plugins.push(new AgentEventCapturePlugin('agent_events'));
+  }
+  if (modelResponses) {
+    plugins.push(new ModelEventCapturePlugin('model_responses'));
+  }
+  const runner = await createRunner(agent, plugins);
 
   for await (const _e of runner.run(prompt)) {
     // Do nothing. The plugins will capture events and model responses.
+  }
+
+  for (const plugin of plugins) {
+    if (plugin instanceof AgentEventCapturePlugin) {
+      plugin.dump(
+        typeof events === 'boolean' ? 'agent_events.json' : (events as string),
+      );
+    }
+    if (plugin instanceof ModelEventCapturePlugin) {
+      plugin.dump(
+        typeof modelResponses === 'boolean'
+          ? 'model_responses.json'
+          : (modelResponses as string),
+      );
+    }
   }
 }

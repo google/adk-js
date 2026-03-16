@@ -839,19 +839,24 @@ export class AdkApiServer {
   async start(): Promise<void> {
     await this.init();
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, async () => {
-        if (this.a2a) {
-          await this.initA2A();
-        }
+        try {
+          if (this.a2a) {
+            await this.initA2A();
+          }
 
-        console.log(`
+          console.log(`
 +-----------------------------------------------------------------------------+
 | ADK API Server started                                                      |
 |                                                                             |
 | For local testing, access at ${this.url}.${''.padStart(39 - this.url.length)}       |
 +-----------------------------------------------------------------------------+`);
-        resolve();
+          resolve();
+        } catch (error) {
+          this.logger.error('Error during AdkApiServer startup:', error);
+          reject(error);
+        }
       });
     });
   }
