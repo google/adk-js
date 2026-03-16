@@ -1,0 +1,126 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "reimburse",
+                "args": {
+                  "purpose": "meals",
+                  "amount": 50
+                },
+                "id": "nhcg5ml2"
+              },
+              "thoughtSignature": "EpADCo0DAb4+9vthjuwXI07ECdcbpSATtxsLUBs9VAoHucOQ7ZAzEmIQ0L6pLfvobg6mux2EF8EKu8myWAf330KzxNn6SxJfafxPwMf+hYOAYm1IO8JwqwEPEOXF22EdHWx9ntwOb67VjlqEnr/3D+FySXuTbAvuj6oxNSvrIzp4ODhjDWpdoUBtI+KEsQVZezghS1dL4XgNpxeJPkv8Kw9iEpTekP5rCWUPrR3m6XtKkvBXPC/zmyDFBh1nSw8FtstHAVzdWDFLzrSm6cLLNPEhq7k6y683SDI+iBm2+q8eydyjItYbR6iDWsJdHttNrEKyQ00pFehTmSWYHbNAMZWnWhHfdH6xG+e8ZozESbY9AcRSUuvX/HBxgHdcjNNRGKyBT3sEhyTifaSmHi27DuRqpQzhlCY6+Xd4SN72GhH6JpvnSiwcnV1eqffRtsIrpsu7GiZSdZk5/VtXO7ueaqAGkqAkNavbLUFBw85fV6wl4vA2FEvimadXU0LEdcNeCAJC3pS7P/C8R/+UTCHIGzYc+A=="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 333,
+      "candidatesTokenCount": 21,
+      "totalTokenCount": 448,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 333
+        }
+      ],
+      "thoughtsTokenCount": 94
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "OK. I have reimbursed $50 for meals."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 462,
+      "candidatesTokenCount": 11,
+      "totalTokenCount": 473,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 462
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "ask_for_approval",
+                "args": {
+                  "amount": 200,
+                  "purpose": "conference travel"
+                },
+                "id": "37w643yr"
+              },
+              "thoughtSignature": "EpkECpYEAb4+9vuG7OlztpiiidXhtsmlmud1EkYS1meNpFfo0pqI9pERfonMl3yBwyewFhSJhv4a/q2PuaiUT7ViM+Pr/FIHRvJEA+wOetuLCd7UwSPwilofDYSvCgOtfqzNXV04mklWnkPZOQ9SwRg7v/6giWKvniPTDz0TwPtJH7fBnYnggZE5rHFNFAYSA9USHKcC4XDVNNrlyDhjrkeuUIrLAKHyxUIKQtUcPQAI4DE5MtprsFJ/Oad/upfUq85KDyGMqqGWxDlaamy609bXsFKub+pGWICvrMtKeI+A94n2hOH6cuXBFF1N/AYa/HJA/GUPt3AeXkh4SlAuFwd5dAqkY7krVJyw5aHGmuIS4cio/F08TJhNXFqDDyiQQuFRuNRXgUV1lU8oglYxqjLAHqTAKTIoTvbfIzgEDTbxCULT8Pb6SSGTbbJaRJ+4ZAwE42/AaNE5NWQpwcEIRHQi3sDLBlwQ2DbRU6TclALYZEc2XZ3BZ6lLg7MGtNqLP3IdLoF0Fqf0mwvmTNwJ2VVzaAq4DNKIrZ8y2RhLnuJUUhxZTnSVes6AyJnc4LoM+Uvbx/zpFl8yAuGNb4jjyfNyiezDZtmiFQBRh+myZ8lm9R2YrHCsM8Kl/Zb2UMmzNkl/PlmH9kgz7NKax798HWUsoePo3dSVkJjIkW2OJP4JwZHNZHekS4BTyhia0VpA/J+n9oRPEwM54AMQ"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 335,
+      "candidatesTokenCount": 25,
+      "totalTokenCount": 498,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 335
+        }
+      ],
+      "thoughtsTokenCount": 138
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "I've submitted your reimbursement request for $200 for conference travel to your manager for approval. I'll let you know as soon as I have an update. (Ticket ID: reimbursement-ticket-001)",
+              "thoughtSignature": "EqIBCp8BAb4+9vvT5zSC9LvfhfAZCWi1XmXRtJO1RwcG+EjMnCPmE/3TUzHni0ry/Nb7csJJBToKeV0TASNBzPmmaQzwOG7s74cdmZPf122rqphjRwlC0ERIKD1VadG79Asic5ps2GBPpN3376Ucm0qIPhiG9qfUIaTB0+8ZUE62sSf/s5QYulScHdgl7asm5Sg9J25HHkfeeVkzpsDPrDgIzGnv"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 535,
+      "candidatesTokenCount": 47,
+      "totalTokenCount": 604,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 535
+        }
+      ],
+      "thoughtsTokenCount": 22
+    }
+  }
+]
