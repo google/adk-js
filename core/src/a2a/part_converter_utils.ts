@@ -22,7 +22,16 @@ import {
   Part as GenAIPart,
   VideoMetadata,
 } from '@google/genai';
-import {A2AMetadataKeys} from './metadata_converter_utils.js';
+
+/**
+ * Metadata keys used in A2A parts.
+ */
+export enum A2APartMetadataKeys {
+  DATA_PART_TYPE = 'adk_type',
+  THOUGHT = 'adk_thought',
+  VIDEO_METADATA = 'adk_video_metadata',
+  IS_LONG_RUNNING = 'adk_is_long_running',
+}
 
 /**
  * The types of data parts.
@@ -39,7 +48,7 @@ enum DataPartType {
  */
 export function toA2AParts(
   parts: GenAIPart[] = [],
-  longRunningToolIDs: string[] = [],
+  longRunningToolIDs?: string[],
 ): A2APart[] {
   return parts.map((part) => toA2APart(part, longRunningToolIDs));
 }
@@ -70,7 +79,7 @@ export function toA2ATextPart(part: GenAIPart): A2APart {
 
   if (part.thought) {
     a2aPart.metadata = {
-      [A2AMetadataKeys.THOUGHT]: true,
+      [A2APartMetadataKeys.THOUGHT]: true,
     };
   }
 
@@ -83,7 +92,7 @@ export function toA2ATextPart(part: GenAIPart): A2APart {
 export function toA2AFilePart(part: GenAIPart): A2APart {
   const metadata: Record<string, unknown> = {};
   if (part.videoMetadata) {
-    metadata[A2AMetadataKeys.VIDEO_METADATA] = part.videoMetadata;
+    metadata[A2APartMetadataKeys.VIDEO_METADATA] = part.videoMetadata;
   }
 
   if (part.fileData) {
@@ -146,15 +155,14 @@ export function toA2ADataPart(
   }
 
   const metadata: Record<string, unknown> = {
-    [A2AMetadataKeys.DATA_PART_TYPE]: dataPartType,
+    [A2APartMetadataKeys.DATA_PART_TYPE]: dataPartType,
   };
-
   if (
     part.functionCall &&
     part.functionCall.id &&
     longRunningToolIDs.includes(part.functionCall.id)
   ) {
-    metadata[A2AMetadataKeys.IS_LONG_RUNNING] = true;
+    metadata[A2APartMetadataKeys.IS_LONG_RUNNING] = true;
   }
 
   if (
@@ -162,7 +170,7 @@ export function toA2ADataPart(
     part.functionResponse.id &&
     longRunningToolIDs.includes(part.functionResponse.id)
   ) {
-    metadata[A2AMetadataKeys.IS_LONG_RUNNING] = true;
+    metadata[A2APartMetadataKeys.IS_LONG_RUNNING] = true;
   }
 
   return {
@@ -212,7 +220,7 @@ export function toGenAIPart(a2aPart: A2APart): GenAIPart {
 export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
   return {
     text: a2aPart.text,
-    thought: !!a2aPart.metadata?.[A2AMetadataKeys.THOUGHT],
+    thought: !!a2aPart.metadata?.[A2APartMetadataKeys.THOUGHT],
   };
 }
 
@@ -221,9 +229,9 @@ export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
  */
 export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
   const part: GenAIPart = {};
-  if (a2aPart.metadata?.[A2AMetadataKeys.VIDEO_METADATA]) {
+  if (a2aPart.metadata?.[A2APartMetadataKeys.VIDEO_METADATA]) {
     part.videoMetadata = a2aPart.metadata[
-      A2AMetadataKeys.VIDEO_METADATA
+      A2APartMetadataKeys.VIDEO_METADATA
     ] as VideoMetadata;
   }
 
@@ -255,7 +263,7 @@ export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
   }
 
   const data = a2aPart.data as Record<string, unknown>;
-  const type = a2aPart.metadata?.[A2AMetadataKeys.DATA_PART_TYPE];
+  const type = a2aPart.metadata?.[A2APartMetadataKeys.DATA_PART_TYPE];
 
   if (type === DataPartType.FUNCTION_CALL) {
     return {functionCall: data};

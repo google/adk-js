@@ -4,8 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event as AdkEvent} from '../events/event.js';
-import {EventActions as AdkEventActions} from '../events/event_actions.js';
+import {Event as AdkEvent, createEvent} from '../events/event.js';
+import {
+  CitationMetadata,
+  GroundingMetadata,
+  UsageMetadata,
+} from '@google/genai';
+import {Artifact} from '@a2a-js/sdk';
+import {
+  EventActions as AdkEventActions,
+  createEventActions,
+} from '../events/event_actions.js';
 import {A2AEvent, isTask} from './a2a_event.js';
 
 const ADK_METADATA_KEY_PREFIX = 'adk_';
@@ -21,19 +30,16 @@ export enum A2AMetadataKeys {
   INVOCATION_ID = `${ADK_METADATA_KEY_PREFIX}invocation_id`,
   AUTHOR = `${ADK_METADATA_KEY_PREFIX}author`,
   BRANCH = `${ADK_METADATA_KEY_PREFIX}branch`,
-  DATA_PART_TYPE = `${ADK_METADATA_KEY_PREFIX}type`,
   PARTIAL = `${ADK_METADATA_KEY_PREFIX}partial`,
   ESCALATE = `${ADK_METADATA_KEY_PREFIX}escalate`,
   TRANSFER_TO_AGENT = `${ADK_METADATA_KEY_PREFIX}transfer_to_agent`,
-  IS_LONG_RUNNING = `${ADK_METADATA_KEY_PREFIX}is_long_running`,
-  THOUGHT = `${ADK_METADATA_KEY_PREFIX}thought`,
+  LONG_RUNNING_TOOL_IDS = `${ADK_METADATA_KEY_PREFIX}long_running_tool_ids`,
   ERROR_CODE = `${ADK_METADATA_KEY_PREFIX}error_code`,
   ERROR_MESSAGE = `${ADK_METADATA_KEY_PREFIX}error_message`,
   CITATION_METADATA = `${ADK_METADATA_KEY_PREFIX}citation_metadata`,
   GROUNDING_METADATA = `${ADK_METADATA_KEY_PREFIX}grounding_metadata`,
   USAGE_METADATA = `${ADK_METADATA_KEY_PREFIX}usage_metadata`,
   CUSTOM_METADATA = `${ADK_METADATA_KEY_PREFIX}custom_metadata`,
-  VIDEO_METADATA = `${ADK_METADATA_KEY_PREFIX}video_metadata`,
 }
 
 /**
@@ -42,6 +48,8 @@ export enum A2AMetadataKeys {
 export enum AdkMetadataKeys {
   TASK_ID = `${A2A_METADATA_KEY_PREFIX}task_id`,
   CONTEXT_ID = `${A2A_METADATA_KEY_PREFIX}context_id`,
+  REQUEST = `${A2A_METADATA_KEY_PREFIX}request`,
+  RESPONSE = `${A2A_METADATA_KEY_PREFIX}response`,
 }
 
 /**
@@ -51,9 +59,62 @@ export function getAdkEventMetadata(
   a2aEvent: A2AEvent,
 ): Record<string, unknown> {
   return {
+    ...a2aEvent.metadata,
     [AdkMetadataKeys.TASK_ID]: isTask(a2aEvent) ? a2aEvent.id : a2aEvent.taskId,
     [AdkMetadataKeys.CONTEXT_ID]: a2aEvent.contextId,
   };
+}
+
+/**
+ * Extracts A2A task metadata from ADK Event custom metadata.
+ */
+export function getA2ATaskMetadataFromAdkEvent(adkEvent: AdkEvent): {
+  taskId?: string;
+  contextId?: string;
+} {
+  const metadata = adkEvent.customMetadata || {};
+
+  return {
+    taskId: metadata[AdkMetadataKeys.TASK_ID] as string,
+    contextId: metadata[AdkMetadataKeys.CONTEXT_ID] as string,
+  };
+}
+
+/**
+ * Creates an ADK Event from A2A Event metadata.
+ */
+export function getAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
+  const metadata = a2aEvent.metadata || {};
+
+  return createEvent({
+    branch: metadata[A2AMetadataKeys.BRANCH] as string,
+    author: metadata[A2AMetadataKeys.AUTHOR] as string,
+    partial: metadata[A2AMetadataKeys.PARTIAL] as boolean,
+    errorCode: metadata[A2AMetadataKeys.ERROR_CODE] as string,
+    errorMessage: metadata[A2AMetadataKeys.ERROR_MESSAGE] as string,
+    citationMetadata: metadata[
+      A2AMetadataKeys.CITATION_METADATA
+    ] as CitationMetadata,
+    groundingMetadata: metadata[
+      A2AMetadataKeys.GROUNDING_METADATA
+    ] as GroundingMetadata,
+    usageMetadata: metadata[A2AMetadataKeys.USAGE_METADATA] as UsageMetadata,
+    actions: createEventActions({
+      escalate: !!metadata[A2AMetadataKeys.ESCALATE],
+      transferToAgent: metadata[A2AMetadataKeys.TRANSFER_TO_AGENT] as string,
+    }),
+    longRunningToolIds: getLongRunningToolIds(a2aEvent),
+    customMetadata: getAdkEventMetadata(a2aEvent),
+  });
+}
+
+/**
+ * Extracts long running tool IDs from A2A Event metadata.
+ */
+export function getLongRunningToolIds(event: A2AEvent | Artifact): string[] {
+  return (
+    (event.metadata?.[A2AMetadataKeys.LONG_RUNNING_TOOL_IDS] as string[]) || []
+  );
 }
 
 /**
@@ -84,8 +145,7 @@ export function getA2AEventMetadata(
     [A2AMetadataKeys.USAGE_METADATA]: adkEvent.usageMetadata,
     [A2AMetadataKeys.CUSTOM_METADATA]: adkEvent.customMetadata,
     [A2AMetadataKeys.PARTIAL]: adkEvent.partial,
-    [A2AMetadataKeys.IS_LONG_RUNNING]:
-      (adkEvent.longRunningToolIds || []).length > 0,
+    [A2AMetadataKeys.LONG_RUNNING_TOOL_IDS]: adkEvent.longRunningToolIds,
   };
 }
 

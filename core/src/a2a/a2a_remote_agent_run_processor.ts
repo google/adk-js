@@ -21,7 +21,7 @@ import {
   isTaskArtifactUpdateEvent,
   isTaskStatusUpdateEvent,
 } from './a2a_event.js';
-import {A2AMetadataKeys} from './metadata_converter_utils.js';
+import {AdkMetadataKeys, A2AMetadataKeys} from './metadata_converter_utils.js';
 
 /**
  * Aggregated state for a specific artifact.
@@ -203,23 +203,10 @@ export class A2ARemoteAgentRunProcessor {
    * Adds request and response metadata to the event.
    */
   updateCustomMetadata(event: AdkEvent, response?: A2AEvent) {
-    const toAdd: Record<string, unknown> = {};
-    if (this.request && event.turnComplete) {
-      toAdd['request'] = this.request;
-    }
-    if (response) {
-      toAdd['response'] = response;
-    }
-    if (Object.keys(toAdd).length === 0) {
-      return;
-    }
-    if (!event.customMetadata) {
-      event.customMetadata = {};
-    }
-    for (const [k, v] of Object.entries(toAdd)) {
-      if (v === undefined || v === null) continue;
-      // Use prefixed keys to avoid collisions
-      event.customMetadata[`a2a:${k}`] = v;
-    }
+    event.customMetadata = {
+      ...(event.customMetadata || {}),
+      [AdkMetadataKeys.REQUEST]: this.request,
+      [AdkMetadataKeys.RESPONSE]: response,
+    };
   }
 }

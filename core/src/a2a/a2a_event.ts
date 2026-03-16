@@ -398,3 +398,31 @@ export function createInputMissingErrorEvent({
     metadata,
   };
 }
+
+/**
+ * Creates an A2A message.
+ */
+export function createMessage({
+  role,
+  parts,
+  taskId,
+  contextId,
+  metadata,
+}: {
+  role: MessageRole;
+  parts: A2APart[];
+  taskId?: string;
+  contextId?: string;
+  metadata?: Record<string, unknown>;
+}): Message {
+  return {
+    kind: 'message',
+    messageId: randomUUID(),
+    role,
+    parts,
+    taskId,
+    contextId,
+    metadata,
+  };
+}
+

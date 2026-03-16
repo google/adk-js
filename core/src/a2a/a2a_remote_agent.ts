@@ -23,16 +23,18 @@ import fs from 'fs/promises';
 import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
-import {MessageRole} from './a2a_event.js';
+import {createMessage as createA2AMessage, MessageRole} from './a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from './a2a_remote_agent_run_processor.js';
 import {
   getUserFunctionCallAt,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
 import {toAdkEvent} from './event_converter_utils.js';
-import {getA2ASessionMetadata} from './metadata_converter_utils.js';
+import {
+  getA2ASessionMetadata,
+  getA2ATaskMetadataFromAdkEvent,
+} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
 
 export type A2AStreamEventData =
@@ -94,90 +96,51 @@ export interface A2ARemoteAgentConfig extends BaseAgentConfig {
  * A2ARemoteAgent delegates execution to a remote agent using the A2A protocol.
  */
 export class A2ARemoteAgent extends BaseAgent {
-  private resolvedCard?: AgentCard;
   private client?: Client;
+  private card?: AgentCard;
+  private isInitialized = false;
 
   constructor(private readonly a2aConfig: A2ARemoteAgentConfig) {
     super(a2aConfig);
+
     if (!a2aConfig.agentCard && !a2aConfig.agentCardSource) {
       throw new Error('Either agentCard or agentCardSource must be provided');
     }
-    if (a2aConfig.agentCard) {
-      this.resolvedCard = a2aConfig.agentCard;
+  }
+
+  private async init() {
+    if (this.isInitialized) {
+      return;
     }
+
+    this.card = await getAgentCard(this.a2aConfig);
+    const factory = this.a2aConfig.clientFactory || new ClientFactory();
+    this.client = await factory.createFromAgentCard(this.card);
+
+    this.isInitialized = true;
   }
 
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<AdkEvent, void, void> {
     try {
-      const client = await this.getOrCreateClient();
-      const card = this.resolvedCard!;
-
-      // 1. Convert current ADK state to A2A Message
-      const events = context.session.events;
-      if (events.length === 0) {
-        throw new Error('No events in session to send');
-      }
-
-      const userFnCall = getUserFunctionCallAt(
-        context.session,
-        events.length - 1,
-      );
-      let parts: A2APart[];
-      let taskId: string | undefined = undefined;
-      let contextId: string | undefined = undefined;
-
-      if (userFnCall) {
-        const event = userFnCall.response;
-        parts = toA2AParts(
-          event.content?.parts || [],
-          event.longRunningToolIds,
-        );
-        taskId = userFnCall.taskId;
-        contextId = userFnCall.contextId;
-      } else {
-        const missing = toMissingRemoteSessionParts(context, context.session);
-        parts = missing.parts;
-        contextId = missing.contextId;
-      }
-
-      const message: Message = {
-        kind: 'message',
-        messageId: randomUUID(),
-        role: MessageRole.USER,
-        parts,
-        metadata: {
-          ...getA2ASessionMetadata({
-            appName: context.session.appName,
-            userId: context.session.userId,
-            sessionId: context.session.id,
-          }),
-        },
-      };
-      if (taskId) message.taskId = taskId;
-      if (contextId) message.contextId = contextId;
-
+      await this.init();
       const params: MessageSendParams = {
-        message,
+        message: buildRemoteMessage(context),
         configuration: this.a2aConfig.messageSendConfig,
       };
 
-      const processor = new A2ARemoteAgentRunProcessor(params);
-
-      // 2. Run BeforeRequestCallbacks
       if (this.a2aConfig.beforeRequestCallbacks) {
         for (const callback of this.a2aConfig.beforeRequestCallbacks) {
           await callback(context, params);
         }
       }
 
-      // 3. Send Message
-      // Default to streaming if supported by card, or check runConfig
-      const useStreaming = card.capabilities?.streaming !== false; // Assume true if not specified, usually standard
+      const processor = new A2ARemoteAgentRunProcessor(params);
+      const useStreaming = this.card!.capabilities?.streaming !== false;
 
       if (useStreaming) {
-        for await (const chunk of client.sendMessageStream(params)) {
+        for await (const chunk of this.client!.sendMessageStream(params)) {
           if (this.a2aConfig.afterRequestCallbacks) {
             for (const callback of this.a2aConfig.afterRequestCallbacks) {
               await callback(context, chunk);
@@ -201,10 +164,8 @@ export class A2ARemoteAgent extends BaseAgent {
           }
         }
       } else {
-        const result = await client.sendMessage(params);
-        // sendMessage result is Message | Task
+        const result = await this.client!.sendMessage(params);
         if (this.a2aConfig.afterRequestCallbacks) {
-          // sendMessage Result doesn't strictly match A2AStreamEventData type in sdk definition for stream but they share kind
           for (const callback of this.a2aConfig.afterRequestCallbacks) {
             await callback(context, result);
           }
@@ -219,10 +180,11 @@ export class A2ARemoteAgent extends BaseAgent {
       const error = e as Error;
       logger.error(`A2ARemoteAgent ${this.name} failed:`, error);
 
-      yield toErrorAdkEvent({
-        context,
-        error,
+      yield createEvent({
         author: this.name,
+        invocationId: context.invocationId,
+        errorMessage: error.message,
+        turnComplete: true,
       });
     }
   }
@@ -232,60 +194,67 @@ export class A2ARemoteAgent extends BaseAgent {
   ): AsyncGenerator<AdkEvent, void, void> {
     throw new Error('Live mode is not supported in A2ARemoteAgent yet.');
   }
+}
 
-  private async getOrCreateClient(): Promise<Client> {
-    if (this.client) {
-      return this.client;
-    }
-
-    const card = await this.resolveCard();
-    const factory = this.a2aConfig.clientFactory || new ClientFactory();
-    this.client = await factory.createFromAgentCard(card);
-    return this.client;
+/**
+ * Resolves the AgentCard from the provided source.
+ */
+async function getAgentCard(
+  a2aConfig: A2ARemoteAgentConfig,
+): Promise<AgentCard> {
+  if (a2aConfig.agentCard) {
+    return a2aConfig.agentCard;
   }
 
-  private async resolveCard(): Promise<AgentCard> {
-    if (this.resolvedCard) {
-      return this.resolvedCard;
-    }
+  const source = a2aConfig.agentCardSource;
+  if (!source) {
+    throw new Error('No agent card or source provided');
+  }
 
-    const source = this.a2aConfig.agentCardSource;
-    if (!source) {
-      throw new Error('No agent card or source provided');
-    }
+  if (source.startsWith('http://') || source.startsWith('https://')) {
+    const resolver = new DefaultAgentCardResolver();
+    return await resolver.resolve(source);
+  }
 
-    if (source.startsWith('http://') || source.startsWith('https://')) {
-      const resolver = new DefaultAgentCardResolver();
-      this.resolvedCard = await resolver.resolve(source);
-      return this.resolvedCard;
-    }
-
-    // Local file path resolution
-    try {
-      const content = await fs.readFile(source, 'utf-8');
-      this.resolvedCard = JSON.parse(content) as AgentCard;
-      return this.resolvedCard;
-    } catch (err: unknown) {
-      throw new Error(
-        `Failed to read agent card from file ${source}: ${(err as Error).message}`,
-      );
-    }
+  try {
+    const content = await fs.readFile(source, 'utf-8');
+    return JSON.parse(content) as AgentCard;
+  } catch (err: unknown) {
+    throw new Error(
+      `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+    );
   }
 }
 
-function toErrorAdkEvent({
-  author,
-  context,
-  error,
-}: {
-  author: string;
-  context: InvocationContext;
-  error: Error;
-}): AdkEvent {
-  return createEvent({
-    author,
-    invocationId: context.invocationId,
-    errorMessage: error.message,
-    turnComplete: true,
+/**
+ * Builds the MessageSendParams from the invocation context.
+ */
+function buildRemoteMessage(context: InvocationContext): Message {
+  const events = context.session.events;
+  const event = getUserFunctionCallAt(events, events.length - 1);
+  const {
+    taskId,
+    contextId
+  } = getA2ATaskMetadataFromAdkEvent(event);
+  let parts: A2APart[];
+
+  if (event) {
+    parts = toA2AParts(event.content?.parts || []);
+  } else {
+    const missing = toMissingRemoteSessionParts(context, context.session);
+    parts = missing.parts;
+    contextId = missing.contextId;
+  }
+
+  return createA2AMessage({
+    parts,
+    taskId,
+    contextId,
+    role: MessageRole.USER,
+    metadata: getA2ASessionMetadata({
+      appName: context.session.appName,
+      userId: context.session.userId,
+      sessionId: context.session.id,
+    }),
   });
 }

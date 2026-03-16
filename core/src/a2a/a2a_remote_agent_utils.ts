@@ -12,20 +12,13 @@ import {Session} from '../sessions/session.js';
 import {AdkMetadataKeys} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
 
-export interface UserFunctionCall {
-  response: AdkEvent;
-  taskId: string;
-  contextId: string;
-}
-
 /**
- * Returns a UserFunctionCall when the event at index has a FunctionResponse.
+ * Returns a user event with a function call when the event at index has a FunctionResponse.
  */
 export function getUserFunctionCallAt(
-  session: Session,
+  events: AdkEvent[],
   index: number,
-): UserFunctionCall | undefined {
-  const events = session.events;
+): AdkEvent | undefined {
   if (index < 0 || index >= events.length) {
     return undefined;
   }
@@ -46,15 +39,7 @@ export function getUserFunctionCallAt(
       continue;
     }
 
-    const metadata = request.customMetadata || {};
-    const taskId = (metadata[AdkMetadataKeys.TASK_ID] as string) || '';
-    const contextId = (metadata[AdkMetadataKeys.CONTEXT_ID] as string) || '';
-
-    return {
-      response: candidate,
-      taskId,
-      contextId,
-    };
+    return candidate;
   }
 
   return undefined;
@@ -64,7 +49,7 @@ export function getUserFunctionCallAt(
  * Checks if an event contains a function call with the given ID.
  */
 export function isFunctionCallEvent(event: AdkEvent, callId: string): boolean {
-  if (!event || !event.content || !event.content.parts) {
+  if (!event.content?.parts?.length) {
     return false;
   }
 
@@ -118,16 +103,11 @@ export function toMissingRemoteSessionParts(
       event = presentAsUserMessage(ctx, event);
     }
 
-    if (
-      !event.content ||
-      !event.content.parts ||
-      event.content.parts.length === 0
-    ) {
+    if (!event.content?.parts?.length) {
       continue;
     }
 
-    const parts = toA2AParts(event.content.parts, event.longRunningToolIds);
-    missingParts.push(...parts);
+    missingParts.push(...toA2AParts(event.content.parts));
   }
 
   return {

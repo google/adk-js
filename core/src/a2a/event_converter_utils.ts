@@ -12,18 +12,14 @@ import {
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
 import {
-  CitationMetadata,
   createModelContent,
   createUserContent,
   Part as GenAIPart,
-  GroundingMetadata,
-  UsageMetadata,
 } from '@google/genai';
-import {Event as AdkEvent, createEvent} from '../events/event.js';
-import {createEventActions} from '../events/event_actions.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
+import {Event as AdkEvent} from '../events/event.js';
 import {
   A2AEvent,
+  createMessage,
   getEventMetadata,
   getFailedTaskStatusUpdateEventError,
   isFailedTaskStatusUpdateEvent,
@@ -38,8 +34,14 @@ import {
 import {
   A2AMetadataKeys,
   getA2AEventMetadata,
+  getAdkEventFromMetadata,
 } from './metadata_converter_utils.js';
-import {toA2AParts, toGenAIPart, toGenAIParts} from './part_converter_utils.js';
+import {
+  toA2AParts,
+  toGenAIPart,
+  toGenAIParts,
+  A2APartMetadataKeys,
+} from './part_converter_utils.js';
 
 /**
  * Converts a session Event to an A2A Message.
@@ -52,14 +54,12 @@ export function toA2AMessage(
     sessionId,
   }: {appName: string; userId: string; sessionId: string},
 ): Message {
-  return {
-    kind: 'message',
-    messageId: randomUUID(),
+  return createMessage({
     role:
       event.author === MessageRole.USER ? MessageRole.USER : MessageRole.AGENT,
-    parts: toA2AParts(event.content?.parts || [], event.longRunningToolIds),
+    parts: toA2AParts(event.content?.parts, event.longRunningToolIds),
     metadata: getA2AEventMetadata(event, {appName, userId, sessionId}),
-  };
+  });
 }
 
 /**
@@ -100,7 +100,7 @@ function messageToAdkEvent(
   const parts = toGenAIParts(msg.parts);
 
   return {
-    ...createAdkEventFromMetadata(parentEvent || msg),
+    ...getAdkEventFromMetadata(parentEvent || msg),
     invocationId,
     author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
     content:
@@ -128,11 +128,11 @@ function artifactUpdateToAdkEvent(
     !a2aEvent.lastChunk;
 
   return {
-    ...createAdkEventFromMetadata(a2aEvent),
+    ...getAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
     content: createModelContent(toGenAIParts(partsToConvert)),
-    longRunningToolIds: getLongRunningToolIDs(partsToConvert),
+    longRunningToolIds: getLongRunningToolIds(partsToConvert),
     partial,
   };
 }
@@ -152,14 +152,13 @@ function finalTaskStatusUpdateToAdkEvent(
   const hasContent = !isFailedTask && parts.length > 0;
 
   return {
-    ...createAdkEventFromMetadata(a2aEvent),
+    ...getAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
     errorMessage: isFailedTask
       ? getFailedTaskStatusUpdateEventError(a2aEvent)
       : undefined,
     content: hasContent ? createModelContent(parts) : undefined,
-    longRunningToolIds: getLongRunningToolIDs(partsToConvert),
     turnComplete: true,
   };
 }
@@ -177,7 +176,7 @@ function taskStatusUpdateToAdkEvent(
   const parts = toGenAIParts(msg.parts);
 
   return {
-    ...createAdkEventFromMetadata(a2aEvent),
+    ...getAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
     content: createModelContent(parts),
@@ -199,7 +198,7 @@ function taskToAdkEvent(
       if (artifact.parts?.length > 0) {
         const artifactParts = toGenAIParts(artifact.parts);
         parts.push(...artifactParts);
-        longRunningToolIds.push(...getLongRunningToolIDs(artifact.parts));
+        longRunningToolIds.push(...getLongRunningToolIds(artifact.parts));
       }
     }
   }
@@ -209,7 +208,7 @@ function taskToAdkEvent(
     const genAIParts = toGenAIParts(a2aParts);
 
     parts.push(...genAIParts);
-    longRunningToolIds.push(...getLongRunningToolIDs(a2aParts));
+    longRunningToolIds.push(...getLongRunningToolIds(a2aParts));
   }
 
   const isTerminal =
@@ -222,7 +221,7 @@ function taskToAdkEvent(
   }
 
   return {
-    ...createAdkEventFromMetadata(a2aTask),
+    ...getAdkEventFromMetadata(a2aTask),
     invocationId,
     author: agentName,
     content: isFailed ? undefined : createModelContent(parts),
@@ -234,38 +233,14 @@ function taskToAdkEvent(
   };
 }
 
-function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
-  const metadata = a2aEvent.metadata || {};
-
-  return createEvent({
-    branch: metadata[A2AMetadataKeys.BRANCH] as string,
-    author: metadata[A2AMetadataKeys.AUTHOR] as string,
-    partial: metadata[A2AMetadataKeys.PARTIAL] as boolean,
-    errorCode: metadata[A2AMetadataKeys.ERROR_CODE] as string,
-    errorMessage: metadata[A2AMetadataKeys.ERROR_MESSAGE] as string,
-    citationMetadata: metadata[
-      A2AMetadataKeys.CITATION_METADATA
-    ] as CitationMetadata,
-    groundingMetadata: metadata[
-      A2AMetadataKeys.GROUNDING_METADATA
-    ] as GroundingMetadata,
-    usageMetadata: metadata[A2AMetadataKeys.USAGE_METADATA] as UsageMetadata,
-    customMetadata: metadata[A2AMetadataKeys.CUSTOM_METADATA] as Record<
-      string,
-      unknown
-    >,
-    actions: createEventActions({
-      escalate: !!metadata[A2AMetadataKeys.ESCALATE],
-      transferToAgent: metadata[A2AMetadataKeys.TRANSFER_TO_AGENT] as string,
-    }),
-  });
-}
-
-function getLongRunningToolIDs(parts: A2APart[]): string[] {
+function getLongRunningToolIds(parts: A2APart[]): string[] {
   const ids: string[] = [];
 
   for (const a2aPart of parts) {
-    if (a2aPart.metadata && a2aPart.metadata[A2AMetadataKeys.IS_LONG_RUNNING]) {
+    if (
+      a2aPart.metadata &&
+      a2aPart.metadata[A2APartMetadataKeys.IS_LONG_RUNNING]
+    ) {
       const genAIPart = toGenAIPart(a2aPart);
       if (genAIPart.functionCall && genAIPart.functionCall.id) {
         ids.push(genAIPart.functionCall.id);
