@@ -127,6 +127,8 @@ export type {
 } from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
+export {AnthropicLlm} from './models/anthropic_llm.js';
+export type {AnthropicLlmParams} from './models/anthropic_llm.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
