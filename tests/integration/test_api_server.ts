@@ -28,7 +28,10 @@ export interface TestApiServerParams {
   sessionServiceUri?: string;
   artifactServiceUri?: string;
   a2a?: boolean;
+  startFailureTimeout?: number;
 }
+
+const DEFAULT_TIMEOUT = 10000;
 
 /**
  * Creates the ADK API server for testing via the CLI. This is useful for integration tests that require an ADK API server to be running.
@@ -78,7 +81,7 @@ export function createTestApiServer(
         setTimeout(() => {
           if (!started)
             reject(new Error('Timeout waiting for server to start.'));
-        }, 10000);
+        }, params.startFailureTimeout || DEFAULT_TIMEOUT);
       });
 
       return new AdkApiClient({backendUrl: `http://localhost:${port}`});
