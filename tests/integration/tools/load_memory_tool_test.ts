@@ -7,8 +7,7 @@
 import {createEvent, InMemoryRunner, LlmAgent, LOAD_MEMORY} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import {describe, expect, it} from 'vitest';
-
-import {GeminiWithMockResponses} from '../agents/test_case_utils.js';
+import {GeminiWithMockResponses} from '../test_case_utils.js';
 
 describe('LoadMemoryTool Integration', () => {
   it('should process load_memory function calls and answer using memory', async () => {
