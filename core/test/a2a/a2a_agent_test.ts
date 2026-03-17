@@ -13,34 +13,24 @@ import {
 } from '@a2a-js/sdk';
 import {ClientFactory} from '@a2a-js/sdk/client';
 import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {
+  A2AAgentExecutor,
+  Event as AdkEvent,
+  AfterA2ARequestCallback,
+  BaseAgent,
+  BaseSessionService,
+  BeforeA2ARequestCallback,
+  createEvent,
+  createEventActions,
+  InvocationContext,
+  RemoteA2AAgent,
+  Runner,
+  RunnerConfig,
+  Session,
+} from '@google/adk';
 import {Language, Outcome} from '@google/genai';
 import {beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {A2AEvent} from '../../src/a2a/a2a_event.js';
-import {
-  AfterA2ARequestCallback,
-  BeforeA2ARequestCallback,
-  RemoteA2AAgent,
-} from '../../src/a2a/a2a_remote_agent.js';
-import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event as AdkEvent, createEvent} from '../../src/events/event.js';
-import {createEventActions} from '../../src/events/event_actions.js';
-import {Runner, RunnerConfig} from '../../src/runner/runner.js';
-import {BaseSessionService} from '../../src/sessions/base_session_service.js';
-import {Session} from '../../src/sessions/session.js';
-
-// Mock @a2a-js/sdk/client
-vi.mock('@a2a-js/sdk/client', () => {
-  const Client = vi.fn().mockImplementation(() => ({
-    sendMessageStream: vi.fn(),
-    sendMessage: vi.fn(),
-  }));
-  const ClientFactory = vi.fn().mockImplementation(() => ({
-    createFromAgentCard: vi.fn(),
-  }));
-  return {Client, ClientFactory};
-});
 
 class MockAgent extends BaseAgent {
   protected runAsyncImpl(

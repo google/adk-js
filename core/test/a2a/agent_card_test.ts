@@ -5,15 +5,19 @@
  */
 
 import {describe, expect, it, vi} from 'vitest';
-import {buildAgentSkills, getA2AAgentCard} from '../../src/a2a/agent_card.js';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {LlmAgent} from '../../src/agents/llm_agent.js';
-import {LoopAgent} from '../../src/agents/loop_agent.js';
-import {ParallelAgent} from '../../src/agents/parallel_agent.js';
-import {SequentialAgent} from '../../src/agents/sequential_agent.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
-import {BaseToolset} from '../../src/tools/base_toolset.js';
-import {FunctionTool} from '../../src/tools/function_tool.js';
+import {buildAgentSkills} from '../../src/a2a/agent_card.js';
+
+import {
+  BaseAgent,
+  BaseTool,
+  BaseToolset,
+  FunctionTool,
+  getA2AAgentCard,
+  LlmAgent,
+  LoopAgent,
+  ParallelAgent,
+  SequentialAgent,
+} from '@google/adk';
 
 // Minimal CustomAgent for testing BaseAgent path
 class CustomAgent extends BaseAgent {
