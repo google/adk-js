@@ -36,28 +36,28 @@ describe('AnthropicLlm', () => {
 
   it('should create instance with explicit API key', () => {
     const llm = new AnthropicLlm({
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       apiKey: 'test-key',
     });
-    expect(llm.model).toBe('claude-sonnet-4-5-20250514');
+    expect(llm.model).toBe('claude-sonnet-4-5-20250929');
     expect(isBaseLlm(llm)).toBe(true);
   });
 
   it('should use default model name when not provided', () => {
     const llm = new AnthropicLlm({apiKey: 'test-key'});
-    expect(llm.model).toBe('claude-sonnet-4-5-20250514');
+    expect(llm.model).toBe('claude-sonnet-4-5-20250929');
   });
 
   it('should read API key from environment variable', () => {
     process.env['ANTHROPIC_API_KEY'] = 'env-key';
-    const llm = new AnthropicLlm({model: 'claude-sonnet-4-5-20250514'});
-    expect(llm.model).toBe('claude-sonnet-4-5-20250514');
+    const llm = new AnthropicLlm({model: 'claude-sonnet-4-5-20250929'});
+    expect(llm.model).toBe('claude-sonnet-4-5-20250929');
   });
 
   it('should throw when no API key is provided', () => {
     delete process.env['ANTHROPIC_API_KEY'];
     expect(
-      () => new AnthropicLlm({model: 'claude-sonnet-4-5-20250514'}),
+      () => new AnthropicLlm({model: 'claude-sonnet-4-5-20250929'}),
     ).toThrow(/API key/);
   });
 
@@ -76,7 +76,7 @@ describe('AnthropicLlm.supportedModels', () => {
   it('should match claude model patterns', () => {
     const patterns = AnthropicLlm.supportedModels;
     const testCases = [
-      'claude-sonnet-4-5-20250514',
+      'claude-sonnet-4-5-20250929',
       'claude-opus-4-0-20250514',
       'claude-haiku-4-5-20251001',
       'claude-3-5-sonnet-20241022',
@@ -118,16 +118,16 @@ describe('AnthropicLlm.supportedModels', () => {
 describe('LLMRegistry with AnthropicLlm', () => {
   it('should resolve claude model names via registry', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
-    const llm = LLMRegistry.newLlm('claude-sonnet-4-5-20250514');
+    const llm = LLMRegistry.newLlm('claude-sonnet-4-5-20250929');
     expect(llm).toBeInstanceOf(AnthropicLlm);
-    expect(llm.model).toBe('claude-sonnet-4-5-20250514');
+    expect(llm.model).toBe('claude-sonnet-4-5-20250929');
   });
 
   it('should work with LlmAgent using string model', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     const agent = new LlmAgent({
       name: 'test_claude_agent',
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
     });
     expect(agent.canonicalModel).toBeInstanceOf(AnthropicLlm);
   });
@@ -152,7 +152,7 @@ describe('AnthropicLlm content conversion', () => {
   beforeEach(() => {
     llm = new AnthropicLlm({
       apiKey: 'test-key',
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
     });
   });
 
@@ -415,7 +415,7 @@ describe('AnthropicLlm response conversion', () => {
       type: 'message' as const,
       role: 'assistant' as const,
       content: [{type: 'text' as const, text: 'Hello!', citations: null}],
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       stop_reason: 'end_turn' as const,
       stop_sequence: null,
       usage: {
@@ -454,7 +454,7 @@ describe('AnthropicLlm response conversion', () => {
           caller: {type: 'direct' as const},
         },
       ],
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       stop_reason: 'tool_use' as const,
       stop_sequence: null,
       usage: {
@@ -486,7 +486,7 @@ describe('AnthropicLlm response conversion', () => {
       type: 'message' as const,
       role: 'assistant' as const,
       content: [{type: 'text' as const, text: 'Hi', citations: null}],
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       stop_reason: 'end_turn' as const,
       stop_sequence: null,
       usage: {

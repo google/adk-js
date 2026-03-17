@@ -37,7 +37,7 @@ import {LlmResponse} from './llm_response.js';
  */
 export interface AnthropicLlmParams {
   /**
-   * The model name. Defaults to 'claude-sonnet-4-5-20250514'.
+   * The model name. Defaults to 'claude-sonnet-4-5-20250929'.
    */
   model?: string;
   /**
@@ -73,7 +73,7 @@ export class AnthropicLlm extends BaseLlm {
 
   constructor({model, apiKey, maxTokens, baseURL}: AnthropicLlmParams) {
     if (!model) {
-      model = 'claude-sonnet-4-5-20250514';
+      model = 'claude-sonnet-4-5-20250929';
     }
     super({model});
 
