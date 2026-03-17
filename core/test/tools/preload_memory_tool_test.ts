@@ -15,8 +15,9 @@ import {
   SearchMemoryResponse,
 } from '@google/adk';
 
-// We mock the console.warn since we test a failing case
+// We mock the logger.warn since we test a failing case
 import {vi} from 'vitest';
+import {logger} from '../../src/utils/logger.js';
 
 class StubToolContext {
   private memories: MemoryEntry[];
@@ -125,7 +126,7 @@ describe('PreloadMemoryTool', () => {
   });
 
   it('handles searchMemory throwing an error gracefully', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const toolContext = new StubToolContext([]) as unknown as Context;
     // Override searchMemory to throw
     toolContext.searchMemory = async () => {

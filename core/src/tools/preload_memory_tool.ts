@@ -5,6 +5,7 @@
  */
 
 import {appendInstructions} from '../models/llm_request.js';
+import {logger} from '../utils/logger.js';
 import {
   BaseTool,
   RunAsyncToolRequest,
@@ -57,7 +58,7 @@ export class PreloadMemoryTool extends BaseTool {
       }
       response = await request.toolContext.searchMemory(userQuery);
     } catch (_) {
-      console.warn(`Failed to preload memory for query: ${userQuery}`);
+      logger.warn(`Failed to preload memory for query: ${userQuery}`);
       return;
     }
 
