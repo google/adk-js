@@ -7,11 +7,14 @@
 import {Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
-import {Context} from '../../src/agents/context.js';
-import {SearchMemoryResponse} from '../../src/memory/base_memory_service.js';
-import {MemoryEntry} from '../../src/memory/memory_entry.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LOAD_MEMORY, LoadMemoryTool} from '../../src/tools/load_memory_tool.js';
+import {
+  Context,
+  LlmRequest,
+  LOAD_MEMORY,
+  LoadMemoryTool,
+  MemoryEntry,
+  SearchMemoryResponse,
+} from '@google/adk';
 
 class StubToolContext {
   private memories: MemoryEntry[];
