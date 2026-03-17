@@ -10,6 +10,8 @@ import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
 
+const TEST_TIMEOUT = 30000;
+
 describe('A2A: RemoteAgent Streaming', () => {
   let server: TestAdkApiServer;
 
@@ -17,9 +19,10 @@ describe('A2A: RemoteAgent Streaming', () => {
     server = createTestApiServer({
       agentsDir: path.join(__dirname, 'test_agents'),
       a2a: true,
+      startFailureTimeout: TEST_TIMEOUT,
     });
     await server.start();
-  });
+  }, TEST_TIMEOUT);
 
   afterAll(async () => {
     await server.stop();
