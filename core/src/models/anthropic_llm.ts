@@ -24,7 +24,7 @@ import type {
   Schema,
 } from '@google/genai';
 
-import {isBrowser} from '../utils/env_aware_utils.js';
+import {isBrowser, randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 
 import {BaseLlm} from './base_llm.js';
@@ -330,7 +330,7 @@ export class AnthropicLlm extends BaseLlm {
       if (part.functionCall) {
         blocks.push({
           type: 'tool_use',
-          id: part.functionCall.id ?? `fc_${Date.now()}`,
+          id: part.functionCall.id ?? `fc_${randomUUID()}`,
           name: part.functionCall.name ?? '',
           input: part.functionCall.args ?? {},
         } as ToolUseBlockParam);
