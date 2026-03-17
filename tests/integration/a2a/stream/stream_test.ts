@@ -4,13 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  Event as AdkEvent,
-  createEvent,
-  InvocationContext,
-  RemoteA2AAgent,
-  Session,
-} from '@google/adk';
+import {Event as AdkEvent, InMemoryRunner, RemoteA2AAgent} from '@google/adk';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
@@ -40,23 +34,18 @@ describe('A2A: RemoteAgent Streaming', () => {
       agentCard: `${server.url}/a2a/streaming_success/`,
     });
 
-    const clientCtx = {
-      session: {
-        appName: 'caller',
-        userId: 'caller-user',
-        id: 'context-4',
-        events: [
-          createEvent({
-            author: 'user',
-            content: {role: 'user', parts: [{text: 'Speak'}]},
-          }),
-        ],
-      } as unknown as Session,
-      invocationId: 'invoke-4',
-    } as unknown as InvocationContext;
+    const runner = new InMemoryRunner({agent: remoteAgent, appName: 'caller'});
+    const session = await runner.sessionService.createSession({
+      appName: 'caller',
+      userId: 'caller-user',
+    });
 
     const events: AdkEvent[] = [];
-    for await (const ev of remoteAgent.runAsync(clientCtx)) {
+    for await (const ev of runner.runAsync({
+      userId: 'caller-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Speak'}]},
+    })) {
       events.push(ev);
     }
 
@@ -74,23 +63,18 @@ describe('A2A: RemoteAgent Streaming', () => {
       agentCard: `${server.url}/a2a/streaming_error/`,
     });
 
-    const clientCtx = {
-      session: {
-        appName: 'caller',
-        userId: 'caller-user',
-        id: 'context-5',
-        events: [
-          createEvent({
-            author: 'user',
-            content: {role: 'user', parts: [{text: 'Speak'}]},
-          }),
-        ],
-      } as unknown as Session,
-      invocationId: 'invoke-5',
-    } as unknown as InvocationContext;
+    const runner = new InMemoryRunner({agent: remoteAgent, appName: 'caller'});
+    const session = await runner.sessionService.createSession({
+      appName: 'caller',
+      userId: 'caller-user',
+    });
 
     const events: AdkEvent[] = [];
-    for await (const ev of remoteAgent.runAsync(clientCtx)) {
+    for await (const ev of runner.runAsync({
+      userId: 'caller-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Speak'}]},
+    })) {
       events.push(ev);
     }
 
