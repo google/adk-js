@@ -37,7 +37,7 @@ export class PreloadMemoryTool extends BaseTool {
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
     // Should not be called by model because it's not declared in LLM tools list.
-    return undefined;
+    throw new Error('PreloadMemoryTool should not be called by model');
   }
 
   override async processLlmRequest(

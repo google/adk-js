@@ -47,16 +47,16 @@ describe('PreloadMemoryTool', () => {
     expect(PRELOAD_MEMORY).toBeInstanceOf(PreloadMemoryTool);
   });
 
-  it('does nothing in runAsync as it is not meant to be called by model', async () => {
+  it('throws error   in runAsync as it is not meant to be called by model', async () => {
     const tool = new PreloadMemoryTool();
     const mockContext = new StubToolContext([]) as unknown as Context;
 
-    const result = await tool.runAsync({
-      args: {},
-      toolContext: mockContext,
-    });
-
-    expect(result).toBeUndefined();
+    await expect(
+      tool.runAsync({
+        args: {},
+        toolContext: mockContext,
+      }),
+    ).rejects.toThrow('PreloadMemoryTool should not be called by model');
   });
 
   it('does not append instruction if userContent is empty', async () => {

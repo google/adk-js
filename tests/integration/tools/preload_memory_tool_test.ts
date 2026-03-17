@@ -13,7 +13,7 @@ import {
 import {createUserContent} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
-import {GeminiWithMockResponses} from '../agents/test_case_utils.js';
+import {GeminiWithMockResponses} from '../test_case_utils.js';
 
 describe('PreloadMemoryTool Integration', () => {
   it('should preload memory into llmRequest system instructions', async () => {
