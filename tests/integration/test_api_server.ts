@@ -68,6 +68,9 @@ export function createTestApiServer(
         serverProcess.stderr.on('data', (data) => {
           console.error(`CLI Stderr: ${data.toString()}`);
         });
+        serverProcess.on('error', (error) => {
+          reject(new Error(`Failed to start server: ${error.message}`));
+        });
         serverProcess.on('exit', (code) => {
           if (!started)
             reject(new Error(`Server exited prematurely with code ${code}`));
