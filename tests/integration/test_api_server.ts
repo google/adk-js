@@ -46,7 +46,12 @@ export function createTestApiServer(
     port,
     url: `http://localhost:${port}`,
     start: async () => {
-      serverProcess = spawn('node', getAdkCliArgs({...params, port}));
+      serverProcess = spawn('node', getAdkCliArgs({...params, port}), {
+        env: {
+          ...process.env,
+          TEST_API_SERVER_PORT: port.toString(),
+        },
+      });
 
       await new Promise<void>((resolve, reject) => {
         let started = false;

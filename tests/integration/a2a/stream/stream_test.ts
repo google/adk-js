@@ -1,0 +1,103 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {
+  Event as AdkEvent,
+  createEvent,
+  InvocationContext,
+  RemoteA2AAgent,
+  Session,
+} from '@google/adk';
+import * as path from 'node:path';
+import {describe, expect, it} from 'vitest';
+import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
+
+describe('A2A: RemoteAgent Streaming', () => {
+  let server: TestAdkApiServer;
+
+  beforeAll(async () => {
+    server = createTestApiServer({
+      agentsDir: path.join(__dirname, 'test_agents'),
+      a2a: true,
+    });
+    await server.start();
+  });
+
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  it('Gemini Success', async () => {
+    const modelTextChunk1 = 'Hello, ';
+    const modelTextChunk2 = 'I am ';
+    const modelTextChunk3 = 'a streaming agent!';
+    const combinedText = modelTextChunk1 + modelTextChunk2 + modelTextChunk3;
+    const remoteAgent = new RemoteA2AAgent({
+      name: 'streaming_success',
+      agentCard: `${server.url}/a2a/streaming_success/`,
+    });
+
+    const clientCtx = {
+      session: {
+        appName: 'caller',
+        userId: 'caller-user',
+        id: 'context-4',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Speak'}]},
+          }),
+        ],
+      } as unknown as Session,
+      invocationId: 'invoke-4',
+    } as unknown as InvocationContext;
+
+    const events: AdkEvent[] = [];
+    for await (const ev of remoteAgent.runAsync(clientCtx)) {
+      events.push(ev);
+    }
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    const joinedText = events
+      .map((ev) => ev.content?.parts?.[0]?.text || '')
+      .join('');
+    expect(joinedText).toBe(combinedText);
+  });
+
+  it('Gemini Error', async () => {
+    const errorMessage = 'Mid-stream connection failure!';
+    const remoteAgent = new RemoteA2AAgent({
+      name: 'streaming_error',
+      agentCard: `${server.url}/a2a/streaming_error/`,
+    });
+
+    const clientCtx = {
+      session: {
+        appName: 'caller',
+        userId: 'caller-user',
+        id: 'context-5',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Speak'}]},
+          }),
+        ],
+      } as unknown as Session,
+      invocationId: 'invoke-5',
+    } as unknown as InvocationContext;
+
+    const events: AdkEvent[] = [];
+    for await (const ev of remoteAgent.runAsync(clientCtx)) {
+      events.push(ev);
+    }
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    const finalEvent = events[events.length - 1];
+    expect(finalEvent.errorMessage).toContain(
+      'Agent run failed: ' + errorMessage,
+    );
+  });
+});
