@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {AuthCredential, AuthCredentialTypes, AuthScheme} from '@google/adk';
 import {BaseCredentialExchanger} from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credential_exchanger_registry.js';
