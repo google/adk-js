@@ -194,6 +194,10 @@ export {
 } from './tools/load_artifacts_tool.js';
 export {LOAD_MEMORY, LoadMemoryTool} from './tools/load_memory_tool.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
+export {
+  PRELOAD_MEMORY,
+  PreloadMemoryTool,
+} from './tools/preload_memory_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
