@@ -6,13 +6,18 @@
 
 import {TaskStatusUpdateEvent, TextPart} from '@a2a-js/sdk';
 import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
+import {A2AAgentExecutor} from '@google/adk';
 import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
-import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
-import {Event as AdkEvent, createEvent} from '../../src/events/event.js';
-import {createEventActions} from '../../src/events/event_actions.js';
-import {Runner, RunnerConfig} from '../../src/runner/runner.js';
-import {BaseSessionService} from '../../src/sessions/base_session_service.js';
-import {Session} from '../../src/sessions/session.js';
+
+import {Event as AdkEvent, createEvent} from '@google/adk';
+
+import {createEventActions} from '@google/adk';
+
+import {Runner, RunnerConfig} from '@google/adk';
+
+import {BaseSessionService} from '@google/adk';
+
+import {Session} from '@google/adk';
 
 // Mock the Runner to control its async generator
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {

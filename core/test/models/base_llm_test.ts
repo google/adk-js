@@ -12,7 +12,7 @@ import {
   LlmResponse,
 } from '@google/adk';
 
-import {version} from '../../src/version.js';
+import {version} from '@google/adk';
 
 class TestLlm extends BaseLlm {
   constructor() {

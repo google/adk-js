@@ -8,8 +8,9 @@ import {metrics, trace} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {MetricReader} from '@opentelemetry/sdk-metrics';
 
-import type {OTelHooks} from '../../src/telemetry/setup.js';
-import {maybeSetOtelProviders} from '../../src/telemetry/setup.js';
+import {OTelHooks} from '@google/adk';
+
+import {maybeSetOtelProviders} from '@google/adk';
 
 vi.hoisted(() => {
   vi.resetModules();

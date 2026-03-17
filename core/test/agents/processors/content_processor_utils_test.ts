@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {createEvent} from '@google/adk';
 import {getContents} from '../../../src/agents/processors/content_processor_utils.js';
-import {createEvent} from '../../../src/events/event.js';
 
 describe('getContents', () => {
   it('should handle object responses in convertForeignEvent', () => {

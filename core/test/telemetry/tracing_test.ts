@@ -4,22 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent} from '@google/adk';
 import {trace} from '@opentelemetry/api';
 import {vi} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
-import {createEventActions} from '../../src/events/event_actions.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
-import {Session} from '../../src/sessions/session.js';
+
+import {InvocationContext} from '@google/adk';
+
+import {Event} from '@google/adk';
+
+import {createEventActions} from '@google/adk';
+
+import {LlmRequest} from '@google/adk';
+
+import {LlmResponse} from '@google/adk';
+
+import {Session} from '@google/adk';
+
+import {BaseTool} from '@google/adk';
 import {
   traceAgentInvocation,
   traceCallLlm,
   traceMergedToolCalls,
   traceToolCall,
 } from '../../src/telemetry/tracing.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
 
 vi.hoisted(() => {
   vi.resetModules();
