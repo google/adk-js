@@ -5,7 +5,7 @@
  */
 
 import {InMemorySessionService, getSessionServiceFromUri} from '@google/adk';
-import {expect} from 'chai';
+import {describe, expect, it} from 'vitest';
 
 describe('Registry', () => {
   describe('getSessionServiceFromUri', () => {
