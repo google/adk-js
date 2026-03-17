@@ -80,11 +80,9 @@ describe('E2E LoadMemoryTool', () => {
           'Please answer: What is the name of my dog? You must call the load_memory function to find the answer.',
         ),
       })) {
-        if (
-          event.author === 'e2e_memory_agent' &&
-          event.content?.parts?.[0]?.text
-        ) {
-          finalResponse += event.content.parts[0].text;
+        const text = event.content?.parts?.[0]?.text;
+        if (event.author === 'e2e_memory_agent' && text) {
+          finalResponse += text;
         }
       }
 

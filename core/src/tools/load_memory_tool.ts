@@ -55,17 +55,12 @@ export class LoadMemoryTool extends BaseTool {
       }
       const searchMemoryResponse = await toolContext.searchMemory(query);
       return {
-        memories: searchMemoryResponse.memories.map((m) => {
-          let text = '';
-          if (m.content.parts) {
-            text = m.content.parts.map((p) => p.text || '').join(' ');
-          }
-          return {
-            content: text,
-            author: m.author,
-            timestamp: m.timestamp,
-          };
-        }),
+        memories: searchMemoryResponse.memories.map((m) => ({
+          // Join all text parts by a space, or empty string if no text parts
+          content: m.content.parts?.map((p) => p.text ?? '').join(' ') ?? '',
+          author: m.author,
+          timestamp: m.timestamp,
+        })),
       };
     } catch (e) {
       console.error('ERROR in LoadMemoryTool runAsync:', e);
