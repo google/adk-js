@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InMemoryRunner, LlmAgent, LOAD_MEMORY} from '@google/adk';
+import {createEvent, InMemoryRunner, LlmAgent, LOAD_MEMORY} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
@@ -44,7 +44,7 @@ describe('LoadMemoryTool Integration', () => {
           {
             content: {
               role: 'model',
-              parts: [{text: 'Your favorite color is blue.'}],
+              parts: [{text: 'Your favorite color is green.'}],
             },
           },
         ],
@@ -56,35 +56,49 @@ describe('LoadMemoryTool Integration', () => {
       appName: 'test_memory_app',
     });
 
+    // We define a mock memory session
+    const memorySession = await runner.sessionService.createSession({
+      appName: 'test_memory_app',
+      userId: 'test_user',
+    });
+    await runner.sessionService.appendEvent({
+      session: memorySession,
+      event: createEvent({
+        author: 'user',
+        content: createUserContent('My favorite color is green.'),
+      }),
+    });
+    // Now we add the session context to memory
+    await runner.memoryService!.addSessionToMemory(memorySession);
+
     const session = await runner.sessionService.createSession({
       appName: 'test_memory_app',
       userId: 'test_user',
     });
-
-    // Now we add a session to memory
-    await runner.memoryService!.addSessionToMemory(session);
-    await runner
-      .runAsync({
-        userId: 'test_user',
-        sessionId: session.id,
-        newMessage: createUserContent('What is my favorite color?'),
-      })
-      .next();
-
     let finalResponse = '';
+    let memoryLoaded = false;
     for await (const event of runner.runAsync({
       userId: 'test_user',
       sessionId: session.id,
-      newMessage: createUserContent(
-        'Based on memory, what is my favorite color?',
-      ),
+      newMessage: createUserContent('What is my favorite color?'),
     })) {
       if (event.author === 'memory_agent') {
         const text = event.content?.parts?.[0]?.text;
         if (text) finalResponse += text;
       }
+
+      // Look for the framework's functionResponse message (which comes from executing the tool)
+      if (event.content?.parts?.[0]?.functionResponse) {
+        const functionResponse = event.content.parts[0].functionResponse;
+        if (functionResponse.name === 'load_memory') {
+          if (JSON.stringify(functionResponse.response).includes('green')) {
+            memoryLoaded = true;
+          }
+        }
+      }
     }
 
-    expect(finalResponse).toContain('Your favorite color is blue.');
+    expect(memoryLoaded).toBe(true);
+    expect(finalResponse).toContain('Your favorite color is green.');
   });
 });
