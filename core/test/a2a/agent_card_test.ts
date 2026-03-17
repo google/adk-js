@@ -4,25 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getA2AAgentCard} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 import {buildAgentSkills} from '../../src/a2a/agent_card.js';
 
-import {BaseAgent} from '@google/adk';
-
-import {LlmAgent} from '@google/adk';
-
-import {LoopAgent} from '@google/adk';
-
-import {ParallelAgent} from '@google/adk';
-
-import {SequentialAgent} from '@google/adk';
-
-import {BaseTool} from '@google/adk';
-
-import {BaseToolset} from '@google/adk';
-
-import {FunctionTool} from '@google/adk';
+import {
+  BaseAgent,
+  BaseTool,
+  BaseToolset,
+  FunctionTool,
+  getA2AAgentCard,
+  LlmAgent,
+  LoopAgent,
+  ParallelAgent,
+  SequentialAgent,
+} from '@google/adk';
 
 // Minimal CustomAgent for testing BaseAgent path
 class CustomAgent extends BaseAgent {

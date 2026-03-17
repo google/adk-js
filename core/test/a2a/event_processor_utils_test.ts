@@ -5,7 +5,12 @@
  */
 
 import {DataPart, Task, TextPart} from '@a2a-js/sdk';
-import {ExecutorContext} from '@google/adk';
+import {
+  Event as AdkEvent,
+  ExecutorContext,
+  createEvent,
+  createEventActions,
+} from '@google/adk';
 import {Content as GenAIContent} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
@@ -13,10 +18,7 @@ import {
   getTaskInputRequiredEvent,
 } from '../../src/a2a/event_processor_utils.js';
 
-import {Event as AdkEvent, createEvent} from '@google/adk';
 import {toA2AParts} from '../../src/a2a/part_converter_utils.js';
-
-import {createEventActions} from '@google/adk';
 
 vi.mock('../../src/utils/env_aware_utils.js', () => ({
   randomUUID: () => 'mock-uuid',

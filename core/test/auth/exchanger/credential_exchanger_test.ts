@@ -1,7 +1,4 @@
-import {AuthCredential, AuthCredentialTypes} from '@google/adk';
-
-import {AuthScheme} from '@google/adk';
-
+import {AuthCredential, AuthCredentialTypes, AuthScheme} from '@google/adk';
 import {BaseCredentialExchanger} from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credential_exchanger_registry.js';
 

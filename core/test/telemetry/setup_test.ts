@@ -4,13 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {OTelHooks, maybeSetOtelProviders} from '@google/adk';
 import {metrics, trace} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {MetricReader} from '@opentelemetry/sdk-metrics';
-
-import {OTelHooks} from '@google/adk';
-
-import {maybeSetOtelProviders} from '@google/adk';
 
 vi.hoisted(() => {
   vi.resetModules();

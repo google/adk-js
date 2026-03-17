@@ -4,23 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent} from '@google/adk';
 import {trace} from '@opentelemetry/api';
 import {vi} from 'vitest';
 
-import {InvocationContext} from '@google/adk';
-
-import {Event} from '@google/adk';
-
-import {createEventActions} from '@google/adk';
-
-import {LlmRequest} from '@google/adk';
-
-import {LlmResponse} from '@google/adk';
-
-import {Session} from '@google/adk';
-
-import {BaseTool} from '@google/adk';
+import {
+  BaseAgent,
+  BaseTool,
+  Event,
+  InvocationContext,
+  LlmRequest,
+  LlmResponse,
+  Session,
+  createEventActions,
+} from '@google/adk';
 import {
   traceAgentInvocation,
   traceCallLlm,
