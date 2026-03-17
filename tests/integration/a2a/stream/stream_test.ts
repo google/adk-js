@@ -5,6 +5,7 @@
  */
 
 import {Event as AdkEvent, InMemoryRunner, RemoteA2AAgent} from '@google/adk';
+import {createUserContent} from '@google/genai';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
@@ -28,7 +29,6 @@ describe('A2A: RemoteAgent Streaming', () => {
     const modelTextChunk1 = 'Hello, ';
     const modelTextChunk2 = 'I am ';
     const modelTextChunk3 = 'a streaming agent!';
-    const combinedText = modelTextChunk1 + modelTextChunk2 + modelTextChunk3;
     const remoteAgent = new RemoteA2AAgent({
       name: 'streaming_success',
       agentCard: `${server.url}/a2a/streaming_success/`,
@@ -44,16 +44,18 @@ describe('A2A: RemoteAgent Streaming', () => {
     for await (const ev of runner.runAsync({
       userId: 'caller-user',
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Speak'}]},
+      newMessage: createUserContent('Speak'),
     })) {
       events.push(ev);
     }
 
     expect(events.length).toBeGreaterThanOrEqual(1);
-    const joinedText = events
-      .map((ev) => ev.content?.parts?.[0]?.text || '')
-      .join('');
-    expect(joinedText).toBe(combinedText);
+    const textChunks = events.map((ev) => ev.content?.parts?.[0]?.text || '');
+    expect(textChunks).toEqual([
+      modelTextChunk1,
+      modelTextChunk2,
+      modelTextChunk3,
+    ]);
   });
 
   it('Gemini Error', async () => {
@@ -73,7 +75,7 @@ describe('A2A: RemoteAgent Streaming', () => {
     for await (const ev of runner.runAsync({
       userId: 'caller-user',
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Speak'}]},
+      newMessage: createUserContent('Speak'),
     })) {
       events.push(ev);
     }

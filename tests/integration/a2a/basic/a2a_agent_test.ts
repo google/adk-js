@@ -11,7 +11,7 @@ import {runTestCase} from '../../test_case_utils.js';
 import turn1ExpectedEvents from './events_turn_1.json' with {type: 'json'};
 import turn2ExpectedEvents from './events_turn_2.json' with {type: 'json'};
 
-describe('A2A remote agent: Basic test', () => {
+describe('A2A: Remote Agent Basic', () => {
   let server: TestAdkApiServer;
 
   beforeAll(async () => {

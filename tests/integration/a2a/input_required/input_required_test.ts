@@ -5,6 +5,7 @@
  */
 
 import {Event as AdkEvent, InMemoryRunner, RemoteA2AAgent} from '@google/adk';
+import {createUserContent} from '@google/genai';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
@@ -43,7 +44,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
     for await (const ev of runner.runAsync({
       userId: 'caller-user',
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Do something'}]},
+      newMessage: createUserContent('Do something'),
     })) {
       events.push(ev);
     }
@@ -106,7 +107,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
     for await (const ev of runner.runAsync({
       userId: 'caller-user',
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Create a ticket'}]},
+      newMessage: createUserContent('Create a ticket'),
     })) {
       events.push(ev);
     }
@@ -143,7 +144,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
     expect(hasCompleteText).toBe(true);
   });
 
-  it('MultiHop', async () => {
+  it('Remote Agent -> Remote Agent -> ADK Agent', async () => {
     const approvalToolName = 'request_approval';
     const toolCallId = 'call-hop';
     const modelTextTaskComplete = 'Hop B complete!';
@@ -162,7 +163,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
     for await (const ev of runner.runAsync({
       userId: 'caller-user',
       sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'Do root task'}]},
+      newMessage: createUserContent('Do root task'),
     })) {
       events.push(ev);
     }
