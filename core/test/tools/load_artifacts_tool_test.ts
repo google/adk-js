@@ -7,12 +7,12 @@
 import {Blob, Part, Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
-import {Context} from '../../src/agents/context.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
 import {
+  Context,
+  LlmRequest,
   LOAD_ARTIFACTS,
   LoadArtifactsTool,
-} from '../../src/tools/load_artifacts_tool.js';
+} from '@google/adk';
 
 class StubToolContext {
   private artifactsByName: Record<string, Part>;
