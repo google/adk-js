@@ -66,16 +66,17 @@ function asSafePartForLlm(artifact: Part, artifactName: string): Part {
   const isTextLike =
     mimeType.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(mimeType);
 
+  const decodedBuffer = Buffer.from(data, 'base64');
   if (isTextLike) {
     try {
-      const decoded = Buffer.from(data, 'base64').toString('utf8');
+      const decoded = decodedBuffer.toString('utf8');
       return {text: decoded};
     } catch {
       // Fallback
     }
   }
 
-  const sizeKb = Buffer.from(data, 'base64').length / 1024;
+  const sizeKb = decodedBuffer.length / 1024;
   return {
     text: `[Binary artifact: ${artifactName}, type: ${mimeType}, size: ${sizeKb.toFixed(1)} KB. Content cannot be displayed inline.]`,
   };
@@ -152,7 +153,11 @@ export class LoadArtifactsTool extends BaseTool {
     const contents = llmRequest.contents;
     if (contents && contents.length > 0) {
       const lastContent = contents[contents.length - 1];
-      if (lastContent.parts && lastContent.parts.length > 0) {
+      if (
+        lastContent.role === 'user' &&
+        lastContent.parts &&
+        lastContent.parts.length > 0
+      ) {
         const functionResponsePart = lastContent.parts[0];
         const functionResponse = functionResponsePart.functionResponse;
 

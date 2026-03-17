@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Part, Type} from '@google/genai';
+import {Blob, Part, Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 
 import {Context} from '../../src/agents/context.js';
@@ -235,6 +235,215 @@ describe('LoadArtifactsTool', () => {
     expect(artifactPart.text).toContain('size: 0.0 KB');
     expect(artifactPart.text).toContain(
       '[Binary artifact: test.bin, type: application/octet-stream',
+    );
+  });
+
+  it('does not append artifacts if role is not user', async () => {
+    const artifactName = 'test.csv';
+    const csvString = 'col1,col2\n1,2\n';
+    const csvBytesBase64 = Buffer.from(csvString, 'utf8').toString('base64');
+    const artifact: Part = {
+      inlineData: {data: csvBytesBase64, mimeType: 'application/csv'},
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'model', // Not 'tool'
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    // Content should remain length 1, no artifact appended
+    expect(llmRequest.contents.length).toEqual(1);
+  });
+
+  it('handles missing artifactService gracefully', async () => {
+    const toolContext = new StubToolContext({}) as unknown as Context;
+    (
+      toolContext.invocationContext as {artifactService: unknown}
+    ).artifactService = undefined;
+
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+    // Should return early and not throw
+    expect(llmRequest.contents.length).toEqual(0);
+  });
+
+  it('handles missing or empty artifacts array', async () => {
+    const toolContext = new StubToolContext({}) as unknown as Context;
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+    // Should return early and not throw
+    expect(llmRequest.contents.length).toEqual(0);
+  });
+
+  it('skips missing artifacts and tries user: prefix', async () => {
+    const artifactName = 'test.txt';
+    const artifact: Part = {text: 'hello'};
+
+    // Register it as 'user:test.txt'
+    const toolContext = new StubToolContext({
+      [`user:${artifactName}`]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName, 'missing.txt']},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    // It should load user:test.txt, but skip missing.txt
+    expect(llmRequest.contents.length).toEqual(2); // The functionResponse + the single loaded artifact part
+    expect(llmRequest.contents[1].parts![1]).toEqual(artifact);
+  });
+
+  it('handles parts with no inlineData', async () => {
+    const artifactName = 'test.txt';
+    const artifact: Part = {text: 'I have no inlineData'};
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.contents.length).toEqual(2);
+    expect(llmRequest.contents[1].parts![1]).toEqual(artifact);
+  });
+
+  it('handles parts with inlineData but no data', async () => {
+    const artifactName = 'test.txt';
+    const artifact: Part = {
+      inlineData: {mimeType: 'text/plain'} as unknown as Blob, // missing data field
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.contents.length).toEqual(2);
+    expect(llmRequest.contents[1].parts![1].text).toContain(
+      'No inline data was provided',
+    );
+  });
+
+  it('handles parts with inlineData but no mimeType', async () => {
+    const artifactName = 'test.dat';
+    const artifact: Part = {
+      inlineData: {data: 'YmFzZTY0'} as unknown as Blob, // missing mimeType field
+    };
+
+    const toolContext = new StubToolContext({
+      [artifactName]: artifact,
+    }) as unknown as Context;
+
+    const llmRequest: LlmRequest = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_artifacts',
+                response: {artifact_names: [artifactName]},
+              },
+            },
+          ],
+        },
+      ],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const tool = new LoadArtifactsTool();
+    await tool.processLlmRequest({toolContext, llmRequest});
+
+    expect(llmRequest.contents.length).toEqual(2);
+    expect(llmRequest.contents[1].parts![1].text).toContain(
+      '[Binary artifact: test.dat, type: application/octet-stream',
     );
   });
 });
