@@ -15,12 +15,7 @@ import {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
-import {
-  Client,
-  ClientFactory,
-  DefaultAgentCardResolver,
-} from '@a2a-js/sdk/client';
-import fs from 'fs/promises';
+import {Client, ClientFactory} from '@a2a-js/sdk/client';
 import {BaseAgent, BaseAgentConfig} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
@@ -32,6 +27,7 @@ import {
   getUserFunctionCallAt,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
+import {resolveAgentCard} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
@@ -112,7 +108,7 @@ export class RemoteA2AAgent extends BaseAgent {
       return;
     }
 
-    this.card = await getAgentCard(this.a2aConfig);
+    this.card = await resolveAgentCard(this.a2aConfig.agentCard);
     const factory = this.a2aConfig.clientFactory || new ClientFactory();
     this.client = await factory.createFromAgentCard(this.card);
 
@@ -237,31 +233,5 @@ export class RemoteA2AAgent extends BaseAgent {
     _context: InvocationContext,
   ): AsyncGenerator<AdkEvent, void, void> {
     throw new Error('Live mode is not supported in A2ARemoteAgent yet.');
-  }
-}
-
-/**
- * Resolves the AgentCard from the provided source.
- */
-async function getAgentCard(
-  a2aConfig: RemoteA2AAgentConfig,
-): Promise<AgentCard> {
-  if (typeof a2aConfig.agentCard === 'object') {
-    return a2aConfig.agentCard;
-  }
-
-  const source = a2aConfig.agentCard as string;
-  if (source.startsWith('http://') || source.startsWith('https://')) {
-    const resolver = new DefaultAgentCardResolver();
-    return await resolver.resolve(source);
-  }
-
-  try {
-    const content = await fs.readFile(source, 'utf-8');
-    return JSON.parse(content) as AgentCard;
-  } catch (err: unknown) {
-    throw new Error(
-      `Failed to read agent card from file ${source}: ${(err as Error).message}`,
-    );
   }
 }

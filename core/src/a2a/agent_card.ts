@@ -5,6 +5,8 @@
  */
 
 import {AgentCard, AgentInterface, AgentSkill} from '@a2a-js/sdk';
+import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
+import * as fs from 'node:fs/promises';
 import {BaseAgent} from '../agents/base_agent.js';
 import {
   InvocationContext,
@@ -17,7 +19,37 @@ import {ReadonlyContext} from '../agents/readonly_context.js';
 import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
+import {logger} from '../utils/logger.js';
 
+/**
+ * Resolves the AgentCard from the provided source.
+ */
+export async function resolveAgentCard(
+  agentCard: AgentCard | string,
+): Promise<AgentCard> {
+  if (typeof agentCard === 'object') {
+    return agentCard;
+  }
+
+  const source = agentCard as string;
+  if (source.startsWith('http://') || source.startsWith('https://')) {
+    const resolver = new DefaultAgentCardResolver();
+    return await resolver.resolve(source);
+  }
+
+  try {
+    const content = await fs.readFile(source, 'utf-8');
+    return JSON.parse(content) as AgentCard;
+  } catch (err: unknown) {
+    throw new Error(
+      `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * Converts an ADK agent to an A2A AgentCard.
+ */
 export async function getA2AAgentCard(
   agent: BaseAgent,
   transports: AgentInterface[],
@@ -272,7 +304,7 @@ async function buildDescriptionFromInstructions(
       try {
         instructionStr = await agent.instruction(dummyContext);
       } catch (e) {
-        console.warn('Failed to resolve dynamic instruction for AgentCard', e);
+        logger.warn('Failed to resolve dynamic instruction for AgentCard', e);
         instructionStr = '';
       }
     } else {
@@ -296,7 +328,7 @@ async function buildDescriptionFromInstructions(
       try {
         globalInstructionStr = await root.globalInstruction(dummyContext);
       } catch (e) {
-        console.warn(
+        logger.warn(
           'Failed to resolve dynamic global instruction for AgentCard',
           e,
         );

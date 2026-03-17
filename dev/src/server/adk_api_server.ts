@@ -4,22 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AGENT_CARD_PATH} from '@a2a-js/sdk';
-import {DefaultRequestHandler, InMemoryTaskStore} from '@a2a-js/sdk/server';
 import {
-  agentCardHandler,
-  jsonRpcHandler,
-  restHandler,
-  UserBuilder,
-} from '@a2a-js/sdk/server/express';
-import {
-  A2AAgentExecutor,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   Event,
-  getA2AAgentCard,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
@@ -29,6 +19,7 @@ import {
   LogLevel,
   Runner,
   StreamingMode,
+  toA2a,
 } from '@google/adk';
 import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
@@ -140,53 +131,17 @@ export class AdkApiServer {
     for (const appName of appNames) {
       const agentFile = await this.agentLoader.getAgentFile(appName);
       const agent = await agentFile.load();
-      const agentCard = await getA2AAgentCard(agent, [
-        {
-          url: `${this.url}/a2a/${appName}/rest`,
-          transport: 'rest',
-        },
-        {
-          url: `${this.url}/a2a/${appName}/jsonrpc`,
-          transport: 'jsonrpc',
-        },
-      ]);
 
-      const agentExecutor = new A2AAgentExecutor({
-        runner: {
-          agent,
-          appName,
-          sessionService: this.sessionService,
-          memoryService: this.memoryService,
-          artifactService: this.artifactService,
-        },
-        runConfig: {
-          streamingMode: StreamingMode.SSE,
-        },
+      await toA2a(agent, {
+        protocol: 'http',
+        host: this.host,
+        port: this.port,
+        basePath: `/a2a/${appName}`,
+        sessionService: this.sessionService,
+        memoryService: this.memoryService,
+        artifactService: this.artifactService,
+        app: this.app,
       });
-      const requestHandler = new DefaultRequestHandler(
-        agentCard,
-        new InMemoryTaskStore(),
-        agentExecutor,
-      );
-
-      this.app.use(
-        `/a2a/${appName}/${AGENT_CARD_PATH}`,
-        agentCardHandler({agentCardProvider: requestHandler}),
-      );
-      this.app.use(
-        `/a2a/${appName}/rest`,
-        restHandler({
-          requestHandler,
-          userBuilder: UserBuilder.noAuthentication,
-        }),
-      );
-      this.app.use(
-        `/a2a/${appName}/jsonrpc`,
-        jsonRpcHandler({
-          requestHandler,
-          userBuilder: UserBuilder.noAuthentication,
-        }),
-      );
     }
   }
 
