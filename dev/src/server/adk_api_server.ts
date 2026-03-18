@@ -813,6 +813,17 @@ export class AdkApiServer {
           reject(error);
         }
       });
+
+      this.server.on('error', (err: unknown) => {
+        if ((err as {code: string}).code === 'EADDRINUSE') {
+          const error = new Error();
+          error.cause = err;
+          error.message = `Port ${this.port} is already in use`;
+          reject(error);
+        } else {
+          reject(err);
+        }
+      });
     });
   }
 

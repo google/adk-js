@@ -1,15 +1,16 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+
 import {LogLevel, Logger} from '@google/adk';
 import * as winston from 'winston';
 
 /**
- * Logger implementation for the ADK API Server.
+ * Logger implementation for the ADK CLI.
  */
-export class ApiServerLogger implements Logger {
+export class AdkCliLogger implements Logger {
   private readonly logger: winston.Logger;
   private logLevel: LogLevel = LogLevel.INFO;
 
@@ -23,16 +24,9 @@ export class ApiServerLogger implements Logger {
       },
       level: 'error',
       format: winston.format.combine(
-        winston.format.label({label}),
-        winston.format((info) => {
-          info.level = info.level.toUpperCase();
-          return info;
-        })(),
-        winston.format.colorize(),
-        winston.format.timestamp(),
-        winston.format.printf((info) => {
-          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
-        }),
+        winston.format.label({label, message: true}),
+        winston.format.colorize({all: true}),
+        winston.format.printf((info) => info.message as string),
       ),
       transports: [new winston.transports.Console()],
     });

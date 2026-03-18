@@ -871,4 +871,29 @@ describe('AdkWebServer', () => {
       await a2aServer.stop();
     });
   });
+
+  describe('Startup', () => {
+    it('should throw an error if the port is already in use', async () => {
+      const portString = server.url.split(':').pop();
+      const port = portString ? parseInt(portString, 10) : 0;
+
+      expect(port).toBeGreaterThan(0);
+
+      const duplicateServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port: port,
+      });
+
+      try {
+        await expect(duplicateServer.start()).rejects.toThrow(
+          `Port ${port} is already in use`,
+        );
+      } finally {
+        await duplicateServer.stop().catch(() => {});
+      }
+    });
+  });
 });

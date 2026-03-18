@@ -23,6 +23,7 @@ import {getTempDir} from '../utils/file_utils.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {deployToCloudRun} from './cli_deploy.js';
+import {AdkCliLogger} from './cli_logger.js';
 import {runAgent} from './cli_run.js';
 
 dotenv.config({quiet: true});
@@ -147,6 +148,7 @@ AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
  * @returns The ADK CLI program.
  */
 export function createProgram(): Command {
+  const logger = new AdkCliLogger('ADK CLI');
   const program = new Command('ADK CLI');
 
   program
@@ -192,7 +194,7 @@ export function createProgram(): Command {
 
         await server.start();
       } catch (error) {
-        console.error('Error starting web server:', error);
+        logger.error('Error starting web server:', (error as Error).message);
       }
     });
 
@@ -232,7 +234,7 @@ export function createProgram(): Command {
         });
         await server.start();
       } catch (error) {
-        console.error('Error starting API server:', error);
+        logger.error('Error starting API server:', (error as Error).message);
       }
     });
 
@@ -270,7 +272,7 @@ export function createProgram(): Command {
           language: options['language'],
         });
       } catch (error) {
-        console.error('Error creating agent:', error);
+        logger.error('Error creating agent:', (error as Error).message);
       }
     });
 
@@ -319,7 +321,7 @@ export function createProgram(): Command {
           agentFileLoadOptions: getAgentFileOptions(options),
         });
       } catch (error) {
-        console.error('Error running agent:', error);
+        logger.error('Error running agent:', (error as Error).message);
       }
     });
 
@@ -404,7 +406,7 @@ export function createProgram(): Command {
           extraGcloudArgs,
         });
       } catch (error) {
-        console.error('Error deploying agent:', error);
+        logger.error('Error deploying agent:', (error as Error).message);
       }
     });
 
