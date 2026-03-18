@@ -229,3 +229,8 @@ export * from './artifacts/base_artifact_service.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
+
+export * from './skills/models.js';
+export * from './skills/loader.js';
+export * from './skills/prompt.js';
+export { SkillToolset, ListSkillsTool, LoadSkillTool, LoadSkillResourceTool, RunSkillScriptTool } from './tools/skill_toolset.js';
