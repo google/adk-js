@@ -29,13 +29,13 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
+import {AdkLogger} from '../utils/logger.js';
 import {
   ApiServerSpanExporter,
   hrTimeToNanoseconds,
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-import {ApiServerLogger} from './adk_api_server_logger.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
 interface ServerOptions {
@@ -105,7 +105,16 @@ export class AdkApiServer {
     this.otelToCloud = options.otelToCloud ?? false;
     this.registerProcessors = options.registerProcessors;
     this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
-    this.logger = options.logger ?? new ApiServerLogger('ADK API Server');
+    this.logger =
+      options.logger ??
+      new AdkLogger({
+        label: 'ADK API Server',
+        timestamp: true,
+        colorize: {level: true},
+        printFormat: (info) => {
+          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
+        },
+      });
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     this.a2a = options.a2a ?? false;
     this.app = express();

@@ -20,10 +20,10 @@ import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
 import {getTempDir} from '../utils/file_utils.js';
+import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {deployToCloudRun} from './cli_deploy.js';
-import {AdkCliLogger} from './cli_logger.js';
 import {runAgent} from './cli_run.js';
 
 dotenv.config({quiet: true});
@@ -148,7 +148,11 @@ AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
  * @returns The ADK CLI program.
  */
 export function createProgram(): Command {
-  const logger = new AdkCliLogger('ADK CLI');
+  const logger = new AdkLogger({
+    label: 'ADK CLI',
+    colorize: {all: true},
+  });
+
   const program = new Command('ADK CLI');
 
   program
