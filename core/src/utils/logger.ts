@@ -42,6 +42,7 @@ class SimpleLogger implements Logger {
         'warn': LogLevel.WARN,
         'error': LogLevel.ERROR,
       },
+      level: 'error',
       format: winston.format.combine(
         winston.format.label({label: 'ADK'}),
         winston.format((info) => {
