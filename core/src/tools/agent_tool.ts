@@ -142,14 +142,19 @@ export class AgentTool extends BaseTool {
       appName: this.agent.name,
       agent: this.agent,
       artifactService: new ForwardingArtifactService(toolContext),
-      sessionService: new InMemorySessionService(),
-      memoryService: new InMemoryMemoryService(),
+      sessionService:
+        toolContext.invocationContext.sessionService ??
+        new InMemorySessionService(),
+      memoryService:
+        toolContext.invocationContext.memoryService ??
+        new InMemoryMemoryService(),
       credentialService: toolContext.invocationContext.credentialService,
     });
 
     const session = await runner.sessionService.createSession({
       appName: this.agent.name,
-      userId: 'tmp_user',
+      userId: toolContext.invocationContext.userId,
+      sessionId: toolContext.invocationContext.session.id,
       state: toolContext.state.toRecord(),
     });
 
