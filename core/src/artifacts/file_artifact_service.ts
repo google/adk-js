@@ -393,8 +393,35 @@ export class FileArtifactService implements BaseArtifactService {
   }
 }
 
-function getUserRoot(rootDir: string, userId: string): string {
-  return path.join(rootDir, 'users', userId);
+const SAFE_SEGMENT_RE = /^[a-zA-Z0-9_@-][a-zA-Z0-9_.@-]{0,255}$/;
+
+export function assertSafeSegment(value: string, label: string): void {
+  if (!value || !SAFE_SEGMENT_RE.test(value)) {
+    throw new Error(
+      `[FileArtifactService] Invalid ${label}: value contains disallowed characters.`,
+    );
+  }
+}
+
+export function assertInsideRoot(
+  resolvedPath: string,
+  rootDir: string,
+  label: string,
+): void {
+  const root = path.resolve(rootDir);
+  const resolved = path.resolve(resolvedPath);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    throw new Error(
+      `[FileArtifactService] ${label} escapes storage root. Resolved: ${resolved}, Root: ${root}`,
+    );
+  }
+}
+
+export function getUserRoot(rootDir: string, userId: string): string {
+  assertSafeSegment(userId, 'userId');
+  const result = path.join(rootDir, 'users', userId);
+  assertInsideRoot(result, rootDir, 'userRoot');
+  return result;
 }
 
 function isUserScoped(
@@ -408,8 +435,14 @@ function getUserArtifactsDir(userRoot: string): string {
   return path.join(userRoot, 'artifacts');
 }
 
-function getSessionArtifactsDir(baseRoot: string, sessionId: string): string {
-  return path.join(baseRoot, 'sessions', sessionId, 'artifacts');
+export function getSessionArtifactsDir(
+  baseRoot: string,
+  sessionId: string,
+): string {
+  assertSafeSegment(sessionId, 'sessionId');
+  const result = path.join(baseRoot, 'sessions', sessionId, 'artifacts');
+  assertInsideRoot(result, baseRoot, 'sessionArtifactsDir');
+  return result;
 }
 
 function getVersionsDir(artifactDir: string): string {
