@@ -99,8 +99,8 @@ describe('toA2a', () => {
     expect(app.use).toHaveBeenCalledWith('json_middleware');
 
     expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'http://localhost:8000/rest', transport: 'rest'},
-      {url: 'http://localhost:8000/jsonrpc', transport: 'jsonrpc'},
+      {url: 'http://localhost:8000/jsonrpc', transport: 'JSONRPC'},
+      {url: 'http://localhost:8000/rest', transport: 'HTTP+JSON'},
     ]);
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
@@ -146,8 +146,8 @@ describe('toA2a', () => {
 
     expect(express).not.toHaveBeenCalled();
     expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [
-      {url: 'https://custom-host:9000api/v1/rest', transport: 'rest'},
-      {url: 'https://custom-host:9000api/v1/jsonrpc', transport: 'jsonrpc'},
+      {url: 'https://custom-host:9000api/v1/jsonrpc', transport: 'JSONRPC'},
+      {url: 'https://custom-host:9000api/v1/rest', transport: 'HTTP+JSON'},
     ]);
 
     expect(A2AAgentExecutor).toHaveBeenCalledWith(
