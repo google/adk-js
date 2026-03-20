@@ -71,8 +71,9 @@ export class State {
    * @param delta The delta to update the state with.
    */
   update(delta: Record<string, unknown>) {
-    this.delta = {...this.delta, ...delta};
-    this.value = {...this.value, ...delta};
+    // This should be revised while working on the parallel tool execution.
+    Object.assign(this.delta, delta);
+    Object.assign(this.value, delta);
   }
 
   /**

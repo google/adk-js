@@ -4,22 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AGENT_CARD_PATH} from '@a2a-js/sdk';
-import {DefaultRequestHandler, InMemoryTaskStore} from '@a2a-js/sdk/server';
 import {
-  agentCardHandler,
-  jsonRpcHandler,
-  restHandler,
-  UserBuilder,
-} from '@a2a-js/sdk/server/express';
-import {
-  A2AAgentExecutor,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   Event,
-  getA2AAgentCard,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
@@ -29,6 +19,7 @@ import {
   LogLevel,
   Runner,
   StreamingMode,
+  toA2a,
 } from '@google/adk';
 import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
@@ -38,13 +29,13 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
+import {AdkLogger} from '../utils/logger.js';
 import {
   ApiServerSpanExporter,
   hrTimeToNanoseconds,
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-import {ApiServerLogger} from './adk_api_server_logger.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
 interface ServerOptions {
@@ -114,7 +105,16 @@ export class AdkApiServer {
     this.otelToCloud = options.otelToCloud ?? false;
     this.registerProcessors = options.registerProcessors;
     this.memoryExporter = new InMemoryExporter(this.sessionTraceDict);
-    this.logger = options.logger ?? new ApiServerLogger('ADK API Server');
+    this.logger =
+      options.logger ??
+      new AdkLogger({
+        label: 'ADK API Server',
+        timestamp: true,
+        colorize: {level: true},
+        printFormat: (info) => {
+          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
+        },
+      });
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     this.a2a = options.a2a ?? false;
     this.app = express();
@@ -140,53 +140,17 @@ export class AdkApiServer {
     for (const appName of appNames) {
       const agentFile = await this.agentLoader.getAgentFile(appName);
       const agent = await agentFile.load();
-      const agentCard = await getA2AAgentCard(agent, [
-        {
-          url: `${this.url}/a2a/${appName}/rest`,
-          transport: 'rest',
-        },
-        {
-          url: `${this.url}/a2a/${appName}/jsonrpc`,
-          transport: 'jsonrpc',
-        },
-      ]);
 
-      const agentExecutor = new A2AAgentExecutor({
-        runner: {
-          agent,
-          appName,
-          sessionService: this.sessionService,
-          memoryService: this.memoryService,
-          artifactService: this.artifactService,
-        },
-        runConfig: {
-          streamingMode: StreamingMode.SSE,
-        },
+      await toA2a(agent, {
+        protocol: 'http',
+        host: this.host,
+        port: this.port,
+        basePath: `/a2a/${appName}`,
+        sessionService: this.sessionService,
+        memoryService: this.memoryService,
+        artifactService: this.artifactService,
+        app: this.app,
       });
-      const requestHandler = new DefaultRequestHandler(
-        agentCard,
-        new InMemoryTaskStore(),
-        agentExecutor,
-      );
-
-      this.app.use(
-        `/a2a/${appName}/${AGENT_CARD_PATH}`,
-        agentCardHandler({agentCardProvider: requestHandler}),
-      );
-      this.app.use(
-        `/a2a/${appName}/rest`,
-        restHandler({
-          requestHandler,
-          userBuilder: UserBuilder.noAuthentication,
-        }),
-      );
-      this.app.use(
-        `/a2a/${appName}/jsonrpc`,
-        jsonRpcHandler({
-          requestHandler,
-          userBuilder: UserBuilder.noAuthentication,
-        }),
-      );
     }
   }
 
@@ -856,6 +820,17 @@ export class AdkApiServer {
         } catch (error) {
           this.logger.error('Error during AdkApiServer startup:', error);
           reject(error);
+        }
+      });
+
+      this.server.on('error', (err: unknown) => {
+        if ((err as {code: string}).code === 'EADDRINUSE') {
+          const error = new Error();
+          error.cause = err;
+          error.message = `Port ${this.port} is already in use`;
+          reject(error);
+        } else {
+          reject(err);
         }
       });
     });
