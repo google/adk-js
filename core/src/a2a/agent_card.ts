@@ -61,6 +61,7 @@ export async function getA2AAgentCard(
     version: '1.0.0',
     skills: await buildAgentSkills(agent),
     url: transports[0].url,
+    preferredTransport: transports[0].transport,
     capabilities: {
       extensions: [],
       stateTransitionHistory: false,
