@@ -95,7 +95,7 @@ function getUserKey(appName: string, userId: string): string {
  */
 function extractWordsLower(text: string): Set<string> {
   return new Set(
-    [...text.matchAll(/[A-Za-z]+/)].map((match) => match[0].toLowerCase()),
+    [...text.matchAll(/[A-Za-z]+/g)].map((match) => match[0].toLowerCase()),
   );
 }
 

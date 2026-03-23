@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Gemini, geminiInitParams, GeminiParams} from '@google/adk';
+import {Gemini, GeminiParams, geminiInitParams, version} from '@google/adk';
 import {HttpOptions} from '@google/genai';
 import {afterEach, describe, expect, it} from 'vitest';
-
-import {version} from '../../src/version.js';
 
 class TestGemini extends Gemini {
   constructor(params: GeminiParams) {

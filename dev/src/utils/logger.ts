@@ -1,19 +1,65 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+
 import {LogLevel, Logger} from '@google/adk';
 import * as winston from 'winston';
 
 /**
- * Logger implementation for the ADK API Server.
+ * Options for the ADK CLI logger.
  */
-export class ApiServerLogger implements Logger {
+export interface AdkLoggerOptions {
+  label: string;
+  colorize?: {
+    level?: boolean;
+    all?: boolean;
+    message?: boolean;
+    colors?: {
+      [level: string]: string;
+    };
+  };
+  timestamp?: boolean;
+  printFormat?: (info: {
+    message: unknown;
+    label?: string;
+    level?: string;
+    timestamp?: string;
+  }) => string;
+}
+
+/**
+ * Logger implementation for the ADK CLI.
+ */
+export class AdkLogger implements Logger {
   private readonly logger: winston.Logger;
   private logLevel: LogLevel = LogLevel.INFO;
 
-  constructor(label: string) {
+  constructor(options: AdkLoggerOptions) {
+    const formats = [
+      winston.format.label({
+        label: options.label,
+        message: options.colorize?.all,
+      }),
+      winston.format((info) => {
+        info.level = info.level.toUpperCase();
+        return info;
+      })(),
+    ];
+
+    if (options.colorize) {
+      formats.push(winston.format.colorize(options.colorize));
+    }
+    if (options.timestamp) {
+      formats.push(winston.format.timestamp());
+    }
+    if (options.printFormat) {
+      formats.push(winston.format.printf(options.printFormat));
+    } else {
+      formats.push(winston.format.printf((info) => info.message as string));
+    }
+
     this.logger = winston.createLogger({
       levels: {
         'debug': LogLevel.DEBUG,
@@ -21,18 +67,8 @@ export class ApiServerLogger implements Logger {
         'warn': LogLevel.WARN,
         'error': LogLevel.ERROR,
       },
-      format: winston.format.combine(
-        winston.format.label({label}),
-        winston.format((info) => {
-          info.level = info.level.toUpperCase();
-          return info;
-        })(),
-        winston.format.colorize(),
-        winston.format.timestamp(),
-        winston.format.printf((info) => {
-          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
-        }),
-      ),
+      level: 'error',
+      format: winston.format.combine(...formats),
       transports: [new winston.transports.Console()],
     });
   }

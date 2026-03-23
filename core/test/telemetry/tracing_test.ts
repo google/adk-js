@@ -6,20 +6,23 @@
 
 import {trace} from '@opentelemetry/api';
 import {vi} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
-import {createEventActions} from '../../src/events/event_actions.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
-import {Session} from '../../src/sessions/session.js';
+
+import {
+  BaseAgent,
+  BaseTool,
+  Event,
+  InvocationContext,
+  LlmRequest,
+  LlmResponse,
+  Session,
+  createEventActions,
+} from '@google/adk';
 import {
   traceAgentInvocation,
   traceCallLlm,
   traceMergedToolCalls,
   traceToolCall,
 } from '../../src/telemetry/tracing.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
 
 vi.hoisted(() => {
   vi.resetModules();

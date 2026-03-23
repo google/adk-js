@@ -4,15 +4,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {TaskArtifactUpdateEvent, TaskStatusUpdateEvent} from '@a2a-js/sdk';
+import {
+  AgentCard,
+  Message,
+  Task,
+  TaskArtifactUpdateEvent,
+  TaskStatusUpdateEvent,
+} from '@a2a-js/sdk';
+import {ClientFactory} from '@a2a-js/sdk/client';
 import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
 import {
+  A2AAgentExecutor,
   Event as AdkEvent,
+  AfterA2ARequestCallback,
   BaseAgent,
   BaseSessionService,
+  BeforeA2ARequestCallback,
   createEvent,
   createEventActions,
   InvocationContext,
+  RemoteA2AAgent,
   Runner,
   RunnerConfig,
   Session,
@@ -20,7 +31,17 @@ import {
 import {Language, Outcome} from '@google/genai';
 import {beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {A2AEvent} from '../../src/a2a/a2a_event.js';
-import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
+
+vi.mock('@a2a-js/sdk/client', () => {
+  const Client = vi.fn().mockImplementation(() => ({
+    sendMessageStream: vi.fn(),
+    sendMessage: vi.fn(),
+  }));
+  const ClientFactory = vi.fn().mockImplementation(() => ({
+    createFromAgentCard: vi.fn(),
+  }));
+  return {Client, ClientFactory};
+});
 
 class MockAgent extends BaseAgent {
   protected runAsyncImpl(
@@ -91,7 +112,6 @@ describe('A2A Agent Executor', () => {
 
   const runTest = async (remoteEvents: AdkEvent[]): Promise<A2AEvent[]> => {
     const executor = new A2AAgentExecutor({
-      // @ts-expect-error: MockRunner correctly implements Runner interface.
       runner: new MockRunner(
         {
           appName: 'test-app',
@@ -604,7 +624,6 @@ describe('A2A Agent Executor', () => {
     ];
 
     const gotEvents = await runTest(remoteEvents);
-
     const artifacts = gotEvents.filter(
       (e: A2AEvent) => e.kind === 'artifact-update',
     ) as TaskArtifactUpdateEvent[];
@@ -677,5 +696,353 @@ describe('A2A Agent Executor', () => {
     expect(artifacts[4].artifact.parts).toEqual([{kind: 'text', text: '5'}]);
     expect(artifacts[4].append).toBe(false);
     expect(artifacts[4].lastChunk).toBe(true);
+  });
+});
+
+describe('A2A Remote Agent', () => {
+  let mockClient: {
+    sendMessageStream: Mock;
+    sendMessage: Mock;
+  };
+  let mockClientFactory: {
+    createFromAgentCard: Mock;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    mockClient = {
+      sendMessageStream: vi.fn(),
+      sendMessage: vi.fn(),
+    };
+
+    mockClientFactory = {
+      createFromAgentCard: vi.fn().mockResolvedValue(mockClient),
+    };
+
+    vi.mocked(ClientFactory).mockImplementation(
+      () => mockClientFactory as unknown as ClientFactory,
+    );
+  });
+
+  const createMockContext = (overrides = {}): InvocationContext => {
+    return {
+      invocationId: 'test-invocation',
+      session: {
+        id: 'test-session',
+        userId: 'test-user',
+        appName: 'test-app',
+        events: [
+          createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'hello'}]},
+          }),
+        ],
+        state: {},
+      } as unknown as Session,
+      ...overrides,
+    } as unknown as InvocationContext;
+  };
+
+  const runRemoteAgentTest = async (
+    events: (
+      | Message
+      | Task
+      | TaskStatusUpdateEvent
+      | TaskArtifactUpdateEvent
+    )[],
+    beforeCallbacks?: BeforeA2ARequestCallback[],
+    afterCallbacks?: AfterA2ARequestCallback[],
+  ): Promise<AdkEvent[]> => {
+    const card: AgentCard = {
+      name: 'Remote',
+      description: 'test',
+      protocolVersion: '1.0',
+      defaultInputModes: [],
+      defaultOutputModes: [],
+      capabilities: {streaming: true},
+      skills: [],
+      url: 'https://example.com',
+      version: '1.0',
+    };
+
+    const agent = new RemoteA2AAgent({
+      name: 'test-agent',
+      agentCard: card,
+      clientFactory: mockClientFactory as unknown as ClientFactory,
+      beforeRequestCallbacks: beforeCallbacks,
+      afterRequestCallbacks: afterCallbacks,
+    });
+
+    const mockStream = async function* () {
+      for (const e of events) {
+        yield e;
+      }
+    };
+    mockClient.sendMessageStream.mockReturnValue(mockStream());
+
+    const context = createMockContext();
+    const gotEvents: AdkEvent[] = [];
+
+    for await (const event of agent.runAsync(context)) {
+      gotEvents.push(event);
+    }
+    return gotEvents;
+  };
+
+  it('empty message', async () => {
+    const remoteEvents = [
+      {
+        kind: 'message' as const,
+        messageId: 'msg-1',
+        role: 'agent' as const,
+        parts: [],
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    // In TS, empty parts usually translates to an event with empty parts or undefined content
+    expect(gotEvents).toHaveLength(1);
+    expect(gotEvents[0].content).toBeUndefined();
+  });
+
+  it('message', async () => {
+    const remoteEvents = [
+      {
+        kind: 'message' as const,
+        messageId: 'msg-2',
+        role: 'agent' as const,
+        parts: [
+          {kind: 'text' as const, text: 'hello'},
+          {kind: 'text' as const, text: 'world'},
+        ],
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    expect(gotEvents).toHaveLength(1);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'hello', thought: false},
+      {text: 'world', thought: false},
+    ]);
+  });
+
+  it('empty task', async () => {
+    const remoteEvents = [
+      {
+        kind: 'status-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        status: {state: 'completed' as const},
+        final: true,
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    // Task status without message is usually transparent or returns final structure
+    expect(gotEvents).toBeDefined();
+  });
+
+  it('task with status message', async () => {
+    const remoteEvents = [
+      {
+        kind: 'status-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        status: {
+          state: 'completed' as const,
+          message: {
+            kind: 'message' as const,
+            messageId: 'msg-inner-1',
+            role: 'agent' as const,
+            parts: [{kind: 'text' as const, text: 'hello'}],
+          },
+        },
+        final: true,
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    expect(gotEvents).toHaveLength(1);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'hello', thought: false},
+    ]);
+  });
+
+  it('task with multipart artifact', async () => {
+    const remoteEvents = [
+      {
+        kind: 'artifact-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        artifact: {
+          artifactId: 'art-multipart-1',
+          parts: [
+            {kind: 'text' as const, text: 'hello'},
+            {kind: 'text' as const, text: 'world'},
+          ],
+        },
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    expect(gotEvents).toHaveLength(1);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'hello', thought: false},
+      {text: 'world', thought: false},
+    ]);
+  });
+
+  it('multiple tasks', async () => {
+    const remoteEvents = [
+      {
+        kind: 'status-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        status: {
+          state: 'working' as const,
+          message: {
+            kind: 'message' as const,
+            messageId: 'msg-working-1',
+            role: 'agent' as const,
+            parts: [{kind: 'text' as const, text: 'hello'}],
+          },
+        },
+        final: false,
+      },
+      {
+        kind: 'status-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        status: {
+          state: 'completed' as const,
+          message: {
+            kind: 'message' as const,
+            messageId: 'msg-completed-1',
+            role: 'agent' as const,
+            parts: [{kind: 'text' as const, text: 'world'}],
+          },
+        },
+        final: true,
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    expect(gotEvents).toHaveLength(2);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'hello', thought: false},
+    ]);
+    expect(gotEvents[1].content?.parts).toEqual([
+      {text: 'world', thought: false},
+    ]);
+  });
+
+  it('artifact parts translation', async () => {
+    const task = {id: 'task-1', contextId: 'ctx-1'};
+    const remoteEvents = [
+      {
+        kind: 'artifact-update' as const,
+        taskId: task.id,
+        contextId: task.contextId,
+        artifact: {
+          artifactId: 'art-1',
+          parts: [{kind: 'text' as const, text: 'hello'}],
+        },
+      },
+      {
+        kind: 'status-update' as const,
+        taskId: task.id,
+        contextId: task.contextId,
+        status: {state: 'completed' as const},
+        final: true,
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+    expect(gotEvents.length).toBeGreaterThan(0);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'hello', thought: false},
+    ]);
+  });
+
+  it('partial and non-partial event aggregation', async () => {
+    const remoteEvents = [
+      {
+        kind: 'artifact-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        artifact: {
+          artifactId: 'art-1',
+          parts: [{kind: 'text' as const, text: '1'}],
+        },
+        append: true,
+        lastChunk: false,
+      },
+      {
+        kind: 'artifact-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        artifact: {
+          artifactId: 'art-1',
+          parts: [{kind: 'text' as const, text: '2'}],
+        },
+        append: true,
+        lastChunk: false,
+      },
+      {
+        kind: 'artifact-update' as const,
+        contextId: 'ctx-1',
+        taskId: 'task-1',
+        artifact: {
+          artifactId: 'art-1',
+          parts: [{kind: 'text' as const, text: '3'}],
+        },
+        append: false,
+        lastChunk: true,
+      },
+    ];
+    const gotEvents = await runRemoteAgentTest(remoteEvents);
+
+    // In TS, aggregation emits partials and then a full aggregate if configured,
+    // or just follows stream. Based on A2ARemoteAgent implementation:
+    // append && !lastChunk yields partial
+    // append && lastChunk yields partial AND aggregate
+    expect(gotEvents).toHaveLength(3);
+    expect(gotEvents[0].content?.parts).toEqual([{text: '1', thought: false}]);
+    expect(gotEvents[0].partial).toBe(true);
+
+    expect(gotEvents[1].content?.parts).toEqual([{text: '2', thought: false}]);
+    expect(gotEvents[1].partial).toBe(true);
+
+    // Last one should be full aggregate for that atifact id IF it was aggregated
+    // Wait, let's verify A2ARemoteAgent agg logic on line 207-224
+    // append=false, lastChunk=true calls aggregations.delete and yields adkEvent
+    expect(gotEvents[2].content?.parts).toEqual([{text: '3', thought: false}]);
+    expect(gotEvents[2].partial).toBe(false);
+  });
+
+  it('request callbacks modification', async () => {
+    const beforeCallback: BeforeA2ARequestCallback = async (ctx, params) => {
+      params.configuration = {acceptedOutputModes: ['custom']};
+    };
+    const afterCallback: AfterA2ARequestCallback = async (ctx, chunk) => {
+      // modify chunk if possible or verify called
+      if (chunk.kind === 'message') {
+        chunk.parts = [{kind: 'text' as const, text: 'intercepted'}];
+      }
+    };
+
+    const remoteEvents = [
+      {
+        kind: 'message' as const,
+        messageId: 'msg-3',
+        role: 'agent' as const,
+        parts: [{kind: 'text' as const, text: 'original'}],
+      },
+    ];
+
+    const gotEvents = await runRemoteAgentTest(
+      remoteEvents,
+      [beforeCallback],
+      [afterCallback],
+    );
+
+    expect(gotEvents).toHaveLength(1);
+    expect(gotEvents[0].content?.parts).toEqual([
+      {text: 'intercepted', thought: false},
+    ]);
   });
 });

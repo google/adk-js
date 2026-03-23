@@ -14,6 +14,7 @@ import {AdkApiClient} from '../../dev/src/server/adk_api_client.js';
 export interface TestAdkApiServer {
   host: string;
   port: number;
+  url: string;
   start: () => Promise<AdkApiClient>;
   stop: () => Promise<void>;
 }
@@ -27,7 +28,10 @@ export interface TestApiServerParams {
   sessionServiceUri?: string;
   artifactServiceUri?: string;
   a2a?: boolean;
+  startFailureTimeout?: number;
 }
+
+const DEFAULT_TIMEOUT = 10000;
 
 /**
  * Creates the ADK API server for testing via the CLI. This is useful for integration tests that require an ADK API server to be running.
@@ -43,8 +47,14 @@ export function createTestApiServer(
   return {
     host: 'localhost',
     port,
+    url: `http://localhost:${port}`,
     start: async () => {
-      serverProcess = spawn('node', getAdkCliArgs({...params, port}));
+      serverProcess = spawn('node', getAdkCliArgs({...params, port}), {
+        env: {
+          ...process.env,
+          TEST_API_SERVER_PORT: port.toString(),
+        },
+      });
 
       await new Promise<void>((resolve, reject) => {
         let started = false;
@@ -61,6 +71,9 @@ export function createTestApiServer(
         serverProcess.stderr.on('data', (data) => {
           console.error(`CLI Stderr: ${data.toString()}`);
         });
+        serverProcess.on('error', (error) => {
+          reject(new Error(`Failed to start server: ${error.message}`));
+        });
         serverProcess.on('exit', (code) => {
           if (!started)
             reject(new Error(`Server exited prematurely with code ${code}`));
@@ -68,7 +81,7 @@ export function createTestApiServer(
         setTimeout(() => {
           if (!started)
             reject(new Error('Timeout waiting for server to start.'));
-        }, 10000);
+        }, params.startFailureTimeout || DEFAULT_TIMEOUT);
       });
 
       return new AdkApiClient({backendUrl: `http://localhost:${port}`});

@@ -8,7 +8,7 @@ import {Event} from '../../events/event.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
 import {injectSessionState} from '../instructions.js';
 import {InvocationContext} from '../invocation_context.js';
-import {isLlmAgent, LlmAgent} from '../llm_agent.js';
+import {isLlmAgent} from '../llm_agent.js';
 import {ReadonlyContext} from '../readonly_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
@@ -22,11 +22,10 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     const agent = invocationContext.agent;
-    if (!isLlmAgent(agent) || !isLlmAgent(agent.rootAgent)) {
+    if (!isLlmAgent(agent)) {
       return;
     }
-    const rootAgent: LlmAgent = agent.rootAgent;
-
+    const rootAgent = agent.rootAgent;
     // TODO - b/425992518: unexpected and buggy for performance.
     // Global instruction should be explicitly scoped.
     // Step 1: Appends global instructions if set by RootAgent.

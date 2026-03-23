@@ -7,12 +7,11 @@
 import {
   BaseLlm,
   BaseLlmConnection,
-  isBaseLlm,
   LlmRequest,
   LlmResponse,
+  isBaseLlm,
+  version,
 } from '@google/adk';
-
-import {version} from '../../src/version.js';
 
 class TestLlm extends BaseLlm {
   constructor() {

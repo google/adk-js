@@ -4,21 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {Event} from '@google/adk';
 import {
+  BaseAgent,
   BasePlugin,
-  Event,
   Gemini,
   InMemoryRunner,
   isLlmAgent,
-  LlmAgent,
-  LlmAgentConfig,
 } from '@google/adk';
+import type {Candidate, UsageMetadata} from '@google/genai';
 import {
-  Candidate,
   createUserContent,
   GenerateContentResponse,
   GoogleGenAI,
-  UsageMetadata,
 } from '@google/genai';
 import {expect} from 'vitest';
 
@@ -42,9 +40,9 @@ export interface TestCaseTurn {
  * Represents a test case for an agent.
  */
 export interface TestCase {
-  agent: LlmAgent | LlmAgentConfig;
+  agent: BaseAgent;
   turns: TestCaseTurn[];
-  modelResponses: RawGenerateContentResponse[];
+  modelResponses?: RawGenerateContentResponse[];
 }
 
 function toGenerateContentResponse(
@@ -59,8 +57,11 @@ function toGenerateContentResponse(
 
 class MockModels {
   private responseIndex = 0;
+  private readonly responses: GenerateContentResponse[];
 
-  constructor(private readonly responses: GenerateContentResponse[]) {}
+  constructor(responses: GenerateContentResponse[]) {
+    this.responses = responses;
+  }
 
   async generateContent(_req: unknown): Promise<GenerateContentResponse> {
     return this.getNextResponse();
@@ -121,7 +122,7 @@ export class GeminiWithMockResponses extends Gemini {
  * @returns A runner for the given agent.
  */
 export async function createRunner(
-  agent: LlmAgent,
+  agent: BaseAgent,
   plugins: BasePlugin[] = [],
 ) {
   const userId = 'test_user';
@@ -147,16 +148,53 @@ const ADK_EVENT_ID_REGEX = /^[a-zA-Z0-9]{8}$/;
 const INVOCATION_ID_REGEX =
   /^e-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+const IGNORE_FIELDS = [
+  'id',
+  'invocationId',
+  'timestamp',
+  'customMetadata.a2a:response.taskId',
+  'customMetadata.a2a:response.contextId',
+  'customMetadata.a2a:response.artifact.artifactId',
+  'customMetadata.a2a:response.metadata.adk_invocation_id',
+  'customMetadata.a2a:response.metadata.adk_session_id',
+  'customMetadata.a2a:response.metadata.adk_user_id',
+];
+
+/**
+ * Deletes fields from an object based on dot-separated paths.
+ * @param obj The object to modify.
+ * @param paths The paths of the fields to delete (e.g., 'a.b.c').
+ */
+export function deleteFields(obj: Record<string, unknown>, paths: string[]) {
+  if (!obj || typeof obj !== 'object') return;
+
+  for (const path of paths) {
+    const parts = path.split('.');
+    let current = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!current || typeof current !== 'object') {
+        break;
+      }
+      current = current[parts[i]] as Record<string, unknown>;
+    }
+    const lastPart = parts[parts.length - 1];
+    if (current && typeof current === 'object' && lastPart in current) {
+      delete current[lastPart];
+    }
+  }
+}
+
 /**
  * Runs the given test case.
  * @param testCase The test case to run.
  */
 export async function runTestCase(testCase: TestCase) {
-  const agent = isLlmAgent(testCase.agent)
-    ? testCase.agent
-    : new LlmAgent(testCase.agent);
-  agent.model = new GeminiWithMockResponses(testCase.modelResponses);
-  const runner = await createRunner(agent);
+  if (isLlmAgent(testCase.agent)) {
+    testCase.agent.model = new GeminiWithMockResponses(
+      testCase.modelResponses ?? [],
+    );
+  }
+  const runner = await createRunner(testCase.agent);
 
   for (const turn of testCase.turns) {
     let eventIndex = 0;
@@ -172,9 +210,10 @@ export async function runTestCase(testCase: TestCase) {
       expect(event.timestamp).toBeGreaterThan(0);
 
       // Prune random fields from expected event.
-      delete (expectedEvent as {id?: string}).id;
-      delete (expectedEvent as {invocationId?: string}).invocationId;
-      delete (expectedEvent as {timestamp?: number}).timestamp;
+      deleteFields(
+        expectedEvent as unknown as Record<string, unknown>,
+        IGNORE_FIELDS,
+      );
 
       expect(event).toMatchObject(expectedEvent);
 
