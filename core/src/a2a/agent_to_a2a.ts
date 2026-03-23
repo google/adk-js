@@ -69,12 +69,12 @@ export async function toA2a(
     ? await resolveAgentCard(options.agentCard)
     : await getA2AAgentCard(agent, [
         {
-          url: `${rpcUrl}/rest`,
-          transport: 'rest',
+          url: `${rpcUrl}/jsonrpc`,
+          transport: 'JSONRPC',
         },
         {
-          url: `${rpcUrl}/jsonrpc`,
-          transport: 'jsonrpc',
+          url: `${rpcUrl}/rest`,
+          transport: 'HTTP+JSON',
         },
       ]);
 
