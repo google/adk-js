@@ -8,6 +8,7 @@ import {
   completeBackgroundTool,
   failBackgroundTool,
   requestInputForBackgroundTool,
+  getBackgroundToolParams,
 } from '@google/adk';
 import {parentPort} from 'worker_threads';
 
@@ -16,18 +17,21 @@ async function main() {
     throw new Error('Must be run as a worker thread');
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const toolParams = (await getBackgroundToolParams()) as {
+    startNumber: number;
+  };
+  const startNumber = toolParams.startNumber;
 
-  const userInput = await requestInputForBackgroundTool(
+  const userInput = (await requestInputForBackgroundTool(
     parentPort,
-    'Are you sure you want to proceed with the calculation? (Yes/No)',
-  );
+    `Are you sure you want to proceed with the calculation starting from ${startNumber}? (Yes/No)`,
+  )) as {text: string};
 
-  if ((userInput as string).toLowerCase().includes('yes')) {
+  if (userInput.text.toLowerCase().includes('yes')) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     completeBackgroundTool(parentPort, {
-      payload: 'Calculation finished successfully! The answer is 42.',
+      result: startNumber * 2,
     });
   } else {
     failBackgroundTool(parentPort, 'User aborted the calculation.');

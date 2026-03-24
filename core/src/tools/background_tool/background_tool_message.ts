@@ -3,7 +3,7 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {MessagePort} from 'worker_threads';
+import {MessagePort, isMainThread, workerData} from 'worker_threads';
 
 /**
  * Supported message types between main thread and worker tools.
@@ -33,7 +33,7 @@ interface BaseBackgroundToolMessage {
 
 interface BackgroundToolWorkerStartedMessage extends BaseBackgroundToolMessage {
   type: BackgroundToolExecutionStatus.WORKER_STARTED;
-  parameters?: Record<string, unknown>;
+  parameters?: unknown;
 }
 
 interface BackgroundToolWorkerCompletedMessage extends BaseBackgroundToolMessage {
@@ -71,6 +71,14 @@ export function failBackgroundTool(port: MessagePort, error: string) {
     type: BackgroundToolExecutionStatus.WORKER_ERROR,
     error,
   });
+}
+
+export async function getBackgroundToolParams(): Promise<unknown | undefined> {
+  if (isMainThread) {
+    return undefined;
+  } else {
+    return workerData['parameters'];
+  }
 }
 
 export async function requestInputForBackgroundTool(

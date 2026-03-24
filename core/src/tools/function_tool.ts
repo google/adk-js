@@ -58,7 +58,7 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   isLongRunning?: boolean;
 };
 
-function toSchema<TParameters extends ToolInputParameters>(
+export function toSchema<TParameters extends ToolInputParameters>(
   parameters: TParameters,
 ): Schema {
   if (parameters === undefined) {

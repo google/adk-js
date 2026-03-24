@@ -15,6 +15,7 @@ import {createUserContent} from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import {fileURLToPath} from 'url';
+import {z} from 'zod';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({path: path.join(__dirname, '.env'), quiet: true});
@@ -23,6 +24,9 @@ const backgroundTool = new BackgroundTool({
   name: 'long_calculation',
   description:
     'Performs a very intensive 5-second calculation in the background. Call that when user asks for a long calculation.',
+  parameters: z.object({
+    startNumber: z.number(),
+  }),
   scriptPath: path.join(__dirname, 'heavy_background_task.ts'),
 });
 
@@ -83,7 +87,9 @@ async function main() {
   });
   const inputStream = new ContentInputStream<any>();
 
-  inputStream.push(createUserContent('Please perform the long calculation.'));
+  inputStream.push(
+    createUserContent('Please perform the long calculation with number 10.'),
+  );
   const responseStream = runner.runStream({
     userId: 'test_user_id',
     sessionId: session.id,

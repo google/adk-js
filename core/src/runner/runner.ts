@@ -504,9 +504,9 @@ export class Runner {
             parts: [
               {
                 functionResponse: {
-                  name: msg.functionName || 'background_tool',
-                  response: {result: msg.result},
                   id: msg.functionCallId,
+                  name: msg.functionName || 'background_tool',
+                  response: msg.result,
                 },
               },
             ],

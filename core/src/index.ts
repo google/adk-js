@@ -37,6 +37,7 @@ export * from './tools/mcp/mcp_toolset.js';
 export {BackgroundTool} from './tools/background_tool/background_tool.js';
 export {
   BackgroundToolExecutionStatus,
+  getBackgroundToolParams,
   completeBackgroundTool,
   failBackgroundTool,
   requestInputForBackgroundTool,

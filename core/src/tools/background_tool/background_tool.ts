@@ -4,33 +4,50 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Worker} from 'worker_threads';
+import {Worker, workerData} from 'worker_threads';
 import {logger} from '../../utils/logger.js';
 import {BaseTool, BaseToolParams, RunAsyncToolRequest} from '../base_tool.js';
 import {BackgroundToolExecutionStatus} from './background_tool_message.js';
 import {getInstance, WorkerCoordinator} from './worker_coordinator.js';
+import {toSchema, ToolInputParameters} from '../function_tool.js';
+import {isZodObject} from '../../utils/simple_zod_to_json.js';
 
 export const BACKGROUND_EXECUTION_PENDING_TOOL_RESULT = Symbol.for(
   'adk.tools.BackgroundExecutionPending',
 );
 
-export interface BackgroundToolParams extends BaseToolParams {
+export interface BackgroundToolParams<
+  TParameters extends ToolInputParameters,
+> extends BaseToolParams {
   scriptPath: string;
+  parameters?: TParameters;
 }
 
 /**
  * A Background Tool runs off-thread and coordinates via IPC messages.
  */
-export class BackgroundTool extends BaseTool {
+export class BackgroundTool<
+  TParameters extends ToolInputParameters,
+> extends BaseTool {
   public scriptPath: string;
   private worker?: Worker;
   private coordinator: WorkerCoordinator;
+  private parameters?: TParameters;
 
-  constructor(params: BackgroundToolParams) {
+  constructor(params: BackgroundToolParams<TParameters>) {
     // Background tools are long running by definition so they don't block the caller
     super({...params, isLongRunning: true});
     this.scriptPath = params.scriptPath;
     this.coordinator = getInstance();
+    this.parameters = params.parameters;
+  }
+
+  _getDeclaration() {
+    return {
+      name: this.name,
+      description: this.description,
+      parameters: toSchema(this.parameters),
+    };
   }
 
   /**
@@ -58,17 +75,21 @@ export class BackgroundTool extends BaseTool {
       }
     }
 
+    let validatedArgs: unknown = request.args;
+    if (isZodObject(this.parameters)) {
+      validatedArgs = this.parameters.parse(request.args);
+    }
+
     const workerOptions = {
       workerData: {
-        args: request.args,
+        parameters: validatedArgs,
+        functionName: this.name,
         functionCallId: request.toolContext.functionCallId,
       },
       execArgv,
     };
 
-    // Note: Node 20 allows loading TS directly if --experimental-strip-types is on or import hooks exist.
     this.worker = new Worker(this.scriptPath, workerOptions);
-
     const callId = request.toolContext.functionCallId || 'unknown_call_id';
 
     this.worker.on('message', (msg) => {
@@ -78,7 +99,7 @@ export class BackgroundTool extends BaseTool {
             type: BackgroundToolExecutionStatus.WORKER_COMPLETED,
             functionCallId: callId,
             functionName: this.name,
-            result: msg.payload,
+            result: msg.result,
           });
           break;
         case BackgroundToolExecutionStatus.WORKER_ERROR:
@@ -86,7 +107,7 @@ export class BackgroundTool extends BaseTool {
             type: BackgroundToolExecutionStatus.WORKER_ERROR,
             functionCallId: callId,
             functionName: this.name,
-            error: msg.payload,
+            error: msg.error,
           });
           break;
         case BackgroundToolExecutionStatus.REQUIRE_INPUT:
@@ -94,7 +115,7 @@ export class BackgroundTool extends BaseTool {
             type: BackgroundToolExecutionStatus.REQUIRE_INPUT,
             functionCallId: callId,
             functionName: this.name,
-            inputRequiredMessage: msg.payload,
+            inputRequiredMessage: msg.inputRequiredMessage,
           });
           break;
         case BackgroundToolExecutionStatus.RESUME_INPUT:
@@ -102,7 +123,7 @@ export class BackgroundTool extends BaseTool {
             type: BackgroundToolExecutionStatus.RESUME_INPUT,
             functionCallId: callId,
             functionName: this.name,
-            parameters: msg.payload,
+            parameters: msg.parameters,
           });
           break;
         default:
@@ -136,7 +157,7 @@ export class BackgroundTool extends BaseTool {
       if (msg.functionCallId === callId) {
         this.worker?.postMessage({
           type: BackgroundToolExecutionStatus.RESUME_INPUT,
-          payload: msg.payload,
+          parameters: msg.parameters,
         });
       }
     });
@@ -145,6 +166,7 @@ export class BackgroundTool extends BaseTool {
       type: BackgroundToolExecutionStatus.WORKER_STARTED,
       functionCallId: callId,
       functionName: this.name,
+      parameters: validatedArgs,
     });
 
     // We return immediately with the pending state
