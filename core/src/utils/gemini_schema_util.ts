@@ -14,6 +14,7 @@ const MCPToolSchemaObject = z.object({
   required: z.string().array().optional(),
 });
 type MCPToolSchema = z.infer<typeof MCPToolSchemaObject>;
+type MCPTypeArrayItem = string | {type: string};
 
 function toGeminiType(mcpType: string): Type {
   if (!mcpType) return Type.TYPE_UNSPECIFIED;
@@ -32,10 +33,21 @@ function toGeminiType(mcpType: string): Type {
       return Type.ARRAY;
     case 'object':
       return Type.OBJECT;
+    case 'null':
+      return Type.NULL;
     default:
       return Type.TYPE_UNSPECIFIED;
   }
 }
+
+const getTypeFromArrayItem = (
+  mcpType: MCPTypeArrayItem,
+): string | undefined => {
+  if (typeof mcpType === 'string') {
+    return mcpType.toLowerCase();
+  }
+  return mcpType?.type?.toLowerCase?.();
+};
 
 export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   if (!mcpSchema) {
@@ -44,15 +56,23 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function recursiveConvert(mcp: any): Schema {
-    // Handle nullable types
-    if (!mcp.type && mcp.anyOf && Array.isArray(mcp.anyOf)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const nonNullOption = mcp.anyOf.find((opt: any) => {
-        const t = opt.type;
-        return t !== 'null' && t !== 'NULL';
-      });
-      if (nonNullOption) {
-        mcp = nonNullOption;
+    const sourceType = mcp.anyOf ?? mcp.type;
+    let isNullable = false;
+    if (Array.isArray(sourceType)) {
+      const nonNullType = sourceType.find(
+        (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) !== 'null',
+      );
+      isNullable = sourceType.some(
+        (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) === 'null',
+      );
+
+      if (nonNullType && typeof nonNullType === 'object') {
+        mcp = nonNullType;
+      } else {
+        mcp = {
+          ...mcp,
+          type: nonNullType,
+        };
       }
     }
 
@@ -62,6 +82,8 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         mcp.type = 'object';
       } else if (mcp.items) {
         mcp.type = 'array';
+      } else if (isNullable) {
+        mcp.type = 'null';
       }
     }
 
@@ -70,6 +92,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       type: geminiType,
       description: mcp.description,
     };
+
+    if (isNullable && mcp.type !== 'null') {
+      geminiSchema.nullable = true;
+    }
 
     if (geminiType === Type.OBJECT) {
       geminiSchema.properties = {};
