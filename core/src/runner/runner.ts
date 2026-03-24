@@ -8,6 +8,11 @@ import {Content, createPartFromText} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
+import {getInstance} from '../tools/background_tool/worker_coordinator.js';
+import {
+  BackgroundToolMessage,
+  BackgroundToolExecutionStatus,
+} from '../tools/background_tool/background_tool_message.js';
 import {
   InvocationContext,
   newInvocationContextId,
@@ -454,6 +459,7 @@ export class Runner {
     const outputQueue = new AsyncEventQueue<Event>();
     let activeAgentGenerators = 0;
     let pendingRun = false;
+    let workerPausedCallId: string | null = null;
 
     // Helper to start the agent execution generator
     const runAgent = async () => {
@@ -478,6 +484,112 @@ export class Runner {
       }
     };
 
+    const handleWorkerMessage = async (msg: BackgroundToolMessage) => {
+      if (msg.type === BackgroundToolExecutionStatus.WORKER_STARTED) return;
+
+      const session = await this.sessionService.getSession({
+        appName: this.appName,
+        userId: params.userId,
+        sessionId: params.sessionId,
+      });
+      if (!session) return;
+
+      if (msg.type === BackgroundToolExecutionStatus.WORKER_COMPLETED) {
+        workerPausedCallId = null;
+        const functionResponseEvent = createEvent({
+          invocationId: newInvocationContextId(),
+          author: this.agent.name,
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: msg.functionName || 'background_tool',
+                  response: {result: msg.result},
+                  id: msg.functionCallId,
+                },
+              },
+            ],
+          },
+        });
+        await this.sessionService.appendEvent({
+          session,
+          event: functionResponseEvent,
+        });
+      } else if (msg.type === BackgroundToolExecutionStatus.WORKER_ERROR) {
+        workerPausedCallId = null;
+        const functionResponseEvent = createEvent({
+          invocationId: newInvocationContextId(),
+          author: this.agent.name,
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: msg.functionName || 'background_tool',
+                  response: {error: msg.error || 'Worker failed'},
+                  id: msg.functionCallId,
+                },
+              },
+            ],
+          },
+        });
+        await this.sessionService.appendEvent({
+          session,
+          event: functionResponseEvent,
+        });
+      } else if (msg.type === BackgroundToolExecutionStatus.REQUIRE_INPUT) {
+        workerPausedCallId = msg.functionCallId;
+        const requireInputEvent = createEvent({
+          invocationId: newInvocationContextId(),
+          author: this.agent.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text:
+                  msg.inputRequiredMessage ||
+                  'User input required in background task.',
+              },
+            ],
+          },
+        });
+        await this.sessionService.appendEvent({
+          session,
+          event: requireInputEvent,
+        });
+        outputQueue.push(requireInputEvent);
+        return;
+      }
+
+      if (activeAgentGenerators === 0 && !workerPausedCallId) {
+        runAgent();
+      } else {
+        pendingRun = true;
+      }
+    };
+
+    const workerListener = (msg: BackgroundToolMessage) => {
+      handleWorkerMessage(msg).catch((e) =>
+        logger.error('Error handling worker message:', e),
+      );
+    };
+
+    const workerCoordinator = getInstance();
+
+    workerCoordinator.on(
+      BackgroundToolExecutionStatus.WORKER_COMPLETED,
+      workerListener,
+    );
+    workerCoordinator.on(
+      BackgroundToolExecutionStatus.WORKER_ERROR,
+      workerListener,
+    );
+    workerCoordinator.on(
+      BackgroundToolExecutionStatus.REQUIRE_INPUT,
+      workerListener,
+    );
+
     // Helper to consume incoming user stream
     const consumeInput = async () => {
       try {
@@ -493,6 +605,24 @@ export class Runner {
 
         for await (const newMessage of params.inputStream) {
           if (!newMessage || !newMessage.parts?.length) continue;
+
+          if (workerPausedCallId) {
+            workerCoordinator.emitMessage({
+              type: BackgroundToolExecutionStatus.RESUME_INPUT,
+              functionCallId: workerPausedCallId,
+              parameters: {text: newMessage.parts[0].text},
+            });
+            workerPausedCallId = null;
+
+            const userEvent = createEvent({
+              invocationId: newInvocationContextId(),
+              author: 'user',
+              content: newMessage,
+            });
+            await this.sessionService.appendEvent({session, event: userEvent});
+            outputQueue.push(userEvent);
+            continue;
+          }
 
           // 1. Immediately inject the event into the session events.
           // This allows mid-generation concurrency reactivity on the next step.
@@ -530,6 +660,18 @@ export class Runner {
         outputQueue.close(e as Error);
       } finally {
         outputQueue.close();
+        workerCoordinator.off(
+          BackgroundToolExecutionStatus.WORKER_COMPLETED,
+          workerListener,
+        );
+        workerCoordinator.off(
+          BackgroundToolExecutionStatus.WORKER_ERROR,
+          workerListener,
+        );
+        workerCoordinator.off(
+          BackgroundToolExecutionStatus.REQUIRE_INPUT,
+          workerListener,
+        );
       }
     };
 
@@ -556,12 +698,12 @@ class AsyncEventQueue<T> {
     }
   }
 
-  close(error?: Error) {
+  async close(error?: Error) {
     this.isClosed = true;
     this.error = error;
     while (this.resolves.length > 0) {
       if (error) {
-        this.resolves.shift()!(Promise.reject(error));
+        this.resolves.shift()!(await Promise.reject(error));
       } else {
         this.resolves.shift()!({value: undefined, done: true});
       }
