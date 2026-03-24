@@ -137,6 +137,82 @@ describe('Runner Streaming and Ephemeral', () => {
     });
   });
 
+  describe('runStream', () => {
+    it('should multiplex input stream and agent events', async () => {
+      let resolveInput: (val: any) => void;
+      let inputPromise = new Promise((resolve) => {
+        resolveInput = resolve;
+      });
+
+      const inputStream = {
+        loopActive: true,
+        push: (val: string) => {
+          resolveInput(val);
+        },
+        close: () => {
+          resolveInput(null);
+        },
+        async *[Symbol.asyncIterator]() {
+          while (this.loopActive) {
+            const val = await inputPromise;
+            if (val === null) break; // End of stream
+            yield {role: 'user', parts: [{text: val}]};
+            inputPromise = new Promise((resolve) => {
+              resolveInput = resolve;
+            });
+          }
+        },
+      };
+
+      const session = await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+      });
+
+      const generator = runner.runStream({
+        userId: TEST_USER_ID,
+        sessionId: session.id,
+        inputStream: inputStream as any,
+      });
+
+      const events: Event[] = [];
+      const consumeEvents = async () => {
+        for await (const event of generator) {
+          events.push(event);
+        }
+      };
+
+      // Start consuming events
+      const consumePromise = consumeEvents();
+
+      // Push first message
+      inputStream.push('Hello 1');
+
+      // Give it a moment to process first message
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Push second message
+      inputStream.push('Hello 2');
+
+      // Close stream
+      await new Promise((r) => setTimeout(r, 50));
+      inputStream.close();
+
+      await consumePromise;
+
+      // We should see user events and model events mixed in the output
+      expect(events.length).toBeGreaterThan(0);
+      const userEvents = events.filter(
+        (e) =>
+          e.author === 'user' && e.content?.parts?.[0]?.text?.includes('Hello'),
+      );
+      expect(userEvents.length).toBe(2);
+
+      const modelEvents = events.filter((e) => e.author === rootAgent.name);
+      expect(modelEvents.length).toBeGreaterThan(0);
+    });
+  });
+
   describe('toStructuredEvents', () => {
     it('should convert error events', () => {
       const event = createEvent({
