@@ -48,7 +48,10 @@ interface BackgroundToolWorkerErrorMessage extends BaseBackgroundToolMessage {
 
 interface BackgroundToolRequireInputMessage extends BaseBackgroundToolMessage {
   type: BackgroundToolExecutionStatus.REQUIRE_INPUT;
-  inputRequiredMessage?: string;
+  toolConfirmation?: {
+    hint: string;
+    payload?: unknown;
+  };
 }
 
 interface BackgroundToolResumeInputMessage extends BaseBackgroundToolMessage {
@@ -83,11 +86,15 @@ export async function getBackgroundToolParams(): Promise<unknown | undefined> {
 
 export async function requestInputForBackgroundTool(
   port: MessagePort,
-  inputRequiredMessage: string,
+  hint: string,
+  payload?: unknown,
 ): Promise<unknown | undefined> {
   port.postMessage({
     type: BackgroundToolExecutionStatus.REQUIRE_INPUT,
-    inputRequiredMessage,
+    toolConfirmation: {
+      hint,
+      payload,
+    },
   });
 
   return new Promise((resolve) => {
@@ -102,3 +109,4 @@ export async function requestInputForBackgroundTool(
     port.on('message', handleUserInput);
   });
 }
+

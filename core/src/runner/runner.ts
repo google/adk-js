@@ -9,6 +9,7 @@ import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {getInstance} from '../tools/background_tool/worker_coordinator.js';
+import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {
   BackgroundToolMessage,
   BackgroundToolExecutionStatus,
@@ -548,11 +549,20 @@ export class Runner {
             parts: [
               {
                 text:
-                  msg.inputRequiredMessage ||
+                  msg.toolConfirmation?.hint ||
                   'User input required in background task.',
               },
             ],
           },
+          actions: createEventActions({
+            requestedToolConfirmations: {
+              [msg.functionCallId]: new ToolConfirmation({
+                hint: msg.toolConfirmation?.hint,
+                confirmed: false,
+                payload: msg.toolConfirmation?.payload,
+              }),
+            },
+          }),
         });
         await this.sessionService.appendEvent({
           session,
@@ -561,6 +571,7 @@ export class Runner {
         outputQueue.push(requireInputEvent);
         return;
       }
+
 
       if (activeAgentGenerators === 0 && !workerPausedCallId) {
         runAgent();

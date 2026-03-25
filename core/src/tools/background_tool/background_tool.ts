@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -111,7 +111,7 @@ export class BackgroundTool<
             type: BackgroundToolExecutionStatus.REQUIRE_INPUT,
             functionCallId: callId,
             functionName: this.name,
-            inputRequiredMessage: msg.inputRequiredMessage,
+            toolConfirmation: msg.toolConfirmation,
           });
           break;
         case BackgroundToolExecutionStatus.RESUME_INPUT:
