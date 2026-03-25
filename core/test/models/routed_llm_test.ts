@@ -4,12 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  BaseLlm,
+  BaseLlmConnection,
+  LlmRequest,
+  LlmResponse,
+  RoutedLlm,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {BaseLlm} from '../../src/models/base_llm.js';
-import {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {LlmResponse} from '../../src/models/llm_response.js';
-import {RoutedLlm} from '../../src/models/routed_llm.js';
 
 class MockLlm extends BaseLlm {
   constructor(modelName: string) {

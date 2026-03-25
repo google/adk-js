@@ -4,11 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  BaseAgent,
+  Event,
+  InvocationContext,
+  InvocationContextParams,
+  RoutedAgent,
+  createEvent,
+  isRoutedAgent,
+} from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {RoutedAgent} from '../../src/agents/routed_agent.js';
-import {Event, createEvent} from '../../src/events/event.js';
 
 class MockAgent extends BaseAgent {
   constructor(name: string) {
@@ -61,7 +66,7 @@ describe('RoutedAgent', () => {
       invocationId: 'test-invocation',
       branch: 'test-branch',
       agent: routedAgent,
-    });
+    } as unknown as InvocationContextParams);
 
     const generator = routedAgent['runAsyncImpl'](context); // Test runAsyncImpl directly or runAsync
     // If we run runAsync, it will create a new context, so testing runAsyncImpl is closer to our logic.
@@ -128,5 +133,33 @@ describe('RoutedAgent', () => {
 
     // Check if parents are set (if BaseAgent constructor does that, which it should)
     expect(routedAgent.subAgents[0].parentAgent).toBe(routedAgent);
+  });
+});
+
+describe('isRoutedAgent', () => {
+  it('should return false for null and undefined', () => {
+    expect(isRoutedAgent(null)).toBe(false);
+    expect(isRoutedAgent(undefined)).toBe(false);
+  });
+
+  it('should return false for plain objects', () => {
+    expect(isRoutedAgent({})).toBe(false);
+    expect(isRoutedAgent({name: 'test'})).toBe(false);
+  });
+
+  it('should return true for objects with the signature symbol', () => {
+    const symbol = Symbol.for('google.adk.routedAgent');
+    expect(isRoutedAgent({[symbol]: true})).toBe(true);
+  });
+
+  it('should return false for objects with the signature symbol set to false', () => {
+    const symbol = Symbol.for('google.adk.routedAgent');
+    expect(isRoutedAgent({[symbol]: false})).toBe(false);
+  });
+
+  it('should check if a RoutedAgent instance is identified', () => {
+    const selector = async () => 'agent-a';
+    const agent = new RoutedAgent({name: 'router', agents: [], selector});
+    expect(isRoutedAgent(agent)).toBe(true);
   });
 });

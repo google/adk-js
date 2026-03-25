@@ -9,6 +9,26 @@ import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
 /**
+ * A unique symbol to identify ADK agent classes.
+ * Defined once and shared by all RoutedAgent instances.
+ */
+const ROUTED_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.routedAgent');
+
+/**
+ * Type guard to check if an object is an instance of RoutedAgent.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of RoutedAgent, false otherwise.
+ */
+export function isRoutedAgent(obj: unknown): obj is RoutedAgent {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    ROUTED_AGENT_SIGNATURE_SYMBOL in obj &&
+    obj[ROUTED_AGENT_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * Type definition for a function that selects an agent based on the invocation context.
  */
 export type AgentSelector = (
@@ -37,6 +57,8 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
  * Routing is strictly limited to the agents passed in the config.
  */
 export class RoutedAgent extends BaseAgent {
+  readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
+
   private readonly agentsMap: Map<string, BaseAgent>;
   private readonly selector: AgentSelector;
 
