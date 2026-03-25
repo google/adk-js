@@ -1,6 +1,7 @@
 {
   "extends": "./node_modules/gts/tsconfig-google.json",
   "compilerOptions": {
+    "jsx": "react",
     "target": "ES2020",
     "module": "nodenext",
     "lib": ["ES2022", "DOM"],

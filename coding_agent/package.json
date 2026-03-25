@@ -1,0 +1,25 @@
+{
+  "name": "coding-agent",
+  "version": "0.1.0",
+  "description": "Interactive terminal coding agent based on ADK-JS",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@google/genai": "^1.37.0",
+    "ink": "^4.4.1",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.2.0",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  }
+}
