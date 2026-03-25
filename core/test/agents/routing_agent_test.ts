@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it} from 'vitest';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {RoutedAgent} from '../../src/agents/routed_agent.js';
@@ -34,9 +34,15 @@ class MockAgent extends BaseAgent {
 }
 
 describe('RoutedAgent', () => {
-  const agentA = new MockAgent('agent-a');
-  const agentB = new MockAgent('agent-b');
-  const agents = [agentA, agentB];
+  let agentA: MockAgent;
+  let agentB: MockAgent;
+  let agents: MockAgent[];
+
+  beforeEach(() => {
+    agentA = new MockAgent('agent-a');
+    agentB = new MockAgent('agent-b');
+    agents = [agentA, agentB];
+  });
 
   it('should route runAsync to the selected agent A', async () => {
     let selectorCalledWith: InvocationContext | null = null;
