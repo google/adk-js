@@ -14,7 +14,6 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
-import {BACKGROUND_EXECUTION_PENDING_TOOL_RESULT} from '../tools/background_tool/background_tool.js';
 import {Context} from './context.js';
 
 import {
@@ -456,11 +455,6 @@ export async function handleFunctionCallList({
     // TODO - b/425992518: state event polluting runtime, consider fix.
     // Allow long running function to return None as response.
     if (tool.isLongRunning && !functionResponse) {
-      continue;
-    }
-
-    if (functionResponse === BACKGROUND_EXECUTION_PENDING_TOOL_RESULT) {
-      logger.debug(`BackgroundExecutionPending for tool ${tool.name}`);
       continue;
     }
 

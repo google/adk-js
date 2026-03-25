@@ -4,17 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Worker, workerData} from 'worker_threads';
+import {Worker} from 'worker_threads';
 import {logger} from '../../utils/logger.js';
 import {BaseTool, BaseToolParams, RunAsyncToolRequest} from '../base_tool.js';
 import {BackgroundToolExecutionStatus} from './background_tool_message.js';
 import {getInstance, WorkerCoordinator} from './worker_coordinator.js';
 import {toSchema, ToolInputParameters} from '../function_tool.js';
 import {isZodObject} from '../../utils/simple_zod_to_json.js';
-
-export const BACKGROUND_EXECUTION_PENDING_TOOL_RESULT = Symbol.for(
-  'adk.tools.BackgroundExecutionPending',
-);
 
 export interface BackgroundToolParams<
   TParameters extends ToolInputParameters,
@@ -169,7 +165,6 @@ export class BackgroundTool<
       parameters: validatedArgs,
     });
 
-    // We return immediately with the pending state
-    return BACKGROUND_EXECUTION_PENDING_TOOL_RESULT;
+    return undefined;
   }
 }
