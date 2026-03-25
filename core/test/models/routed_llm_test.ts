@@ -21,12 +21,10 @@ class MockLlm extends BaseLlm {
     _stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
     yield {
-      contents: [
-        {
-          role: 'model',
-          parts: [{text: `Response from ${this.model}`}],
-        },
-      ],
+      content: {
+        role: 'model',
+        parts: [{text: `Response from ${this.model}`}],
+      },
     } as LlmResponse;
   }
 
@@ -57,7 +55,7 @@ describe('RoutedLlm', () => {
     const generator = routedLlm.generateContentAsync(request);
     const result = await generator.next();
 
-    expect(result.value?.contents?.[0]?.parts?.[0]?.text).toBe(
+    expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from model-a',
     );
     expect(selectorCalledWith).toBe(request);
@@ -76,7 +74,7 @@ describe('RoutedLlm', () => {
     const generator = routedLlm.generateContentAsync(request);
     const result = await generator.next();
 
-    expect(result.value?.contents?.[0]?.parts?.[0]?.text).toBe(
+    expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from model-b',
     );
   });
