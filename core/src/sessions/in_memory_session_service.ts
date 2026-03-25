@@ -99,36 +99,37 @@ export class InMemorySessionService extends BaseSessionService {
       return Promise.resolve(undefined);
     }
 
-    const session: Session = this.sessions[appName][userId][sessionId];
-    const copiedSession = cloneDeep(session);
+    const originalSession: Session = this.sessions[appName][userId][sessionId];
+    let resultSession: Session = originalSession;
 
     if (config) {
+      resultSession = cloneDeep(originalSession);
       if (config.numRecentEvents) {
-        copiedSession.events = copiedSession.events.slice(
+        resultSession.events = originalSession.events.slice(
           -config.numRecentEvents,
         );
       }
       if (config.afterTimestamp) {
-        let i = copiedSession.events.length - 1;
+        let i = resultSession.events.length - 1;
         while (i >= 0) {
-          if (copiedSession.events[i].timestamp < config.afterTimestamp) {
+          if (originalSession.events[i].timestamp < config.afterTimestamp) {
             break;
           }
           i--;
         }
         if (i >= 0) {
-          copiedSession.events = copiedSession.events.slice(i + 1);
+          resultSession.events = originalSession.events.slice(i + 1);
         }
       }
     }
 
-    copiedSession.state = mergeStates(
+    resultSession.state = mergeStates(
       this.appState[appName],
       this.userState[appName]?.[userId],
-      copiedSession.state,
+      originalSession.state,
     );
 
-    return copiedSession;
+    return resultSession;
   }
 
   listSessions({
