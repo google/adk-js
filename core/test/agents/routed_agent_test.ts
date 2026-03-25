@@ -45,9 +45,14 @@ describe('RoutedAgent', () => {
   });
 
   it('should route runAsync to the selected agent A', async () => {
-    let selectorCalledWith: InvocationContext | null = null;
-    const selector = async (ctx: InvocationContext) => {
-      selectorCalledWith = ctx;
+    let selectorCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
+    let selectorCalledWithContext: InvocationContext | null = null;
+    const selector = async (
+      agents: ReadonlyMap<string, BaseAgent>,
+      ctx: InvocationContext,
+    ) => {
+      selectorCalledWithAgents = agents;
+      selectorCalledWithContext = ctx;
       return 'agent-a';
     };
 
@@ -67,11 +72,15 @@ describe('RoutedAgent', () => {
     expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from agent-a',
     );
-    expect(selectorCalledWith).toBeDefined();
+    expect(selectorCalledWithContext).toBeDefined();
+    expect(selectorCalledWithAgents).toBeDefined();
   });
 
   it('should route runAsync to the selected agent B', async () => {
-    const selector = async (_ctx: InvocationContext) => 'agent-b';
+    const selector = async (
+      _agents: ReadonlyMap<string, BaseAgent>,
+      _ctx: InvocationContext,
+    ) => 'agent-b';
 
     const routedAgent = new RoutedAgent({name: 'router', agents, selector});
     const context = new InvocationContext({
@@ -87,7 +96,10 @@ describe('RoutedAgent', () => {
   });
 
   it('should throw error if selected agent is not found', async () => {
-    const selector = async (_ctx: InvocationContext) => 'unknown-agent';
+    const selector = async (
+      _agents: ReadonlyMap<string, BaseAgent>,
+      _ctx: InvocationContext,
+    ) => 'unknown-agent';
 
     const routedAgent = new RoutedAgent({name: 'router', agents, selector});
     const context = new InvocationContext({
@@ -104,7 +116,10 @@ describe('RoutedAgent', () => {
   });
 
   it('should maintain subAgents tree in super', () => {
-    const selector = async (_ctx: InvocationContext) => 'agent-a';
+    const selector = async (
+      _agents: ReadonlyMap<string, BaseAgent>,
+      _ctx: InvocationContext,
+    ) => 'agent-a';
     const routedAgent = new RoutedAgent({name: 'router', agents, selector});
 
     expect(routedAgent.subAgents.length).toBe(2);

@@ -12,6 +12,7 @@ import {InvocationContext} from './invocation_context.js';
  * Type definition for a function that selects an agent based on the invocation context.
  */
 export type AgentSelector = (
+  agents: ReadonlyMap<string, BaseAgent>,
   context: InvocationContext,
 ) => Promise<string> | string;
 
@@ -65,7 +66,7 @@ export class RoutedAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.selector(context);
+    const selectedKey = await this.selector(this.agentsMap, context);
     const selectedAgent = this.agentsMap.get(selectedKey);
     if (!selectedAgent) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
@@ -79,7 +80,7 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.selector(context);
+    const selectedKey = await this.selector(this.agentsMap, context);
     const selectedAgent = this.agentsMap.get(selectedKey);
     if (!selectedAgent) {
       throw new Error(`Agent not found for key: ${selectedKey}`);

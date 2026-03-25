@@ -39,9 +39,14 @@ describe('RoutedLlm', () => {
   const models = [modelA, modelB];
 
   it('should route generateContentAsync to the selected model A', async () => {
-    let selectorCalledWith: LlmRequest | null = null;
-    const selector = async (req: LlmRequest) => {
-      selectorCalledWith = req;
+    let selectorCalledWithModels: ReadonlyMap<string, BaseLlm> | null = null;
+    let selectorCalledWithRequest: LlmRequest | null = null;
+    const selector = async (
+      models: ReadonlyMap<string, BaseLlm>,
+      req: LlmRequest,
+    ) => {
+      selectorCalledWithModels = models;
+      selectorCalledWithRequest = req;
       return 'model-a';
     };
 
@@ -58,11 +63,15 @@ describe('RoutedLlm', () => {
     expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from model-a',
     );
-    expect(selectorCalledWith).toBe(request);
+    expect(selectorCalledWithRequest).toBe(request);
+    expect(selectorCalledWithModels).toBeDefined();
   });
 
   it('should route generateContentAsync to the selected model B', async () => {
-    const selector = async (_req: LlmRequest) => 'model-b';
+    const selector = async (
+      _models: ReadonlyMap<string, BaseLlm>,
+      _req: LlmRequest,
+    ) => 'model-b';
 
     const routedLlm = new RoutedLlm({models, selector});
     const request: LlmRequest = {
@@ -80,7 +89,10 @@ describe('RoutedLlm', () => {
   });
 
   it('should throw error if selected model is not found', async () => {
-    const selector = async (_req: LlmRequest) => 'unknown-model';
+    const selector = async (
+      _models: ReadonlyMap<string, BaseLlm>,
+      _req: LlmRequest,
+    ) => 'unknown-model';
 
     const routedLlm = new RoutedLlm({models, selector});
     const request: LlmRequest = {
@@ -98,7 +110,10 @@ describe('RoutedLlm', () => {
 
   it('should route connect to the selected model', async () => {
     let selectorCalled = false;
-    const selector = async (_req: LlmRequest) => {
+    const selector = async (
+      _models: ReadonlyMap<string, BaseLlm>,
+      _req: LlmRequest,
+    ) => {
       selectorCalled = true;
       return 'model-b';
     };

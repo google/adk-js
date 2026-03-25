@@ -12,7 +12,10 @@ import {LlmResponse} from './llm_response.js';
 /**
  * Type definition for a function that selects a model based on the request.
  */
-export type LlmSelector = (request: LlmRequest) => Promise<string> | string;
+export type LlmSelector = (
+  models: ReadonlyMap<string, BaseLlm>,
+  request: LlmRequest,
+) => Promise<string> | string;
 
 /**
  * A BaseLlm implementation that delegates to one of multiple models based on a selector function.
@@ -46,7 +49,7 @@ export class RoutedLlm extends BaseLlm {
     llmRequest: LlmRequest,
     stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
-    const selectedKey = await this.selector(llmRequest);
+    const selectedKey = await this.selector(this.models, llmRequest);
     const selectedModel = this.models.get(selectedKey);
     if (!selectedModel) {
       throw new Error(`Model not found for key: ${selectedKey}`);
@@ -58,7 +61,7 @@ export class RoutedLlm extends BaseLlm {
    * Connects to the LLM by delegating to the selected model.
    */
   async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    const selectedKey = await this.selector(llmRequest);
+    const selectedKey = await this.selector(this.models, llmRequest);
     const selectedModel = this.models.get(selectedKey);
     if (!selectedModel) {
       throw new Error(`Model not found for key: ${selectedKey}`);
