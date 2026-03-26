@@ -187,3 +187,5 @@ export class AuthPreprocessor extends BaseLlmRequestProcessor {
     }
   }
 }
+
+export const AUTH_PREPROCESSOR = new AuthPreprocessor();
