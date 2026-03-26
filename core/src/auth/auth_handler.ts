@@ -9,7 +9,7 @@ import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {AuthCredential} from './auth_credential.js';
 import {AuthConfig} from './auth_tool.js';
-import {OAuth2CredentialExchanger} from './exchanger/oauth2_credential_exchanger.js';
+import {OAuth2CredentialExchanger} from './oauth2/oauth2_credential_exchanger.js';
 
 /**
  * A handler that handles the auth flow in Agent Development Kit to help

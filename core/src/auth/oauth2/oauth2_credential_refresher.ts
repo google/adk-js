@@ -5,8 +5,10 @@
  */
 
 import {AuthCredential} from '../auth_credential.js';
-import {AuthScheme, OpenIdConnectWithConfig} from '../auth_schemes.js';
-import {BaseCredentialRefresher} from './base_credential_refresher.js';
+import {AuthScheme} from '../auth_schemes.js';
+import {BaseCredentialRefresher} from '../refresher/base_credential_refresher.js';
+import {fetchOAuth2Tokens, getTokenEndpoint} from './oauth2_utils.js';
+import {logger} from '../../utils/logger.js';
 
 /**
  * Refreshes OAuth2 credentials using standard fetch.
@@ -49,7 +51,7 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
     }
 
     if (!authCredential.oauth2.refreshToken) {
-      console.warn('No refresh token available to refresh credential');
+      logger.warn('No refresh token available to refresh credential');
       return authCredential;
     }
 
@@ -58,9 +60,9 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
       return authCredential;
     }
 
-    const tokenEndpoint = this.getTokenEndpoint(authScheme);
+    const tokenEndpoint = getTokenEndpoint(authScheme);
     if (!tokenEndpoint) {
-      console.warn('Token endpoint not found in auth scheme.');
+      logger.warn('Token endpoint not found in auth scheme.');
       return authCredential;
     }
 
@@ -68,7 +70,7 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
       !authCredential.oauth2.clientId ||
       !authCredential.oauth2.clientSecret
     ) {
-      console.warn('clientId and clientSecret are required for token refresh.');
+      logger.warn('clientId and clientSecret are required for token refresh.');
       return authCredential;
     }
 
@@ -79,32 +81,14 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
     body.set('client_secret', authCredential.oauth2.clientSecret);
 
     try {
-      const response = await fetch(tokenEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: body.toString(),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Token refresh failed with status ${response.status}`);
-      }
-
-      const data = (await response.json()) as {
-        access_token?: string;
-        refresh_token?: string;
-        expires_in?: number;
-      };
+      const data = await fetchOAuth2Tokens(tokenEndpoint, body);
 
       const updatedOAuth2 = {
         ...authCredential.oauth2,
-        accessToken: data.access_token || authCredential.oauth2.accessToken,
-        refreshToken: data.refresh_token || authCredential.oauth2.refreshToken,
-        expiresIn: data.expires_in,
-        expiresAt: data.expires_in
-          ? Date.now() + data.expires_in * 1000
-          : authCredential.oauth2.expiresAt,
+        accessToken: data.accessToken || authCredential.oauth2.accessToken,
+        refreshToken: data.refreshToken || authCredential.oauth2.refreshToken,
+        expiresIn: data.expiresIn,
+        expiresAt: data.expiresAt || authCredential.oauth2.expiresAt,
       };
 
       return {
@@ -112,26 +96,9 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
         oauth2: updatedOAuth2,
       };
     } catch (error) {
-      console.error('Failed to refresh tokens:', error);
+      logger.error('Failed to refresh tokens:', error);
       // Return original credential on failure, as per Python implementation
       return authCredential;
     }
-  }
-
-  private getTokenEndpoint(authScheme: AuthScheme): string | undefined {
-    if ('tokenEndpoint' in authScheme) {
-      return (authScheme as OpenIdConnectWithConfig).tokenEndpoint;
-    } else if ('flows' in authScheme && authScheme.flows) {
-      const flows = authScheme.flows;
-      const flow =
-        flows.authorizationCode ||
-        flows.clientCredentials ||
-        flows.password ||
-        flows.implicit;
-      if (flow && 'tokenUrl' in flow) {
-        return flow.tokenUrl;
-      }
-    }
-    return undefined;
   }
 }

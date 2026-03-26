@@ -5,6 +5,7 @@
  */
 
 import {z} from 'zod';
+import {logger} from '../../utils/logger.js';
 
 /**
  * Represents the OAuth2 authorization server metadata per RFC8414.
@@ -51,7 +52,7 @@ export class OAuth2DiscoveryManager {
       baseUrl = `${url.protocol}//${url.host}`;
       path = url.pathname;
     } catch (e) {
-      console.warn(`Failed to parse issuerUrl ${issuerUrl}: ${e}`);
+      logger.warn(`Failed to parse issuerUrl ${issuerUrl}: ${e}`);
       return undefined;
     }
 
@@ -92,12 +93,12 @@ export class OAuth2DiscoveryManager {
         ) {
           return metadata;
         } else {
-          console.warn(
+          logger.warn(
             `Issuer in metadata ${metadata.issuer} does not match issuerUrl ${issuerUrl}`,
           );
         }
       } catch (e) {
-        console.debug(`Failed to fetch metadata from ${endpoint}: ${e}`);
+        logger.debug(`Failed to fetch metadata from ${endpoint}: ${e}`);
       }
     }
 
@@ -118,7 +119,7 @@ export class OAuth2DiscoveryManager {
       baseUrl = `${url.protocol}//${url.host}`;
       path = url.pathname;
     } catch (e) {
-      console.warn(`Failed to parse resourceUrl ${resourceUrl}: ${e}`);
+      logger.warn(`Failed to parse resourceUrl ${resourceUrl}: ${e}`);
       return undefined;
     }
 
@@ -149,12 +150,12 @@ export class OAuth2DiscoveryManager {
       ) {
         return metadata;
       } else {
-        console.warn(
+        logger.warn(
           `Resource in metadata ${metadata.resource} does not match resourceUrl ${resourceUrl}`,
         );
       }
     } catch (e) {
-      console.debug(`Failed to fetch metadata from ${wellKnownEndpoint}: ${e}`);
+      logger.debug(`Failed to fetch metadata from ${wellKnownEndpoint}: ${e}`);
     }
 
     return undefined;

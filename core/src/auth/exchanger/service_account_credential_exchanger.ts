@@ -39,7 +39,7 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
     const saConfig = authCredential.serviceAccount;
 
     // We take the scopes from the serviceAccount config, or use a default if available.
-    // The Python version defaults to 'https://www.googleapis.com/auth/cloud-platform' for default credentials if no scopes provided.
+    // Defaults to 'https://www.googleapis.com/auth/cloud-platform' for default credentials if no scopes provided.
     const scopes =
       saConfig.scopes && saConfig.scopes.length > 0
         ? saConfig.scopes

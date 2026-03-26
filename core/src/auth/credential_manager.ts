@@ -11,11 +11,12 @@ import {AuthProviderRegistry} from './auth_provider_registry.js';
 import {OpenIdConnectWithConfig} from './auth_schemes.js';
 import {AuthConfig} from './auth_tool.js';
 import {CredentialExchangerRegistry} from './exchanger/credential_exchanger_registry.js';
-import {OAuth2CredentialExchanger} from './exchanger/oauth2_credential_exchanger.js';
 import {ServiceAccountCredentialExchanger} from './exchanger/service_account_credential_exchanger.js';
-import {OAuth2DiscoveryManager} from './oauth2_discovery.js';
+import {OAuth2CredentialExchanger} from './oauth2/oauth2_credential_exchanger.js';
+import {OAuth2DiscoveryManager} from './oauth2/oauth2_discovery.js';
 import {CredentialRefresherRegistry} from './refresher/credential_refresher_registry.js';
-import {OAuth2CredentialRefresher} from './refresher/oauth2_credential_refresher.js';
+import {OAuth2CredentialRefresher} from './oauth2/oauth2_credential_refresher.js';
+import {logger} from '../utils/logger.js';
 
 /**
  * Manages authentication credentials through a structured workflow.
@@ -287,14 +288,14 @@ export class CredentialManager {
     }
 
     if (!issuerUrl) {
-      console.warn('No issuerUrl available for auto-discovery.');
+      logger.warn('No issuerUrl available for auto-discovery.');
       return false;
     }
 
     const metadata =
       await this.discoveryManager.discoverAuthServerMetadata(issuerUrl);
     if (!metadata) {
-      console.warn('Auto-discovery failed to populate OAuth scheme info.');
+      logger.warn('Auto-discovery failed to populate OAuth scheme info.');
       return false;
     }
 
