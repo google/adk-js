@@ -61,6 +61,7 @@ export type {
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
 export {AuthCredentialTypes} from './auth/auth_credential.js';
+export {AuthenticatedFunctionTool} from './tools/authenticated_function_tool.js';
 export type {
   AuthCredential,
   HttpAuth,

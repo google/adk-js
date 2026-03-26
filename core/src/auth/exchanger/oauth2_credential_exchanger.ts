@@ -53,15 +53,17 @@ export class OAuth2CredentialExchanger implements BaseCredentialExchanger {
 
     if (grantType === OAuthGrantType.CLIENT_CREDENTIALS) {
       return this.exchangeClientCredentials({authCredential, authScheme});
-    } else if (grantType === OAuthGrantType.AUTHORIZATION_CODE) {
-      return this.exchangeAuthorizationCode({authCredential, authScheme});
-    } else {
-      console.warn(`Unsupported OAuth2 grant type: ${grantType}`);
-      return {
-        credential: authCredential,
-        wasExchanged: false,
-      };
     }
+
+    if (grantType === OAuthGrantType.AUTHORIZATION_CODE) {
+      return this.exchangeAuthorizationCode({authCredential, authScheme});
+    }
+
+    console.warn(`Unsupported OAuth2 grant type: ${grantType}`);
+    return {
+      credential: authCredential,
+      wasExchanged: false,
+    };
   }
 
   private determineGrantType(
@@ -69,16 +71,16 @@ export class OAuth2CredentialExchanger implements BaseCredentialExchanger {
   ): OAuthGrantType | undefined {
     if ('flows' in authScheme && authScheme.flows) {
       return getOAuthGrantTypeFromFlow(authScheme.flows);
-    } else if ('grantTypesSupported' in authScheme) {
+    }
+
+    if ((authScheme as OpenIdConnectWithConfig).grantTypesSupported) {
       const oidcScheme = authScheme as OpenIdConnectWithConfig;
-      if (
-        oidcScheme.grantTypesSupported &&
-        oidcScheme.grantTypesSupported.includes('client_credentials')
-      ) {
+
+      if (oidcScheme.grantTypesSupported?.includes('client_credentials')) {
         return OAuthGrantType.CLIENT_CREDENTIALS;
-      } else {
-        return OAuthGrantType.AUTHORIZATION_CODE; // Default to authorization code for OIDC if not specified
       }
+
+      return OAuthGrantType.AUTHORIZATION_CODE;
     }
     return undefined;
   }
