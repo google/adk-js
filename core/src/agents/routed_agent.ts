@@ -31,7 +31,7 @@ export function isRoutedAgent(obj: unknown): obj is RoutedAgent {
 /**
  * Type definition for a function that selects an agent based on the invocation context.
  */
-export type AgentSelector = (
+export type AgentRouter = (
   agents: ReadonlyMap<string, BaseAgent>,
   context: InvocationContext,
 ) => Promise<string> | string;
@@ -49,18 +49,18 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
   /**
    * The function to select which agent to run.
    */
-  selector: AgentSelector;
+  router: AgentRouter;
 }
 
 /**
- * A BaseAgent implementation that delegates to one of multiple agents based on a selector function.
+ * A BaseAgent implementation that delegates to one of multiple agents based on a router function.
  * Routing is strictly limited to the agents passed in the config.
  */
 export class RoutedAgent extends BaseAgent {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 
   private readonly agentsMap: Map<string, BaseAgent>;
-  private readonly selector: AgentSelector;
+  private readonly router: AgentRouter;
 
   constructor(config: RoutedAgentConfig) {
     const agentsArray = Array.isArray(config.agents)
@@ -79,7 +79,7 @@ export class RoutedAgent extends BaseAgent {
     } else {
       this.agentsMap = config.agents;
     }
-    this.selector = config.selector;
+    this.router = config.router;
   }
 
   /**
@@ -88,7 +88,7 @@ export class RoutedAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.selector(this.agentsMap, context);
+    const selectedKey = await this.router(this.agentsMap, context);
     const selectedAgent = this.agentsMap.get(selectedKey);
     if (!selectedAgent) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
@@ -102,7 +102,7 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.selector(this.agentsMap, context);
+    const selectedKey = await this.router(this.agentsMap, context);
     const selectedAgent = this.agentsMap.get(selectedKey);
     if (!selectedAgent) {
       throw new Error(`Agent not found for key: ${selectedKey}`);

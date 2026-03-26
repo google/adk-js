@@ -41,18 +41,18 @@ describe('RoutedLlm', () => {
   const models = [modelA, modelB];
 
   it('should route generateContentAsync to the selected model A', async () => {
-    let selectorCalledWithModels: ReadonlyMap<string, BaseLlm> | null = null;
-    let selectorCalledWithRequest: LlmRequest | null = null;
-    const selector = async (
+    let routerCalledWithModels: ReadonlyMap<string, BaseLlm> | null = null;
+    let routerCalledWithRequest: LlmRequest | null = null;
+    const router = async (
       models: ReadonlyMap<string, BaseLlm>,
       req: LlmRequest,
     ) => {
-      selectorCalledWithModels = models;
-      selectorCalledWithRequest = req;
+      routerCalledWithModels = models;
+      routerCalledWithRequest = req;
       return 'model-a';
     };
 
-    const routedLlm = new RoutedLlm({models, selector});
+    const routedLlm = new RoutedLlm({models, router});
     const request: LlmRequest = {
       contents: [],
       toolsDict: {},
@@ -65,17 +65,17 @@ describe('RoutedLlm', () => {
     expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from model-a',
     );
-    expect(selectorCalledWithRequest).toBe(request);
-    expect(selectorCalledWithModels).toBeDefined();
+    expect(routerCalledWithRequest).toBe(request);
+    expect(routerCalledWithModels).toBeDefined();
   });
 
   it('should route generateContentAsync to the selected model B', async () => {
-    const selector = async (
+    const router = async (
       _models: ReadonlyMap<string, BaseLlm>,
       _req: LlmRequest,
     ) => 'model-b';
 
-    const routedLlm = new RoutedLlm({models, selector});
+    const routedLlm = new RoutedLlm({models, router});
     const request: LlmRequest = {
       contents: [],
       toolsDict: {},
@@ -91,12 +91,12 @@ describe('RoutedLlm', () => {
   });
 
   it('should throw error if selected model is not found', async () => {
-    const selector = async (
+    const router = async (
       _models: ReadonlyMap<string, BaseLlm>,
       _req: LlmRequest,
     ) => 'unknown-model';
 
-    const routedLlm = new RoutedLlm({models, selector});
+    const routedLlm = new RoutedLlm({models, router});
     const request: LlmRequest = {
       contents: [],
       toolsDict: {},
@@ -111,16 +111,16 @@ describe('RoutedLlm', () => {
   });
 
   it('should route connect to the selected model', async () => {
-    let selectorCalled = false;
-    const selector = async (
+    let routerCalled = false;
+    const router = async (
       _models: ReadonlyMap<string, BaseLlm>,
       _req: LlmRequest,
     ) => {
-      selectorCalled = true;
+      routerCalled = true;
       return 'model-b';
     };
 
-    const routedLlm = new RoutedLlm({models, selector});
+    const routedLlm = new RoutedLlm({models, router});
     const request: LlmRequest = {
       contents: [],
       toolsDict: {},
@@ -129,6 +129,6 @@ describe('RoutedLlm', () => {
 
     await routedLlm.connect(request);
 
-    expect(selectorCalled).toBe(true);
+    expect(routerCalled).toBe(true);
   });
 });

@@ -5,7 +5,7 @@
  */
 
 import {
-  AgentSelector,
+  AgentRouter,
   AgentTool,
   BaseAgent,
   InvocationContext,
@@ -32,7 +32,7 @@ describe('RoutedAgent Integration', () => {
       model: new GeminiWithMockResponses([]),
     });
 
-    const selector: AgentSelector = async (
+    const router: AgentRouter = async (
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       agents: ReadonlyMap<string, BaseAgent>,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -44,7 +44,7 @@ describe('RoutedAgent Integration', () => {
     const routedAgent = new RoutedAgent({
       name: 'router',
       agents: [agentA, agentB],
-      selector,
+      router,
     });
 
     const runner = await createRunner(routedAgent);
@@ -76,7 +76,7 @@ describe('RoutedAgent Integration', () => {
       ]),
     });
 
-    const selector = async (
+    const router = async (
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       agents: ReadonlyMap<string, BaseAgent>,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -88,7 +88,7 @@ describe('RoutedAgent Integration', () => {
     const routedAgent = new RoutedAgent({
       name: 'router',
       agents: [agentA, agentB],
-      selector,
+      router,
     });
 
     const runner = await createRunner(routedAgent);
@@ -116,11 +116,11 @@ describe('RoutedAgent Integration', () => {
       ]),
     });
 
-    const selector = async () => 'leaf-agent';
+    const router = async () => 'leaf-agent';
     const routedAgent = new RoutedAgent({
       name: 'router',
       agents: [leafAgent],
-      selector,
+      router,
     });
 
     const agentTool = new AgentTool({agent: routedAgent});
@@ -178,14 +178,14 @@ describe('RoutedAgent Integration', () => {
     expect(responseText).toContain('The leaf said: Response from leaf');
   });
 
-  it('should propagate error when selector throws', async () => {
-    const selector = async () => {
-      throw new Error('Selector failed');
+  it('should propagate error when router throws', async () => {
+    const router = async () => {
+      throw new Error('Router failed');
     };
-    const routedAgent = new RoutedAgent({name: 'router', agents: [], selector});
+    const routedAgent = new RoutedAgent({name: 'router', agents: [], router});
     const runner = await createRunner(routedAgent);
     const gen = runner.run('hi');
-    await expect(gen.next()).rejects.toThrow('Selector failed');
+    await expect(gen.next()).rejects.toThrow('Router failed');
   });
 
   it('should propagate error when selected agent throws', async () => {
@@ -200,11 +200,11 @@ describe('RoutedAgent Integration', () => {
       protected async *runLiveImpl() {}
     }
     const errorAgent = new ErrorAgent();
-    const selector = async () => 'error-agent';
+    const router = async () => 'error-agent';
     const routedAgent = new RoutedAgent({
       name: 'router',
       agents: [errorAgent],
-      selector,
+      router,
     });
     const runner = await createRunner(routedAgent);
     const gen = runner.run('hi');
@@ -223,11 +223,11 @@ describe('RoutedAgent Integration', () => {
       protected async *runLiveImpl() {}
     }
     const flaky = new FlakyAgent();
-    const selector = async () => 'flaky';
+    const router = async () => 'flaky';
     const routedAgent = new RoutedAgent({
       name: 'router',
       agents: [flaky],
-      selector,
+      router,
     });
     const runner = await createRunner(routedAgent);
     const gen = runner.run('hi');

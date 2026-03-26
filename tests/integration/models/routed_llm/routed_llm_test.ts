@@ -24,7 +24,7 @@ describe('RoutedLlm Integration', () => {
         ['model-a', modelA],
         ['model-b', modelB],
       ]),
-      selector: async () => 'model-a',
+      router: async () => 'model-a',
     });
 
     const agent = new LlmAgent({
@@ -60,7 +60,7 @@ describe('RoutedLlm Integration', () => {
         ['model-a', modelA],
         ['model-b', modelB],
       ]),
-      selector: async () => 'model-b',
+      router: async () => 'model-b',
     });
 
     const agent = new LlmAgent({
@@ -86,7 +86,7 @@ describe('RoutedLlm Integration', () => {
 
     const routedLlm = new RoutedLlm({
       models: new Map([['flaky', flakyModel]]),
-      selector: async () => 'flaky',
+      router: async () => 'flaky',
     });
 
     const agent = new LlmAgent({

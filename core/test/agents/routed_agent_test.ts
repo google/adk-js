@@ -50,18 +50,18 @@ describe('RoutedAgent', () => {
   });
 
   it('should route runAsync to the selected agent A', async () => {
-    let selectorCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
-    let selectorCalledWithContext: InvocationContext | null = null;
-    const selector = async (
+    let routerCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
+    let routerCalledWithContext: InvocationContext | null = null;
+    const router = async (
       agents: ReadonlyMap<string, BaseAgent>,
       ctx: InvocationContext,
     ) => {
-      selectorCalledWithAgents = agents;
-      selectorCalledWithContext = ctx;
+      routerCalledWithAgents = agents;
+      routerCalledWithContext = ctx;
       return 'agent-a';
     };
 
-    const routedAgent = new RoutedAgent({name: 'router', agents, selector});
+    const routedAgent = new RoutedAgent({name: 'router', agents, router});
     const context = new InvocationContext({
       invocationId: 'test-invocation',
       branch: 'test-branch',
@@ -77,17 +77,17 @@ describe('RoutedAgent', () => {
     expect(result.value?.content?.parts?.[0]?.text).toBe(
       'Response from agent-a',
     );
-    expect(selectorCalledWithContext).toBeDefined();
-    expect(selectorCalledWithAgents).toBeDefined();
+    expect(routerCalledWithContext).toBeDefined();
+    expect(routerCalledWithAgents).toBeDefined();
   });
 
   it('should route runAsync to the selected agent B', async () => {
-    const selector = async (
+    const router = async (
       _agents: ReadonlyMap<string, BaseAgent>,
       _ctx: InvocationContext,
     ) => 'agent-b';
 
-    const routedAgent = new RoutedAgent({name: 'router', agents, selector});
+    const routedAgent = new RoutedAgent({name: 'router', agents, router});
     const context = new InvocationContext({
       invocationId: 'test-invocation',
       branch: 'test-branch',
@@ -101,12 +101,12 @@ describe('RoutedAgent', () => {
   });
 
   it('should throw error if selected agent is not found', async () => {
-    const selector = async (
+    const router = async (
       _agents: ReadonlyMap<string, BaseAgent>,
       _ctx: InvocationContext,
     ) => 'unknown-agent';
 
-    const routedAgent = new RoutedAgent({name: 'router', agents, selector});
+    const routedAgent = new RoutedAgent({name: 'router', agents, router});
     const context = new InvocationContext({
       invocationId: 'test-invocation',
       branch: 'test-branch',
@@ -121,11 +121,11 @@ describe('RoutedAgent', () => {
   });
 
   it('should maintain subAgents tree in super', () => {
-    const selector = async (
+    const router = async (
       _agents: ReadonlyMap<string, BaseAgent>,
       _ctx: InvocationContext,
     ) => 'agent-a';
-    const routedAgent = new RoutedAgent({name: 'router', agents, selector});
+    const routedAgent = new RoutedAgent({name: 'router', agents, router});
 
     expect(routedAgent.subAgents.length).toBe(2);
     expect(routedAgent.subAgents[0].name).toBe('agent-a');
@@ -158,8 +158,8 @@ describe('isRoutedAgent', () => {
   });
 
   it('should check if a RoutedAgent instance is identified', () => {
-    const selector = async () => 'agent-a';
-    const agent = new RoutedAgent({name: 'router', agents: [], selector});
+    const router = async () => 'agent-a';
+    const agent = new RoutedAgent({name: 'router', agents: [], router});
     expect(isRoutedAgent(agent)).toBe(true);
   });
 });
