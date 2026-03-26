@@ -34,7 +34,8 @@ export function isRoutedAgent(obj: unknown): obj is RoutedAgent {
 export type AgentRouter = (
   agents: ReadonlyMap<string, BaseAgent>,
   context: InvocationContext,
-) => Promise<string> | string;
+  errorContext?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+) => Promise<string | undefined> | string | undefined;
 
 /**
  * Configuration for the RoutingAgent.
@@ -88,12 +89,57 @@ export class RoutedAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.router(this.agentsMap, context);
-    const selectedAgent = this.agentsMap.get(selectedKey);
-    if (!selectedAgent) {
+    const initialKey = await this.router(this.agentsMap, context);
+    if (!initialKey) {
+      throw new Error('Initial routing failed, no agent selected.');
+    }
+
+    let selectedKey = initialKey;
+    let selectedModel = this.agentsMap.get(selectedKey);
+    if (!selectedModel) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
     }
-    yield* selectedAgent.runAsync(context);
+
+    const triedKeys = new Set<string>([selectedKey]);
+
+    while (true) {
+      const iterator = selectedModel.runAsync(context);
+      let firstYielded = false;
+
+      try {
+        while (true) {
+          const result = await iterator.next();
+          if (result.done) break;
+          yield result.value;
+          firstYielded = true;
+        }
+        break; // Success!
+      } catch (error) {
+        if (!firstYielded) {
+          const nextKey = await this.router(this.agentsMap, context, {
+            failedKeys: triedKeys,
+            lastError: error,
+          });
+
+          if (!nextKey) {
+            throw error; // Router decided to bail out
+          }
+
+          if (triedKeys.has(nextKey)) {
+            throw error; // Give up to avoid infinite loop
+          }
+
+          selectedKey = nextKey;
+          selectedModel = this.agentsMap.get(selectedKey);
+          if (!selectedModel) {
+            throw new Error(`Agent not found for key: ${selectedKey}`);
+          }
+          triedKeys.add(selectedKey);
+        } else {
+          throw error; // Re-throw if data was already yielded
+        }
+      }
+    }
   }
 
   /**
@@ -102,11 +148,56 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const selectedKey = await this.router(this.agentsMap, context);
-    const selectedAgent = this.agentsMap.get(selectedKey);
-    if (!selectedAgent) {
+    const initialKey = await this.router(this.agentsMap, context);
+    if (!initialKey) {
+      throw new Error('Initial routing failed, no agent selected.');
+    }
+
+    let selectedKey = initialKey;
+    let selectedModel = this.agentsMap.get(selectedKey);
+    if (!selectedModel) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
     }
-    yield* selectedAgent.runLive(context);
+
+    const triedKeys = new Set<string>([selectedKey]);
+
+    while (true) {
+      const iterator = selectedModel.runLive(context);
+      let firstYielded = false;
+
+      try {
+        while (true) {
+          const result = await iterator.next();
+          if (result.done) break;
+          yield result.value;
+          firstYielded = true;
+        }
+        break; // Success!
+      } catch (error) {
+        if (!firstYielded) {
+          const nextKey = await this.router(this.agentsMap, context, {
+            failedKeys: triedKeys,
+            lastError: error,
+          });
+
+          if (!nextKey) {
+            throw error; // Router decided to bail out
+          }
+
+          if (triedKeys.has(nextKey)) {
+            throw error; // Give up to avoid infinite loop
+          }
+
+          selectedKey = nextKey;
+          selectedModel = this.agentsMap.get(selectedKey);
+          if (!selectedModel) {
+            throw new Error(`Agent not found for key: ${selectedKey}`);
+          }
+          triedKeys.add(selectedKey);
+        } else {
+          throw error; // Re-throw if data was already yielded
+        }
+      }
+    }
   }
 }
