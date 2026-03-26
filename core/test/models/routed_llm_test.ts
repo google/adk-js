@@ -131,4 +131,201 @@ describe('RoutedLlm', () => {
 
     expect(routerCalled).toBe(true);
   });
+
+  it('should failover in generateContentAsync if the first model fails before yielding', async () => {
+    class FailingLlm extends BaseLlm {
+      constructor(modelName: string) {
+        super({model: modelName});
+      }
+
+      // eslint-disable-next-line require-yield
+      async *generateContentAsync(
+        _llmRequest: LlmRequest,
+        _stream?: boolean,
+      ): AsyncGenerator<LlmResponse, void> {
+        throw new Error('Model failed');
+      }
+
+      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        return {} as BaseLlmConnection;
+      }
+    }
+
+    const failingModel = new FailingLlm('model-failing');
+    const successModel = new MockLlm('model-success');
+    const testModels = [failingModel, successModel];
+
+    let routerCalls = 0;
+    const router = async (
+      models: ReadonlyMap<string, BaseLlm>,
+      req: LlmRequest,
+      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+    ) => {
+      routerCalls++;
+      if (!context) return 'model-failing';
+      if (context.failedKeys.has('model-failing')) return 'model-success';
+      return undefined;
+    };
+
+    const routedLlm = new RoutedLlm({models: testModels, router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const generator = routedLlm.generateContentAsync(request);
+    const result = await generator.next();
+
+    expect(result.value?.content?.parts?.[0]?.text).toBe(
+      'Response from model-success',
+    );
+    expect(routerCalls).toBe(2);
+  });
+
+  it('should not failover in generateContentAsync if failure occurs after yielding content', async () => {
+    class PartialLlm extends BaseLlm {
+      constructor(modelName: string) {
+        super({model: modelName});
+      }
+
+      async *generateContentAsync(
+        _llmRequest: LlmRequest,
+        _stream?: boolean,
+      ): AsyncGenerator<LlmResponse, void> {
+        yield {
+          content: {
+            role: 'model',
+            parts: [{text: 'Partial response'}],
+          },
+        } as LlmResponse;
+        throw new Error('Mid-stream failure');
+      }
+
+      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        return {} as BaseLlmConnection;
+      }
+    }
+
+    const partialModel = new PartialLlm('model-partial');
+    const fallbackModel = new MockLlm('model-fallback');
+    const testModels = [partialModel, fallbackModel];
+
+    let routerCalls = 0;
+    const router = async (
+      models: ReadonlyMap<string, BaseLlm>,
+      req: LlmRequest,
+      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+    ) => {
+      routerCalls++;
+      if (!context) return 'model-partial';
+      return 'model-fallback';
+    };
+
+    const routedLlm = new RoutedLlm({models: testModels, router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const generator = routedLlm.generateContentAsync(request);
+
+    const firstResult = await generator.next();
+    expect(firstResult.value?.content?.parts?.[0]?.text).toBe(
+      'Partial response',
+    );
+
+    await expect(generator.next()).rejects.toThrow('Mid-stream failure');
+    expect(routerCalls).toBe(1);
+  });
+
+  it('should failover in connect if the first model fails to connect', async () => {
+    class FailingConnectLlm extends BaseLlm {
+      constructor(modelName: string) {
+        super({model: modelName});
+      }
+
+      async *generateContentAsync(
+        _llmRequest: LlmRequest,
+        _stream?: boolean,
+      ): AsyncGenerator<LlmResponse, void> {
+        yield {} as LlmResponse;
+      }
+
+      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        throw new Error('Connect failed');
+      }
+    }
+
+    const failingModel = new FailingConnectLlm('model-failing');
+    const successModel = new MockLlm('model-success');
+    const testModels = [failingModel, successModel];
+
+    let routerCalls = 0;
+    const router = async (
+      models: ReadonlyMap<string, BaseLlm>,
+      req: LlmRequest,
+      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+    ) => {
+      routerCalls++;
+      if (!context) return 'model-failing';
+      return 'model-success';
+    };
+
+    const routedLlm = new RoutedLlm({models: testModels, router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const connection = await routedLlm.connect(request);
+    expect(connection).toBeDefined();
+    expect(routerCalls).toBe(2);
+  });
+
+  it('should propagate error if router returns undefined (bails out)', async () => {
+    class FailingLlm extends BaseLlm {
+      constructor(modelName: string) {
+        super({model: modelName});
+      }
+
+      // eslint-disable-next-line require-yield
+      async *generateContentAsync(
+        _llmRequest: LlmRequest,
+        _stream?: boolean,
+      ): AsyncGenerator<LlmResponse, void> {
+        throw new Error('Initial fail');
+      }
+
+      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        throw new Error('Initial fail');
+      }
+    }
+
+    const failingModel = new FailingLlm('model-failing');
+    const testModels = [failingModel];
+
+    const router = async (
+      models: ReadonlyMap<string, BaseLlm>,
+      req: LlmRequest,
+      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+    ) => {
+      if (!context) return 'model-failing';
+      return undefined;
+    };
+
+    const routedLlm = new RoutedLlm({models: testModels, router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const generator = routedLlm.generateContentAsync(request);
+    await expect(generator.next()).rejects.toThrow('Initial fail');
+
+    await expect(routedLlm.connect(request)).rejects.toThrow('Initial fail');
+  });
 });
