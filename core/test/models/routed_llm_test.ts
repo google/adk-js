@@ -14,14 +14,17 @@ import {
 import {describe, expect, it} from 'vitest';
 
 class MockLlm extends BaseLlm {
+  receivedStream: boolean | undefined;
+
   constructor(modelName: string) {
     super({model: modelName});
   }
 
   async *generateContentAsync(
-    _llmRequest: LlmRequest,
-    _stream?: boolean,
+    llmRequest: LlmRequest,
+    stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
+    this.receivedStream = stream;
     yield {
       content: {
         role: 'model',
@@ -327,5 +330,50 @@ describe('RoutedLlm', () => {
     await expect(generator.next()).rejects.toThrow('Initial fail');
 
     await expect(routedLlm.connect(request)).rejects.toThrow('Initial fail');
+  });
+
+  it('should throw error if initial routing fails (returns undefined) in generateContentAsync', async () => {
+    const router = async () => undefined;
+    const routedLlm = new RoutedLlm({models: [], router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const generator = routedLlm.generateContentAsync(request);
+    await expect(generator.next()).rejects.toThrow(
+      'Initial routing failed, no model selected.',
+    );
+  });
+
+  it('should throw error if initial routing fails (returns undefined) in connect', async () => {
+    const router = async () => undefined;
+    const routedLlm = new RoutedLlm({models: [], router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    await expect(routedLlm.connect(request)).rejects.toThrow(
+      'Initial routing failed, no model selected.',
+    );
+  });
+
+  it('should propagate stream parameter to selected model', async () => {
+    const model = new MockLlm('model-a');
+    const router = async () => 'model-a';
+    const routedLlm = new RoutedLlm({models: [model], router});
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    const generator = routedLlm.generateContentAsync(request, true);
+    await generator.next();
+
+    expect(model.receivedStream).toBe(true);
   });
 });

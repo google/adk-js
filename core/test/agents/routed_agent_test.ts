@@ -10,6 +10,7 @@ import {
   InvocationContext,
   InvocationContextParams,
   RoutedAgent,
+  Session,
   createEvent,
   isRoutedAgent,
 } from '@google/adk';
@@ -32,10 +33,38 @@ class MockAgent extends BaseAgent {
   }
 
   protected async *runLiveImpl(
-    _context: InvocationContext,
+    context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    // Mock live mode if needed
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {
+        role: 'model',
+        parts: [{text: `Live response from ${this.name}`}],
+      },
+    });
   }
+
+  override async *runLive(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield* this.runLiveImpl(context);
+  }
+}
+
+function createTestContext(params: {
+  invocationId?: string;
+  branch?: string;
+  agent: BaseAgent;
+  session?: Session;
+}): InvocationContext {
+  return new InvocationContext({
+    invocationId: params.invocationId ?? 'test-invocation',
+    branch: params.branch ?? 'test-branch',
+    agent: params.agent,
+    session: params.session,
+  } as unknown as InvocationContextParams);
 }
 
 describe('RoutedAgent', () => {
@@ -62,11 +91,7 @@ describe('RoutedAgent', () => {
     };
 
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context); // Test runAsyncImpl directly or runAsync
     // If we run runAsync, it will create a new context, so testing runAsyncImpl is closer to our logic.
@@ -88,11 +113,7 @@ describe('RoutedAgent', () => {
     ) => 'agent-b';
 
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context);
     const result = await generator.next();
@@ -107,11 +128,7 @@ describe('RoutedAgent', () => {
     ) => 'unknown-agent';
 
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context);
 
@@ -174,11 +191,7 @@ describe('RoutedAgent', () => {
       agents: testAgents,
       router,
     });
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context);
     const result = await generator.next();
@@ -230,11 +243,7 @@ describe('RoutedAgent', () => {
       agents: testAgents,
       router,
     });
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context);
 
@@ -282,14 +291,162 @@ describe('RoutedAgent', () => {
       agents: testAgents,
       router,
     });
-    const context = new InvocationContext({
-      invocationId: 'test-invocation',
-      branch: 'test-branch',
-      agent: routedAgent,
-    } as unknown as InvocationContextParams);
+    const context = createTestContext({agent: routedAgent});
 
     const generator = routedAgent['runAsyncImpl'](context);
     await expect(generator.next()).rejects.toThrow('Initial fail');
+  });
+
+  it('should maintain the session history on the next invocation when a new agent is selected', async () => {
+    const session: Session = {
+      id: 'session-id',
+      appName: 'test-app',
+      userId: 'user-id',
+      state: {},
+      events: [] as Event[],
+      lastUpdateTime: Date.now(),
+    };
+
+    let selectedAgentName = 'agent-a';
+    const router = async () => selectedAgentName;
+
+    class HistoryCheckingAgent extends BaseAgent {
+      constructor(name: string) {
+        super({name});
+      }
+
+      protected async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        expect(context.session?.events.length).toBe(1);
+        expect(context.session?.events[0].author).toBe('agent-a');
+
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          branch: context.branch,
+          content: {
+            role: 'model',
+            parts: [{text: `Response from ${this.name}`}],
+          },
+        });
+      }
+
+      protected async *runLiveImpl(_context: InvocationContext) {}
+    }
+
+    const localAgentA = new MockAgent('agent-a');
+    const localAgentB = new HistoryCheckingAgent('agent-b');
+    const testAgents = [localAgentA, localAgentB];
+
+    const routedAgent = new RoutedAgent({
+      name: 'router',
+      agents: testAgents,
+      router,
+    });
+
+    const context1 = createTestContext({
+      invocationId: 'invocation-1',
+      branch: 'branch-1',
+      agent: routedAgent,
+      session,
+    });
+
+    const generator1 = routedAgent['runAsyncImpl'](context1);
+    const event1 = await generator1.next();
+
+    if (event1.value) {
+      session.events.push(event1.value);
+    }
+
+    selectedAgentName = 'agent-b';
+
+    const context2 = createTestContext({
+      invocationId: 'invocation-2',
+      branch: 'branch-2',
+      agent: routedAgent,
+      session,
+    });
+
+    const generator2 = routedAgent['runAsyncImpl'](context2);
+    const event2 = await generator2.next();
+
+    expect(session.events.length).toBe(1);
+    expect(event2.value?.author).toBe('agent-b');
+  });
+
+  it('should route runLive to the selected agent A', async () => {
+    let routerCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
+    let routerCalledWithContext: InvocationContext | null = null;
+    const router = async (
+      agents: ReadonlyMap<string, BaseAgent>,
+      ctx: InvocationContext,
+    ) => {
+      routerCalledWithAgents = agents;
+      routerCalledWithContext = ctx;
+      return 'agent-a';
+    };
+
+    const routedAgent = new RoutedAgent({name: 'router', agents, router});
+    const context = createTestContext({agent: routedAgent});
+
+    const generator = routedAgent['runLiveImpl'](context);
+    const result = await generator.next();
+
+    expect(result.value?.author).toBe('agent-a');
+    expect(result.value?.content?.parts?.[0]?.text).toBe(
+      'Live response from agent-a',
+    );
+    expect(routerCalledWithContext).toBeDefined();
+    expect(routerCalledWithAgents).toBeDefined();
+  });
+
+  it('should failover in runLiveImpl if the first agent fails before yielding', async () => {
+    class FailingLiveAgent extends BaseAgent {
+      constructor(name: string) {
+        super({name});
+      }
+
+      protected async *runAsyncImpl(
+        _context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {}
+
+      // eslint-disable-next-line require-yield
+      protected async *runLiveImpl(
+        _context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        throw new Error('Live agent failed');
+      }
+    }
+
+    const failingAgent = new FailingLiveAgent('agent-failing');
+    const successAgent = new MockAgent('agent-success');
+    const testAgents = [failingAgent, successAgent];
+
+    let routerCalls = 0;
+    const router = async (
+      agents: ReadonlyMap<string, BaseAgent>,
+      ctx: InvocationContext,
+      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+    ) => {
+      routerCalls++;
+      if (!context) return 'agent-failing';
+      if (context.failedKeys.has('agent-failing')) return 'agent-success';
+      return undefined;
+    };
+
+    const routedAgent = new RoutedAgent({
+      name: 'router',
+      agents: testAgents,
+      router,
+    });
+    const context = createTestContext({agent: routedAgent});
+
+    const generator = routedAgent['runLiveImpl'](context);
+    const result = await generator.next();
+
+    expect(result.value?.author).toBe('agent-success');
+    expect(routerCalls).toBe(2);
   });
 });
 
