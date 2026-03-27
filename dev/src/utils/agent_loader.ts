@@ -19,6 +19,8 @@ import {
   isFileExists,
   isFolderExists,
   loadFileData,
+  removeFolder,
+  tryToFindFileRecursively,
 } from './file_utils.js';
 
 /**
@@ -217,10 +219,7 @@ export class AgentFile {
       this.disposed = true;
       await fsPromises.unlink(this.cleanupFilePath);
       if (this.cleanupDirPath) {
-        await fsPromises.rm(this.cleanupDirPath, {
-          recursive: true,
-          force: true,
-        });
+        await removeFolder(this.cleanupDirPath);
       }
     }
   }
@@ -420,7 +419,7 @@ async function linkProjectNodeModules(
   outputDir: string,
   sourceDir: string,
 ): Promise<void> {
-  const nodeModulesDir = await findParentNodeModulesDir(sourceDir);
+  const nodeModulesDir = await getProjectNodeModulesDir(sourceDir);
   if (!nodeModulesDir) {
     return;
   }
@@ -443,22 +442,22 @@ async function linkProjectNodeModules(
   }
 }
 
-async function findParentNodeModulesDir(
+async function getProjectNodeModulesDir(
   sourceDir: string,
 ): Promise<string | undefined> {
-  let currentDir = sourceDir;
+  try {
+    const packageJsonPath = await tryToFindFileRecursively(
+      sourceDir,
+      'package.json',
+      10,
+    );
+    const nodeModulesDir = path.join(
+      path.dirname(packageJsonPath),
+      'node_modules',
+    );
 
-  while (true) {
-    const nodeModulesDir = path.join(currentDir, 'node_modules');
-    if (await isFolderExists(nodeModulesDir)) {
-      return nodeModulesDir;
-    }
-
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      return undefined;
-    }
-
-    currentDir = parentDir;
+    return (await isFolderExists(nodeModulesDir)) ? nodeModulesDir : undefined;
+  } catch {
+    return undefined;
   }
 }

@@ -21,6 +21,8 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   isFile: vi.fn(),
   isFileExists: vi.fn(),
   isFolderExists: vi.fn(),
+  removeFolder: vi.fn(),
+  tryToFindFileRecursively: vi.fn(),
 }));
 
 vi.mock('esbuild', () => ({
@@ -120,6 +122,12 @@ describe('AgentLoader', () => {
           return false;
         }
       },
+    );
+    (fileUtils.removeFolder as Mock).mockImplementation((folderPath) =>
+      fs.rm(folderPath as string, {recursive: true, force: true}),
+    );
+    (fileUtils.tryToFindFileRecursively as Mock).mockImplementation(
+      async (_sourceFolder, fileName) => path.join(tempAgentsDir, fileName),
     );
     await initNpmProject();
   });
