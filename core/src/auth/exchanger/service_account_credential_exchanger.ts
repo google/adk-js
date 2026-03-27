@@ -5,7 +5,11 @@
  */
 
 import {GoogleAuth, JWT} from 'google-auth-library';
-import {AuthCredential, AuthCredentialTypes} from '../auth_credential.js';
+import {
+  AuthCredential,
+  AuthCredentialTypes,
+  ServiceAccount,
+} from '../auth_credential.js';
 import {AuthScheme} from '../auth_schemes.js';
 import {
   BaseCredentialExchanger,
@@ -38,50 +42,51 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
 
     const saConfig = authCredential.serviceAccount;
 
-    // We take the scopes from the serviceAccount config, or use a default if available.
-    // Defaults to 'https://www.googleapis.com/auth/cloud-platform' for default credentials if no scopes provided.
-    const scopes =
-      saConfig.scopes && saConfig.scopes.length > 0
-        ? saConfig.scopes
-        : ['https://www.googleapis.com/auth/cloud-platform'];
+    if (saConfig.useIdToken) {
+      return this._exchangeForIdToken(saConfig);
+    }
+
+    return this._exchangeForAccessToken(saConfig);
+  }
+
+  private async _exchangeForIdToken(
+    saConfig: ServiceAccount,
+  ): Promise<ExchangeResult> {
+    if (!saConfig.useDefaultCredential && !saConfig.serviceAccountCredential) {
+      throw new CredentialExchangeError(
+        'serviceAccountCredential is required when useDefaultCredential is false',
+      );
+    }
+
+    if (!saConfig.audience) {
+      throw new CredentialExchangeError(
+        'audience is required for ID token exchange',
+      );
+    }
 
     try {
-      let token: string | null | undefined = undefined;
-      let quotaProjectId: string | null | undefined = undefined;
-
+      let auth: GoogleAuth;
       if (saConfig.useDefaultCredential) {
-        const auth = new GoogleAuth({
-          scopes: scopes,
-        });
-        const client = await auth.getClient();
-        const tokenResponse = await client.getAccessToken();
-        token = tokenResponse.token;
-        quotaProjectId = client.quotaProjectId; // Might be undefined
+        auth = new GoogleAuth();
       } else {
-        if (!saConfig.serviceAccountCredential) {
-          throw new CredentialExchangeError(
-            'serviceAccountCredential is required when useDefaultCredential is false',
-          );
-        }
-
-        const creds = saConfig.serviceAccountCredential;
-        const jwtClient = new JWT({
-          email: creds.clientEmail,
-          key: creds.privateKey,
-          scopes: scopes,
+        const creds = saConfig.serviceAccountCredential!;
+        auth = new GoogleAuth({
+          credentials: {
+            client_email: creds.clientEmail,
+            private_key: creds.privateKey,
+          },
         });
-
-        const tokenResponse = await jwtClient.authorize();
-        token = tokenResponse.access_token;
-        // In JWT client, quotaProjectId might not be directly available as in GoogleAuth,
-        // but it can be set if we want to extract it from the creds or if we don't need it.
       }
 
-      if (!token) {
+      const client = await auth.getIdTokenClient(saConfig.audience);
+      const headers = await client.getRequestHeaders();
+      const authHeader = headers.get('Authorization');
+      if (!authHeader) {
         throw new CredentialExchangeError(
-          'Failed to get token from service account provider.',
+          'Failed to get authorization header for ID token',
         );
       }
+      const token = authHeader.replace(/^Bearer /, '');
 
       const exchangedCredential: AuthCredential = {
         authType: AuthCredentialTypes.HTTP,
@@ -99,7 +104,81 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
       };
     } catch (e: any) {
       throw new CredentialExchangeError(
-        `Failed to exchange service account token: ${e.message || e}`,
+        `Failed to exchange service account for ID token: ${e.message || e}`,
+      );
+    }
+  }
+
+  private async _exchangeForAccessToken(
+    saConfig: ServiceAccount,
+  ): Promise<ExchangeResult> {
+    if (!saConfig.useDefaultCredential && !saConfig.scopes) {
+      throw new CredentialExchangeError(
+        'scopes are required when using explicit service account credentials for access token exchange.',
+      );
+    }
+
+    const scopes =
+      saConfig.scopes && saConfig.scopes.length > 0
+        ? saConfig.scopes
+        : ['https://www.googleapis.com/auth/cloud-platform'];
+
+    try {
+      let token: string | null | undefined = undefined;
+      let quotaProjectId: string | null | undefined = undefined;
+
+      if (saConfig.useDefaultCredential) {
+        const auth = new GoogleAuth({
+          scopes: scopes,
+        });
+        const client = await auth.getClient();
+        const tokenResponse = await client.getAccessToken();
+        token = tokenResponse.token;
+        quotaProjectId = client.quotaProjectId;
+      } else {
+        if (!saConfig.serviceAccountCredential) {
+          throw new CredentialExchangeError(
+            'serviceAccountCredential is required when useDefaultCredential is false',
+          );
+        }
+
+        const creds = saConfig.serviceAccountCredential;
+        const jwtClient = new JWT({
+          email: creds.clientEmail,
+          key: creds.privateKey,
+          scopes: scopes,
+        });
+
+        const tokenResponse = await jwtClient.authorize();
+        token = tokenResponse.access_token;
+      }
+
+      if (!token) {
+        throw new CredentialExchangeError(
+          'Failed to get token from service account provider.',
+        );
+      }
+
+      const exchangedCredential: AuthCredential = {
+        authType: AuthCredentialTypes.HTTP,
+        http: {
+          scheme: 'bearer',
+          credentials: {
+            token,
+          },
+          additionalHeaders: quotaProjectId
+            ? {'x-goog-user-project': quotaProjectId}
+            : undefined,
+        },
+      };
+
+      return {
+        credential: exchangedCredential,
+        wasExchanged: true,
+      };
+    } catch (e: any) {
+      throw new CredentialExchangeError(
+        `Failed to exchange service account access token: ${e.message || e}`,
       );
     }
   }

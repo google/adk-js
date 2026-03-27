@@ -37,10 +37,10 @@ export interface BaseCredentialExchanger {
    */
 
   exchange({
-    authCredential,
     authScheme,
+    authCredential,
   }: {
-    authCredential: AuthCredential;
     authScheme?: AuthScheme;
+    authCredential: AuthCredential;
   }): Promise<ExchangeResult>;
 }
