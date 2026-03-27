@@ -13,7 +13,13 @@ import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
-import {getTempDir, isFile, isFileExists, loadFileData} from './file_utils.js';
+import {
+  getTempDir,
+  isFile,
+  isFileExists,
+  isFolderExists,
+  loadFileData,
+} from './file_utils.js';
 
 /**
  * Supported file extensions for JavaScript and TypeScript.
@@ -109,12 +115,13 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
-      const outputDir = getTempDir('adk_agent_loader', parsedPath.dir);
+      const outputDir = getTempDir('adk_agent_loader');
       const compiledFilePath = path.join(
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
       await fsPromises.mkdir(outputDir, {recursive: true});
+      await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -407,4 +414,51 @@ async function getTypeFromPackageJson(dir: string): Promise<FileModuleType> {
   }
 
   return getTypeFromPackageJson(parentDir);
+}
+
+async function linkProjectNodeModules(
+  outputDir: string,
+  sourceDir: string,
+): Promise<void> {
+  const nodeModulesDir = await findParentNodeModulesDir(sourceDir);
+  if (!nodeModulesDir) {
+    return;
+  }
+
+  const linkPath = path.join(outputDir, 'node_modules');
+  if (await isFolderExists(linkPath)) {
+    return;
+  }
+
+  try {
+    await fsPromises.symlink(
+      path.resolve(nodeModulesDir),
+      linkPath,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+  } catch (error) {
+    if ((error as {code?: string}).code !== 'EEXIST') {
+      throw error;
+    }
+  }
+}
+
+async function findParentNodeModulesDir(
+  sourceDir: string,
+): Promise<string | undefined> {
+  let currentDir = sourceDir;
+
+  while (true) {
+    const nodeModulesDir = path.join(currentDir, 'node_modules');
+    if (await isFolderExists(nodeModulesDir)) {
+      return nodeModulesDir;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return undefined;
+    }
+
+    currentDir = parentDir;
+  }
 }

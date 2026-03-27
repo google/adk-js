@@ -20,6 +20,7 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   getTempDir: vi.fn(),
   isFile: vi.fn(),
   isFileExists: vi.fn(),
+  isFolderExists: vi.fn(),
 }));
 
 vi.mock('esbuild', () => ({
@@ -97,20 +98,35 @@ export const agent2 = new FakeAgent('agent2');
 
 describe('AgentLoader', () => {
   let tempAgentsDir: string;
+  let tempLoaderDir: string;
+
+  const compiledPath = (fileName: string) => path.join(tempLoaderDir, fileName);
 
   beforeEach(async () => {
     tempAgentsDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-loader-test'),
     );
-    (fileUtils.getTempDir as Mock).mockImplementation(
-      () => `${tempAgentsDir}/`,
+    tempLoaderDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent-loader-output-test'),
     );
+    (fileUtils.getTempDir as Mock).mockImplementation(() => tempLoaderDir);
     (fileUtils.isFileExists as Mock).mockImplementation(() => true);
+    (fileUtils.isFolderExists as Mock).mockImplementation(
+      async (folderPath) => {
+        try {
+          const stat = await fs.stat(folderPath as string);
+          return stat.isDirectory();
+        } catch {
+          return false;
+        }
+      },
+    );
     await initNpmProject();
   });
 
   afterEach(async () => {
     await fs.rm(tempAgentsDir, {recursive: true, force: true});
+    await fs.rm(tempLoaderDir, {recursive: true, force: true});
     vi.clearAllMocks();
   });
 
@@ -134,7 +150,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent1.cjs');
+      const compiledAgentPath = compiledPath('agent1.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agent1JsContent);
         return Promise.resolve();
@@ -152,7 +168,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent2.ts');
       await fs.writeFile(agentPath, agent2TsContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent2.cjs');
+      const compiledAgentPath = compiledPath('agent2.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agent2CjsContentMocked);
         return Promise.resolve();
@@ -183,7 +199,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'bad_agent.js');
       await fs.writeFile(agentPath, 'exports.someOther = 1;');
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'bad_agent.cjs');
+      const compiledAgentPath = compiledPath('bad_agent.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, 'exports.someOther = 1;');
         return Promise.resolve();
@@ -209,7 +225,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent1.cjs');
+      const compiledAgentPath = compiledPath('agent1.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agent1JsContent);
         return Promise.resolve();
@@ -225,7 +241,7 @@ describe('AgentLoader', () => {
 
     it('returns cleanup file path if compiled', async () => {
       const agentPath = path.join(tempAgentsDir, 'agent2.ts');
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent2.cjs');
+      const compiledAgentPath = compiledPath('agent2.cjs');
       await fs.writeFile(agentPath, agent2TsContent);
 
       (esbuild.build as Mock).mockImplementation(async () => {
@@ -256,7 +272,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent_default.js');
       await fs.writeFile(agentPath, agentDefaultExportContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent_default.cjs');
+      const compiledAgentPath = compiledPath('agent_default.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agentDefaultExportContent);
         return Promise.resolve();
@@ -274,7 +290,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent_multiple.js');
       await fs.writeFile(agentPath, agentMultipleExportsContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent_multiple.cjs');
+      const compiledAgentPath = compiledPath('agent_multiple.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agentMultipleExportsContent);
         return Promise.resolve();
@@ -296,7 +312,7 @@ describe('AgentLoader', () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
 
-      const compiledAgentPath = path.join(tempAgentsDir, 'agent1.cjs');
+      const compiledAgentPath = compiledPath('agent1.cjs');
       (esbuild.build as Mock).mockImplementation(async () => {
         await fs.writeFile(compiledAgentPath, agent1JsContent);
         return Promise.resolve();
@@ -338,17 +354,17 @@ describe('AgentLoader', () => {
       (esbuild.build as Mock).mockImplementation(
         async (options: {entryPoints: string[]}) => {
           if (options.entryPoints[0].includes('agent1.js')) {
-            const compiledAgent1Path = path.join(tempAgentsDir, 'agent1.cjs');
+            const compiledAgent1Path = compiledPath('agent1.cjs');
             await fs.writeFile(compiledAgent1Path, agent1JsContent);
           }
 
           if (options.entryPoints[0].includes('agent2.ts')) {
-            const compiledAgent2Path = path.join(tempAgentsDir, 'agent2.cjs');
+            const compiledAgent2Path = compiledPath('agent2.cjs');
             await fs.writeFile(compiledAgent2Path, agent2CjsContentMocked);
           }
 
           if (options.entryPoints[0].includes('agent3')) {
-            const compiledAgent3Path = path.join(tempAgentsDir, 'agent.cjs');
+            const compiledAgent3Path = compiledPath('agent.cjs');
             await fs.writeFile(compiledAgent3Path, agent3JsContent);
           }
 
@@ -378,7 +394,7 @@ describe('AgentLoader', () => {
 
       const agent2File = await agentLoader.getAgentFile('agent2');
       await agent2File.load();
-      const compiledAgent2Path = path.join(tempAgentsDir, 'agent2.cjs');
+      const compiledAgent2Path = compiledPath('agent2.cjs');
       await fs.access(compiledAgent2Path);
 
       await agentLoader.disposeAll();

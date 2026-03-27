@@ -99,12 +99,6 @@ describe('Build setup', () => {
         .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
         .catch(() => {});
       await fs.unlink(`${projectPath}/package-lock.json`).catch(() => {});
-      await fs
-        .rm(`${projectPath}/adk_agent_loader`, {
-          recursive: true,
-          force: true,
-        })
-        .catch(() => {});
 
       if (buildSetup.startsWith('ts_')) {
         await fs

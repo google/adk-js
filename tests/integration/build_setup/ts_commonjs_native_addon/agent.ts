@@ -3,26 +3,20 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-const nativeAddon = require('onnxruntime-node'); // eslint-disable-line @typescript-eslint/no-require-imports
-const {
+import type {BaseLlmConnection, LlmResponse} from '@google/adk';
+import {
   BaseLlm,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  BaseLlmConnection,
   LlmAgent,
   LLMRegistry,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  LlmResponse,
-  setLogLevel,
   LogLevel,
-} = require('@google/adk'); // eslint-disable-line @typescript-eslint/no-require-imports
-const {createModelContent, GenerateContentResponse} = require('@google/genai'); // eslint-disable-line @typescript-eslint/no-require-imports
-
-type BaseLlmConnectionType = typeof BaseLlmConnection;
-type LlmResponseType = typeof LlmResponse;
+  setLogLevel,
+} from '@google/adk';
+import {createModelContent, GenerateContentResponse} from '@google/genai';
+import nativeAddon from 'onnxruntime-node';
 
 setLogLevel(LogLevel.DEBUG);
 
-class MockLlmConnection implements BaseLlmConnectionType {
+class MockLlmConnection implements BaseLlmConnection {
   async sendHistory(): Promise<void> {
     return Promise.resolve();
   }
@@ -31,7 +25,7 @@ class MockLlmConnection implements BaseLlmConnectionType {
 
   async sendRealtime(): Promise<void> {}
 
-  async *receive(): AsyncGenerator<LlmResponseType, void, void> {}
+  async *receive(): AsyncGenerator<LlmResponse, void, void> {}
 
   async close(): Promise<void> {}
 }
@@ -43,7 +37,7 @@ class MockLll extends BaseLlm {
 
   static readonly supportedModels = ['test-llm-model'];
 
-  async *generateContentAsync(): AsyncGenerator<LlmResponseType, void> {
+  async *generateContentAsync(): AsyncGenerator<LlmResponse, void> {
     const generateContentResponse = new GenerateContentResponse();
 
     generateContentResponse.candidates = [
@@ -63,7 +57,7 @@ class MockLll extends BaseLlm {
     };
   }
 
-  async connect(): Promise<BaseLlmConnectionType> {
+  async connect(): Promise<BaseLlmConnection> {
     return new MockLlmConnection();
   }
 }

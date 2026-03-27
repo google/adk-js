@@ -130,14 +130,6 @@ describe('file_utils', () => {
     nowSpy.mockRestore();
   });
 
-  it('getTempDir supports a custom base directory', () => {
-    osMock.tmpdir.mockReturnValue('/tmp');
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234567890);
-    const dir = getTempDir('myprefix', '/workspace/project');
-    expect(dir).toBe(path.join('/workspace/project', 'myprefix', '1234567890'));
-    nowSpy.mockRestore();
-  });
-
   it('tryToFindFileRecursively finds a file in a parent folder', async () => {
     fsPromises.stat.mockImplementation((p: string) => {
       if (p === path.join('/a', 'target.txt')) {
