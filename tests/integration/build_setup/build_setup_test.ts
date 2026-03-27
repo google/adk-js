@@ -56,6 +56,7 @@ describe('Build setup', () => {
     'ts_commonjs',
     'ts_esm',
     'ts_commonjs_native_addon',
+    'ts_esm_native_addon',
   ])('%s', (buildSetup: string) => {
     const projectPath = `${dirname}/tests/integration/build_setup/${buildSetup}`;
 
