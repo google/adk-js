@@ -34,7 +34,7 @@ describe('RoutedAgent Integration', () => {
 
     const router: AgentRouter = async (
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       ctx: InvocationContext,
     ) => {
@@ -78,7 +78,7 @@ describe('RoutedAgent Integration', () => {
 
     const router = async (
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       ctx: InvocationContext,
     ) => {

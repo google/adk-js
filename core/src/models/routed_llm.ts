@@ -13,7 +13,7 @@ import {LlmResponse} from './llm_response.js';
  * Type definition for a function that selects a model based on the request.
  */
 export type LlmRouter = (
-  models: ReadonlyMap<string, BaseLlm>,
+  models: Readonly<Record<string, BaseLlm>>,
   request: LlmRequest,
   errorContext?: {failedKeys: ReadonlySet<string>; lastError: unknown},
 ) => Promise<string | undefined> | string | undefined;
@@ -22,7 +22,7 @@ export type LlmRouter = (
  * A BaseLlm implementation that delegates to one of multiple models based on a router function.
  */
 export class RoutedLlm extends BaseLlm {
-  private readonly models: Map<string, BaseLlm>;
+  private readonly models: Readonly<Record<string, BaseLlm>>;
   private readonly router: LlmRouter;
 
   constructor({
@@ -30,16 +30,14 @@ export class RoutedLlm extends BaseLlm {
     router,
     modelName = 'routed-llm',
   }: {
-    models: Map<string, BaseLlm> | BaseLlm[];
+    models: Readonly<Record<string, BaseLlm>> | BaseLlm[];
     router: LlmRouter;
     modelName?: string;
   }) {
     super({model: modelName});
-    if (Array.isArray(models)) {
-      this.models = new Map(models.map((m) => [m.model, m]));
-    } else {
-      this.models = models;
-    }
+    this.models = Array.isArray(models)
+      ? Object.fromEntries(models.map((m) => [m.model, m]))
+      : models;
     this.router = router;
   }
 
@@ -56,7 +54,7 @@ export class RoutedLlm extends BaseLlm {
     }
 
     let selectedKey = initialKey;
-    let selectedModel = this.models.get(selectedKey);
+    let selectedModel = this.models[selectedKey];
     if (!selectedModel) {
       throw new Error(`Model not found for key: ${selectedKey}`);
     }
@@ -91,7 +89,7 @@ export class RoutedLlm extends BaseLlm {
           }
 
           selectedKey = nextKey;
-          selectedModel = this.models.get(selectedKey);
+          selectedModel = this.models[selectedKey];
           if (!selectedModel) {
             throw new Error(`Model not found for key: ${selectedKey}`);
           }
@@ -115,7 +113,7 @@ export class RoutedLlm extends BaseLlm {
     }
 
     let selectedKey = initialKey;
-    let selectedModel = this.models.get(selectedKey);
+    let selectedModel = this.models[selectedKey];
     if (!selectedModel) {
       throw new Error(`Model not found for key: ${selectedKey}`);
     }
@@ -140,7 +138,7 @@ export class RoutedLlm extends BaseLlm {
         }
 
         selectedKey = nextKey;
-        selectedModel = this.models.get(selectedKey);
+        selectedModel = this.models[selectedKey];
         if (!selectedModel) {
           throw new Error(`Model not found for key: ${selectedKey}`);
         }

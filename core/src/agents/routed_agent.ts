@@ -32,7 +32,7 @@ export function isRoutedAgent(obj: unknown): obj is RoutedAgent {
  * Type definition for a function that selects an agent based on the invocation context.
  */
 export type AgentRouter = (
-  agents: ReadonlyMap<string, BaseAgent>,
+  agents: Readonly<Record<string, BaseAgent>>,
   context: InvocationContext,
   errorContext?: {failedKeys: ReadonlySet<string>; lastError: unknown},
 ) => Promise<string | undefined> | string | undefined;
@@ -42,10 +42,10 @@ export type AgentRouter = (
  */
 export interface RoutedAgentConfig extends BaseAgentConfig {
   /**
-   * The set of agents to route to. Can be an array of agents or a Map of keys to agents.
+   * The set of agents to route to. Can be an array of agents or a Record of keys to agents.
    * If an array is provided, the agent names will be used as keys.
    */
-  agents: Map<string, BaseAgent> | BaseAgent[];
+  agents: Readonly<Record<string, BaseAgent>> | BaseAgent[];
 
   /**
    * The function to select which agent to run.
@@ -60,13 +60,13 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
 export class RoutedAgent extends BaseAgent {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 
-  private readonly agentsMap: Map<string, BaseAgent>;
+  private readonly agents: Readonly<Record<string, BaseAgent>>;
   private readonly router: AgentRouter;
 
   constructor(config: RoutedAgentConfig) {
     const agentsArray = Array.isArray(config.agents)
       ? config.agents
-      : Array.from(config.agents.values());
+      : Object.values(config.agents);
 
     // We pass the agents to super as subAgents to maintain the tree structure (parent tracking),
     // but our routing logic strictly uses the internal map.
@@ -76,9 +76,9 @@ export class RoutedAgent extends BaseAgent {
     });
 
     if (Array.isArray(config.agents)) {
-      this.agentsMap = new Map(config.agents.map((a) => [a.name, a]));
+      this.agents = Object.fromEntries(config.agents.map((a) => [a.name, a]));
     } else {
-      this.agentsMap = config.agents;
+      this.agents = config.agents;
     }
     this.router = config.router;
   }
@@ -89,13 +89,13 @@ export class RoutedAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const initialKey = await this.router(this.agentsMap, context);
+    const initialKey = await this.router(this.agents, context);
     if (!initialKey) {
       throw new Error('Initial routing failed, no agent selected.');
     }
 
     let selectedKey = initialKey;
-    let selectedModel = this.agentsMap.get(selectedKey);
+    let selectedModel = this.agents[selectedKey];
     if (!selectedModel) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
     }
@@ -116,7 +116,7 @@ export class RoutedAgent extends BaseAgent {
         break; // Success!
       } catch (error) {
         if (!firstYielded) {
-          const nextKey = await this.router(this.agentsMap, context, {
+          const nextKey = await this.router(this.agents, context, {
             failedKeys: triedKeys,
             lastError: error,
           });
@@ -130,7 +130,7 @@ export class RoutedAgent extends BaseAgent {
           }
 
           selectedKey = nextKey;
-          selectedModel = this.agentsMap.get(selectedKey);
+          selectedModel = this.agents[selectedKey];
           if (!selectedModel) {
             throw new Error(`Agent not found for key: ${selectedKey}`);
           }
@@ -148,13 +148,13 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const initialKey = await this.router(this.agentsMap, context);
+    const initialKey = await this.router(this.agents, context);
     if (!initialKey) {
       throw new Error('Initial routing failed, no agent selected.');
     }
 
     let selectedKey = initialKey;
-    let selectedModel = this.agentsMap.get(selectedKey);
+    let selectedModel = this.agents[selectedKey];
     if (!selectedModel) {
       throw new Error(`Agent not found for key: ${selectedKey}`);
     }
@@ -175,7 +175,7 @@ export class RoutedAgent extends BaseAgent {
         break; // Success!
       } catch (error) {
         if (!firstYielded) {
-          const nextKey = await this.router(this.agentsMap, context, {
+          const nextKey = await this.router(this.agents, context, {
             failedKeys: triedKeys,
             lastError: error,
           });
@@ -189,7 +189,7 @@ export class RoutedAgent extends BaseAgent {
           }
 
           selectedKey = nextKey;
-          selectedModel = this.agentsMap.get(selectedKey);
+          selectedModel = this.agents[selectedKey];
           if (!selectedModel) {
             throw new Error(`Agent not found for key: ${selectedKey}`);
           }

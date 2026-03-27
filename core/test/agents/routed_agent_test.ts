@@ -79,10 +79,11 @@ describe('RoutedAgent', () => {
   });
 
   it('should route runAsync to the selected agent A', async () => {
-    let routerCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
+    let routerCalledWithAgents: Readonly<Record<string, BaseAgent>> | null =
+      null;
     let routerCalledWithContext: InvocationContext | null = null;
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
     ) => {
       routerCalledWithAgents = agents;
@@ -108,7 +109,7 @@ describe('RoutedAgent', () => {
 
   it('should route runAsync to the selected agent B', async () => {
     const router = async (
-      _agents: ReadonlyMap<string, BaseAgent>,
+      _agents: Readonly<Record<string, BaseAgent>>,
       _ctx: InvocationContext,
     ) => 'agent-b';
 
@@ -123,7 +124,7 @@ describe('RoutedAgent', () => {
 
   it('should throw error if selected agent is not found', async () => {
     const router = async (
-      _agents: ReadonlyMap<string, BaseAgent>,
+      _agents: Readonly<Record<string, BaseAgent>>,
       _ctx: InvocationContext,
     ) => 'unknown-agent';
 
@@ -139,7 +140,7 @@ describe('RoutedAgent', () => {
 
   it('should maintain subAgents tree in super', () => {
     const router = async (
-      _agents: ReadonlyMap<string, BaseAgent>,
+      _agents: Readonly<Record<string, BaseAgent>>,
       _ctx: InvocationContext,
     ) => 'agent-a';
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
@@ -176,7 +177,7 @@ describe('RoutedAgent', () => {
 
     let routerCalls = 0;
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -229,7 +230,7 @@ describe('RoutedAgent', () => {
 
     let routerCalls = 0;
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -278,7 +279,7 @@ describe('RoutedAgent', () => {
     const testAgents = [failingAgent];
 
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -376,10 +377,11 @@ describe('RoutedAgent', () => {
   });
 
   it('should route runLive to the selected agent A', async () => {
-    let routerCalledWithAgents: ReadonlyMap<string, BaseAgent> | null = null;
+    let routerCalledWithAgents: Readonly<Record<string, BaseAgent>> | null =
+      null;
     let routerCalledWithContext: InvocationContext | null = null;
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
     ) => {
       routerCalledWithAgents = agents;
@@ -425,7 +427,7 @@ describe('RoutedAgent', () => {
 
     let routerCalls = 0;
     const router = async (
-      agents: ReadonlyMap<string, BaseAgent>,
+      agents: Readonly<Record<string, BaseAgent>>,
       ctx: InvocationContext,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {

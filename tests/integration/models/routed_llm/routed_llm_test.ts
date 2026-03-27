@@ -20,10 +20,10 @@ describe('RoutedLlm Integration', () => {
     const modelB = new GeminiWithMockResponses([]);
 
     const routedLlm = new RoutedLlm({
-      models: new Map([
-        ['model-a', modelA],
-        ['model-b', modelB],
-      ]),
+      models: {
+        'model-a': modelA,
+        'model-b': modelB,
+      },
       router: async () => 'model-a',
     });
 
@@ -56,10 +56,10 @@ describe('RoutedLlm Integration', () => {
     ]);
 
     const routedLlm = new RoutedLlm({
-      models: new Map([
-        ['model-a', modelA],
-        ['model-b', modelB],
-      ]),
+      models: {
+        'model-a': modelA,
+        'model-b': modelB,
+      },
       router: async () => 'model-b',
     });
 
@@ -85,7 +85,7 @@ describe('RoutedLlm Integration', () => {
     const flakyModel = new GeminiWithMockResponses([]);
 
     const routedLlm = new RoutedLlm({
-      models: new Map([['flaky', flakyModel]]),
+      models: {flaky: flakyModel},
       router: async () => 'flaky',
     });
 

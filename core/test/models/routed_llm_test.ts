@@ -44,10 +44,10 @@ describe('RoutedLlm', () => {
   const models = [modelA, modelB];
 
   it('should route generateContentAsync to the selected model A', async () => {
-    let routerCalledWithModels: ReadonlyMap<string, BaseLlm> | null = null;
+    let routerCalledWithModels: Readonly<Record<string, BaseLlm>> | null = null;
     let routerCalledWithRequest: LlmRequest | null = null;
     const router = async (
-      models: ReadonlyMap<string, BaseLlm>,
+      models: Readonly<Record<string, BaseLlm>>,
       req: LlmRequest,
     ) => {
       routerCalledWithModels = models;
@@ -74,7 +74,7 @@ describe('RoutedLlm', () => {
 
   it('should route generateContentAsync to the selected model B', async () => {
     const router = async (
-      _models: ReadonlyMap<string, BaseLlm>,
+      _models: Readonly<Record<string, BaseLlm>>,
       _req: LlmRequest,
     ) => 'model-b';
 
@@ -95,7 +95,7 @@ describe('RoutedLlm', () => {
 
   it('should throw error if selected model is not found', async () => {
     const router = async (
-      _models: ReadonlyMap<string, BaseLlm>,
+      _models: Readonly<Record<string, BaseLlm>>,
       _req: LlmRequest,
     ) => 'unknown-model';
 
@@ -116,7 +116,7 @@ describe('RoutedLlm', () => {
   it('should route connect to the selected model', async () => {
     let routerCalled = false;
     const router = async (
-      _models: ReadonlyMap<string, BaseLlm>,
+      _models: Readonly<Record<string, BaseLlm>>,
       _req: LlmRequest,
     ) => {
       routerCalled = true;
@@ -160,7 +160,7 @@ describe('RoutedLlm', () => {
 
     let routerCalls = 0;
     const router = async (
-      models: ReadonlyMap<string, BaseLlm>,
+      models: Readonly<Record<string, BaseLlm>>,
       req: LlmRequest,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -216,7 +216,7 @@ describe('RoutedLlm', () => {
 
     let routerCalls = 0;
     const router = async (
-      models: ReadonlyMap<string, BaseLlm>,
+      models: Readonly<Record<string, BaseLlm>>,
       req: LlmRequest,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -267,7 +267,7 @@ describe('RoutedLlm', () => {
 
     let routerCalls = 0;
     const router = async (
-      models: ReadonlyMap<string, BaseLlm>,
+      models: Readonly<Record<string, BaseLlm>>,
       req: LlmRequest,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
@@ -311,7 +311,7 @@ describe('RoutedLlm', () => {
     const testModels = [failingModel];
 
     const router = async (
-      models: ReadonlyMap<string, BaseLlm>,
+      models: Readonly<Record<string, BaseLlm>>,
       req: LlmRequest,
       context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
