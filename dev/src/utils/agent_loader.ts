@@ -78,6 +78,7 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  */
 export class AgentFile {
   private cleanupFilePath: string | undefined;
+  private cleanupDirPath: string | undefined;
   private disposed = false;
   private agent?: BaseAgent;
 
@@ -108,10 +109,12 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
+      const outputDir = getTempDir('adk_agent_loader', parsedPath.dir);
       const compiledFilePath = path.join(
-        getTempDir('adk_agent_loader'),
+        outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
+      await fsPromises.mkdir(outputDir, {recursive: true});
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -130,6 +133,9 @@ export class AgentFile {
           'better-sqlite3',
           'mysql',
           'mysql2',
+          // Native addons must remain external so Node can resolve their
+          // platform-specific assets at runtime.
+          'onnxruntime-node',
           'oracledb',
           'pg-native',
           'pg-query-stream',
@@ -138,6 +144,7 @@ export class AgentFile {
         ],
       });
 
+      this.cleanupDirPath = outputDir;
       this.cleanupFilePath = compiledFilePath;
       filePath = compiledFilePath;
     }
@@ -201,7 +208,13 @@ export class AgentFile {
 
     if (this.cleanupFilePath) {
       this.disposed = true;
-      return fsPromises.unlink(this.cleanupFilePath);
+      await fsPromises.unlink(this.cleanupFilePath);
+      if (this.cleanupDirPath) {
+        await fsPromises.rm(this.cleanupDirPath, {
+          recursive: true,
+          force: true,
+        });
+      }
     }
   }
 }

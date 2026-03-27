@@ -103,8 +103,8 @@ export async function saveToFile<T>(filePath: string, data: T): Promise<void> {
  * @param prefix Optional prefix for the temp directory
  * @returns
  */
-export function getTempDir(prefix?: string): string {
-  const pathParts = [os.tmpdir()];
+export function getTempDir(prefix?: string, baseDir = os.tmpdir()): string {
+  const pathParts = [baseDir];
 
   if (prefix) {
     pathParts.push(prefix);

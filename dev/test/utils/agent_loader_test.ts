@@ -172,6 +172,7 @@ describe('AgentLoader', () => {
         bundle: true,
         minify: true,
         allowOverwrite: true,
+        external: expect.arrayContaining(['onnxruntime-node']),
       });
 
       await agentFile.dispose();
