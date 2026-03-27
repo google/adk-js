@@ -8,3 +8,4 @@ node_modules/
 tests/**/package-lock.json
 coverage/
 .env
+go.sum

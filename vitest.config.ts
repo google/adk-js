@@ -42,6 +42,14 @@ export default defineConfig({
           include: ['tests/e2e/**/*_test.ts'],
         },
       },
+      {
+        test: {
+          name: 'cross-language',
+          environment: 'node',
+          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+          include: ['tests/cross_language/**/*_test.ts'],
+        },
+      },
     ],
     coverage: {
       provider: 'v8',

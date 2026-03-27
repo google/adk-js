@@ -8,15 +8,15 @@ import {Event as AdkEvent, InMemoryRunner, RemoteA2AAgent} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import * as path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
+import {AdkTsApiServer} from '../../test_api_server.js';
 
 const TEST_TIMEOUT = 30000;
 
 describe('A2A: RemoteAgent Streaming', () => {
-  let server: TestAdkApiServer;
+  let server: AdkTsApiServer;
 
   beforeAll(async () => {
-    server = createTestApiServer({
+    server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'test_agents'),
       a2a: true,
       startFailureTimeout: TEST_TIMEOUT,

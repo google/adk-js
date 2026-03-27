@@ -7,16 +7,16 @@
 import {Event, RemoteA2AAgent} from '@google/adk';
 import * as path from 'node:path';
 import {afterAll, beforeAll, describe, it} from 'vitest';
-import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
+import {AdkTsApiServer} from '../../test_api_server.js';
 import {runTestCase} from '../../test_case_utils.js';
 import turn1ExpectedEvents from './events_turn_1.json' with {type: 'json'};
 import turn2ExpectedEvents from './events_turn_2.json' with {type: 'json'};
 
 describe('A2A: Remote Agent Basic', () => {
-  let server: TestAdkApiServer;
+  let server: AdkTsApiServer;
 
   beforeAll(async () => {
-    server = createTestApiServer({
+    server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'remote_a2a/'),
       a2a: true,
     });
