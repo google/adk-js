@@ -6,6 +6,7 @@
 
 import {LiveRequest, LiveRequestQueue} from '@google/adk';
 import {createUserContent} from '@google/genai';
+import {describe, expect, it} from 'vitest';
 
 describe('LiveRequestQueue', () => {
   it('should handle sendContent', async () => {

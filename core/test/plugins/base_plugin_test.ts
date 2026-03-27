@@ -16,6 +16,7 @@ import {
   LlmResponse,
 } from '@google/adk';
 import {Content} from '@google/genai';
+import {describe, expect, it} from 'vitest';
 
 class TestablePlugin extends BasePlugin {
   constructor(name = 'testable_plugin') {
