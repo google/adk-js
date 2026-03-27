@@ -77,6 +77,7 @@ describe('toGeminiSchema', () => {
     // Should resolve to STRING
     expect(schema).toEqual({
       type: Type.STRING,
+      nullable: true,
     });
   });
 
@@ -89,6 +90,7 @@ describe('toGeminiSchema', () => {
 
     expect(schema).toEqual({
       type: Type.STRING,
+      nullable: true,
     });
   });
 
@@ -138,6 +140,7 @@ describe('toGeminiSchema', () => {
           properties: {
             created: {type: Type.STRING},
           },
+          nullable: true,
         },
       },
     });
@@ -167,6 +170,7 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.STRING,
       description: 'an optional string',
+      nullable: true,
     });
   });
 
@@ -193,6 +197,7 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.BOOLEAN,
       description: undefined,
+      nullable: true,
     });
   });
 
@@ -206,6 +211,7 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.BOOLEAN,
       description: undefined,
+      nullable: true,
     });
   });
 

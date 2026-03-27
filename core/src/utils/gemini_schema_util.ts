@@ -92,6 +92,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       description: mcp.description,
     };
 
+    if (isNullable && mcp.type !== 'null') {
+      geminiSchema.nullable = true;
+    }
+
     if (geminiType === Type.OBJECT) {
       geminiSchema.properties = {};
       if (mcp.properties) {
