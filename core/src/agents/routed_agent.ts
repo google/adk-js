@@ -8,6 +8,8 @@ import {Event} from '../events/event.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
+import {runWithSelectionAndFailoverGenerator} from '../utils/failover_utils.js';
+
 /**
  * A unique symbol to identify ADK agent classes.
  * Defined once and shared by all RoutedAgent instances.
@@ -84,72 +86,17 @@ export class RoutedAgent extends BaseAgent {
   }
 
   /**
-   * Common implementation for running a selected agent with failover support.
-   */
-  private async *runCommonImpl(
-    context: InvocationContext,
-    runFn: (agent: BaseAgent) => AsyncGenerator<Event, void, void>,
-  ): AsyncGenerator<Event, void, void> {
-    const initialKey = await this.router(this.agents, context);
-    if (!initialKey) {
-      throw new Error('Initial routing failed, no agent selected.');
-    }
-
-    let selectedKey = initialKey;
-    let selectedAgent = this.agents[selectedKey];
-    if (!selectedAgent) {
-      throw new Error(`Agent not found for key: ${selectedKey}`);
-    }
-
-    const triedKeys = new Set<string>([selectedKey]);
-
-    while (true) {
-      const iterator = runFn(selectedAgent);
-      let firstYielded = false;
-
-      try {
-        while (true) {
-          const result = await iterator.next();
-          if (result.done) break;
-          yield result.value;
-          firstYielded = true;
-        }
-        break; // Success!
-      } catch (error) {
-        if (!firstYielded) {
-          const nextKey = await this.router(this.agents, context, {
-            failedKeys: triedKeys,
-            lastError: error,
-          });
-
-          if (!nextKey) {
-            throw error; // Router decided to bail out
-          }
-
-          if (triedKeys.has(nextKey)) {
-            throw error; // Give up to avoid infinite loop
-          }
-
-          selectedKey = nextKey;
-          selectedAgent = this.agents[selectedKey];
-          if (!selectedAgent) {
-            throw new Error(`Agent not found for key: ${selectedKey}`);
-          }
-          triedKeys.add(selectedKey);
-        } else {
-          throw error; // Re-throw if data was already yielded
-        }
-      }
-    }
-  }
-
-  /**
    * Runs the selected agent via text-based conversation.
    */
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* this.runCommonImpl(context, (agent) => agent.runAsync(context));
+    yield* runWithSelectionAndFailoverGenerator(
+      this.agents,
+      context,
+      this.router,
+      (agent) => agent.runAsync(context),
+    );
   }
 
   /**
@@ -158,6 +105,11 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* this.runCommonImpl(context, (agent) => agent.runLive(context));
+    yield* runWithSelectionAndFailoverGenerator(
+      this.agents,
+      context,
+      this.router,
+      (agent) => agent.runLive(context),
+    );
   }
 }

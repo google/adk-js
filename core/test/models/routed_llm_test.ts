@@ -109,7 +109,7 @@ describe('RoutedLlm', () => {
     const generator = routedLlm.generateContentAsync(request);
 
     await expect(generator.next()).rejects.toThrow(
-      'Model not found for key: unknown-model',
+      'Item not found for key: unknown-model',
     );
   });
 
@@ -343,7 +343,7 @@ describe('RoutedLlm', () => {
 
     const generator = routedLlm.generateContentAsync(request);
     await expect(generator.next()).rejects.toThrow(
-      'Initial routing failed, no model selected.',
+      'Initial routing failed, no item selected.',
     );
   });
 
@@ -357,7 +357,7 @@ describe('RoutedLlm', () => {
     };
 
     await expect(routedLlm.connect(request)).rejects.toThrow(
-      'Initial routing failed, no model selected.',
+      'Initial routing failed, no item selected.',
     );
   });
 

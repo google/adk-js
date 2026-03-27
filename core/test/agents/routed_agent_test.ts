@@ -134,7 +134,7 @@ describe('RoutedAgent', () => {
     const generator = routedAgent['runAsyncImpl'](context);
 
     await expect(generator.next()).rejects.toThrow(
-      'Agent not found for key: unknown-agent',
+      'Item not found for key: unknown-agent',
     );
   });
 

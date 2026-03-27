@@ -9,6 +9,11 @@ import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
+import {
+  runWithSelectionAndFailoverGenerator,
+  runWithSelectionAndFailoverPromise,
+} from '../utils/failover_utils.js';
+
 /**
  * Type definition for a function that selects a model based on the request.
  */
@@ -48,57 +53,12 @@ export class RoutedLlm extends BaseLlm {
     llmRequest: LlmRequest,
     stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
-    const initialKey = await this.router(this.models, llmRequest);
-    if (!initialKey) {
-      throw new Error('Initial routing failed, no model selected.');
-    }
-
-    let selectedKey = initialKey;
-    let selectedModel = this.models[selectedKey];
-    if (!selectedModel) {
-      throw new Error(`Model not found for key: ${selectedKey}`);
-    }
-
-    const triedKeys = new Set<string>([selectedKey]);
-
-    while (true) {
-      const iterator = selectedModel.generateContentAsync(llmRequest, stream);
-      let firstYielded = false;
-
-      try {
-        while (true) {
-          const result = await iterator.next();
-          if (result.done) break;
-          yield result.value;
-          firstYielded = true;
-        }
-        break; // Success!
-      } catch (error) {
-        if (!firstYielded) {
-          const nextKey = await this.router(this.models, llmRequest, {
-            failedKeys: triedKeys,
-            lastError: error,
-          });
-
-          if (!nextKey) {
-            throw error; // Router decided to bail out
-          }
-
-          if (triedKeys.has(nextKey)) {
-            throw error; // Give up to avoid infinite loop
-          }
-
-          selectedKey = nextKey;
-          selectedModel = this.models[selectedKey];
-          if (!selectedModel) {
-            throw new Error(`Model not found for key: ${selectedKey}`);
-          }
-          triedKeys.add(selectedKey);
-        } else {
-          throw error; // Re-throw if data was already yielded
-        }
-      }
-    }
+    yield* runWithSelectionAndFailoverGenerator(
+      this.models,
+      llmRequest,
+      this.router,
+      (model) => model.generateContentAsync(llmRequest, stream),
+    );
   }
 
   /**
@@ -107,43 +67,11 @@ export class RoutedLlm extends BaseLlm {
    * selected at the time of connection.
    */
   async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    const initialKey = await this.router(this.models, llmRequest);
-    if (!initialKey) {
-      throw new Error('Initial routing failed, no model selected.');
-    }
-
-    let selectedKey = initialKey;
-    let selectedModel = this.models[selectedKey];
-    if (!selectedModel) {
-      throw new Error(`Model not found for key: ${selectedKey}`);
-    }
-
-    const triedKeys = new Set<string>([selectedKey]);
-
-    while (true) {
-      try {
-        return await selectedModel.connect(llmRequest);
-      } catch (error) {
-        const nextKey = await this.router(this.models, llmRequest, {
-          failedKeys: triedKeys,
-          lastError: error,
-        });
-
-        if (!nextKey) {
-          throw error; // Router decided to bail out
-        }
-
-        if (triedKeys.has(nextKey)) {
-          throw error; // Give up to avoid infinite loop
-        }
-
-        selectedKey = nextKey;
-        selectedModel = this.models[selectedKey];
-        if (!selectedModel) {
-          throw new Error(`Model not found for key: ${selectedKey}`);
-        }
-        triedKeys.add(selectedKey);
-      }
-    }
+    return runWithSelectionAndFailoverPromise(
+      this.models,
+      llmRequest,
+      this.router,
+      (model) => model.connect(llmRequest),
+    );
   }
 }
