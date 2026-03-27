@@ -7,7 +7,7 @@
 import {Event as AdkEvent, InMemoryRunner, RemoteA2AAgent} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import * as path from 'node:path';
-import {describe, expect, it} from 'vitest';
+import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {createTestApiServer, TestAdkApiServer} from '../../test_api_server.js';
 
 const TEST_TIMEOUT = 30000;

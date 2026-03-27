@@ -12,6 +12,7 @@ import {
   isBaseLlm,
   version,
 } from '@google/adk';
+import {describe, expect, it} from 'vitest';
 
 class TestLlm extends BaseLlm {
   constructor() {

@@ -24,10 +24,11 @@
     "docs:generate": "typedoc",
     "docs:serve": "http-server api-reference/typescript",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
-    "test": "vitest",
+    "test": "vitest --project unit:core --project unit:dev --project integration --project e2e",
+    "test:unit": "vitest --project unit:core --project unit:dev",
+    "test:integration": "vitest --project integration",
+    "test:e2e": "vitest --project e2e",
     "test:coverage": "vitest run --coverage",
-    "test:unit": "vitest core/** dev/**",
-    "test:integration": "vitest tests/integration/**",
     "prepare": "husky"
   },
   "workspaces": [

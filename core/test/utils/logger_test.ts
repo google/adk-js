@@ -5,7 +5,7 @@
  */
 
 import {getLogger, Logger, LogLevel, setLogger, setLogLevel} from '@google/adk';
-
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {resetLogger} from '../../src/utils/logger.js';
 
 describe('setLogger', () => {
