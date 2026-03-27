@@ -69,9 +69,17 @@ export type {
   ServiceAccount,
   ServiceAccountCredential,
 } from './auth/auth_credential.js';
+export {AuthHandler} from './auth/auth_handler.js';
+export {AuthProviderRegistry} from './auth/auth_provider_registry.js';
+export {OAuthGrantType} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
+export type {BaseAuthProvider} from './auth/base_auth_provider.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
+export {InMemoryCredentialService} from './auth/credential_service/in_memory_credential_service.js';
+export {SessionStateCredentialService} from './auth/credential_service/session_state_credential_service.js';
+export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
+export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
 export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
