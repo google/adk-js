@@ -259,4 +259,91 @@ describe('toGeminiSchema', () => {
       items: {type: Type.TYPE_UNSPECIFIED},
     });
   });
+
+  it('handles TYPE_UNSPECIFIED when without type and without anyOf', () => {
+    const input = {
+      description: 'only description',
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.TYPE_UNSPECIFIED,
+      description: 'only description',
+    });
+  });
+
+  it('handles type array with multiple non-null types via anyOf', () => {
+    const input = {
+      type: ['string', 'integer', 'null'],
+      description: 'multi-type field',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      description: 'multi-type field',
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}, {type: Type.NULL}],
+    });
+  });
+
+  it('handles type array with multiple non-null types in reverse order via anyOf', () => {
+    const input = {
+      type: ['null', 'integer', 'string'],
+      description: 'multi-type field',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      description: 'multi-type field',
+      anyOf: [{type: Type.NULL}, {type: Type.INTEGER}, {type: Type.STRING}],
+    });
+  });
+
+  it('handles type array with multiple non-null types without null', () => {
+    const input = {
+      type: ['string', 'integer'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}],
+    });
+  });
+
+  it('handles anyOf with multiple non-null types and null', () => {
+    const input = {
+      anyOf: [{type: 'string'}, {type: 'integer'}, {type: 'null'}],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}, {type: Type.NULL}],
+    });
+  });
+
+  it('handles anyOf with multiple non-null object types', () => {
+    const input = {
+      anyOf: [
+        {type: 'object', properties: {a: {type: 'string'}}},
+        {type: 'string'},
+      ],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.OBJECT, properties: {a: {type: Type.STRING}}},
+        {type: Type.STRING},
+      ],
+    });
+  });
 });

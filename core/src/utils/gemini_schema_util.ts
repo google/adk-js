@@ -58,20 +58,30 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   function recursiveConvert(mcp: any): Schema {
     const sourceType = mcp.anyOf ?? mcp.type;
     let isNullable = false;
+    let nonNullTypes;
     if (Array.isArray(sourceType)) {
-      const nonNullType = sourceType.find(
+      nonNullTypes = sourceType.filter(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) !== 'null',
       );
       isNullable = sourceType.some(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) === 'null',
       );
-      if (nonNullType && typeof nonNullType === 'object') {
-        mcp = nonNullType;
-      } else {
-        mcp = {
-          ...mcp,
-          type: nonNullType,
-        };
+
+      if (nonNullTypes.length === 1) {
+        const nonNullType = nonNullTypes[0];
+        if (typeof nonNullType === 'object') {
+          mcp = nonNullType;
+        } else {
+          const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
+          mcp = {...rest, type: nonNullType};
+        }
+      } else if (nonNullTypes.length === 0 && isNullable) {
+        const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
+        mcp = {...rest, type: 'null'};
+      } else if (typeof mcp.anyOf === 'undefined') {
+        const anyOfItems = mcp.type.map((t: MCPTypeArrayItem) => ({type: t}));
+        const {type: _removed, ...rest} = mcp;
+        mcp = {...rest, anyOf: anyOfItems};
       }
     }
 
@@ -87,10 +97,19 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
     }
 
     const geminiType = toGeminiType(mcp.type);
-    const geminiSchema: Schema = {
-      type: geminiType,
-      description: mcp.description,
-    };
+    const geminiSchema: Schema = {};
+
+    if (mcp.anyOf) {
+      geminiSchema.anyOf = mcp.anyOf.map((item: Record<string, unknown>) =>
+        recursiveConvert(item),
+      );
+    } else {
+      geminiSchema.type = geminiType;
+    }
+
+    if (mcp.description) {
+      geminiSchema.description = mcp.description;
+    }
 
     if (isNullable && mcp.type !== 'null') {
       geminiSchema.nullable = true;
@@ -105,7 +124,9 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
           );
         }
       }
-      geminiSchema.required = mcp.required;
+      if (mcp.required) {
+        geminiSchema.required = mcp.required;
+      }
     } else if (geminiType === Type.ARRAY) {
       if (mcp.items) {
         geminiSchema.items = recursiveConvert(mcp.items);
