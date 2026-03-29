@@ -42,7 +42,7 @@
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
     "@google/genai": "^1.37.0",
-    "@mikro-orm/core": "^6.6.6",
+    "@mikro-orm/core": "^6.6.10",
     "@mikro-orm/reflection": "^6.6.6",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "express": "^4.22.1",
