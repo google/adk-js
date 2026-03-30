@@ -5,7 +5,7 @@
  */
 
 import {Type} from '@google/genai';
-
+import {describe, expect, it} from 'vitest';
 import {toGeminiSchema} from '../../src/utils/gemini_schema_util.js';
 
 interface MCPToolSchema {

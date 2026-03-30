@@ -18,6 +18,7 @@ import {
   GenerateContentResponse,
   GoogleGenAI,
 } from '@google/genai';
+import {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {expect} from 'vitest';
 
 /**
@@ -218,6 +219,95 @@ export async function runTestCase(testCase: TestCase) {
       expect(event).toMatchObject(expectedEvent);
 
       eventIndex++;
+    }
+  }
+}
+
+/**
+ * Base class for test servers.
+ */
+export abstract class BaseTestServer {
+  host: string;
+  port: number;
+  url: string;
+  protected serverProcess?: ChildProcessWithoutNullStreams;
+
+  constructor(host: string, port?: number) {
+    this.host = host;
+    this.port = port || BaseTestServer.getRandomPort();
+    this.url = `http://${this.host}:${this.port}`;
+  }
+
+  static getRandomPort(): number {
+    return 40000 + Math.floor(Math.random() * 10000);
+  }
+
+  protected async startProcess({
+    spawnProcess,
+    startMessage,
+    successLogMessage,
+    serverName,
+    timeoutMs,
+  }: {
+    spawnProcess: () => ChildProcessWithoutNullStreams;
+    startMessage: string;
+    successLogMessage: string;
+    serverName: string;
+    timeoutMs: number;
+  }): Promise<void> {
+    this.serverProcess = spawnProcess();
+
+    await new Promise<void>((resolve, reject) => {
+      let started = false;
+      this.serverProcess!.stdout.on('data', (data) => {
+        const message = data.toString();
+        if (message.includes(startMessage)) {
+          started = true;
+          console.log(successLogMessage);
+          resolve();
+        }
+      });
+
+      this.serverProcess!.stderr.on('data', (data) => {
+        console.error(`${serverName} Stderr: ${data.toString()}`);
+      });
+
+      this.serverProcess!.on('error', (error) => {
+        console.error(`${serverName} Error: ${error.message}`);
+
+        reject(
+          new Error(
+            `Failed to start ${serverName.toLowerCase()}: ${error.message}`,
+          ),
+        );
+      });
+
+      this.serverProcess!.on('exit', (code) => {
+        console.error(`${serverName} exited with code ${code}`);
+
+        if (!started) {
+          reject(
+            new Error(`${serverName} exited prematurely with code ${code}`),
+          );
+        }
+      });
+
+      setTimeout(() => {
+        if (!started) {
+          reject(
+            new Error(
+              `Timeout waiting for ${serverName.toLowerCase()} to start.`,
+            ),
+          );
+        }
+      }, timeoutMs);
+    });
+  }
+
+  async stop(): Promise<void> {
+    if (this.serverProcess) {
+      this.serverProcess.kill('SIGINT');
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 }

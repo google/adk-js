@@ -8,6 +8,7 @@ import {OTelHooks, maybeSetOtelProviders} from '@google/adk';
 import {metrics, trace} from '@opentelemetry/api';
 import {logs} from '@opentelemetry/api-logs';
 import {MetricReader} from '@opentelemetry/sdk-metrics';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.hoisted(() => {
   vi.resetModules();

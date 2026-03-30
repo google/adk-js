@@ -5,6 +5,7 @@
  */
 
 import {createEvent} from '@google/adk';
+import {describe, expect, it} from 'vitest';
 import {getContents} from '../../../src/agents/processors/content_processor_utils.js';
 
 describe('getContents', () => {

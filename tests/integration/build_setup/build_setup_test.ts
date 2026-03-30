@@ -50,58 +50,62 @@ function getResponse(
 }
 
 describe('Build setup', () => {
-  describe.each(['js_commonjs', 'js_esm', 'ts_commonjs', 'ts_esm'])(
-    '%s',
-    (buildSetup: string) => {
-      const projectPath = `${dirname}/tests/integration/build_setup/${buildSetup}`;
+  describe.each([
+    'js_commonjs',
+    'js_esm',
+    'ts_commonjs',
+    'ts_esm',
+    'ts_commonjs_native_addon',
+    'ts_esm_native_addon',
+  ])('%s', (buildSetup: string) => {
+    const projectPath = `${dirname}/tests/integration/build_setup/${buildSetup}`;
 
-      it(
-        'should build and run agent successfully',
-        async () => {
-          await execAsync('npm install', {cwd: projectPath});
-
-          if (buildSetup.startsWith('ts_')) {
-            let buildResult;
-            try {
-              buildResult = await execAsync('npm run build', {
-                cwd: projectPath,
-              });
-            } catch (error: unknown) {
-              console.error(`Build failed for ${buildSetup}:`);
-              console.error(`stdout:\n${(error as {stdout: string}).stdout}`);
-              console.error(`stderr:\n${(error as {stderr: string}).stderr}`);
-              throw error;
-            }
-            expect(buildResult.stderr).toBe('');
-            expect(buildResult.stdout).toContain('\nBuild complete');
-          }
-
-          const childProcess = spawn('npm', ['run', 'start'], {
-            cwd: projectPath,
-            shell: true,
-          });
-
-          let response = await sendInput(childProcess, 'Tell me a joke.\n');
-          expect(response.toString()).toContain('test-llm-model-response');
-
-          response = await sendInput(childProcess, 'exit\n');
-          expect(response.toString()).toContain('');
-        },
-        TEST_EXECUTION_TIMEOUT,
-      );
-
-      afterAll(async () => {
-        await fs
-          .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
-          .catch(() => {});
-        await fs.unlink(`${projectPath}/package-lock.json`).catch(() => {});
+    it(
+      'should build and run agent successfully',
+      async () => {
+        await execAsync('npm install', {cwd: projectPath});
 
         if (buildSetup.startsWith('ts_')) {
-          await fs
-            .rm(`${projectPath}/dist`, {recursive: true, force: true})
-            .catch(() => {});
+          let buildResult;
+          try {
+            buildResult = await execAsync('npm run build', {
+              cwd: projectPath,
+            });
+          } catch (error: unknown) {
+            console.error(`Build failed for ${buildSetup}:`);
+            console.error(`stdout:\n${(error as {stdout: string}).stdout}`);
+            console.error(`stderr:\n${(error as {stderr: string}).stderr}`);
+            throw error;
+          }
+          expect(buildResult.stderr).toBe('');
+          expect(buildResult.stdout).toContain('\nBuild complete');
         }
-      });
-    },
-  );
+
+        const childProcess = spawn('npm', ['run', 'start'], {
+          cwd: projectPath,
+          shell: true,
+        });
+
+        let response = await sendInput(childProcess, 'Tell me a joke.\n');
+        expect(response.toString()).toContain('test-llm-model-response');
+
+        response = await sendInput(childProcess, 'exit\n');
+        expect(response.toString()).toContain('');
+      },
+      TEST_EXECUTION_TIMEOUT,
+    );
+
+    afterAll(async () => {
+      await fs
+        .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
+        .catch(() => {});
+      await fs.unlink(`${projectPath}/package-lock.json`).catch(() => {});
+
+      if (buildSetup.startsWith('ts_')) {
+        await fs
+          .rm(`${projectPath}/dist`, {recursive: true, force: true})
+          .catch(() => {});
+      }
+    });
+  });
 });

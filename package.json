@@ -1,6 +1,6 @@
 {
   "name": "adk",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -24,10 +24,12 @@
     "docs:generate": "typedoc",
     "docs:serve": "http-server api-reference/typescript",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
-    "test": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "test:unit": "vitest core/** dev/**",
-    "test:integration": "vitest tests/integration/**",
+    "test": "vitest --project unit:core --project unit:dev --project integration --project e2e",
+    "test:unit": "vitest --project unit:core --project unit:dev",
+    "test:integration": "vitest --project integration",
+    "test:e2e": "vitest --project e2e",
+    "test:cross-language": "vitest --project cross-language",
+    "test:coverage": "vitest run --project unit:core --project unit:dev --project integration --project e2e --coverage",
     "prepare": "husky"
   },
   "workspaces": [

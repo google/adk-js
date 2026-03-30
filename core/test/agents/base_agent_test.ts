@@ -5,6 +5,7 @@
  */
 
 import {LlmAgent} from '@google/adk';
+import {describe, expect, it} from 'vitest';
 
 describe('BaseAgent', () => {
   describe('rootAgent', () => {

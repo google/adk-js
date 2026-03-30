@@ -209,6 +209,14 @@ export class A2ARemoteAgentRunProcessor {
     }
     if (response) {
       toAdd['response'] = response;
+
+      if (isTask(response)) {
+        if (response.id) toAdd['task_id'] = response.id;
+        if (response.contextId) toAdd['context_id'] = response.contextId;
+      } else if (response.taskId) {
+        toAdd['task_id'] = response.taskId;
+        if (response.contextId) toAdd['context_id'] = response.contextId;
+      }
     }
     if (Object.keys(toAdd).length === 0) {
       return;

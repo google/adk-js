@@ -13,7 +13,15 @@ import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
-import {getTempDir, isFile, isFileExists, loadFileData} from './file_utils.js';
+import {
+  getTempDir,
+  isFile,
+  isFileExists,
+  isFolderExists,
+  loadFileData,
+  removeFolder,
+  tryToFindFileRecursively,
+} from './file_utils.js';
 
 /**
  * Supported file extensions for JavaScript and TypeScript.
@@ -78,6 +86,7 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  */
 export class AgentFile {
   private cleanupFilePath: string | undefined;
+  private cleanupDirPath: string | undefined;
   private disposed = false;
   private agent?: BaseAgent;
 
@@ -108,10 +117,13 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
+      const outputDir = getTempDir('adk_agent_loader');
       const compiledFilePath = path.join(
-        getTempDir('adk_agent_loader'),
+        outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
+      await fsPromises.mkdir(outputDir, {recursive: true});
+      await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       await esbuild.build({
         entryPoints: [filePath],
@@ -130,6 +142,9 @@ export class AgentFile {
           'better-sqlite3',
           'mysql',
           'mysql2',
+          // Native addons must remain external so Node can resolve their
+          // platform-specific assets at runtime.
+          'onnxruntime-node',
           'oracledb',
           'pg-native',
           'pg-query-stream',
@@ -138,6 +153,7 @@ export class AgentFile {
         ],
       });
 
+      this.cleanupDirPath = outputDir;
       this.cleanupFilePath = compiledFilePath;
       filePath = compiledFilePath;
     }
@@ -201,7 +217,10 @@ export class AgentFile {
 
     if (this.cleanupFilePath) {
       this.disposed = true;
-      return fsPromises.unlink(this.cleanupFilePath);
+      await fsPromises.unlink(this.cleanupFilePath);
+      if (this.cleanupDirPath) {
+        await removeFolder(this.cleanupDirPath);
+      }
     }
   }
 }
@@ -394,4 +413,51 @@ async function getTypeFromPackageJson(dir: string): Promise<FileModuleType> {
   }
 
   return getTypeFromPackageJson(parentDir);
+}
+
+async function linkProjectNodeModules(
+  outputDir: string,
+  sourceDir: string,
+): Promise<void> {
+  const nodeModulesDir = await getProjectNodeModulesDir(sourceDir);
+  if (!nodeModulesDir) {
+    return;
+  }
+
+  const linkPath = path.join(outputDir, 'node_modules');
+  if (await isFolderExists(linkPath)) {
+    return;
+  }
+
+  try {
+    await fsPromises.symlink(
+      path.resolve(nodeModulesDir),
+      linkPath,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+  } catch (error) {
+    if ((error as {code?: string}).code !== 'EEXIST') {
+      throw error;
+    }
+  }
+}
+
+async function getProjectNodeModulesDir(
+  sourceDir: string,
+): Promise<string | undefined> {
+  try {
+    const packageJsonPath = await tryToFindFileRecursively(
+      sourceDir,
+      'package.json',
+      10,
+    );
+    const nodeModulesDir = path.join(
+      path.dirname(packageJsonPath),
+      'node_modules',
+    );
+
+    return (await isFolderExists(nodeModulesDir)) ? nodeModulesDir : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -5,6 +5,7 @@
  */
 
 import {AuthCredential, AuthCredentialTypes, AuthScheme} from '@google/adk';
+import {describe, expect, it} from 'vitest';
 import {BaseCredentialExchanger} from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credential_exchanger_registry.js';
 

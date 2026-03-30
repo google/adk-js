@@ -6,6 +6,7 @@
 
 import type {ExecuteCodeParams} from '@google/adk';
 import {BuiltInCodeExecutor, LlmRequest} from '@google/adk';
+import {beforeEach, describe, expect, it} from 'vitest';
 
 describe('BuiltInCodeExecutor', () => {
   let executor: BuiltInCodeExecutor;

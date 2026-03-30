@@ -66,9 +66,14 @@ export type AfterA2ARequestCallback = (
  */
 export interface RemoteA2AAgentConfig extends BaseAgentConfig {
   /**
-   * Loaded AgentCard or URL to AgentCard
+   * Loaded AgentCard or URL to AgentCard.
    */
-  agentCard: AgentCard | string;
+  agentCard?: AgentCard | string;
+
+  /**
+   * Optional pre-initialized Client for connection pooling.
+   */
+  client?: Client;
 
   /**
    * Optional ClientFactory for creating the A2A Client.
@@ -98,8 +103,8 @@ export class RemoteA2AAgent extends BaseAgent {
 
   constructor(private readonly a2aConfig: RemoteA2AAgentConfig) {
     super(a2aConfig);
-    if (!a2aConfig.agentCard) {
-      throw new Error('AgentCard must be provided');
+    if (!a2aConfig.agentCard && !a2aConfig.client) {
+      throw new Error('Either AgentCard or Client must be provided');
     }
   }
 
@@ -108,9 +113,18 @@ export class RemoteA2AAgent extends BaseAgent {
       return;
     }
 
-    this.card = await resolveAgentCard(this.a2aConfig.agentCard);
-    const factory = this.a2aConfig.clientFactory || new ClientFactory();
-    this.client = await factory.createFromAgentCard(this.card);
+    if (this.a2aConfig.client) {
+      this.client = this.a2aConfig.client;
+    }
+
+    if (this.a2aConfig.agentCard) {
+      this.card = await resolveAgentCard(this.a2aConfig.agentCard);
+
+      if (!this.client) {
+        const factory = this.a2aConfig.clientFactory || new ClientFactory();
+        this.client = await factory.createFromAgentCard(this.card);
+      }
+    }
 
     this.isInitialized = true;
   }
@@ -154,13 +168,11 @@ export class RemoteA2AAgent extends BaseAgent {
         messageId: randomUUID(),
         role: MessageRole.USER,
         parts,
-        metadata: {
-          ...getA2ASessionMetadata({
-            appName: context.session.appName,
-            userId: context.session.userId,
-            sessionId: context.session.id,
-          }),
-        },
+        metadata: getA2ASessionMetadata({
+          appName: context.session.appName,
+          userId: context.session.userId,
+          sessionId: context.session.id,
+        }),
       };
       if (taskId) message.taskId = taskId;
       if (contextId) message.contextId = contextId;
@@ -178,7 +190,9 @@ export class RemoteA2AAgent extends BaseAgent {
         }
       }
 
-      const useStreaming = this.card!.capabilities?.streaming !== false;
+      const useStreaming = this.card
+        ? this.card.capabilities?.streaming !== false
+        : true;
       if (useStreaming) {
         for await (const chunk of this.client!.sendMessageStream(params)) {
           if (this.a2aConfig.afterRequestCallbacks) {

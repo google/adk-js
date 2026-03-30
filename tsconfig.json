@@ -7,7 +7,6 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals"],
     "experimentalDecorators": true
   }
 }
