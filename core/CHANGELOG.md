@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/google/adk-js/compare/adk-v0.6.0...adk-v0.6.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* add support for MCP type array instead of string only in gemini_schema_util ([#199](https://github.com/google/adk-js/issues/199)) ([9cb4a33](https://github.com/google/adk-js/commit/9cb4a33b9a15718e97cbda532a04f1e91c45389e))
+
 ## [0.6.0](https://github.com/google/adk-js/compare/adk-v0.5.0...adk-v0.6.0) (2026-03-23)
 
 

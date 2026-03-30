@@ -1,6 +1,6 @@
 {
   "name": "@google/adk-devtools",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Google ADK JS Development Tools",
   "author": "Google",
   "license": "Apache-2.0",
@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "@google/adk": "^0.6.0",
+    "@google/adk": "^0.6.1",
     "camelcase-keys": "^6.2.2",
     "@mikro-orm/mariadb": "^6.6.6",
     "@mikro-orm/mssql": "^6.6.6",

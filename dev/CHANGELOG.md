@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.1](https://github.com/google/adk-js/compare/devtools-v0.6.0...devtools-v0.6.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* support native addon agent deps ([#219](https://github.com/google/adk-js/issues/219)) ([a13ee82](https://github.com/google/adk-js/commit/a13ee8244fb9d843a4123732ab5c28bbc49aeb7a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^0.6.0 to ^0.6.1
+
 ## [0.6.0](https://github.com/google/adk-js/compare/devtools-v0.5.0...devtools-v0.6.0) (2026-03-23)
 
 
