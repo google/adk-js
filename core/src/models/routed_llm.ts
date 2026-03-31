@@ -9,10 +9,7 @@ import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
-import {
-  runWithSelectionAndFailoverGenerator,
-  runWithSelectionAndFailoverPromise,
-} from '../utils/failover_utils.js';
+import {runWithRouting} from '../utils/failover_utils.js';
 
 /**
  * Type definition for a function that selects a model based on the request.
@@ -53,11 +50,8 @@ export class RoutedLlm extends BaseLlm {
     llmRequest: LlmRequest,
     stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
-    yield* runWithSelectionAndFailoverGenerator(
-      this.models,
-      llmRequest,
-      this.router,
-      (model) => model.generateContentAsync(llmRequest, stream),
+    yield* runWithRouting(this.models, llmRequest, this.router, (model) =>
+      model.generateContentAsync(llmRequest, stream),
     );
   }
 
@@ -67,11 +61,8 @@ export class RoutedLlm extends BaseLlm {
    * selected at the time of connection.
    */
   async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    return runWithSelectionAndFailoverPromise(
-      this.models,
-      llmRequest,
-      this.router,
-      (model) => model.connect(llmRequest),
+    return runWithRouting(this.models, llmRequest, this.router, (model) =>
+      model.connect(llmRequest),
     );
   }
 }

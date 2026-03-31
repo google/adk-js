@@ -8,7 +8,7 @@ import {Event} from '../events/event.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
-import {runWithSelectionAndFailoverGenerator} from '../utils/failover_utils.js';
+import {runWithRouting} from '../utils/failover_utils.js';
 
 /**
  * A unique symbol to identify ADK agent classes.
@@ -91,11 +91,8 @@ export class RoutedAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* runWithSelectionAndFailoverGenerator(
-      this.agents,
-      context,
-      this.router,
-      (agent) => agent.runAsync(context),
+    yield* runWithRouting(this.agents, context, this.router, (agent) =>
+      agent.runAsync(context),
     );
   }
 
@@ -105,11 +102,8 @@ export class RoutedAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    yield* runWithSelectionAndFailoverGenerator(
-      this.agents,
-      context,
-      this.router,
-      (agent) => agent.runLive(context),
+    yield* runWithRouting(this.agents, context, this.router, (agent) =>
+      agent.runLive(context),
     );
   }
 }

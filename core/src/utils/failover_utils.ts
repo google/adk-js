@@ -14,14 +14,15 @@ export type Router<T, C> = (
 ) => Promise<string | undefined> | string | undefined;
 
 /**
- * Runs a generator-based operation with selection and failover support.
+ * Runs a core operation with selection and failover support.
+ * Internal helper to unify Promise and Generator logic.
  */
-export async function* runWithSelectionAndFailoverGenerator<T, C, R>(
+async function* runWithRoutingCore<T, C, TYield, TReturn>(
   items: Readonly<Record<string, T>>,
   context: C,
   router: Router<T, C>,
-  runFn: (item: T) => AsyncGenerator<R, void, void>,
-): AsyncGenerator<R, void> {
+  runFn: (item: T) => AsyncGenerator<TYield, TReturn, void> | Promise<TReturn>,
+): AsyncGenerator<TYield, TReturn> {
   const initialKey = await router(items, context);
   if (!initialKey) {
     throw new Error('Initial routing failed, no item selected.');
@@ -36,17 +37,28 @@ export async function* runWithSelectionAndFailoverGenerator<T, C, R>(
   const triedKeys = new Set<string>([selectedKey]);
 
   while (true) {
-    const iterator = runFn(selectedItem);
+    const runResult = runFn(selectedItem);
     let firstYielded = false;
 
     try {
-      while (true) {
-        const result = await iterator.next();
-        if (result.done) break;
-        yield result.value;
-        firstYielded = true;
+      if (
+        runResult &&
+        typeof runResult === 'object' &&
+        typeof (runResult as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
+          'function'
+      ) {
+        const iterator = runResult as AsyncGenerator<TYield, TReturn, void>;
+        while (true) {
+          const result = await iterator.next();
+          if (result.done) {
+            return result.value;
+          }
+          yield result.value;
+          firstYielded = true;
+        }
+      } else {
+        return await (runResult as Promise<TReturn>);
       }
-      break; // Success!
     } catch (error) {
       if (!firstYielded) {
         const nextKey = await router(items, context, {
@@ -54,12 +66,14 @@ export async function* runWithSelectionAndFailoverGenerator<T, C, R>(
           lastError: error,
         });
 
+        // Router can return undefined to stop processing
         if (!nextKey) {
-          throw error; // Router decided to bail out
+          throw error;
         }
 
+        // Disallow re-processing the same key in a single execution
         if (triedKeys.has(nextKey)) {
-          throw error; // Give up to avoid infinite loop
+          throw error;
         }
 
         selectedKey = nextKey;
@@ -69,57 +83,60 @@ export async function* runWithSelectionAndFailoverGenerator<T, C, R>(
         }
         triedKeys.add(selectedKey);
       } else {
-        throw error; // Re-throw if data was already yielded
+        throw error;
       }
     }
   }
 }
 
 /**
- * Runs a promise-based operation with selection and failover support.
+ * Runs an operation with selection and failover support.
+ * Overloaded to support both AsyncGenerator and Promise-returning functions.
  */
-export async function runWithSelectionAndFailoverPromise<T, C, R>(
+export function runWithRouting<T, C, R>(
+  items: Readonly<Record<string, T>>,
+  context: C,
+  router: Router<T, C>,
+  runFn: (item: T) => AsyncGenerator<R, void, void>,
+): AsyncGenerator<R, void>;
+
+// eslint-disable-next-line no-redeclare
+export function runWithRouting<T, C, R>(
   items: Readonly<Record<string, T>>,
   context: C,
   router: Router<T, C>,
   runFn: (item: T) => Promise<R>,
-): Promise<R> {
-  const initialKey = await router(items, context);
-  if (!initialKey) {
-    throw new Error('Initial routing failed, no item selected.');
-  }
+): Promise<R>;
 
-  let selectedKey = initialKey;
-  let selectedItem = items[selectedKey];
-  if (!selectedItem) {
-    throw new Error(`Item not found for key: ${selectedKey}`);
-  }
+// eslint-disable-next-line no-redeclare
+export function runWithRouting<T, C, R>(
+  items: Readonly<Record<string, T>>,
+  context: C,
+  router: Router<T, C>,
+  runFn: (item: T) => AsyncGenerator<R, void, void> | Promise<R>,
+): unknown {
+  const gen = runWithRoutingCore(items, context, router, runFn);
 
-  const triedKeys = new Set<string>([selectedKey]);
+  return {
+    then<TResult1 = R, TResult2 = never>(
+      onfulfilled?: ((value: R) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?:
+        | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+        | null,
+    ): Promise<TResult1 | TResult2> {
+      const p = (async () => {
+        while (true) {
+          const result = await gen.next();
+          if (result.done) {
+            return result.value as R;
+          }
+        }
+      })();
+      return p.then(onfulfilled, onrejected);
+    },
 
-  while (true) {
-    try {
-      return await runFn(selectedItem);
-    } catch (error) {
-      const nextKey = await router(items, context, {
-        failedKeys: triedKeys,
-        lastError: error,
-      });
-
-      if (!nextKey) {
-        throw error; // Router decided to bail out
-      }
-
-      if (triedKeys.has(nextKey)) {
-        throw error; // Give up to avoid infinite loop
-      }
-
-      selectedKey = nextKey;
-      selectedItem = items[selectedKey];
-      if (!selectedItem) {
-        throw new Error(`Item not found for key: ${selectedKey}`);
-      }
-      triedKeys.add(selectedKey);
-    }
-  }
+    [Symbol.asyncIterator](): AsyncIterator<R, void> {
+      return gen as unknown as AsyncIterator<R, void>;
+    },
+  };
 }
