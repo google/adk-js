@@ -21,6 +21,7 @@ describe(
       tsServer = new AdkTsApiServer({
         agentsDir: path.resolve(__dirname, 'ts_backend'),
         a2a: true,
+        startFailureTimeout: TIMEOUT,
       });
       await tsServer.start();
     }, TIMEOUT);
