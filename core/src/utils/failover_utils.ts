@@ -48,12 +48,9 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
           'function'
       ) {
         const iterator = runResult as AsyncGenerator<TYield, TReturn, void>;
-        while (true) {
-          const result = await iterator.next();
-          if (result.done) {
-            return result.value;
-          }
-          yield result.value;
+
+        for await (const result of iterator) {
+          yield result;
           firstYielded = true;
         }
       } else {
