@@ -35,6 +35,7 @@ export interface BaseCredentialExchanger {
    * @returns The exchanged credential.
    * @throws CredentialExchangeError: If credential exchange fails.
    */
+
   exchange(params: {
     authScheme?: AuthScheme;
     authCredential: AuthCredential;
