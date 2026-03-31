@@ -11,6 +11,7 @@ import {
 } from '@google/adk';
 import {detectResources, Resource} from '@opentelemetry/resources';
 import {GoogleAuth} from 'google-auth-library';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.hoisted(() => {
   vi.resetModules();

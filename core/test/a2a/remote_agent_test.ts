@@ -92,11 +92,11 @@ describe('A2ARemoteAgent', () => {
     } as unknown as InvocationContext;
   };
 
-  it('should throw if neither agentCard nor agentCardSource is provided', () => {
+  it('should throw if neither agentCard nor client are provided', () => {
     expect(
       () =>
         new RemoteA2AAgent({name: 'test'} as unknown as RemoteA2AAgentConfig),
-    ).toThrow('AgentCard must be provided');
+    ).toThrow('Either AgentCard or Client must be provided');
   });
 
   it('should resolve card from URL and send message streaming', async () => {

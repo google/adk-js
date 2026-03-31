@@ -5,7 +5,7 @@
  */
 
 import {trace} from '@opentelemetry/api';
-import {vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
   BaseAgent,

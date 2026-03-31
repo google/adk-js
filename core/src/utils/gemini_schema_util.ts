@@ -14,6 +14,7 @@ const MCPToolSchemaObject = z.object({
   required: z.string().array().optional(),
 });
 type MCPToolSchema = z.infer<typeof MCPToolSchemaObject>;
+type MCPTypeArrayItem = string | {type: string};
 
 function toGeminiType(mcpType: string): Type {
   if (!mcpType) return Type.TYPE_UNSPECIFIED;
@@ -32,10 +33,21 @@ function toGeminiType(mcpType: string): Type {
       return Type.ARRAY;
     case 'object':
       return Type.OBJECT;
+    case 'null':
+      return Type.NULL;
     default:
       return Type.TYPE_UNSPECIFIED;
   }
 }
+
+const getTypeFromArrayItem = (
+  mcpType: MCPTypeArrayItem,
+): string | undefined => {
+  if (typeof mcpType === 'string') {
+    return mcpType.toLowerCase();
+  }
+  return mcpType?.type?.toLowerCase?.();
+};
 
 export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
   if (!mcpSchema) {
@@ -44,15 +56,32 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function recursiveConvert(mcp: any): Schema {
-    // Handle nullable types
-    if (!mcp.type && mcp.anyOf && Array.isArray(mcp.anyOf)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const nonNullOption = mcp.anyOf.find((opt: any) => {
-        const t = opt.type;
-        return t !== 'null' && t !== 'NULL';
-      });
-      if (nonNullOption) {
-        mcp = nonNullOption;
+    const sourceType = mcp.anyOf ?? mcp.type;
+    let isNullable = false;
+    let nonNullTypes;
+    if (Array.isArray(sourceType)) {
+      nonNullTypes = sourceType.filter(
+        (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) !== 'null',
+      );
+      isNullable = sourceType.some(
+        (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) === 'null',
+      );
+
+      if (nonNullTypes.length === 1) {
+        const nonNullType = nonNullTypes[0];
+        if (typeof nonNullType === 'object') {
+          mcp = nonNullType;
+        } else {
+          const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
+          mcp = {...rest, type: nonNullType};
+        }
+      } else if (nonNullTypes.length === 0 && isNullable) {
+        const {type: _removed, anyOf: _removedAnyOf, ...rest} = mcp;
+        mcp = {...rest, type: 'null'};
+      } else if (typeof mcp.anyOf === 'undefined') {
+        const anyOfItems = mcp.type.map((t: MCPTypeArrayItem) => ({type: t}));
+        const {type: _removed, ...rest} = mcp;
+        mcp = {...rest, anyOf: anyOfItems};
       }
     }
 
@@ -62,14 +91,29 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         mcp.type = 'object';
       } else if (mcp.items) {
         mcp.type = 'array';
+      } else if (isNullable) {
+        mcp.type = 'null';
       }
     }
 
     const geminiType = toGeminiType(mcp.type);
-    const geminiSchema: Schema = {
-      type: geminiType,
-      description: mcp.description,
-    };
+    const geminiSchema: Schema = {};
+
+    if (mcp.anyOf) {
+      geminiSchema.anyOf = mcp.anyOf.map((item: Record<string, unknown>) =>
+        recursiveConvert(item),
+      );
+    } else {
+      geminiSchema.type = geminiType;
+    }
+
+    if (mcp.description) {
+      geminiSchema.description = mcp.description;
+    }
+
+    if (isNullable && mcp.type !== 'null') {
+      geminiSchema.nullable = true;
+    }
 
     if (geminiType === Type.OBJECT) {
       geminiSchema.properties = {};
@@ -80,7 +124,9 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
           );
         }
       }
-      geminiSchema.required = mcp.required;
+      if (mcp.required) {
+        geminiSchema.required = mcp.required;
+      }
     } else if (geminiType === Type.ARRAY) {
       if (mcp.items) {
         geminiSchema.items = recursiveConvert(mcp.items);

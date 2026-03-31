@@ -1,0 +1,18 @@
+{
+  "name": "ts_commonjs_native_addon_build_setup",
+  "version": "1.0.0",
+  "description": "",
+  "main": "agent.ts",
+  "scripts": {
+    "build": "tsc && echo Build complete",
+    "start": "npx @google/adk-devtools run agent.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/adk": "file:../../../../core",
+    "@google/adk-devtools": "file:../../../../dev",
+    "onnxruntime-node": "file:./fake-onnxruntime-node"
+  }
+}

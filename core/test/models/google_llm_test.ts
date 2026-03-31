@@ -6,7 +6,7 @@
 
 import {Gemini, GeminiParams, geminiInitParams, version} from '@google/adk';
 import {HttpOptions} from '@google/genai';
-import {afterEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
 class TestGemini extends Gemini {
   constructor(params: GeminiParams) {

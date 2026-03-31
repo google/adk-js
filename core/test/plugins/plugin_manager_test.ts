@@ -16,6 +16,7 @@ import {
   PluginManager,
 } from '@google/adk';
 import {Content} from '@google/genai';
+import {beforeEach, describe, expect, it} from 'vitest';
 
 type PluginCallbackName = keyof BasePlugin;
 

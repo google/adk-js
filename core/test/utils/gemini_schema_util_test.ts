@@ -5,7 +5,7 @@
  */
 
 import {Type} from '@google/genai';
-
+import {describe, expect, it} from 'vitest';
 import {toGeminiSchema} from '../../src/utils/gemini_schema_util.js';
 
 interface MCPToolSchema {
@@ -77,6 +77,7 @@ describe('toGeminiSchema', () => {
     // Should resolve to STRING
     expect(schema).toEqual({
       type: Type.STRING,
+      nullable: true,
     });
   });
 
@@ -89,6 +90,19 @@ describe('toGeminiSchema', () => {
 
     expect(schema).toEqual({
       type: Type.STRING,
+      nullable: true,
+    });
+  });
+
+  it('handles anyOf with null only', () => {
+    const input = {
+      anyOf: [{type: 'null'}],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.NULL,
     });
   });
 
@@ -126,6 +140,7 @@ describe('toGeminiSchema', () => {
           properties: {
             created: {type: Type.STRING},
           },
+          nullable: true,
         },
       },
     });
@@ -141,6 +156,88 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.OBJECT,
       properties: {},
+    });
+  });
+
+  it('handles array-typed type field with null – picks non-null type', () => {
+    const input = {
+      type: ['string', 'null'],
+      description: 'an optional string',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      description: 'an optional string',
+      nullable: true,
+    });
+  });
+
+  it('handles array-typed type field without null – picks the single non-null type', () => {
+    const input = {
+      type: ['integer'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.INTEGER,
+      description: undefined,
+    });
+  });
+
+  it('handles array-typed type field with case-insensitive NULL', () => {
+    const input = {
+      type: ['boolean', 'NULL'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.BOOLEAN,
+      description: undefined,
+      nullable: true,
+    });
+  });
+
+  it('handles array-typed type field with reverse order', () => {
+    const input = {
+      type: ['null', 'boolean'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.BOOLEAN,
+      description: undefined,
+      nullable: true,
+    });
+  });
+
+  it('handles array-typed type field with only null', () => {
+    const input = {
+      type: ['null'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.NULL,
+      description: undefined,
+    });
+  });
+
+  it('handles type null', () => {
+    const input = {
+      type: 'null',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.NULL,
+      description: undefined,
     });
   });
 
@@ -160,6 +257,93 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.ARRAY,
       items: {type: Type.TYPE_UNSPECIFIED},
+    });
+  });
+
+  it('handles TYPE_UNSPECIFIED when without type and without anyOf', () => {
+    const input = {
+      description: 'only description',
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.TYPE_UNSPECIFIED,
+      description: 'only description',
+    });
+  });
+
+  it('handles type array with multiple non-null types via anyOf', () => {
+    const input = {
+      type: ['string', 'integer', 'null'],
+      description: 'multi-type field',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      description: 'multi-type field',
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}, {type: Type.NULL}],
+    });
+  });
+
+  it('handles type array with multiple non-null types in reverse order via anyOf', () => {
+    const input = {
+      type: ['null', 'integer', 'string'],
+      description: 'multi-type field',
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      description: 'multi-type field',
+      anyOf: [{type: Type.NULL}, {type: Type.INTEGER}, {type: Type.STRING}],
+    });
+  });
+
+  it('handles type array with multiple non-null types without null', () => {
+    const input = {
+      type: ['string', 'integer'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}],
+    });
+  });
+
+  it('handles anyOf with multiple non-null types and null', () => {
+    const input = {
+      anyOf: [{type: 'string'}, {type: 'integer'}, {type: 'null'}],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.STRING}, {type: Type.INTEGER}, {type: Type.NULL}],
+    });
+  });
+
+  it('handles anyOf with multiple non-null object types', () => {
+    const input = {
+      anyOf: [
+        {type: 'object', properties: {a: {type: 'string'}}},
+        {type: 'string'},
+      ],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.OBJECT, properties: {a: {type: Type.STRING}}},
+        {type: Type.STRING},
+      ],
     });
   });
 });

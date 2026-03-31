@@ -17,6 +17,7 @@ import {
   SingleBeforeToolCallback,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
+import {beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
 // Get the test target function

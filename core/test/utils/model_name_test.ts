@@ -5,6 +5,7 @@
  */
 
 import {isGemini2OrAbove} from '@google/adk';
+import {describe, expect, it} from 'vitest';
 
 describe('isGemini2OrAbove', () => {
   describe('valid models', () => {
