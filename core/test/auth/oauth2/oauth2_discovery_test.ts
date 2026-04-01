@@ -111,6 +111,42 @@ describe('OAuth2DiscoveryManager', () => {
       expect(result).toBeUndefined();
     });
 
+    it('returns metadata when issuer matches even with trailing slash differences', async () => {
+      const issuerUrl = 'https://example.com/';
+      const mockMetadata = {
+        issuer: 'https://example.com',
+        authorization_endpoint: 'https://example.com/authorize',
+        token_endpoint: 'https://example.com/token',
+      };
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => mockMetadata,
+      } as Response);
+
+      const result = await manager.discoverAuthServerMetadata(issuerUrl);
+
+      expect(result).toEqual(mockMetadata);
+    });
+
+    it('rejects metadata if issuer is a subdomain of the expected issuer', async () => {
+      const issuerUrl = 'https://example.com';
+      const mockMetadata = {
+        issuer: 'https://example.com.evil.com',
+        authorization_endpoint: 'https://example.com/authorize',
+        token_endpoint: 'https://example.com/token',
+      };
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => mockMetadata,
+      } as Response);
+
+      const result = await manager.discoverAuthServerMetadata(issuerUrl);
+
+      expect(result).toBeUndefined();
+    });
+
     it('continues to next endpoint if fetch fails (throws error)', async () => {
       const issuerUrl = 'https://example.com';
 
@@ -216,6 +252,40 @@ describe('OAuth2DiscoveryManager', () => {
       const resourceUrl = 'https://example.com';
       const mockMetadata = {
         resource: 'https://malicious.com',
+        authorization_servers: ['https://example.com/auth'],
+      };
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => mockMetadata,
+      } as Response);
+
+      const result = await manager.discoverResourceMetadata(resourceUrl);
+
+      expect(result).toBeUndefined();
+    });
+
+    it('returns metadata when resource matches even with trailing slash differences', async () => {
+      const resourceUrl = 'https://example.com/';
+      const mockMetadata = {
+        resource: 'https://example.com',
+        authorization_servers: ['https://example.com/auth'],
+      };
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => mockMetadata,
+      } as Response);
+
+      const result = await manager.discoverResourceMetadata(resourceUrl);
+
+      expect(result).toEqual(mockMetadata);
+    });
+
+    it('rejects metadata if resource is a subdomain of the expected resource', async () => {
+      const resourceUrl = 'https://example.com';
+      const mockMetadata = {
+        resource: 'https://example.com.evil.com',
         authorization_servers: ['https://example.com/auth'],
       };
 

@@ -13,11 +13,14 @@ import {AuthScheme, OpenIdConnectWithConfig} from '../auth_schemes.js';
  * Returns the token endpoint for the given auth scheme.
  */
 export function getTokenEndpoint(authScheme: AuthScheme): string | undefined {
-  if ('tokenEndpoint' in authScheme) {
+  if (
+    authScheme.type === 'openIdConnect' &&
+    (authScheme as OpenIdConnectWithConfig).tokenEndpoint
+  ) {
     return (authScheme as OpenIdConnectWithConfig).tokenEndpoint;
   }
 
-  if ('flows' in authScheme && authScheme.flows) {
+  if (authScheme.type === 'oauth2' && authScheme.flows) {
     const flows = authScheme.flows;
     const flow =
       flows.authorizationCode ||
@@ -46,28 +49,33 @@ export async function fetchOAuth2Tokens(
   endpoint: string,
   body: URLSearchParams,
 ): Promise<OAuth2Auth> {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  });
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Token request failed with status ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Token request failed with status ${response.status}`);
+    }
+
+    const data = (await response.json()) as OAuth2TokenResponse;
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+      expiresAt: data.expires_in
+        ? Date.now() + data.expires_in * 1000
+        : undefined,
+    };
+  } catch (e) {
+    logger.error(`Failed to fetch OAuth2 tokens: ${e}`);
+    throw e;
   }
-
-  const data = (await response.json()) as OAuth2TokenResponse;
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresIn: data.expires_in,
-    expiresAt: data.expires_in
-      ? Date.now() + data.expires_in * 1000
-      : undefined,
-  };
 }
 
 /**

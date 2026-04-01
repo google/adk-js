@@ -21,6 +21,7 @@ describe('oauth2_utils', () => {
   describe('getTokenEndpoint', () => {
     it('returns tokenEndpoint from OpenIdConnectWithConfig', () => {
       const scheme = {
+        type: 'openIdConnect',
         tokenEndpoint: 'https://example.com/token',
       } as AuthScheme;
       expect(getTokenEndpoint(scheme)).toBe('https://example.com/token');
@@ -28,6 +29,7 @@ describe('oauth2_utils', () => {
 
     it('returns tokenUrl from flows.authorizationCode', () => {
       const scheme = {
+        type: 'oauth2',
         flows: {
           authorizationCode: {
             tokenUrl: 'https://example.com/token-auth',
@@ -39,6 +41,7 @@ describe('oauth2_utils', () => {
 
     it('returns tokenUrl from flows.clientCredentials', () => {
       const scheme = {
+        type: 'oauth2',
         flows: {
           clientCredentials: {
             tokenUrl: 'https://example.com/token-cc',
