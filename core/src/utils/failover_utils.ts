@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {logger} from './logger.js';
+
 /**
  * Type definition for a function that selects an item based on the context.
  */
@@ -29,6 +31,7 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
   }
 
   let selectedKey = initialKey;
+  logger.debug(`Router selected initial key: ${selectedKey}`);
   let selectedItem = items[selectedKey];
   if (!selectedItem) {
     throw new Error(`Item not found for key: ${selectedKey}`);
@@ -62,6 +65,8 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
           failedKeys: triedKeys,
           lastError: error,
         });
+
+        logger.debug(`Router selected next key: ${nextKey}`);
 
         // Router can return undefined to stop processing
         if (!nextKey) {

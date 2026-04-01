@@ -10,6 +10,7 @@ import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
 import {runWithRouting} from '../utils/failover_utils.js';
+import {logger} from '../utils/logger.js';
 
 /**
  * Type definition for a function that selects a model based on the request.
@@ -36,10 +37,17 @@ export class RoutedLlm extends BaseLlm {
     router: LlmRouter;
     modelName?: string;
   }) {
-    super({model: modelName});
-    this.models = Array.isArray(models)
+    const modelsMap = Array.isArray(models)
       ? Object.fromEntries(models.map((m) => [m.model, m]))
       : models;
+
+    const modelNames = Object.entries(modelsMap).map(
+      ([name, model]) => `${name} (${model.model})`,
+    );
+    const computedName = `RoutedLlm[${modelNames.join(', ')}]`;
+
+    super({model: modelName === 'routed-llm' ? computedName : modelName});
+    this.models = modelsMap;
     this.router = router;
   }
 
@@ -50,6 +58,7 @@ export class RoutedLlm extends BaseLlm {
     llmRequest: LlmRequest,
     stream?: boolean,
   ): AsyncGenerator<LlmResponse, void> {
+    logger.info(`Routing request via ${this.model}`);
     yield* runWithRouting(this.models, llmRequest, this.router, (model) =>
       model.generateContentAsync(llmRequest, stream),
     );
