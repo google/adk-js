@@ -11,7 +11,10 @@ import {BaseCredentialService} from './base_credential_service.js';
 
 /**
  * Class for implementation of credential service using session state as the store.
- * Note: store credential in session may not be secure, use at your own risk.
+ *
+ * @warning Storing credentials in session state is insecure. Session state may be
+ * persisted in plaintext, logged, or accessible via XSS depending on the runner
+ * environment. Use a secure vault or encrypted storage for production applications.
  */
 export class SessionStateCredentialService implements BaseCredentialService {
   loadCredential(

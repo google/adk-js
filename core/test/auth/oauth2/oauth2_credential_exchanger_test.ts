@@ -383,5 +383,79 @@ describe('OAuth2CredentialExchanger', () => {
         exchangeAuthorizationCode({authCredential, authScheme}),
       ).rejects.toThrow(CredentialExchangeError);
     });
+
+    it('throws CredentialExchangeError if state in authResponseUri does not match expected state', async () => {
+      const authCredential = {
+        oauth2: {
+          clientId: 'id',
+          clientSecret: 'secret',
+          authResponseUri: 'https://callback?code=abc&state=wrong',
+          state: 'expected-state',
+        },
+      } as AuthCredential;
+      const authScheme = {} as AuthScheme;
+
+      vi.mocked(oauth2Utils.getTokenEndpoint).mockReturnValue(
+        'https://example.com/token',
+      );
+      vi.mocked(oauth2Utils.parseAuthorizationCode).mockReturnValue('abc');
+
+      await expect(
+        exchangeAuthorizationCode({authCredential, authScheme}),
+      ).rejects.toThrow('State mismatch detected');
+    });
+
+    it('succeeds if state in authResponseUri matches expected state', async () => {
+      const authCredential = {
+        oauth2: {
+          clientId: 'id',
+          clientSecret: 'secret',
+          authResponseUri: 'https://callback?code=abc&state=correct',
+          state: 'correct',
+        },
+      } as AuthCredential;
+      const authScheme = {} as AuthScheme;
+      const mockTokens = {accessToken: 'new-token'};
+
+      vi.mocked(oauth2Utils.getTokenEndpoint).mockReturnValue(
+        'https://example.com/token',
+      );
+      vi.mocked(oauth2Utils.parseAuthorizationCode).mockReturnValue('abc');
+      vi.mocked(oauth2Utils.fetchOAuth2Tokens).mockResolvedValue(mockTokens);
+
+      const result = await exchangeAuthorizationCode({
+        authCredential,
+        authScheme,
+      });
+
+      expect(result.wasExchanged).toBe(true);
+    });
+
+    it('passes codeVerifier to createOAuth2TokenRequestBody', async () => {
+      const authCredential = {
+        authType: 'oauth2',
+        oauth2: {
+          clientId: 'id',
+          clientSecret: 'secret',
+          authCode: 'code',
+          codeVerifier: 'verifier-123',
+        },
+      } as AuthCredential;
+      const authScheme = {} as AuthScheme;
+      const mockTokens = {accessToken: 'new-token'};
+
+      vi.mocked(oauth2Utils.getTokenEndpoint).mockReturnValue(
+        'https://example.com/token',
+      );
+      vi.mocked(oauth2Utils.fetchOAuth2Tokens).mockResolvedValue(mockTokens);
+
+      await exchangeAuthorizationCode({authCredential, authScheme});
+
+      expect(oauth2Utils.createOAuth2TokenRequestBody).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeVerifier: 'verifier-123',
+        }),
+      );
+    });
   });
 });

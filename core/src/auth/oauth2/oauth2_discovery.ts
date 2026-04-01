@@ -44,6 +44,10 @@ export class OAuth2DiscoveryManager {
   async discoverAuthServerMetadata(
     issuerUrl: string,
   ): Promise<AuthorizationServerMetadata | undefined> {
+    if (!validateDiscoveryUrl(issuerUrl)) {
+      return undefined;
+    }
+
     let baseUrl: string;
     let path: string;
 
@@ -111,6 +115,10 @@ export class OAuth2DiscoveryManager {
   async discoverResourceMetadata(
     resourceUrl: string,
   ): Promise<ProtectedResourceMetadata | undefined> {
+    if (!validateDiscoveryUrl(resourceUrl)) {
+      return undefined;
+    }
+
     let baseUrl: string;
     let path: string;
 
@@ -159,5 +167,45 @@ export class OAuth2DiscoveryManager {
     }
 
     return undefined;
+  }
+}
+
+function validateDiscoveryUrl(urlStr: string): boolean {
+  try {
+    const url = new URL(urlStr);
+    if (url.protocol !== 'https:') {
+      logger.warn(`Unsafe protocol for discovery URL: ${url.protocol}`);
+      return false;
+    }
+
+    const host = url.hostname.toLowerCase();
+
+    // Block localhost and common private IP ranges
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '[::1]' ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      host.startsWith('169.254.')
+    ) {
+      logger.warn(`Unsafe host for discovery URL: ${host}`);
+      return false;
+    }
+
+    // Check for 172.16.x.x - 172.31.x.x
+    const match = host.match(/^172\.(\d+)\./);
+    if (match) {
+      const secondOctet = parseInt(match[1], 10);
+      if (secondOctet >= 16 && secondOctet <= 31) {
+        logger.warn(`Unsafe host for discovery URL: ${host}`);
+        return false;
+      }
+    }
+
+    return true;
+  } catch (e) {
+    logger.warn(`Failed to parse URL for validation ${urlStr}: ${e}`);
+    return false;
   }
 }

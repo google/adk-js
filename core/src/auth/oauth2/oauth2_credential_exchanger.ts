@@ -164,6 +164,22 @@ export async function exchangeAuthorizationCode({
     code = parseAuthorizationCode(authCredential.oauth2.authResponseUri);
   }
 
+  if (authCredential.oauth2.authResponseUri && authCredential.oauth2.state) {
+    try {
+      const url = new URL(authCredential.oauth2.authResponseUri);
+      const receivedState = url.searchParams.get('state') || undefined;
+      if (authCredential.oauth2.state !== receivedState) {
+        throw new CredentialExchangeError(
+          'State mismatch detected. Potential CSRF attack.',
+        );
+      }
+    } catch (e) {
+      throw new CredentialExchangeError(
+        `Failed to parse authResponseUri for state validation: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   if (!code) {
     throw new CredentialExchangeError(
       'Authorization code not found in auth response.',
@@ -176,6 +192,7 @@ export async function exchangeAuthorizationCode({
     clientSecret: authCredential.oauth2.clientSecret,
     code,
     redirectUri: authCredential.oauth2.redirectUri,
+    codeVerifier: authCredential.oauth2.codeVerifier,
   });
 
   try {

@@ -182,6 +182,21 @@ describe('oauth2_utils', () => {
       expect(body.get('redirect_uri')).toBe('https://example.com/callback');
     });
 
+    it('creates body for authorization_code with code_verifier', () => {
+      const params: AuthorizationCodeParams = {
+        grantType: 'authorization_code',
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        code: 'auth-code',
+        redirectUri: 'https://example.com/callback',
+        codeVerifier: 'verifier-123',
+      };
+
+      const body = createOAuth2TokenRequestBody(params);
+
+      expect(body.get('code_verifier')).toBe('verifier-123');
+    });
+
     it('creates body for refresh_token', () => {
       const params: RefreshTokenParams = {
         grantType: 'refresh_token',

@@ -109,6 +109,7 @@ export interface AuthorizationCodeParams {
   clientSecret: string;
   code: string;
   redirectUri?: string;
+  codeVerifier?: string;
 }
 
 /**
@@ -144,6 +145,9 @@ export function createOAuth2TokenRequestBody(
     body.set('code', params.code);
     if (params.redirectUri) {
       body.set('redirect_uri', params.redirectUri);
+    }
+    if (params.codeVerifier) {
+      body.set('code_verifier', params.codeVerifier);
     }
   } else if (params.grantType === 'refresh_token') {
     body.set('refresh_token', params.refreshToken);

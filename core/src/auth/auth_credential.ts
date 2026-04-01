@@ -45,6 +45,7 @@ export interface OAuth2Auth {
    */
   authUri?: string;
   state?: string;
+  codeVerifier?: string;
   /**
    * tool or adk can decide the redirect_uri if they don't want client to decide
    */

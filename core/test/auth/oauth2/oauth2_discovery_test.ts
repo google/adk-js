@@ -25,6 +25,25 @@ describe('OAuth2DiscoveryManager', () => {
       expect(result).toBeUndefined();
     });
 
+    it('returns undefined if issuerUrl uses non-https protocol', async () => {
+      const result =
+        await manager.discoverAuthServerMetadata('http://example.com');
+      expect(result).toBeUndefined();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined if issuerUrl uses private IP or localhost', async () => {
+      const result =
+        await manager.discoverAuthServerMetadata('https://127.0.0.1');
+      expect(result).toBeUndefined();
+
+      const result2 =
+        await manager.discoverAuthServerMetadata('https://localhost');
+      expect(result2).toBeUndefined();
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
     it('tries endpoints in order if path is present', async () => {
       const issuerUrl = 'https://example.com/api';
 
@@ -197,6 +216,25 @@ describe('OAuth2DiscoveryManager', () => {
     it('returns undefined and logs warning for invalid resourceUrl', async () => {
       const result = await manager.discoverResourceMetadata('not-a-url');
       expect(result).toBeUndefined();
+    });
+
+    it('returns undefined if resourceUrl uses non-https protocol', async () => {
+      const result =
+        await manager.discoverResourceMetadata('http://example.com');
+      expect(result).toBeUndefined();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined if resourceUrl uses private IP or localhost', async () => {
+      const result =
+        await manager.discoverResourceMetadata('https://127.0.0.1');
+      expect(result).toBeUndefined();
+
+      const result2 =
+        await manager.discoverResourceMetadata('https://localhost');
+      expect(result2).toBeUndefined();
+
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it('uses correct endpoint if path is present', async () => {
