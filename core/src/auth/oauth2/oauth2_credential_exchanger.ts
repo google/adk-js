@@ -28,14 +28,6 @@ import {
  * Exchanges OAuth2 credentials from authorization responses using standard fetch.
  */
 export class OAuth2CredentialExchanger implements BaseCredentialExchanger {
-  /**
-   * Exchange OAuth2 credential if needed.
-   *
-   * @param authCredential - The OAuth2 credential to exchange.
-   * @param authScheme - The OAuth2 authentication scheme.
-   * @returns The exchanged credential.
-   * @throws CredentialExchangeError: If authScheme is missing.
-   */
   async exchange({
     authCredential,
     authScheme,

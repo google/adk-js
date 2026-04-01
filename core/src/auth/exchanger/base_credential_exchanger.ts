@@ -30,16 +30,13 @@ export interface BaseCredentialExchanger {
   /**
    * Exchange credential if needed.
    *
-   * @param authCredential - The credential to exchange.
-   * @param authScheme - The authentication scheme (optional, some exchangers don't need it).
+   * @param params.authCredential - The credential to exchange.
+   * @param params.authScheme - The authentication scheme (optional, some exchangers don't need it).
    * @returns The exchanged credential.
    * @throws CredentialExchangeError: If credential exchange fails.
    */
 
-  exchange({
-    authScheme,
-    authCredential,
-  }: {
+  exchange(params: {
     authScheme?: AuthScheme;
     authCredential: AuthCredential;
   }): Promise<ExchangeResult>;
