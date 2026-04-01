@@ -267,12 +267,14 @@ describe('RoutedLlm', () => {
 
     let routerCalls = 0;
     const router = async (
-      models: Readonly<Record<string, BaseLlm>>,
-      req: LlmRequest,
-      context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
+      _models: Readonly<Record<string, BaseLlm>>,
+      _req: LlmRequest,
+      _context?: {failedKeys: ReadonlySet<string>; lastError: unknown},
     ) => {
       routerCalls++;
-      if (!context) return 'model-failing';
+      if (routerCalls == 1) {
+        return 'model-failing';
+      }
       return 'model-success';
     };
 

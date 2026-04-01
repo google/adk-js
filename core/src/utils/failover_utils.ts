@@ -19,12 +19,12 @@ export type Router<T, C> = (
  * Runs a core operation with selection and failover support.
  * Internal helper to unify Promise and Generator logic.
  */
-async function* runWithRoutingCore<T, C, TYield, TReturn>(
+async function* runWithRoutingCore<T, C, TYield>(
   items: Readonly<Record<string, T>>,
   context: C,
   router: Router<T, C>,
-  runFn: (item: T) => AsyncGenerator<TYield, TReturn, void> | Promise<TReturn>,
-): AsyncGenerator<TYield, TReturn> {
+  runFn: (item: T) => AsyncGenerator<TYield, void, void> | Promise<TYield>,
+): AsyncGenerator<TYield, void> {
   const initialKey = await router(items, context);
   if (!initialKey) {
     throw new Error('Initial routing failed, no item selected.');
@@ -50,7 +50,7 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
         typeof (runResult as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
           'function'
       ) {
-        const iterator = runResult as AsyncGenerator<TYield, TReturn, void>;
+        const iterator = runResult as AsyncGenerator<TYield, void, void>;
 
         for await (const result of iterator) {
           yield result;
@@ -58,7 +58,9 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
         }
         break;
       } else {
-        return await (runResult as Promise<TReturn>);
+        const result = await (runResult as Promise<TYield>);
+        yield result;
+        break;
       }
     } catch (error) {
       if (!firstYielded) {
@@ -70,7 +72,7 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
         logger.debug(`Router selected next key: ${nextKey}`);
 
         // Router can return undefined to stop processing
-        if (!nextKey) {
+        if (nextKey === undefined) {
           throw error;
         }
 
@@ -128,18 +130,22 @@ export function runWithRouting<T, C, R>(
         | null,
     ): Promise<TResult1 | TResult2> {
       const p = (async () => {
+        let savedValue: R | undefined;
         while (true) {
           const result = await gen.next();
           if (result.done) {
-            return result.value as R;
+            return (
+              result.value !== undefined ? result.value : savedValue
+            ) as R;
           }
+          savedValue = result.value as R;
         }
       })();
       return p.then(onfulfilled, onrejected);
     },
 
     [Symbol.asyncIterator](): AsyncIterator<R, void> {
-      return gen as unknown as AsyncIterator<R, void>;
+      return gen;
     },
   };
 }
