@@ -56,6 +56,7 @@ async function* runWithRoutingCore<T, C, TYield, TReturn>(
           yield result;
           firstYielded = true;
         }
+        break;
       } else {
         return await (runResult as Promise<TReturn>);
       }
