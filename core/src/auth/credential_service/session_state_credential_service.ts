@@ -18,9 +18,7 @@ export class SessionStateCredentialService implements BaseCredentialService {
     authConfig: AuthConfig,
     toolContext: Context,
   ): Promise<AuthCredential | undefined> {
-    return Promise.resolve(
-      toolContext.state.get<AuthCredential>(authConfig.credentialKey),
-    );
+    return Promise.resolve(toolContext.state.get(authConfig.credentialKey));
   }
 
   async saveCredential(
