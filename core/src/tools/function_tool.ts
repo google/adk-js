@@ -97,11 +97,8 @@ export class FunctionTool<
 > extends BaseTool {
   /** A unique symbol to identify ADK function tool class. */
   readonly [FUNCTION_TOOL_SIGNATURE_SYMBOL] = true;
-
-  // User defined function.
-  private readonly execute: ToolExecuteFunction<TParameters>;
-  // Typed input parameters.
-  private readonly parameters?: TParameters;
+  protected readonly execute: ToolExecuteFunction<TParameters>;
+  protected readonly parameters?: TParameters;
 
   /**
    * The constructor acts as the user-friendly factory.

@@ -10,8 +10,9 @@ import {context, trace} from '@opentelemetry/api';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
+import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseCodeExecutor} from '../code_executors/base_code_executor.js';
-
+import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {
   createEvent,
   createNewEventId,
@@ -19,32 +20,23 @@ import {
   getFunctionCalls,
   isFinalResponse,
 } from '../events/event.js';
-
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
 import {BaseLlm, isBaseLlm} from '../models/base_llm.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
-
-import {BaseTool, isBaseTool} from '../tools/base_tool.js';
-import {BaseToolset} from '../tools/base_toolset.js';
-
-import {logger} from '../utils/logger.js';
-import {Context} from './context.js';
-
 import {
   runAsyncGeneratorWithOtelContext,
   traceCallLlm,
   tracer,
 } from '../telemetry/tracing.js';
+import {BaseTool, isBaseTool} from '../tools/base_tool.js';
+import {BaseToolset} from '../tools/base_toolset.js';
+import {logger} from '../utils/logger.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
-import {
-  BaseLlmRequestProcessor,
-  BaseLlmResponseProcessor,
-} from './processors/base_llm_processor.js';
-
+import {Context} from './context.js';
 import {
   generateAuthEvent,
   generateRequestConfirmationEvent,
@@ -52,10 +44,12 @@ import {
   handleFunctionCallsAsync,
   populateClientFunctionCallId,
 } from './functions.js';
-
-import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext} from './invocation_context.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
+import {
+  BaseLlmRequestProcessor,
+  BaseLlmResponseProcessor,
+} from './processors/base_llm_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {CODE_EXECUTION_REQUEST_PROCESSOR} from './processors/code_execution_request_processor.js';
 import {CONTENT_REQUEST_PROCESSOR} from './processors/content_request_processor.js';
@@ -391,6 +385,7 @@ export class LlmAgent extends BaseAgent {
     // Orders matter, don't change. Append new processors to the end
     this.requestProcessors = config.requestProcessors ?? [
       BASIC_LLM_REQUEST_PROCESSOR,
+      AUTH_PREPROCESSOR,
       IDENTITY_LLM_REQUEST_PROCESSOR,
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,

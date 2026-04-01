@@ -75,6 +75,7 @@ export {OAuthGrantType} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';
+export {CredentialManager} from './auth/credential_manager.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
 export {InMemoryCredentialService} from './auth/credential_service/in_memory_credential_service.js';
 export {SessionStateCredentialService} from './auth/credential_service/session_state_credential_service.js';
@@ -83,6 +84,7 @@ export type {
   BaseCredentialExchanger,
   ExchangeResult,
 } from './auth/exchanger/base_credential_exchanger.js';
+export {ServiceAccountCredentialExchanger} from './auth/exchanger/service_account_credential_exchanger.js';
 export {OAuth2CredentialExchanger} from './auth/oauth2/oauth2_credential_exchanger.js';
 export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
 export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
@@ -186,6 +188,7 @@ export type {Session} from './sessions/session.js';
 export {State} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
+export {AuthenticatedFunctionTool} from './tools/authenticated_function_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
 export type {
   BaseToolParams,
