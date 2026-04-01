@@ -84,6 +84,7 @@ export type {
   ExchangeResult,
 } from './auth/exchanger/base_credential_exchanger.js';
 export {OAuth2CredentialExchanger} from './auth/oauth2/oauth2_credential_exchanger.js';
+export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
 export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
 export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';

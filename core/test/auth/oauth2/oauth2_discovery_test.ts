@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {OAuth2DiscoveryManager} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {OAuth2DiscoveryManager} from '../../../src/auth/oauth2/oauth2_discovery.js';
 
 describe('OAuth2DiscoveryManager', () => {
   let manager: OAuth2DiscoveryManager;
