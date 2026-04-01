@@ -13,6 +13,14 @@ import {AuthScheme} from '../auth_schemes.js';
 export class CredentialExchangeError extends Error {}
 
 /**
+ * Result of a credential exchange.
+ */
+export interface ExchangeResult {
+  credential: AuthCredential;
+  wasExchanged: boolean;
+}
+
+/**
  * Base interface for credential exchangers.
  *
  * Credential exchangers are responsible for exchanging credentials from
@@ -22,17 +30,14 @@ export interface BaseCredentialExchanger {
   /**
    * Exchange credential if needed.
    *
-   * @param authCredential - The credential to exchange.
-   * @param authScheme - The authentication scheme (optional, some exchangers don't need it).
+   * @param params.authCredential - The credential to exchange.
+   * @param params.authScheme - The authentication scheme (optional, some exchangers don't need it).
    * @returns The exchanged credential.
    * @throws CredentialExchangeError: If credential exchange fails.
    */
 
-  exchange({
-    authCredential,
-    authScheme,
-  }: {
-    authCredential: AuthCredential;
+  exchange(params: {
     authScheme?: AuthScheme;
-  }): Promise<AuthCredential>;
+    authCredential: AuthCredential;
+  }): Promise<ExchangeResult>;
 }
