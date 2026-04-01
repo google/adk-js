@@ -6,12 +6,12 @@
 
 import {
   AuthCredential,
+  AuthScheme,
+  CredentialExchangeError,
   OAuth2CredentialExchanger,
   OAuthGrantType,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {AuthScheme} from '../../../src/auth/auth_schemes.js';
-import {CredentialExchangeError} from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {
   determineGrantType,
   exchangeAuthorizationCode,
