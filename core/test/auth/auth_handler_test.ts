@@ -298,7 +298,11 @@ describe('AuthHandler', () => {
         },
         rawAuthCredential: {
           authType: AuthCredentialTypes.OAUTH2,
-          oauth2: {clientId: 'id', redirectUri: 'https://redirect.com'},
+          oauth2: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            redirectUri: 'https://redirect.com',
+          },
         },
       };
       const handler = new AuthHandler(authConfig);
@@ -312,10 +316,70 @@ describe('AuthHandler', () => {
         'redirect_uri=https%3A%2F%2Fredirect.com',
       );
       expect(uri?.oauth2?.authUri).toContain('scope=scope1');
+      expect(uri?.oauth2?.authUri).not.toContain('secret');
       expect(uri?.oauth2?.state).toBeDefined();
     });
 
     it('throws if authorization endpoint is missing', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            clientCredentials: {
+              tokenUrl: '',
+              scopes: {},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'id'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      expect(() => handler.generateAuthUri()).toThrow(
+        'Authorization endpoint not configured in auth scheme.',
+      );
+    });
+
+    it('generates auth URI for scheme with authorizationEndpoint (OpenIdConnect)', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'openIdConnect',
+          authorizationEndpoint: 'https://oidc-auth.com',
+          scopes: ['openid'],
+          tokenEndpoint: '',
+          openIdConnectUrl: 'https://oidc-auth.com',
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'id', redirectUri: 'https://redirect.com'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeDefined();
+      expect(uri?.oauth2?.authUri).toContain('https://oidc-auth.com');
+    });
+
+    it('returns original credential if rawAuthCredential or oauth2 is missing', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'oauth2', flows: {}},
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeUndefined();
+    });
+
+    it('uses tokenUrl as fallback for authorizationEndpoint if authorizationUrl is missing', () => {
       const authConfig: AuthConfig = {
         credentialKey: 'testKey',
         authScheme: {
@@ -334,9 +398,10 @@ describe('AuthHandler', () => {
       };
       const handler = new AuthHandler(authConfig);
 
-      expect(() => handler.generateAuthUri()).toThrow(
-        'Authorization endpoint not configured in auth scheme.',
-      );
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeDefined();
+      expect(uri?.oauth2?.authUri).toContain('https://token.com');
     });
   });
 });

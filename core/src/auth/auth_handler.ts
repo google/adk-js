@@ -126,6 +126,8 @@ export class AuthHandler {
       if (flow) {
         if ('authorizationUrl' in flow && flow.authorizationUrl) {
           authorizationEndpoint = flow.authorizationUrl;
+        } else if ('tokenUrl' in flow && flow.tokenUrl) {
+          authorizationEndpoint = flow.tokenUrl;
         }
 
         if (flow.scopes) {
@@ -156,7 +158,7 @@ export class AuthHandler {
       oauth2: {
         ...authCredential.oauth2,
         authUri: url.toString(),
-        state: state,
+        state,
       },
     };
 
