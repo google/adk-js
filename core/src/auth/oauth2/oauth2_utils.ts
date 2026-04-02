@@ -40,6 +40,7 @@ interface OAuth2TokenResponse {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
+  id_token?: string;
 }
 
 /**
@@ -67,6 +68,7 @@ export async function fetchOAuth2Tokens(
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
+      idToken: data.id_token,
       expiresIn: data.expires_in,
       expiresAt: data.expires_in
         ? Date.now() + data.expires_in * 1000
