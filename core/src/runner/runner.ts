@@ -150,6 +150,7 @@ export class Runner {
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
     runConfig?: RunConfig;
+    abortSignal?: AbortSignal;
   }): AsyncGenerator<Event, void, undefined> {
     const {userId, sessionId, stateDelta} = params;
     const runConfig = createRunConfig(params.runConfig);
@@ -291,6 +292,7 @@ export class Runner {
               // Step 2: Otherwise continue with normal execution
               for await (const event of invocationContext.agent.runAsync(
                 invocationContext,
+                params.abortSignal,
               )) {
                 if (!event.partial) {
                   await this.sessionService.appendEvent({session, event});

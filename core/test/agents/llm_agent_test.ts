@@ -68,6 +68,33 @@ class MockLlm extends BaseLlm {
   }
 }
 
+class StreamingMockLlm extends BaseLlm {
+  responseChunks: LlmResponse[];
+
+  constructor(chunks: LlmResponse[]) {
+    super({model: 'streaming-mock-llm'});
+    this.responseChunks = chunks;
+  }
+
+  async *generateContentAsync(
+    _request: LlmRequest,
+    _stream?: boolean,
+    abortSignal?: AbortSignal,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    for (const chunk of this.responseChunks) {
+      if (abortSignal?.aborted) {
+        return;
+      }
+      yield chunk;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    return new MockLlmConnection();
+  }
+}
+
 class MockPlugin extends BasePlugin {
   beforeModelResponse?: LlmResponse;
   afterModelResponse?: LlmResponse;
@@ -441,5 +468,51 @@ describe('LlmAgent Configuration with contextCompactors', () => {
       CONTENT_REQUEST_PROCESSOR,
     );
     expect(contentIndex).toBe(processorIndex + 1);
+  });
+});
+
+describe('LlmAgent Abort Handling', () => {
+  it('should stop execution when abortSignal is aborted between steps', async () => {
+    const responseChunks: LlmResponse[] = [
+      {content: {parts: [{text: 'chunk 1'}]}},
+      {content: {parts: [{text: 'chunk 2'}]}},
+      {content: {parts: [{text: 'chunk 3'}]}},
+      {content: {parts: [{text: 'chunk 4'}]}},
+      {content: {parts: [{text: 'chunk 5'}]}},
+    ];
+    const mockModel = new StreamingMockLlm(responseChunks);
+    const agent = new LlmAgent({name: 'test_agent', model: mockModel});
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+    });
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    const generator = agent.runAsync(invocationContext, signal);
+
+    const firstResult = await generator.next();
+    expect(firstResult.done).toBe(false);
+    expect((firstResult.value as Event).content?.parts?.[0].text).toBe(
+      'chunk 1',
+    );
+
+    abortController.abort();
+
+    const secondResult = await generator.next();
+    expect(secondResult.done).toBe(true);
   });
 });

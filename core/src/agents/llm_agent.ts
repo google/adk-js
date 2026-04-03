@@ -664,10 +664,11 @@ export class LlmAgent extends BaseAgent {
 
   protected async *runAsyncImpl(
     context: InvocationContext,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
-      for await (const event of this.runOneStepAsync(context)) {
+      for await (const event of this.runOneStepAsync(context, abortSignal)) {
         lastEvent = event;
         this.maybeSaveOutputToState(event);
         yield event;
@@ -676,8 +677,14 @@ export class LlmAgent extends BaseAgent {
       if (!lastEvent || isFinalResponse(lastEvent)) {
         break;
       }
+
       if (lastEvent.partial) {
         logger.warn('The last event is partial, which is not expected.');
+        break;
+      }
+
+      if (abortSignal?.aborted) {
+        logger.warn('Aborting the agent run.');
         break;
       }
     }
@@ -709,6 +716,7 @@ export class LlmAgent extends BaseAgent {
 
   private async *runOneStepAsync(
     invocationContext: InvocationContext,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void> {
     const llmRequest: LlmRequest = {
       contents: [],
@@ -724,6 +732,7 @@ export class LlmAgent extends BaseAgent {
       for await (const event of processor.runAsync(
         invocationContext,
         llmRequest,
+        abortSignal,
       )) {
         yield event;
       }
@@ -781,6 +790,7 @@ export class LlmAgent extends BaseAgent {
             invocationContext,
             llmRequest,
             modelResponseEvent,
+            abortSignal,
           )) {
             // ======================================================================
             // Postprocess after calling the LLM
@@ -815,6 +825,7 @@ export class LlmAgent extends BaseAgent {
     llmRequest: LlmRequest,
     llmResponse: LlmResponse,
     modelResponseEvent: Event,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void> {
     // =========================================================================
     // Runs response processors
@@ -823,6 +834,7 @@ export class LlmAgent extends BaseAgent {
       for await (const event of processor.runAsync(
         invocationContext,
         llmResponse,
+        abortSignal,
       )) {
         yield event;
       }
@@ -881,6 +893,7 @@ export class LlmAgent extends BaseAgent {
       toolsDict: llmRequest.toolsDict,
       beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
       afterToolCallbacks: this.canonicalAfterToolCallbacks,
+      abortSignal,
     });
 
     if (!functionResponseEvent) {
@@ -950,6 +963,7 @@ export class LlmAgent extends BaseAgent {
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
     modelResponseEvent: Event,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void, void> {
     // Runs before_model_callback if it exists.
     const beforeModelResponse = await this.handleBeforeModelCallback(
@@ -984,6 +998,7 @@ export class LlmAgent extends BaseAgent {
         llmRequest,
         /* stream= */ invocationContext.runConfig?.streamingMode ===
           StreamingMode.SSE,
+        abortSignal,
       );
 
       for await (const llmResponse of responsesGenerator) {

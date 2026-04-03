@@ -132,6 +132,7 @@ export class Gemini extends BaseLlm {
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     stream = false,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     this.preprocessRequest(llmRequest);
     this.maybeAppendUserContent(llmRequest);
@@ -139,11 +140,19 @@ export class Gemini extends BaseLlm {
       `Sending out request, model: ${llmRequest.model ?? this.model}, backend: ${this.apiBackend}, stream: ${stream}`,
     );
 
-    if (llmRequest.config?.httpOptions) {
+    if (!llmRequest.config) {
+      llmRequest.config = {};
+    }
+
+    if (llmRequest.config.httpOptions) {
       llmRequest.config.httpOptions.headers = {
         ...llmRequest.config.httpOptions.headers,
         ...this.trackingHeaders,
       };
+    }
+
+    if (abortSignal) {
+      llmRequest.config.abortSignal = abortSignal;
     }
 
     if (stream) {

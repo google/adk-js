@@ -40,6 +40,7 @@ export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
 export type ToolExecuteFunction<TParameters extends ToolInputParameters> = (
   input: ToolExecuteArgument<TParameters>,
   tool_context?: Context,
+  abortSignal?: AbortSignal,
 ) => Promise<unknown> | unknown;
 
 /**
@@ -137,7 +138,10 @@ export class FunctionTool<
   /**
    * Logic for running the tool.
    */
-  override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync(
+    req: RunAsyncToolRequest,
+    abortSignal?: AbortSignal,
+  ): Promise<unknown> {
     try {
       let validatedArgs: unknown = req.args;
       if (isZodObject(this.parameters)) {
@@ -146,6 +150,7 @@ export class FunctionTool<
       return await this.execute(
         validatedArgs as ToolExecuteArgument<TParameters>,
         req.toolContext,
+        abortSignal,
       );
     } catch (error) {
       const errorMessage =

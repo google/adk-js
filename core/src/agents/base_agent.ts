@@ -168,6 +168,7 @@ export abstract class BaseAgent {
    */
   async *runAsync(
     parentContext: InvocationContext,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void> {
     const span = tracer.startSpan(`invoke_agent ${this.name}`);
     const ctx = trace.setSpan(context.active(), span);
@@ -189,7 +190,7 @@ export abstract class BaseAgent {
           }
 
           traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context)) {
+          for await (const event of this.runAsyncImpl(context, abortSignal)) {
             yield event;
           }
 
@@ -244,6 +245,7 @@ export abstract class BaseAgent {
    */
   protected abstract runAsyncImpl(
     context: InvocationContext,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void>;
 
   /**

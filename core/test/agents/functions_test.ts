@@ -20,7 +20,7 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {Content, FunctionCall} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
   generateClientFunctionCallId,
@@ -293,6 +293,34 @@ describe('handleFunctionCallList', () => {
     expect(event!.content!.parts![0].functionResponse!.response).toEqual({
       error: "Error in tool 'errorTool': tool error message content",
     });
+  });
+
+  it('should pass abortSignal to tool execution', async () => {
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    const mockTool = new FunctionTool({
+      name: 'mockTool',
+      description: 'mock tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'ok'}),
+    });
+
+    const runAsyncSpy = vi.spyOn(mockTool, 'runAsync');
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: '1', name: 'mockTool', args: {}}],
+      toolsDict: {'mockTool': mockTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      abortSignal: signal,
+    });
+
+    expect(runAsyncSpy).toHaveBeenCalledWith(
+      expect.objectContaining({}),
+      signal,
+    );
   });
 });
 

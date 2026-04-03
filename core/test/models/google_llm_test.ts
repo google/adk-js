@@ -6,8 +6,27 @@
 
 import {Gemini, GeminiParams, geminiInitParams, version} from '@google/adk';
 import {GenerateContentResponse, GoogleGenAI, HttpOptions} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {LlmRequest} from '../../src/models/llm_request.js';
+
+vi.mock('@google/genai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@google/genai')>();
+  return {
+    ...actual,
+    GoogleGenAI: vi.fn().mockImplementation((options) => ({
+      apiClient: {
+        clientOptions: {
+          httpOptions: options.httpOptions,
+        },
+      },
+      models: {
+        generateContentStream: vi.fn(),
+        generateContent: vi.fn(),
+      },
+      vertexai: options.vertexai || false,
+    })),
+  };
+});
 
 class TestGemini extends Gemini {
   constructor(params: GeminiParams) {
@@ -281,6 +300,71 @@ describe('GoogleLlm', () => {
         location: 'us-central1',
       };
       expect(() => geminiInitParams(input)).toThrow(/VertexAI project/);
+    });
+  });
+
+  describe('generateContentAsync', () => {
+    it('should pass abortSignal to generateContentStream', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const abortController = new AbortController();
+      const signal = abortController.signal;
+
+      const mockStreamResult = [
+        {candidates: [{content: {parts: [{text: 'response'}]}}]},
+      ];
+
+      const generateContentStreamMock = vi
+        .fn()
+        .mockResolvedValue(mockStreamResult);
+      llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+      const llmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const generator = llm.generateContentAsync(llmRequest, true, signal);
+      await generator.next();
+
+      expect(generateContentStreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            abortSignal: signal,
+          }),
+        }),
+      );
+    });
+
+    it('should throw error when stream is aborted', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const abortController = new AbortController();
+      const signal = abortController.signal;
+
+      const generateContentStreamMock = vi
+        .fn()
+        .mockImplementation(async function* () {
+          yield {candidates: [{content: {parts: [{text: 'response1'}]}}]};
+          if (signal.aborted) {
+            throw new Error('Aborted');
+          }
+          yield {candidates: [{content: {parts: [{text: 'response2'}]}}]};
+        });
+      llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+      const llmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const generator = llm.generateContentAsync(llmRequest, true, signal);
+
+      await generator.next();
+
+      abortController.abort();
+
+      await expect(generator.next()).rejects.toThrow('Aborted');
     });
   });
 });
