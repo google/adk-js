@@ -19,12 +19,12 @@ export type Router<T, C> = (
  * Runs a core operation with selection and failover support.
  * Internal helper to unify Promise and Generator logic.
  */
-async function* runWithRoutingCore<T, C, TYield>(
+export async function* runWithRouting<T, C, TYield>(
   items: Readonly<Record<string, T>>,
   context: C,
   router: Router<T, C>,
   runFn: (item: T) => AsyncGenerator<TYield, void, void> | Promise<TYield>,
-): AsyncGenerator<TYield, void> {
+): AsyncGenerator<TYield, void, void> {
   const initialKey = await router(items, context);
   if (!initialKey) {
     throw new Error('Initial routing failed, no item selected.');
@@ -40,28 +40,21 @@ async function* runWithRoutingCore<T, C, TYield>(
   const triedKeys = new Set<string>([selectedKey]);
 
   while (true) {
-    const runResult = runFn(selectedItem);
+    const generatorOrPromise = runFn(selectedItem);
     let firstYielded = false;
 
     try {
-      if (
-        runResult &&
-        typeof runResult === 'object' &&
-        typeof (runResult as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
-          'function'
-      ) {
-        const iterator = runResult as AsyncGenerator<TYield, void, void>;
-
-        for await (const result of iterator) {
+      if (isAsyncGenerator(generatorOrPromise)) {
+        for await (const result of generatorOrPromise) {
           yield result;
           firstYielded = true;
         }
-        break;
-      } else {
-        const result = await (runResult as Promise<TYield>);
-        yield result;
-        break;
+        return;
       }
+
+      const result = await generatorOrPromise;
+      yield result;
+      return;
     } catch (error) {
       if (!firstYielded) {
         const nextKey = await router(items, context, {
@@ -94,58 +87,11 @@ async function* runWithRoutingCore<T, C, TYield>(
   }
 }
 
-/**
- * Runs an operation with selection and failover support.
- * Overloaded to support both AsyncGenerator and Promise-returning functions.
- */
-export function runWithRouting<T, C, R>(
-  items: Readonly<Record<string, T>>,
-  context: C,
-  router: Router<T, C>,
-  runFn: (item: T) => AsyncGenerator<R, void, void>,
-): AsyncGenerator<R, void>;
-
-// eslint-disable-next-line no-redeclare
-export function runWithRouting<T, C, R>(
-  items: Readonly<Record<string, T>>,
-  context: C,
-  router: Router<T, C>,
-  runFn: (item: T) => Promise<R>,
-): Promise<R>;
-
-// eslint-disable-next-line no-redeclare
-export function runWithRouting<T, C, R>(
-  items: Readonly<Record<string, T>>,
-  context: C,
-  router: Router<T, C>,
-  runFn: (item: T) => AsyncGenerator<R, void, void> | Promise<R>,
-): unknown {
-  const gen = runWithRoutingCore(items, context, router, runFn);
-
-  return {
-    then<TResult1 = R, TResult2 = never>(
-      onfulfilled?: ((value: R) => TResult1 | PromiseLike<TResult1>) | null,
-      onrejected?:
-        | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
-        | null,
-    ): Promise<TResult1 | TResult2> {
-      const p = (async () => {
-        let savedValue: R | undefined;
-        while (true) {
-          const result = await gen.next();
-          if (result.done) {
-            return (
-              result.value !== undefined ? result.value : savedValue
-            ) as R;
-          }
-          savedValue = result.value as R;
-        }
-      })();
-      return p.then(onfulfilled, onrejected);
-    },
-
-    [Symbol.asyncIterator](): AsyncIterator<R, void> {
-      return gen;
-    },
-  };
+function isAsyncGenerator(
+  obj: unknown,
+): obj is AsyncGenerator<unknown, void, void> {
+  return (
+    typeof obj === 'object' &&
+    typeof (obj as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
+  );
 }

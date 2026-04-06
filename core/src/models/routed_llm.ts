@@ -70,8 +70,16 @@ export class RoutedLlm extends BaseLlm {
    * selected at the time of connection.
    */
   async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    return runWithRouting(this.models, llmRequest, this.router, (model) =>
-      model.connect(llmRequest),
+    const generator = runWithRouting(
+      this.models,
+      llmRequest,
+      this.router,
+      (model) => model.connect(llmRequest),
     );
+    const result = await generator.next();
+    if (result.done || result.value === undefined) {
+      throw new Error('Failed to establish connection: No connection yielded.');
+    }
+    return result.value;
   }
 }
