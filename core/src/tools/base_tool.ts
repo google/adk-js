@@ -106,10 +106,7 @@ export abstract class BaseTool {
    * @param request The request to run the tool.
    * @return A promise that resolves to the tool response.
    */
-  abstract runAsync(
-    request: RunAsyncToolRequest,
-    abortSignal?: AbortSignal,
-  ): Promise<unknown>;
+  abstract runAsync(request: RunAsyncToolRequest): Promise<unknown>;
 
   /**
    * Processes the outgoing LLM request for this tool.

@@ -19,7 +19,6 @@ export abstract class BaseLlmRequestProcessor {
   abstract runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
-    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void>;
 }
 
@@ -33,6 +32,5 @@ export abstract class BaseLlmResponseProcessor {
   abstract runAsync(
     invocationContext: InvocationContext,
     llmResponse: LlmResponse,
-    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void>;
 }

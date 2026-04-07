@@ -7,17 +7,23 @@
 import {
   BaseLlm,
   BaseLlmConnection,
+  BaseLlmRequestProcessor,
+  BaseLlmResponseProcessor,
   BasePlugin,
+  BaseTool,
   CONTENT_REQUEST_PROCESSOR,
   Context,
   ContextCompactorRequestProcessor,
+  createEvent,
   Event,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   PluginManager,
+  RunAsyncToolRequest,
   Session,
+  ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -120,6 +126,65 @@ class MockPlugin extends BasePlugin {
     error: Error;
   }): Promise<LlmResponse | undefined> {
     return this.onModelErrorResponse;
+  }
+}
+
+class MockRequestProcessor extends BaseLlmRequestProcessor {
+  async *runAsync(
+    _invocationContext: InvocationContext,
+    _llmRequest: LlmRequest,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({id: 'evt_processor_1', author: 'processor'});
+    yield createEvent({id: 'evt_processor_2', author: 'processor'});
+  }
+}
+
+class MockTool extends BaseTool {
+  constructor(
+    name: string,
+    private controller?: AbortController,
+  ) {
+    super({name, description: 'mock tool'});
+  }
+  async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+    return Promise.resolve({});
+  }
+  override async processLlmRequest(
+    _params: ToolProcessLlmRequest,
+  ): Promise<void> {
+    if (this.controller) {
+      this.controller.abort();
+    }
+  }
+}
+
+class MockToolWithRun extends BaseTool {
+  constructor(
+    name: string,
+    private controller?: AbortController,
+  ) {
+    super({name, description: 'mock tool with run'});
+  }
+  async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+    if (this.controller) {
+      this.controller.abort();
+    }
+    return Promise.resolve({result: 'success'});
+  }
+  override async processLlmRequest(
+    params: ToolProcessLlmRequest,
+  ): Promise<void> {
+    params.llmRequest.toolsDict[this.name] = this;
+  }
+}
+
+class MockResponseProcessor extends BaseLlmResponseProcessor {
+  async *runAsync(
+    _invocationContext: InvocationContext,
+    _llmResponse: LlmResponse,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({id: 'evt_response_processor_1', author: 'processor'});
+    yield createEvent({id: 'evt_response_processor_2', author: 'processor'});
   }
 }
 
@@ -488,6 +553,8 @@ describe('LlmAgent Abort Handling', () => {
       get: () => undefined,
       set: () => {},
     };
+
+    const abortController = new AbortController();
     const invocationContext = new InvocationContext({
       invocationId: 'inv_123',
       session: {
@@ -497,18 +564,219 @@ describe('LlmAgent Abort Handling', () => {
       } as unknown as Session,
       agent: agent,
       pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
     });
 
-    const abortController = new AbortController();
-    const signal = abortController.signal;
-
-    const generator = agent.runAsync(invocationContext, signal);
+    const generator = agent.runAsync(invocationContext);
 
     const firstResult = await generator.next();
     expect(firstResult.done).toBe(false);
     expect((firstResult.value as Event).content?.parts?.[0].text).toBe(
       'chunk 1',
     );
+
+    abortController.abort();
+
+    const secondResult = await generator.next();
+    expect(secondResult.done).toBe(true);
+  });
+
+  it('should stop execution when abortSignal is aborted during request processors', async () => {
+    const mockProcessor = new MockRequestProcessor();
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      requestProcessors: [mockProcessor],
+    });
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+
+    const abortController = new AbortController();
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
+    });
+
+    const generator = agent.runAsync(invocationContext);
+
+    const firstResult = await generator.next();
+    expect(firstResult.done).toBe(false);
+    expect((firstResult.value as Event).author).toBe('processor');
+
+    abortController.abort();
+
+    const secondResult = await generator.next();
+    expect(secondResult.done).toBe(true);
+  });
+
+  it('should stop execution when abortSignal is aborted during tool processing', async () => {
+    const abortController = new AbortController();
+    const mockTool = new MockTool('mock_tool', abortController);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [mockTool],
+      model: new MockLlm(null),
+    });
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
+    });
+
+    const generator = agent.runAsync(invocationContext);
+
+    const result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
+  it('should stop execution when abortSignal is aborted during after model callback', async () => {
+    const abortController = new AbortController();
+    const mockModel = new MockLlm({
+      content: {parts: [{text: 'mock response'}]},
+    });
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: mockModel,
+    });
+
+    agent.afterModelCallback = async () => {
+      abortController.abort();
+      return undefined;
+    };
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
+    });
+
+    const generator = agent.runAsync(invocationContext);
+
+    const result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
+  it('should stop execution when abortSignal is aborted during tool invocation', async () => {
+    const abortController = new AbortController();
+    const mockTool = new MockToolWithRun('mock_tool', abortController);
+
+    const functionCallResponse: LlmResponse = {
+      content: {
+        parts: [
+          {
+            functionCall: {
+              name: 'mock_tool',
+              args: {},
+            },
+          },
+        ],
+      },
+    };
+
+    const mockModel = new MockLlm(functionCallResponse);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [mockTool],
+      model: mockModel,
+    });
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
+    });
+
+    const generator = agent.runAsync(invocationContext);
+
+    const firstResult = await generator.next();
+    expect(firstResult.done).toBe(false);
+    expect(
+      (firstResult.value as Event).content?.parts?.[0].functionCall?.name,
+    ).toBe('mock_tool');
+
+    const secondResult = await generator.next();
+    expect(secondResult.done).toBe(true);
+  });
+
+  it('should stop execution when abortSignal is aborted during response processors', async () => {
+    const mockProcessor = new MockResponseProcessor();
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      responseProcessors: [mockProcessor],
+      model: new MockLlm({content: {parts: [{text: 'mock response'}]}}),
+    });
+
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+
+    const abortController = new AbortController();
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+      abortSignal: abortController.signal,
+    });
+
+    const generator = agent.runAsync(invocationContext);
+
+    const firstResult = await generator.next();
+    expect(firstResult.done).toBe(false);
+    expect((firstResult.value as Event).author).toBe('processor');
 
     abortController.abort();
 

@@ -168,7 +168,6 @@ export abstract class BaseAgent {
    */
   async *runAsync(
     parentContext: InvocationContext,
-    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void> {
     const span = tracer.startSpan(`invoke_agent ${this.name}`);
     const ctx = trace.setSpan(context.active(), span);
@@ -190,7 +189,7 @@ export abstract class BaseAgent {
           }
 
           traceAgentInvocation({agent: this, invocationContext: context});
-          for await (const event of this.runAsyncImpl(context, abortSignal)) {
+          for await (const event of this.runAsyncImpl(context)) {
             yield event;
           }
 
@@ -245,7 +244,6 @@ export abstract class BaseAgent {
    */
   protected abstract runAsyncImpl(
     context: InvocationContext,
-    abortSignal?: AbortSignal,
   ): AsyncGenerator<Event, void, void>;
 
   /**
@@ -323,6 +321,10 @@ export abstract class BaseAgent {
     for (const callback of this.beforeAgentCallback) {
       const content = await callback(callbackContext);
 
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
       if (content) {
         invocationContext.endInvocation = true;
 
@@ -365,6 +367,10 @@ export abstract class BaseAgent {
     const callbackContext = new Context({invocationContext});
     for (const callback of this.afterAgentCallback) {
       const content = await callback(callbackContext);
+
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
 
       if (content) {
         return createEvent({

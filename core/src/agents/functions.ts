@@ -215,13 +215,12 @@ async function callToolAsync(
   tool: BaseTool,
   args: Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
   toolContext: Context,
-  abortSignal?: AbortSignal,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   return tracer.startActiveSpan(`execute_tool ${tool.name}`, async (span) => {
     try {
       logger.debug(`callToolAsync ${tool.name}`);
-      const result = await tool.runAsync({args, toolContext}, abortSignal);
+      const result = await tool.runAsync({args, toolContext});
       traceToolCall({
         tool,
         args,
@@ -293,7 +292,6 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
-  abortSignal,
 }: {
   invocationContext: InvocationContext;
   functionCallEvent: Event;
@@ -302,7 +300,6 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
-  abortSignal?: AbortSignal;
 }): Promise<Event | null> {
   const functionCalls = getFunctionCalls(functionCallEvent);
   return await handleFunctionCallList({
@@ -313,7 +310,6 @@ export async function handleFunctionCallsAsync({
     afterToolCallbacks: afterToolCallbacks,
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
-    abortSignal,
   });
 }
 
@@ -330,7 +326,6 @@ export async function handleFunctionCallList({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
-  abortSignal,
 }: {
   invocationContext: InvocationContext;
   functionCalls: FunctionCall[];
@@ -339,7 +334,6 @@ export async function handleFunctionCallList({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
-  abortSignal?: AbortSignal;
 }): Promise<Event | null> {
   const functionResponseEvents: Event[] = [];
 
@@ -397,12 +391,7 @@ export async function handleFunctionCallList({
     if (functionResponse == null) {
       // Cover both null and undefined
       try {
-        functionResponse = await callToolAsync(
-          tool,
-          functionArgs,
-          toolContext,
-          abortSignal,
-        );
+        functionResponse = await callToolAsync(tool, functionArgs, toolContext);
       } catch (e: unknown) {
         if (e instanceof Error) {
           const onToolErrorResponse =

@@ -307,6 +307,13 @@ describe('handleFunctionCallList', () => {
     });
 
     const runAsyncSpy = vi.spyOn(mockTool, 'runAsync');
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {} as Session,
+      agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+      pluginManager,
+      abortSignal: signal,
+    });
 
     await handleFunctionCallList({
       invocationContext,
@@ -314,12 +321,15 @@ describe('handleFunctionCallList', () => {
       toolsDict: {'mockTool': mockTool},
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
-      abortSignal: signal,
     });
 
     expect(runAsyncSpy).toHaveBeenCalledWith(
-      expect.objectContaining({}),
-      signal,
+      expect.objectContaining({
+        args: {},
+        toolContext: expect.objectContaining({
+          abortSignal: signal,
+        }),
+      }),
     );
   });
 });
