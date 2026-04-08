@@ -156,7 +156,7 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
-export {BasePlugin} from './plugins/base_plugin.js';
+export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
 export {
