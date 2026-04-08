@@ -15,6 +15,7 @@ import {
   isRoutedAgent,
 } from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
+import {Logger, setLogger} from '../../src/utils/logger.js';
 
 class MockAgent extends BaseAgent {
   constructor(name: string) {
@@ -76,6 +77,30 @@ describe('RoutedAgent', () => {
     agentA = new MockAgent('agent-a');
     agentB = new MockAgent('agent-b');
     agents = [agentA, agentB];
+  });
+
+  describe('experimental check', () => {
+    const warnCalls: string[] = [];
+    const mockLogger: Logger = {
+      setLogLevel: () => {},
+      log: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: (...args: unknown[]) => {
+        warnCalls.push(args.map((a) => String(a)).join(' '));
+      },
+      error: () => {},
+    };
+
+    it('warns when instantiated', () => {
+      setLogger(mockLogger);
+
+      const router = async () => 'agent-a';
+      new RoutedAgent({name: 'router', agents: [], router});
+
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain('Class RoutedAgent is experimental');
+    });
   });
 
   it('should route runAsync to the selected agent A', async () => {
