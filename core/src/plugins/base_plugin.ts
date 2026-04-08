@@ -16,6 +16,14 @@ import {BaseTool} from '../tools/base_tool.js';
 import {experimental} from '../utils/experimental.js';
 
 /**
+ * Trigger for context compaction.
+ */
+export enum ContextCompactionTrigger {
+  Manual = 'Manual',
+  Auto = 'Auto',
+}
+
+/**
  * Base class for creating plugins.
  *
  * Plugins provide a structured way to intercept and modify agent, tool, and
@@ -308,6 +316,42 @@ export abstract class BasePlugin {
     callbackContext: Context;
     tools: Readonly<Record<string, BaseTool>>;
   }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
+    return;
+  }
+
+  /**
+   * Callback executed before context compaction.
+   *
+   * This callback provides an opportunity to inspect or modify the context
+   * before it is compacted.
+   *
+   * @param params.invocationContext The context for the entire invocation.
+   * @param params.trigger The trigger for the context compaction.
+   */
+  @experimental
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async beforeContextCompaction(params: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
+    return;
+  }
+
+  /**
+   * Callback executed after context compaction.
+   *
+   * This callback provides an opportunity to inspect the context
+   * after it has been compacted.
+   *
+   * @param params.invocationContext The context for the entire invocation.
+   * @param params.trigger The trigger for the context compaction.
+   */
+  @experimental
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async afterContextCompaction(params: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
     return;
   }
 

@@ -17,6 +17,7 @@ import {
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {describe, expect, it} from 'vitest';
+import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 import {resetLogger, setLogger} from '../../src/utils/logger.js';
 
 class TestablePlugin extends BasePlugin {
@@ -347,6 +348,64 @@ describe('BasePlugin', () => {
       expect(warnCalls).toHaveLength(1);
       expect(warnCalls[0]).toContain(
         'Method BasePlugin.beforeToolSelection is experimental',
+      );
+    } finally {
+      resetLogger();
+    }
+  });
+
+  it('should warn that beforeContextCompaction is experimental', async () => {
+    const warnCalls: string[] = [];
+    const mockLogger = {
+      setLogLevel: () => {},
+      log: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: (...args: unknown[]) => {
+        warnCalls.push(args.map((a) => String(a)).join(' '));
+      },
+      error: () => {},
+    };
+
+    setLogger(mockLogger);
+    try {
+      const plugin = new TestablePlugin('test_plugin');
+      await plugin.beforeContextCompaction({
+        invocationContext: mockInvocationContext,
+        trigger: ContextCompactionTrigger.Auto,
+      });
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain(
+        'Method BasePlugin.beforeContextCompaction is experimental',
+      );
+    } finally {
+      resetLogger();
+    }
+  });
+
+  it('should warn that afterContextCompaction is experimental', async () => {
+    const warnCalls: string[] = [];
+    const mockLogger = {
+      setLogLevel: () => {},
+      log: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: (...args: unknown[]) => {
+        warnCalls.push(args.map((a) => String(a)).join(' '));
+      },
+      error: () => {},
+    };
+
+    setLogger(mockLogger);
+    try {
+      const plugin = new TestablePlugin('test_plugin');
+      await plugin.afterContextCompaction({
+        invocationContext: mockInvocationContext,
+        trigger: ContextCompactionTrigger.Auto,
+      });
+      expect(warnCalls).toHaveLength(1);
+      expect(warnCalls[0]).toContain(
+        'Method BasePlugin.afterContextCompaction is experimental',
       );
     } finally {
       resetLogger();
