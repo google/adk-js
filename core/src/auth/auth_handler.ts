@@ -28,12 +28,10 @@ export class AuthHandler {
   async parseAndStoreAuthResponse(state: State): Promise<void> {
     const credentialKey = 'temp:' + this.authConfig.credentialKey;
 
-    if (this.authConfig.exchangedAuthCredential) {
-      state.set(credentialKey, this.authConfig.exchangedAuthCredential);
-    }
-
     const authSchemeType = this.authConfig.authScheme.type;
     if (!['oauth2', 'openIdConnect'].includes(authSchemeType)) {
+      state.set(credentialKey, this.authConfig.exchangedAuthCredential);
+
       return;
     }
 
