@@ -8,6 +8,7 @@ import {Event} from '../events/event.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
+import {experimental} from '../utils/experimental.js';
 import {runWithRouting} from '../utils/failover_utils.js';
 
 /**
@@ -59,6 +60,7 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
  * A BaseAgent implementation that delegates to one of multiple agents based on a router function.
  * Routing is strictly limited to the agents passed in the config.
  */
+@experimental
 export class RoutedAgent extends BaseAgent {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 
