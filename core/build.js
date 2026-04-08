@@ -63,6 +63,14 @@ function build({
     buildOptions.outdir = `./dist/${targetDir}`;
   }
 
+  if (format === 'esm') {
+    buildOptions.banner = {
+      js:
+        (buildOptions.banner?.js || '') +
+        `import {createRequire as topLevelCreateRequire} from 'module';\nconst require = topLevelCreateRequire(import.meta.url);`,
+    };
+  }
+
   return watch
     ? esbuild.context(buildOptions).then((c) => c.watch())
     : esbuild.build(buildOptions);
