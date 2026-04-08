@@ -113,6 +113,37 @@ describe('Build setup', () => {
       TEST_EXECUTION_TIMEOUT,
     );
 
+    it(
+      'should import devtools successfully',
+      async () => {
+        const verifyScript = buildSetup.startsWith('ts_')
+          ? 'dist/verify_devtools.js'
+          : 'verify_devtools.js';
+
+        const {stdout, stderr} = await execAsync(`node ${verifyScript}`, {
+          cwd: projectPath,
+        });
+
+        expect(stdout).toContain('Devtools verification successful');
+        expect(stderr).toBe('');
+      },
+      TEST_EXECUTION_TIMEOUT,
+    );
+
+    it(
+      'should run devtools CLI successfully',
+      async () => {
+        const {stdout, stderr} = await execAsync(
+          'npx @google/adk-devtools --version',
+          {cwd: projectPath},
+        );
+
+        expect(stdout).toBeTruthy();
+        expect(stderr).toBe('');
+      },
+      TEST_EXECUTION_TIMEOUT,
+    );
+
     afterAll(async () => {
       await fs
         .rm(`${projectPath}/node_modules`, {recursive: true, force: true})
