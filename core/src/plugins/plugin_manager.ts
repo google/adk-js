@@ -217,6 +217,24 @@ export class PluginManager {
   }
 
   /**
+   * Runs the `beforeToolSelection` for all plugins.
+   */
+  async runBeforeToolSelection({
+    callbackContext,
+    tools,
+  }: {
+    callbackContext: Context;
+    tools: Readonly<Record<string, BaseTool>>;
+  }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
+    return (await this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeToolSelection({callbackContext, tools}),
+      'beforeToolSelection',
+    )) as Readonly<Record<string, BaseTool>> | undefined;
+  }
+
+  /**
    * Runs the `beforeToolCallback` for all plugins.
    */
   async runBeforeToolCallback({

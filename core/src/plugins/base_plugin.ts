@@ -13,6 +13,7 @@ import {Event} from '../events/event.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {experimental} from '../utils/experimental.js';
 
 /**
  * Base class for creating plugins.
@@ -286,6 +287,27 @@ export abstract class BasePlugin {
     llmRequest: LlmRequest;
     error: Error;
   }): Promise<LlmResponse | undefined> {
+    return;
+  }
+
+  /**
+   * Callback executed before a tool is selected.
+   *
+   * This callback provides an opportunity to inspect, log, or modify the
+   * available tools before they are selected.
+   *
+   * @param params.callbackContext The context for the current agent call.
+   * @param params.tools The available tools.
+   * @returns An optional value. A non-`undefined` return may be used by the
+   *     framework to modify or replace the available tools. Returning
+   *     `undefined` allows the original tools to be used.
+   */
+  @experimental
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async beforeToolSelection(params: {
+    callbackContext: Context;
+    tools: Readonly<Record<string, BaseTool>>;
+  }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
     return;
   }
 
