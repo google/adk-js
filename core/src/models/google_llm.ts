@@ -136,7 +136,7 @@ export class Gemini extends BaseLlm {
     this.preprocessRequest(llmRequest);
     this.maybeAppendUserContent(llmRequest);
     logger.info(
-      `Sending out request, model: ${llmRequest.model}, backend: ${this.apiBackend}, stream: ${stream}`,
+      `Sending out request, model: ${llmRequest.model ?? this.model}, backend: ${this.apiBackend}, stream: ${stream}`,
     );
 
     if (llmRequest.config?.httpOptions) {

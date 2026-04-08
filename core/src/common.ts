@@ -47,6 +47,8 @@ export {
 } from './agents/processors/content_request_processor.js';
 export {ContextCompactorRequestProcessor} from './agents/processors/context_compactor_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
+export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
+export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
@@ -152,6 +154,8 @@ export type {LlmRequest} from './models/llm_request.js';
 export type {LlmResponse} from './models/llm_response.js';
 export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
+export {RoutedLlm} from './models/routed_llm.js';
+export type {LlmRouter} from './models/routed_llm.js';
 export {BasePlugin} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
