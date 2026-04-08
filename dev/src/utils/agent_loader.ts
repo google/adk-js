@@ -125,6 +125,27 @@ export class AgentFile {
       await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
+      const originalDir = path.dirname(filePath);
+      const replaceDirnamePlugin = {
+        name: 'replace-dirname',
+        setup(build: any) {
+          build.onLoad({filter: /.*/}, async (args: any) => {
+            if (args.path === filePath) {
+              const content = await fsPromises.readFile(args.path, 'utf8');
+              const modifiedContent = content.replace(
+                /__dirname/g,
+                `'${originalDir}'`,
+              );
+              return {
+                contents: modifiedContent,
+                loader: path.extname(filePath) === '.ts' ? 'ts' : 'js',
+              };
+            }
+            return undefined;
+          });
+        },
+      };
+
       await esbuild.build({
         entryPoints: [filePath],
         outfile: compiledFilePath,
@@ -135,7 +156,7 @@ export class AgentFile {
         bundle: this.options.bundle,
         minify: this.options.bundle,
         allowOverwrite: true,
-        plugins: [shimPlugin()],
+        plugins: [replaceDirnamePlugin, shimPlugin()],
         // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
         external: [
           'sqlite3',
