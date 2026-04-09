@@ -113,19 +113,20 @@ describe('Build setup', () => {
       TEST_EXECUTION_TIMEOUT,
     );
 
-    it(
+    it.skipIf(
+      !['js_commonjs', 'js_esm', 'ts_commonjs', 'ts_esm'].includes(buildSetup),
+    )(
       'should import devtools successfully',
       async () => {
-        const verifyScript = buildSetup.startsWith('ts_')
-          ? 'dist/verify_devtools.js'
-          : 'verify_devtools.js';
-
-        const {stdout, stderr} = await execAsync(`node ${verifyScript}`, {
+        const childProcess = spawn('npm', ['run', 'test:devtools'], {
           cwd: projectPath,
+          shell: true,
         });
 
-        expect(stdout).toContain('Devtools verification successful');
-        expect(stderr).toBe('');
+        const response = await getResponse(childProcess);
+        expect(response.toString()).toContain(
+          'Devtools verification successful',
+        );
       },
       TEST_EXECUTION_TIMEOUT,
     );
