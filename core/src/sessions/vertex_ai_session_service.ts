@@ -4,14 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   ApiClient,
   NodeAuth,
   NodeDownloader,
   NodeUploader,
 } from '@google/genai/vertex_internal';
-// @ts-expect-error - The module may not be published yet
-import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 
 import {Event} from '../events/event.js';
@@ -129,10 +128,13 @@ export class VertexAiSessionService extends BaseSessionService {
     });
 
     const operationName = apiResponse.name;
+    if (!operationName) {
+      throw new Error('Operation name is missing from response');
+    }
 
-    // Poll for operation completion
     let attempts = 0;
-    while (!apiResponse.done && attempts < 30) {
+    const maxAttempts = this.expressModeApiKey ? 5 : 30;
+    while (!apiResponse.done && attempts < maxAttempts) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       apiResponse = await this.client.getSessionOperationInternal({
         operationName: operationName,
@@ -146,16 +148,22 @@ export class VertexAiSessionService extends BaseSessionService {
       );
     }
 
-    const getSessionResponse = apiResponse.response;
+    const getSessionResponse = apiResponse.response as {
+      name: string;
+      sessionState?: Record<string, unknown>;
+      updateTime?: string;
+    };
     const id = getSessionResponse.name.split('/').pop() || '';
 
     return createSession({
       id,
       appName,
       userId,
-      state: getSessionResponse.session_state || {},
+      state: getSessionResponse.sessionState || {},
       events: [],
-      lastUpdateTime: getSessionResponse.update_time?.timestamp || Date.now(),
+      lastUpdateTime: getSessionResponse.updateTime
+        ? Date.parse(getSessionResponse.updateTime)
+        : Date.now(),
     });
   }
 
@@ -188,10 +196,17 @@ export class VertexAiSessionService extends BaseSessionService {
           }),
         ]);
         getSessionResponse = sessionRes;
-        eventsIterator = eventsRes.sessionEvents || [];
+        eventsIterator =
+          (eventsRes as {sessionEvents?: unknown[]}).sessionEvents || [];
       }
 
-      if (getSessionResponse.userId !== userId) {
+      const sessionObj = getSessionResponse as {
+        userId?: string;
+        sessionState?: Record<string, unknown>;
+        updateTime?: string;
+      };
+
+      if (sessionObj.userId !== userId) {
         throw new Error(
           `Session ${sessionId} does not belong to user ${userId}.`,
         );
@@ -201,15 +216,15 @@ export class VertexAiSessionService extends BaseSessionService {
         id: sessionId,
         appName,
         userId,
-        state: getSessionResponse.sessionState || {},
+        state: sessionObj.sessionState || {},
         events: [],
-        lastUpdateTime: getSessionResponse.updateTime
-          ? Date.parse(getSessionResponse.updateTime)
+        lastUpdateTime: sessionObj.updateTime
+          ? Date.parse(sessionObj.updateTime)
           : Date.now(),
       });
 
       for (const event of eventsIterator) {
-        session.events.push(_fromApiEvent(event));
+        session.events.push(_fromApiEvent(event as Record<string, unknown>));
       }
 
       if (config && config.numRecentEvents) {
@@ -237,7 +252,7 @@ export class VertexAiSessionService extends BaseSessionService {
       config: userId ? {filter: `userId="${userId}"`} : {},
     });
 
-    const sessions = response.sessions || [];
+    const sessions = (response as {sessions?: unknown[]}).sessions || [];
     const adkSessions = sessions.map((s: unknown) => {
       const sessionObj = s as {
         name: string;
@@ -331,16 +346,23 @@ export class VertexAiSessionService extends BaseSessionService {
 }
 
 function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
-  const actions = apiEventObj.actions || {};
-  const eventMetadata = apiEventObj.eventMetadata || {};
+  const actions = (apiEventObj.actions as Record<string, unknown>) || {};
+  const eventMetadata =
+    (apiEventObj.eventMetadata as Record<string, unknown>) || {};
 
-  let customMetadata = eventMetadata.customMetadata;
+  let customMetadata = eventMetadata.customMetadata as
+    | Record<string, unknown>
+    | undefined;
   let compactionData = null;
   let usageMetadataData = null;
 
   if (customMetadata) {
     if (customMetadata._compaction) {
-      compactionData = customMetadata._compaction;
+      compactionData = customMetadata._compaction as {
+        startTime: number;
+        endTime: number;
+        compactedContent: unknown;
+      };
       delete customMetadata._compaction;
     }
     if (customMetadata._usage_metadata) {
@@ -353,32 +375,32 @@ function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
   }
 
   const eventActions = {
-    skipSummarization: actions.skipSummarization,
-    stateDelta: actions.stateDelta,
-    artifactDelta: actions.artifactDelta,
-    transferToAgent: actions.transferAgent,
-    escalate: actions.escalate,
-    requestedAuthConfigs: actions.requestedAuthConfigs,
+    skipSummarization: actions['skipSummarization'],
+    stateDelta: actions['stateDelta'],
+    artifactDelta: actions['artifactDelta'],
+    transferToAgent: actions['transferAgent'],
+    escalate: actions['escalate'],
+    requestedAuthConfigs: actions['requestedAuthConfigs'],
     compaction: compactionData,
   };
 
-  const event = {
+  const event: Record<string, unknown> = {
     id: (apiEventObj.name as string).split('/').pop() || '',
     invocationId: apiEventObj.invocationId as string,
     author: apiEventObj.author as string,
     actions: eventActions as unknown as Event['actions'],
     content: apiEventObj.content,
     timestamp: apiEventObj.timestamp
-      ? new Date(apiEventObj.timestamp).getTime()
+      ? new Date(apiEventObj.timestamp as string).getTime()
       : Date.now(),
     errorCode: apiEventObj.errorCode,
     errorMessage: apiEventObj.errorMessage,
-    partial: eventMetadata.partial,
-    turnComplete: eventMetadata.turnComplete,
-    interrupted: eventMetadata.interrupted,
-    branch: eventMetadata.branch,
+    partial: eventMetadata['partial'],
+    turnComplete: eventMetadata['turnComplete'],
+    interrupted: eventMetadata['interrupted'],
+    branch: eventMetadata['branch'],
     customMetadata,
-    longRunningToolIds: eventMetadata.longRunningToolIds,
+    longRunningToolIds: eventMetadata['longRunningToolIds'],
     usageMetadata: usageMetadataData,
   };
 
@@ -389,5 +411,5 @@ function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
     event.compactedContent = compactionData.compactedContent;
   }
 
-  return event as Event;
+  return event as unknown as Event;
 }
