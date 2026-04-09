@@ -80,6 +80,38 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
 };
 
 /**
+ * Returns an esbuild plugin that replaces __dirname with the original directory
+ * path in the agent file. This plugin is needed to ensure that the agent file
+ * has access to its original directory path after compilation.
+ *
+ * @param filePath - The path to the agent file.
+ * @param originalDir - The original directory path of the agent file.
+ * @returns An esbuild plugin that replaces __dirname with the original directory
+ * path in the agent file.
+ */
+function replaceDirnamePlugin(filePath: string, originalDir: string) {
+  return {
+    name: 'replace-dirname',
+    setup(build: esbuild.PluginBuild) {
+      build.onLoad({filter: /.*/}, async (args: esbuild.OnLoadArgs) => {
+        if (args.path === filePath) {
+          const content = await fsPromises.readFile(args.path, 'utf8');
+          const modifiedContent = content.replace(
+            /__dirname/g,
+            `'${originalDir}'`,
+          );
+          return {
+            contents: modifiedContent,
+            loader: path.extname(filePath) === '.ts' ? 'ts' : 'js',
+          };
+        }
+        return undefined;
+      });
+    },
+  };
+}
+
+/**
  * Wrapper class which loads file that contains base agent (support both .js and
  * .ts) and has a dispose function to cleanup the comliped artifact after file
  * usage.
@@ -122,6 +154,7 @@ export class AgentFile {
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
+      const originalDir = path.dirname(filePath);
       await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
@@ -135,7 +168,7 @@ export class AgentFile {
         bundle: this.options.bundle,
         minify: this.options.bundle,
         allowOverwrite: true,
-        plugins: [shimPlugin()],
+        plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
         // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
         external: [
           'sqlite3',
