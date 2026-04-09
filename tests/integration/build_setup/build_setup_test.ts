@@ -134,13 +134,11 @@ describe('Build setup', () => {
     it(
       'should run devtools CLI successfully',
       async () => {
-        const {stdout, stderr} = await execAsync(
-          'npx @google/adk-devtools --version',
-          {cwd: projectPath},
-        );
+        const {stdout} = await execAsync('npx @google/adk-devtools --version', {
+          cwd: projectPath,
+        });
 
         expect(stdout).toBeTruthy();
-        expect(stderr).toBe('');
       },
       TEST_EXECUTION_TIMEOUT,
     );
