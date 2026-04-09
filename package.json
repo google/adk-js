@@ -72,6 +72,6 @@
     ]
   },
   "dependencies": {
-    "@google-cloud/vertexai": "github:googleapis/nodejs-vertexai"
+    "@google-cloud/vertexai": "^1.11.0"
   }
 }
