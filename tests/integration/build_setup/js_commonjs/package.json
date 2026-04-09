@@ -1,17 +1,18 @@
 {
-	"name": "js_commonjs_build_setup",
-	"version": "1.0.0",
-	"description": "",
-	"main": "agent.js",
-	"type": "commonjs",
-	"scripts": {
-		"start": "npx @google/adk-devtools run agent.js"
-	},
-	"keywords": [],
-	"author": "",
-	"license": "ISC",
-	"dependencies": {
-		"@google/adk": "file:../../../../core",
-		"@google/adk-devtools": "file:../../../../dev"
-	}
+  "name": "js_commonjs_build_setup",
+  "version": "1.0.0",
+  "description": "",
+  "main": "agent.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "npx @google/adk-devtools run agent.js",
+    "test:db": "node ./db_init_check.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/adk": "file:../../../../core",
+    "@google/adk-devtools": "file:../../../../dev"
+  }
 }
