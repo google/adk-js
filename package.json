@@ -52,6 +52,7 @@
     "lint-staged": "^16.2.7",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.3.0",
+    "punycode": "^2.3.1",
     "secretlint": "^11.3.1",
     "typedoc": "^0.28.16",
     "typedoc-theme-fresh": "^0.2.3",
