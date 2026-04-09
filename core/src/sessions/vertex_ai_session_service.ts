@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ApiClient, NodeAuth, NodeDownloader, NodeUploader} from '@google/genai/vertex_internal';
-// @ts-ignore - The module may not be published yet
+import {
+  ApiClient,
+  NodeAuth,
+  NodeDownloader,
+  NodeUploader,
+} from '@google/genai/vertex_internal';
+// @ts-expect-error - The module may not be published yet
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 
@@ -26,7 +31,9 @@ import {createSession, Session} from './session.js';
 /**
  * Checks if the given URI is a Vertex AI session service URI.
  */
-export function isVertexAiSessionServiceConnectionString(uri?: string): boolean {
+export function isVertexAiSessionServiceConnectionString(
+  uri?: string,
+): boolean {
   return uri?.startsWith('vertexai://') || false;
 }
 
@@ -42,7 +49,7 @@ export interface VertexAiSessionServiceOptions {
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
 export class VertexAiSessionService extends BaseSessionService {
-  private client: any;
+  private client: Sessions;
   private agentEngineId?: string;
   private expressModeApiKey?: string;
   private projectId?: string;
@@ -56,7 +63,9 @@ export class VertexAiSessionService extends BaseSessionService {
     this.location = options?.location;
 
     if (!options?.client && (!this.projectId || !this.location)) {
-      throw new Error('Project ID and Location are required if no client instance is provided.');
+      throw new Error(
+        'Project ID and Location are required if no client instance is provided.',
+      );
     }
 
     if (options?.client) {
@@ -89,10 +98,13 @@ export class VertexAiSessionService extends BaseSessionService {
     if (/^\d+$/.test(appName)) {
       return appName;
     }
-    const pattern = /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)$/;
+    const pattern =
+      /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)$/;
     const match = appName.match(pattern);
     if (!match) {
-      throw new Error(`App name ${appName} is not valid. It should either be the full ReasoningEngine resource name, or the reasoning engine id.`);
+      throw new Error(
+        `App name ${appName} is not valid. It should either be the full ReasoningEngine resource name, or the reasoning engine id.`,
+      );
     }
     return match[3];
   }
@@ -104,7 +116,9 @@ export class VertexAiSessionService extends BaseSessionService {
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
     if (sessionId) {
-      throw new Error('User-provided Session id is not supported for VertexAISessionService.');
+      throw new Error(
+        'User-provided Session id is not supported for VertexAISessionService.',
+      );
     }
 
     const reasoningEngineId = this._getReasoningEngineId(appName);
@@ -115,11 +129,11 @@ export class VertexAiSessionService extends BaseSessionService {
     });
 
     const operationName = apiResponse.name;
-    
+
     // Poll for operation completion
     let attempts = 0;
     while (!apiResponse.done && attempts < 30) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       apiResponse = await this.client.getSessionOperationInternal({
         operationName: operationName,
       });
@@ -127,7 +141,9 @@ export class VertexAiSessionService extends BaseSessionService {
     }
 
     if (!apiResponse.done) {
-      throw new Error(`Session creation operation ${operationName} did not complete in time.`);
+      throw new Error(
+        `Session creation operation ${operationName} did not complete in time.`,
+      );
     }
 
     const getSessionResponse = apiResponse.response;
@@ -153,19 +169,19 @@ export class VertexAiSessionService extends BaseSessionService {
     const sessionResourceName = `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`;
 
     try {
-      let getSessionResponse: any;
-      let eventsIterator: any[] = [];
+      let getSessionResponse: unknown;
+      let eventsIterator: unknown[] = [];
 
       if (config && config.numRecentEvents === 0) {
-        getSessionResponse = await this.client.get({ name: sessionResourceName });
+        getSessionResponse = await this.client.get({name: sessionResourceName});
       } else {
-        const listConfig: any = {};
+        const listConfig: Record<string, string> = {};
         if (config && config.afterTimestamp) {
           listConfig.filter = `timestamp>="${new Date(config.afterTimestamp).toISOString()}"`;
         }
 
         const [sessionRes, eventsRes] = await Promise.all([
-          this.client.get({ name: sessionResourceName }),
+          this.client.get({name: sessionResourceName}),
           this.client.events.listInternal({
             name: sessionResourceName,
             config: listConfig,
@@ -176,7 +192,9 @@ export class VertexAiSessionService extends BaseSessionService {
       }
 
       if (getSessionResponse.userId !== userId) {
-        throw new Error(`Session ${sessionId} does not belong to user ${userId}.`);
+        throw new Error(
+          `Session ${sessionId} does not belong to user ${userId}.`,
+        );
       }
 
       const session = createSession({
@@ -185,7 +203,9 @@ export class VertexAiSessionService extends BaseSessionService {
         userId,
         state: getSessionResponse.sessionState || {},
         events: [],
-        lastUpdateTime: getSessionResponse.updateTime ? Date.parse(getSessionResponse.updateTime) : Date.now(),
+        lastUpdateTime: getSessionResponse.updateTime
+          ? Date.parse(getSessionResponse.updateTime)
+          : Date.now(),
       });
 
       for (const event of eventsIterator) {
@@ -197,12 +217,12 @@ export class VertexAiSessionService extends BaseSessionService {
       }
 
       return session;
-
-    } catch (error: any) {
-      if (error.code === 5 || error.code === 404) {
+    } catch (error: unknown) {
+      const err = error as {code?: number; message?: string};
+      if (err.code === 5 || err.code === 404) {
         return undefined;
       }
-      logger.error(`Error getting session from Vertex AI: ${error.message}`);
+      logger.error(`Error getting session from Vertex AI: ${err.message}`);
       throw error;
     }
   }
@@ -218,15 +238,23 @@ export class VertexAiSessionService extends BaseSessionService {
     });
 
     const sessions = response.sessions || [];
-    const adkSessions = sessions.map((s: any) => {
-      const id = s.name.split('/').pop() || '';
+    const adkSessions = sessions.map((s: unknown) => {
+      const sessionObj = s as {
+        name: string;
+        userId?: string;
+        sessionState?: Record<string, unknown>;
+        updateTime?: string;
+      };
+      const id = sessionObj.name.split('/').pop() || '';
       return createSession({
         id,
         appName,
-        userId: s.userId,
-        state: s.sessionState || {},
+        userId: sessionObj.userId,
+        state: sessionObj.sessionState || {},
         events: [],
-        lastUpdateTime: s.updateTime ? Date.parse(s.updateTime) : Date.now(),
+        lastUpdateTime: sessionObj.updateTime
+          ? new Date(sessionObj.updateTime).getTime()
+          : Date.now(),
       });
     });
 
@@ -235,7 +263,7 @@ export class VertexAiSessionService extends BaseSessionService {
 
   async deleteSession({
     appName,
-    userId,
+    userId: _userId,
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
     const reasoningEngineId = this._getReasoningEngineId(appName);
@@ -253,7 +281,7 @@ export class VertexAiSessionService extends BaseSessionService {
 
     const reasoningEngineId = this._getReasoningEngineId(session.appName);
 
-    const customMetadata: Record<string, any> = {...event.customMetadata};
+    const customMetadata: Record<string, unknown> = {...event.customMetadata};
     if (isCompactedEvent(event)) {
       customMetadata._compaction = {
         startTime: event.startTime,
@@ -261,25 +289,28 @@ export class VertexAiSessionService extends BaseSessionService {
         compactedContent: event.compactedContent,
       };
     }
-    if ((event as any).usageMetadata) {
-      customMetadata._usage_metadata = (event as any).usageMetadata;
+    const eventWithUsage = event as unknown as {usageMetadata?: unknown};
+    if (eventWithUsage.usageMetadata) {
+      customMetadata._usage_metadata = eventWithUsage.usageMetadata;
     }
 
-    const response = await this.client.events.append({
+    await this.client.events.append({
       name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
       author: event.author || 'user',
       invocationId: event.invocationId || `inv-${Date.now()}`,
       timestamp: new Date(event.timestamp).toISOString(),
       config: {
         content: event.content,
-        actions: event.actions ? {
-          skipSummarization: event.actions.skipSummarization,
-          stateDelta: event.actions.stateDelta,
-          artifactDelta: event.actions.artifactDelta,
-          transferAgent: event.actions.transferToAgent,
-          escalate: event.actions.escalate,
-          requestedAuthConfigs: event.actions.requestedAuthConfigs,
-        } : undefined,
+        actions: event.actions
+          ? {
+              skipSummarization: event.actions.skipSummarization,
+              stateDelta: event.actions.stateDelta,
+              artifactDelta: event.actions.artifactDelta,
+              transferAgent: event.actions.transferToAgent,
+              escalate: event.actions.escalate,
+              requestedAuthConfigs: event.actions.requestedAuthConfigs,
+            }
+          : undefined,
         errorCode: event.errorCode,
         errorMessage: event.errorMessage,
         eventMetadata: {
@@ -287,7 +318,8 @@ export class VertexAiSessionService extends BaseSessionService {
           turnComplete: event.turnComplete,
           interrupted: event.interrupted,
           branch: event.branch,
-          customMetadata: Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
+          customMetadata:
+            Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
           longRunningToolIds: event.longRunningToolIds,
           groundingMetadata: event.groundingMetadata,
         },
@@ -298,10 +330,10 @@ export class VertexAiSessionService extends BaseSessionService {
   }
 }
 
-function _fromApiEvent(apiEventObj: any): Event {
+function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
   const actions = apiEventObj.actions || {};
   const eventMetadata = apiEventObj.eventMetadata || {};
-  
+
   let customMetadata = eventMetadata.customMetadata;
   let compactionData = null;
   let usageMetadataData = null;
@@ -330,13 +362,15 @@ function _fromApiEvent(apiEventObj: any): Event {
     compaction: compactionData,
   };
 
-  const event: any = {
-    id: apiEventObj.name.split('/').pop() || '',
-    invocationId: apiEventObj.invocationId,
-    author: apiEventObj.author,
-    actions: eventActions as any,
+  const event = {
+    id: (apiEventObj.name as string).split('/').pop() || '',
+    invocationId: apiEventObj.invocationId as string,
+    author: apiEventObj.author as string,
+    actions: eventActions as unknown as Event['actions'],
     content: apiEventObj.content,
-    timestamp: apiEventObj.timestamp ? new Date(apiEventObj.timestamp).getTime() : Date.now(),
+    timestamp: apiEventObj.timestamp
+      ? new Date(apiEventObj.timestamp).getTime()
+      : Date.now(),
     errorCode: apiEventObj.errorCode,
     errorMessage: apiEventObj.errorMessage,
     partial: eventMetadata.partial,

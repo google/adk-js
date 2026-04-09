@@ -11,6 +11,7 @@ import {
   LlmAgent,
   Runner,
   VertexAiSessionService,
+  VertexAiSessionServiceOptions,
 } from '@google/adk';
 import {FinishReason} from '@google/genai';
 import {describe, expect, it} from 'vitest';
@@ -115,6 +116,7 @@ describe('AgentTool', () => {
     };
 
     for await (const _event of runner.runAsync(runOptions)) {
+      // Consume events
     }
 
     const session = await sessionService.getSession({
@@ -196,18 +198,20 @@ describe('AgentTool', () => {
       tools: [new AgentTool({agent: subAgent})],
     });
 
-    const sessionStateStore: Record<string, any> = {};
-    const eventsStore: any[] = [];
+    const sessionStateStore: Record<string, Record<string, unknown>> = {};
+    const eventsStore: unknown[] = [];
 
     const mockClient = {
-      createInternal: async (req: any) => {
+      createInternal: async (req: {
+        config?: {sessionState?: Record<string, unknown>};
+      }) => {
         const id = 'mock-session-id';
         sessionStateStore[id] = req.config?.sessionState || {};
         return {
           name: 'operations/mock-operation',
         };
       },
-      getSessionOperationInternal: async (req: any) => {
+      getSessionOperationInternal: async (_req: unknown) => {
         const id = 'mock-session-id';
         return {
           done: true,
@@ -218,7 +222,7 @@ describe('AgentTool', () => {
           },
         };
       },
-      get: async (req: any) => {
+      get: async (req: {name: string}) => {
         const id = req.name.split('/').pop();
         return {
           userId: 'TestUser',
@@ -230,7 +234,10 @@ describe('AgentTool', () => {
         };
       },
       events: {
-        append: async (req: any) => {
+        append: async (req: {
+          name: string;
+          config?: {actions?: {stateDelta?: Record<string, unknown>}};
+        }) => {
           const id = req.name.split('/').pop();
           eventsStore.push(req);
           if (req.config?.actions?.stateDelta) {
@@ -241,7 +248,7 @@ describe('AgentTool', () => {
           }
           return {};
         },
-        listInternal: async (req: any) => {
+        listInternal: async (_req: unknown) => {
           return {
             sessionEvents: eventsStore,
           };
@@ -252,18 +259,20 @@ describe('AgentTool', () => {
     const sessionService = new VertexAiSessionService({
       projectId: 'amaad-martin-vertex-api',
       location: 'us-west1',
-      client: mockClient as any,
+      client: mockClient as unknown as VertexAiSessionServiceOptions['client'],
     });
     const memoryService = new InMemoryMemoryService();
 
     const createdSession = await sessionService.createSession({
-      appName: 'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       userId: 'TestUser',
       state: {initialStateKey: 'contexto inicial'},
     });
 
     const runner = new Runner({
-      appName: 'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       agent: mainAgent,
       sessionService,
       memoryService,
@@ -279,10 +288,12 @@ describe('AgentTool', () => {
     };
 
     for await (const _event of runner.runAsync(runOptions)) {
+      // Consume events
     }
 
     const session = await sessionService.getSession({
-      appName: 'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       userId: 'TestUser',
       sessionId: createdSession.id,
     });

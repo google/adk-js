@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InMemoryRunner, Runner, VertexAiSessionService, InMemoryMemoryService, isCompactedEvent} from '@google/adk';
+import {
+  InMemoryMemoryService,
+  InMemoryRunner,
+  isCompactedEvent,
+  Runner,
+  VertexAiSessionService,
+} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
@@ -26,8 +32,7 @@ describe('E2e Context Compaction', () => {
     !!process.env.GOOGLE_CLOUD_PROJECT;
 
   const hasRequiredEnv =
-    !!process.env.GOOGLE_CLOUD_PROJECT &&
-    !!process.env.REASONING_ENGINE_ID;
+    !!process.env.GOOGLE_CLOUD_PROJECT && !!process.env.REASONING_ENGINE_ID;
 
   it.skipIf(!hasAKey)(
     'should hit token threshold and compact history using Gemini API (InMemory)',
@@ -54,6 +59,7 @@ describe('E2e Context Compaction', () => {
         });
 
         for await (const _ of responseGen) {
+          // Consume the events.
         }
       }
 
@@ -115,6 +121,7 @@ describe('E2e Context Compaction', () => {
         });
 
         for await (const _ of responseGen) {
+          // Consume the events.
         }
       }
 
