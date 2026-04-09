@@ -9,10 +9,6 @@ import {defineConfig} from 'vitest/config';
 
 export default defineConfig({
   test: {
-    alias: {
-      '@google/adk': path.resolve(__dirname, './core/src'),
-      'nodejs-vertexai': path.resolve(__dirname, './core/test/sessions/mock_nodejs_vertexai.ts'),
-    },
     projects: [
       {
         test: {
