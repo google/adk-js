@@ -226,6 +226,12 @@ export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
 export type {Frontmatter, Resources, Script, Skill} from './skills/skill.js';
+export {
+  ListSkillsTool,
+  LoadSkillResourceTool,
+  LoadSkillTool,
+  SkillToolset,
+} from './tools/skill_toolset.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './memory/base_memory_service.js';
