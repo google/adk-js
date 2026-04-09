@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc && echo Build complete",
-    "start": "npx @google/adk-devtools run agent.ts"
+    "start": "npx @google/adk-devtools run agent.ts",
+    "test:db": "node ./dist/db_init_check.js"
   },
   "keywords": [],
   "author": "",
