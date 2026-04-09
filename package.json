@@ -70,8 +70,5 @@
     "**/*.{json,md}": [
       "prettier --write"
     ]
-  },
-  "dependencies": {
-    "@google-cloud/vertexai": "^1.11.0"
   }
 }
