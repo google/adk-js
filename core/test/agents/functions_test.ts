@@ -6,6 +6,8 @@
 import {
   BasePlugin,
   BaseTool,
+  createEvent,
+  createEventActions,
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
@@ -15,10 +17,18 @@ import {
   Session,
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
+  ToolConfirmation,
 } from '@google/adk';
-import {FunctionCall} from '@google/genai';
+import {Content, FunctionCall} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
+import {
+  generateClientFunctionCallId,
+  getLongRunningFunctionCalls,
+  mergeParallelFunctionResponseEvents,
+  populateClientFunctionCallId,
+  removeClientFunctionCallId,
+} from '../../src/agents/functions.js';
 
 // Get the test target function
 const {
@@ -302,35 +312,33 @@ describe('generateAuthEvent', () => {
   });
 
   it('should return undefined if no requestedAuthConfigs', () => {
-    const functionResponseEvent = {
-      actions: {},
-      content: {role: 'model'},
-    } as unknown as Event;
+    const functionResponseEvent = createEvent({
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateAuthEvent(invocationContext, functionResponseEvent);
     expect(event).toBeUndefined();
   });
 
   it('should return undefined if requestedAuthConfigs is empty', () => {
-    const functionResponseEvent = {
-      actions: {requestedAuthConfigs: {}},
-      content: {role: 'model'},
-    } as unknown as Event;
+    const functionResponseEvent = createEvent({
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateAuthEvent(invocationContext, functionResponseEvent);
     expect(event).toBeUndefined();
   });
 
   it('should return auth event if requestedAuthConfigs is present', () => {
-    const functionResponseEvent = {
-      actions: {
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
         requestedAuthConfigs: {
           'call_1': 'auth_config_1',
           'call_2': 'auth_config_2',
         },
-      },
-      content: {role: 'model'},
-    } as unknown as Event;
+      }),
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateAuthEvent(invocationContext, functionResponseEvent);
     expect(event).toBeDefined();
@@ -371,11 +379,10 @@ describe('generateRequestConfirmationEvent', () => {
   });
 
   it('should return undefined if no requestedToolConfirmations', () => {
-    const functionCallEvent = {content: {parts: []}} as unknown as Event;
-    const functionResponseEvent = {
-      actions: {},
-      content: {role: 'model'},
-    } as unknown as Event;
+    const functionCallEvent = createEvent({content: {role: 'user', parts: []}});
+    const functionResponseEvent = createEvent({
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateRequestConfirmationEvent({
       invocationContext,
@@ -386,11 +393,11 @@ describe('generateRequestConfirmationEvent', () => {
   });
 
   it('should return undefined if requestedToolConfirmations is empty', () => {
-    const functionCallEvent = {content: {parts: []}} as unknown as Event;
-    const functionResponseEvent = {
-      actions: {requestedToolConfirmations: {}},
-      content: {role: 'model'},
-    } as unknown as Event;
+    const functionCallEvent = createEvent({content: {role: 'user', parts: []}});
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({requestedToolConfirmations: {}}),
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateRequestConfirmationEvent({
       invocationContext,
@@ -401,8 +408,9 @@ describe('generateRequestConfirmationEvent', () => {
   });
 
   it('should return confirmation event if requestedToolConfirmations is present', () => {
-    const functionCallEvent = {
+    const functionCallEvent = createEvent({
       content: {
+        role: 'user',
         parts: [
           {
             functionCall: {
@@ -420,17 +428,23 @@ describe('generateRequestConfirmationEvent', () => {
           },
         ],
       },
-    } as unknown as Event;
+    });
 
-    const functionResponseEvent = {
-      actions: {
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
         requestedToolConfirmations: {
-          'call_1': {message: 'confirm tool 1'},
-          'call_2': {message: 'confirm tool 2'},
+          'call_1': new ToolConfirmation({
+            hint: 'confirm tool 1',
+            confirmed: false,
+          }),
+          'call_2': new ToolConfirmation({
+            hint: 'confirm tool 2',
+            confirmed: false,
+          }),
         },
-      },
-      content: {role: 'model'},
-    } as unknown as Event;
+      }),
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateRequestConfirmationEvent({
       invocationContext,
@@ -451,9 +465,12 @@ describe('generateRequestConfirmationEvent', () => {
     );
     expect(call1).toBeDefined();
     expect(call1!.functionCall!.name).toBe('adk_request_confirmation');
-    expect(call1!.functionCall!.args!['toolConfirmation']).toEqual({
-      message: 'confirm tool 1',
-    });
+    expect(call1!.functionCall!.args!['toolConfirmation']).toEqual(
+      new ToolConfirmation({
+        hint: 'confirm tool 1',
+        confirmed: false,
+      }),
+    );
 
     const call2 = parts.find(
       (p) =>
@@ -462,14 +479,18 @@ describe('generateRequestConfirmationEvent', () => {
     );
     expect(call2).toBeDefined();
     expect(call2!.functionCall!.name).toBe('adk_request_confirmation');
-    expect(call2!.functionCall!.args!['toolConfirmation']).toEqual({
-      message: 'confirm tool 2',
-    });
+    expect(call2!.functionCall!.args!['toolConfirmation']).toEqual(
+      new ToolConfirmation({
+        hint: 'confirm tool 2',
+        confirmed: false,
+      }),
+    );
   });
 
   it('should skip confirmation if original function call is not found', () => {
-    const functionCallEvent = {
+    const functionCallEvent = createEvent({
       content: {
+        role: 'user',
         parts: [
           {
             functionCall: {
@@ -480,17 +501,23 @@ describe('generateRequestConfirmationEvent', () => {
           },
         ],
       },
-    } as unknown as Event;
+    });
 
-    const functionResponseEvent = {
-      actions: {
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
         requestedToolConfirmations: {
-          'call_1': {message: 'confirm tool 1'},
-          'call_missing': {message: 'confirm tool missing'},
+          'call_1': new ToolConfirmation({
+            hint: 'confirm tool 1',
+            confirmed: false,
+          }),
+          'call_missing': new ToolConfirmation({
+            hint: 'confirm tool missing',
+            confirmed: false,
+          }),
         },
-      },
-      content: {role: 'model'},
-    } as unknown as Event;
+      }),
+      content: {role: 'model', parts: []},
+    });
 
     const event = generateRequestConfirmationEvent({
       invocationContext,
@@ -507,5 +534,149 @@ describe('generateRequestConfirmationEvent', () => {
         'call_1',
     );
     expect(call1).toBeDefined();
+  });
+});
+
+describe('generateClientFunctionCallId', () => {
+  it('should generate a valid ID with prefix', () => {
+    const id = generateClientFunctionCallId();
+    expect(id).toMatch(/^adk-/);
+  });
+});
+
+describe('populateClientFunctionCallId', () => {
+  it('should populate ID if missing', () => {
+    const event = createEvent({
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'testTool', args: {}}}],
+      },
+    });
+    populateClientFunctionCallId(event);
+    expect(event.content!.parts![0].functionCall!.id).toBeDefined();
+    expect(event.content!.parts![0].functionCall!.id).toMatch(/^adk-/);
+  });
+
+  it('should not overwrite existing ID', () => {
+    const event = createEvent({
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {name: 'testTool', args: {}, id: 'existing-id'}},
+        ],
+      },
+    });
+    populateClientFunctionCallId(event);
+    expect(event.content!.parts![0].functionCall!.id).toBe('existing-id');
+  });
+
+  it('should handle event with no function calls', () => {
+    const event = createEvent({
+      content: {
+        role: 'model',
+        parts: [{text: 'hello'}],
+      },
+    });
+    populateClientFunctionCallId(event);
+    expect(event.content!.parts![0].text).toBe('hello');
+  });
+});
+
+describe('removeClientFunctionCallId', () => {
+  it('should remove client generated ID from functionCall', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'adk-test-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBeUndefined();
+  });
+
+  it('should remove client generated ID from functionResponse', () => {
+    const content: Content = {
+      role: 'user',
+      parts: [
+        {functionResponse: {name: 'testTool', response: {}, id: 'adk-test-id'}},
+      ],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionResponse!.id).toBeUndefined();
+  });
+
+  it('should not remove non-client generated ID', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'server-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBe('server-id');
+  });
+});
+
+describe('getLongRunningFunctionCalls', () => {
+  it('should return IDs of long running function calls', () => {
+    const functionCalls = [
+      {name: 'longTool', id: 'call-1'},
+      {name: 'shortTool', id: 'call-2'},
+    ];
+    const toolsDict: Record<string, BaseTool> = {
+      'longTool': new FunctionTool({
+        name: 'longTool',
+        description: 'long',
+        execute: async () => ({}),
+        isLongRunning: true,
+      }),
+      'shortTool': new FunctionTool({
+        name: 'shortTool',
+        description: 'short',
+        execute: async () => ({}),
+        isLongRunning: false,
+      }),
+    };
+    // @ts-expect-error ts will argue about toolsDict because getLongRunningFunctionCalls is improted from the source and BaseTool is imported from '@google/adk'.
+    const result = getLongRunningFunctionCalls(functionCalls, toolsDict);
+    expect(result.has('call-1')).toBe(true);
+    expect(result.has('call-2')).toBe(false);
+  });
+});
+
+describe('mergeParallelFunctionResponseEvents', () => {
+  it('should merge multiple events into one', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent-1',
+      content: {
+        role: 'user',
+        parts: [
+          {functionResponse: {name: 'tool1', response: {result: 1}, id: 'id1'}},
+        ],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent-1',
+      content: {
+        role: 'user',
+        parts: [
+          {functionResponse: {name: 'tool2', response: {result: 2}, id: 'id2'}},
+        ],
+      },
+    });
+    const merged = mergeParallelFunctionResponseEvents([event1, event2]);
+    expect(merged.content!.parts!.length).toBe(2);
+    expect(merged.content!.parts![0].functionResponse!.name).toBe('tool1');
+    expect(merged.content!.parts![1].functionResponse!.name).toBe('tool2');
+  });
+
+  it('should throw if no events provided', () => {
+    expect(() => mergeParallelFunctionResponseEvents([])).toThrow(
+      'No function response events provided.',
+    );
+  });
+
+  it('should return the same event if only one provided', () => {
+    const event = createEvent();
+    const merged = mergeParallelFunctionResponseEvents([event]);
+    expect(merged).toBe(event);
   });
 });
