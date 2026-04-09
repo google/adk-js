@@ -89,7 +89,7 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  * @returns An esbuild plugin that replaces __dirname with the original directory
  * path in the agent file.
  */
-function replaceDirnamePlugin(filePath: string, originalDir: string) {
+export function replaceDirnamePlugin(filePath: string, originalDir: string) {
   return {
     name: 'replace-dirname',
     setup(build: esbuild.PluginBuild) {
