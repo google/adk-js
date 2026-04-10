@@ -15,20 +15,19 @@ export function createCompactionAgent(): LlmAgent {
   // We create a TokenBasedContextCompactor with a low tokenThreshold
   // to aggressively trigger compaction during testing.
   const compactor = new TokenBasedContextCompactor({
-    tokenThreshold: 50, // Artificially low token limit.
+    tokenThreshold: 200, // Artificially low token limit.
     eventRetentionSize: 2, // Keep the last 2 events uncompacted out of those triggered.
     summarizer: new LlmSummarizer({
-      llm: new Gemini({model: 'gemini-2.5-flash', vertexai: true}),
+      llm: new Gemini({model: 'gemini-2.5-flash'}),
     }),
   });
 
-  const agentModel = new Gemini({model: 'gemini-2.5-flash', vertexai: true});
   return new LlmAgent({
     name: 'compaction_agent',
     description: 'An agent configured to test live context compaction.',
     instruction:
       'You are a helpful conversational AI. Please provide short, single-sentence answers.',
-    model: agentModel,
+    model: 'gemini-2.5-flash',
     contextCompactors: [compactor],
   });
 }

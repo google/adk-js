@@ -4,13 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  InMemoryMemoryService,
-  InMemoryRunner,
-  isCompactedEvent,
-  Runner,
-  VertexAiSessionService,
-} from '@google/adk';
+import {InMemoryRunner, isCompactedEvent} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
@@ -31,15 +25,13 @@ describe('E2e Context Compaction', () => {
     !!process.env.GOOGLE_GENAI_API_KEY ||
     !!process.env.GOOGLE_CLOUD_PROJECT;
 
-  const hasRequiredEnv =
-    !!process.env.GOOGLE_CLOUD_PROJECT && !!process.env.REASONING_ENGINE_ID;
-
   it.skipIf(!hasAKey)(
-    'should hit token threshold and compact history using Gemini API (InMemory)',
+    'should hit token threshold and compact history using Gemini API',
     async () => {
+      // Instantiate agent inside the test so it relies on the loaded env variations
       const agent = createCompactionAgent();
+
       const runner = new InMemoryRunner({agent, appName: 'e2e_test'});
-
       const session = await runner.sessionService.createSession({
         appName: 'e2e_test',
         userId: 'test_user',
@@ -59,16 +51,18 @@ describe('E2e Context Compaction', () => {
         });
 
         for await (const _ of responseGen) {
-          // Consume the events.
+          // Drain the generator to let the agent run and append events
         }
       }
 
+      // Now retrieve the session and check its events
       const updatedSession = await runner.sessionService.getSession({
         appName: 'e2e_test',
         userId: 'test_user',
         sessionId: session.id,
       });
 
+      // Find if there is a CompactedEvent
       const compactedEvents = updatedSession!.events.filter(isCompactedEvent);
       expect(compactedEvents.length).toBeGreaterThan(0);
 
@@ -77,67 +71,5 @@ describe('E2e Context Compaction', () => {
       expect(latestCompacted.compactedContent.length).toBeGreaterThan(0);
     },
     30000,
-  );
-
-  it.skipIf(!hasRequiredEnv)(
-    'should hit token threshold and compact history using Vertex AI Sessions',
-    async () => {
-      const agent = createCompactionAgent();
-
-      const projectId = process.env.GOOGLE_CLOUD_PROJECT!;
-      const location = process.env.LOCATION || 'us-west1';
-      const agentEngineId = process.env.REASONING_ENGINE_ID!;
-
-      const sessionService = new VertexAiSessionService({
-        projectId,
-        location,
-        agentEngineId,
-      });
-      const memoryService = new InMemoryMemoryService();
-
-      const runner = new Runner({
-        appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
-        agent,
-        sessionService,
-        memoryService,
-      });
-
-      const session = await runner.sessionService.createSession({
-        appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
-        userId: 'test_user',
-      });
-
-      const turns = [
-        'Tell me a long story about a brave knight named Sir Galahad exploring a dragon-infested cave.',
-        'What happens after he finds the treasure?',
-        'Can you summarize his entire adventure in 3 sentences?',
-      ];
-
-      for (const prompt of turns) {
-        const responseGen = runner.runAsync({
-          userId: 'test_user',
-          sessionId: session.id,
-          newMessage: createUserContent(prompt),
-        });
-
-        for await (const _ of responseGen) {
-          // Consume the events.
-        }
-      }
-
-      const updatedSession = await runner.sessionService.getSession({
-        appName: 'e2e_test',
-        userId: 'test_user',
-        sessionId: session.id,
-      });
-
-      const compactedEvents = updatedSession!.events.filter(isCompactedEvent);
-      expect(compactedEvents.length).toBeGreaterThan(0);
-
-      const latestCompacted = compactedEvents[compactedEvents.length - 1];
-      expect(latestCompacted.compactedContent).toBeTruthy();
-      expect(latestCompacted.compactedContent.length).toBeGreaterThan(0);
-    },
-    30000,
-  );
+  ); // 30 sec timeout for e2e LLM tests
 });

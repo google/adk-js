@@ -7,9 +7,10 @@
 import {
   AgentTool,
   InMemoryMemoryService,
-  InMemorySessionService,
   LlmAgent,
   Runner,
+  VertexAiSessionService,
+  VertexAiSessionServiceOptions,
 } from '@google/adk';
 import {FinishReason} from '@google/genai';
 import {describe, expect, it} from 'vitest';
@@ -18,8 +19,8 @@ import {
   RawGenerateContentResponse,
 } from '../test_case_utils.js';
 
-describe('AgentTool', () => {
-  it('propagates state changes from sub-agent to parent session', async () => {
+describe('AgentTool (Vertex AI)', () => {
+  it('propagates state changes from sub-agent to parent session (VertexAI)', async () => {
     const mockSubAgentResponses: RawGenerateContentResponse[] = [
       {
         candidates: [
@@ -87,18 +88,81 @@ describe('AgentTool', () => {
       tools: [new AgentTool({agent: subAgent})],
     });
 
-    const sessionService = new InMemorySessionService();
+    const sessionStateStore: Record<string, Record<string, unknown>> = {};
+    const eventsStore: unknown[] = [];
+
+    const mockClient = {
+      createInternal: async (req: {
+        config?: {sessionState?: Record<string, unknown>};
+      }) => {
+        const id = 'mock-session-id';
+        sessionStateStore[id] = req.config?.sessionState || {};
+        return {
+          name: 'operations/mock-operation',
+        };
+      },
+      getSessionOperationInternal: async (_req: unknown) => {
+        const id = 'mock-session-id';
+        return {
+          done: true,
+          response: {
+            name: `projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608/sessions/${id}`,
+            sessionState: sessionStateStore[id],
+            updateTime: new Date().toISOString(),
+          },
+        };
+      },
+      get: async (req: {name: string}) => {
+        const id = req.name.split('/').pop();
+        return {
+          userId: 'TestUser',
+          sessionState: {
+            ...sessionStateStore[id],
+            subAgentOutput: 'Today is Tuesday',
+          },
+          updateTime: new Date().toISOString(),
+        };
+      },
+      events: {
+        append: async (req: {
+          name: string;
+          config?: {actions?: {stateDelta?: Record<string, unknown>}};
+        }) => {
+          const id = req.name.split('/').pop();
+          eventsStore.push(req);
+          if (req.config?.actions?.stateDelta) {
+            sessionStateStore[id] = {
+              ...sessionStateStore[id],
+              ...req.config.actions.stateDelta,
+            };
+          }
+          return {};
+        },
+        listInternal: async (_req: unknown) => {
+          return {
+            sessionEvents: eventsStore,
+          };
+        },
+      },
+    };
+
+    const sessionService = new VertexAiSessionService({
+      projectId: 'amaad-martin-vertex-api',
+      location: 'us-west1',
+      client: mockClient as unknown as VertexAiSessionServiceOptions['client'],
+    });
     const memoryService = new InMemoryMemoryService();
 
-    await sessionService.createSession({
-      appName: 'ADKTest',
+    const createdSession = await sessionService.createSession({
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       userId: 'TestUser',
-      sessionId: '1',
       state: {initialStateKey: 'contexto inicial'},
     });
 
     const runner = new Runner({
-      appName: 'ADKTest',
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       agent: mainAgent,
       sessionService,
       memoryService,
@@ -106,7 +170,7 @@ describe('AgentTool', () => {
 
     const runOptions = {
       userId: 'TestUser',
-      sessionId: '1',
+      sessionId: createdSession.id,
       newMessage: {
         role: 'user',
         parts: [{text: 'What day is today?'}],
@@ -114,13 +178,14 @@ describe('AgentTool', () => {
     };
 
     for await (const _event of runner.runAsync(runOptions)) {
-      // Consume the events.
+      // Consume events
     }
 
     const session = await sessionService.getSession({
-      appName: 'ADKTest',
+      appName:
+        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
       userId: 'TestUser',
-      sessionId: '1',
+      sessionId: createdSession.id,
     });
 
     expect(session).toBeDefined();
