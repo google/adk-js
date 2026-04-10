@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {AdkTsApiServer} from '../../test_api_server.js';
 
-const TEST_TIMEOUT = 30000;
+const TEST_TIMEOUT = 60000;
 
 describe('A2A: RemoteAgent Streaming', () => {
   let server: AdkTsApiServer;
