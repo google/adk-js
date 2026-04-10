@@ -7,6 +7,7 @@
 import yaml from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import {logger} from '../utils/logger.js';
 import {
   Frontmatter,
   FrontmatterSchema,
@@ -143,9 +144,11 @@ export async function loadSkillFromDir(skillDir: string): Promise<Skill> {
   const assetsDir = path.join(resolvedDir, 'assets');
   const scriptsDir = path.join(resolvedDir, 'scripts');
 
-  const references = await loadDir(referencesDir);
-  const assets = await loadDir(assetsDir);
-  const rawScripts = await loadDir(scriptsDir);
+  const [references, assets, rawScripts] = await Promise.all([
+    loadDir(referencesDir),
+    loadDir(assetsDir),
+    loadDir(scriptsDir),
+  ]);
 
   const scripts: Record<string, Script> = {};
   for (const [name, src] of Object.entries(rawScripts)) {
@@ -250,13 +253,12 @@ export async function listSkillsInDir(
           const skill = await loadSkillFromDir(skillDir);
           skills[skill.frontmatter.name] = skill;
         } catch (e) {
-          // Skip invalid skills as per Python implementation
-          console.warn(`Skipping invalid skill in '${skillDir}':`, e);
+          logger.warn(`Skipping invalid skill in '${skillDir}':`, e);
         }
       }
     }
-  } catch (_e: unknown) {
-    console.warn(`Skills base path '${skillsBasePath}' is not a directory.`);
+  } catch (e: unknown) {
+    logger.warn(`Skills base path '${skillsBasePath}' is not a directory.`, e);
   }
 
   return skills;
