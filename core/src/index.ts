@@ -26,6 +26,10 @@ export type {ExecutorContext} from './a2a/executor_context.js';
 export {FileArtifactService} from './artifacts/file_artifact_service.js';
 export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
+export {
+  UnsafeLocalCodeExecutor,
+  type UnsafeLocalCodeExecutorOptions,
+} from './code_executors/unsafe_local_code_executor.js';
 export * from './common.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
