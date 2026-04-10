@@ -105,9 +105,9 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
           const transformResult = await esbuild.transform(content, {
             loader: loader,
             define: {
-              '__dirname': `'${originalDir}'`,
-              '__filename': `'${filePath}'`,
-              'import.meta.url': `'${fileUrl}'`,
+              '__dirname': JSON.stringify(originalDir),
+              '__filename': JSON.stringify(filePath),
+              'import.meta.url': JSON.stringify(fileUrl),
             },
           });
 
