@@ -111,7 +111,7 @@ export class AgentEventCapturePlugin extends BasePlugin {
  */
 export async function runAndCapture(
   agent: LlmAgent,
-  prompt: string,
+  prompts: string | string[],
   {
     events,
     modelResponses,
@@ -129,22 +129,31 @@ export async function runAndCapture(
   }
   const runner = await createRunner(agent, plugins);
 
-  for await (const _e of runner.run(prompt)) {
-    // Do nothing. The plugins will capture events and model responses.
-  }
+  prompts = Array.isArray(prompts) ? prompts : [prompts];
 
-  for (const plugin of plugins) {
-    if (plugin instanceof AgentEventCapturePlugin) {
-      plugin.dump(
-        typeof events === 'boolean' ? 'agent_events.json' : (events as string),
-      );
+  let i = 1;
+  for (const prompt of prompts) {
+    for await (const _e of runner.run(prompt)) {
+      // Do nothing. The plugins will capture events and model responses.
     }
-    if (plugin instanceof ModelEventCapturePlugin) {
-      plugin.dump(
-        typeof modelResponses === 'boolean'
-          ? 'model_responses.json'
-          : (modelResponses as string),
-      );
+
+    for (const plugin of plugins) {
+      if (plugin instanceof AgentEventCapturePlugin) {
+        plugin.dump(
+          typeof events === 'boolean'
+            ? `events_turn_${i}.json`
+            : (events as string),
+        );
+      }
+      if (plugin instanceof ModelEventCapturePlugin) {
+        plugin.dump(
+          typeof modelResponses === 'boolean'
+            ? `model_responses_turn_${i}.json`
+            : (modelResponses as string),
+        );
+      }
     }
+
+    i++;
   }
 }
