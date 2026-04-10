@@ -383,7 +383,7 @@ describe('AgentLoader', () => {
 
       const result = await onLoadCallback({path: filePath});
 
-      expect(result.contents).toContain(fileDir);
+      expect(result.contents).toContain(JSON.stringify(fileDir));
       expect(result.loader).toBe('js');
     });
 
@@ -424,7 +424,7 @@ describe('AgentLoader', () => {
 
       const result = await onLoadCallback({path: filePath});
 
-      expect(result.contents).toContain(filePath);
+      expect(result.contents).toContain(JSON.stringify(filePath));
       expect(result.loader).toBe('js');
     });
 
@@ -448,7 +448,7 @@ describe('AgentLoader', () => {
       const result = await onLoadCallback({path: filePath});
 
       expect(result.contents).toContain('const str = "__dirname"');
-      expect(result.contents).toContain(fileDir);
+      expect(result.contents).toContain(JSON.stringify(fileDir));
       expect(result.loader).toBe('js');
     });
 
