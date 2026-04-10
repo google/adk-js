@@ -63,6 +63,7 @@ import {ContextCompactorRequestProcessor} from './processors/context_compactor_r
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
+import {TOOL_FILTER_REQUEST_PROCESSOR} from './processors/tool_filter_request_processor.js';
 import {ReadonlyContext} from './readonly_context.js';
 import {StreamingMode} from './run_config.js';
 
@@ -396,6 +397,7 @@ export class LlmAgent extends BaseAgent {
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
+      TOOL_FILTER_REQUEST_PROCESSOR,
     ];
 
     if (
@@ -732,10 +734,21 @@ export class LlmAgent extends BaseAgent {
       const toolContext = new Context({invocationContext});
 
       // process all tools from this tool union
-      const tools = await convertToolUnionToTools(
-        toolUnion,
-        new ReadonlyContext(invocationContext),
-      );
+      const tools = (
+        await convertToolUnionToTools(
+          toolUnion,
+          new ReadonlyContext(invocationContext),
+        )
+      ).filter((tool) => {
+        // If allowedTools is not set, allow all tools. Otherwise, only allow
+        // tools that are in the allowedTools set.
+        // The allowedTools set is populated by request processors.
+        return (
+          !llmRequest.allowedTools ||
+          llmRequest.allowedTools.includes(tool.name)
+        );
+      });
+
       for (const tool of tools) {
         await tool.processLlmRequest({toolContext, llmRequest});
       }

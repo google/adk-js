@@ -55,12 +55,12 @@
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "@google/adk": "^0.6.1",
-    "camelcase-keys": "^6.2.2",
     "@mikro-orm/mariadb": "^6.6.6",
     "@mikro-orm/mssql": "^6.6.6",
     "@mikro-orm/mysql": "^6.6.6",
     "@mikro-orm/postgresql": "^6.6.6",
     "@mikro-orm/sqlite": "^6.6.6",
+    "camelcase-keys": "^6.2.2",
     "commander": "^14.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -68,9 +68,9 @@
     "esbuild-shim-plugin": "^1.0.3",
     "express": "^4.21.2",
     "fast-glob": "^3.3.3",
+    "js-yaml": "^4.1.1",
     "ts-graphviz": "^1.0.1",
     "winston": "^3.19.0",
-    "yaml": "^2.8.3",
     "zod": "^4.2.1"
   }
 }

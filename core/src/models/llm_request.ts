@@ -41,6 +41,11 @@ export interface LlmRequest {
    * The tools dictionary. Excluded from JSON serialization.
    */
   toolsDict: {[key: string]: BaseTool};
+
+  /**
+   * The set of allowed tools, populated by request processors.
+   */
+  allowedTools?: string[];
 }
 
 /**

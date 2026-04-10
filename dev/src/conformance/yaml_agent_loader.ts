@@ -6,9 +6,9 @@
 
 import camelcaseKeys from 'camelcase-keys';
 import fg from 'fast-glob';
+import yaml from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {parse} from 'yaml';
 import {AgentToolArgs, YamlAgentConfig} from '../integration/agent_types.js';
 
 /**
@@ -28,7 +28,7 @@ export async function batchLoadYamlAgentConfig(
   for await (const file of files) {
     const filePath = (file as string).replaceAll('\\', '/');
     const content = await fs.readFile(filePath, 'utf-8');
-    const agentConfig = camelcaseKeys(parse(content), {
+    const agentConfig = camelcaseKeys(yaml.load(content) as YamlAgentConfig, {
       deep: true,
     }) as YamlAgentConfig;
 
