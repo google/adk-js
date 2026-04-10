@@ -51,5 +51,5 @@ LLMRegistry.register(MockLll);
 export const rootAgent = new LlmAgent({
   name: 'import_meta_agent',
   model: 'test-llm-model',
-  description: 'Agent that tests import meta url',
+  description: 'Agent that tests import.meta.url',
 });

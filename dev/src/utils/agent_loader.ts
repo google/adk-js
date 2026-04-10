@@ -97,16 +97,23 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
         if (args.path === filePath) {
           const content = await fsPromises.readFile(args.path, 'utf8');
           const fileUrl = pathToFileURL(filePath).href;
-          const modifiedContent = content
-            .replace(/__dirname/g, `'${originalDir}'`)
-            .replace(/__filename/g, `'${filePath}'`)
-            .replace(/import\.meta\.url/g, `'${fileUrl}'`);
+          const loader = ['.ts', '.mts', '.cts'].includes(
+            path.extname(filePath),
+          )
+            ? 'ts'
+            : 'js';
+          const transformResult = await esbuild.transform(content, {
+            loader: loader,
+            define: {
+              '__dirname': `'${originalDir}'`,
+              '__filename': `'${filePath}'`,
+              'import.meta.url': `'${fileUrl}'`,
+            },
+          });
 
           return {
-            contents: modifiedContent,
-            loader: ['.ts', '.mts', '.cts'].includes(path.extname(filePath))
-              ? 'ts'
-              : 'js',
+            contents: transformResult.code,
+            loader: 'js',
           };
         }
         return undefined;

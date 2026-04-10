@@ -47,5 +47,5 @@ LLMRegistry.register(MockLll);
 export const rootAgent = new LlmAgent({
   name: 'dirname_agent',
   model: 'test-llm-model',
-  description: 'Agent that tests dirname',
+  description: 'Agent that tests __dirname',
 });

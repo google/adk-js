@@ -50,5 +50,5 @@ LLMRegistry.register(MockLll);
 export const rootAgent = new LlmAgent({
   name: 'filename_agent',
   model: 'test-llm-model',
-  description: 'Agent that tests filename',
+  description: 'Agent that tests __filename',
 });
