@@ -104,7 +104,9 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
 
           return {
             contents: modifiedContent,
-            loader: path.extname(filePath) === '.ts' ? 'ts' : 'js',
+            loader: ['.ts', '.mts', '.cts'].includes(path.extname(filePath))
+              ? 'ts'
+              : 'js',
           };
         }
         return undefined;

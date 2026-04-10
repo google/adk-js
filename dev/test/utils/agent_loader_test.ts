@@ -353,7 +353,7 @@ describe('AgentLoader', () => {
     it('replaces __dirname with original directory', async () => {
       const filePath = path.join(tempAgentsDir, 'test_agent.ts');
       const fileDir = path.dirname(filePath);
-      const plugin = replaceDirnamePlugin();
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
 
       expect(plugin.name).toBe('replace-dirname');
 
@@ -364,7 +364,7 @@ describe('AgentLoader', () => {
       plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
 
       expect(mockBuild.onLoad).toHaveBeenCalledWith(
-        {filter: /\.(js|ts|cjs|mjs|cts|mts)$/},
+        {filter: /.*/},
         expect.any(Function),
       );
 
@@ -386,7 +386,8 @@ describe('AgentLoader', () => {
 
     it('replaces import.meta.url with file URL', async () => {
       const filePath = path.join(tempAgentsDir, 'test_agent.ts');
-      const plugin = replaceDirnamePlugin();
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
 
       const mockBuild = {
         onLoad: vi.fn(),
@@ -408,7 +409,8 @@ describe('AgentLoader', () => {
 
     it('replaces __filename with file path', async () => {
       const filePath = path.join(tempAgentsDir, 'test_agent.ts');
-      const plugin = replaceDirnamePlugin();
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
 
       const mockBuild = {
         onLoad: vi.fn(),
@@ -429,7 +431,10 @@ describe('AgentLoader', () => {
 
     it('returns undefined for node_modules', async () => {
       const filePath = '/path/to/node_modules/some_pkg/index.js';
-      const plugin = replaceDirnamePlugin();
+      const plugin = replaceDirnamePlugin(
+        path.join(tempAgentsDir, 'test_agent.ts'),
+        tempAgentsDir,
+      );
 
       const mockBuild = {
         onLoad: vi.fn(),
@@ -445,7 +450,8 @@ describe('AgentLoader', () => {
 
     it('uses js loader for non-ts files', async () => {
       const filePath = path.join(tempAgentsDir, 'test_agent.js');
-      const plugin = replaceDirnamePlugin();
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
 
       const mockBuild = {
         onLoad: vi.fn(),
@@ -461,6 +467,48 @@ describe('AgentLoader', () => {
 
       expect(result).toMatchObject({
         loader: 'js',
+      });
+    });
+
+    it('uses ts loader for mts files', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.mts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(filePath, 'const dir = __dirname;');
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toMatchObject({
+        loader: 'ts',
+      });
+    });
+
+    it('uses ts loader for cts files', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.cts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(filePath, 'const dir = __dirname;');
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toMatchObject({
+        loader: 'ts',
       });
     });
   });
