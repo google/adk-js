@@ -80,14 +80,14 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
 };
 
 /**
- * Returns an esbuild plugin that replaces __dirname with the original directory
- * path in the agent file. This plugin is needed to ensure that the agent file
- * has access to its original directory path after compilation.
+ * Returns an esbuild plugin that replaces `__dirname`, `__filename`, and `import.meta.url`
+ * with the original directory path, file path, and file URL in the agent file.
+ * This plugin is needed to ensure that the agent file has access to its original
+ * location context after compilation.
  *
  * @param filePath - The path to the agent file.
  * @param originalDir - The original directory path of the agent file.
- * @returns An esbuild plugin that replaces __dirname with the original directory
- * path in the agent file.
+ * @returns An esbuild plugin that replaces path and URL references in the agent file.
  */
 export function replaceDirnamePlugin(filePath: string, originalDir: string) {
   return {
