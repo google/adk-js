@@ -15,14 +15,18 @@
     "dist"
   ],
   "type": "module",
-  "module": "./dist/cli_entrypoint.mjs",
+  "typings": "./dist/types/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
   "bin": {
     "adk": "./dist/cli_entrypoint.mjs"
   },
   "exports": {
     ".": {
-      "types": "./dist/cli_entrypoint.d.ts",
-      "import": "./dist/cli_entrypoint.mjs"
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
     }
   },
   "scripts": {
