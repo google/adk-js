@@ -50,7 +50,7 @@ export class ToolFilterRequestProcessor extends BaseLlmRequestProcessor {
 
     // If plugins returned a filtered set, update allowedTools
     if (filteredTools !== undefined) {
-      llmRequest.allowedTools = new Set(Object.keys(filteredTools));
+      llmRequest.allowedTools = Object.keys(filteredTools);
     }
   }
 }

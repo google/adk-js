@@ -45,7 +45,7 @@ export interface LlmRequest {
   /**
    * The set of allowed tools, populated by request processors.
    */
-  allowedTools?: Set<string>;
+  allowedTools?: string[];
 }
 
 /**

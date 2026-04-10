@@ -135,8 +135,8 @@ describe('ToolFilterRequestProcessor', () => {
     }
 
     expect(llmRequest.allowedTools).toBeDefined();
-    expect(llmRequest.allowedTools?.has('tool1')).toBe(true);
-    expect(llmRequest.allowedTools?.has('tool2')).toBe(false);
+    expect(llmRequest.allowedTools?.includes('tool1')).toBe(true);
+    expect(llmRequest.allowedTools?.includes('tool2')).toBe(false);
   });
 
   it('should not populate allowedTools if plugins return undefined', async () => {
@@ -194,7 +194,10 @@ describe('ToolFilterRequestProcessor', () => {
       new ReadonlyContext(invocationContext),
     );
     for (const tool of tools) {
-      if (llmRequest.allowedTools && !llmRequest.allowedTools.has(tool.name)) {
+      if (
+        llmRequest.allowedTools &&
+        !llmRequest.allowedTools.includes(tool.name)
+      ) {
         continue;
       }
       await tool.processLlmRequest({toolContext, llmRequest});

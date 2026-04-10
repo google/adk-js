@@ -744,7 +744,8 @@ export class LlmAgent extends BaseAgent {
         // tools that are in the allowedTools set.
         // The allowedTools set is populated by request processors.
         return (
-          !llmRequest.allowedTools || llmRequest.allowedTools.has(tool.name)
+          !llmRequest.allowedTools ||
+          llmRequest.allowedTools.includes(tool.name)
         );
       });
 
