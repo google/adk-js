@@ -75,6 +75,7 @@ describe('skill_toolset', () => {
         skill_name: 'test-skill',
         instructions: 'Test instructions',
         frontmatter: mockSkill.frontmatter,
+        resources: mockSkill.resources,
       });
 
       expect(toolContext.state.get('_adk_activated_skill_test-agent')).toEqual([
