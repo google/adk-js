@@ -5,7 +5,19 @@
  */
 
 import {AuthConfig, AuthCredentialTypes, AuthHandler, State} from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
+
+vi.mock('../../src/auth/oauth2/oauth2_credential_exchanger.js', () => ({
+  OAuth2CredentialExchanger: class {
+    exchange = vi.fn().mockResolvedValue({
+      credential: {
+        authType: 'oauth2',
+        oauth2: {accessToken: 'mockAccessToken'},
+      },
+      wasExchanged: true,
+    });
+  },
+}));
 
 describe('AuthHandler', () => {
   describe('getAuthResponse', () => {
@@ -38,6 +50,70 @@ describe('AuthHandler', () => {
       const response = handler.getAuthResponse(state);
 
       expect(response).toBeUndefined();
+    });
+  });
+
+  describe('parseAndStoreAuthResponse', () => {
+    it('stores exchangedAuthCredential when present for non-oauth2', async () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'testToken',
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await handler.parseAndStoreAuthResponse(state);
+
+      expect(state.get('temp:testKey')).toEqual({
+        authType: 'apiKey',
+        apiKey: 'testToken',
+      });
+    });
+
+    it('returns early if scheme type is not oauth2 or openIdConnect', async () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await handler.parseAndStoreAuthResponse(state);
+
+      expect(state.get('temp:testKey')).toBeUndefined();
+    });
+
+    it('stores exchangedCredential.credential for oauth2 when exchange happens', async () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {authCode: '123'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await handler.parseAndStoreAuthResponse(state);
+
+      expect(state.get('temp:testKey')).toEqual({
+        authType: 'oauth2',
+        oauth2: {accessToken: 'mockAccessToken'},
+      });
     });
   });
 
@@ -199,14 +275,15 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request.exchangedAuthCredential).toEqual(
-        authConfig.rawAuthCredential, // As per current implementation of generateAuthUri returning rawAuthCredential
+      expect(request.exchangedAuthCredential).toBeDefined();
+      expect(request.exchangedAuthCredential?.oauth2?.authUri).toContain(
+        'https://auth.com',
       );
     });
   });
 
   describe('generateAuthUri', () => {
-    it('returns rawAuthCredential (current implementation)', () => {
+    it('generates auth URI for oauth2 scheme with flows', () => {
       const authConfig: AuthConfig = {
         credentialKey: 'testKey',
         authScheme: {
@@ -214,6 +291,101 @@ describe('AuthHandler', () => {
           flows: {
             authorizationCode: {
               authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {scope1: 'desc'},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            redirectUri: 'https://redirect.com',
+          },
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeDefined();
+      expect(uri?.oauth2?.authUri).toContain('https://auth.com');
+      expect(uri?.oauth2?.authUri).toContain('client_id=id');
+      expect(uri?.oauth2?.authUri).toContain(
+        'redirect_uri=https%3A%2F%2Fredirect.com',
+      );
+      expect(uri?.oauth2?.authUri).toContain('scope=scope1');
+      expect(uri?.oauth2?.authUri).not.toContain('secret');
+      expect(uri?.oauth2?.state).toBeDefined();
+    });
+
+    it('throws if authorization endpoint is missing', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            clientCredentials: {
+              tokenUrl: '',
+              scopes: {},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'id'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      expect(() => handler.generateAuthUri()).toThrow(
+        'Authorization endpoint not configured in auth scheme.',
+      );
+    });
+
+    it('generates auth URI for scheme with authorizationEndpoint (OpenIdConnect)', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'openIdConnect',
+          authorizationEndpoint: 'https://oidc-auth.com',
+          scopes: ['openid'],
+          tokenEndpoint: '',
+          openIdConnectUrl: 'https://oidc-auth.com',
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'id', redirectUri: 'https://redirect.com'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeDefined();
+      expect(uri?.oauth2?.authUri).toContain('https://oidc-auth.com');
+    });
+
+    it('returns original credential if rawAuthCredential or oauth2 is missing', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'oauth2', flows: {}},
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri).toBeUndefined();
+    });
+
+    it('uses tokenUrl as fallback for authorizationEndpoint if authorizationUrl is missing', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            clientCredentials: {
               tokenUrl: 'https://token.com',
               scopes: {},
             },
@@ -228,7 +400,8 @@ describe('AuthHandler', () => {
 
       const uri = handler.generateAuthUri();
 
-      expect(uri).toBe(authConfig.rawAuthCredential);
+      expect(uri).toBeDefined();
+      expect(uri?.oauth2?.authUri).toContain('https://token.com');
     });
   });
 });

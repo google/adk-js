@@ -113,6 +113,36 @@ describe('Build setup', () => {
       TEST_EXECUTION_TIMEOUT,
     );
 
+    it.skipIf(
+      !['js_commonjs', 'js_esm', 'ts_commonjs', 'ts_esm'].includes(buildSetup),
+    )(
+      'should import devtools successfully',
+      async () => {
+        const childProcess = spawn('npm', ['run', 'test:devtools'], {
+          cwd: projectPath,
+          shell: true,
+        });
+
+        const response = await getResponse(childProcess);
+        expect(response.toString()).toContain(
+          'Devtools verification successful',
+        );
+      },
+      TEST_EXECUTION_TIMEOUT,
+    );
+
+    it(
+      'should run devtools CLI successfully',
+      async () => {
+        const {stdout} = await execAsync('npx @google/adk-devtools --version', {
+          cwd: projectPath,
+        });
+
+        expect(stdout).toBeTruthy();
+      },
+      TEST_EXECUTION_TIMEOUT,
+    );
+
     afterAll(async () => {
       await fs
         .rm(`${projectPath}/node_modules`, {recursive: true, force: true})

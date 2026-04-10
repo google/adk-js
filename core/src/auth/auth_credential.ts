@@ -44,6 +44,7 @@ export interface OAuth2Auth {
    * verify the state
    */
   authUri?: string;
+  nonce?: string;
   state?: string;
   codeVerifier?: string;
   /**
@@ -54,8 +55,11 @@ export interface OAuth2Auth {
   authCode?: string;
   accessToken?: string;
   refreshToken?: string;
+  idToken?: string;
   expiresAt?: number;
   expiresIn?: number;
+  audience?: string;
+  tokenEndpointAuthMethod?: string;
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 } from '@google/adk';
 import {Content} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
+import {ContextCompactionTrigger} from '../../src/plugins/base_plugin.js';
 
 type PluginCallbackName = keyof BasePlugin;
 
@@ -145,6 +146,20 @@ class TestPlugin extends BasePlugin {
     return (await this.handleCallback('onModelErrorCallback')) as
       | LlmResponse
       | undefined;
+  }
+
+  override async beforeContextCompaction(_params: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
+    await this.handleCallback('beforeContextCompaction');
+  }
+
+  override async afterContextCompaction(_params: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
+    await this.handleCallback('afterContextCompaction');
   }
 }
 
@@ -290,6 +305,14 @@ describe('PluginManager', () => {
       llmRequest: mockLlmRequest,
       error: mockError,
     });
+    await service.runBeforeContextCompaction({
+      invocationContext: mockInvocationContext,
+      trigger: ContextCompactionTrigger.Auto,
+    });
+    await service.runAfterContextCompaction({
+      invocationContext: mockInvocationContext,
+      trigger: ContextCompactionTrigger.Auto,
+    });
 
     const expectedCallbacks: PluginCallbackName[] = [
       'onUserMessageCallback',
@@ -304,6 +327,8 @@ describe('PluginManager', () => {
       'beforeModelCallback',
       'afterModelCallback',
       'onModelErrorCallback',
+      'beforeContextCompaction',
+      'afterContextCompaction',
     ];
     expect(plugin1.callLog.sort()).toEqual(expectedCallbacks.sort());
   });
