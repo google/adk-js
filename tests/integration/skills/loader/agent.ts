@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {LlmAgent, SkillToolset, listSkillsInDir} from '@google/adk';
+import {LlmAgent, SkillToolset, loadAllSkillsInDir} from '@google/adk';
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const skillsDir = path.resolve(__dirname, '../skills');
-const skillsMap = await listSkillsInDir(skillsDir);
+const skillsMap = await loadAllSkillsInDir(skillsDir);
 const skills = Object.values(skillsMap);
 
 export const rootAgent = new LlmAgent({

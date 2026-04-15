@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {
-  listSkillsInDir,
+  loadAllSkillsInDir,
   loadSkillFromDir,
   parseSkillMdContent,
   validateSkillDir,
@@ -130,13 +130,37 @@ Instructions content`,
       await fs.rm(tempDir, {recursive: true, force: true});
     });
 
+    it.each(['SKILL.md', 'skill.md', 'Skill.md', 'sKiLl.Md'])(
+      'loads a valid skill with %s file name',
+      async (fileName) => {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+        const skillDir = path.join(tempDir, 'test-skill');
+        await fs.mkdir(skillDir);
+
+        await fs.writeFile(
+          path.join(skillDir, fileName),
+          `---
+name: test-skill
+description: A test skill
+---
+Instructions content`,
+        );
+
+        const skill = await loadSkillFromDir(skillDir);
+        expect(skill.frontmatter.name).toBe('test-skill');
+        expect(skill.instructions).toBe('Instructions content');
+
+        await fs.rm(tempDir, {recursive: true, force: true});
+      },
+    );
+
     it('throws error if SKILL.md not found', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
       const skillDir = path.join(tempDir, 'test-skill');
       await fs.mkdir(skillDir);
 
       await expect(loadSkillFromDir(skillDir)).rejects.toThrow(
-        /SKILL.md not found/,
+        /SKILL\.md \(or any case variation like skill\.md\) not found/,
       );
 
       await fs.rm(tempDir, {recursive: true, force: true});
@@ -228,10 +252,35 @@ Instructions`,
       await fs.rm(tempDir, {recursive: true, force: true});
     });
 
+    it.each(['SKILL.md', 'skill.md', 'Skill.md', 'sKiLl.Md'])(
+      'returns no problems for a valid skill directory with %s file name',
+      async (fileName) => {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+        const skillDir = path.join(tempDir, 'test-skill');
+        await fs.mkdir(skillDir);
+
+        await fs.writeFile(
+          path.join(skillDir, fileName),
+          `---
+name: test-skill
+description: A test skill
+---
+Instructions`,
+        );
+
+        const problems = await validateSkillDir(skillDir);
+        expect(problems).toEqual([]);
+
+        await fs.rm(tempDir, {recursive: true, force: true});
+      },
+    );
+
     it('returns problem if directory does not exist', async () => {
       const problems = await validateSkillDir('/non/existent/path');
       expect(problems.length).toBe(1);
-      expect(problems[0]).toContain('does not exist');
+      expect(problems[0]).toContain(
+        "SKILL.md (or any case variation like skill.md) not found in '/non/existent/path'.",
+      );
     });
 
     it('returns problem if SKILL.md missing', async () => {
@@ -241,7 +290,9 @@ Instructions`,
 
       const problems = await validateSkillDir(skillDir);
       expect(problems.length).toBe(1);
-      expect(problems[0]).toContain('SKILL.md not found');
+      expect(problems[0]).toContain(
+        'SKILL.md (or any case variation like skill.md) not found',
+      );
 
       await fs.rm(tempDir, {recursive: true, force: true});
     });
@@ -314,7 +365,7 @@ Instructions`,
     });
   });
 
-  describe('listSkillsInDir', () => {
+  describe('loadAllSkillsInDir', () => {
     let tempDir: string;
 
     it('lists valid skills in a directory', async () => {
@@ -342,7 +393,7 @@ description: Skill 2
 Instructions`,
       );
 
-      const skills = await listSkillsInDir(tempDir);
+      const skills = await loadAllSkillsInDir(tempDir);
       expect(Object.keys(skills).length).toBe(2);
       expect(skills['skill-1']).toBeDefined();
       expect(skills['skill-2']).toBeDefined();
@@ -376,7 +427,7 @@ description: Invalid Skill
 Instructions`,
       );
 
-      const skills = await listSkillsInDir(tempDir);
+      const skills = await loadAllSkillsInDir(tempDir);
       expect(Object.keys(skills).length).toBe(1);
       expect(skills['valid-skill']).toBeDefined();
       expect(skills['wrong-name']).toBeUndefined();
@@ -385,7 +436,7 @@ Instructions`,
     });
 
     it('handles non-existent directory gracefully', async () => {
-      const skills = await listSkillsInDir('/non/existent/path');
+      const skills = await loadAllSkillsInDir('/non/existent/path');
       expect(skills).toEqual({});
     });
   });

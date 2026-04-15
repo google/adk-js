@@ -25,8 +25,36 @@ const ALLOWED_FRONTMATTER_KEYS = new Set([
   'compatibility',
 ]);
 
+const IGNORED_DIRECTORIES = new Set([
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  'node_modules',
+  'coverage',
+  'venv',
+  '.venv',
+  'env',
+  '.env',
+  '.git',
+  '.vscode',
+  '.idea',
+]);
+
+const IGNORED_EXTENSIONS = new Set([
+  '.pyc',
+  '.pyo',
+  '.pyd',
+  '.tsbuildinfo',
+  '.DS_Store',
+]);
+
 /**
  * Recursively loads files from a directory into a dictionary.
+ *
+ * @param directoryPath - The absolute or relative path of the directory to load.
+ * @returns A promise that resolves to a dictionary where keys are relative file paths
+ * and values are the file contents (as string for UTF-8 or Buffer otherwise).
  */
 async function loadDir(
   directoryPath: string,
@@ -38,18 +66,23 @@ async function loadDir(
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (IGNORED_DIRECTORIES.has(entry.name)) {
+          continue;
+        }
+
         await walk(fullPath);
       } else if (entry.isFile()) {
         const relativePath = path.relative(directoryPath, fullPath);
-        if (fullPath.includes('__pycache__')) continue;
+        if (IGNORED_EXTENSIONS.has(path.extname(entry.name))) {
+          continue;
+        }
+
+        const fileData = await fs.readFile(fullPath);
 
         try {
-          // Try reading as text
-          const content = await fs.readFile(fullPath, 'utf-8');
-          files[relativePath] = content;
+          files[relativePath] = fileData.toString('utf-8');
         } catch (_e: unknown) {
-          // Fallback to Buffer for binary files
-          files[relativePath] = await fs.readFile(fullPath);
+          files[relativePath] = fileData;
         }
       }
     }
@@ -60,15 +93,21 @@ async function loadDir(
     if (stats.isDirectory()) {
       await walk(directoryPath);
     }
-  } catch (_e: unknown) {
-    // ignore
+  } catch (e: unknown) {
+    logger.warn(
+      `Failed to load directory '${directoryPath}': ${(e as Error).message}`,
+    );
   }
 
   return files;
 }
 
 /**
- * Parses SKILL.md from raw content string.
+ * Parses SKILL.md from a raw content string, extracting the YAML frontmatter and the body.
+ *
+ * @param content - The raw content of the SKILL.md file.
+ * @returns An object containing the parsed frontmatter and the remaining markdown body.
+ * @throws {Error} If the content is not properly formatted with YAML frontmatter.
  */
 export function parseSkillMdContent(content: string): {
   frontmatter: Frontmatter;
@@ -101,44 +140,14 @@ export function parseSkillMdContent(content: string): {
 }
 
 /**
- * Load a complete skill from a directory.
+ * Load a complete skill, including its instructions and resources, from a directory.
+ *
+ * @param skillDir - The path to the directory containing the skill definition.
+ * @returns A promise that resolves to the fully loaded Skill object.
  */
 export async function loadSkillFromDir(skillDir: string): Promise<Skill> {
   const resolvedDir = path.resolve(skillDir);
-  const skillMdPaths = [
-    path.join(resolvedDir, 'SKILL.md'),
-    path.join(resolvedDir, 'skill.md'),
-  ];
-
-  let skillMdPath = '';
-  let content = '';
-
-  for (const p of skillMdPaths) {
-    try {
-      content = await fs.readFile(p, 'utf-8');
-      skillMdPath = p;
-      break;
-    } catch (_e: unknown) {
-      // continue
-    }
-  }
-
-  if (!skillMdPath) {
-    throw new Error(`SKILL.md not found in '${skillDir}'.`);
-  }
-
-  const {frontmatter: parsed, body} = parseSkillMdContent(content);
-
-  // Validate with Zod
-  const frontmatter = FrontmatterSchema.parse(parsed);
-
-  // Validate name matches directory name
-  const dirName = path.basename(resolvedDir);
-  if (dirName !== frontmatter.name) {
-    throw new Error(
-      `Skill name '${frontmatter.name}' does not match directory name '${dirName}'.`,
-    );
-  }
+  const skill = await loadSkillFile(skillDir);
 
   const referencesDir = path.join(resolvedDir, 'references');
   const assetsDir = path.join(resolvedDir, 'assets');
@@ -160,54 +169,30 @@ export async function loadSkillFromDir(skillDir: string): Promise<Skill> {
   const resources: Resources = {references, assets, scripts};
 
   return {
-    frontmatter,
-    instructions: body,
+    ...skill,
     resources,
   };
 }
 
 /**
- * Validate a skill directory without fully loading it.
+ * Validates a skill directory structure and frontmatter without fully loading all resources.
+ *
+ * @param skillDir - The path to the skill directory to validate.
+ * @returns A promise that resolves to an array of validation error messages, or an empty array if valid.
  */
 export async function validateSkillDir(skillDir: string): Promise<string[]> {
   const problems: string[] = [];
   const resolvedDir = path.resolve(skillDir);
 
+  let skill;
   try {
-    const stats = await fs.stat(resolvedDir);
-    if (!stats.isDirectory()) {
-      return [`'${skillDir}' is not a directory.`];
-    }
-  } catch (_e: unknown) {
-    return [`Directory '${skillDir}' does not exist.`];
-  }
-
-  const skillMdPaths = [
-    path.join(resolvedDir, 'SKILL.md'),
-    path.join(resolvedDir, 'skill.md'),
-  ];
-
-  let skillMdPath = '';
-  let content = '';
-
-  for (const p of skillMdPaths) {
-    try {
-      content = await fs.readFile(p, 'utf-8');
-      skillMdPath = p;
-      break;
-    } catch (_e: unknown) {
-      // continue
-    }
-  }
-
-  if (!skillMdPath) {
-    return [`SKILL.md not found in '${skillDir}'.`];
+    skill = await loadSkillFile(resolvedDir);
+  } catch (e: unknown) {
+    return [(e as Error).message];
   }
 
   try {
-    const {frontmatter: parsed} = parseSkillMdContent(content);
-
-    const keys = Object.keys(parsed);
+    const keys = Object.keys(skill.frontmatter);
     const unknown = keys.filter((k) => !ALLOWED_FRONTMATTER_KEYS.has(k));
     if (unknown.length > 0) {
       problems.push(
@@ -215,17 +200,10 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
       );
     }
 
-    const result = FrontmatterSchema.safeParse(parsed);
-    if (!result.success) {
-      problems.push(`Frontmatter validation error: ${result.error.message}`);
-      return problems;
-    }
-
-    const frontmatter = result.data;
     const dirName = path.basename(resolvedDir);
-    if (dirName !== frontmatter.name) {
+    if (dirName !== skill.frontmatter.name) {
       problems.push(
-        `Skill name '${frontmatter.name}' does not match directory name '${dirName}'.`,
+        `Skill name '${skill.frontmatter.name}' does not match directory name '${dirName}'.`,
       );
     }
   } catch (e: unknown) {
@@ -236,9 +214,65 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
 }
 
 /**
- * List skills in a local directory.
+ * Internal helper to load just the core skill definition (SKILL.md) from a directory.
+ *
+ * @param skillDir - The path to the skill directory.
+ * @returns A promise that resolves to a Skill object containing only frontmatter and instructions.
+ * @throws {Error} If the skill file cannot be found or parsed.
  */
-export async function listSkillsInDir(
+async function loadSkillFile(skillDir: string): Promise<Skill> {
+  const resolvedDir = path.resolve(skillDir);
+  let skillMdPath = '';
+  let content = '';
+
+  try {
+    const entries = await fs.readdir(resolvedDir, {withFileTypes: true});
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.toLowerCase() === 'skill.md') {
+        const p = path.join(resolvedDir, entry.name);
+        try {
+          content = await fs.readFile(p, 'utf-8');
+          skillMdPath = p;
+          break;
+        } catch (_e: unknown) {
+          // continue
+        }
+      }
+    }
+  } catch (e: unknown) {
+    logger.warn(
+      `Failed to load directory '${skillDir}': ${(e as Error).message}`,
+    );
+  }
+
+  if (!skillMdPath) {
+    throw new Error(
+      `SKILL.md (or any case variation like skill.md) not found in '${skillDir}'.`,
+    );
+  }
+
+  const {frontmatter: parsed, body} = parseSkillMdContent(content);
+  const frontmatter = FrontmatterSchema.parse(parsed);
+  const dirName = path.basename(resolvedDir);
+  if (dirName !== frontmatter.name) {
+    throw new Error(
+      `Skill name '${frontmatter.name}' does not match directory name '${dirName}'.`,
+    );
+  }
+
+  return {
+    frontmatter,
+    instructions: body,
+  };
+}
+
+/**
+ * Loads all skills located within subdirectories of a given base path.
+ *
+ * @param skillsBasePath - The base directory containing individual skill subdirectories.
+ * @returns A promise that resolves to a map of skill names to their corresponding Skill objects.
+ */
+export async function loadAllSkillsInDir(
   skillsBasePath: string,
 ): Promise<Record<string, Skill>> {
   const resolvedPath = path.resolve(skillsBasePath);
