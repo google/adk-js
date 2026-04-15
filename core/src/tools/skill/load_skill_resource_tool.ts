@@ -5,6 +5,7 @@
  */
 
 import {FunctionDeclaration, Type} from '@google/genai';
+import path from 'node:path';
 import {experimental} from '../../utils/experimental.js';
 import {
   BaseTool,
@@ -76,7 +77,7 @@ export class LoadSkillResourceTool extends BaseTool {
 
   override async runAsync({args}: RunAsyncToolRequest): Promise<unknown> {
     const skillName = args['skill_name'] as string;
-    const resourcePath = args['path'] as string;
+    let resourcePath = args['path'] as string;
 
     if (!skillName) {
       return {
@@ -90,6 +91,8 @@ export class LoadSkillResourceTool extends BaseTool {
         error_code: 'MISSING_RESOURCE_PATH',
       };
     }
+
+    resourcePath = path.posix.normalize(resourcePath);
 
     const skill = this.toolset.getSkill(skillName);
     if (!skill) {

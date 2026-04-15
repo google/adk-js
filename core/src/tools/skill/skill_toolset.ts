@@ -112,10 +112,21 @@ export class SkillToolset extends BaseToolset {
     const candidateTools: Record<string, BaseTool> = {};
     for (const toolUnion of this.additionalTools) {
       if (toolUnion instanceof BaseTool) {
+        if (candidateTools[toolUnion.name]) {
+          throw new Error(`Duplicate tool name: ${toolUnion.name}`);
+        }
+
         candidateTools[toolUnion.name] = toolUnion;
       } else if (toolUnion instanceof BaseToolset) {
         const tsTools = await toolUnion.getTools(context);
-        tsTools.forEach((t) => (candidateTools[t.name] = t));
+
+        for (const t of tsTools) {
+          if (candidateTools[t.name]) {
+            throw new Error(`Duplicate tool name: ${t.name}`);
+          }
+
+          candidateTools[t.name] = t;
+        }
       }
     }
 
