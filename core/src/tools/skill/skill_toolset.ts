@@ -83,6 +83,8 @@ export class SkillToolset extends BaseToolset {
     ]);
   }
 
+  private toolCache = new Map<string, BaseTool[]>();
+
   private async resolveAdditionalTools(
     context?: ReadonlyContext,
   ): Promise<BaseTool[]> {
@@ -93,6 +95,11 @@ export class SkillToolset extends BaseToolset {
     const activatedSkills = context.state.get<string[]>(stateKey) || [];
 
     if (activatedSkills.length === 0) return [];
+
+    const cacheKey = `${agentName}:${activatedSkills.join(',')}`;
+    if (this.toolCache.has(cacheKey)) {
+      return this.toolCache.get(cacheKey)!;
+    }
 
     const additionalToolNames = new Set<string>();
     for (const skillName of activatedSkills) {
@@ -107,7 +114,10 @@ export class SkillToolset extends BaseToolset {
       }
     }
 
-    if (additionalToolNames.size === 0) return [];
+    if (additionalToolNames.size === 0) {
+      this.toolCache.set(cacheKey, []);
+      return [];
+    }
 
     const candidateTools: Record<string, BaseTool> = {};
     for (const toolUnion of this.additionalTools) {
@@ -143,6 +153,7 @@ export class SkillToolset extends BaseToolset {
       }
     }
 
+    this.toolCache.set(cacheKey, resolvedTools);
     return resolvedTools;
   }
 }

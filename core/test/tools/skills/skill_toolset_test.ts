@@ -231,5 +231,63 @@ describe('skill_toolset', () => {
         'Duplicate tool name: shared_name',
       );
     });
+
+    it('caches resolved tools and avoids recalculating candidateTools', async () => {
+      class DummyTool extends BaseTool {
+        constructor() {
+          super({name: 'cached_tool', description: 'dummy'});
+        }
+        _getDeclaration() {
+          return {name: 'cached_tool', description: 'dummy'};
+        }
+        async runAsync() {
+          return 'dummy';
+        }
+      }
+
+      const mockInnerGetTools = vi.fn().mockResolvedValue([new DummyTool()]);
+
+      class SpyToolset extends BaseToolset {
+        constructor() {
+          super([]);
+        }
+        override getTools = mockInnerGetTools;
+        override async close() {}
+      }
+
+      const spyToolset = new SpyToolset();
+
+      const skillWithTools: Skill = {
+        frontmatter: {
+          name: 'skill-with-tools',
+          description: 'desc',
+          metadata: {
+            adk_additional_tools: ['cached_tool'],
+          },
+        },
+        instructions: 'instructions',
+      };
+
+      const toolset = new SkillToolset([skillWithTools], {
+        additionalTools: [spyToolset],
+      });
+
+      const mockState = {
+        get: vi.fn().mockReturnValue(['skill-with-tools']),
+      };
+
+      const context = {
+        agentName: 'test-agent',
+        state: mockState,
+      } as unknown as ReadonlyContext;
+
+      const tools1 = await toolset.getTools(context);
+      expect(tools1.map((t) => t.name)).toContain('cached_tool');
+      expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
+
+      const tools2 = await toolset.getTools(context);
+      expect(tools2.map((t) => t.name)).toContain('cached_tool');
+      expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
+    });
   });
 });
