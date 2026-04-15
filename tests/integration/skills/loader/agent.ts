@@ -11,8 +11,7 @@ import {fileURLToPath} from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const skillsDir = path.resolve(__dirname, '../skills');
-const skillsMap = await loadAllSkillsInDir(skillsDir);
-const skills = Object.values(skillsMap);
+const skills = await loadAllSkillsInDir(skillsDir);
 
 export const rootAgent = new LlmAgent({
   name: 'test_skills_agent',
