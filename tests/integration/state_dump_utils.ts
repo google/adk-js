@@ -63,7 +63,7 @@ function toGenAIResponse(response: LlmResponse): GenerateContentResponse {
  * A plugin that captures all model responses.
  */
 export class ModelEventCapturePlugin extends BasePlugin {
-  private readonly modelResponses: GenerateContentResponse[] = [];
+  private modelResponses: GenerateContentResponse[] = [];
 
   async afterModelCallback(params: {
     callbackContext: Context;
@@ -74,9 +74,12 @@ export class ModelEventCapturePlugin extends BasePlugin {
   }
 
   dump(fileName: string): Promise<void> {
+    const modelResponses = this.modelResponses;
+    this.modelResponses = [];
+
     return fs.writeFile(
       path.join(process.cwd(), fileName),
-      JSON.stringify(this.modelResponses, null, 2),
+      JSON.stringify(modelResponses, null, 2),
     );
   }
 }
@@ -85,7 +88,7 @@ export class ModelEventCapturePlugin extends BasePlugin {
  * A plugin that captures all agent events.
  */
 export class AgentEventCapturePlugin extends BasePlugin {
-  private readonly events: Event[] = [];
+  private events: Event[] = [];
 
   async onEventCallback(params: {event: Event}): Promise<Event | undefined> {
     this.events.push(params.event);
@@ -93,9 +96,12 @@ export class AgentEventCapturePlugin extends BasePlugin {
   }
 
   dump(fileName: string): Promise<void> {
+    const events = this.events;
+    this.events = [];
+
     return fs.writeFile(
       path.join(process.cwd(), fileName),
-      JSON.stringify(this.events, null, 2),
+      JSON.stringify(events, null, 2),
     );
   }
 }
