@@ -355,7 +355,24 @@ describe('AgentLoader', () => {
   });
 
   describe('replaceDirnamePlugin', () => {
-    it('replaces __dirname with original directory', async () => {
+    it.each([
+      {
+        name: 'replaces __dirname with original directory',
+        content: `const dir = __dirname;\nconsole.log(__dirname);`,
+        expected: (filePath: string, fileDir: string) =>
+          JSON.stringify(fileDir),
+      },
+      {
+        name: 'replaces import.meta.url with file URL',
+        content: 'const url = import.meta.url;',
+        expected: (filePath: string) => pathToFileURL(filePath).href,
+      },
+      {
+        name: 'replaces __filename with file path',
+        content: 'const file = __filename;',
+        expected: (filePath: string) => JSON.stringify(filePath),
+      },
+    ])('$name', async ({content, expected}) => {
       const filePath = path.join(tempAgentsDir, 'test_agent.ts');
       const fileDir = path.dirname(filePath);
       const plugin = replaceDirnamePlugin(filePath, fileDir);
@@ -375,56 +392,11 @@ describe('AgentLoader', () => {
 
       const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
 
-      // Write real file
-      await fs.writeFile(
-        filePath,
-        `const dir = __dirname;\nconsole.log(__dirname);`,
-      );
+      await fs.writeFile(filePath, content);
 
       const result = await onLoadCallback({path: filePath});
 
-      expect(result.contents).toContain(JSON.stringify(fileDir));
-      expect(result.loader).toBe('js');
-    });
-
-    it('replaces import.meta.url with file URL', async () => {
-      const filePath = path.join(tempAgentsDir, 'test_agent.ts');
-      const fileDir = path.dirname(filePath);
-      const plugin = replaceDirnamePlugin(filePath, fileDir);
-
-      const mockBuild = {
-        onLoad: vi.fn(),
-      };
-
-      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
-      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
-
-      await fs.writeFile(filePath, 'const url = import.meta.url;');
-
-      const result = await onLoadCallback({path: filePath});
-      const fileUrl = pathToFileURL(filePath).href;
-
-      expect(result.contents).toContain(fileUrl);
-      expect(result.loader).toBe('js');
-    });
-
-    it('replaces __filename with file path', async () => {
-      const filePath = path.join(tempAgentsDir, 'test_agent.ts');
-      const fileDir = path.dirname(filePath);
-      const plugin = replaceDirnamePlugin(filePath, fileDir);
-
-      const mockBuild = {
-        onLoad: vi.fn(),
-      };
-
-      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
-      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
-
-      await fs.writeFile(filePath, 'const file = __filename;');
-
-      const result = await onLoadCallback({path: filePath});
-
-      expect(result.contents).toContain(JSON.stringify(filePath));
+      expect(result.contents).toContain(expected(filePath, fileDir));
       expect(result.loader).toBe('js');
     });
 
