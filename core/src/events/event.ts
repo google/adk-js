@@ -62,6 +62,17 @@ export interface Event extends LlmResponse {
    * The timestamp of the event.
    */
   timestamp: number;
+
+  /**
+   * Whether this event is from an intermediate agent step that precedes a
+   * function call. When `true`, the event was produced by the model during a
+   * reasoning step that was followed by tool invocations and is not the final
+   * response to the user.
+   *
+   * Streaming consumers can use this flag to suppress intermediate model text
+   * (e.g. "thinking" output) from the user-visible response.
+   */
+  intermediate?: boolean;
 }
 
 /**

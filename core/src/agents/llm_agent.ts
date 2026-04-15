@@ -667,6 +667,7 @@ export class LlmAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
+      const stepEvents: Event[] = [];
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -674,14 +675,22 @@ export class LlmAgent extends BaseAgent {
 
         lastEvent = event;
         this.maybeSaveOutputToState(event);
+        stepEvents.push(event);
+      }
+
+      const isFinal = !lastEvent || isFinalResponse(lastEvent);
+      for (const event of stepEvents) {
+        if (!isFinal) {
+          event.intermediate = true;
+        }
         yield event;
       }
 
-      if (!lastEvent || isFinalResponse(lastEvent)) {
+      if (isFinal) {
         break;
       }
 
-      if (lastEvent.partial) {
+      if (lastEvent?.partial) {
         logger.warn('The last event is partial, which is not expected.');
         break;
       }
