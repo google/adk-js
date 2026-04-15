@@ -14,6 +14,7 @@ import {
   InvocationContext,
   LlmAgent,
   Runner,
+  State,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -610,5 +611,133 @@ describe('Runner error handling', () => {
     expect(error?.message).toContain(
       `Session not found: ${nonExistentSessionId}`,
     );
+  });
+});
+
+describe('Runner.runAsync beforeRunCallback', () => {
+  let sessionService: InMemorySessionService;
+  let runner: Runner;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    const agent = new MockLlmAgent('root_agent');
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+    });
+  });
+
+  it('invokes beforeRunCallback with the InvocationContext before the agent runs', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    let capturedContext: InvocationContext | undefined;
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hello'}]},
+      beforeRunCallback: (ctx) => {
+        capturedContext = ctx;
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(capturedContext).toBeDefined();
+    expect(capturedContext!.session.id).toBe(session.id);
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('allows injecting temp: state via beforeRunCallback', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+
+    const tempKey = `${State.TEMP_PREFIX}myvar`;
+    let observedTempValue: unknown;
+
+    class TempReadingAgent extends LlmAgent {
+      constructor() {
+        super({name: 'temp_reader', model: 'gemini-2.5-flash'});
+      }
+
+      protected override async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        observedTempValue = context.session.state[tempKey];
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'done'}]},
+        });
+      }
+    }
+
+    const tempRunner = new Runner({
+      appName: TEST_APP_ID,
+      agent: new TempReadingAgent(),
+      sessionService,
+    });
+
+    for await (const _ of tempRunner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+      beforeRunCallback: (ctx) => {
+        ctx.session.state[tempKey] = 'injectedValue';
+      },
+    })) {
+      // consume
+    }
+
+    expect(observedTempValue).toBe('injectedValue');
+  });
+
+  it('supports async beforeRunCallback', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+
+    let callbackInvoked = false;
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hello'}]},
+      beforeRunCallback: async () => {
+        await Promise.resolve();
+        callbackInvoked = true;
+      },
+    })) {
+      // consume
+    }
+
+    expect(callbackInvoked).toBe(true);
+  });
+
+  it('runs normally when beforeRunCallback is not provided', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hello'}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
   });
 });
