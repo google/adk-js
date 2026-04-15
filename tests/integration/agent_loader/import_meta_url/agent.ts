@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,16 +15,7 @@ import {createModelContent} from '@google/genai';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
-
-class MockLlmConnection implements BaseLlmConnection {
-  async sendHistory(): Promise<void> {
-    return Promise.resolve();
-  }
-  async sendContent(): Promise<void> {}
-  async sendRealtime(): Promise<void> {}
-  async *receive(): AsyncGenerator<LlmResponse, void, void> {}
-  async close(): Promise<void> {}
-}
+import {MockLlmConnection} from '../../mock_llm_connection.js';
 
 class MockLll extends BaseLlm {
   constructor({model}: {model: string}) {
