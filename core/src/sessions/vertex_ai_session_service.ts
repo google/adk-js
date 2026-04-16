@@ -10,12 +10,12 @@ import {
   Session as VertexAiSession,
   SessionEvent as VertexAiSessionEvent,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
 
 import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
+import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
 import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
 
@@ -437,7 +437,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     requestedAuthConfigs:
       (actions.requestedAuthConfigs as Record<string, unknown>) || {},
     requestedToolConfirmations:
-      (actions['requestedToolConfirmations'] as Record<string, unknown>) || {},
+      ((actions as Record<string, unknown>)[
+        'requestedToolConfirmations'
+      ] as Record<string, ToolConfirmation>) || {},
     skipSummarization: actions['skipSummarization'] as boolean | undefined,
     transferToAgent: actions['transferAgent'] as string | undefined,
     escalate: actions['escalate'] as boolean | undefined,
