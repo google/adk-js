@@ -15,25 +15,12 @@ const {
   LogLevel,
 } = require('@google/adk'); // eslint-disable-line @typescript-eslint/no-require-imports
 const {createModelContent, GenerateContentResponse} = require('@google/genai'); // eslint-disable-line @typescript-eslint/no-require-imports
+const {MockLlmConnection} = require('../../mock_llm_connection'); // eslint-disable-line @typescript-eslint/no-require-imports
 
 type BaseLlmConnectionType = typeof BaseLlmConnection;
 type LlmResponseType = typeof LlmResponse;
 
 setLogLevel(LogLevel.DEBUG);
-
-class MockLlmConnection implements BaseLlmConnectionType {
-  async sendHistory(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  async sendContent(): Promise<void> {}
-
-  async sendRealtime(): Promise<void> {}
-
-  async *receive(): AsyncGenerator<LlmResponseType, void, void> {}
-
-  async close(): Promise<void> {}
-}
 
 class MockLll extends BaseLlm {
   constructor({model}: {model: string}) {

@@ -1,0 +1,117 @@
+[
+  {
+    "invocationId": "e-717c2465-0196-45d4-8f9a-d5794f88ebed",
+    "author": "skill_user_agent",
+    "id": "mJBmxwVV",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774039117,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "load_skill",
+            "args": {
+              "name": "weather-skill"
+            },
+            "id": "adk-005353a3-ec15-47d5-97c9-4e7b15e58f3b"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 318,
+      "candidatesTokenCount": 17,
+      "totalTokenCount": 391,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 318
+        }
+      ],
+      "thoughtsTokenCount": 56
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-717c2465-0196-45d4-8f9a-d5794f88ebed",
+    "author": "skill_user_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-005353a3-ec15-47d5-97c9-4e7b15e58f3b",
+            "name": "load_skill",
+            "response": {
+              "skill_name": "weather-skill",
+              "instructions": "\n    Step 1: Check 'references/weather_info.md' for the current weather.\n    Step 2: If humidity is requested, use the `get_humidity` tool with the `location` argument from the user query.\n    Step 3: If wind speed is requested, use the `get_wind_speed` tool with the `location` argument from the user query.\n    Step 4: Provide the update to the user in a concise form.\n  ",
+              "frontmatter": {
+                "name": "weather-skill",
+                "description": "A weather skill that can provide weather information.",
+                "metadata": {
+                  "adk_additional_tools": ["get_wind_speed", "get_humidity"]
+                }
+              },
+              "resources": {
+                "references": {
+                  "weather_info.md": "\n        Weather Information\n        - **Location:** San Francisco, CA\n        - **Temperature:** 68°F (20°C)\n        - **Condition:** Partly Cloudy\n        - **Humidity:** 55%\n        - **Wind Speed:** 10 mph"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {
+        "_adk_activated_skill_skill_user_agent": ["weather-skill"]
+      },
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "qcnYHeMj",
+    "longRunningToolIds": [],
+    "timestamp": 1775774040137
+  },
+  {
+    "invocationId": "e-717c2465-0196-45d4-8f9a-d5794f88ebed",
+    "author": "skill_user_agent",
+    "id": "zloKLEQu",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774040139,
+    "content": {
+      "parts": [
+        {
+          "text": "The weather skill has been loaded. I can get you the humidity and wind speed for a given location. I also have some general weather information for San Francisco, CA:\n\nTemperature: 68°F (20°C)\nCondition: Partly Cloudy\nHumidity: 55%\nWind Speed: 10 mph"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 686,
+      "candidatesTokenCount": 68,
+      "totalTokenCount": 754,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 686
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

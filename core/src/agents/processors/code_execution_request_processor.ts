@@ -12,6 +12,7 @@ import {isBuiltInCodeExecutor} from '../../code_executors/built_in_code_executor
 import {
   buildCodeExecutionResultPart,
   buildExecutableCodePart,
+  CodeExecutionLanguage,
   CodeExecutionResult,
   convertCodeExecutionParts,
   extractCodeAndTruncateContent,
@@ -260,6 +261,7 @@ async function* runPreProcessor(
       invocationContext,
       codeExecutionInput: {
         code: codeStr,
+        language: CodeExecutionLanguage.PYTHON,
         inputFiles: [file],
         executionId,
       },
@@ -360,6 +362,7 @@ async function* runPostProcessor(
     invocationContext,
     codeExecutionInput: {
       code: codeStr,
+      language: CodeExecutionLanguage.PYTHON,
       inputFiles: codeExecutorContext.getInputFiles(),
       executionId,
     },
