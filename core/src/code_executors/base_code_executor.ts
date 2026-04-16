@@ -72,16 +72,20 @@ export abstract class BaseCodeExecutor {
 
   /**
    * The list of the enclosing delimiters to identify the code blocks.
-   * For example, the delimiter('```python\\n', '\\n```') can be  used to
-   * identify code blocks with the following format::
+   * For example, the delimiter('```javascript\\n', '\\n```') can be used to
+   * identify code blocks with the following format:
    *
-   * ```python
-   *  print("hello")
+   * ```javascript
+   *  console.log("hello")
    * ```
    */
   codeBlockDelimiters: Array<[string, string]> = [
     ['```tool_code\n', '\n```'],
     ['```python\n', '\n```'],
+    ['```javascript\n', '\n```'],
+    ['```typescript\n', '\n```'],
+    ['```bash\n', '\n```'],
+    ['```sh\n', '\n```'],
   ];
 
   /**

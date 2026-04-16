@@ -80,6 +80,49 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
 };
 
 /**
+ * Returns an esbuild plugin that replaces `__dirname`, `__filename`, and `import.meta.url`
+ * with the original directory path, file path, and file URL in the agent file.
+ * This plugin is needed to ensure that the agent file has access to its original
+ * location context after compilation.
+ *
+ * @param filePath - The path to the agent file.
+ * @param originalDir - The original directory path of the agent file.
+ * @returns An esbuild plugin that replaces path and URL references in the agent file.
+ */
+export function replaceDirnamePlugin(filePath: string, originalDir: string) {
+  return {
+    name: 'replace-dirname',
+    setup(build: esbuild.PluginBuild) {
+      build.onLoad({filter: /.*/}, async (args: esbuild.OnLoadArgs) => {
+        if (args.path === filePath) {
+          const content = await fsPromises.readFile(args.path, 'utf8');
+          const fileUrl = pathToFileURL(filePath).href;
+          const loader = ['.ts', '.mts', '.cts'].includes(
+            path.extname(filePath),
+          )
+            ? 'ts'
+            : 'js';
+          const transformResult = await esbuild.transform(content, {
+            loader: loader,
+            define: {
+              '__dirname': JSON.stringify(originalDir),
+              '__filename': JSON.stringify(filePath),
+              'import.meta.url': JSON.stringify(fileUrl),
+            },
+          });
+
+          return {
+            contents: transformResult.code,
+            loader: 'js',
+          };
+        }
+        return undefined;
+      });
+    },
+  };
+}
+
+/**
  * Wrapper class which loads file that contains base agent (support both .js and
  * .ts) and has a dispose function to cleanup the comliped artifact after file
  * usage.
@@ -122,6 +165,7 @@ export class AgentFile {
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
+      const originalDir = path.dirname(filePath);
       await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
@@ -135,7 +179,7 @@ export class AgentFile {
         bundle: this.options.bundle,
         minify: this.options.bundle,
         allowOverwrite: true,
-        plugins: [shimPlugin()],
+        plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
         // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
         external: [
           'sqlite3',

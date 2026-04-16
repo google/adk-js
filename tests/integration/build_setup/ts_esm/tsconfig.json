@@ -2,7 +2,6 @@
   "compilerOptions": {
     "target": "esnext",
     "module": "nodenext",
-    "rootDir": "./",
     "outDir": "dist",
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,

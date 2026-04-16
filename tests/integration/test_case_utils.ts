@@ -186,6 +186,26 @@ export function deleteFields(obj: Record<string, unknown>, paths: string[]) {
 }
 
 /**
+ * Recursively normalizes CRLF (\r\n) to LF (\n) in all string properties of an object.
+ */
+export function normalizeLineEndings(obj: unknown): unknown {
+  if (typeof obj === 'string') {
+    return obj.replace(/\r\n/g, '\n');
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeLineEndings);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    const normalizedObj: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      normalizedObj[key] = normalizeLineEndings(value);
+    }
+    return normalizedObj;
+  }
+  return obj;
+}
+
+/**
  * Runs the given test case.
  * @param testCase The test case to run.
  */
@@ -216,7 +236,12 @@ export async function runTestCase(testCase: TestCase) {
         IGNORE_FIELDS,
       );
 
-      expect(event).toMatchObject(expectedEvent);
+      const normalizedActual = normalizeLineEndings(event);
+      const normalizedExpected = normalizeLineEndings(expectedEvent);
+
+      expect(normalizedActual).toMatchObject(
+        normalizedExpected as Record<string, unknown>,
+      );
 
       eventIndex++;
     }
