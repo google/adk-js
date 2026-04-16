@@ -42,6 +42,7 @@ export interface UnsafeLocalCodeExecutorOptions {
 async function createTempScriptFile(
   code: string,
   language: CodeExecutionLanguage,
+  shellCommandPath?: string,
 ): Promise<{filePath: string; tempDir: string}> {
   const tempDir = path.join(
     os.tmpdir(),
@@ -50,7 +51,7 @@ async function createTempScriptFile(
   );
   await fs.mkdir(tempDir, {recursive: true});
 
-  const ext = getExtensionForLanguage(language) || '.js';
+  const ext = getExtensionForLanguage(language, shellCommandPath) || '.js';
   const filePath = path.join(tempDir, `script${ext}`);
   await fs.writeFile(filePath, code);
 
@@ -59,6 +60,7 @@ async function createTempScriptFile(
 
 function getExtensionForLanguage(
   language: CodeExecutionLanguage,
+  shellCommandPath?: string,
 ): string | undefined {
   if (language === CodeExecutionLanguage.JAVASCRIPT) {
     return '.js';
@@ -77,7 +79,13 @@ function getExtensionForLanguage(
   }
 
   if (language === CodeExecutionLanguage.SHELL) {
-    return IS_WINDOWS ? '.bat' : '.sh';
+    if (IS_WINDOWS) {
+      if (shellCommandPath && shellCommandPath.toLowerCase().includes('cmd')) {
+        return '.bat';
+      }
+      return '.ps1';
+    }
+    return '.sh';
   }
 
   return undefined;
@@ -145,7 +153,11 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
 
     let tempDir: string | undefined;
     try {
-      const res = await createTempScriptFile(code, language);
+      const res = await createTempScriptFile(
+        code,
+        language,
+        this.shellCommandPath,
+      );
       const filePath = res.filePath;
       tempDir = res.tempDir;
 
@@ -157,8 +169,16 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
       } else if (language === CodeExecutionLanguage.SHELL) {
         command = this.shellCommandPath;
         if (this.shellCommandPath.toLowerCase().includes('powershell')) {
-          args = ['-ExecutionPolicy', 'Bypass', '-File', filePath];
+          args = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', filePath];
+        } else if (this.shellCommandPath.toLowerCase().includes('cmd')) {
+          args = ['/c', filePath];
         }
+      } else if (language === CodeExecutionLanguage.POWERSHELL) {
+        command = IS_WINDOWS ? 'powershell' : 'pwsh';
+        args = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', filePath];
+      } else if (language === CodeExecutionLanguage.WINDOWS_CMD) {
+        command = 'cmd.exe';
+        args = ['/c', filePath];
       }
 
       return await new Promise<CodeExecutionResult>((resolve) => {

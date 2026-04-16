@@ -84,6 +84,8 @@ export abstract class BaseCodeExecutor {
     ['```python\n', '\n```'],
     ['```javascript\n', '\n```'],
     ['```typescript\n', '\n```'],
+    ['```bash\n', '\n```'],
+    ['```sh\n', '\n```'],
   ];
 
   /**
