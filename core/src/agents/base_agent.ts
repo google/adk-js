@@ -184,7 +184,7 @@ export abstract class BaseAgent {
             yield beforeAgentCallbackEvent;
           }
 
-          if (context.endInvocation) {
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
             return;
           }
 
@@ -193,7 +193,7 @@ export abstract class BaseAgent {
             yield event;
           }
 
-          if (context.endInvocation) {
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
             return;
           }
 

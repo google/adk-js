@@ -210,9 +210,6 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
-    this.abortSignal?.addEventListener('abort', () => {
-      this.endInvocation = true;
-    });
   }
 
   /**

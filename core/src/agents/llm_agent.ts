@@ -692,6 +692,10 @@ export class LlmAgent extends BaseAgent {
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     for await (const event of this.runLiveFlow(context)) {
+      if (context.abortSignal?.aborted) {
+        return;
+      }
+
       this.maybeSaveOutputToState(event);
       yield event;
     }
