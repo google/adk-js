@@ -1,0 +1,43 @@
+name: Publish @siro-ai/adk + @siro-ai/adk-devtools
+
+on:
+  push:
+    branches:
+      - vk/main-pin
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com/Siro-ai'
+          scope: '@siro-ai'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build workspaces
+        run: npm run build --workspaces
+
+      # Publish core first. dev/ depends on core via an npm alias
+      # (`"@google/adk": "npm:@siro-ai/adk@<version>"`) so core must be
+      # published to GitHub Packages before dev can resolve it.
+      - name: Publish @siro-ai/adk
+        working-directory: core
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @siro-ai/adk-devtools
+        working-directory: dev
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

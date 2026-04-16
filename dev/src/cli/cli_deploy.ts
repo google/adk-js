@@ -171,7 +171,14 @@ async function createPackageJson(sourceFolder: string, targetFolder: string) {
   const targetPackageJsonPath = path.join(targetFolder, 'package.json');
 
   await Promise.all([
-    fs.mkdir(path.join(targetFolder, 'node_modules')),
+    // Siro fork: copy the pre-installed node_modules from the runner
+    // instead of creating an empty dir, so the generated Dockerfile can skip
+    // its npm install step and keep GitHub Packages auth off Cloud Build.
+    fs.cp(
+      path.join(sourceFolder, 'node_modules'),
+      path.join(targetFolder, 'node_modules'),
+      {recursive: true},
+    ),
     saveToFile(path.join(targetFolder, 'package-lock.json'), ''),
     saveToFile(targetPackageJsonPath, {
       dependencies: packageJson.dependencies,
@@ -238,10 +245,10 @@ COPY --chown=myuser:myuser "package-lock.json" "/app/package-lock.json"
 COPY --chown=myuser:myuser "node_modules" "/app/node_modules"
 # Copy application files
 
-# Install Agent Deps - Start
-RUN npm install @google/adk-devtools@latest
-RUN npm install --production
-# Install Agent Deps - End
+# Siro fork: agent deps (including @siro-ai/adk-devtools which provides
+# the `adk` CLI) were installed on the runner and are already present in
+# the copied node_modules above. Skipping the install here means Cloud
+# Build never needs GitHub Packages auth.
 
 EXPOSE ${options.port}
 

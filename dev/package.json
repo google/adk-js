@@ -1,12 +1,15 @@
 {
-  "name": "@google/adk-devtools",
-  "version": "0.6.1",
-  "description": "Google ADK JS Development Tools",
-  "author": "Google",
+  "name": "@siro-ai/adk-devtools",
+  "version": "0.7.0-siro.0",
+  "description": "Siro fork of @google/adk-devtools pinned to unreleased main",
+  "author": "Siro",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/google/adk-js"
+    "url": "https://github.com/Siro-ai/adk-js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/Siro-ai"
   },
   "files": [
     "package.json",
@@ -54,7 +57,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "@google/adk": "^0.6.1",
+    "@google/adk": "npm:@siro-ai/adk@0.7.0-siro.0",
     "@mikro-orm/mariadb": "^6.6.6",
     "@mikro-orm/mssql": "^6.6.6",
     "@mikro-orm/mysql": "^6.6.6",

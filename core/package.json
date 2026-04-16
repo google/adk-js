@@ -1,12 +1,15 @@
 {
-  "name": "@google/adk",
-  "version": "0.6.1",
-  "description": "Google ADK JS",
-  "author": "Google",
+  "name": "@siro-ai/adk",
+  "version": "0.7.0-siro.0",
+  "description": "Siro fork of @google/adk pinned to unreleased main (session-history fixes)",
+  "author": "Siro",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/google/adk-js"
+    "url": "https://github.com/Siro-ai/adk-js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/Siro-ai"
   },
   "files": [
     "package.json",
