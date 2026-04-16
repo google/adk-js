@@ -36,7 +36,12 @@ export enum CodeExecutionLanguage {
   PYTHON = 'python',
   JAVASCRIPT = 'javascript',
   TYPESCRIPT = 'typescript',
+  // Linux, WSL, macOS
   SHELL = 'shell',
+  // Windows only
+  POWERSHELL = 'powershell',
+  // Windows only
+  WINDOWS_CMD = 'cmd',
 }
 
 /**
