@@ -15,7 +15,7 @@ import {
 } from './in_memory_session_service.js';
 import {
   VertexAiSessionService,
-  isVertexAiSessionServiceConnectionString,
+  isVertexAiConnectionString,
 } from './vertex_ai_session_service.js';
 
 export function getSessionServiceFromUri(uri: string): BaseSessionService {
@@ -27,9 +27,9 @@ export function getSessionServiceFromUri(uri: string): BaseSessionService {
     return new DatabaseSessionService(uri);
   }
 
-  if (isVertexAiSessionServiceConnectionString(uri)) {
+  if (isVertexAiConnectionString(uri)) {
     // uri is something like vertexai://projects/abc/locations/us-central1
-    return new VertexAiSessionService();
+    return new VertexAiSessionService({});
   }
 
   throw new Error(`Unsupported session service URI: ${uri}`);

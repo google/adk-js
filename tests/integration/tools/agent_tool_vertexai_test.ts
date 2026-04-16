@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   AgentTool,
   InMemoryMemoryService,
   LlmAgent,
   Runner,
   VertexAiSessionService,
-  VertexAiSessionServiceOptions,
 } from '@google/adk';
 import {FinishReason} from '@google/genai';
 import {describe, expect, it} from 'vitest';
@@ -149,7 +149,7 @@ describe('AgentTool (Vertex AI)', () => {
     const sessionService = new VertexAiSessionService({
       projectId: 'amaad-martin-vertex-api',
       location: 'us-west1',
-      client: mockClient as unknown as VertexAiSessionServiceOptions['client'],
+      sessions: mockClient as unknown as Sessions,
     });
     const memoryService = new InMemoryMemoryService();
 

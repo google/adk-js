@@ -20,23 +20,19 @@ vi.mock('nodejs-vertexai', () => ({
   },
 }));
 
-import {isVertexAiSessionServiceConnectionString} from '@google/adk/sessions/vertex_ai_session_service.js';
+import {isVertexAiConnectionString} from '@google/adk/sessions/vertex_ai_session_service.js';
 import {logger} from '@google/adk/utils/logger.js';
 
-describe('isVertexAiSessionServiceConnectionString', () => {
+describe('isVertexAiConnectionString', () => {
   it('returns true for vertexai://', () => {
-    expect(
-      isVertexAiSessionServiceConnectionString('vertexai://projects/abc'),
-    ).toBe(true);
+    expect(isVertexAiConnectionString('vertexai://projects/abc')).toBe(true);
   });
 
   it('returns false for other strings', () => {
-    expect(
-      isVertexAiSessionServiceConnectionString('postgres://localhost:5432'),
-    ).toBe(false);
-    expect(isVertexAiSessionServiceConnectionString('memory:/')).toBe(false);
-    expect(isVertexAiSessionServiceConnectionString('')).toBe(false);
-    expect(isVertexAiSessionServiceConnectionString(undefined)).toBe(false);
+    expect(isVertexAiConnectionString('postgres://localhost:5432')).toBe(false);
+    expect(isVertexAiConnectionString('memory:/')).toBe(false);
+    expect(isVertexAiConnectionString('')).toBe(false);
+    expect(isVertexAiConnectionString(undefined)).toBe(false);
   });
 });
 
@@ -92,7 +88,7 @@ describe('VertexAiSessionService', () => {
     };
 
     service = new VertexAiSessionService({
-      client: mockClient as unknown as Sessions,
+      sessions: mockClient as unknown as Sessions,
     });
   });
 
@@ -106,13 +102,13 @@ describe('VertexAiSessionService', () => {
 
   it('throws an error if no client and no project/location provided', () => {
     expect(() => new VertexAiSessionService({})).toThrow(
-      'Project ID and Location are required if no client instance is provided.',
+      'Either (Project ID and Location) or an expressModeApiKey is required.',
     );
   });
 
   it('uses agentEngineId if provided', async () => {
     const serviceWithEngineId = new VertexAiSessionService({
-      client: mockClient as unknown as Sessions,
+      sessions: mockClient as unknown as Sessions,
       agentEngineId: 'custom-engine-id',
     });
 
@@ -176,14 +172,20 @@ describe('VertexAiSessionService', () => {
       });
     });
 
-    it('throws an error if sessionId is provided', async () => {
-      await expect(
-        service.createSession({
-          appName: '12345',
-          userId: 'testUser',
-          sessionId: 'user-provided-id',
+    it('passes sessionId in config if provided', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'user-provided-id',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            sessionId: 'user-provided-id',
+          }),
         }),
-      ).rejects.toThrow('User-provided Session id is not supported');
+      );
     });
 
     it('throws error if session creation operation times out', async () => {
@@ -426,12 +428,13 @@ describe('VertexAiSessionService', () => {
 
       expect(session?.events[0].actions).toEqual({
         skipSummarization: undefined,
-        stateDelta: undefined,
-        artifactDelta: undefined,
+        stateDelta: {},
+        artifactDelta: {},
         transferToAgent: undefined,
         escalate: undefined,
-        requestedAuthConfigs: undefined,
-        compaction: null,
+        requestedAuthConfigs: {},
+        requestedToolConfirmations: {},
+        compaction: undefined,
       });
       expect(session?.events[0].timestamp).toBeGreaterThan(0);
     });
@@ -605,6 +608,7 @@ describe('VertexAiSessionService', () => {
             longRunningToolIds: [],
             groundingMetadata: undefined,
           },
+          rawEvent: expect.any(Object),
         },
       });
     });

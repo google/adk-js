@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
-  ApiClient,
-  NodeAuth,
-  NodeDownloader,
-  NodeUploader,
-} from '@google/genai/vertex_internal';
+  Session as VertexAiSession,
+  SessionEvent as VertexAiSessionEvent,
+} from '@google-cloud/vertexai/build/src/genai/types.js';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
 
 import {Event} from '../events/event.js';
+import {EventActions} from '../events/event_actions.js';
 import {logger} from '../utils/logger.js';
+import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
 
 import {
   AppendEventRequest,
@@ -27,12 +30,12 @@ import {
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 
+const DEFAULT_MAX_ATTEMPTS = 30;
+
 /**
  * Checks if the given URI is a Vertex AI session service URI.
  */
-export function isVertexAiSessionServiceConnectionString(
-  uri?: string,
-): boolean {
+export function isVertexAiConnectionString(uri?: string): boolean {
   return uri?.startsWith('vertexai://') || false;
 }
 
@@ -41,52 +44,48 @@ export interface VertexAiSessionServiceOptions {
   location?: string;
   agentEngineId?: string;
   expressModeApiKey?: string;
-  client?: Sessions;
+  sessions?: Sessions;
 }
 
 /**
+ * @experimental (Experimental, subject to change)
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
 export class VertexAiSessionService extends BaseSessionService {
-  private client: Sessions;
+  private sessions: Sessions;
   private agentEngineId?: string;
   private expressModeApiKey?: string;
   private projectId?: string;
   private location?: string;
 
-  constructor(options?: VertexAiSessionServiceOptions) {
+  constructor(options: VertexAiSessionServiceOptions) {
     super();
-    this.agentEngineId = options?.agentEngineId;
-    this.expressModeApiKey = options?.expressModeApiKey;
-    this.projectId = options?.projectId;
-    this.location = options?.location;
+    this.agentEngineId = options.agentEngineId;
+    this.projectId = options.projectId;
+    this.location = options.location;
+    this.expressModeApiKey = getExpressModeApiKey(
+      this.projectId,
+      this.location,
+      options.expressModeApiKey,
+    );
 
-    if (!options?.client && (!this.projectId || !this.location)) {
-      throw new Error(
-        'Project ID and Location are required if no client instance is provided.',
-      );
+    if (!options.sessions) {
+      if (!this.expressModeApiKey && (!this.projectId || !this.location)) {
+        throw new Error(
+          'Either (Project ID and Location) or an expressModeApiKey is required.',
+        );
+      }
     }
 
-    if (options?.client) {
-      this.client = options.client;
+    // sessions is primarily for testing to inject a mock client.
+    if (options.sessions) {
+      this.sessions = options.sessions;
     } else {
-      const auth = new NodeAuth({
-        googleAuthOptions: {
-          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-        },
-      });
-      const uploader = new NodeUploader();
-      const downloader = new NodeDownloader();
-      const apiClient = new ApiClient({
-        auth,
-        uploader,
-        downloader,
+      const client = new Client({
         project: this.projectId,
         location: this.location,
-        vertexai: true,
-        userAgentExtra: `vertex-genai-modules/1.10.4`,
       });
-      this.client = new Sessions(apiClient);
+      this.sessions = client.agentEnginesInternal.sessions;
     }
   }
 
@@ -114,29 +113,22 @@ export class VertexAiSessionService extends BaseSessionService {
     state,
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
-    if (sessionId) {
-      throw new Error(
-        'User-provided Session id is not supported for VertexAISessionService.',
-      );
-    }
-
     const reasoningEngineId = this._getReasoningEngineId(appName);
-    let apiResponse = await this.client.createInternal({
+    let apiResponse = await this.sessions.createInternal({
       name: `reasoningEngines/${reasoningEngineId}`,
       userId: userId,
-      config: state ? {sessionState: state} : {},
+      config: {
+        ...(state ? {sessionState: state} : {}),
+        ...(sessionId ? {sessionId} : {}),
+      },
     });
 
-    const operationName = apiResponse.name;
-    if (!operationName) {
-      throw new Error('Operation name is missing from response');
-    }
+    const operationName = apiResponse.name!;
 
     let attempts = 0;
-    const maxAttempts = this.expressModeApiKey ? 5 : 30;
-    while (!apiResponse.done && attempts < maxAttempts) {
+    while (!apiResponse.done && attempts < DEFAULT_MAX_ATTEMPTS) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      apiResponse = await this.client.getSessionOperationInternal({
+      apiResponse = await this.sessions.getSessionOperationInternal({
         operationName: operationName,
       });
       attempts++;
@@ -148,18 +140,14 @@ export class VertexAiSessionService extends BaseSessionService {
       );
     }
 
-    const getSessionResponse = apiResponse.response as {
-      name: string;
-      sessionState?: Record<string, unknown>;
-      updateTime?: string;
-    };
-    const id = getSessionResponse.name.split('/').pop() || '';
+    const getSessionResponse = apiResponse.response as VertexAiSession;
+    const id = getSessionResponse.name?.split('/').pop() || '';
 
     return createSession({
       id,
       appName,
       userId,
-      state: getSessionResponse.sessionState || {},
+      state: getSessionResponse.sessionState,
       events: [],
       lastUpdateTime: getSessionResponse.updateTime
         ? Date.parse(getSessionResponse.updateTime)
@@ -177,34 +165,35 @@ export class VertexAiSessionService extends BaseSessionService {
     const sessionResourceName = `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`;
 
     try {
-      let getSessionResponse: unknown;
-      let eventsIterator: unknown[] = [];
+      let getSessionResponse: VertexAiSession | undefined;
+      let eventsIterator: VertexAiSessionEvent[] = [];
 
       if (config && config.numRecentEvents === 0) {
-        getSessionResponse = await this.client.get({name: sessionResourceName});
+        getSessionResponse = (await this.sessions.get({
+          name: sessionResourceName,
+        })) as VertexAiSession;
       } else {
         const listConfig: Record<string, string> = {};
         if (config && config.afterTimestamp) {
-          listConfig.filter = `timestamp>="${new Date(config.afterTimestamp).toISOString()}"`;
+          listConfig.filter = `timestamp>="${new Date(
+            config.afterTimestamp,
+          ).toISOString()}"`;
         }
 
         const [sessionRes, eventsRes] = await Promise.all([
-          this.client.get({name: sessionResourceName}),
-          this.client.events.listInternal({
+          this.sessions.get({name: sessionResourceName}),
+          this.sessions.events.listInternal({
             name: sessionResourceName,
             config: listConfig,
           }),
         ]);
-        getSessionResponse = sessionRes;
+        getSessionResponse = sessionRes as VertexAiSession;
         eventsIterator =
-          (eventsRes as {sessionEvents?: unknown[]}).sessionEvents || [];
+          (eventsRes as {sessionEvents?: VertexAiSessionEvent[]})
+            .sessionEvents || [];
       }
 
-      const sessionObj = getSessionResponse as {
-        userId?: string;
-        sessionState?: Record<string, unknown>;
-        updateTime?: string;
-      };
+      const sessionObj = getSessionResponse!;
 
       if (sessionObj.userId !== userId) {
         throw new Error(
@@ -216,7 +205,7 @@ export class VertexAiSessionService extends BaseSessionService {
         id: sessionId,
         appName,
         userId,
-        state: sessionObj.sessionState || {},
+        state: sessionObj.sessionState,
         events: [],
         lastUpdateTime: sessionObj.updateTime
           ? Date.parse(sessionObj.updateTime)
@@ -224,7 +213,7 @@ export class VertexAiSessionService extends BaseSessionService {
       });
 
       for (const event of eventsIterator) {
-        session.events.push(_fromApiEvent(event as Record<string, unknown>));
+        session.events.push(_fromApiEvent(event));
       }
 
       if (config && config.numRecentEvents) {
@@ -247,31 +236,37 @@ export class VertexAiSessionService extends BaseSessionService {
     userId,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
     const reasoningEngineId = this._getReasoningEngineId(appName);
-    const response = await this.client.listInternal({
-      name: `reasoningEngines/${reasoningEngineId}`,
-      config: userId ? {filter: `userId="${userId}"`} : {},
-    });
+    const adkSessions: Session[] = [];
+    let pageToken: string | undefined = undefined;
 
-    const sessions = (response as {sessions?: unknown[]}).sessions || [];
-    const adkSessions = sessions.map((s: unknown) => {
-      const sessionObj = s as {
-        name: string;
-        userId?: string;
-        sessionState?: Record<string, unknown>;
-        updateTime?: string;
-      };
-      const id = sessionObj.name.split('/').pop() || '';
-      return createSession({
-        id,
-        appName,
-        userId: sessionObj.userId,
-        state: sessionObj.sessionState || {},
-        events: [],
-        lastUpdateTime: sessionObj.updateTime
-          ? new Date(sessionObj.updateTime).getTime()
-          : Date.now(),
+    do {
+      const response = await this.sessions.listInternal({
+        name: `reasoningEngines/${reasoningEngineId}`,
+        config: {
+          ...(userId ? {filter: `userId="${userId}"`} : {}),
+          ...(pageToken ? {pageToken} : {}),
+        },
       });
-    });
+
+      const sessions =
+        (response as {sessions?: VertexAiSession[]}).sessions || [];
+      for (const sessionObj of sessions) {
+        const id = sessionObj.name?.split('/').pop() || '';
+        adkSessions.push(
+          createSession({
+            id,
+            appName,
+            userId: sessionObj.userId,
+            state: sessionObj.sessionState,
+            events: [],
+            lastUpdateTime: sessionObj.updateTime
+              ? new Date(sessionObj.updateTime).getTime()
+              : Date.now(),
+          }),
+        );
+      }
+      pageToken = (response as {nextPageToken?: string}).nextPageToken;
+    } while (pageToken);
 
     return {sessions: adkSessions};
   }
@@ -282,7 +277,7 @@ export class VertexAiSessionService extends BaseSessionService {
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
     const reasoningEngineId = this._getReasoningEngineId(appName);
-    await this.client.delete({
+    await this.sessions.delete({
       name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
     });
   }
@@ -304,56 +299,118 @@ export class VertexAiSessionService extends BaseSessionService {
         compactedContent: event.compactedContent,
       };
     }
-    const eventWithUsage = event as unknown as {usageMetadata?: unknown};
-    if (eventWithUsage.usageMetadata) {
-      customMetadata._usage_metadata = eventWithUsage.usageMetadata;
+    if (event.usageMetadata) {
+      customMetadata._usage_metadata = event.usageMetadata;
     }
 
-    await this.client.events.append({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
-      author: event.author || 'user',
-      invocationId: event.invocationId || `inv-${Date.now()}`,
-      timestamp: new Date(event.timestamp).toISOString(),
-      config: {
-        content: event.content,
-        actions: event.actions
-          ? {
-              skipSummarization: event.actions.skipSummarization,
-              stateDelta: event.actions.stateDelta,
-              artifactDelta: event.actions.artifactDelta,
-              transferAgent: event.actions.transferToAgent,
-              escalate: event.actions.escalate,
-              requestedAuthConfigs: event.actions.requestedAuthConfigs,
-            }
-          : undefined,
-        errorCode: event.errorCode,
-        errorMessage: event.errorMessage,
-        eventMetadata: {
-          partial: event.partial,
-          turnComplete: event.turnComplete,
-          interrupted: event.interrupted,
-          branch: event.branch,
-          customMetadata:
-            Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
-          longRunningToolIds: event.longRunningToolIds,
-          groundingMetadata: event.groundingMetadata,
-        },
+    const {
+      content,
+      errorCode,
+      errorMessage,
+      partial,
+      turnComplete,
+      interrupted,
+      branch,
+      longRunningToolIds,
+      groundingMetadata,
+    } = event;
+
+    const actions = event.actions
+      ? {
+          skipSummarization: event.actions.skipSummarization,
+          stateDelta: event.actions.stateDelta,
+          artifactDelta: event.actions.artifactDelta,
+          transferAgent: event.actions.transferToAgent,
+          escalate: event.actions.escalate,
+          requestedAuthConfigs: event.actions.requestedAuthConfigs,
+        }
+      : undefined;
+
+    const config: Record<string, unknown> = {
+      content,
+      actions,
+      errorCode,
+      errorMessage,
+      eventMetadata: {
+        partial,
+        turnComplete,
+        interrupted,
+        branch,
+        customMetadata:
+          Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
+        longRunningToolIds,
+        groundingMetadata,
       },
-    });
+      rawEvent: JSON.parse(JSON.stringify(event)) as Record<string, unknown>,
+    };
+
+    try {
+      await this.sessions.events.append({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
+        author: event.author || 'user',
+        invocationId: event.invocationId || `inv-${Date.now()}`,
+        timestamp: new Date(event.timestamp).toISOString(),
+        config,
+      });
+    } catch (error) {
+      logger.warn(
+        'Failed to append event with rawEvent, falling back...',
+        error,
+      );
+      delete config.rawEvent;
+      await this.sessions.events.append({
+        name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
+        author: event.author || 'user',
+        invocationId: event.invocationId || `inv-${Date.now()}`,
+        timestamp: new Date(event.timestamp).toISOString(),
+        config,
+      });
+    }
 
     return event;
   }
 }
 
-function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
-  const actions = (apiEventObj.actions as Record<string, unknown>) || {};
-  const eventMetadata =
-    (apiEventObj.eventMetadata as Record<string, unknown>) || {};
+interface ExtendedEventActions extends EventActions {
+  compaction?: {
+    startTime: number;
+    endTime: number;
+    compactedContent: string;
+  };
+}
+
+interface ExtendedEvent extends Event {
+  actions: ExtendedEventActions;
+  isCompacted?: boolean;
+  startTime?: number;
+  endTime?: number;
+  compactedContent?: string;
+}
+
+function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
+  const rawEvent = apiEventObj.rawEvent;
+  if (rawEvent) {
+    const event = JSON.parse(JSON.stringify(rawEvent)) as Event;
+    event.id = apiEventObj.name?.split('/').pop() || '';
+    event.invocationId = apiEventObj.invocationId || '';
+    event.author = apiEventObj.author;
+    if (apiEventObj.timestamp) {
+      event.timestamp = new Date(apiEventObj.timestamp).getTime();
+    }
+    return event;
+  }
+
+  const actions = apiEventObj.actions || {};
+  const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
     | Record<string, unknown>
     | undefined;
-  let compactionData = null;
+  let compactionData: {
+    startTime: number;
+    endTime: number;
+    compactedContent: string;
+  } | null = null;
   let usageMetadataData = null;
 
   if (customMetadata) {
@@ -361,7 +418,7 @@ function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
       compactionData = customMetadata._compaction as {
         startTime: number;
         endTime: number;
-        compactedContent: unknown;
+        compactedContent: string;
       };
       delete customMetadata._compaction;
     }
@@ -374,34 +431,40 @@ function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
     }
   }
 
-  const eventActions = {
-    skipSummarization: actions['skipSummarization'],
-    stateDelta: actions['stateDelta'],
-    artifactDelta: actions['artifactDelta'],
-    transferToAgent: actions['transferAgent'],
-    escalate: actions['escalate'],
-    requestedAuthConfigs: actions['requestedAuthConfigs'],
-    compaction: compactionData,
+  const eventActions: ExtendedEventActions = {
+    stateDelta: (actions['stateDelta'] as {[key: string]: unknown}) || {},
+    artifactDelta: (actions['artifactDelta'] as {[key: string]: number}) || {},
+    requestedAuthConfigs:
+      (actions.requestedAuthConfigs as Record<string, unknown>) || {},
+    requestedToolConfirmations:
+      (actions['requestedToolConfirmations'] as Record<string, unknown>) || {},
+    skipSummarization: actions['skipSummarization'] as boolean | undefined,
+    transferToAgent: actions['transferAgent'] as string | undefined,
+    escalate: actions['escalate'] as boolean | undefined,
+    compaction: compactionData || undefined,
   };
 
-  const event: Record<string, unknown> = {
-    id: (apiEventObj.name as string).split('/').pop() || '',
-    invocationId: apiEventObj.invocationId as string,
-    author: apiEventObj.author as string,
-    actions: eventActions as unknown as Event['actions'],
-    content: apiEventObj.content,
+  const event: ExtendedEvent = {
+    id: apiEventObj.name?.split('/').pop() || '',
+    invocationId: apiEventObj.invocationId || '',
+    author: apiEventObj.author,
+    actions: eventActions,
+    content: apiEventObj.content as unknown as Content,
     timestamp: apiEventObj.timestamp
-      ? new Date(apiEventObj.timestamp as string).getTime()
+      ? new Date(apiEventObj.timestamp).getTime()
       : Date.now(),
-    errorCode: apiEventObj.errorCode,
+    errorCode: apiEventObj.errorCode?.toString(),
     errorMessage: apiEventObj.errorMessage,
-    partial: eventMetadata['partial'],
-    turnComplete: eventMetadata['turnComplete'],
-    interrupted: eventMetadata['interrupted'],
-    branch: eventMetadata['branch'],
+    partial: eventMetadata['partial'] as boolean | undefined,
+    turnComplete: eventMetadata['turnComplete'] as boolean | undefined,
+    interrupted: eventMetadata['interrupted'] as boolean | undefined,
+    branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
-    longRunningToolIds: eventMetadata['longRunningToolIds'],
-    usageMetadata: usageMetadataData,
+    longRunningToolIds: eventMetadata['longRunningToolIds'] as
+      | string[]
+      | undefined,
+    usageMetadata:
+      usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };
 
   if (compactionData) {
@@ -411,5 +474,5 @@ function _fromApiEvent(apiEventObj: Record<string, unknown>): Event {
     event.compactedContent = compactionData.compactedContent;
   }
 
-  return event as unknown as Event;
+  return event;
 }
