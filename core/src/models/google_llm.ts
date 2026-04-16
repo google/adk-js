@@ -8,6 +8,7 @@ import {
   Blob,
   createPartFromText,
   FileData,
+  FinishReason,
   GoogleGenAI,
   HttpOptions,
 } from '@google/genai';
@@ -161,7 +162,34 @@ export class Gemini extends BaseLlm {
       });
 
       const aggregator = new StreamingResponseAggregator();
+      let sawFunctionCall = false;
       for await (const response of streamResult) {
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        if (parts.some((part) => part.functionCall)) {
+          sawFunctionCall = true;
+        }
+
+        // Gemini thinking models emit an empty text chunk with finishReason
+        // STOP after a function call. The aggregator would treat it as a
+        // final model turn and prevent the agent from making the follow-up
+        // call, so drop it before it reaches the aggregator.
+        if (
+          sawFunctionCall &&
+          response.candidates?.[0]?.finishReason === FinishReason.STOP &&
+          parts.length > 0 &&
+          parts.every(
+            (part) =>
+              !part.functionCall &&
+              !part.functionResponse &&
+              !part.inlineData &&
+              !part.executableCode &&
+              !part.codeExecutionResult &&
+              (!part.text || part.text === ''),
+          )
+        ) {
+          continue;
+        }
+
         for await (const llmResponse of aggregator.processResponse(response)) {
           yield llmResponse;
         }
