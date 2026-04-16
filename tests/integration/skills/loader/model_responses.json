@@ -1,0 +1,249 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "list_skills",
+                "args": {},
+                "id": "adk-55b6db6d-09cd-43ae-8115-2a96890a7cfe"
+              },
+              "thoughtSignature": "CuIBAb4+9vtqucLDGrzRYGS615D7TetEZtGyH/XCtFPEBwzZGVDeEg920sZQgLhWxlvwWgoJ+8ugSaQQdrrJA0J0w04PDOYlCY+926NlVIx1NxX6uJfrQd48M8N5XhAz4ougImwpNMODCMm8ZJ2Jf/b2exuiOvC4vtYR4HfaxLdGgFXHScUhhWgkjJsPRrYq02O/23jz+e4fI+k/Q5HAsAg19URP/hZ9oOPuZQarZNxr+IJwU/c9PsPVr1fknwjRehkZwCvI1NUgmZcumj6ORPPHm7pOUqKfqT7Yznvs191RNhCjrg=="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 225,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 275,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 225
+        }
+      ],
+      "thoughtsTokenCount": 40
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "I have the following skills:\n* **gws-calendar**: Google Calendar: Manage calendars and events.\n* **internal-comms**: A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.)."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 389,
+      "candidatesTokenCount": 93,
+      "totalTokenCount": 482,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 389
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "load_skill",
+                "args": {
+                  "name": "gws-calendar"
+                },
+                "id": "adk-bcea3bec-b368-4365-b85e-46a212165025"
+              },
+              "thoughtSignature": "CvgBAb4+9vuLFICeBxw9pI3tCXj90uE3dxDKZPP+WFbJS2felDZElWxPgD2hmYRAdBA8QHbMJeASUeyfsghjo63Ur6P7i7DgKO+CCYzeW7iXmvgpL8B3VZGDPSVfCYWvWgwVMQ7tslWIgiUACpmUSPReT6P6AjWAkqX74Yr0k8vwlyEJ6K5W3vA6ysarMWlNj+ytnAhZrufO6O+PlHacDDyhyd2hoe5q6k5Hu4OBoZsvxgOQwdryZ+qEd9iZVEpj+lPhPnarWwQrDrhRAPDY+eut5KWdZaXSE6e/ryan/twxoHqvZmdE3kOxch/I5Dlif74ND33s4jI+kbk="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 492,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 565,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 492
+        }
+      ],
+      "thoughtsTokenCount": 55
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The `gws-calendar` skill has been loaded. It's designed to manage calendars and events, and it requires the `gws` tool. You can use `gws calendar <resource> <method> [flags]` to interact with it."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 716,
+      "candidatesTokenCount": 53,
+      "totalTokenCount": 769,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 716
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "load_skill_resource",
+                "args": {
+                  "skill_name": "internal-comms",
+                  "path": "references/3p_updates_guideline.md"
+                },
+                "id": "adk-7e0d9ee5-55f7-48c5-a201-d60ec623d52c"
+              },
+              "thoughtSignature": "CvMKAb4+9vvqDm3g0eHocfHa/ELneBvMNRCasTZzI7IlViWzrfKHQbwdD9Moe/1dA3lSh/3ivcINC8M9gKu1jynk1mWavNxJDFwMriyzinLpaiOyIvZ1do3gDFNzuWg2p8BvyKdPpzmeMdiW3V12rgSYgV0bkk0UEZXdTqr+d1WBt0See90DelZnFht/lH9e7Gj1yq0BbX1vnIrQGIBCCGUuUBbkKA3E9rAfe8n8xx9xbD5mc0K19g9/36sf1Lb6A3eEN6vFv96wDo2iynnMV8ebTywzA302zZBJrmpOoYxpGwN6g+pTPcrBsY0ceEH26QcHvrffX6deNCJRx+T7WyrZ9g/etef113RGNf5TkSR77tA6jx/WaBYUNxzObQdtddL7p/9uZ5q1y/21KRAbYnK2PaQPsvXDT9exgf1AukdoavvH3Z6URj6lgJnIUeiva5iMQzcmkEC+8j0M06wb6HRoS9LXKERE99VC3lqLty4aB9+PYZQ1o6FtSeB72am+IY8pdtFxMH3bcJZNY7qsPLPyIx7ZJS6EBVj6Y8LorBnK5VN9/E50iwdMQ5kw+CNM38StsEMn7bWipUHHd5y0BXHnJUhV8j+8+PRU4kAxEDdIiD0auFonvZF9S21p0kKLTu60C/2C28qSxsZSPicg5ScamadGkqlNjV3ybRsQXIBFFCLRNG0yUCPfi5o10ajBINkzIe7Cn0wTSxihLxzni49sy617tGHdwbIZTPad104WZ8zWFtoDOhxzWWsNp/U2pTUfI5SqGLR8I3Sy+mfbXKpPJhH4FFORO2TGTD8v4qHdpudMvqYvC4bKF72vtuv7xF2q5Cp2+GkXRTAVe+SK4Cz1m1IAGRjAnD6eBDjU9FI7cqcO2VVPNIoXpPHJ/nCnnhST9JUMNZYmEGwXOYGaM9l0uIolj9d00sM31KAQ5jE/GTaHZ68w1EcpDaTX7GJ+KKuEbuLUhRDGEt2XCmhZiTNEkYnyfqsezXlIco0WczQfuu39f+XJComLpB760qvB6oUBPYB/DwDVhIH6IZBQtb9BA722Mf+lUG+OJKs8VwQaPFX5qdadG9jkoKLmPF0DC9uGOryusFMctkNFZiMN4m4SlAa/kyJj+d104J+I4i8EiYS6i3/UqZvvi3Wu0shkPr3HcnrtmJshatSAtWOhad7JFwwhzmil0fYZfYpxDy4c7ojFW58G0QyQsXBsm6gffHEN9i4e/afclQ0QCkAXQMLI1CbO9ZyXNs3R4WqvjE7XOR5EIM+CW5AcxYPov/wdmjyECJJbKQDXcdWtvXO0CjPzxPzUAQDLhzwciundaz0A6HdvlkXVqT8vYMtfyZqZ2rvAr+cbXMC8Jkqc826a+Hz7b/4VSkxqlVI6WLJXyTM9qmPlJZVJHOzXC2sRVs9d100Kd4IlFjXyN79fZsmw4ftaTEhXixqmR6r6+LX7ThxUw9RbFX709BRmR1MwHCD5iQIFlEM6z0qBJX01NN1KGKdMs1l7EfWJv6JURO++nufXs2Ca9YFvAwiQR1cTVjbDlVWLA31INgISMGhLiGZowab+8vy+NKPdEJnBy52Q/jEZXDFd7Jn8fjoYc0y05m+9dFihNO7q+W5KkUd+Suo/HW53qiaSNDmURS+jIvpCkKbIb6ivuJ1DPGXrkxlws96fMbyXULqJFwCipJIrlGJmdR+0g0DHohy4AVI0rjtZRfBdmTcA+TIFJPve4/b1pAXBmK8ZTfjiI1Mkr6JvD/bt5jl3LjrPppy0AUsKVPa+CzoFvGOcRYecGAteS63zhCkASvx4lLqOgFaES5ZsdVifmQ15QoR+GuduLymfcyv/FDo4SN+k6UXLZMKolBQOG6TrJYoMkL1+"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 785,
+      "candidatesTokenCount": 37,
+      "totalTokenCount": 1153,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 785
+        }
+      ],
+      "thoughtsTokenCount": 331
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "It seems I couldn't find a resource named `3p_updates_guideline.md` within the `internal-comms` skill. It's possible the guideline has a different name or is located in a different directory. Would you like me to try looking for another name, or perhaps provide a list of all available resources within the `internal-comms` skill if such a function were available?"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 875,
+      "candidatesTokenCount": 85,
+      "totalTokenCount": 960,
+      "cachedContentTokenCount": 534,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 875
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 534
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "load_skill_resource",
+                "args": {
+                  "path": "references/company_newsletter_guideline.md",
+                  "skill_name": "internal-comms"
+                },
+                "id": "adk-2a07e84b-8df6-4521-9a3b-1f4255090b3e"
+              },
+              "thoughtSignature": "CvQDAb4+9vsuX68sZKZjTAOtw6bgyhPggdiQaKiLulO6GilgYxz6CfUz9GYVUqVPq8G/VLROothivf1SXqwpSrqohkSJNn1ZN+JqQjsK9jUiptTb1ULlBBPxuiok6DqvzuI9aEV0AdT63qXWeMKNG7qc88Wt9Simx7yM3RR2GB1rXE93v45ZBkx8fzw0gYaDIBbpgQni+V9lY1wfefk4i7Gc4eIy5nQzSVXEYhP6kkXqlixXYT43UF0iOuPHnwwhMLqorxIjvCc7428h9hLolbWXc0T71UwtICvn43MskGajEbJAQikzQRdirsG4PYhGysxfsVkIVJwN7myNgAs4yeaAVE7qX9xf+VMP3rA4VHXsP318sTfrAWddzkqjHJz/Wu/M4JnFNtp/B1THDJF4fHGzmqDckcx2dpKgIxJYY1a556x6jloY4M82wSEC1AqfS6wa2f92d71eAth1CXa+GNND1Xv+/N1vPsox+ibnYiBgQe3Hs2/x4VBFuaPCPbJ7fCunLjEVIuuRmnPX+5zNMVHv5POnUO9BD0KEhIs255lkCZy8YHgnsFXdg4UY4EUhigWfD9Eihv8zhQebp0+8xiUM3jL7Ot8o1Jn9+Osz1rh/zxFP6+0kjyTjb7VwD96puc77B8CvtC0UchDHGIxJslWhaw9tYAM="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 974,
+      "candidatesTokenCount": 36,
+      "totalTokenCount": 1120,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 974
+        }
+      ],
+      "thoughtsTokenCount": 110
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "It seems I also couldn't find a resource named `company_newsletter_guideline.md` within the `internal-comms` skill. It's possible the guideline has a different name or is located in a different directory. I'm sorry about that!\n\nWould you like me to try looking for another name, or is there a way for me to list all available resources within the `internal-comms` skill so you can tell me the exact file name?"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 1062,
+      "candidatesTokenCount": 99,
+      "totalTokenCount": 1161,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 1062
+        }
+      ]
+    }
+  }
+]

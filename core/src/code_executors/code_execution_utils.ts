@@ -29,6 +29,22 @@ export interface File {
 }
 
 /**
+ * The language of the code to execute.
+ */
+export enum CodeExecutionLanguage {
+  UNSPECIFIED = 'unspecified',
+  PYTHON = 'python',
+  JAVASCRIPT = 'javascript',
+  TYPESCRIPT = 'typescript',
+  // Linux, WSL, macOS
+  SHELL = 'shell',
+  // Windows only
+  POWERSHELL = 'powershell',
+  // Windows only
+  WINDOWS_CMD = 'cmd',
+}
+
+/**
  * A structure that contains the input of code execution.
  * */
 export interface CodeExecutionInput {
@@ -36,6 +52,11 @@ export interface CodeExecutionInput {
    * The code to execute.
    * */
   code: string;
+
+  /**
+   * The language of the code to execute.
+   */
+  language: CodeExecutionLanguage;
 
   /**
    * The input files available to the code.

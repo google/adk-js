@@ -1,0 +1,263 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "list_skills",
+                "args": {},
+                "id": "adk-83a8c382-4222-4d05-8e95-0f2cb7884594"
+              },
+              "thoughtSignature": "Cv4BAb4+9vvTRXQyVWCXheRri1a2Md7Um3i447+h7TaNaqQP353W/+Y1Ko/QQcdkIKpKJCEv4Rd5urD84tfRJPjquJV5R3DzGkYVFuQXjb9SXW0yjamWkZnhkfGfzQxAztfb8CKRcExeTWLmwHVB3cS8aF4jaJ1zMtsYDznh/gqOOVahE4CmJOkaiHFKRRosNF0AFTR9xpddXtoO+6D08X3YL4hli0v0mz31r9Bf1ehCj45fSZLcariY3H0j6tYDkF2+vK+x+ofwEZLelZMDRwf1id2KnFyzl9fezRiq1oJUcgC13Z/L9YDKCOZ9FT0Pw060Orzaa0lqRg+h5pFdhOU="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 228,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 287,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 228
+        }
+      ],
+      "thoughtsTokenCount": 49
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "I have a weather skill that can provide weather information."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 299,
+      "candidatesTokenCount": 11,
+      "totalTokenCount": 310,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 299
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "load_skill",
+                "args": {
+                  "name": "weather-skill"
+                },
+                "id": "adk-005353a3-ec15-47d5-97c9-4e7b15e58f3b"
+              }
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 318,
+      "candidatesTokenCount": 17,
+      "totalTokenCount": 391,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 318
+        }
+      ],
+      "thoughtsTokenCount": 56
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The weather skill has been loaded. I can get you the humidity and wind speed for a given location. I also have some general weather information for San Francisco, CA:\n\nTemperature: 68°F (20°C)\nCondition: Partly Cloudy\nHumidity: 55%\nWind Speed: 10 mph"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 686,
+      "candidatesTokenCount": 68,
+      "totalTokenCount": 754,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 686
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "load_skill_resource",
+                "args": {
+                  "skill_name": "weather-skill",
+                  "path": "references/weather_info.md"
+                },
+                "id": "adk-aca240c1-1af6-4a46-b331-bb8fb6cc0ed5"
+              },
+              "thoughtSignature": "CqYCAb4+9vt8DV1YfPF4YgfCEFdkoMTlI2nWXklCTKtHpVJ9PDiJISmdhd+r5cMhsaDlACbwKTpg9SMtMbmhyIWRRK9frLP6J5ftyXI9EsDhfMmIy55GT4VuJu/s2cuTeoeHQDKye1YPqnvrG2z/iBV50PTDrRF0z5BgAQSJh8Ibra6gxj1mKMuU3GmIwPy0F++Ch3SyiTacBVYPKPFOL4Qpx4t3sdpX14N3NkdQSGE5hzgbsu56iLQu4V11y1wns+KecrjSa3jlIRlSkvrTkDTcTZU3GWW5DNLqQ3inCOQBGDj5WZesDxggzD8HP6v2yj0K+4hNqDFJ53Fv6CEY739x9QKod7mgAJJ9oNlhWdklHdaJRUA4Y/six+LFUl2me7No4jN2vWNA"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 768,
+      "candidatesTokenCount": 32,
+      "totalTokenCount": 855,
+      "cachedContentTokenCount": 643,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 768
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 643
+        }
+      ],
+      "thoughtsTokenCount": 55
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The current weather in San Francisco, CA is:\nTemperature: 68°F (20°C)\nCondition: Partly Cloudy\nHumidity: 55%\nWind Speed: 10 mph"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 901,
+      "candidatesTokenCount": 44,
+      "totalTokenCount": 945,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 901
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_wind_speed",
+                "args": {
+                  "location": "Irvine, CA"
+                },
+                "id": "adk-58d11ee9-7e4f-4a8d-8668-c25590555cbf"
+              },
+              "thoughtSignature": "CqICAb4+9vsGP2q5fCYg7ozzQW4WDxWs3O86NA21kL6e/W8LgApDkIYrGYlyvT8omMYNwT7zmhCdLVY384qTMdXZ3iB1HALDafU5su8CqYz66rUvdGD95GPpaT6NxES0WwnpwET8ZoeeJCjG2+YluKECmUDD8jWKRx5Bjeepm6QJ6NS9JuNG3DgewdSG3JoXl8JgdP5yFgyCPqDoFH+UUccIbq6Py7E98VMsi0L77Y9ergPg2QWk3/luVKaQ64Fn8cWcDmLKhm8FADMJROEBJG+qz2YWi0GGsbpktf3vfPvrMt0/jTC5f0SjIv9uF4GwFG2cSeAhMYkQ++BsFqaBZ7B7ug3KvYRN2nNsxjiHYvt7Mbb8qsao5gOK9pGA5mlViqEnOAU="
+            },
+            {
+              "functionCall": {
+                "name": "get_humidity",
+                "args": {
+                  "location": "Irvine, CA"
+                },
+                "id": "adk-7f5591b9-4b27-43db-91ff-7b106f941f63"
+              }
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 971,
+      "candidatesTokenCount": 40,
+      "totalTokenCount": 1073,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 971
+        }
+      ],
+      "thoughtsTokenCount": 62
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The wind speed in Irvine, CA is 10 mph and the humidity is 55%."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 1064,
+      "candidatesTokenCount": 20,
+      "totalTokenCount": 1084,
+      "cachedContentTokenCount": 672,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 1064
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 672
+        }
+      ]
+    }
+  }
+]

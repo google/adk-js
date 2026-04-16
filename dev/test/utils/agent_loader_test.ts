@@ -8,10 +8,15 @@ import {exec} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {promisify} from 'node:util';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
-import {AgentFile, AgentLoader} from '../../src/utils/agent_loader.js';
+import {
+  AgentFile,
+  AgentLoader,
+  replaceDirnamePlugin,
+} from '../../src/utils/agent_loader.js';
 import * as fileUtils from '../../src/utils/file_utils.js';
 
 const execAsync = promisify(exec);
@@ -25,11 +30,16 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   tryToFindFileRecursively: vi.fn(),
 }));
 
-vi.mock('esbuild', () => ({
-  default: {
-    build: vi.fn(),
-  },
-}));
+vi.mock('esbuild', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('esbuild')>();
+  return {
+    ...actual,
+    default: {
+      ...(actual as unknown as {default: {build: Mock}}).default,
+      build: vi.fn(),
+    },
+  };
+});
 
 const agent1JsContent = `
 import {BaseAgent} from '@google/adk';
@@ -341,6 +351,160 @@ describe('AgentLoader', () => {
       await expect(agentFile.load()).rejects.toThrow(
         `Agent file ${agentPath} does not exists`,
       );
+    });
+  });
+
+  describe('replaceDirnamePlugin', () => {
+    it.each([
+      {
+        name: 'replaces __dirname with original directory',
+        content: `const dir = __dirname;\nconsole.log(__dirname);`,
+        expected: (filePath: string, fileDir: string) =>
+          JSON.stringify(fileDir),
+      },
+      {
+        name: 'replaces import.meta.url with file URL',
+        content: 'const url = import.meta.url;',
+        expected: (filePath: string) => pathToFileURL(filePath).href,
+      },
+      {
+        name: 'replaces __filename with file path',
+        content: 'const file = __filename;',
+        expected: (filePath: string) => JSON.stringify(filePath),
+      },
+    ])('$name', async ({content, expected}) => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.ts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      expect(plugin.name).toBe('replace-dirname');
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+
+      expect(mockBuild.onLoad).toHaveBeenCalledWith(
+        {filter: /.*/},
+        expect.any(Function),
+      );
+
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(filePath, content);
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result.contents).toContain(expected(filePath, fileDir));
+      expect(result.loader).toBe('js');
+    });
+
+    it('does not replace tokens in strings', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.ts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(
+        filePath,
+        `const str = "__dirname";\nconst code = __dirname;`,
+      );
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result.contents).toContain('const str = "__dirname"');
+      expect(result.contents).toContain(JSON.stringify(fileDir));
+      expect(result.loader).toBe('js');
+    });
+
+    it('returns undefined for node_modules', async () => {
+      const filePath = '/path/to/node_modules/some_pkg/index.js';
+      const plugin = replaceDirnamePlugin(
+        path.join(tempAgentsDir, 'test_agent.ts'),
+        tempAgentsDir,
+      );
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toBeUndefined();
+    });
+
+    it('uses js loader for non-ts files', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.js');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      // Write real file
+      await fs.writeFile(filePath, 'const dir = __dirname;');
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toMatchObject({
+        loader: 'js',
+      });
+    });
+
+    it('returns js loader for mts files', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.mts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(filePath, 'const dir = __dirname;');
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toMatchObject({
+        loader: 'js',
+      });
+    });
+
+    it('returns js loader for cts files', async () => {
+      const filePath = path.join(tempAgentsDir, 'test_agent.cts');
+      const fileDir = path.dirname(filePath);
+      const plugin = replaceDirnamePlugin(filePath, fileDir);
+
+      const mockBuild = {
+        onLoad: vi.fn(),
+      };
+
+      plugin.setup(mockBuild as unknown as esbuild.PluginBuild);
+      const onLoadCallback = mockBuild.onLoad.mock.calls[0][1];
+
+      await fs.writeFile(filePath, 'const dir = __dirname;');
+
+      const result = await onLoadCallback({path: filePath});
+
+      expect(result).toMatchObject({
+        loader: 'js',
+      });
     });
   });
 

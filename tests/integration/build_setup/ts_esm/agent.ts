@@ -13,22 +13,9 @@ import {
   setLogLevel,
 } from '@google/adk';
 import {createModelContent, GenerateContentResponse} from '@google/genai';
+import {MockLlmConnection} from '../../mock_llm_connection.js';
 
 setLogLevel(LogLevel.DEBUG);
-
-class MockLlmConnection implements BaseLlmConnection {
-  async sendHistory(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  async sendContent(): Promise<void> {}
-
-  async sendRealtime(): Promise<void> {}
-
-  async *receive(): AsyncGenerator<LlmResponse, void, void> {}
-
-  async close(): Promise<void> {}
-}
 
 class MockLll extends BaseLlm {
   constructor({model}: {model: string}) {
