@@ -39,15 +39,15 @@ export class SkillToolset extends BaseToolset {
   public additionalTools: Array<BaseTool | BaseToolset>;
 
   constructor(
-    skills: Skill[],
+    skills: Record<string, Skill> | Skill[],
     options: {
       additionalTools?: Array<BaseTool | BaseToolset>;
     } = {},
   ) {
-    super([], 'adk_skill_toolset'); // Pass empty filter to base
-    this.skills = Object.fromEntries(
-      skills.map((s) => [s.frontmatter.name, s]),
-    );
+    super([], 'adk_skill_toolset');
+    this.skills = Array.isArray(skills)
+      ? Object.fromEntries(skills.map((s) => [s.frontmatter.name, s]))
+      : skills;
     this.additionalTools = options.additionalTools || [];
 
     this.tools = [

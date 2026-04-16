@@ -1,0 +1,101 @@
+[
+  {
+    "invocationId": "e-9f43f52c-2d34-4f60-830a-4753f0f053eb",
+    "author": "test_skills_agent",
+    "id": "bNBWjyJD",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788519549,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "list_skills",
+            "args": {},
+            "id": "adk-55b6db6d-09cd-43ae-8115-2a96890a7cfe"
+          },
+          "thoughtSignature": "CuIBAb4+9vtqucLDGrzRYGS615D7TetEZtGyH/XCtFPEBwzZGVDeEg920sZQgLhWxlvwWgoJ+8ugSaQQdrrJA0J0w04PDOYlCY+926NlVIx1NxX6uJfrQd48M8N5XhAz4ougImwpNMODCMm8ZJ2Jf/b2exuiOvC4vtYR4HfaxLdGgFXHScUhhWgkjJsPRrYq02O/23jz+e4fI+k/Q5HAsAg19URP/hZ9oOPuZQarZNxr+IJwU/c9PsPVr1fknwjRehkZwCvI1NUgmZcumj6ORPPHm7pOUqKfqT7Yznvs191RNhCjrg=="
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 225,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 275,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 225
+        }
+      ],
+      "thoughtsTokenCount": 40
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-9f43f52c-2d34-4f60-830a-4753f0f053eb",
+    "author": "test_skills_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-55b6db6d-09cd-43ae-8115-2a96890a7cfe",
+            "name": "list_skills",
+            "response": {
+              "result": "<available_skills>\n  <skill>\n    <name>gws-calendar</name>\n    <description>Google Calendar: Manage calendars and events.</description>\n  </skill>\n  <skill>\n    <name>internal-comms</name>\n    <description>A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.).</description>\n  </skill>\n</available_skills>"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "Y3PRjYwk",
+    "longRunningToolIds": [],
+    "timestamp": 1775788520682
+  },
+  {
+    "invocationId": "e-9f43f52c-2d34-4f60-830a-4753f0f053eb",
+    "author": "test_skills_agent",
+    "id": "zQGACr1C",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788520683,
+    "content": {
+      "parts": [
+        {
+          "text": "I have the following skills:\n* **gws-calendar**: Google Calendar: Manage calendars and events.\n* **internal-comms**: A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.)."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 389,
+      "candidatesTokenCount": 93,
+      "totalTokenCount": 482,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 389
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

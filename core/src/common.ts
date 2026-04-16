@@ -92,10 +92,11 @@ export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
 export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
-export type {
-  CodeExecutionInput,
-  CodeExecutionResult,
-  File,
+export {
+  CodeExecutionLanguage,
+  type CodeExecutionInput,
+  type CodeExecutionResult,
+  type File,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';

@@ -1,0 +1,125 @@
+[
+  {
+    "invocationId": "e-478543d7-a11a-4c53-bfa9-d6c16e520704",
+    "author": "test_skills_agent",
+    "id": "WAdqE3ML",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788521692,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "load_skill",
+            "args": {
+              "name": "gws-calendar"
+            },
+            "id": "adk-bcea3bec-b368-4365-b85e-46a212165025"
+          },
+          "thoughtSignature": "CvgBAb4+9vuLFICeBxw9pI3tCXj90uE3dxDKZPP+WFbJS2felDZElWxPgD2hmYRAdBA8QHbMJeASUeyfsghjo63Ur6P7i7DgKO+CCYzeW7iXmvgpL8B3VZGDPSVfCYWvWgwVMQ7tslWIgiUACpmUSPReT6P6AjWAkqX74Yr0k8vwlyEJ6K5W3vA6ysarMWlNj+ytnAhZrufO6O+PlHacDDyhyd2hoe5q6k5Hu4OBoZsvxgOQwdryZ+qEd9iZVEpj+lPhPnarWwQrDrhRAPDY+eut5KWdZaXSE6e/ryan/twxoHqvZmdE3kOxch/I5Dlif74ND33s4jI+kbk="
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 492,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 565,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 492
+        }
+      ],
+      "thoughtsTokenCount": 55
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-478543d7-a11a-4c53-bfa9-d6c16e520704",
+    "author": "test_skills_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-bcea3bec-b368-4365-b85e-46a212165025",
+            "name": "load_skill",
+            "response": {
+              "skill_name": "gws-calendar",
+              "instructions": "# calendar (v3)\n\n> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n```bash\ngws calendar <resource> <method> [flags]\n```\n\n## Helper Commands\n\n| Command                                      | Description                               |\n|",
+              "frontmatter": {
+                "name": "gws-calendar",
+                "description": "Google Calendar: Manage calendars and events.",
+                "metadata": {
+                  "version": "0.22.5",
+                  "openclaw": {
+                    "category": "productivity",
+                    "requires": {
+                      "bins": ["gws"]
+                    },
+                    "cliHelp": "gws calendar --help"
+                  }
+                }
+              },
+              "resources": {
+                "references": {},
+                "assets": {},
+                "scripts": {}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {
+        "_adk_activated_skill_test_skills_agent": ["gws-calendar"]
+      },
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "mrMzlZwd",
+    "longRunningToolIds": [],
+    "timestamp": 1775788522800
+  },
+  {
+    "invocationId": "e-478543d7-a11a-4c53-bfa9-d6c16e520704",
+    "author": "test_skills_agent",
+    "id": "SN5AsE3X",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788522800,
+    "content": {
+      "parts": [
+        {
+          "text": "The `gws-calendar` skill has been loaded. It's designed to manage calendars and events, and it requires the `gws` tool. You can use `gws calendar <resource> <method> [flags]` to interact with it."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 716,
+      "candidatesTokenCount": 53,
+      "totalTokenCount": 769,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 716
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]
