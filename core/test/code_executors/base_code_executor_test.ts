@@ -36,6 +36,8 @@ describe('BaseCodeExecutor', () => {
       [threeBt + 'python\n', '\n' + threeBt],
       [threeBt + 'javascript\n', '\n' + threeBt],
       [threeBt + 'typescript\n', '\n' + threeBt],
+      [threeBt + 'bash\n', '\n' + threeBt],
+      [threeBt + 'sh\n', '\n' + threeBt],
     ]);
 
     expect(executor.executionResultDelimiters).toEqual([
