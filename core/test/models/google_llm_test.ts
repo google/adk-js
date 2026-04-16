@@ -5,8 +5,9 @@
  */
 
 import {Gemini, GeminiParams, geminiInitParams, version} from '@google/adk';
-import {HttpOptions} from '@google/genai';
+import {GenerateContentResponse, GoogleGenAI, HttpOptions} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {LlmRequest} from '../../src/models/llm_request.js';
 
 class TestGemini extends Gemini {
   constructor(params: GeminiParams) {
@@ -80,6 +81,132 @@ describe('GoogleLlm', () => {
     expect(liveOptions.headers!['x-custom-header']).toBeUndefined();
     expect(liveOptions.headers!['x-goog-api-client']).toContain('google-adk/');
     expect(liveOptions.apiVersion).toBeDefined();
+  });
+
+  describe('generateContentAsync streaming thoughtSignature propagation', () => {
+    function makeStreamingChunk(
+      parts: Record<string, unknown>[],
+    ): GenerateContentResponse {
+      const response = new GenerateContentResponse();
+      response.candidates = [
+        {
+          content: {
+            role: 'model',
+            parts:
+              parts as GenerateContentResponse['candidates'][0]['content']['parts'],
+          },
+        },
+      ];
+      return response;
+    }
+
+    class GeminiWithStreamingChunks extends Gemini {
+      private readonly _chunks: GenerateContentResponse[];
+
+      constructor(chunks: GenerateContentResponse[]) {
+        super({apiKey: 'test-key'});
+        this._chunks = chunks;
+      }
+
+      override get apiClient(): GoogleGenAI {
+        const chunks = this._chunks;
+        return {
+          models: {
+            generateContentStream: async function () {
+              return (async function* () {
+                for (const chunk of chunks) {
+                  yield chunk;
+                }
+              })();
+            },
+          },
+          vertexai: false,
+        } as unknown as GoogleGenAI;
+      }
+    }
+
+    it('should propagate thoughtSignature to subsequent function call parts missing it', async () => {
+      const signature = 'test-thought-signature-abc123';
+
+      // Chunk 1: function call WITH thoughtSignature
+      const chunk1 = makeStreamingChunk([
+        {
+          functionCall: {name: 'tool_a', args: {q: '1'}},
+          thoughtSignature: signature,
+        },
+      ]);
+      // Chunk 2: function call WITHOUT thoughtSignature
+      const chunk2 = makeStreamingChunk([
+        {functionCall: {name: 'tool_b', args: {q: '2'}}},
+      ]);
+      // Chunk 3: function call WITHOUT thoughtSignature
+      const chunk3 = makeStreamingChunk([
+        {functionCall: {name: 'tool_c', args: {q: '3'}}},
+      ]);
+
+      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2, chunk3]);
+      const request: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses = [];
+      for await (const response of gemini.generateContentAsync(request, true)) {
+        responses.push(response);
+      }
+
+      // All function call parts should have the thoughtSignature
+      const functionCallResponses = responses.filter((r) =>
+        r.content?.parts?.some((p) => p.functionCall),
+      );
+
+      expect(functionCallResponses).toHaveLength(3);
+      for (const response of functionCallResponses) {
+        for (const part of response.content!.parts!) {
+          if (part.functionCall) {
+            expect(part.thoughtSignature).toBe(signature);
+          }
+        }
+      }
+    });
+
+    it('should not set thoughtSignature when no function call has one', async () => {
+      // All chunks lack thoughtSignature
+      const chunk1 = makeStreamingChunk([
+        {functionCall: {name: 'tool_a', args: {q: '1'}}},
+      ]);
+      const chunk2 = makeStreamingChunk([
+        {functionCall: {name: 'tool_b', args: {q: '2'}}},
+      ]);
+
+      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2]);
+      const request: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses = [];
+      for await (const response of gemini.generateContentAsync(request, true)) {
+        responses.push(response);
+      }
+
+      const functionCallResponses = responses.filter((r) =>
+        r.content?.parts?.some((p) => p.functionCall),
+      );
+
+      expect(functionCallResponses).toHaveLength(2);
+      for (const response of functionCallResponses) {
+        for (const part of response.content!.parts!) {
+          if (part.functionCall) {
+            expect(part.thoughtSignature).toBeUndefined();
+          }
+        }
+      }
+    });
   });
 
   describe('geminiInitParams', () => {

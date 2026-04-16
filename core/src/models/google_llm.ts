@@ -154,6 +154,7 @@ export class Gemini extends BaseLlm {
       });
       let thoughtText = '';
       let text = '';
+      let firstThoughtSignature: string | undefined;
       let usageMetadata;
       let lastResponse: GenerateContentResponse | undefined;
 
@@ -192,6 +193,27 @@ export class Gemini extends BaseLlm {
           };
           thoughtText = '';
           text = '';
+        }
+        // Propagate thoughtSignature to all function call parts in the stream
+        // during this turn. Thinking models only provide thoughtSignature on
+        // the first function call part; subsequent concurrent function calls
+        // in the same turn omit it. The API requires matching signatures on
+        // all function response parts, so we fill them in here.
+        //
+        // https://ai.google.dev/gemini-api/docs/thought-signatures
+        const parts = llmResponse.content?.parts;
+        if (parts) {
+          for (const part of parts) {
+            if (part.functionCall) {
+              if (part.thoughtSignature) {
+                if (!firstThoughtSignature) {
+                  firstThoughtSignature = part.thoughtSignature;
+                }
+              } else if (firstThoughtSignature) {
+                part.thoughtSignature = firstThoughtSignature;
+              }
+            }
+          }
         }
         yield llmResponse;
       }
