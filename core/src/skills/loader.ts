@@ -278,19 +278,46 @@ export async function loadAllSkillsInDir(
   const resolvedPath = path.resolve(skillsBasePath);
   const skills: Record<string, Skill> = {};
 
-  try {
-    const entries = await fs.readdir(resolvedPath, {withFileTypes: true});
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const skillDir = path.join(resolvedPath, entry.name);
-        try {
-          const skill = await loadSkillFromDir(skillDir);
-          skills[skill.frontmatter.name] = skill;
-        } catch (e) {
-          logger.warn(`Skipping invalid skill in '${skillDir}':`, e);
+  async function scanDir(currentDir: string) {
+    let entries;
+    try {
+      entries = await fs.readdir(currentDir, {withFileTypes: true});
+    } catch (_e: unknown) {
+      return;
+    }
+
+    let isSkillDir = false;
+    if (currentDir !== resolvedPath) {
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.toLowerCase() === 'skill.md') {
+          isSkillDir = true;
+          break;
         }
       }
     }
+
+    if (isSkillDir) {
+      try {
+        const skill = await loadSkillFromDir(currentDir);
+        skills[skill.frontmatter.name] = skill;
+      } catch (e) {
+        logger.warn(`Skipping invalid skill in '${currentDir}':`, e);
+      }
+    } else {
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (IGNORED_DIRECTORIES.has(entry.name)) {
+            continue;
+          }
+          await scanDir(path.join(currentDir, entry.name));
+        }
+      }
+    }
+  }
+
+  try {
+    await fs.readdir(resolvedPath);
+    await scanDir(resolvedPath);
   } catch (e: unknown) {
     logger.warn(`Skills base path '${skillsBasePath}' is not a directory.`, e);
   }

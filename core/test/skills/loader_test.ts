@@ -439,5 +439,56 @@ Instructions`,
       const skills = await loadAllSkillsInDir('/non/existent/path');
       expect(skills).toEqual({});
     });
+
+    it('loads skills from nested subdirectories', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+
+      const subdir1 = path.join(tempDir, 'subdir1');
+      await fs.mkdir(subdir1);
+
+      const skill1Dir = path.join(subdir1, 'skill-1');
+      await fs.mkdir(skill1Dir);
+      await fs.writeFile(
+        path.join(skill1Dir, 'SKILL.md'),
+        `---
+name: skill-1
+description: Skill 1
+---
+Instructions`,
+      );
+
+      const skill2Dir = path.join(subdir1, 'skill-2');
+      await fs.mkdir(skill2Dir);
+      await fs.writeFile(
+        path.join(skill2Dir, 'SKILL.md'),
+        `---
+name: skill-2
+description: Skill 2
+---
+Instructions`,
+      );
+
+      const subdir2 = path.join(tempDir, 'subdir2');
+      await fs.mkdir(subdir2);
+
+      const skill3Dir = path.join(subdir2, 'skill-3');
+      await fs.mkdir(skill3Dir);
+      await fs.writeFile(
+        path.join(skill3Dir, 'SKILL.md'),
+        `---
+name: skill-3
+description: Skill 3
+---
+Instructions`,
+      );
+
+      const skills = await loadAllSkillsInDir(tempDir);
+      expect(Object.keys(skills).length).toBe(3);
+      expect(skills['skill-1']).toBeDefined();
+      expect(skills['skill-2']).toBeDefined();
+      expect(skills['skill-3']).toBeDefined();
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
   });
 });
