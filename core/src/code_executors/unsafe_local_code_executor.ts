@@ -9,7 +9,10 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
-import {CodeExecutionResult} from './code_execution_utils.js';
+import {
+  CodeExecutionLanguage,
+  CodeExecutionResult,
+} from './code_execution_utils.js';
 
 /**
  * Options for UnsafeLocalCodeExecutor.
@@ -55,7 +58,14 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
   }
 
   async executeCode(params: ExecuteCodeParams): Promise<CodeExecutionResult> {
-    const {code} = params.codeExecutionInput;
+    const {code, language} = params.codeExecutionInput;
+    if (language !== CodeExecutionLanguage.JAVASCRIPT) {
+      return {
+        stdout: '',
+        stderr: `Unsupported language: ${language}`,
+        outputFiles: [],
+      };
+    }
 
     let filePath: string | undefined;
     try {

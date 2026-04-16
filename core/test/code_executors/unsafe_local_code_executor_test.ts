@@ -5,6 +5,7 @@
  */
 
 import {
+  CodeExecutionLanguage,
   ExecuteCodeParams,
   InvocationContext,
   LlmAgent,
@@ -46,6 +47,7 @@ describe('UnsafeLocalCodeExecutor', () => {
       invocationContext,
       codeExecutionInput: {
         code: 'console.log("Hello, World!");',
+        language: CodeExecutionLanguage.JAVASCRIPT,
         inputFiles: [],
       },
     };
@@ -61,6 +63,7 @@ describe('UnsafeLocalCodeExecutor', () => {
       invocationContext,
       codeExecutionInput: {
         code: 'console.error("An error occurred");',
+        language: CodeExecutionLanguage.JAVASCRIPT,
         inputFiles: [],
       },
     };
@@ -75,6 +78,7 @@ describe('UnsafeLocalCodeExecutor', () => {
       invocationContext,
       codeExecutionInput: {
         code: 'throw new Error("Fatal error");',
+        language: CodeExecutionLanguage.JAVASCRIPT,
         inputFiles: [],
       },
     };
@@ -94,6 +98,7 @@ describe('UnsafeLocalCodeExecutor', () => {
       invocationContext,
       codeExecutionInput: {
         code: 'setTimeout(() => {}, 5000);', // Sleep for 5 seconds
+        language: CodeExecutionLanguage.JAVASCRIPT,
         inputFiles: [],
       },
     };
@@ -103,5 +108,21 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.stderr).toContain(
       'Code execution timed out after 1 seconds.',
     );
+  });
+
+  it('should return error for unsupported language', async () => {
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: 'print("Hello")',
+        language: CodeExecutionLanguage.PYTHON,
+        inputFiles: [],
+      },
+    };
+
+    const result = await executor.executeCode(params);
+
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Unsupported language: python');
   });
 });
