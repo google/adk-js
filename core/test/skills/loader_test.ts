@@ -276,10 +276,11 @@ Instructions`,
     );
 
     it('returns problem if directory does not exist', async () => {
-      const problems = await validateSkillDir('/non/existent/path');
+      const testPath = '/non/existent/path';
+      const problems = await validateSkillDir(testPath);
       expect(problems.length).toBe(1);
       expect(problems[0]).toContain(
-        "SKILL.md (or any case variation like skill.md) not found in '/non/existent/path'.",
+        `SKILL.md (or any case variation like skill.md) not found in '${path.resolve(testPath)}'.`,
       );
     });
 
