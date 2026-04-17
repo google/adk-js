@@ -18,12 +18,12 @@ import {
 } from '../../test_case_utils.js';
 import modelResponses from './model_responses.json' with {type: 'json'};
 
-const skillsDir = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../skills/algorithmic-art',
+const skill = await loadSkillFromDir(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../skills/algorithmic-art',
+  ),
 );
-
-const skill = await loadSkillFromDir(skillsDir);
 
 export const rootAgent = new LlmAgent({
   name: 'test_algorithmic_art_skill_agent',

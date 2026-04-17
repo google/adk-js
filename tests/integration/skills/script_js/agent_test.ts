@@ -3,51 +3,16 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {ChildProcessWithoutNullStreams, exec, spawn} from 'node:child_process';
+import {exec, spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import {promisify} from 'node:util';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
+import {normalizeLineEndings, sendInput} from '../../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 const PROJECT_PATH = `${dirname}/tests/integration/skills/script_js`;
 const TEST_EXECUTION_TIMEOUT = 60000;
-
-function sendInput(
-  childProcess: ChildProcessWithoutNullStreams,
-  input: string,
-): Promise<string> {
-  childProcess.stdin.write(input);
-  childProcess.stdin.end();
-
-  return getResponse(childProcess);
-}
-
-function getResponse(
-  childProcess: ChildProcessWithoutNullStreams,
-): Promise<string> {
-  return new Promise<string>((resolve) => {
-    let output = '';
-    let resolved = false;
-
-    const onFinish = () => {
-      if (!resolved) {
-        resolve(output);
-      }
-
-      childProcess.stdout.off('data', onData);
-      resolved = true;
-    };
-
-    const onData = (data: Buffer) => {
-      output += data.toString();
-    };
-
-    childProcess.stdout.on('data', onData);
-    childProcess.stdout.once('end', onFinish);
-    childProcess.stdout.once('close', onFinish);
-  });
-}
 
 /**
  * This integration test verifies that an agent equipped with script execution skills
@@ -114,21 +79,27 @@ describe('Agent with skills that generates JS script and runs it locally', () =>
         'utf-8',
       );
 
-      expect(resultMdFile.trim()).toEqual(expectedMdFile.trim());
-      expect(resultScriptFile.trim()).toEqual(expectedScriptFile.trim());
-      expect(resultHtmlFile.trim()).toEqual(expectedHtmlFile.trim());
-
-      // delete generated files
-      await fs
-        .rm(`${PROJECT_PATH}/ephemeral_entanglement.md`, {force: true})
-        .catch(() => {});
-      await fs.rm(`${PROJECT_PATH}/index.html`, {force: true}).catch(() => {});
-      await fs.rm(`${PROJECT_PATH}/sketch.js`, {force: true}).catch(() => {});
+      expect((normalizeLineEndings(resultMdFile) as string).trim()).toEqual(
+        (normalizeLineEndings(expectedMdFile) as string).trim(),
+      );
+      expect((normalizeLineEndings(resultScriptFile) as string).trim()).toEqual(
+        (normalizeLineEndings(expectedScriptFile) as string).trim(),
+      );
+      expect((normalizeLineEndings(resultHtmlFile) as string).trim()).toEqual(
+        (normalizeLineEndings(expectedHtmlFile) as string).trim(),
+      );
     },
     TEST_EXECUTION_TIMEOUT,
   );
 
   afterAll(async () => {
+    // delete generated files
+    await fs
+      .rm(`${PROJECT_PATH}/ephemeral_entanglement.md`, {force: true})
+      .catch(() => {});
+    await fs.rm(`${PROJECT_PATH}/index.html`, {force: true}).catch(() => {});
+    await fs.rm(`${PROJECT_PATH}/sketch.js`, {force: true}).catch(() => {});
+
     await fs
       .rm(`${PROJECT_PATH}/node_modules`, {recursive: true, force: true})
       .catch(() => {});

@@ -14,8 +14,12 @@ import {
   UnsafeLocalCodeExecutor,
 } from '@google/adk';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
+
+const IS_WINDOWS = os.platform() === 'win32';
+const IS_UNIX = os.platform() === 'linux' || os.platform() === 'darwin';
 
 describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
   function createMockContext(agentName = 'test-agent') {
@@ -56,6 +60,18 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
         'create_file.js': {
           src: "const fs = require('fs'); fs.writeFileSync('output_from_script.txt', 'hello from script file');",
         },
+        'hello.ps1': {
+          src: 'Write-Host "hello from skill powershell"',
+        },
+        'hello.bat': {
+          src: '@echo off\necho hello from skill cmd',
+        },
+        'fail.ps1': {
+          src: 'Write-Error "skill powershell error"; exit 1',
+        },
+        'fail.bat': {
+          src: '@echo off\n>&2 echo skill cmd error\nexit /b 1',
+        },
       },
     },
   };
@@ -78,23 +94,26 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     expect(result.stderr).toBe('');
   });
 
-  it('successfully executes a real Shell skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it.skipIf(!IS_UNIX)(
+    'successfully executes a real Shell skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/hello.sh',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/hello.sh',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stdout).toContain('hello from skill sh');
-    expect(result.stderr).toBe('');
-  });
+      expect(result).toBeDefined();
+      expect(result.stdout).toContain('hello from skill sh');
+      expect(result.stderr).toBe('');
+    },
+  );
 
   it('captures stderr from a failing JavaScript skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
@@ -113,22 +132,25 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     expect(result.stderr).toContain('skill js error');
   });
 
-  it('captures stderr and exit code from a failing Shell skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it.skipIf(!IS_UNIX)(
+    'captures stderr and exit code from a failing Shell skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/fail.sh',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/fail.sh',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stderr).toContain('skill sh error');
-  });
+      expect(result).toBeDefined();
+      expect(result.stderr).toContain('skill sh error');
+    },
+  );
 
   it('successfully executes a real Python skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
@@ -164,6 +186,88 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     expect(result).toBeDefined();
     expect(result.stderr).toContain('skill python error');
   });
+
+  it.skipIf(!IS_WINDOWS)(
+    'successfully executes a real PowerShell skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
+
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/hello.ps1',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
+
+      expect(result).toBeDefined();
+      expect(result.stdout).toContain('hello from skill powershell');
+      expect(result.stderr).toBe('');
+    },
+  );
+
+  it.skipIf(!IS_WINDOWS)(
+    'captures stderr from a failing PowerShell skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
+
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/fail.ps1',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
+
+      expect(result).toBeDefined();
+      expect(result.stderr).toContain('skill powershell error');
+    },
+  );
+
+  it.skipIf(!IS_WINDOWS)(
+    'successfully executes a real CMD skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
+
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/hello.bat',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
+
+      expect(result).toBeDefined();
+      expect(result.stdout).toContain('hello from skill cmd');
+      expect(result.stderr).toBe('');
+    },
+  );
+
+  it.skipIf(!IS_WINDOWS)(
+    'captures stderr from a failing CMD skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
+
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/fail.bat',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
+
+      expect(result).toBeDefined();
+      expect(result.stderr).toContain('skill cmd error');
+    },
+  );
 
   it('creates files in process.cwd returned from execution', async () => {
     const executor = new UnsafeLocalCodeExecutor();

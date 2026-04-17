@@ -5,6 +5,7 @@
  */
 
 import {FunctionDeclaration, Type} from '@google/genai';
+import * as path from 'node:path';
 import {isLlmAgent} from '../../agents/llm_agent.js';
 import {
   CodeExecutionLanguage,
@@ -12,6 +13,10 @@ import {
 } from '../../code_executors/code_execution_utils.js';
 import {Script, Skill} from '../../skills/skill.js';
 import {experimental} from '../../utils/experimental.js';
+import {
+  getMimeTypeAndEncoding,
+  getScriptLanguageByExtension,
+} from '../../utils/file_extension_utils.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {materializeFiles} from './run_skill_script_utils.js';
 import {SkillToolset} from './skill_toolset.js';
@@ -113,15 +118,13 @@ export class RunSkillScriptTool extends BaseTool {
     }
 
     try {
+      const language = getScriptLanguageByExtension(path.extname(scriptPath));
       const result = await codeExecutor.executeCode({
         invocationContext: toolContext.invocationContext,
         codeExecutionInput: {
-          code: buildWrapperCode(
-            scriptPath,
-            getLanguageByExtension(scriptPath),
-          ),
+          code: buildWrapperCode(scriptPath, language),
           inputFiles: getSkillResourceFiles(skill),
-          language: getLanguageByExtension(scriptPath),
+          language,
           args: scriptArgs,
         },
       });
@@ -159,27 +162,6 @@ function buildWrapperCode(
   }
 }
 
-function getLanguageByExtension(scriptPath: string): CodeExecutionLanguage {
-  const ext = scriptPath.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'js':
-      return CodeExecutionLanguage.JAVASCRIPT;
-    case 'ts':
-      return CodeExecutionLanguage.TYPESCRIPT;
-    case 'py':
-      return CodeExecutionLanguage.PYTHON;
-    case 'bat':
-    case 'cmd':
-      return CodeExecutionLanguage.WINDOWS_CMD;
-    case 'ps1':
-      return CodeExecutionLanguage.POWERSHELL;
-    case 'sh':
-      return CodeExecutionLanguage.SHELL;
-    default:
-      throw new Error(`Unsupported file script extension: ${ext}`);
-  }
-}
-
 export function getSkillResourceFiles(skill: Skill): File[] {
   const files: File[] = [];
 
@@ -211,22 +193,13 @@ export function getSkillResourceFiles(skill: Skill): File[] {
         continue;
       }
 
-      if (typeof fileContent === 'string') {
-        files.push({
-          name: `${resourceType}/${resourceName}`,
-          content: fileContent,
-          contentEncoding: 'utf8',
-          mimeType: 'text/plain',
-        });
-
-        continue;
-      }
-
+      const ext = path.extname(resourceName).toLowerCase();
+      const {encoding, mimeType} = getMimeTypeAndEncoding(ext);
       files.push({
         name: `${resourceType}/${resourceName}`,
-        content: Buffer.from(fileContent).toString('hex'),
-        contentEncoding: 'hex',
-        mimeType: 'application/octet-stream',
+        content: Buffer.from(fileContent).toString(encoding),
+        contentEncoding: encoding,
+        mimeType,
       });
     }
   }

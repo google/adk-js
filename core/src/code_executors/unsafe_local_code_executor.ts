@@ -8,13 +8,13 @@ import {spawn} from 'child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {getMimeTypeAndEncoding} from '../utils/file_extension_utils.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {
   CodeExecutionLanguage,
   CodeExecutionResult,
   File,
-  FileContentEncoding,
 } from './code_execution_utils.js';
 
 const IS_WINDOWS = os.platform() === 'win32';
@@ -91,46 +91,6 @@ function getExtensionForLanguage(
   }
 
   return undefined;
-}
-
-function getMimeTypeAndEncoding(ext: string): {
-  mimeType: string;
-  encoding: FileContentEncoding;
-} {
-  switch (ext.toLowerCase()) {
-    case '.js':
-      return {mimeType: 'text/javascript', encoding: 'utf-8'};
-    case '.py':
-      return {mimeType: 'text/x-python', encoding: 'utf-8'};
-    case '.md':
-      return {mimeType: 'text/markdown', encoding: 'utf-8'};
-    case '.txt':
-      return {mimeType: 'text/plain', encoding: 'utf-8'};
-    case '.html':
-      return {mimeType: 'text/html', encoding: 'utf-8'};
-    case '.css':
-      return {mimeType: 'text/css', encoding: 'utf-8'};
-    case '.json':
-      return {mimeType: 'application/json', encoding: 'utf-8'};
-    case '.csv':
-      return {mimeType: 'text/csv', encoding: 'utf-8'};
-    case '.svg':
-      return {mimeType: 'image/svg+xml', encoding: 'utf-8'};
-    case '.xml':
-      return {mimeType: 'application/xml', encoding: 'utf-8'};
-    case '.yaml':
-    case '.yml':
-      return {mimeType: 'text/yaml', encoding: 'utf-8'};
-    case '.png':
-      return {mimeType: 'image/png', encoding: 'base64'};
-    case '.jpg':
-    case '.jpeg':
-      return {mimeType: 'image/jpeg', encoding: 'base64'};
-    case '.pdf':
-      return {mimeType: 'application/pdf', encoding: 'base64'};
-    default:
-      return {mimeType: 'application/octet-stream', encoding: 'base64'};
-  }
 }
 
 /**

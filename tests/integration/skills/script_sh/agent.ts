@@ -13,10 +13,12 @@ import {
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const skillsDir = path.resolve(__dirname, '../skills/gh-issues');
-const skill = await loadSkillFromDir(skillsDir);
+const skill = await loadSkillFromDir(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../skills/gh-issues',
+  ),
+);
 
 export const rootAgent = new LlmAgent({
   name: 'test_sh_skill_agent',

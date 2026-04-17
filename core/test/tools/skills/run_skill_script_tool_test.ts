@@ -201,7 +201,7 @@ describe('RunSkillScriptTool', () => {
     expect(fileNames).toContain('assets/binary.dat');
 
     const binaryFile = inputFiles?.find((f) => f.name === 'assets/binary.dat');
-    expect(binaryFile?.contentEncoding).toBe('hex');
+    expect(binaryFile?.contentEncoding).toBe('base64');
   });
 
   it('calls materializeFiles with output files from executor', async () => {

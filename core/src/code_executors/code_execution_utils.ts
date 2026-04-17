@@ -8,20 +8,10 @@ import {cloneDeep} from 'lodash-es';
 
 import {base64Encode, isBase64Encoded} from '../utils/env_aware_utils.js';
 
-// Copy of BufferEncoding from Node
-export type FileContentEncoding =
-  | 'ascii'
-  | 'utf8'
-  | 'utf-8'
-  | 'utf16le'
-  | 'utf-16le'
-  | 'ucs2'
-  | 'ucs-2'
-  | 'base64'
-  | 'base64url'
-  | 'latin1'
-  | 'binary'
-  | 'hex';
+export enum FileContentEncoding {
+  UTF8 = 'utf-8',
+  BASE64 = 'base64',
+}
 
 /**
  * A structure that contains a file name and its content
