@@ -32,6 +32,7 @@ export class Context extends ReadonlyContext {
   readonly eventActions: EventActions;
   readonly functionCallId?: string;
   toolConfirmation?: ToolConfirmation;
+  readonly abortSignal?: AbortSignal;
 
   /**
    * @param options The configuration options for the Context.
@@ -59,6 +60,7 @@ export class Context extends ReadonlyContext {
     );
     this.functionCallId = options.functionCallId;
     this.toolConfirmation = options.toolConfirmation;
+    this.abortSignal = options.invocationContext.abortSignal;
   }
 
   /**

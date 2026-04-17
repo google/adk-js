@@ -142,10 +142,11 @@ export class ApigeeLlm extends Gemini {
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     stream = false,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     const modelToUse = llmRequest.model ?? this.model;
     llmRequest.model = getModelId(modelToUse);
-    yield* super.generateContentAsync(llmRequest, stream);
+    yield* super.generateContentAsync(llmRequest, stream, abortSignal);
   }
 
   override async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
