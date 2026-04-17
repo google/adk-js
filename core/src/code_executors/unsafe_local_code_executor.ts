@@ -243,27 +243,33 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
           const fullPath = path.join(tempDir, relativeFilePath);
           const stat = await fs.stat(fullPath);
 
-          if (stat.isFile()) {
-            // Skip the script file
-            if (relativeFilePath === path.basename(filePath)) continue;
-
-            // Skip input files
-            const isInputFile = params.codeExecutionInput.inputFiles?.some(
-              (f) => f.name === relativeFilePath,
-            );
-            if (isInputFile) continue;
-
-            const fileContent = await fs.readFile(fullPath);
-            const {mimeType, encoding} = getMimeTypeAndEncoding(
-              path.extname(relativeFilePath),
-            );
-            outputFiles.push({
-              name: relativeFilePath,
-              content: fileContent.toString(encoding),
-              contentEncoding: encoding,
-              mimeType: mimeType,
-            });
+          if (!stat.isFile()) {
+            continue;
           }
+
+          // Skip the script file
+          if (relativeFilePath === path.basename(filePath)) {
+            continue;
+          }
+
+          // Skip input files
+          const isInputFile = params.codeExecutionInput.inputFiles?.some(
+            (f) => f.name === relativeFilePath,
+          );
+          if (isInputFile) {
+            continue;
+          }
+
+          const fileContent = await fs.readFile(fullPath);
+          const {mimeType, encoding} = getMimeTypeAndEncoding(
+            path.extname(relativeFilePath),
+          );
+          outputFiles.push({
+            name: relativeFilePath,
+            content: fileContent.toString(encoding),
+            contentEncoding: encoding,
+            mimeType: mimeType,
+          });
         }
       } catch (e) {
         logger.error(`Error scanning output files: ${e}`);

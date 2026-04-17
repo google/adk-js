@@ -13,8 +13,16 @@ import {File} from '../code_executors/code_execution_utils.js';
  * @param files The files to materialize.
  */
 export async function materializeFiles(files: File[], dir = process.cwd()) {
+  const resolvedBaseDir = path.resolve(dir);
   for (const file of files) {
-    const fullPath = path.join(dir, file.name);
+    const fullPath = path.resolve(dir, file.name);
+
+    if (!fullPath.startsWith(resolvedBaseDir)) {
+      throw new Error(
+        `Path traversal detected: ${file.name} resolves outside of ${dir}`,
+      );
+    }
+
     await fs.mkdir(path.dirname(fullPath), {recursive: true});
     await fs.writeFile(
       fullPath,
