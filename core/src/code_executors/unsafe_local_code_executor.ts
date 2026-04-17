@@ -241,7 +241,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         const allFiles = await fs.readdir(tempDir, {recursive: true});
         for (const relativeFilePath of allFiles) {
           const fullPath = path.join(tempDir, relativeFilePath);
-          const stat = await fs.stat(fullPath);
+          const stat = await fs.lstat(fullPath);
 
           if (!stat.isFile()) {
             continue;
