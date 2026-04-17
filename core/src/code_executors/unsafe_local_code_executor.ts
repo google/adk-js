@@ -13,6 +13,8 @@ import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {
   CodeExecutionLanguage,
   CodeExecutionResult,
+  File,
+  FileContentEncoding,
 } from './code_execution_utils.js';
 
 const IS_WINDOWS = os.platform() === 'win32';
@@ -91,6 +93,46 @@ function getExtensionForLanguage(
   return undefined;
 }
 
+function getMimeTypeAndEncoding(ext: string): {
+  mimeType: string;
+  encoding: FileContentEncoding;
+} {
+  switch (ext.toLowerCase()) {
+    case '.js':
+      return {mimeType: 'text/javascript', encoding: 'utf-8'};
+    case '.py':
+      return {mimeType: 'text/x-python', encoding: 'utf-8'};
+    case '.md':
+      return {mimeType: 'text/markdown', encoding: 'utf-8'};
+    case '.txt':
+      return {mimeType: 'text/plain', encoding: 'utf-8'};
+    case '.html':
+      return {mimeType: 'text/html', encoding: 'utf-8'};
+    case '.css':
+      return {mimeType: 'text/css', encoding: 'utf-8'};
+    case '.json':
+      return {mimeType: 'application/json', encoding: 'utf-8'};
+    case '.csv':
+      return {mimeType: 'text/csv', encoding: 'utf-8'};
+    case '.svg':
+      return {mimeType: 'image/svg+xml', encoding: 'utf-8'};
+    case '.xml':
+      return {mimeType: 'application/xml', encoding: 'utf-8'};
+    case '.yaml':
+    case '.yml':
+      return {mimeType: 'text/yaml', encoding: 'utf-8'};
+    case '.png':
+      return {mimeType: 'image/png', encoding: 'base64'};
+    case '.jpg':
+    case '.jpeg':
+      return {mimeType: 'image/jpeg', encoding: 'base64'};
+    case '.pdf':
+      return {mimeType: 'application/pdf', encoding: 'base64'};
+    default:
+      return {mimeType: 'application/octet-stream', encoding: 'base64'};
+  }
+}
+
 /**
  * A code executor that unsafely executes code in the local context.
  * Supports JavaScript, Python, and Shell capabilities cross-platform.
@@ -157,6 +199,17 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
       const filePath = res.filePath;
       tempDir = res.tempDir;
 
+      if (params.codeExecutionInput.inputFiles) {
+        for (const file of params.codeExecutionInput.inputFiles) {
+          const fullPath = path.join(tempDir, file.name);
+          await fs.mkdir(path.dirname(fullPath), {recursive: true});
+          await fs.writeFile(
+            fullPath,
+            Buffer.from(file.content, file.contentEncoding),
+          );
+        }
+      }
+
       let command = this.nodeCommandPath;
       let args = [filePath];
 
@@ -177,7 +230,21 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         args = ['/c', filePath];
       }
 
-      return await new Promise<CodeExecutionResult>((resolve) => {
+      if (params.codeExecutionInput.args) {
+        if (Array.isArray(params.codeExecutionInput.args)) {
+          args.push(...params.codeExecutionInput.args);
+        } else {
+          for (const [k, v] of Object.entries(params.codeExecutionInput.args)) {
+            args.push(`--${k}`, String(v));
+          }
+        }
+      }
+
+      const executionResult = await new Promise<{
+        stdout: string;
+        stderr: string;
+        exitCode: number | null;
+      }>((resolve) => {
         const child = spawn(command, args, {
           timeout: this.timeoutSeconds * 1000,
           killSignal: 'SIGKILL',
@@ -206,14 +273,53 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         child.on('close', (exitCode, signal) => {
           if (signal === 'SIGKILL' || signal === 'SIGTERM') {
             stderr += `\nCode execution timed out after ${this.timeoutSeconds} seconds.`;
+          } else if (exitCode !== 0 && exitCode !== null) {
+            if (!stderr) {
+              stderr = `Exit code ${exitCode}`;
+            }
           }
-          resolve({
-            stdout,
-            stderr,
-            outputFiles: [],
-          });
+          resolve({stdout, stderr, exitCode});
         });
       });
+
+      const outputFiles: File[] = [];
+      try {
+        const allFiles = await fs.readdir(tempDir, {recursive: true});
+        for (const relativeFilePath of allFiles) {
+          const fullPath = path.join(tempDir, relativeFilePath);
+          const stat = await fs.stat(fullPath);
+
+          if (stat.isFile()) {
+            // Skip the script file
+            if (relativeFilePath === path.basename(filePath)) continue;
+
+            // Skip input files
+            const isInputFile = params.codeExecutionInput.inputFiles?.some(
+              (f) => f.name === relativeFilePath,
+            );
+            if (isInputFile) continue;
+
+            const fileContent = await fs.readFile(fullPath);
+            const {mimeType, encoding} = getMimeTypeAndEncoding(
+              path.extname(relativeFilePath),
+            );
+            outputFiles.push({
+              name: relativeFilePath,
+              content: fileContent.toString(encoding),
+              contentEncoding: encoding,
+              mimeType: mimeType,
+            });
+          }
+        }
+      } catch (e) {
+        logger.error(`Error scanning output files: ${e}`);
+      }
+
+      return {
+        stdout: executionResult.stdout,
+        stderr: executionResult.stderr,
+        outputFiles,
+      };
     } finally {
       if (tempDir) {
         await fs.rm(tempDir, {recursive: true, force: true});

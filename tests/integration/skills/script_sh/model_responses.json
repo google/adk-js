@@ -1,0 +1,184 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "list_skills",
+                "args": {},
+                "id": "dxa86j2m"
+              },
+              "thoughtSignature": "EqAHCp0HAb4+9vuAM3bs+3NVfYtBf66O6A64jwxaKuhSQa74IAwOYOwP9gLVYvEX75dEdsbUr+iAfz+C+y3K9+4ddS2WgcdQs7PGT+X+aGta3NHxlAfhZpQkakchWGGcTLjPWA0OQNeKh3IMBzstay7HO2HJ2SoYPGHH/cgMCTe5vEOm607MpiBL6xvL1RX8kf64pG30OWmySUZJLeGN54CKYCtf8t1zEGMAAIRhIZPS1zgpYbm2t6MnH+I/FzG4p8bL2B2y4in+KT9AuE1YI4/E0s0CSFj4bvvQe7awvNNUlib7LJK4QbEHJizPNyCh8iixTfD4FqtUoVnkH+wnbSjGZ55UWLts6y2GMIJC0NhREIFmRNB29pi79aVQvA7FymkXX/5sekyb+gkHRRfzEcwSf4/djXsc+YyQzzSlv1SDh3/hYzaTFiDyPsYSCoUzcGi22fieRkaLDegkzZ7Xyl8l9dixZIwUtHmvBnTYwTWdzOEEEC8wByt+goD0mqBLqool7KujbWADFN6/buOZjyqYR2SZ75xdWj5TtZ+TIyck2I4u2m9LG476gF231beVnEY+prNaqgKzJ8bE09A1kGBytxti7WVo/4DM07f4JGW+pWun6nOIJAYWLOhNy3CRdQYq7MQJbQ08JYMb4Jj90KjKz3QND2xvptMjydoERR3TbWIDk7ZCZVsuNSFJDwCNijmOaASIROdNNMoUkHAAud7D/6VpFiFdkbEVGzBoMh15W2banhYByyLy9HpW6LP2Xm1R4Z7CH86Hg/3ZmyTs2K1G1jxLK4hvYe3f3x0zSp9Le+rfZUxL8DWoeHWGzmzcRK17XDTftShIHa3a33KWBJePZ+P/wDGAChEdk80bUXmHjpQiY5Jo/Cllm9DmVkeLrf/j427hozSLhJaAQExf0kMZWgrqaK8zDJnkNXr8Hw61WY8S5J/NlRntI8ZXdOkl8/ebxgRGegmhTA6O37fwhh9TcoHd6/YV6irp2Oii7cPxkvIupQ5SMxphNwD2UvZDMRaf3BPvqA/QwjtP0TW5zsvMM0Zmgb999XMc+pkDphu6qRIk8EoaexolF2AKgGPxSADrJvYZ9e9UJlcm5/VsUvw15i/Hj2x6Uj3qd0IIcnjbkhzA9SUIDvrA/QHD9n1LojeTFRdjLgco57VsRSjKCAj+SLpihQkuBOFbMRyWnp17O7OcXxTZJ3EAtGRmNtjYQtcT+l9tU0/liKvDUVBuVJ7BGw=="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 536,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 791,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 536
+        }
+      ],
+      "thoughtsTokenCount": 245
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "I am an agent designed to test skills. \n\nCurrently, I have the following skill available:\n\n*   **gh-issues**: This skill allows me to fetch GitHub issues, spawn sub-agents to implement fixes and open Pull Requests (PRs), and monitor and address PR review comments. It supports various options like filtering by label, milestone, or assignee, using a fork, watching for reviews, and running on a schedule.\n\nIf you have a GitHub repository with issues you'd like me to look at, or if you'd like to test this skill in any other way, just let me know!",
+              "thoughtSignature": "EpoCCpcCAb4+9vsvWgqZA72piposXyi4CIzBxPuAPyMjUzqibVzd2madIlzjCGW+yCJYO8dYPw/qXaZVn0Huy8lrt14d2WrUEtq9U9UWs7bop8T61iIKqjfiPi5hWAieBo3sZQ/G4VEzruxk4VGvCIPWmi+kfD2bccFKryb8Bnj47mYx8mvO9vb+FshAdTlcTq4mmgwjb+UYihy+AGr3nbmUc4DjvoeaqDqoAdWXPt7WL5LW8q7SqYbD50cmqnj0W1MoX6kemubi0QHID91Jevs5Dc5NTB+isZFUNzeBBNTWV3bHICaPO6E9jAfhm+ZnZYFUhmjG3tRKGPHMh6ZlZhwiJCCLZHkeh0k63RrrY9dJZihmThV+trUN+Mur"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 708,
+      "candidatesTokenCount": 125,
+      "totalTokenCount": 892,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 708
+        }
+      ],
+      "thoughtsTokenCount": 59
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "run_skill_inline_script",
+                "args": {
+                  "script_content": "curl -s https://api.github.com/repos/google/adk-js/pulls/276 | grep -E '\"title\"|\"body\"' | head -n 2",
+                  "language": "shell"
+                },
+                "id": "cps3b9cj"
+              },
+              "thoughtSignature": "ErABCq0BAb4+9vsLv0wn8jH7GRjmo49wQkU8eEf13K70UWpQMiq++qYs1y3LX6d+Fh9MDAoong6SheH3NqVYoIg6bktTP64sEBO+O2u+XzbHHiyfES5Rhwk75c2mgGF4GvptzvoBn6EDndRWrX7+CZeUV62wyjd8Q/+j4lI+Wl/C7Bsvfxai2s4AKxL4c7Vs+UWudXIlQsxCiHgwon/yHOkUoa16G7BAGQkbk1HKzSA4aEQ="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 1279,
+      "candidatesTokenCount": 69,
+      "totalTokenCount": 1374,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 1279
+        }
+      ],
+      "thoughtsTokenCount": 26
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The title of the pull request is **\"feat: skills: support script execution\"**.\n\nHere is its description (body text):\n\n```\n**Please ensure you have read the contribution guide before creating a pull request.**\n\n### Link to Issue or Description of Change\n\n**1. Link to an existing issue (if applicable):**\n\n- Closes: #_issue_number_\n- Related: https://github.com/google/adk-js/issues/155\n\n**2. Or, if no issue exists, describe the change:**\n\n_If applicable, please follow the issue templates to provide as much detail as\npossible._\n\n**Problem:**\n_A clear and concise description of what the problem is._\n\n**Solution:**\n_A clear and concise description of what you want to happen and why you choose\nthis solution._\n\n### Testing Plan\n\n_Please describe the tests that you ran to verify your changes. This is required\nfor all PRs that are not small documentation or typo fixes._\n\n**Unit Tests:**\n\n- [ ] I have added or updated unit tests for my change.\n- [ ] All unit tests pass locally.\n\n_Please include a summary of passed npm test results._\n\n**Manual End-to-End (E2E) Tests:**\n\n_Please provide instructions on how to manually test your changes, including any\nnecessary setup or configuration. Please provide logs or screenshots to help\nreviewers better understand the fix._\n\n### Checklist\n\n- [ ] I have read the CONTRIBUTING.md document.\n- [ ] I have performed a self-review of my own code.\n- [ ] I have commented my code, particularly in hard-to-understand areas.\n- [ ] I have added tests that prove my fix is effective or that my feature works.\n- [ ] New and existing unit tests pass locally with my changes.\n- [ ] I have manually tested my changes end-to-end.\n- [ ] Any dependent changes have been merged and published in downstream modules.\n\n### Additional context\n\n_Add any other context or screenshots about the feature request here._\n``` \n\nIt seems the author left the PR template largely unmodified, apart from adding a related issue link to `https://github.com/google/adk-js/issues/155`."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 2043,
+      "candidatesTokenCount": 485,
+      "totalTokenCount": 2528,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2043
+        }
+      ]
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "run_skill_inline_script",
+                "args": {
+                  "script_content": "curl -s https://api.github.com/repos/google/adk-js/pulls/276 | grep -E '\"state\":|\"merged\":'",
+                  "language": "shell"
+                },
+                "id": "t6oev5z1"
+              },
+              "thoughtSignature": "EogFCoUFAb4+9vuc24ty2efKmiHnkGYjXaPg5pahQlDL5bSZhFjrMYmquBHm3/ZcDYkx8P7rnZKi8o35lmod6Ihkpcsfv4DtF7fR6Vyqd90CadLNEFtcTA5NC7HwyCxUfWt0oFqX6kz8OkuqbDIqtyDuFYMYy3ryLDDh8RsPQF093W03BkGVaSm66TyVVZgjqhCWuRGxC28x5MWsMzp59uf+TefnAY8QfquDuCanrrM+z8Irl0r207yoWB5qAknUppGWimtmLR+eMORVcJqTy3UvTsb9iMktpRsScLk456LNbvLsJEs7cKC3pDLhZMLslAXDHsMJ9ZnucnoUd5jvSBReqivp7SgRfJUuHDtnMx4VtfA6XmvVvlJtrT0kq+ozpn78PqRLsgqTYMwMUdru8fKq0iA1WqHlN79vpH4biYEmYQWLv8LqZja5rftfpMaYWLODxUS7N46zE8MqJfYHpNNXN2u7x3emz08ebtlzHBsqQPv8OCQbfOMrShkF+qCC15tkOdX/4zadOEIIIDzGpvyYIhnZBl9EcIIiU5FiwZbtQQE03IhmQ7//XmlyZmaTXl3dwNuTGLZ/6R1Yv0uGCvAXO/GNEPpx+h1NeKXr1qPz9F5v2J7vU3KdSW9S241LElFiobJho2ST14hvHrJwSRvHOG1v4una0+Tsgju8o1uupGwRePqK7wUB3wPOs1tuCtmSWcK4SDMtMH9trY19uBY+3+8ZrEK8SE96SP0tJB//99XKT6umFpuFOwOGOlosWFkOV37jPQqXJ5D2cJOTpSlueCu+83ZG4cVSEeyKhNfSxOXAZYUVji1HUBOmebr4K4OiHhAdZNN2AQiKTYnpM5V2fwlt9QVCPdAx"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 2334,
+      "candidatesTokenCount": 64,
+      "totalTokenCount": 2581,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2334
+        }
+      ],
+      "thoughtsTokenCount": 183
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The status of that Pull Request is currently **open** (it has not been merged)."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 2622,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 2640,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2622
+        }
+      ]
+    }
+  }
+]

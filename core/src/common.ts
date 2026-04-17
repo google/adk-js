@@ -98,6 +98,7 @@ export {
   type CodeExecutionInput,
   type CodeExecutionResult,
   type File,
+  type FileContentEncoding,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
