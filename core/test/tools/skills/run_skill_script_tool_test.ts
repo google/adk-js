@@ -10,13 +10,19 @@ import {
   CodeExecutionResult,
   Context,
   ExecuteCodeParams,
+  File,
   InvocationContext,
   LlmAgent,
   RunSkillScriptTool,
   Skill,
   SkillToolset,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
+import {materializeFiles} from '../../../src/tools/skill/run_skill_script_utils.js';
+
+vi.mock('../../../src/tools/skill/run_skill_script_utils.js', () => ({
+  materializeFiles: vi.fn(),
+}));
 
 class MockCodeExecutor extends BaseCodeExecutor {
   mockResult: CodeExecutionResult = {
@@ -196,5 +202,30 @@ describe('RunSkillScriptTool', () => {
 
     const binaryFile = inputFiles?.find((f) => f.name === 'assets/binary.dat');
     expect(binaryFile?.contentEncoding).toBe('hex');
+  });
+
+  it('calls materializeFiles with output files from executor', async () => {
+    const mockExecutor = new MockCodeExecutor();
+    const testFile = {
+      name: 'output.txt',
+      content: 'hello',
+      contentEncoding: 'utf8',
+      mimeType: 'text/plain',
+    } as File;
+    mockExecutor.mockResult = {
+      stdout: '',
+      stderr: '',
+      outputFiles: [testFile],
+    };
+
+    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
+      toolContext: createMockContext(),
+    });
+
+    expect(materializeFiles).toHaveBeenCalledWith([testFile]);
   });
 });
