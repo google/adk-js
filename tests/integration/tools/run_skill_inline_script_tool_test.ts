@@ -170,4 +170,40 @@ describe('RunSkillInlineScriptTool Integration with UnsafeLocalCodeExecutor', ()
     // Clean up
     await fs.unlink(fullPath);
   });
+
+  it('successfully passes array arguments to a JavaScript inline script', async () => {
+    const executor = new UnsafeLocalCodeExecutor();
+    const toolset = new SkillToolset([], {codeExecutor: executor});
+    const tool = new RunSkillInlineScriptTool(toolset);
+
+    const result = (await tool.runAsync({
+      args: {
+        script_content: 'console.log(process.argv.slice(2).join(" "));',
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        args: ['arg1', 'arg2'],
+      },
+      toolContext: createMockContext(),
+    })) as CodeExecutionResult;
+
+    expect(result).toBeDefined();
+    expect(result.stdout).toContain('arg1 arg2');
+  });
+
+  it('successfully passes object arguments to a JavaScript inline script', async () => {
+    const executor = new UnsafeLocalCodeExecutor();
+    const toolset = new SkillToolset([], {codeExecutor: executor});
+    const tool = new RunSkillInlineScriptTool(toolset);
+
+    const result = (await tool.runAsync({
+      args: {
+        script_content: 'console.log(process.argv.slice(2).join(" "));',
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        args: {flag1: 'val1', flag2: 'val2'},
+      },
+      toolContext: createMockContext(),
+    })) as CodeExecutionResult;
+
+    expect(result).toBeDefined();
+    expect(result.stdout).toContain('--flag1 val1 --flag2 val2');
+  });
 });

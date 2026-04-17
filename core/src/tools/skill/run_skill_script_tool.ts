@@ -17,8 +17,8 @@ import {
   getMimeTypeAndEncoding,
   getScriptLanguageByExtension,
 } from '../../utils/file_extension_utils.js';
+import {materializeFiles} from '../../utils/file_utils.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
-import {materializeFiles} from './run_skill_script_utils.js';
 import {SkillToolset} from './skill_toolset.js';
 
 @experimental

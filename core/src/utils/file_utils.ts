@@ -6,7 +6,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {File} from '../../code_executors/code_execution_utils.js';
+import {File} from '../code_executors/code_execution_utils.js';
 
 /**
  * Creates files with the given paths in the current working directory.

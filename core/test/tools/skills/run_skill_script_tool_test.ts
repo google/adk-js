@@ -18,9 +18,9 @@ import {
   SkillToolset,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {materializeFiles} from '../../../src/tools/skill/run_skill_script_utils.js';
+import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/tools/skill/run_skill_script_utils.js', () => ({
+vi.mock('../../../src/utils/file_utils.js', () => ({
   materializeFiles: vi.fn(),
 }));
 

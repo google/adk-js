@@ -17,9 +17,9 @@ import {
   SkillToolset,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {materializeFiles} from '../../../src/tools/skill/run_skill_script_utils.js';
+import {materializeFiles} from '../../../src/utils/file_utils.js';
 
-vi.mock('../../../src/tools/skill/run_skill_script_utils.js', () => ({
+vi.mock('../../../src/utils/file_utils.js', () => ({
   materializeFiles: vi.fn(),
 }));
 
@@ -224,5 +224,33 @@ describe('RunSkillInlineScriptTool', () => {
     });
 
     expect(materializeFiles).toHaveBeenCalledWith([testFile]);
+  });
+
+  it('successfully passes array arguments to code executor', async () => {
+    const mockExecutor = new MockCodeExecutor();
+    mockExecutor.mockResult = {
+      stdout: 'mock output',
+      stderr: '',
+      outputFiles: [],
+    };
+
+    const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+    const tool = new RunSkillInlineScriptTool(toolset);
+
+    const mockToolContext = createMockContext();
+
+    await tool.runAsync({
+      args: {
+        script_content: 'echo "hi"',
+        language: CodeExecutionLanguage.SHELL,
+        args: ['arg1', 'arg2'],
+      },
+      toolContext: mockToolContext,
+    });
+
+    expect(mockExecutor.executeCodeParams?.codeExecutionInput.args).toEqual([
+      'arg1',
+      'arg2',
+    ]);
   });
 });

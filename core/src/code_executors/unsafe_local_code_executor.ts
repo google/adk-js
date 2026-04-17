@@ -9,6 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {getMimeTypeAndEncoding} from '../utils/file_extension_utils.js';
+import {materializeFiles} from '../utils/file_utils.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {
@@ -160,14 +161,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
       tempDir = res.tempDir;
 
       if (params.codeExecutionInput.inputFiles) {
-        for (const file of params.codeExecutionInput.inputFiles) {
-          const fullPath = path.join(tempDir, file.name);
-          await fs.mkdir(path.dirname(fullPath), {recursive: true});
-          await fs.writeFile(
-            fullPath,
-            Buffer.from(file.content, file.contentEncoding),
-          );
-        }
+        await materializeFiles(params.codeExecutionInput.inputFiles, tempDir);
       }
 
       let command = this.nodeCommandPath;

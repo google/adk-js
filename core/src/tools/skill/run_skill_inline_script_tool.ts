@@ -8,8 +8,8 @@ import {FunctionDeclaration, Type} from '@google/genai';
 import {isLlmAgent} from '../../agents/llm_agent.js';
 import {CodeExecutionLanguage} from '../../code_executors/code_execution_utils.js';
 import {experimental} from '../../utils/experimental.js';
+import {materializeFiles} from '../../utils/file_utils.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
-import {materializeFiles} from './run_skill_script_utils.js';
 import {SkillToolset} from './skill_toolset.js';
 
 @experimental
@@ -41,9 +41,12 @@ export class RunSkillInlineScriptTool extends BaseTool {
             ),
           },
           args: {
-            type: Type.OBJECT,
+            anyOf: [
+              {type: Type.OBJECT},
+              {type: Type.ARRAY, items: {type: Type.STRING}},
+            ],
             description:
-              'Optional arguments to pass to the script as key-value pairs.',
+              'Optional arguments to pass to the script as key-value pairs or an array of strings.',
           },
         },
         required: ['script_content', 'language'],
@@ -57,8 +60,10 @@ export class RunSkillInlineScriptTool extends BaseTool {
   }: RunAsyncToolRequest): Promise<unknown> {
     const inlineScriptContent = args['script_content'] as string;
     const language = args['language'] as string;
-    const scriptArgs =
-      (args['args'] as Record<string, string | number | boolean>) || {};
+    const scriptArgs = args['args'] as
+      | string[]
+      | Record<string, string | number | boolean>
+      | undefined;
 
     if (!inlineScriptContent) {
       return {
