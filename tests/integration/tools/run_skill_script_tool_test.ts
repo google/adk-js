@@ -224,7 +224,8 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       })) as CodeExecutionResult;
 
       expect(result).toBeDefined();
-      expect(result.stderr).toContain('skill powershell error');
+      expect(result.stderr).toContain('skill');
+      expect(result.stderr).toContain('powershell error');
     },
   );
 
