@@ -52,6 +52,10 @@ export class ParallelAgent extends BaseAgent {
     );
 
     for await (const event of mergeAgentRuns(agentRuns)) {
+      if (context.abortSignal?.aborted) {
+        return;
+      }
+
       yield event;
     }
   }

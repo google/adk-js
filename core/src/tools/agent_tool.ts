@@ -158,12 +158,21 @@ export class AgentTool extends BaseTool {
       state: toolContext.state.toRecord(),
     });
 
+    if (toolContext.abortSignal?.aborted) {
+      return '';
+    }
+
     let lastEvent: Event | undefined;
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
       newMessage: content,
+      abortSignal: toolContext.abortSignal,
     })) {
+      if (toolContext.abortSignal?.aborted) {
+        return;
+      }
+
       if (event.actions.stateDelta) {
         toolContext.state.update(event.actions.stateDelta);
       }
