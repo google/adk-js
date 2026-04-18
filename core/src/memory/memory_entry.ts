@@ -19,7 +19,9 @@ export interface MemoryEntry {
   content: Content;
 
   /**
-   * The author of the memory (e.g. `'user'` or `'model'`).
+   * The author of the memory. Common values are `'user'` and `'model'`, but
+   * this can also be the name of an agent when the content was produced by a
+   * named sub-agent.
    */
   author?: string;
 
