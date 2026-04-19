@@ -67,6 +67,7 @@ export abstract class BaseLlm {
   abstract generateContentAsync(
     llmRequest: LlmRequest,
     stream?: boolean,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void>;
 
   /**

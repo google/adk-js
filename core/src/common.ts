@@ -37,6 +37,7 @@ export type {
 export {LoopAgent, isLoopAgent} from './agents/loop_agent.js';
 export type {LoopAgentConfig} from './agents/loop_agent.js';
 export {ParallelAgent, isParallelAgent} from './agents/parallel_agent.js';
+export {AgentTransferLlmRequestProcessor} from './agents/processors/agent_transfer_llm_request_processor.js';
 export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
@@ -92,10 +93,11 @@ export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
 export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
-export type {
-  CodeExecutionInput,
-  CodeExecutionResult,
-  File,
+export {
+  CodeExecutionLanguage,
+  type CodeExecutionInput,
+  type CodeExecutionResult,
+  type File,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
@@ -228,6 +230,10 @@ export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
 export type {Frontmatter, Resources, Script, Skill} from './skills/skill.js';
+export {ListSkillsTool} from './tools/skill/list_skills_tool.js';
+export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
+export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
+export {SkillToolset} from './tools/skill/skill_toolset.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './memory/base_memory_service.js';

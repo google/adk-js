@@ -184,7 +184,7 @@ export abstract class BaseAgent {
             yield beforeAgentCallbackEvent;
           }
 
-          if (context.endInvocation) {
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
             return;
           }
 
@@ -193,7 +193,7 @@ export abstract class BaseAgent {
             yield event;
           }
 
-          if (context.endInvocation) {
+          if (context.endInvocation || parentContext.abortSignal?.aborted) {
             return;
           }
 
@@ -321,6 +321,10 @@ export abstract class BaseAgent {
     for (const callback of this.beforeAgentCallback) {
       const content = await callback(callbackContext);
 
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+
       if (content) {
         invocationContext.endInvocation = true;
 
@@ -363,6 +367,10 @@ export abstract class BaseAgent {
     const callbackContext = new Context({invocationContext});
     for (const callback of this.afterAgentCallback) {
       const content = await callback(callbackContext);
+
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
 
       if (content) {
         return createEvent({
