@@ -1,0 +1,206 @@
+[
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_current_time",
+                "args": {},
+                "id": "6e3po27k"
+              },
+              "thoughtSignature": "EsACCr0CAb4+9vtQQt/iesf6HKshVBd1IP4ZumKAx5pal2rDJvFa5G8OqhI20MWzgrkrwq8oLM0qKXpsmSCNfYQ6mXjrLkB4hnK5/Dx+Svgj7/iw/7AF6LnbRaTVPCvLth+3cwF1p/8F7mEGqhrOXOlHHgGF2F8DJuLtzti49bq//54gcR49MGHC0EhxWcph342bGcFq2CWtWoA1PzZt9hOaqeJtCG9UdbZZPzG/2yqnQREXgSuQnUtAPa5m6piRUL130N4Od2e1nDZORa0aH7xmflUfyICo+dvtzeZ259+q4MlDUeQuuMq3tav+4BArfx43jEWvjGISAcXAtl+HtA9+A3AmEQ1v6CSpasf8iPD8e/LW00Aun1UqrkV9i46ZaG5G5rCrUqaLnN3ztfLeCCsPMrRn2kDEFqSCuME1ftg4+gc="
+            }
+          ],
+          "role": "model"
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": ""
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_current_time",
+                "args": {},
+                "id": "6e3po27k"
+              },
+              "thoughtSignature": "EsACCr0CAb4+9vtQQt/iesf6HKshVBd1IP4ZumKAx5pal2rDJvFa5G8OqhI20MWzgrkrwq8oLM0qKXpsmSCNfYQ6mXjrLkB4hnK5/Dx+Svgj7/iw/7AF6LnbRaTVPCvLth+3cwF1p/8F7mEGqhrOXOlHHgGF2F8DJuLtzti49bq//54gcR49MGHC0EhxWcph342bGcFq2CWtWoA1PzZt9hOaqeJtCG9UdbZZPzG/2yqnQREXgSuQnUtAPa5m6piRUL130N4Od2e1nDZORa0aH7xmflUfyICo+dvtzeZ259+q4MlDUeQuuMq3tav+4BArfx43jEWvjGISAcXAtl+HtA9+A3AmEQ1v6CSpasf8iPD8e/LW00Aun1UqrkV9i46ZaG5G5rCrUqaLnN3ztfLeCCsPMrRn2kDEFqSCuME1ftg4+gc="
+            },
+            {
+              "text": ""
+            }
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The"
+            }
+          ],
+          "role": "model"
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 118,
+      "candidatesTokenCount": 1,
+      "totalTokenCount": 160,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 118
+        }
+      ],
+      "thoughtsTokenCount": 41
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": " current time is 9:13 PM on April 10, 2026."
+            }
+          ],
+          "role": "model"
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 118,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 181,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 118
+        }
+      ],
+      "thoughtsTokenCount": 41
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "",
+              "thoughtSignature": "EqgBCqUBAb4+9vvoVMEQ9SY/VHX0F2xXYyx5kqPjgW7HxsgEqgCjvj2x7eTBLvwZUk5/1obe42plfWKF1Hp5EZpbLbsn1ergWE3a+swaIqRnc9O/B0B3ABPEGooOtygf10lQAllEBpBpz3zs5Z7eHhQ+JcUcphWZqUWQxag1U+5r1o+CPjVrrVPZrt/NBtMWncyZeUP3TnKnzz+D7UXwVO2E0Gnh9m2hN5iA"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 171,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 234,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 171
+        }
+      ],
+      "thoughtsTokenCount": 41
+    }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The current time is 9:13 PM on April 10, 2026."
+            },
+            {
+              "text": "",
+              "thoughtSignature": "EqgBCqUBAb4+9vvoVMEQ9SY/VHX0F2xXYyx5kqPjgW7HxsgEqgCjvj2x7eTBLvwZUk5/1obe42plfWKF1Hp5EZpbLbsn1ergWE3a+swaIqRnc9O/B0B3ABPEGooOtygf10lQAllEBpBpz3zs5Z7eHhQ+JcUcphWZqUWQxag1U+5r1o+CPjVrrVPZrt/NBtMWncyZeUP3TnKnzz+D7UXwVO2E0Gnh9m2hN5iA"
+            }
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 171,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 234,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 171
+        }
+      ],
+      "thoughtsTokenCount": 41
+    }
+  }
+]
