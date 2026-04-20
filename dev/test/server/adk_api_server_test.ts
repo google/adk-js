@@ -691,6 +691,44 @@ describe('AdkWebServer', () => {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
+
+    it('should return 404 if no active run to abort', async () => {
+      try {
+        await client.post('/run_sse/abort', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'missingSession',
+        });
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(404);
+      }
+    });
+
+    it('should successfully abort an active run via /run_sse/abort', async () => {
+      const sessionKey = 'testApp:testUser:abortSession';
+      const mockController = new AbortController();
+      (
+        server as unknown as {
+          abortControllers: Map<string, AbortController>;
+        }
+      ).abortControllers.set(sessionKey, mockController);
+
+      const response = await client.post('/run_sse/abort', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'abortSession',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.data).toEqual({status: 'aborted'});
+      expect(
+        (
+          server as unknown as {
+            abortControllers: Map<string, AbortController>;
+          }
+        ).abortControllers.has(sessionKey),
+      ).toBe(false);
+    });
   });
 
   describe('List Apps', () => {

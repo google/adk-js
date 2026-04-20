@@ -88,6 +88,7 @@ export class AdkApiServer {
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;
+  private readonly abortControllers = new Map<string, AbortController>();
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -718,6 +719,14 @@ export class AdkApiServer {
         return;
       }
 
+      const sessionKey = `${appName}:${userId}:${sessionId}`;
+      const abortController = new AbortController();
+      this.abortControllers.set(sessionKey, abortController);
+
+      req.on('close', () => {
+        abortController.abort();
+      });
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
@@ -729,6 +738,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           events.push(e);
         }
@@ -739,6 +749,8 @@ export class AdkApiServer {
 
         res.status(500).json({error});
         this.logger.error(error);
+      } finally {
+        this.abortControllers.delete(sessionKey);
       }
     });
 
@@ -760,6 +772,14 @@ export class AdkApiServer {
         return;
       }
 
+      const sessionKey = `${appName}:${userId}:${sessionId}`;
+      const abortController = new AbortController();
+      this.abortControllers.set(sessionKey, abortController);
+
+      req.on('close', () => {
+        abortController.abort();
+      });
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
@@ -779,6 +799,7 @@ export class AdkApiServer {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
@@ -796,8 +817,28 @@ export class AdkApiServer {
           res.status(500).json({error});
           this.logger.error(error);
         }
+      } finally {
+        this.abortControllers.delete(sessionKey);
       }
     });
+
+    const abortHandler = async (req: Request, res: Response) => {
+      const {appName, userId, sessionId} = req.body;
+      const sessionKey = `${appName}:${userId}:${sessionId}`;
+      const abortController = this.abortControllers.get(sessionKey);
+      if (abortController) {
+        abortController.abort();
+        this.abortControllers.delete(sessionKey);
+        res.json({status: 'aborted'});
+      } else {
+        res
+          .status(404)
+          .json({error: `Active run not found for session: ${sessionId}`});
+      }
+    };
+
+    app.post('/run_sse/abort', abortHandler);
+    app.post('/run/abort', abortHandler);
   }
 
   async start(): Promise<void> {
