@@ -206,4 +206,49 @@ describe('RunSkillInlineScriptTool Integration with UnsafeLocalCodeExecutor', ()
     expect(result).toBeDefined();
     expect(result.stdout).toContain('--flag1 val1 --flag2 val2');
   });
+
+  it('handles file collisions by appending a numeric suffix', async () => {
+    const executor = new UnsafeLocalCodeExecutor();
+    const toolset = new SkillToolset([], {codeExecutor: executor});
+    const tool = new RunSkillInlineScriptTool(toolset);
+
+    const testFileName = `test_inline_output_${Date.now()}.txt`;
+    const testFileContent = 'hello from output file';
+
+    // Pre-create the target file to force a collision
+    const targetFile = path.join(process.cwd(), testFileName);
+    await fs.writeFile(targetFile, 'existing content');
+
+    const result = (await tool.runAsync({
+      args: {
+        script_content: `const fs = require('fs'); fs.writeFileSync('${testFileName}', '${testFileContent}');`,
+        language: CodeExecutionLanguage.JAVASCRIPT,
+      },
+      toolContext: createMockContext(),
+    })) as CodeExecutionResult;
+
+    expect(result).toBeDefined();
+    expect(result.outputFiles).toBeDefined();
+
+    const baseName = path.basename(testFileName, '.txt');
+    const expectedName = `${baseName}_2.txt`;
+
+    const outputFile = result.outputFiles?.find((f) => f.name === expectedName);
+    expect(outputFile).toBeDefined();
+
+    // Verify collision file was created in process.cwd()
+    const fullPath = path.join(process.cwd(), expectedName);
+    const exists = await fs
+      .access(fullPath)
+      .then(() => true)
+      .catch(() => false);
+    expect(exists).toBe(true);
+
+    const content = await fs.readFile(fullPath, 'utf-8');
+    expect(content).toBe(testFileContent);
+
+    // Clean up both files
+    await fs.unlink(targetFile);
+    await fs.unlink(fullPath);
+  });
 });

@@ -104,7 +104,8 @@ export class RunSkillInlineScriptTool extends BaseTool {
         },
       });
 
-      await materializeFiles(result.outputFiles);
+      // Final filename could be different if there was a collision, so update the result.
+      result.outputFiles = await materializeFiles(result.outputFiles);
 
       return result;
     } catch (e: unknown) {

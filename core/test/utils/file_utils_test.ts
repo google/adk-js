@@ -115,5 +115,48 @@ describe('file_utils', () => {
       );
       expect(content2).toBe('world');
     });
+
+    it('should append a numeric suffix to the filename if it already exists', async () => {
+      const files = [
+        {
+          name: 'collision.txt',
+          content: 'first',
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+        {
+          name: 'collision.txt',
+          content: 'second',
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+        {
+          name: 'collision.txt',
+          content: 'third',
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+      ];
+
+      await materializeFiles(files, tempDir);
+
+      const content1 = await fs.readFile(
+        path.join(tempDir, 'collision.txt'),
+        'utf8',
+      );
+      expect(content1).toBe('first');
+
+      const content2 = await fs.readFile(
+        path.join(tempDir, 'collision_2.txt'),
+        'utf8',
+      );
+      expect(content2).toBe('second');
+
+      const content3 = await fs.readFile(
+        path.join(tempDir, 'collision_3.txt'),
+        'utf8',
+      );
+      expect(content3).toBe('third');
+    });
   });
 });

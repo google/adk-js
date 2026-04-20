@@ -11,6 +11,7 @@ import {
   Context,
   ExecuteCodeParams,
   File,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   RunSkillInlineScriptTool,
@@ -20,7 +21,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
 vi.mock('../../../src/utils/file_utils.js', () => ({
-  materializeFiles: vi.fn(),
+  materializeFiles: vi.fn().mockImplementation((files) => files),
 }));
 
 class MockCodeExecutor extends BaseCodeExecutor {
@@ -200,12 +201,12 @@ describe('RunSkillInlineScriptTool', () => {
 
   it('calls materializeFiles with output files from executor', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const testFile = {
+    const testFile: File = {
       name: 'output.txt',
       content: 'hello',
-      contentEncoding: 'utf8',
+      contentEncoding: FileContentEncoding.UTF8,
       mimeType: 'text/plain',
-    } as File;
+    };
     mockExecutor.mockResult = {
       stdout: '',
       stderr: '',
