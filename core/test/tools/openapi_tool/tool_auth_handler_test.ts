@@ -1,0 +1,74 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {describe, expect, it, vi} from 'vitest';
+import {Context} from '../../../src/agents/context.js';
+import {AuthCredentialTypes} from '../../../src/auth/auth_credential.js';
+import {ToolAuthHandler} from '../../../src/tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+
+// Mock AutoAuthCredentialExchanger
+vi.mock(
+  '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js',
+  () => {
+    return {
+      AutoAuthCredentialExchanger: vi.fn().mockImplementation(() => ({
+        exchange: vi.fn().mockResolvedValue({
+          credential: {
+            authType: AuthCredentialTypes.HTTP,
+            http: {scheme: 'bearer', credentials: {token: 'exchanged-token'}},
+          },
+          wasExchanged: true,
+        }),
+      })),
+    };
+  },
+);
+
+describe('ToolAuthHandler', () => {
+  it('should return done if no auth scheme', async () => {
+    const mockContext = {} as unknown as Context;
+    const handler = new ToolAuthHandler(mockContext);
+
+    const result = await handler.prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential).toBeUndefined();
+  });
+
+  it('should return done after exchange if credential in context', async () => {
+    const mockContext = {
+      getAuthResponse: vi
+        .fn()
+        .mockReturnValue({
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'key',
+        }),
+    } as unknown as Context;
+
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+
+    const result = await handler.prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential?.http?.credentials.token).toBe(
+      'exchanged-token',
+    );
+  });
+
+  it('should return pending and request credential if not in context', async () => {
+    const mockContext = {
+      getAuthResponse: vi.fn().mockReturnValue(undefined),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+
+    const result = await handler.prepareAuthCredentials();
+
+    expect(result.state).toBe('pending');
+    expect(mockContext.requestCredential).toHaveBeenCalled();
+  });
+});
