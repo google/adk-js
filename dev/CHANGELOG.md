@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.0](https://github.com/google/adk-js/compare/devtools-v0.6.1...devtools-v1.0.0) (2026-04-21)
+
+
+### Features
+
+* export AdkApiServer from @google/adk-devtools package ([#245](https://github.com/google/adk-js/issues/245)) ([0887e40](https://github.com/google/adk-js/commit/0887e4082974fb500a67411ded196f31e9d790bf))
+* keep original __dirname, __filename and import.meta.url value for compiled agent files. ([#254](https://github.com/google/adk-js/issues/254)) ([db89a42](https://github.com/google/adk-js/commit/db89a4212000a450b6b197438cb798b4bf294831))
+
+
+### Bug Fixes
+
+* add client url to support custom url options for DB connection. ([#284](https://github.com/google/adk-js/issues/284)) ([bf8fade](https://github.com/google/adk-js/commit/bf8fadefb764e2ea22f9bc022b6e437ce8020873))
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([84f886e](https://github.com/google/adk-js/commit/84f886e1ac8b3e9a7807a184257444fd0b15e1af))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^0.6.1 to ^1.0.0
+
 ## [0.6.1](https://github.com/google/adk-js/compare/devtools-v0.6.0...devtools-v0.6.1) (2026-03-30)
 
 
