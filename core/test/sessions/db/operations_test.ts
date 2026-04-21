@@ -38,20 +38,35 @@ describe('operations', () => {
       const options = await getConnectionOptionsFromUri(
         'postgres://user:pass@localhost:5432/db',
       );
-      expect(options.dbName).toBe('db');
-      expect(options.host).toBe('localhost');
-      expect(options.port).toBe(5432);
-      expect(options.user).toBe('user');
-      expect(options.password).toBe('pass');
       expect(options.driver).toBeDefined();
+      expect(options.clientUrl).toBe('postgres://user:pass@localhost:5432/db');
+    });
+
+    it('should parse postgresql URI with query params and preserve them in clientUrl', async () => {
+      const uri = 'postgres://user:pass@localhost:5432/db?sslmode=require';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
+    });
+
+    it('should parse postgresql Unix-socket URI with percent-encoded host', async () => {
+      const uri =
+        'postgresql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
+    });
+
+    it('should parse postgresql Unix-socket URI with query param host', async () => {
+      const uri =
+        'postgresql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
     });
 
     it('should parse mysql URI', async () => {
-      const options = await getConnectionOptionsFromUri(
-        'mysql://user:pass@localhost:3306/db',
-      );
+      const uri = 'mysql://user:pass@localhost:3306/db';
+      const options = await getConnectionOptionsFromUri(uri);
       expect(options.driver).toBeDefined();
-      expect(options.dbName).toBe('db');
+      expect(options.clientUrl).toBe(uri);
     });
 
     it('should parse mariadb URI', async () => {

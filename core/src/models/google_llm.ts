@@ -8,17 +8,15 @@ import {
   Blob,
   createPartFromText,
   FileData,
-  FinishReason,
-  GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
-  Part,
 } from '@google/genai';
 
 import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
+import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
@@ -161,89 +159,16 @@ export class Gemini extends BaseLlm {
         contents: llmRequest.contents,
         config: llmRequest.config,
       });
-      let thoughtText = '';
-      let text = '';
-      let firstThoughtSignature: string | undefined;
-      let usageMetadata;
-      let lastResponse: GenerateContentResponse | undefined;
 
-      // TODO - b/425992518: verify the type of streaming response is correct.
+      const aggregator = new StreamingResponseAggregator();
       for await (const response of streamResult) {
-        lastResponse = response;
-        const llmResponse = createLlmResponse(response);
-        usageMetadata = llmResponse.usageMetadata;
-        const firstPart = llmResponse.content?.parts?.[0];
-        // Accumulates the text and thought text from the first part.
-        if (firstPart?.text) {
-          if ('thought' in firstPart && firstPart.thought) {
-            thoughtText += firstPart.text;
-          } else {
-            text += firstPart.text;
-          }
-          llmResponse.partial = true;
-        } else if (
-          (thoughtText || text) &&
-          (!firstPart || !firstPart.inlineData)
-        ) {
-          // Flushes the data if there's no more text.
-          const parts: Part[] = [];
-          if (thoughtText) {
-            parts.push({text: thoughtText, thought: true});
-          }
-          if (text) {
-            parts.push(createPartFromText(text));
-          }
-          yield {
-            content: {
-              role: 'model',
-              parts,
-            },
-            usageMetadata: llmResponse.usageMetadata,
-          };
-          thoughtText = '';
-          text = '';
+        for await (const llmResponse of aggregator.processResponse(response)) {
+          yield llmResponse;
         }
-        // Propagate thoughtSignature to all function call parts in the stream
-        // during this turn. Thinking models only provide thoughtSignature on
-        // the first function call part; subsequent concurrent function calls
-        // in the same turn omit it. The API requires matching signatures on
-        // all function response parts, so we fill them in here.
-        //
-        // https://ai.google.dev/gemini-api/docs/thought-signatures
-        const parts = llmResponse.content?.parts;
-        if (parts) {
-          for (const part of parts) {
-            if (part.functionCall) {
-              if (part.thoughtSignature) {
-                if (!firstThoughtSignature) {
-                  firstThoughtSignature = part.thoughtSignature;
-                }
-              } else if (firstThoughtSignature) {
-                part.thoughtSignature = firstThoughtSignature;
-              }
-            }
-          }
-        }
-        yield llmResponse;
       }
-      if (
-        (text || thoughtText) &&
-        lastResponse?.candidates?.[0]?.finishReason === FinishReason.STOP
-      ) {
-        const parts: Part[] = [];
-        if (thoughtText) {
-          parts.push({text: thoughtText, thought: true} as Part);
-        }
-        if (text) {
-          parts.push({text: text});
-        }
-        yield {
-          content: {
-            role: 'model',
-            parts,
-          },
-          usageMetadata,
-        };
+      const finalResponse = aggregator.close();
+      if (finalResponse) {
+        yield finalResponse;
       }
     } else {
       const response = await this.apiClient.models.generateContent({

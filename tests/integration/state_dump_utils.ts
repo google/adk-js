@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Event, LlmResponse} from '@google/adk';
+import type {Event, LlmResponse, RunConfig} from '@google/adk';
 import {
   BaseAgent,
   BasePlugin,
@@ -24,6 +24,7 @@ import * as path from 'node:path';
 export async function createRunner(
   agent: BaseAgent,
   plugins: BasePlugin[] = [],
+  runConfig?: RunConfig,
 ) {
   const userId = 'test_user';
   const appName = agent.name;
@@ -39,6 +40,7 @@ export async function createRunner(
         userId,
         sessionId: session.id,
         newMessage: createUserContent(prompt),
+        runConfig,
       });
     },
   };
@@ -113,9 +115,11 @@ export async function runAndCapture(
   agent: LlmAgent,
   prompts: string | string[],
   {
+    runConfig,
     events,
     modelResponses,
   }: {
+    runConfig?: RunConfig;
     events?: string | boolean;
     modelResponses?: string | boolean;
   },
@@ -127,7 +131,7 @@ export async function runAndCapture(
   if (modelResponses) {
     plugins.push(new ModelEventCapturePlugin('model_responses'));
   }
-  const runner = await createRunner(agent, plugins);
+  const runner = await createRunner(agent, plugins, runConfig);
 
   prompts = Array.isArray(prompts) ? prompts : [prompts];
 

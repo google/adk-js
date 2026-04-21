@@ -1,0 +1,314 @@
+[
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "mW8f454h",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855613364,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_current_time",
+            "args": {},
+            "id": "6e3po27k"
+          },
+          "thoughtSignature": "EsACCr0CAb4+9vtQQt/iesf6HKshVBd1IP4ZumKAx5pal2rDJvFa5G8OqhI20MWzgrkrwq8oLM0qKXpsmSCNfYQ6mXjrLkB4hnK5/Dx+Svgj7/iw/7AF6LnbRaTVPCvLth+3cwF1p/8F7mEGqhrOXOlHHgGF2F8DJuLtzti49bq//54gcR49MGHC0EhxWcph342bGcFq2CWtWoA1PzZt9hOaqeJtCG9UdbZZPzG/2yqnQREXgSuQnUtAPa5m6piRUL130N4Od2e1nDZORa0aH7xmflUfyICo+dvtzeZ259+q4MlDUeQuuMq3tav+4BArfx43jEWvjGISAcXAtl+HtA9+A3AmEQ1v6CSpasf8iPD8e/LW00Aun1UqrkV9i46ZaG5G5rCrUqaLnN3ztfLeCCsPMrRn2kDEFqSCuME1ftg4+gc="
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    }
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "6e3po27k",
+            "name": "get_current_time",
+            "response": {
+              "result": "2026-04-10T21:13:34.609Z"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "ivDihJ23",
+    "longRunningToolIds": [],
+    "timestamp": 1775855614609
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "db9NVV32",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855614609,
+    "content": {
+      "parts": [
+        {
+          "text": ""
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "1Jpy8oEJ",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855615168,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_current_time",
+            "args": {},
+            "id": "6e3po27k"
+          },
+          "thoughtSignature": "EsACCr0CAb4+9vtQQt/iesf6HKshVBd1IP4ZumKAx5pal2rDJvFa5G8OqhI20MWzgrkrwq8oLM0qKXpsmSCNfYQ6mXjrLkB4hnK5/Dx+Svgj7/iw/7AF6LnbRaTVPCvLth+3cwF1p/8F7mEGqhrOXOlHHgGF2F8DJuLtzti49bq//54gcR49MGHC0EhxWcph342bGcFq2CWtWoA1PzZt9hOaqeJtCG9UdbZZPzG/2yqnQREXgSuQnUtAPa5m6piRUL130N4Od2e1nDZORa0aH7xmflUfyICo+dvtzeZ259+q4MlDUeQuuMq3tav+4BArfx43jEWvjGISAcXAtl+HtA9+A3AmEQ1v6CSpasf8iPD8e/LW00Aun1UqrkV9i46ZaG5G5rCrUqaLnN3ztfLeCCsPMrRn2kDEFqSCuME1ftg4+gc="
+        },
+        {
+          "text": ""
+        }
+      ]
+    },
+    "usageMetadata": {
+      "promptTokenCount": 67,
+      "candidatesTokenCount": 12,
+      "totalTokenCount": 133,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 67
+        }
+      ],
+      "thoughtsTokenCount": 54
+    },
+    "finishReason": "STOP",
+    "partial": false
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "6e3po27k",
+            "name": "get_current_time",
+            "response": {
+              "result": "2026-04-10T21:13:35.172Z"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "IAFGZ4FK",
+    "longRunningToolIds": [],
+    "timestamp": 1775855615172
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "RUtyLfs3",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855615173,
+    "content": {
+      "parts": [
+        {
+          "text": "The"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 118,
+      "candidatesTokenCount": 1,
+      "totalTokenCount": 160,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 118
+        }
+      ],
+      "thoughtsTokenCount": 41
+    },
+    "partial": true
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "P5DLFyF1",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855616126,
+    "content": {
+      "parts": [
+        {
+          "text": " current time is 9:13 PM on April 10, 2026."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 118,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 181,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 118
+        }
+      ],
+      "thoughtsTokenCount": 41
+    },
+    "partial": true
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "Er0skRvM",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855616190,
+    "content": {
+      "parts": [
+        {
+          "text": "",
+          "thoughtSignature": "EqgBCqUBAb4+9vvoVMEQ9SY/VHX0F2xXYyx5kqPjgW7HxsgEqgCjvj2x7eTBLvwZUk5/1obe42plfWKF1Hp5EZpbLbsn1ergWE3a+swaIqRnc9O/B0B3ABPEGooOtygf10lQAllEBpBpz3zs5Z7eHhQ+JcUcphWZqUWQxag1U+5r1o+CPjVrrVPZrt/NBtMWncyZeUP3TnKnzz+D7UXwVO2E0Gnh9m2hN5iA"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 171,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 234,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 171
+        }
+      ],
+      "thoughtsTokenCount": 41
+    },
+    "finishReason": "STOP",
+    "partial": true
+  },
+  {
+    "invocationId": "e-b3db90ec-d585-422d-8b80-8fa4bf1a8018",
+    "author": "streaming_repro_agent",
+    "id": "sYgxREBF",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775855616677,
+    "content": {
+      "role": "model",
+      "parts": [
+        {
+          "text": "The current time is 9:13 PM on April 10, 2026."
+        },
+        {
+          "text": "",
+          "thoughtSignature": "EqgBCqUBAb4+9vvoVMEQ9SY/VHX0F2xXYyx5kqPjgW7HxsgEqgCjvj2x7eTBLvwZUk5/1obe42plfWKF1Hp5EZpbLbsn1ergWE3a+swaIqRnc9O/B0B3ABPEGooOtygf10lQAllEBpBpz3zs5Z7eHhQ+JcUcphWZqUWQxag1U+5r1o+CPjVrrVPZrt/NBtMWncyZeUP3TnKnzz+D7UXwVO2E0Gnh9m2hN5iA"
+        }
+      ]
+    },
+    "usageMetadata": {
+      "promptTokenCount": 171,
+      "candidatesTokenCount": 22,
+      "totalTokenCount": 234,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 171
+        }
+      ],
+      "thoughtsTokenCount": 41
+    },
+    "finishReason": "STOP",
+    "partial": false
+  }
+]

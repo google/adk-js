@@ -3,51 +3,16 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {ChildProcessWithoutNullStreams, exec, spawn} from 'node:child_process';
+import {exec, spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import {promisify} from 'node:util';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
+import {getResponse, sendInput} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 
 const TEST_EXECUTION_TIMEOUT = 20000;
-
-function sendInput(
-  childProcess: ChildProcessWithoutNullStreams,
-  input: string,
-): Promise<string> {
-  childProcess.stdin.write(input);
-  childProcess.stdin.end();
-
-  return getResponse(childProcess);
-}
-
-function getResponse(
-  childProcess: ChildProcessWithoutNullStreams,
-): Promise<string> {
-  return new Promise<string>((resolve) => {
-    let output = '';
-    let resolved = false;
-
-    const onFinish = () => {
-      if (!resolved) {
-        resolve(output);
-      }
-
-      childProcess.stdout.off('data', onData);
-      resolved = true;
-    };
-
-    const onData = (data: Buffer) => {
-      output += data.toString();
-    };
-
-    childProcess.stdout.on('data', onData);
-    childProcess.stdout.once('end', onFinish);
-    childProcess.stdout.once('close', onFinish);
-  });
-}
 
 describe('Build setup', () => {
   describe.each([

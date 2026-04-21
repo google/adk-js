@@ -336,3 +336,39 @@ export abstract class BaseTestServer {
     }
   }
 }
+
+export function sendInput(
+  childProcess: ChildProcessWithoutNullStreams,
+  input: string,
+): Promise<string> {
+  childProcess.stdin.write(input);
+  childProcess.stdin.end();
+
+  return getResponse(childProcess);
+}
+
+export function getResponse(
+  childProcess: ChildProcessWithoutNullStreams,
+): Promise<string> {
+  return new Promise<string>((resolve) => {
+    let output = '';
+    let resolved = false;
+
+    const onFinish = () => {
+      if (!resolved) {
+        resolve(output);
+      }
+
+      childProcess.stdout.off('data', onData);
+      resolved = true;
+    };
+
+    const onData = (data: Buffer) => {
+      output += data.toString();
+    };
+
+    childProcess.stdout.on('data', onData);
+    childProcess.stdout.once('end', onFinish);
+    childProcess.stdout.once('close', onFinish);
+  });
+}
