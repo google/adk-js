@@ -1,0 +1,12 @@
+{
+  "name": "agent_that_uses_skill_to_run_js_script",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "npx @google/adk-devtools run agent.ts"
+  },
+  "devDependencies": {
+    "@google/adk-devtools": "file:../../../../dev",
+    "@google/adk": "file:../../../../core"
+  }
+}

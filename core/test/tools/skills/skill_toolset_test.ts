@@ -57,11 +57,13 @@ describe('skill_toolset', () => {
     it('returns default tools only when no context provided', async () => {
       const toolset = new SkillToolset([mockSkill]);
       const tools = await toolset.getTools();
-      expect(tools.length).toBe(3);
+      expect(tools.length).toBe(5);
       expect(tools.map((t) => t.name)).toEqual([
         'list_skills',
         'load_skill',
         'load_skill_resource',
+        'run_skill_script',
+        'run_skill_inline_script',
       ]);
     });
 
@@ -69,7 +71,7 @@ describe('skill_toolset', () => {
       const toolset = new SkillToolset([mockSkill]);
       const context = createMockContext();
       const tools = await toolset.getTools(context);
-      expect(tools.length).toBe(3);
+      expect(tools.length).toBe(5);
     });
 
     it('appends instructions to LLM request', async () => {
