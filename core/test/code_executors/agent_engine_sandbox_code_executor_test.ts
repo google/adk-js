@@ -220,9 +220,12 @@ describe('AgentEngineSandboxCodeExecutor', () => {
         expect.objectContaining({
           inputs: expect.arrayContaining([
             expect.objectContaining({
+              mimeType: 'application/json',
+            }),
+            expect.objectContaining({
               metadata: {
                 attributes: {
-                  file_name: 'data.csv',
+                  file_name: Buffer.from('data.csv').toString('base64'),
                 },
               },
             }),

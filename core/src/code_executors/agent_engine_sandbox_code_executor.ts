@@ -125,13 +125,10 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
 
     const inputs: Chunk[] = [
       {
-        mimeType: 'text/plain',
-        data: Buffer.from(codeExecutionInput.code).toString('base64'),
-        metadata: {
-          attributes: {
-            file_name: 'main.py', // Default file name for execution
-          },
-        },
+        mimeType: 'application/json',
+        data: Buffer.from(
+          JSON.stringify({code: codeExecutionInput.code}),
+        ).toString('base64'),
       },
     ];
 
@@ -142,7 +139,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
           data: file.content, // Assumed to be already base64 encoded based on CodeExecutionInput definition
           metadata: {
             attributes: {
-              file_name: file.name,
+              file_name: Buffer.from(file.name).toString('base64'),
             },
           },
         });
