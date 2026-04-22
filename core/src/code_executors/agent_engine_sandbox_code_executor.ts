@@ -160,7 +160,10 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
     if (response.outputs) {
       for (const output of response.outputs) {
         const attributes = output.metadata?.attributes || {};
-        const fileName = attributes['file_name'];
+        const encodedFileName = attributes['file_name'];
+        const fileName = encodedFileName
+          ? Buffer.from(encodedFileName, 'base64').toString('utf-8')
+          : undefined;
 
         if (output.mimeType === 'application/json' && !fileName) {
           if (output.data) {

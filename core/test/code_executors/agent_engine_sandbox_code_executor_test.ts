@@ -243,7 +243,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
               data: 'base64data',
               metadata: {
                 attributes: {
-                  file_name: 'plot.png',
+                  file_name: Buffer.from('plot.png').toString('base64'),
                 },
               },
             },
@@ -273,7 +273,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
               data: 'base64data',
               metadata: {
                 attributes: {
-                  file_name: 'data.csv',
+                  file_name: Buffer.from('data.csv').toString('base64'),
                 },
               },
             },
