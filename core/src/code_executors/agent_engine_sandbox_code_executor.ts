@@ -215,16 +215,13 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         logger.info(
           'No Agent Engine resource name provided. Creating a new one...',
         );
-        // In a real scenario, we would call createInternal and poll for completion.
-        // However, the nodejs-vertexai SDK might have specific behavior.
-        // Let's assume we need to create it.
         const operation = await this.client.agentEnginesInternal.createInternal(
           {
             config: {
               displayName: 'default_engine',
             },
           } as CreateAgentEngineRequestParameters,
-        ); // Using any because we don't have the full type definition details easily accessible and need to fit it.
+        );
 
         let apiResponse = operation;
         let attempts = 0;
