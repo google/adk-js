@@ -199,6 +199,7 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
+export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';
