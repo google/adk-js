@@ -27,6 +27,10 @@ export {FileArtifactService} from './artifacts/file_artifact_service.js';
 export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
 export {
+  AgentEngineSandboxCodeExecutor,
+  type AgentEngineSandboxCodeExecutorOptions,
+} from './code_executors/agent_engine_sandbox_code_executor.js';
+export {
   UnsafeLocalCodeExecutor,
   type UnsafeLocalCodeExecutorOptions,
 } from './code_executors/unsafe_local_code_executor.js';
