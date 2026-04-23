@@ -96,8 +96,7 @@ export class RestApiTool extends BaseTool {
     return {
       name: this.name,
       description: this.description,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      parameters: schema as any, // Cast to any if types don't match exactly
+      parameters: schema,
     };
   }
 
@@ -126,9 +125,7 @@ export class RestApiTool extends BaseTool {
     const method = this.endpoint.method.toUpperCase();
     let url = `${this.endpoint.baseUrl}${this.endpoint.path}`;
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+    const headers: Record<string, string> = {};
 
     const queryParams = new URLSearchParams();
     let body: unknown = undefined;
@@ -170,6 +167,16 @@ export class RestApiTool extends BaseTool {
       url = url.replace(`{${key}}`, value);
     }
 
+    // Extract query parameters from path if any
+    const urlParts = url.split('?');
+    if (urlParts.length > 1) {
+      const pathQueryParams = new URLSearchParams(urlParts[1]);
+      for (const [key, value] of pathQueryParams.entries()) {
+        queryParams.append(key, value);
+      }
+      url = urlParts[0];
+    }
+
     // Append query parameters
     const queryString = queryParams.toString();
     if (queryString) {
@@ -177,10 +184,48 @@ export class RestApiTool extends BaseTool {
     }
 
     // Handle body
-    if (body === undefined && Object.keys(bodyData).length > 0) {
-      body = JSON.stringify(bodyData);
-    } else if (body !== undefined && typeof body !== 'string') {
-      body = JSON.stringify(body);
+    const requestBody = this.operation.requestBody;
+    const finalData =
+      body !== undefined
+        ? body
+        : Object.keys(bodyData).length > 0
+          ? bodyData
+          : undefined;
+
+    if (requestBody && 'content' in requestBody) {
+      const content = requestBody.content;
+      for (const [mimeType, _mediaTypeObject] of Object.entries(content)) {
+        if (finalData !== undefined) {
+          if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
+            body =
+              typeof finalData === 'string'
+                ? finalData
+                : JSON.stringify(finalData);
+            headers['Content-Type'] = mimeType;
+          } else if (mimeType === 'application/x-www-form-urlencoded') {
+            body = new URLSearchParams(finalData as Record<string, string>);
+            // Fetch sets content-type automatically for URLSearchParams
+          } else if (mimeType === 'multipart/form-data') {
+            const formData = new FormData();
+            if (typeof finalData === 'object' && finalData !== null) {
+              for (const [key, value] of Object.entries(finalData)) {
+                formData.append(key, String(value));
+              }
+            }
+            body = formData;
+            // Fetch sets content-type with boundary automatically. DO NOT set it.
+          } else if (mimeType === 'text/plain') {
+            body = String(finalData);
+            headers['Content-Type'] = mimeType;
+          }
+        }
+        break; // Process only the first mime type
+      }
+    } else if (finalData !== undefined) {
+      // Fallback to JSON if no requestBody content specified but data exists
+      body =
+        typeof finalData === 'string' ? finalData : JSON.stringify(finalData);
+      headers['Content-Type'] = 'application/json';
     }
 
     // Handle Auth
@@ -196,7 +241,8 @@ export class RestApiTool extends BaseTool {
       const response = await globalThis.fetch(url, {
         method,
         headers,
-        body,
+        // eslint-disable-next-line no-undef
+        body: body as BodyInit,
       });
 
       const contentType = response.headers.get('content-type');
