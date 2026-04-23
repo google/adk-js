@@ -1,234 +1,216 @@
-/**
- * @license
- * Copyright 2026 Google LLC
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import {OpenAPIV3} from 'openapi-types';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import {Context} from '../../../src/agents/context.js';
+import {ToolAuthHandler} from '../../../src/tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 import {RestApiTool} from '../../../src/tools/openapi_tool/rest_api_tool.js';
 
 describe('RestApiTool', () => {
-  const mockOperation: OpenAPIV3.OperationObject = {
-    operationId: 'createUser',
-    requestBody: {
-      content: {
-        'application/json': {
-          schema: {
-            type: 'object',
-            properties: {
-              name: {type: 'string'},
-            },
-          },
-        },
-      },
-    },
-    responses: {
-      '200': {description: 'OK'},
-    },
-  };
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
-  beforeEach(() => {
+  it('should configure credential key', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    tool.configureCredentialKey('my-credential-key');
+
+    expect((tool as unknown as {credentialKey: string}).credentialKey).toBe(
+      'my-credential-key',
+    );
+  });
+
+  it('should apply headers from provider', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const headerProvider = vi
+      .fn()
+      .mockReturnValue({'X-Custom-Header': 'custom-value'});
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+      undefined,
+      undefined,
+      {headerProvider},
+    );
+
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      headers: {get: () => 'application/json'},
-      json: async () => ({success: true}),
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
     });
-  });
 
-  it('should handle request body in execution', async () => {
-    const tool = new RestApiTool(
-      'create_user',
-      'Create a user',
-      {baseUrl: 'https://api.example.com', path: '/users', method: 'POST'},
-      mockOperation,
-    );
-
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
-    };
-
-    const result = await tool.runAsync({
-      args: {name: 'John Doe'},
+    const mockContext = {};
+    await tool.runAsync({
+      args: {},
       toolContext: mockContext as unknown as Context,
     });
 
-    expect(result).toEqual({success: true});
+    expect(headerProvider).toHaveBeenCalledWith(mockContext);
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.example.com/users',
+      expect.anything(),
       expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({name: 'John Doe'}),
+        headers: expect.objectContaining({'X-Custom-Header': 'custom-value'}),
       }),
     );
   });
 
-  it('should handle path parameters', async () => {
-    const opWithPathParam: OpenAPIV3.OperationObject = {
-      operationId: 'getUser',
-      parameters: [
-        {
-          name: 'userId',
-          in: 'path',
-          required: true,
-          schema: {type: 'string'},
-        },
-      ],
-      responses: {'200': {description: 'OK'}},
+  it('should stringify object body', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
     };
-
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
-      'get_user',
-      'Get a user',
-      {
-        baseUrl: 'https://api.example.com',
-        path: '/users/{userId}',
-        method: 'GET',
-      },
-      opWithPathParam,
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
     );
 
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
-    };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    // Mock operationParser to return a body parameter
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'body', originalName: 'body', paramLocation: 'body'},
+    ];
 
     await tool.runAsync({
-      args: {user_id: '123'},
-      toolContext: mockContext as unknown as Context,
+      args: {body: {foo: 'bar'}},
+      toolContext: {} as unknown as Context,
     });
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.example.com/users/123',
+      expect.anything(),
       expect.objectContaining({
-        method: 'GET',
+        body: JSON.stringify({foo: 'bar'}),
       }),
     );
   });
 
-  it('should handle header parameters', async () => {
-    const opWithHeaderParam: OpenAPIV3.OperationObject = {
-      operationId: 'testOp',
-      parameters: [
-        {
-          name: 'X-Custom-Header',
-          in: 'header',
-          required: true,
-          schema: {type: 'string'},
-        },
-      ],
-      responses: {'200': {description: 'OK'}},
+  it('should replace path parameters', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/users/{id}',
+      method: 'GET',
     };
-
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
-      'test_op',
-      'Test Op',
-      {baseUrl: 'https://api.example.com', path: '/test', method: 'GET'},
-      opWithHeaderParam,
-      undefined,
-      undefined,
-      {preservePropertyNames: true},
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
     );
 
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
-    };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'id', originalName: 'id', paramLocation: 'path'},
+    ];
 
     await tool.runAsync({
-      args: {'X-Custom-Header': 'my-value'},
-      toolContext: mockContext as unknown as Context,
+      args: {id: '123'},
+      toolContext: {} as unknown as Context,
     });
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.example.com/test',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Custom-Header': 'my-value',
-        }),
-      }),
+      'http://api.example.com/users/123',
+      expect.anything(),
     );
   });
 
-  it('should handle explicit body parameter', async () => {
-    const opWithExplicitBody: OpenAPIV3.OperationObject = {
-      operationId: 'testOp',
-      requestBody: {
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-            },
-          },
-        },
-      },
-      responses: {'200': {description: 'OK'}},
+  it('should stringify bodyData', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
     };
-
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
-      'test_op',
-      'Test Op',
-      {baseUrl: 'https://api.example.com', path: '/test', method: 'POST'},
-      opWithExplicitBody,
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
     );
 
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
-    };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
 
-    const bodyObj = {some: 'data'};
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'user', originalName: 'user', paramLocation: 'body'},
+    ];
+
     await tool.runAsync({
-      args: {body: bodyObj},
-      toolContext: mockContext as unknown as Context,
+      args: {user: {name: 'Alice'}},
+      toolContext: {} as unknown as Context,
     });
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.example.com/test',
+      expect.anything(),
       expect.objectContaining({
-        body: JSON.stringify(bodyObj),
+        body: JSON.stringify({user: {name: 'Alice'}}),
       }),
     );
   });
 
-  it('should return declaration', () => {
-    const tool = new RestApiTool(
-      'create_user',
-      'Create a user',
-      {baseUrl: 'https://api.example.com', path: '/users', method: 'POST'},
-      mockOperation,
-    );
-
-    const declaration = tool._getDeclaration();
-    expect(declaration.name).toBe('create_user');
-    expect(declaration.description).toBe('Create a user');
-    expect(declaration.parameters).toBeTruthy();
-  });
-
-  it('should return pending state when auth is pending', async () => {
-    const tool = new RestApiTool(
-      'test_op',
-      'Test Op',
-      {baseUrl: 'https://api.example.com', path: '/test', method: 'GET'},
-      {operationId: 'testOp', responses: {}},
-      {type: 'apiKey', in: 'header', name: 'key'},
-    );
-
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
+  it('should return pending if auth is pending', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
     };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    const mockAuthHandler = {
+      prepareAuthCredentials: async () => ({state: 'pending'}),
+    };
+    vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue(
+      mockAuthHandler as unknown as ToolAuthHandler,
+    );
 
     const result = await tool.runAsync({
       args: {},
-      toolContext: mockContext as unknown as Context,
+      toolContext: {} as unknown as Context,
     });
 
     expect(result).toEqual({
@@ -237,39 +219,245 @@ describe('RestApiTool', () => {
     });
   });
 
-  it('should apply headers from headerProvider', async () => {
-    const headerProvider = vi
-      .fn()
-      .mockReturnValue({'X-Dynamic-Header': 'dynamic-value'});
+  it('should add header parameters', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
-      'test_op',
-      'Test Op',
-      {baseUrl: 'https://api.example.com', path: '/test', method: 'GET'},
-      {operationId: 'testOp', responses: {}},
-      undefined,
-      undefined,
-      {headerProvider},
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
     );
 
-    const mockContext = {
-      getAuthResponse: vi.fn().mockReturnValue(undefined),
-      requestCredential: vi.fn(),
-      state: {},
-    };
-
-    await tool.runAsync({
-      args: {},
-      toolContext: mockContext as unknown as Context,
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
     });
 
-    expect(headerProvider).toHaveBeenCalled();
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'x-trace-id', originalName: 'X-Trace-Id', paramLocation: 'header'},
+    ];
+
+    await tool.runAsync({
+      args: {'x-trace-id': 'trace-123'},
+      toolContext: {} as unknown as Context,
+    });
+
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.example.com/test',
+      expect.anything(),
       expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Dynamic-Header': 'dynamic-value',
-        }),
+        headers: expect.objectContaining({'X-Trace-Id': 'trace-123'}),
       }),
     );
+  });
+
+  it('should get declaration', () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    const mockSchema = {type: 'object', properties: {}};
+    (
+      tool as unknown as {operationParser: {getJsonSchema: () => unknown}}
+    ).operationParser.getJsonSchema = () => mockSchema;
+
+    const declaration = (
+      tool as unknown as {_getDeclaration: () => unknown}
+    )._getDeclaration();
+
+    expect(declaration).toEqual({
+      name: 'test_tool',
+      description: 'description',
+      parameters: mockSchema,
+    });
+  });
+
+  it('should extract query parameters from path', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test?existing=param',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'new_param', originalName: 'new_param', paramLocation: 'query'},
+    ];
+
+    await tool.runAsync({
+      args: {new_param: 'value'},
+      toolContext: {} as unknown as Context,
+    });
+
+    // Verify URL contains both parameters
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('http://api.example.com/test'),
+      expect.anything(),
+    );
+    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('existing=param');
+    expect(calledUrl).toContain('new_param=value');
+  });
+
+  it('should handle application/x-www-form-urlencoded body', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      responses: {},
+      requestBody: {
+        content: {
+          'application/x-www-form-urlencoded': {
+            schema: {type: 'object'},
+          },
+        },
+      },
+    };
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'foo', originalName: 'foo', paramLocation: 'body'},
+      {name: 'baz', originalName: 'baz', paramLocation: 'body'},
+    ];
+
+    await tool.runAsync({
+      args: {foo: 'bar', baz: 'qux'},
+      toolContext: {} as unknown as Context,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: expect.any(URLSearchParams),
+      }),
+    );
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
+      .body as URLSearchParams;
+    expect(calledBody.get('foo')).toBe('bar');
+    expect(calledBody.get('baz')).toBe('qux');
+  });
+
+  it('should handle multipart/form-data body', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {
+      responses: {},
+      requestBody: {
+        content: {
+          'multipart/form-data': {
+            schema: {type: 'object'},
+          },
+        },
+      },
+    };
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'foo', originalName: 'foo', paramLocation: 'body'},
+      {name: 'file', originalName: 'file', paramLocation: 'body'},
+    ];
+
+    await tool.runAsync({
+      args: {foo: 'bar', file: 'content'},
+      toolContext: {} as unknown as Context,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: expect.any(FormData),
+      }),
+    );
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
+      .body as FormData;
+    expect(calledBody.get('foo')).toBe('bar');
+    expect(calledBody.get('file')).toBe('content');
+  });
+
+  it('should handle fetch error', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+
+    const result = await tool.runAsync({
+      args: {},
+      toolContext: {} as unknown as Context,
+    });
+
+    expect(result).toEqual({
+      error: 'Failed to execute API call: Network error',
+    });
   });
 });

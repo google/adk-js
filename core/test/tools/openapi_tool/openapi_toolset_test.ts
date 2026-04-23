@@ -6,6 +6,7 @@
 
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
+import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
 import {OpenApiSpecParser} from '../../../src/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 import {OpenAPIToolset} from '../../../src/tools/openapi_tool/openapi_toolset.js';
 
@@ -124,6 +125,25 @@ describe('OpenAPIToolset', () => {
     expect(
       (tools[0] as unknown as Record<string, unknown>).authCredential,
     ).toEqual({api_key: 'my-key'});
+  });
+
+  it('should handle context in getTools', async () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+    const mockContext = {};
+    (
+      toolset as unknown as {
+        isToolSelected: (tool: unknown, context: unknown) => boolean;
+      }
+    ).isToolSelected = () => true;
+    const tools = await toolset.getTools(
+      mockContext as unknown as ReadonlyContext,
+    );
+    expect(tools.length).toBe(2);
+  });
+
+  it('should call close', async () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+    await expect(toolset.close()).resolves.toBeUndefined();
   });
 });
 

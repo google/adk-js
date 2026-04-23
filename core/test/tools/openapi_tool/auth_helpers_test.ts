@@ -1,10 +1,6 @@
-/**
- * @license
- * Copyright 2026 Google LLC
- * SPDX-License-Identifier: Apache-2.0
- */
-
+import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
+import {AuthCredential} from '../../../src/auth/auth_credential.js';
 import {
   applyCredential,
   createApiKeyScheme,
@@ -13,8 +9,8 @@ import {
 
 describe('auth_helpers', () => {
   describe('applyCredential', () => {
-    it('should return original url if no credential provided', () => {
-      const url = 'https://example.com';
+    it('should return original URL if credential is not provided', () => {
+      const url = 'http://example.com';
       const headers = {};
       const result = applyCredential(url, headers, undefined);
       expect(result).toBe(url);
@@ -22,47 +18,70 @@ describe('auth_helpers', () => {
     });
 
     it('should apply API key in header', () => {
-      const url = 'https://example.com';
+      const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential = {api_key: 'my-key'};
-      const authScheme = {in: 'header', name: 'X-API-Key'};
+      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const authScheme: OpenAPIV3.SecuritySchemeObject = {
+        type: 'apiKey',
+        name: 'X-API-Key',
+        in: 'header',
+      };
 
       const result = applyCredential(url, headers, credential, authScheme);
 
       expect(result).toBe(url);
-      expect(headers['X-API-Key']).toBe('my-key');
+      expect(headers['X-API-Key']).toBe('secret_key');
     });
 
     it('should apply API key in query', () => {
-      const url = 'https://example.com';
+      const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential = {api_key: 'my-key'};
-      const authScheme = {in: 'query', name: 'key'};
+      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const authScheme: OpenAPIV3.SecuritySchemeObject = {
+        type: 'apiKey',
+        name: 'api_key',
+        in: 'query',
+      };
 
       const result = applyCredential(url, headers, credential, authScheme);
 
-      expect(result).toBe('https://example.com?key=my-key');
+      expect(result).toBe('http://example.com?api_key=secret_key');
       expect(headers).toEqual({});
     });
 
     it('should apply API key in query with existing params', () => {
-      const url = 'https://example.com?existing=param';
+      const url = 'http://example.com?foo=bar';
       const headers: Record<string, string> = {};
-      const credential = {api_key: 'my-key'};
-      const authScheme = {in: 'query', name: 'key'};
+      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const authScheme: OpenAPIV3.SecuritySchemeObject = {
+        type: 'apiKey',
+        name: 'api_key',
+        in: 'query',
+      };
 
       const result = applyCredential(url, headers, credential, authScheme);
 
-      expect(result).toBe('https://example.com?existing=param&key=my-key');
+      expect(result).toBe('http://example.com?foo=bar&api_key=secret_key');
+    });
+
+    it('should fallback to Authorization header for API key if location is not specified', () => {
+      const url = 'http://example.com';
+      const headers: Record<string, string> = {};
+      const credential: AuthCredential = {apiKey: 'secret_key'};
+
+      const result = applyCredential(url, headers, credential);
+
+      expect(result).toBe(url);
+      expect(headers['Authorization']).toBe('secret_key');
     });
 
     it('should apply bearer token', () => {
-      const url = 'https://example.com';
+      const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential = {
+      const credential: AuthCredential = {
         http: {
           credentials: {
-            token: 'my-token',
+            token: 'my_token',
           },
         },
       };
@@ -70,23 +89,25 @@ describe('auth_helpers', () => {
       const result = applyCredential(url, headers, credential);
 
       expect(result).toBe(url);
-      expect(headers['Authorization']).toBe('Bearer my-token');
+      expect(headers['Authorization']).toBe('Bearer my_token');
     });
   });
 
-  describe('helpers', () => {
-    it('should create API key scheme', () => {
-      const scheme = createApiKeyScheme('X-API-Key', 'header');
-      expect(scheme).toEqual({
+  describe('createApiKeyScheme', () => {
+    it('should create an API key scheme', () => {
+      const result = createApiKeyScheme('X-API-Key', 'header');
+      expect(result).toEqual({
         type: 'apiKey',
         name: 'X-API-Key',
         in: 'header',
       });
     });
+  });
 
-    it('should create bearer scheme', () => {
-      const scheme = createBearerScheme();
-      expect(scheme).toEqual({
+  describe('createBearerScheme', () => {
+    it('should create a bearer scheme', () => {
+      const result = createBearerScheme();
+      expect(result).toEqual({
         type: 'http',
         scheme: 'bearer',
       });
