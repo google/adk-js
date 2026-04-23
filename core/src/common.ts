@@ -37,6 +37,7 @@ export type {
 export {LoopAgent, isLoopAgent} from './agents/loop_agent.js';
 export type {LoopAgentConfig} from './agents/loop_agent.js';
 export {ParallelAgent, isParallelAgent} from './agents/parallel_agent.js';
+export {AgentTransferLlmRequestProcessor} from './agents/processors/agent_transfer_llm_request_processor.js';
 export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
@@ -94,6 +95,7 @@ export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
 export {
   CodeExecutionLanguage,
+  FileContentEncoding,
   type CodeExecutionInput,
   type CodeExecutionResult,
   type File,
@@ -233,6 +235,7 @@ export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
 
 export * from './artifacts/base_artifact_service.js';
+export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';

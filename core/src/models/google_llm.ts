@@ -8,17 +8,15 @@ import {
   Blob,
   createPartFromText,
   FileData,
-  FinishReason,
-  GenerateContentResponse,
   GoogleGenAI,
   HttpOptions,
-  Part,
 } from '@google/genai';
 
 import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
+import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
@@ -132,6 +130,7 @@ export class Gemini extends BaseLlm {
   override async *generateContentAsync(
     llmRequest: LlmRequest,
     stream = false,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     this.preprocessRequest(llmRequest);
     this.maybeAppendUserContent(llmRequest);
@@ -139,11 +138,19 @@ export class Gemini extends BaseLlm {
       `Sending out request, model: ${llmRequest.model ?? this.model}, backend: ${this.apiBackend}, stream: ${stream}`,
     );
 
-    if (llmRequest.config?.httpOptions) {
+    if (!llmRequest.config) {
+      llmRequest.config = {};
+    }
+
+    if (llmRequest.config.httpOptions) {
       llmRequest.config.httpOptions.headers = {
         ...llmRequest.config.httpOptions.headers,
         ...this.trackingHeaders,
       };
+    }
+
+    if (abortSignal) {
+      llmRequest.config.abortSignal = abortSignal;
     }
 
     if (stream) {
@@ -152,67 +159,16 @@ export class Gemini extends BaseLlm {
         contents: llmRequest.contents,
         config: llmRequest.config,
       });
-      let thoughtText = '';
-      let text = '';
-      let usageMetadata;
-      let lastResponse: GenerateContentResponse | undefined;
 
-      // TODO - b/425992518: verify the type of streaming response is correct.
+      const aggregator = new StreamingResponseAggregator();
       for await (const response of streamResult) {
-        lastResponse = response;
-        const llmResponse = createLlmResponse(response);
-        usageMetadata = llmResponse.usageMetadata;
-        const firstPart = llmResponse.content?.parts?.[0];
-        // Accumulates the text and thought text from the first part.
-        if (firstPart?.text) {
-          if ('thought' in firstPart && firstPart.thought) {
-            thoughtText += firstPart.text;
-          } else {
-            text += firstPart.text;
-          }
-          llmResponse.partial = true;
-        } else if (
-          (thoughtText || text) &&
-          (!firstPart || !firstPart.inlineData)
-        ) {
-          // Flushes the data if there's no more text.
-          const parts: Part[] = [];
-          if (thoughtText) {
-            parts.push({text: thoughtText, thought: true});
-          }
-          if (text) {
-            parts.push(createPartFromText(text));
-          }
-          yield {
-            content: {
-              role: 'model',
-              parts,
-            },
-            usageMetadata: llmResponse.usageMetadata,
-          };
-          thoughtText = '';
-          text = '';
+        for await (const llmResponse of aggregator.processResponse(response)) {
+          yield llmResponse;
         }
-        yield llmResponse;
       }
-      if (
-        (text || thoughtText) &&
-        lastResponse?.candidates?.[0]?.finishReason === FinishReason.STOP
-      ) {
-        const parts: Part[] = [];
-        if (thoughtText) {
-          parts.push({text: thoughtText, thought: true} as Part);
-        }
-        if (text) {
-          parts.push({text: text});
-        }
-        yield {
-          content: {
-            role: 'model',
-            parts,
-          },
-          usageMetadata,
-        };
+      const finalResponse = aggregator.close();
+      if (finalResponse) {
+        yield finalResponse;
       }
     } else {
       const response = await this.apiClient.models.generateContent({

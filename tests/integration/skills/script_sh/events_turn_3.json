@@ -1,0 +1,106 @@
+[
+  {
+    "invocationId": "e-6bca856a-3218-4c2c-a45c-408af57ec7a0",
+    "author": "test_sh_skill_agent",
+    "id": "4s3UXVFo",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1776310724635,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "run_skill_inline_script",
+            "args": {
+              "script_content": "curl -s https://api.github.com/repos/google/adk-js/pulls/276 | grep -E '\"state\":|\"merged\":'",
+              "language": "shell"
+            },
+            "id": "t6oev5z1"
+          },
+          "thoughtSignature": "EogFCoUFAb4+9vuc24ty2efKmiHnkGYjXaPg5pahQlDL5bSZhFjrMYmquBHm3/ZcDYkx8P7rnZKi8o35lmod6Ihkpcsfv4DtF7fR6Vyqd90CadLNEFtcTA5NC7HwyCxUfWt0oFqX6kz8OkuqbDIqtyDuFYMYy3ryLDDh8RsPQF093W03BkGVaSm66TyVVZgjqhCWuRGxC28x5MWsMzp59uf+TefnAY8QfquDuCanrrM+z8Irl0r207yoWB5qAknUppGWimtmLR+eMORVcJqTy3UvTsb9iMktpRsScLk456LNbvLsJEs7cKC3pDLhZMLslAXDHsMJ9ZnucnoUd5jvSBReqivp7SgRfJUuHDtnMx4VtfA6XmvVvlJtrT0kq+ozpn78PqRLsgqTYMwMUdru8fKq0iA1WqHlN79vpH4biYEmYQWLv8LqZja5rftfpMaYWLODxUS7N46zE8MqJfYHpNNXN2u7x3emz08ebtlzHBsqQPv8OCQbfOMrShkF+qCC15tkOdX/4zadOEIIIDzGpvyYIhnZBl9EcIIiU5FiwZbtQQE03IhmQ7//XmlyZmaTXl3dwNuTGLZ/6R1Yv0uGCvAXO/GNEPpx+h1NeKXr1qPz9F5v2J7vU3KdSW9S241LElFiobJho2ST14hvHrJwSRvHOG1v4una0+Tsgju8o1uupGwRePqK7wUB3wPOs1tuCtmSWcK4SDMtMH9trY19uBY+3+8ZrEK8SE96SP0tJB//99XKT6umFpuFOwOGOlosWFkOV37jPQqXJ5D2cJOTpSlueCu+83ZG4cVSEeyKhNfSxOXAZYUVji1HUBOmebr4K4OiHhAdZNN2AQiKTYnpM5V2fwlt9QVCPdAx"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 2334,
+      "candidatesTokenCount": 64,
+      "totalTokenCount": 2581,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2334
+        }
+      ],
+      "thoughtsTokenCount": 183
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-6bca856a-3218-4c2c-a45c-408af57ec7a0",
+    "author": "test_sh_skill_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "t6oev5z1",
+            "name": "run_skill_inline_script",
+            "response": {
+              "stdout": "  \"state\": \"open\",\n  \"merged\": false,\n",
+              "stderr": "",
+              "outputFiles": []
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "zk2vJIjZ",
+    "longRunningToolIds": [],
+    "timestamp": 1776310732539
+  },
+  {
+    "invocationId": "e-6bca856a-3218-4c2c-a45c-408af57ec7a0",
+    "author": "test_sh_skill_agent",
+    "id": "brswif0g",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1776310732539,
+    "content": {
+      "parts": [
+        {
+          "text": "The status of that Pull Request is currently **open** (it has not been merged)."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 2622,
+      "candidatesTokenCount": 18,
+      "totalTokenCount": 2640,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2622
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

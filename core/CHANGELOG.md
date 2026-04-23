@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.0.0](https://github.com/google/adk-js/compare/adk-v0.6.1...adk-v1.0.0) (2026-04-21)
+
+
+### Features
+
+* add Agent type alias for LlmAgent to keep parity with Python ADK. ([#242](https://github.com/google/adk-js/issues/242)) ([03da958](https://github.com/google/adk-js/commit/03da95820efb5cdbca045f0621f15c5a60efe2ea))
+* add auth preprocessor and update auth handler. ([#227](https://github.com/google/adk-js/issues/227)) ([e94c181](https://github.com/google/adk-js/commit/e94c181d50760b47dde5b2302a385f7c35cbe34e))
+* add auth related base classes ([#223](https://github.com/google/adk-js/issues/223)) ([a87ed8e](https://github.com/google/adk-js/commit/a87ed8e0215e4eb654d000cd2ce6b763ab9b7b6b))
+* add progressive model streaming processing ([#258](https://github.com/google/adk-js/issues/258)) ([93d551b](https://github.com/google/adk-js/commit/93d551b488427e7d124636141cd012fd2ce6a8b6))
+* oauth support: add oauth2 related classes ([#225](https://github.com/google/adk-js/issues/225)) ([d2b7dcb](https://github.com/google/adk-js/commit/d2b7dcb80c9c501a96630582a02191cc55aafcca))
+* Plugin callbacks for context compaction and tool selection ([#250](https://github.com/google/adk-js/issues/250)) ([3deda16](https://github.com/google/adk-js/commit/3deda167a6b2e9fd465142ed718db96a0f20d446))
+* RoutedAgent and RoutedLlm ([#215](https://github.com/google/adk-js/issues/215)) ([1083301](https://github.com/google/adk-js/commit/10833019afafa3e0993af3f3f9fe87c3728ac08d))
+* skills: add skills toolset (part 2) ([#252](https://github.com/google/adk-js/issues/252)) ([6869e23](https://github.com/google/adk-js/commit/6869e2336db6aa80d96ac87e444e6c657480d9e7))
+* skills: define skills interface ([#251](https://github.com/google/adk-js/issues/251)) ([e8b2cae](https://github.com/google/adk-js/commit/e8b2caeb219de7d84e1a9e399a52fe19cb9c70c9))
+* skills: loader (part 3) ([#256](https://github.com/google/adk-js/issues/256)) ([a4d2858](https://github.com/google/adk-js/commit/a4d2858a7a8f2e87bd7e0f10d8988fc08c350824))
+* skills: support script execution ([#276](https://github.com/google/adk-js/issues/276)) ([8d5cc0a](https://github.com/google/adk-js/commit/8d5cc0ac347f96a5362fcf85d445efd1c04eccae))
+* support abort parameter in runner, agent, model, tool and processors ([#234](https://github.com/google/adk-js/issues/234)) ([1614f36](https://github.com/google/adk-js/commit/1614f36c77967ff064a52ff2ee89be0a5c6b5cb4))
+* unsafe local code executor ([#257](https://github.com/google/adk-js/issues/257)) ([ce5bde9](https://github.com/google/adk-js/commit/ce5bde9c37635f01a67b137354d32aa5d1ea4650))
+
+
+### Bug Fixes
+
+* add client url to support custom url options for DB connection. ([#284](https://github.com/google/adk-js/issues/284)) ([bf8fade](https://github.com/google/adk-js/commit/bf8fadefb764e2ea22f9bc022b6e437ce8020873))
+* add missing invocation id when creating new ADK event while merging parallel tool responses. ([#253](https://github.com/google/adk-js/issues/253)) ([7739bd8](https://github.com/google/adk-js/commit/7739bd8b79ef38fc65fb06495043318c3f287f40))
+* move otel dependencies from dev deps to deps ([#243](https://github.com/google/adk-js/issues/243)) ([9622da6](https://github.com/google/adk-js/commit/9622da610f394c3cb4a93432ea1d9a9391000947))
+* propagate thoughtSignature to concurrent function calls in streaming ([#268](https://github.com/google/adk-js/issues/268)) ([8cd6360](https://github.com/google/adk-js/commit/8cd6360eea2a38fd3acdcfc8b73c7491d28bc75a))
+* support dynamic requre in esm builds ([#244](https://github.com/google/adk-js/issues/244)) ([fecbdd3](https://github.com/google/adk-js/commit/fecbdd351552fbacf2db1d6174920e76ddc56a53))
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([84f886e](https://github.com/google/adk-js/commit/84f886e1ac8b3e9a7807a184257444fd0b15e1af))
+
 ## [0.6.1](https://github.com/google/adk-js/compare/adk-v0.6.0...adk-v0.6.1) (2026-03-30)
 
 

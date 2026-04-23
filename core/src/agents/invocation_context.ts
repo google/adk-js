@@ -39,6 +39,7 @@ export interface InvocationContextParams {
   liveRequestQueue?: LiveRequestQueue;
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -186,6 +187,11 @@ export class InvocationContext {
   pluginManager: PluginManager;
 
   /**
+   * The abort signal for the invocation.
+   */
+  readonly abortSignal?: AbortSignal;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -203,6 +209,7 @@ export class InvocationContext {
     this.liveRequestQueue = params.liveRequestQueue;
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
+    this.abortSignal = params.abortSignal;
   }
 
   /**
