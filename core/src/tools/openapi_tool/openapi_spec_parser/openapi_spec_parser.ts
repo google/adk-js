@@ -8,6 +8,16 @@ import {OpenAPIV3} from 'openapi-types';
 import {experimental} from '../../../utils/experimental.js';
 import {ApiParameter, OperationParser} from './operation_parser.js';
 
+const VALID_SCHEMA_TYPES = new Set([
+  'array',
+  'boolean',
+  'integer',
+  'null',
+  'number',
+  'object',
+  'string',
+]);
+
 export interface OperationEndpoint {
   baseUrl: string;
   path: string;
@@ -35,8 +45,8 @@ export class OpenApiSpecParser {
   @experimental
   public parse(openapiSpec: OpenAPIV3.Document): ParsedOperation[] {
     const resolvedSpec = this.resolveReferences(openapiSpec);
-    // Skipping sanitizeSchemaTypes for now unless we find it's needed for Gemini
-    return this.collectOperations(resolvedSpec);
+    const sanitizedSpec = this.sanitizeSchemaTypes(resolvedSpec);
+    return this.collectOperations(sanitizedSpec);
   }
 
   private resolveReferences(spec: OpenAPIV3.Document): OpenAPIV3.Document {
@@ -115,6 +125,72 @@ export class OpenApiSpecParser {
     };
 
     return recursiveResolve(specCopy, specCopy) as OpenAPIV3.Document;
+  }
+
+  private sanitizeSchemaTypes(
+    openapiSpec: OpenAPIV3.Document,
+  ): OpenAPIV3.Document {
+    const specCopy = JSON.parse(JSON.stringify(openapiSpec));
+
+    const sanitizeTypeField = (schemaDict: Record<string, unknown>) => {
+      if (!('type' in schemaDict)) return;
+
+      const typeValue = schemaDict['type'];
+      if (typeof typeValue === 'string') {
+        const normalizedType = typeValue.toLowerCase();
+        if (VALID_SCHEMA_TYPES.has(normalizedType)) {
+          schemaDict['type'] = normalizedType;
+        } else {
+          delete schemaDict['type'];
+        }
+        return;
+      }
+
+      if (Array.isArray(typeValue)) {
+        const validTypes: string[] = [];
+        for (const entry of typeValue) {
+          if (typeof entry !== 'string') continue;
+          const normalizedEntry = entry.toLowerCase();
+          if (
+            VALID_SCHEMA_TYPES.has(normalizedEntry) &&
+            !validTypes.includes(normalizedEntry)
+          ) {
+            validTypes.push(normalizedEntry);
+          }
+        }
+        if (validTypes.length > 0) {
+          schemaDict['type'] = validTypes;
+        } else {
+          delete schemaDict['type'];
+        }
+      }
+    };
+
+    const sanitizeRecursive = (obj: unknown, inSchema: boolean): unknown => {
+      if (typeof obj !== 'object' || obj === null) {
+        return obj;
+      }
+
+      if (Array.isArray(obj)) {
+        return obj.map((item) => sanitizeRecursive(item, inSchema));
+      }
+
+      const objRecord = obj as Record<string, unknown>;
+      if (inSchema) {
+        sanitizeTypeField(objRecord);
+      }
+
+      for (const [key, value] of Object.entries(objRecord)) {
+        const isSchemaContainer = key === 'schema' || key === 'schemas';
+        objRecord[key] = sanitizeRecursive(
+          value,
+          inSchema || isSchemaContainer,
+        );
+      }
+      return objRecord;
+    };
+
+    return sanitizeRecursive(specCopy, false) as OpenAPIV3.Document;
   }
 
   private collectOperations(spec: OpenAPIV3.Document): ParsedOperation[] {

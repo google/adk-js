@@ -318,4 +318,91 @@ describe('OpenApiSpecParser', () => {
       scheme: 'bearer',
     });
   });
+
+  it('should sanitize invalid schema types', () => {
+    const specWithInvalidType = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0'},
+      paths: {
+        '/test': {
+          get: {
+            operationId: 'testOp',
+            responses: {
+              '200': {
+                description: 'OK',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        invalidProp: {type: 'Any'},
+                        validProp: {type: 'string'},
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as unknown as OpenAPIV3.Document;
+
+    const parser = new OpenApiSpecParser();
+    const operations = parser.parse(specWithInvalidType);
+
+    expect(operations.length).toBe(1);
+    const schema = operations[0].operation.responses?.['200']?.content?.[
+      'application/json'
+    ]?.schema as OpenAPIV3.SchemaObject;
+    const invalidPropSchema = schema.properties?.[
+      'invalidProp'
+    ] as OpenAPIV3.SchemaObject;
+    const validPropSchema = schema.properties?.[
+      'validProp'
+    ] as OpenAPIV3.SchemaObject;
+    expect(invalidPropSchema.type).toBeUndefined();
+    expect(validPropSchema.type).toBe('string');
+  });
+
+  it('should sanitize invalid schema types in array', () => {
+    const specWithInvalidArrayType = {
+      openapi: '3.0.0',
+      info: {title: 'Test', version: '1.0'},
+      paths: {
+        '/test': {
+          get: {
+            operationId: 'testOp',
+            responses: {
+              '200': {
+                description: 'OK',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        multiProp: {type: ['string', 'Any', 'integer']},
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as unknown as OpenAPIV3.Document;
+
+    const parser = new OpenApiSpecParser();
+    const operations = parser.parse(specWithInvalidArrayType);
+
+    expect(operations.length).toBe(1);
+    const schema = operations[0].operation.responses?.['200']?.content?.[
+      'application/json'
+    ]?.schema as OpenAPIV3.SchemaObject;
+    const multiPropSchema = schema.properties?.[
+      'multiProp'
+    ] as OpenAPIV3.SchemaObject;
+    expect(multiPropSchema.type).toEqual(['string', 'integer']);
+  });
 });
