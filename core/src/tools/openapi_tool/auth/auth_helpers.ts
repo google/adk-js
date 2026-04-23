@@ -19,23 +19,29 @@ import {AuthCredential} from '../../../auth/auth_credential.js';
 export function applyCredential(
   url: string,
   headers: Record<string, string>,
-  credential: AuthCredential,
+  credential?: AuthCredential,
   authScheme?: OpenAPIV3.SecuritySchemeObject,
 ): string {
   if (!credential) return url;
 
-  if (credential.api_key) {
-    const inLocation = authScheme?.in;
-    const name = authScheme?.name || 'key';
+  if (credential.apiKey) {
+    let inLocation: string | undefined;
+    let name = 'key';
+
+    if (authScheme && authScheme.type === 'apiKey') {
+      const apiKeyScheme = authScheme as OpenAPIV3.ApiKeySecurityScheme;
+      inLocation = apiKeyScheme.in;
+      name = apiKeyScheme.name;
+    }
 
     if (inLocation === 'header') {
-      headers[name] = credential.api_key;
+      headers[name] = credential.apiKey;
     } else if (inLocation === 'query') {
       const separator = url.includes('?') ? '&' : '?';
-      url += `${separator}${name}=${encodeURIComponent(credential.api_key)}`;
+      url += `${separator}${name}=${encodeURIComponent(credential.apiKey)}`;
     } else {
       // Default to header Authorization if not specified or unknown location
-      headers['Authorization'] = credential.api_key;
+      headers['Authorization'] = credential.apiKey;
     }
   } else if (
     credential.http &&

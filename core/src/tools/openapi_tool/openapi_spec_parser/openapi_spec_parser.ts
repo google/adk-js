@@ -43,17 +43,23 @@ export class OpenApiSpecParser {
     const resolvedCache = new Map<string, unknown>();
     const specCopy = JSON.parse(JSON.stringify(spec)); // Deep copy
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const resolveRef = (refString: string, currentDoc: any) => {
+    const resolveRef = (
+      refString: string,
+      currentDoc: OpenAPIV3.Document,
+    ): unknown => {
       const parts = refString.split('/');
       if (parts[0] !== '#') {
         throw new Error(`External references not supported: ${refString}`);
       }
 
-      let current = currentDoc;
+      let current: unknown = currentDoc;
       for (const part of parts.slice(1)) {
-        if (part in current) {
-          current = current[part];
+        if (
+          typeof current === 'object' &&
+          current !== null &&
+          part in current
+        ) {
+          current = (current as Record<string, unknown>)[part];
         } else {
           return undefined;
         }
@@ -61,12 +67,11 @@ export class OpenApiSpecParser {
       return current;
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const recursiveResolve = (
-      obj: any,
-      currentDoc: any,
+      obj: unknown,
+      currentDoc: OpenAPIV3.Document,
       seenRefs = new Set<string>(),
-    ): any => {
+    ): unknown => {
       if (typeof obj !== 'object' || obj === null) {
         return obj;
       }
@@ -75,12 +80,13 @@ export class OpenApiSpecParser {
         return obj.map((item) => recursiveResolve(item, currentDoc, seenRefs));
       }
 
-      if ('$ref' in obj && typeof obj['$ref'] === 'string') {
-        const refString = obj['$ref'];
+      const objRecord = obj as Record<string, unknown>;
+      if ('$ref' in objRecord && typeof objRecord['$ref'] === 'string') {
+        const refString = objRecord['$ref'] as string;
 
         if (seenRefs.has(refString) && !resolvedCache.has(refString)) {
           // Circular reference detected. Break cycle.
-          const copy = {...obj};
+          const copy = {...objRecord};
           delete copy['$ref'];
           return copy;
         }
@@ -102,13 +108,13 @@ export class OpenApiSpecParser {
       }
 
       const newDict: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(obj)) {
+      for (const [key, value] of Object.entries(objRecord)) {
         newDict[key] = recursiveResolve(value, currentDoc, seenRefs);
       }
       return newDict;
     };
 
-    return recursiveResolve(specCopy, specCopy);
+    return recursiveResolve(specCopy, specCopy) as OpenAPIV3.Document;
   }
 
   private collectOperations(spec: OpenAPIV3.Document): ParsedOperation[] {
