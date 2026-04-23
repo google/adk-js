@@ -108,7 +108,8 @@ export class RestApiTool extends BaseTool {
     const authHandler = ToolAuthHandler.fromToolContext(
       context,
       this.authScheme,
-      undefined, // We rely on context to provide credential
+      this.authCredential,
+      {credentialKey: this.credentialKey},
     );
 
     const authResult = await authHandler.prepareAuthCredentials();

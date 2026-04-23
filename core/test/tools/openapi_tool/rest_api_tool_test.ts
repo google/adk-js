@@ -460,4 +460,93 @@ describe('RestApiTool', () => {
       error: 'Failed to execute API call: Network error',
     });
   });
+
+  it('should apply auth credentials to fetch request', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const authScheme: OpenAPIV3.SecuritySchemeObject = {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    };
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+      authScheme,
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    const mockAuthHandler = {
+      prepareAuthCredentials: async () => ({
+        state: 'done',
+        authCredential: {apiKey: 'secret_key'},
+      }),
+    };
+    vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue(
+      mockAuthHandler as unknown as ToolAuthHandler,
+    );
+
+    await tool.runAsync({
+      args: {},
+      toolContext: {} as unknown as Context,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({'X-API-Key': 'secret_key'}),
+      }),
+    );
+  });
+
+  it('should fallback to JSON if no requestBody in spec', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'POST',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    (
+      tool as unknown as {operationParser: {getParameters: () => unknown[]}}
+    ).operationParser.getParameters = () => [
+      {name: 'body', originalName: 'body', paramLocation: 'body'},
+    ];
+
+    await tool.runAsync({
+      args: {body: {foo: 'bar'}},
+      toolContext: {} as unknown as Context,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({'Content-Type': 'application/json'}),
+        body: JSON.stringify({foo: 'bar'}),
+      }),
+    );
+  });
 });
