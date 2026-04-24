@@ -7,9 +7,9 @@
 import {Session} from '@google/adk';
 import camelcaseKeys from 'camelcase-keys';
 import fg from 'fast-glob';
+import {load} from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {parse} from 'yaml';
 import {Recordings, TestInfo, TestSpec} from '../integration/test_types.js';
 
 /**
@@ -44,16 +44,17 @@ export async function batchLoadYamlTestDefs(
     const specFile = path.posix.join(baseDir, 'spec.yaml');
     const filePath = specFile;
     const content = await fs.readFile(filePath, 'utf-8');
-    const testSpec = camelcaseKeys(parse(content), {
+
+    const testSpec = camelcaseKeys(load(content) as object, {
       deep: true,
-    }) as TestSpec;
+    }) as unknown as TestSpec;
 
     // Session file
     const sessionFile = path.posix.join(baseDir, 'generated-session.yaml');
     const sessionContent = await fs.readFile(sessionFile, 'utf-8');
-    const session = camelcaseKeys(parse(sessionContent), {
+    const session = camelcaseKeys(load(sessionContent) as object, {
       deep: true,
-    }) as Session;
+    }) as unknown as Session;
 
     // Recordings file
     const recordingsFile = path.posix.join(
@@ -61,9 +62,9 @@ export async function batchLoadYamlTestDefs(
       'generated-recordings.yaml',
     );
     const recordingsContent = await fs.readFile(recordingsFile, 'utf-8');
-    const recordings = camelcaseKeys(parse(recordingsContent), {
+    const recordings = camelcaseKeys(load(recordingsContent) as object, {
       deep: true,
-    }) as Recordings;
+    }) as unknown as Recordings;
 
     // Make test names unique by including relative file path from given root dir
     const normalizedDir = directory.replaceAll('\\', '/');
