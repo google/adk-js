@@ -7,7 +7,7 @@
 import {Session} from '@google/adk';
 import camelcaseKeys from 'camelcase-keys';
 import fg from 'fast-glob';
-import {load} from 'js-yaml';
+import yaml from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {Recordings, TestInfo, TestSpec} from '../integration/test_types.js';
@@ -44,16 +44,24 @@ export async function batchLoadYamlTestDefs(
     const specFile = path.posix.join(baseDir, 'spec.yaml');
     const filePath = specFile;
     const content = await fs.readFile(filePath, 'utf-8');
-    const testSpec = camelcaseKeys(load(content) as object, {
+    const parsedSpec = yaml.load(content);
+    if (typeof parsedSpec !== 'object' || parsedSpec === null) {
+      throw new Error('Spec file must be a YAML mapping');
+    }
+    const testSpec = camelcaseKeys(parsedSpec, {
       deep: true,
-    }) as unknown as TestSpec;
+    }) as TestSpec;
 
     // Session file
     const sessionFile = path.posix.join(baseDir, 'generated-session.yaml');
     const sessionContent = await fs.readFile(sessionFile, 'utf-8');
-    const session = camelcaseKeys(load(sessionContent) as object, {
+    const parsedSession = yaml.load(sessionContent);
+    if (typeof parsedSession !== 'object' || parsedSession === null) {
+      throw new Error('Session file must be a YAML mapping');
+    }
+    const session = camelcaseKeys(parsedSession, {
       deep: true,
-    }) as unknown as Session;
+    }) as Session;
 
     // Recordings file
     const recordingsFile = path.posix.join(
@@ -61,9 +69,13 @@ export async function batchLoadYamlTestDefs(
       'generated-recordings.yaml',
     );
     const recordingsContent = await fs.readFile(recordingsFile, 'utf-8');
-    const recordings = camelcaseKeys(load(recordingsContent) as object, {
+    const parsedRecordings = yaml.load(recordingsContent);
+    if (typeof parsedRecordings !== 'object' || parsedRecordings === null) {
+      throw new Error('Recording file must be a YAML mapping');
+    }
+    const recordings = camelcaseKeys(parsedRecordings, {
       deep: true,
-    }) as unknown as Recordings;
+    }) as Recordings;
 
     // Make test names unique by including relative file path from given root dir
     const normalizedDir = directory.replaceAll('\\', '/');
