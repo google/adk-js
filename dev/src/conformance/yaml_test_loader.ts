@@ -44,7 +44,6 @@ export async function batchLoadYamlTestDefs(
     const specFile = path.posix.join(baseDir, 'spec.yaml');
     const filePath = specFile;
     const content = await fs.readFile(filePath, 'utf-8');
-
     const testSpec = camelcaseKeys(load(content) as object, {
       deep: true,
     }) as unknown as TestSpec;
