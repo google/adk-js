@@ -285,7 +285,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       });
 
       const memoryRevisionLabels = this.revisionLabelsForMemory(memory);
-      const config = this.buildCreateMemoryConfig({
+      const config = buildCreateMemoryConfig({
         customMetadata: memoryMetadata,
         memoryRevisionLabels,
       });
@@ -367,7 +367,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       if (key === 'metadata') {
         if (value === null || value === undefined) continue;
         if (typeof value === 'object' && !Array.isArray(value)) {
-          config['metadata'] = this.buildVertexMetadata(
+          config['metadata'] = buildVertexMetadata(
             value as Record<string, unknown>,
           );
         } else {
@@ -392,94 +392,16 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     if (Object.keys(metadataByKey).length > 0) {
       const existingMetadata = config['metadata'];
       if (!existingMetadata) {
-        config['metadata'] = this.buildVertexMetadata(metadataByKey);
+        config['metadata'] = buildVertexMetadata(metadataByKey);
       } else {
         config['metadata'] = {
           ...existingMetadata,
-          ...this.buildVertexMetadata(metadataByKey),
+          ...buildVertexMetadata(metadataByKey),
         };
       }
     }
 
     return config as GenerateAgentEngineMemoriesConfig;
-  }
-
-  private buildCreateMemoryConfig(params: {
-    customMetadata?: Record<string, unknown>;
-    memoryRevisionLabels?: Record<string, string>;
-  }): AgentEngineMemoryConfig {
-    const config: Record<string, unknown> = {waitForCompletion: false};
-
-    if (params.customMetadata) {
-      logger.debug(
-        `Memory creation metadata: ${JSON.stringify(params.customMetadata)}`,
-      );
-    }
-
-    const metadataByKey: Record<string, unknown> = {};
-    const customRevisionLabels: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(params.customMetadata || {})) {
-      if (key === ENABLE_CONSOLIDATION_KEY) {
-        continue;
-      }
-      if (key === 'metadata') {
-        if (value === null || value === undefined) continue;
-        if (typeof value === 'object' && !Array.isArray(value)) {
-          config['metadata'] = this.buildVertexMetadata(
-            value as Record<string, unknown>,
-          );
-        } else {
-          logger.warn(
-            'Ignoring metadata because customMetadata["metadata"] is not an object.',
-          );
-        }
-        continue;
-      }
-      if (key === 'revisionLabels') {
-        if (value === null || value === undefined) continue;
-        const extractedLabels = this.extractRevisionLabels(
-          value,
-          'customMetadata["revisionLabels"]',
-        );
-        if (extractedLabels) {
-          Object.assign(customRevisionLabels, extractedLabels);
-        }
-        continue;
-      }
-
-      const knownFields = CREATE_MEMORY_KNOWN_FIELDS;
-
-      if (knownFields.includes(key)) {
-        if (value !== null && value !== undefined) {
-          config[key] = value;
-        }
-      } else {
-        metadataByKey[key] = value;
-      }
-    }
-
-    if (Object.keys(metadataByKey).length > 0) {
-      const existingMetadata = config['metadata'];
-      if (!existingMetadata) {
-        config['metadata'] = this.buildVertexMetadata(metadataByKey);
-      } else {
-        config['metadata'] = {
-          ...existingMetadata,
-          ...this.buildVertexMetadata(metadataByKey),
-        };
-      }
-    }
-
-    const revisionLabels = {
-      ...customRevisionLabels,
-      ...params.memoryRevisionLabels,
-    };
-    if (Object.keys(revisionLabels).length > 0) {
-      config['revisionLabels'] = revisionLabels;
-    }
-
-    return config as AgentEngineMemoryConfig;
   }
 
   private normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
@@ -559,32 +481,6 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return revisionLabels;
   }
 
-  private extractRevisionLabels(
-    value: unknown,
-    source: string,
-  ): Record<string, string> | undefined {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      logger.warn(`Ignoring ${source} because it is not an object.`);
-      return undefined;
-    }
-
-    const revisionLabels: Record<string, string> = {};
-    for (const [key, labelValue] of Object.entries(value)) {
-      if (typeof labelValue !== 'string') {
-        logger.warn(
-          `Ignoring revision label ${key} from ${source} because its value is not a string.`,
-        );
-        continue;
-      }
-      revisionLabels[key] = labelValue;
-    }
-
-    if (Object.keys(revisionLabels).length === 0) {
-      return undefined;
-    }
-    return revisionLabels;
-  }
-
   private isConsolidationEnabled(
     customMetadata?: Record<string, unknown>,
   ): boolean {
@@ -616,17 +512,121 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
     return memoryBatches;
   }
+}
 
-  private buildVertexMetadata(
-    metadataByKey: Record<string, unknown>,
-  ): Record<string, MemoryMetadataValue> {
-    const vertexMetadata: Record<string, MemoryMetadataValue> = {};
-    for (const [key, value] of Object.entries(metadataByKey)) {
-      const convertedValue = toVertexMetadataValue(key, value);
-      if (convertedValue !== undefined) {
-        vertexMetadata[key] = convertedValue;
-      }
-    }
-    return vertexMetadata;
+// Standalone utility functions
+
+function buildCreateMemoryConfig(params: {
+  customMetadata?: Record<string, unknown>;
+  memoryRevisionLabels?: Record<string, string>;
+}): AgentEngineMemoryConfig {
+  const config: Record<string, unknown> = {waitForCompletion: false};
+
+  if (params.customMetadata) {
+    logger.debug(
+      `Memory creation metadata: ${JSON.stringify(params.customMetadata)}`,
+    );
   }
+
+  const metadataByKey: Record<string, unknown> = {};
+  const customRevisionLabels: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(params.customMetadata || {})) {
+    if (key === ENABLE_CONSOLIDATION_KEY) {
+      continue;
+    }
+    if (key === 'metadata') {
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        config['metadata'] = buildVertexMetadata(
+          value as Record<string, unknown>,
+        );
+      } else {
+        logger.warn(
+          'Ignoring metadata because customMetadata["metadata"] is not an object.',
+        );
+      }
+      continue;
+    }
+    if (key === 'revisionLabels') {
+      if (value === null || value === undefined) continue;
+      const extractedLabels = extractRevisionLabels(
+        value,
+        'customMetadata["revisionLabels"]',
+      );
+      if (extractedLabels) {
+        Object.assign(customRevisionLabels, extractedLabels);
+      }
+      continue;
+    }
+
+    if (CREATE_MEMORY_KNOWN_FIELDS.includes(key)) {
+      if (value !== null && value !== undefined) {
+        config[key] = value;
+      }
+    } else {
+      metadataByKey[key] = value;
+    }
+  }
+
+  if (Object.keys(metadataByKey).length > 0) {
+    const existingMetadata = config['metadata'];
+    if (!existingMetadata) {
+      config['metadata'] = buildVertexMetadata(metadataByKey);
+    } else {
+      config['metadata'] = {
+        ...existingMetadata,
+        ...buildVertexMetadata(metadataByKey),
+      };
+    }
+  }
+
+  const revisionLabels = {
+    ...customRevisionLabels,
+    ...params.memoryRevisionLabels,
+  };
+  if (Object.keys(revisionLabels).length > 0) {
+    config['revisionLabels'] = revisionLabels;
+  }
+
+  return config as AgentEngineMemoryConfig;
+}
+
+function extractRevisionLabels(
+  value: unknown,
+  source: string,
+): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    logger.warn(`Ignoring ${source} because it is not an object.`);
+    return undefined;
+  }
+
+  const revisionLabels: Record<string, string> = {};
+  for (const [key, labelValue] of Object.entries(value)) {
+    if (typeof labelValue !== 'string') {
+      logger.warn(
+        `Ignoring revision label ${key} from ${source} because its value is not a string.`,
+      );
+      continue;
+    }
+    revisionLabels[key] = labelValue;
+  }
+
+  if (Object.keys(revisionLabels).length === 0) {
+    return undefined;
+  }
+  return revisionLabels;
+}
+
+function buildVertexMetadata(
+  metadataByKey: Record<string, unknown>,
+): Record<string, MemoryMetadataValue> {
+  const vertexMetadata: Record<string, MemoryMetadataValue> = {};
+  for (const [key, value] of Object.entries(metadataByKey)) {
+    const convertedValue = toVertexMetadataValue(key, value);
+    if (convertedValue !== undefined) {
+      vertexMetadata[key] = convertedValue;
+    }
+  }
+  return vertexMetadata;
 }
