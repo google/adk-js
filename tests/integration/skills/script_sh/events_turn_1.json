@@ -1,0 +1,103 @@
+[
+  {
+    "invocationId": "e-558c741d-cdc0-4407-8310-69d618b6d07b",
+    "author": "test_sh_skill_agent",
+    "id": "Zjm99vKS",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1776310700793,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "list_skills",
+            "args": {},
+            "id": "dxa86j2m"
+          },
+          "thoughtSignature": "EqAHCp0HAb4+9vuAM3bs+3NVfYtBf66O6A64jwxaKuhSQa74IAwOYOwP9gLVYvEX75dEdsbUr+iAfz+C+y3K9+4ddS2WgcdQs7PGT+X+aGta3NHxlAfhZpQkakchWGGcTLjPWA0OQNeKh3IMBzstay7HO2HJ2SoYPGHH/cgMCTe5vEOm607MpiBL6xvL1RX8kf64pG30OWmySUZJLeGN54CKYCtf8t1zEGMAAIRhIZPS1zgpYbm2t6MnH+I/FzG4p8bL2B2y4in+KT9AuE1YI4/E0s0CSFj4bvvQe7awvNNUlib7LJK4QbEHJizPNyCh8iixTfD4FqtUoVnkH+wnbSjGZ55UWLts6y2GMIJC0NhREIFmRNB29pi79aVQvA7FymkXX/5sekyb+gkHRRfzEcwSf4/djXsc+YyQzzSlv1SDh3/hYzaTFiDyPsYSCoUzcGi22fieRkaLDegkzZ7Xyl8l9dixZIwUtHmvBnTYwTWdzOEEEC8wByt+goD0mqBLqool7KujbWADFN6/buOZjyqYR2SZ75xdWj5TtZ+TIyck2I4u2m9LG476gF231beVnEY+prNaqgKzJ8bE09A1kGBytxti7WVo/4DM07f4JGW+pWun6nOIJAYWLOhNy3CRdQYq7MQJbQ08JYMb4Jj90KjKz3QND2xvptMjydoERR3TbWIDk7ZCZVsuNSFJDwCNijmOaASIROdNNMoUkHAAud7D/6VpFiFdkbEVGzBoMh15W2banhYByyLy9HpW6LP2Xm1R4Z7CH86Hg/3ZmyTs2K1G1jxLK4hvYe3f3x0zSp9Le+rfZUxL8DWoeHWGzmzcRK17XDTftShIHa3a33KWBJePZ+P/wDGAChEdk80bUXmHjpQiY5Jo/Cllm9DmVkeLrf/j427hozSLhJaAQExf0kMZWgrqaK8zDJnkNXr8Hw61WY8S5J/NlRntI8ZXdOkl8/ebxgRGegmhTA6O37fwhh9TcoHd6/YV6irp2Oii7cPxkvIupQ5SMxphNwD2UvZDMRaf3BPvqA/QwjtP0TW5zsvMM0Zmgb999XMc+pkDphu6qRIk8EoaexolF2AKgGPxSADrJvYZ9e9UJlcm5/VsUvw15i/Hj2x6Uj3qd0IIcnjbkhzA9SUIDvrA/QHD9n1LojeTFRdjLgco57VsRSjKCAj+SLpihQkuBOFbMRyWnp17O7OcXxTZJ3EAtGRmNtjYQtcT+l9tU0/liKvDUVBuVJ7BGw=="
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 536,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 791,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 536
+        }
+      ],
+      "thoughtsTokenCount": 245
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-558c741d-cdc0-4407-8310-69d618b6d07b",
+    "author": "test_sh_skill_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "dxa86j2m",
+            "name": "list_skills",
+            "response": {
+              "result": "<available_skills>\n  <skill>\n    <name>gh-issues</name>\n    <description>Fetch GitHub issues, spawn sub-agents to implement fixes and open PRs, then monitor and address PR review comments. Usage: /gh-issues [owner/repo] [--label bug] [--limit 5] [--milestone v1.0] [--assignee @me] [--fork user/repo] [--watch] [--interval 5] [--reviews-only] [--cron] [--dry-run] [--model glm-5] [--notify-channel -1002381931352]</description>\n  </skill>\n</available_skills>"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "hQXsUpiP",
+    "longRunningToolIds": [],
+    "timestamp": 1776310705312
+  },
+  {
+    "invocationId": "e-558c741d-cdc0-4407-8310-69d618b6d07b",
+    "author": "test_sh_skill_agent",
+    "id": "W5JX8U5C",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1776310705313,
+    "content": {
+      "parts": [
+        {
+          "text": "I am an agent designed to test skills. \n\nCurrently, I have the following skill available:\n\n*   **gh-issues**: This skill allows me to fetch GitHub issues, spawn sub-agents to implement fixes and open Pull Requests (PRs), and monitor and address PR review comments. It supports various options like filtering by label, milestone, or assignee, using a fork, watching for reviews, and running on a schedule.\n\nIf you have a GitHub repository with issues you'd like me to look at, or if you'd like to test this skill in any other way, just let me know!",
+          "thoughtSignature": "EpoCCpcCAb4+9vsvWgqZA72piposXyi4CIzBxPuAPyMjUzqibVzd2madIlzjCGW+yCJYO8dYPw/qXaZVn0Huy8lrt14d2WrUEtq9U9UWs7bop8T61iIKqjfiPi5hWAieBo3sZQ/G4VEzruxk4VGvCIPWmi+kfD2bccFKryb8Bnj47mYx8mvO9vb+FshAdTlcTq4mmgwjb+UYihy+AGr3nbmUc4DjvoeaqDqoAdWXPt7WL5LW8q7SqYbD50cmqnj0W1MoX6kemubi0QHID91Jevs5Dc5NTB+isZFUNzeBBNTWV3bHICaPO6E9jAfhm+ZnZYFUhmjG3tRKGPHMh6ZlZhwiJCCLZHkeh0k63RrrY9dJZihmThV+trUN+Mur"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 708,
+      "candidatesTokenCount": 125,
+      "totalTokenCount": 892,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 708
+        }
+      ],
+      "thoughtsTokenCount": 59
+    },
+    "finishReason": "STOP"
+  }
+]

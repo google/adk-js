@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ephemeral Entanglement</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-family: sans-serif;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+        .control-group { margin-bottom: 10px; }
+        label { display: inline-block; width: 120px; font-size: 12px; }
+        input[type="range"] { width: 150px; vertical-align: middle; }
+        button { background: #333; color: #fff; border: 1px solid #555; padding: 5px 10px; cursor: pointer; }
+        button:hover { background: #555; }
+    </style>
+    <!-- Load p5.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <div id="controls">
+        <div class="control-group">
+            <label for="particleCount">Particle Count</label>
+            <input type="range" id="particleCount" min="100" max="1000" value="400">
+        </div>
+        <div class="control-group">
+            <label for="connectionRadius">Connection Radius</label>
+            <input type="range" id="connectionRadius" min="10" max="150" value="70">
+        </div>
+        <div class="control-group">
+            <label for="noiseScale">Noise Scale</label>
+            <input type="range" id="noiseScale" min="1" max="100" value="20">
+        </div>
+        <button id="resetBtn">Regenerate Seed</button>
+    </div>
+    <script src="sketch.js"></script>
+</body>
+</html>

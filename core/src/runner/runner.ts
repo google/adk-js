@@ -150,6 +150,7 @@ export class Runner {
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
     runConfig?: RunConfig;
+    abortSignal?: AbortSignal;
   }): AsyncGenerator<Event, void, undefined> {
     const {userId, sessionId, stateDelta} = params;
     const runConfig = createRunConfig(params.runConfig);
@@ -170,6 +171,10 @@ export class Runner {
             userId,
             sessionId,
           });
+
+          if (params.abortSignal?.aborted) {
+            return;
+          }
 
           if (!session) {
             if (!this.appName) {
@@ -206,6 +211,7 @@ export class Runner {
             userContent: newMessage,
             runConfig,
             pluginManager: this.pluginManager,
+            abortSignal: params.abortSignal,
           });
 
           // =========================================================================
@@ -216,6 +222,11 @@ export class Runner {
               userMessage: newMessage,
               invocationContext,
             });
+
+          if (params.abortSignal?.aborted) {
+            return;
+          }
+
           if (pluginUserMessage) {
             newMessage = pluginUserMessage as Content;
           }
@@ -238,6 +249,9 @@ export class Runner {
                 session.id,
                 newMessage,
               );
+              if (params.abortSignal?.aborted) {
+                return;
+              }
             }
             // Append the user message to the session with optional state delta.
             await this.sessionService.appendEvent({
@@ -251,6 +265,9 @@ export class Runner {
                 content: newMessage,
               }),
             });
+            if (params.abortSignal?.aborted) {
+              return;
+            }
           }
 
           // =========================================================================
@@ -273,6 +290,9 @@ export class Runner {
               await this.pluginManager.runBeforeRunCallback({
                 invocationContext,
               });
+            if (params.abortSignal?.aborted) {
+              return;
+            }
 
             if (beforeRunCallbackResponse) {
               const earlyExitEvent = createEvent({
@@ -286,12 +306,20 @@ export class Runner {
                 session,
                 event: earlyExitEvent,
               });
+              if (params.abortSignal?.aborted) {
+                return;
+              }
+
               yield earlyExitEvent;
             } else {
               // Step 2: Otherwise continue with normal execution
               for await (const event of invocationContext.agent.runAsync(
                 invocationContext,
               )) {
+                if (params.abortSignal?.aborted) {
+                  return;
+                }
+
                 if (!event.partial) {
                   await this.sessionService.appendEvent({session, event});
                 }
@@ -301,6 +329,10 @@ export class Runner {
                     invocationContext,
                     event,
                   });
+                if (params.abortSignal?.aborted) {
+                  return;
+                }
+
                 if (modifiedEvent) {
                   yield modifiedEvent;
                 } else {
@@ -309,6 +341,9 @@ export class Runner {
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
               await this.pluginManager.runAfterRunCallback({invocationContext});
+              if (params.abortSignal?.aborted) {
+                return;
+              }
             }
           }
         },

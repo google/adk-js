@@ -69,6 +69,10 @@ export class LoopAgent extends BaseAgent {
       for (const subAgent of this.subAgents) {
         let shouldExit = false;
         for await (const event of subAgent.runAsync(context)) {
+          if (context.abortSignal?.aborted) {
+            return;
+          }
+
           yield event;
 
           if (event.actions.escalate) {

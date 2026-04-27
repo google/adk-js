@@ -4,9 +4,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Gemini, GeminiParams, geminiInitParams, version} from '@google/adk';
-import {HttpOptions} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {
+  Gemini,
+  GeminiParams,
+  LlmRequest,
+  geminiInitParams,
+  version,
+} from '@google/adk';
+import {GenerateContentResponse, GoogleGenAI, HttpOptions} from '@google/genai';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+
+vi.mock('@google/genai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@google/genai')>();
+  return {
+    ...actual,
+    GoogleGenAI: vi.fn().mockImplementation((options) => ({
+      apiClient: {
+        clientOptions: {
+          httpOptions: options.httpOptions,
+        },
+      },
+      models: {
+        generateContentStream: vi.fn(),
+        generateContent: vi.fn(),
+      },
+      vertexai: options.vertexai || false,
+    })),
+  };
+});
 
 class TestGemini extends Gemini {
   constructor(params: GeminiParams) {
@@ -82,6 +107,132 @@ describe('GoogleLlm', () => {
     expect(liveOptions.apiVersion).toBeDefined();
   });
 
+  describe('generateContentAsync streaming thoughtSignature propagation', () => {
+    function makeStreamingChunk(
+      parts: Record<string, unknown>[],
+    ): GenerateContentResponse {
+      const response = new GenerateContentResponse();
+      response.candidates = [
+        {
+          content: {
+            role: 'model',
+            parts:
+              parts as GenerateContentResponse['candidates'][0]['content']['parts'],
+          },
+        },
+      ];
+      return response;
+    }
+
+    class GeminiWithStreamingChunks extends Gemini {
+      private readonly _chunks: GenerateContentResponse[];
+
+      constructor(chunks: GenerateContentResponse[]) {
+        super({apiKey: 'test-key'});
+        this._chunks = chunks;
+      }
+
+      override get apiClient(): GoogleGenAI {
+        const chunks = this._chunks;
+        return {
+          models: {
+            generateContentStream: async function () {
+              return (async function* () {
+                for (const chunk of chunks) {
+                  yield chunk;
+                }
+              })();
+            },
+          },
+          vertexai: false,
+        } as unknown as GoogleGenAI;
+      }
+    }
+
+    it('should propagate thoughtSignature to subsequent function call parts missing it', async () => {
+      const signature = 'test-thought-signature-abc123';
+
+      // Chunk 1: function call WITH thoughtSignature
+      const chunk1 = makeStreamingChunk([
+        {
+          functionCall: {name: 'tool_a', args: {q: '1'}},
+          thoughtSignature: signature,
+        },
+      ]);
+      // Chunk 2: function call WITHOUT thoughtSignature
+      const chunk2 = makeStreamingChunk([
+        {functionCall: {name: 'tool_b', args: {q: '2'}}},
+      ]);
+      // Chunk 3: function call WITHOUT thoughtSignature
+      const chunk3 = makeStreamingChunk([
+        {functionCall: {name: 'tool_c', args: {q: '3'}}},
+      ]);
+
+      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2, chunk3]);
+      const request: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses = [];
+      for await (const response of gemini.generateContentAsync(request, true)) {
+        responses.push(response);
+      }
+
+      // All function call parts should have the thoughtSignature
+      const functionCallResponses = responses.filter((r) =>
+        r.content?.parts?.some((p) => p.functionCall),
+      );
+
+      expect(functionCallResponses).toHaveLength(3);
+      for (const response of functionCallResponses) {
+        for (const part of response.content!.parts!) {
+          if (part.functionCall) {
+            expect(part.thoughtSignature).toBe(signature);
+          }
+        }
+      }
+    });
+
+    it('should not set thoughtSignature when no function call has one', async () => {
+      // All chunks lack thoughtSignature
+      const chunk1 = makeStreamingChunk([
+        {functionCall: {name: 'tool_a', args: {q: '1'}}},
+      ]);
+      const chunk2 = makeStreamingChunk([
+        {functionCall: {name: 'tool_b', args: {q: '2'}}},
+      ]);
+
+      const gemini = new GeminiWithStreamingChunks([chunk1, chunk2]);
+      const request: LlmRequest = {
+        contents: [{role: 'user', parts: [{text: 'do stuff'}]}],
+        config: {},
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const responses = [];
+      for await (const response of gemini.generateContentAsync(request, true)) {
+        responses.push(response);
+      }
+
+      const functionCallResponses = responses.filter((r) =>
+        r.content?.parts?.some((p) => p.functionCall),
+      );
+
+      expect(functionCallResponses).toHaveLength(2);
+      for (const response of functionCallResponses) {
+        for (const part of response.content!.parts!) {
+          if (part.functionCall) {
+            expect(part.thoughtSignature).toBeUndefined();
+          }
+        }
+      }
+    });
+  });
+
   describe('geminiInitParams', () => {
     it('should initialize params for Gemini', () => {
       const input = {
@@ -154,6 +305,71 @@ describe('GoogleLlm', () => {
         location: 'us-central1',
       };
       expect(() => geminiInitParams(input)).toThrow(/VertexAI project/);
+    });
+  });
+
+  describe('generateContentAsync', () => {
+    it('should pass abortSignal to generateContentStream', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const abortController = new AbortController();
+      const signal = abortController.signal;
+
+      const mockStreamResult = [
+        {candidates: [{content: {parts: [{text: 'response'}]}}]},
+      ];
+
+      const generateContentStreamMock = vi
+        .fn()
+        .mockResolvedValue(mockStreamResult);
+      llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+      const llmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const generator = llm.generateContentAsync(llmRequest, true, signal);
+      await generator.next();
+
+      expect(generateContentStreamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            abortSignal: signal,
+          }),
+        }),
+      );
+    });
+
+    it('should throw error when stream is aborted', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+      const abortController = new AbortController();
+      const signal = abortController.signal;
+
+      const generateContentStreamMock = vi
+        .fn()
+        .mockImplementation(async function* () {
+          yield {candidates: [{content: {parts: [{text: 'response1'}]}}]};
+          if (signal.aborted) {
+            throw new Error('Aborted');
+          }
+          yield {candidates: [{content: {parts: [{text: 'response2'}]}}]};
+        });
+      llm.apiClient.models.generateContentStream = generateContentStreamMock;
+
+      const llmRequest = {
+        contents: [{role: 'user', parts: [{text: 'hello'}]}],
+        liveConnectConfig: {},
+        toolsDict: {},
+      };
+
+      const generator = llm.generateContentAsync(llmRequest, true, signal);
+
+      await generator.next();
+
+      abortController.abort();
+
+      await expect(generator.next()).rejects.toThrow('Aborted');
     });
   });
 });
