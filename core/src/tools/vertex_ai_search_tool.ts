@@ -97,7 +97,7 @@ export class VertexAiSearchTool extends BaseTool {
    * configuration based on the context (e.g., set filter based on session
    * state).
    */
-  _buildVertexAiSearchConfig(
+  protected buildVertexAiSearchConfig(
     _readonlyContext: ReadonlyContext,
   ): VertexAISearchConfig {
     return {
@@ -134,7 +134,7 @@ export class VertexAiSearchTool extends BaseTool {
       }
 
       // Build the search config (can be overridden by subclasses)
-      const vertexAiSearchConfig = this._buildVertexAiSearchConfig(toolContext);
+      const vertexAiSearchConfig = this.buildVertexAiSearchConfig(toolContext);
 
       // Format dataStoreSpecs concisely for logging
       let specsInfo: string | undefined;
