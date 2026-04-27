@@ -490,7 +490,7 @@ describe('VertexAiSessionService', () => {
 
       expect(mockClient.listInternal).toHaveBeenCalledWith({
         name: 'reasoningEngines/12345',
-        config: {filter: 'userId="testUser"'},
+        config: {filter: 'user_id="testUser"'},
       });
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].id).toBe('test-list-1');
