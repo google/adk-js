@@ -7,6 +7,9 @@
 import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
+  AppendAgentEngineSessionEventConfig,
+  AppendAgentEngineSessionEventRequestParameters,
+  EventMetadata,
   Session as VertexAiSession,
   SessionEvent as VertexAiSessionEvent,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
@@ -19,6 +22,7 @@ import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
 import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
 
+import {partialCopy} from '../utils/partial_copy.js';
 import {
   AppendEventRequest,
   BaseSessionService,
@@ -303,55 +307,41 @@ export class VertexAiSessionService extends BaseSessionService {
       customMetadata._usage_metadata = event.usageMetadata;
     }
 
-    const {
-      content,
-      errorCode,
-      errorMessage,
-      partial,
-      turnComplete,
-      interrupted,
-      branch,
-      longRunningToolIds,
-      groundingMetadata,
-    } = event;
+    const config = partialCopy<AppendAgentEngineSessionEventConfig>(event, [
+      'content',
+      'actions',
+      'errorCode',
+      'errorMessage',
+    ]);
 
-    const actions = event.actions
-      ? {
-          skipSummarization: event.actions.skipSummarization,
-          stateDelta: event.actions.stateDelta,
-          artifactDelta: event.actions.artifactDelta,
-          transferAgent: event.actions.transferToAgent,
-          escalate: event.actions.escalate,
-          requestedAuthConfigs: event.actions.requestedAuthConfigs,
-        }
-      : undefined;
+    config.eventMetadata = {
+      ...partialCopy<EventMetadata>(event, [
+        'partial',
+        'turnComplete',
+        'interrupted',
+        'branch',
+        'longRunningToolIds',
+        'groundingMetadata',
+      ]),
+      customMetadata:
+        Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
+    };
 
-    const config: Record<string, unknown> = {
-      content,
-      actions,
-      errorCode,
-      errorMessage,
-      eventMetadata: {
-        partial,
-        turnComplete,
-        interrupted,
-        branch,
-        customMetadata:
-          Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
-        longRunningToolIds,
-        groundingMetadata,
-      },
-      rawEvent: JSON.parse(JSON.stringify(event)) as Record<string, unknown>,
+    config.rawEvent = JSON.parse(JSON.stringify(event)) as Record<
+      string,
+      unknown
+    >;
+
+    const params: AppendAgentEngineSessionEventRequestParameters = {
+      name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
+      author: event.author || 'user',
+      invocationId: event.invocationId || `inv-${Date.now()}`,
+      timestamp: new Date(event.timestamp).toISOString(),
+      config,
     };
 
     try {
-      await this.sessions.events.append({
-        name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
-        author: event.author || 'user',
-        invocationId: event.invocationId || `inv-${Date.now()}`,
-        timestamp: new Date(event.timestamp).toISOString(),
-        config,
-      });
+      await this.sessions.events.append(params);
     } catch (error) {
       logger.warn(
         'Failed to append event with rawEvent, falling back...',

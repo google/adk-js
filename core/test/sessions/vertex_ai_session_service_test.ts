@@ -591,11 +591,9 @@ describe('VertexAiSessionService', () => {
           content: {role: 'model', parts: [{text: 'hello'}]},
           actions: {
             artifactDelta: {},
-            escalate: undefined,
             requestedAuthConfigs: {},
-            skipSummarization: undefined,
+            requestedToolConfirmations: {},
             stateDelta: {},
-            transferAgent: undefined,
           },
           errorCode: undefined,
           errorMessage: undefined,
