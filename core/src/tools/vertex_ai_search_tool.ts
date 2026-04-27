@@ -28,14 +28,25 @@ export interface VertexAISearchConfig {
   maxResults?: number;
 }
 
-export interface VertexAiSearchToolParams {
-  dataStoreId?: string;
-  dataStoreSpecs?: VertexAISearchDataStoreSpec[];
-  searchEngineId?: string;
+export interface BaseVertexAiSearchToolParams {
   filter?: string;
   maxResults?: number;
   bypassMultiToolsLimit?: boolean;
 }
+
+export interface DataStoreParams extends BaseVertexAiSearchToolParams {
+  dataStoreId: string;
+  searchEngineId?: never;
+  dataStoreSpecs?: never;
+}
+
+export interface SearchEngineParams extends BaseVertexAiSearchToolParams {
+  searchEngineId: string;
+  dataStoreId?: never;
+  dataStoreSpecs?: VertexAISearchDataStoreSpec[];
+}
+
+export type VertexAiSearchToolParams = DataStoreParams | SearchEngineParams;
 
 /**
  * A built-in tool using Vertex AI Search.
