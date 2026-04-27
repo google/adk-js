@@ -132,48 +132,47 @@ export class VertexAiSearchTool extends BaseTool {
     llmRequest.config = llmRequest.config || ({} as GenerateContentConfig);
     llmRequest.config.tools = llmRequest.config.tools || [];
 
-    if (isGeminiModel(llmRequest.model) || modelCheckDisabled) {
-      if (
-        isGemini1Model(llmRequest.model) &&
-        llmRequest.config.tools.length > 0
-      ) {
-        if (!this.bypassMultiToolsLimit) {
-          throw new Error(
-            'Vertex AI search tool cannot be used with other tools in Gemini 1.x.',
-          );
-        }
-      }
-
-      // Build the search config (can be overridden by subclasses)
-      const vertexAiSearchConfig = this.buildVertexAiSearchConfig(toolContext);
-
-      // Format dataStoreSpecs concisely for logging
-      let specsInfo: string | undefined;
-      if (vertexAiSearchConfig.dataStoreSpecs) {
-        const specIds = vertexAiSearchConfig.dataStoreSpecs.map((spec) =>
-          spec.dataStore ? spec.dataStore.split('/').pop() : 'unnamed',
-        );
-        specsInfo = `${vertexAiSearchConfig.dataStoreSpecs.length} spec(s): [${specIds.join(', ')}]`;
-      }
-
-      logger.debug(
-        `Adding Vertex AI Search tool config to LLM request: ` +
-          `datastore=${vertexAiSearchConfig.datastore}, ` +
-          `engine=${vertexAiSearchConfig.engine}, ` +
-          `filter=${vertexAiSearchConfig.filter}, ` +
-          `maxResults=${vertexAiSearchConfig.maxResults}, ` +
-          `dataStoreSpecs=${specsInfo}`,
-      );
-
-      llmRequest.config.tools.push({
-        retrieval: {
-          vertexAiSearch: vertexAiSearchConfig,
-        },
-      } as unknown as Tool);
-    } else {
+    if (!isGeminiModel(llmRequest.model) && !modelCheckDisabled) {
       throw new Error(
         `Vertex AI search tool is not supported for model ${llmRequest.model}`,
       );
     }
+
+    if (
+      isGemini1Model(llmRequest.model) &&
+      llmRequest.config.tools.length > 0 &&
+      !this.bypassMultiToolsLimit
+    ) {
+      throw new Error(
+        'Vertex AI search tool cannot be used with other tools in Gemini 1.x.',
+      );
+    }
+
+    // Build the search config (can be overridden by subclasses)
+    const vertexAiSearchConfig = this.buildVertexAiSearchConfig(toolContext);
+
+    // Format dataStoreSpecs concisely for logging
+    let specsInfo: string | undefined;
+    if (vertexAiSearchConfig.dataStoreSpecs) {
+      const specIds = vertexAiSearchConfig.dataStoreSpecs.map((spec) =>
+        spec.dataStore ? spec.dataStore.split('/').pop() : 'unnamed',
+      );
+      specsInfo = `${vertexAiSearchConfig.dataStoreSpecs.length} spec(s): [${specIds.join(', ')}]`;
+    }
+
+    logger.debug(
+      `Adding Vertex AI Search tool config to LLM request: ` +
+        `datastore=${vertexAiSearchConfig.datastore}, ` +
+        `engine=${vertexAiSearchConfig.engine}, ` +
+        `filter=${vertexAiSearchConfig.filter}, ` +
+        `maxResults=${vertexAiSearchConfig.maxResults}, ` +
+        `dataStoreSpecs=${specsInfo}`,
+    );
+
+    llmRequest.config.tools.push({
+      retrieval: {
+        vertexAiSearch: vertexAiSearchConfig,
+      },
+    } as unknown as Tool);
   }
 }
