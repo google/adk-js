@@ -7,9 +7,9 @@
 import {Session} from '@google/adk';
 import camelcaseKeys from 'camelcase-keys';
 import fg from 'fast-glob';
+import yaml from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {parse} from 'yaml';
 import {Recordings, TestInfo, TestSpec} from '../integration/test_types.js';
 
 /**
@@ -44,14 +44,22 @@ export async function batchLoadYamlTestDefs(
     const specFile = path.posix.join(baseDir, 'spec.yaml');
     const filePath = specFile;
     const content = await fs.readFile(filePath, 'utf-8');
-    const testSpec = camelcaseKeys(parse(content), {
+    const parsedSpec = yaml.load(content);
+    if (typeof parsedSpec !== 'object' || parsedSpec === null) {
+      throw new Error('Spec file must be a YAML mapping');
+    }
+    const testSpec = camelcaseKeys(parsedSpec, {
       deep: true,
     }) as TestSpec;
 
     // Session file
     const sessionFile = path.posix.join(baseDir, 'generated-session.yaml');
     const sessionContent = await fs.readFile(sessionFile, 'utf-8');
-    const session = camelcaseKeys(parse(sessionContent), {
+    const parsedSession = yaml.load(sessionContent);
+    if (typeof parsedSession !== 'object' || parsedSession === null) {
+      throw new Error('Session file must be a YAML mapping');
+    }
+    const session = camelcaseKeys(parsedSession, {
       deep: true,
     }) as Session;
 
@@ -61,7 +69,11 @@ export async function batchLoadYamlTestDefs(
       'generated-recordings.yaml',
     );
     const recordingsContent = await fs.readFile(recordingsFile, 'utf-8');
-    const recordings = camelcaseKeys(parse(recordingsContent), {
+    const parsedRecordings = yaml.load(recordingsContent);
+    if (typeof parsedRecordings !== 'object' || parsedRecordings === null) {
+      throw new Error('Recording file must be a YAML mapping');
+    }
+    const recordings = camelcaseKeys(parsedRecordings, {
       deep: true,
     }) as Recordings;
 
