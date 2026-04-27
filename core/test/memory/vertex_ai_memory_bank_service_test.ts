@@ -6,18 +6,16 @@
 
 import {Client} from '@google-cloud/vertexai';
 import {
-  Event,
-  MemoryEntry,
   createEvent,
   createSession,
+  Event,
   getLogger,
+  MemoryEntry,
+  VertexAiMemoryBankService,
+  VertexAiMemoryBankServiceOptions,
 } from '@google/adk';
 import {Content, Part} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {
-  VertexAiMemoryBankService,
-  VertexAiMemoryBankServiceOptions,
-} from '../../src/memory/vertex_ai_memory_bank_service.js';
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
