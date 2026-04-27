@@ -132,12 +132,14 @@ export class VertexAiSearchTool extends BaseTool {
     llmRequest.config = llmRequest.config || ({} as GenerateContentConfig);
     llmRequest.config.tools = llmRequest.config.tools || [];
 
+    // Guard against unsupported models unless check is disabled.
     if (!isGeminiModel(llmRequest.model) && !modelCheckDisabled) {
       throw new Error(
         `Vertex AI search tool is not supported for model ${llmRequest.model}`,
       );
     }
 
+    // Guard against multi-tool usage in Gemini 1.x unless explicitly bypassed.
     if (
       isGemini1Model(llmRequest.model) &&
       llmRequest.config.tools.length > 0 &&
