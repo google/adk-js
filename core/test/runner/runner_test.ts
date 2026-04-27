@@ -418,6 +418,119 @@ describe('Runner with plugins', () => {
     await runTest();
     expect(plugin.afterRunCallbackCalled).toBe(true);
   });
+
+  it('should respect abort signal after onUserMessageCallback', async () => {
+    const abortController = new AbortController();
+    plugin.enableUserMessageCallback = true;
+
+    const originalCallback = plugin.onUserMessageCallback;
+    plugin.onUserMessageCallback = async (params) => {
+      await originalCallback.call(plugin, params);
+      abortController.abort();
+      return undefined;
+    };
+
+    await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      abortSignal: abortController.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events.length).toBe(0);
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(session!.events.length).toBe(0);
+  });
+
+  it('should respect abort signal after beforeRunCallback', async () => {
+    const abortController = new AbortController();
+    plugin.enableBeforeRunCallback = true;
+
+    const originalCallback = plugin.beforeRunCallback;
+    plugin.beforeRunCallback = async (params) => {
+      await originalCallback.call(plugin, params);
+      abortController.abort();
+      return undefined;
+    };
+
+    await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      abortSignal: abortController.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events.length).toBe(0);
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(session!.events.length).toBe(1);
+    expect(session!.events[0].author).toBe('user');
+  });
+
+  it('should respect abort signal after onEventCallback', async () => {
+    const abortController = new AbortController();
+    plugin.enableEventCallback = true;
+
+    const originalCallback = plugin.onEventCallback;
+    plugin.onEventCallback = async (params) => {
+      await originalCallback.call(plugin, params);
+      abortController.abort();
+      return undefined;
+    };
+
+    await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      abortSignal: abortController.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events.length).toBe(0);
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(session!.events.length).toBe(2);
+    expect(session!.events[1].author).toBe('test_agent');
+  });
 });
 
 describe('Runner error handling', () => {

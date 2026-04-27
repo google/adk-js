@@ -1,0 +1,101 @@
+[
+  {
+    "invocationId": "e-c0274753-0555-47a2-b8a6-0f23485253e5",
+    "author": "skill_user_agent",
+    "id": "r60mKzyu",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774037533,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "list_skills",
+            "args": {},
+            "id": "adk-83a8c382-4222-4d05-8e95-0f2cb7884594"
+          },
+          "thoughtSignature": "Cv4BAb4+9vvTRXQyVWCXheRri1a2Md7Um3i447+h7TaNaqQP353W/+Y1Ko/QQcdkIKpKJCEv4Rd5urD84tfRJPjquJV5R3DzGkYVFuQXjb9SXW0yjamWkZnhkfGfzQxAztfb8CKRcExeTWLmwHVB3cS8aF4jaJ1zMtsYDznh/gqOOVahE4CmJOkaiHFKRRosNF0AFTR9xpddXtoO+6D08X3YL4hli0v0mz31r9Bf1ehCj45fSZLcariY3H0j6tYDkF2+vK+x+ofwEZLelZMDRwf1id2KnFyzl9fezRiq1oJUcgC13Z/L9YDKCOZ9FT0Pw060Orzaa0lqRg+h5pFdhOU="
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 228,
+      "candidatesTokenCount": 10,
+      "totalTokenCount": 287,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 228
+        }
+      ],
+      "thoughtsTokenCount": 49
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-c0274753-0555-47a2-b8a6-0f23485253e5",
+    "author": "skill_user_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-83a8c382-4222-4d05-8e95-0f2cb7884594",
+            "name": "list_skills",
+            "response": {
+              "result": "<available_skills>\n  <skill>\n    <name>weather-skill</name>\n    <description>A weather skill that can provide weather information.</description>\n  </skill>\n</available_skills>"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "7LOmul96",
+    "longRunningToolIds": [],
+    "timestamp": 1775774038507
+  },
+  {
+    "invocationId": "e-c0274753-0555-47a2-b8a6-0f23485253e5",
+    "author": "skill_user_agent",
+    "id": "jJvGstRQ",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774038508,
+    "content": {
+      "parts": [
+        {
+          "text": "I have a weather skill that can provide weather information."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 299,
+      "candidatesTokenCount": 11,
+      "totalTokenCount": 310,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 299
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

@@ -11,13 +11,19 @@ import {
   LlmRequest,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
+import {ContextCompactionTrigger} from '../../../src/plugins/base_plugin.js';
 
 describe('ContextCompactorRequestProcessor', () => {
   it('should run compactors in order and stop after first compaction', async () => {
+    const mockPluginManager = {
+      runBeforeContextCompaction: vi.fn().mockResolvedValue(undefined),
+      runAfterContextCompaction: vi.fn().mockResolvedValue(undefined),
+    };
     const mockCtx = {
       session: {
         events: [],
       },
+      pluginManager: mockPluginManager,
     } as unknown as InvocationContext;
     const mockReq = {} as LlmRequest;
 
@@ -55,5 +61,15 @@ describe('ContextCompactorRequestProcessor', () => {
 
     expect(compactor3.shouldCompact).not.toHaveBeenCalled();
     expect(compactor3.compact).not.toHaveBeenCalled();
+
+    expect(mockPluginManager.runBeforeContextCompaction).toHaveBeenCalledWith({
+      invocationContext: mockCtx,
+      trigger: ContextCompactionTrigger.Auto,
+    });
+
+    expect(mockPluginManager.runAfterContextCompaction).toHaveBeenCalledWith({
+      invocationContext: mockCtx,
+      trigger: ContextCompactionTrigger.Auto,
+    });
   });
 });

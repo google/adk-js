@@ -8,6 +8,11 @@ import {cloneDeep} from 'lodash-es';
 
 import {base64Encode, isBase64Encoded} from '../utils/env_aware_utils.js';
 
+export enum FileContentEncoding {
+  UTF8 = 'utf-8',
+  BASE64 = 'base64',
+}
+
 /**
  * A structure that contains a file name and its content
  */
@@ -18,14 +23,35 @@ export interface File {
   name: string;
 
   /**
-   * The base64 - encoded bytes of the file content.
+   * The encoded bytes of the file content.
    * */
   content: string;
+
+  /**
+   * The encoding of the file content.
+   */
+  contentEncoding?: FileContentEncoding;
 
   /**
    * The mime type of the file (e.g., ' image / png')
    * */
   mimeType: string;
+}
+
+/**
+ * The language of the code to execute.
+ */
+export enum CodeExecutionLanguage {
+  UNSPECIFIED = 'unspecified',
+  PYTHON = 'python',
+  JAVASCRIPT = 'javascript',
+  TYPESCRIPT = 'typescript',
+  // Linux, WSL, macOS
+  SHELL = 'shell',
+  // Windows only
+  POWERSHELL = 'powershell',
+  // Windows only
+  WINDOWS_CMD = 'cmd',
 }
 
 /**
@@ -38,6 +64,11 @@ export interface CodeExecutionInput {
   code: string;
 
   /**
+   * The language of the code to execute.
+   */
+  language: CodeExecutionLanguage;
+
+  /**
    * The input files available to the code.
    * */
   inputFiles: File[];
@@ -46,6 +77,11 @@ export interface CodeExecutionInput {
    * The execution ID for the stateful code execution.
    * */
   executionId?: string;
+
+  /**
+   * Optional arguments to pass to the executed code/script.
+   */
+  args?: string[] | Record<string, string | number | boolean>;
 }
 
 /**

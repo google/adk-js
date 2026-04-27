@@ -11,20 +11,9 @@ const {
   LLMRegistry,
 } = require('@google/adk'); // eslint-disable-line @typescript-eslint/no-require-imports
 const {createModelContent, GenerateContentResponse} = require('@google/genai'); // eslint-disable-line @typescript-eslint/no-require-imports
+const {MockLlmConnection} = require('../../mock_llm_connection'); // eslint-disable-line @typescript-eslint/no-require-imports
 
 setLogLevel(LogLevel.DEBUG);
-
-class MockLlmConnection {
-  async sendHistory() {
-    return Promise.resolve();
-  }
-  async sendContent() {
-    return Promise.resolve();
-  }
-  async sendRealtime() {}
-  async *receive() {}
-  async close() {}
-}
 
 class MockLll extends BaseLlm {
   static supportedModels = ['test-llm-model'];

@@ -7,6 +7,7 @@
 import {BaseContextCompactor} from '../../context/base_context_compactor.js';
 import {Event} from '../../events/event.js';
 import {LlmRequest} from '../../models/llm_request.js';
+import {ContextCompactionTrigger} from '../../plugins/base_plugin.js';
 import {InvocationContext} from '../invocation_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
@@ -33,8 +34,19 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         compactor.shouldCompact(invocationContext),
       );
       if (shouldCompact) {
+        await invocationContext.pluginManager.runBeforeContextCompaction({
+          invocationContext,
+          trigger: ContextCompactionTrigger.Auto,
+        });
+
         const oldEvents = new Set(invocationContext.session.events);
         await Promise.resolve(compactor.compact(invocationContext));
+
+        await invocationContext.pluginManager.runAfterContextCompaction({
+          invocationContext,
+          trigger: ContextCompactionTrigger.Auto,
+        });
+
         const newEvents = invocationContext.session.events.filter(
           (e) => !oldEvents.has(e),
         );

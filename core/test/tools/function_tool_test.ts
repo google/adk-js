@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Context, FunctionTool} from '@google/adk';
+import {Context, FunctionTool, isFunctionTool} from '@google/adk';
 import {Type} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {z as z3} from 'zod/v3';
@@ -14,6 +14,27 @@ describe('FunctionTool', () => {
   let emptyContext: Context;
   beforeEach(() => {
     emptyContext = {} as Context;
+  });
+
+  describe('isFunctionTool', () => {
+    it('returns true for FunctionTool instances', () => {
+      const tool = new FunctionTool({
+        name: 'test',
+        description: 'test',
+        execute: () => {},
+      });
+      expect(isFunctionTool(tool)).toBe(true);
+    });
+
+    it('returns false for plain objects', () => {
+      expect(isFunctionTool({})).toBe(false);
+      expect(isFunctionTool({name: 'test'})).toBe(false);
+    });
+
+    it('returns false for null or undefined', () => {
+      expect(isFunctionTool(null)).toBe(false);
+      expect(isFunctionTool(undefined)).toBe(false);
+    });
   });
 
   describe('zod v3', () => {

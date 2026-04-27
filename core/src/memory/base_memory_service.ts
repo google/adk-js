@@ -22,8 +22,16 @@ export interface SearchMemoryResponse {
  * The parameters for `searchMemory`.
  */
 export interface SearchMemoryRequest {
+  /** The app name associated with the memory to search. */
   appName: string;
+
+  /** The user ID whose memory is being searched. */
   userId: string;
+
+  /**
+   * The natural language query used to retrieve relevant memories.
+   * Implementations may use keyword matching or semantic search.
+   */
   query: string;
 }
 

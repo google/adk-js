@@ -9,8 +9,11 @@ import {
   Context,
   createEvent,
   createEventActions,
+  createSession,
   InMemorySessionService,
+  InvocationContext,
   LlmAgent,
+  PluginManager,
   Runner,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
@@ -39,17 +42,25 @@ describe('AgentTool', () => {
     const mockSessionService = new InMemorySessionService();
     vi.spyOn(mockSessionService, 'createSession');
 
-    const toolContext = {
-      invocationContext: {
-        userId: 'parent-user',
-        session: {id: 'parent-session'},
-        sessionService: mockSessionService,
-      },
-      state: {
-        toRecord: () => ({}),
-        update: vi.fn(),
-      },
-    } as unknown as Context;
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      sessionService: mockSessionService,
+    });
+
+    const toolContext = new Context({
+      invocationContext,
+    });
+
+    vi.spyOn(toolContext.state, 'update');
 
     // Setup Runner mock to return some events
     const mockRunAsync = async function* () {
@@ -90,5 +101,98 @@ describe('AgentTool', () => {
     expect(toolContext.state.update).toHaveBeenCalledWith({
       someKey: 'someValue',
     });
+  });
+
+  it('handles abort signal before execution', async () => {
+    const mockAgent = {
+      name: 'sub-agent',
+    } as unknown as LlmAgent;
+
+    const tool = new AgentTool({agent: mockAgent});
+
+    const controller = new AbortController();
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      abortSignal: controller.signal,
+    });
+
+    const toolContext = new Context({
+      invocationContext,
+    });
+    controller.abort();
+
+    const result = await tool.runAsync({
+      args: {request: 'hello'},
+      toolContext,
+    });
+
+    expect(result).toBe('');
+  });
+
+  it('handles abort signal during execution', async () => {
+    const mockAgent = {
+      name: 'sub-agent',
+    } as unknown as LlmAgent;
+
+    const tool = new AgentTool({agent: mockAgent});
+
+    const controller = new AbortController();
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      abortSignal: controller.signal,
+    });
+
+    const toolContext = new Context({
+      invocationContext,
+    });
+
+    // Setup Runner mock to yield an event and then abort
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'hello'}]},
+      });
+      controller.abort();
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'world'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    const result = await tool.runAsync({
+      args: {request: 'hello'},
+      toolContext,
+    });
+
+    // The method should return undefined (void) when aborted during loop
+    expect(result).toBeUndefined();
   });
 });

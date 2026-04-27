@@ -1,0 +1,128 @@
+[
+  {
+    "invocationId": "e-7b2152dc-b77b-4cf0-9891-974cda49e208",
+    "author": "skill_user_agent",
+    "id": "eZ7Tw0LC",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774042847,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "get_wind_speed",
+            "args": {
+              "location": "Irvine, CA"
+            },
+            "id": "adk-58d11ee9-7e4f-4a8d-8668-c25590555cbf"
+          },
+          "thoughtSignature": "CqICAb4+9vsGP2q5fCYg7ozzQW4WDxWs3O86NA21kL6e/W8LgApDkIYrGYlyvT8omMYNwT7zmhCdLVY384qTMdXZ3iB1HALDafU5su8CqYz66rUvdGD95GPpaT6NxES0WwnpwET8ZoeeJCjG2+YluKECmUDD8jWKRx5Bjeepm6QJ6NS9JuNG3DgewdSG3JoXl8JgdP5yFgyCPqDoFH+UUccIbq6Py7E98VMsi0L77Y9ergPg2QWk3/luVKaQ64Fn8cWcDmLKhm8FADMJROEBJG+qz2YWi0GGsbpktf3vfPvrMt0/jTC5f0SjIv9uF4GwFG2cSeAhMYkQ++BsFqaBZ7B7ug3KvYRN2nNsxjiHYvt7Mbb8qsao5gOK9pGA5mlViqEnOAU="
+        },
+        {
+          "functionCall": {
+            "name": "get_humidity",
+            "args": {
+              "location": "Irvine, CA"
+            },
+            "id": "adk-7f5591b9-4b27-43db-91ff-7b106f941f63"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 971,
+      "candidatesTokenCount": 40,
+      "totalTokenCount": 1073,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 971
+        }
+      ],
+      "thoughtsTokenCount": 62
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "author": "skill_user_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-58d11ee9-7e4f-4a8d-8668-c25590555cbf",
+            "name": "get_wind_speed",
+            "response": {
+              "result": "The wind speed in Irvine, CA is 10 mph."
+            }
+          }
+        },
+        {
+          "functionResponse": {
+            "id": "adk-7f5591b9-4b27-43db-91ff-7b106f941f63",
+            "name": "get_humidity",
+            "response": {
+              "result": "The humidity in Irvine, CA is 55%."
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "timestamp": 1775774043929,
+    "id": "bdkdVKza",
+    "invocationId": "e-7b2152dc-b77b-4cf0-9891-974cda49e208",
+    "longRunningToolIds": []
+  },
+  {
+    "invocationId": "e-7b2152dc-b77b-4cf0-9891-974cda49e208",
+    "author": "skill_user_agent",
+    "id": "B06vtyTw",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774043930,
+    "content": {
+      "parts": [
+        {
+          "text": "The wind speed in Irvine, CA is 10 mph and the humidity is 55%."
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 1064,
+      "candidatesTokenCount": 20,
+      "totalTokenCount": 1084,
+      "cachedContentTokenCount": 672,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 1064
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 672
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

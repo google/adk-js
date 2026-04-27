@@ -1,0 +1,112 @@
+[
+  {
+    "invocationId": "e-49e6b412-f6df-484f-ae0b-566b5117e202",
+    "author": "test_skills_agent",
+    "id": "xgB5M6D0",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788523739,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "load_skill_resource",
+            "args": {
+              "skill_name": "internal-comms",
+              "path": "references/3p_updates_guideline.md"
+            },
+            "id": "adk-7e0d9ee5-55f7-48c5-a201-d60ec623d52c"
+          },
+          "thoughtSignature": "CvMKAb4+9vvqDm3g0eHocfHa/ELneBvMNRCasTZzI7IlViWzrfKHQbwdD9Moe/1dA3lSh/3ivcINC8M9gKu1jynk1mWavNxJDFwMriyzinLpaiOyIvZ1do3gDFNzuWg2p8BvyKdPpzmeMdiW3V12rgSYgV0bkk0UEZXdTqr+d1WBt0See90DelZnFht/lH9e7Gj1yq0BbX1vnIrQGIBCCGUuUBbkKA3E9rAfe8n8xx9xbD5mc0K19g9/36sf1Lb6A3eEN6vFv96wDo2iynnMV8ebTywzA302zZBJrmpOoYxpGwN6g+pTPcrBsY0ceEH26QcHvrffX6deNCJRx+T7WyrZ9g/etef113RGNf5TkSR77tA6jx/WaBYUNxzObQdtddL7p/9uZ5q1y/21KRAbYnK2PaQPsvXDT9exgf1AukdoavvH3Z6URj6lgJnIUeiva5iMQzcmkEC+8j0M06wb6HRoS9LXKERE99VC3lqLty4aB9+PYZQ1o6FtSeB72am+IY8pdtFxMH3bcJZNY7qsPLPyIx7ZJS6EBVj6Y8LorBnK5VN9/E50iwdMQ5kw+CNM38StsEMn7bWipUHHd5y0BXHnJUhV8j+8+PRU4kAxEDdIiD0auFonvZF9S21p0kKLTu60C/2C28qSxsZSPicg5ScamadGkqlNjV3ybRsQXIBFFCLRNG0yUCPfi5o10ajBINkzIe7Cn0wTSxihLxzni49sy617tGHdwbIZTPad104WZ8zWFtoDOhxzWWsNp/U2pTUfI5SqGLR8I3Sy+mfbXKpPJhH4FFORO2TGTD8v4qHdpudMvqYvC4bKF72vtuv7xF2q5Cp2+GkXRTAVe+SK4Cz1m1IAGRjAnD6eBDjU9FI7cqcO2VVPNIoXpPHJ/nCnnhST9JUMNZYmEGwXOYGaM9l0uIolj9d00sM31KAQ5jE/GTaHZ68w1EcpDaTX7GJ+KKuEbuLUhRDGEt2XCmhZiTNEkYnyfqsezXlIco0WczQfuu39f+XJComLpB760qvB6oUBPYB/DwDVhIH6IZBQtb9BA722Mf+lUG+OJKs8VwQaPFX5qdadG9jkoKLmPF0DC9uGOryusFMctkNFZiMN4m4SlAa/kyJj+d104J+I4i8EiYS6i3/UqZvvi3Wu0shkPr3HcnrtmJshatSAtWOhad7JFwwhzmil0fYZfYpxDy4c7ojFW58G0QyQsXBsm6gffHEN9i4e/afclQ0QCkAXQMLI1CbO9ZyXNs3R4WqvjE7XOR5EIM+CW5AcxYPov/wdmjyECJJbKQDXcdWtvXO0CjPzxPzUAQDLhzwciundaz0A6HdvlkXVqT8vYMtfyZqZ2rvAr+cbXMC8Jkqc826a+Hz7b/4VSkxqlVI6WLJXyTM9qmPlJZVJHOzXC2sRVs9d100Kd4IlFjXyN79fZsmw4ftaTEhXixqmR6r6+LX7ThxUw9RbFX709BRmR1MwHCD5iQIFlEM6z0qBJX01NN1KGKdMs1l7EfWJv6JURO++nufXs2Ca9YFvAwiQR1cTVjbDlVWLA31INgISMGhLiGZowab+8vy+NKPdEJnBy52Q/jEZXDFd7Jn8fjoYc0y05m+9dFihNO7q+W5KkUd+Suo/HW53qiaSNDmURS+jIvpCkKbIb6ivuJ1DPGXrkxlws96fMbyXULqJFwCipJIrlGJmdR+0g0DHohy4AVI0rjtZRfBdmTcA+TIFJPve4/b1pAXBmK8ZTfjiI1Mkr6JvD/bt5jl3LjrPppy0AUsKVPa+CzoFvGOcRYecGAteS63zhCkASvx4lLqOgFaES5ZsdVifmQ15QoR+GuduLymfcyv/FDo4SN+k6UXLZMKolBQOG6TrJYoMkL1+"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 785,
+      "candidatesTokenCount": 37,
+      "totalTokenCount": 1153,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 785
+        }
+      ],
+      "thoughtsTokenCount": 331
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-49e6b412-f6df-484f-ae0b-566b5117e202",
+    "author": "test_skills_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-7e0d9ee5-55f7-48c5-a201-d60ec623d52c",
+            "name": "load_skill_resource",
+            "response": {
+              "error": "Resource 'references/3p_updates_guideline.md' not found in skill 'internal-comms'.",
+              "error_code": "RESOURCE_NOT_FOUND"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "zjhAPyMF",
+    "longRunningToolIds": [],
+    "timestamp": 1775788526457
+  },
+  {
+    "invocationId": "e-49e6b412-f6df-484f-ae0b-566b5117e202",
+    "author": "test_skills_agent",
+    "id": "QXdjMFZk",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775788526458,
+    "content": {
+      "parts": [
+        {
+          "text": "It seems I couldn't find a resource named `3p_updates_guideline.md` within the `internal-comms` skill. It's possible the guideline has a different name or is located in a different directory. Would you like me to try looking for another name, or perhaps provide a list of all available resources within the `internal-comms` skill if such a function were available?"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 875,
+      "candidatesTokenCount": 85,
+      "totalTokenCount": 960,
+      "cachedContentTokenCount": 534,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 875
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 534
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

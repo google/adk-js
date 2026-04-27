@@ -186,6 +186,26 @@ export function deleteFields(obj: Record<string, unknown>, paths: string[]) {
 }
 
 /**
+ * Recursively normalizes CRLF (\r\n) to LF (\n) in all string properties of an object.
+ */
+export function normalizeLineEndings(obj: unknown): unknown {
+  if (typeof obj === 'string') {
+    return obj.replace(/\r\n/g, '\n');
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeLineEndings);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    const normalizedObj: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      normalizedObj[key] = normalizeLineEndings(value);
+    }
+    return normalizedObj;
+  }
+  return obj;
+}
+
+/**
  * Runs the given test case.
  * @param testCase The test case to run.
  */
@@ -216,7 +236,12 @@ export async function runTestCase(testCase: TestCase) {
         IGNORE_FIELDS,
       );
 
-      expect(event).toMatchObject(expectedEvent);
+      const normalizedActual = normalizeLineEndings(event);
+      const normalizedExpected = normalizeLineEndings(expectedEvent);
+
+      expect(normalizedActual).toMatchObject(
+        normalizedExpected as Record<string, unknown>,
+      );
 
       eventIndex++;
     }
@@ -310,4 +335,40 @@ export abstract class BaseTestServer {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
+}
+
+export function sendInput(
+  childProcess: ChildProcessWithoutNullStreams,
+  input: string,
+): Promise<string> {
+  childProcess.stdin.write(input);
+  childProcess.stdin.end();
+
+  return getResponse(childProcess);
+}
+
+export function getResponse(
+  childProcess: ChildProcessWithoutNullStreams,
+): Promise<string> {
+  return new Promise<string>((resolve) => {
+    let output = '';
+    let resolved = false;
+
+    const onFinish = () => {
+      if (!resolved) {
+        resolve(output);
+      }
+
+      childProcess.stdout.off('data', onData);
+      resolved = true;
+    };
+
+    const onData = (data: Buffer) => {
+      output += data.toString();
+    };
+
+    childProcess.stdout.on('data', onData);
+    childProcess.stdout.once('end', onFinish);
+    childProcess.stdout.once('close', onFinish);
+  });
 }

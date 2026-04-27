@@ -15,7 +15,7 @@ import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {logger} from '../utils/logger.js';
 
-import {BasePlugin} from './base_plugin.js';
+import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
 
 /**
  * Manages the registration and execution of plugins.
@@ -214,6 +214,60 @@ export class PluginManager {
         plugin.afterAgentCallback({agent, callbackContext}),
       'afterAgentCallback',
     )) as Content | undefined;
+  }
+
+  /**
+   * Runs the `beforeToolSelection` for all plugins.
+   */
+  async runBeforeToolSelection({
+    callbackContext,
+    tools,
+  }: {
+    callbackContext: Context;
+    tools: Readonly<Record<string, BaseTool>>;
+  }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
+    return (await this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeToolSelection({callbackContext, tools}),
+      'beforeToolSelection',
+    )) as Readonly<Record<string, BaseTool>> | undefined;
+  }
+
+  /**
+   * Runs the `beforeContextCompaction` for all plugins.
+   */
+  async runBeforeContextCompaction({
+    invocationContext,
+    trigger,
+  }: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
+    await this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeContextCompaction({invocationContext, trigger}),
+      'beforeContextCompaction',
+    );
+  }
+
+  /**
+   * Runs the `afterContextCompaction` for all plugins.
+   */
+  async runAfterContextCompaction({
+    invocationContext,
+    trigger,
+  }: {
+    invocationContext: InvocationContext;
+    trigger: ContextCompactionTrigger;
+  }): Promise<void> {
+    await this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.afterContextCompaction({invocationContext, trigger}),
+      'afterContextCompaction',
+    );
   }
 
   /**

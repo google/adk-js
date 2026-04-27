@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Event, LlmResponse} from '@google/adk';
+import type {Event, LlmResponse, RunConfig} from '@google/adk';
 import {
   BaseAgent,
   BasePlugin,
@@ -24,6 +24,7 @@ import * as path from 'node:path';
 export async function createRunner(
   agent: BaseAgent,
   plugins: BasePlugin[] = [],
+  runConfig?: RunConfig,
 ) {
   const userId = 'test_user';
   const appName = agent.name;
@@ -39,6 +40,7 @@ export async function createRunner(
         userId,
         sessionId: session.id,
         newMessage: createUserContent(prompt),
+        runConfig,
       });
     },
   };
@@ -63,7 +65,7 @@ function toGenAIResponse(response: LlmResponse): GenerateContentResponse {
  * A plugin that captures all model responses.
  */
 export class ModelEventCapturePlugin extends BasePlugin {
-  private readonly modelResponses: GenerateContentResponse[] = [];
+  private modelResponses: GenerateContentResponse[] = [];
 
   async afterModelCallback(params: {
     callbackContext: Context;
@@ -74,9 +76,12 @@ export class ModelEventCapturePlugin extends BasePlugin {
   }
 
   dump(fileName: string): Promise<void> {
+    const modelResponses = this.modelResponses;
+    this.modelResponses = [];
+
     return fs.writeFile(
       path.join(process.cwd(), fileName),
-      JSON.stringify(this.modelResponses, null, 2),
+      JSON.stringify(modelResponses, null, 2),
     );
   }
 }
@@ -85,7 +90,7 @@ export class ModelEventCapturePlugin extends BasePlugin {
  * A plugin that captures all agent events.
  */
 export class AgentEventCapturePlugin extends BasePlugin {
-  private readonly events: Event[] = [];
+  private events: Event[] = [];
 
   async onEventCallback(params: {event: Event}): Promise<Event | undefined> {
     this.events.push(params.event);
@@ -93,9 +98,12 @@ export class AgentEventCapturePlugin extends BasePlugin {
   }
 
   dump(fileName: string): Promise<void> {
+    const events = this.events;
+    this.events = [];
+
     return fs.writeFile(
       path.join(process.cwd(), fileName),
-      JSON.stringify(this.events, null, 2),
+      JSON.stringify(events, null, 2),
     );
   }
 }
@@ -105,11 +113,13 @@ export class AgentEventCapturePlugin extends BasePlugin {
  */
 export async function runAndCapture(
   agent: LlmAgent,
-  prompt: string,
+  prompts: string | string[],
   {
+    runConfig,
     events,
     modelResponses,
   }: {
+    runConfig?: RunConfig;
     events?: string | boolean;
     modelResponses?: string | boolean;
   },
@@ -121,24 +131,33 @@ export async function runAndCapture(
   if (modelResponses) {
     plugins.push(new ModelEventCapturePlugin('model_responses'));
   }
-  const runner = await createRunner(agent, plugins);
+  const runner = await createRunner(agent, plugins, runConfig);
 
-  for await (const _e of runner.run(prompt)) {
-    // Do nothing. The plugins will capture events and model responses.
-  }
+  prompts = Array.isArray(prompts) ? prompts : [prompts];
 
-  for (const plugin of plugins) {
-    if (plugin instanceof AgentEventCapturePlugin) {
-      plugin.dump(
-        typeof events === 'boolean' ? 'agent_events.json' : (events as string),
-      );
+  let i = 1;
+  for (const prompt of prompts) {
+    for await (const _e of runner.run(prompt)) {
+      // Do nothing. The plugins will capture events and model responses.
     }
-    if (plugin instanceof ModelEventCapturePlugin) {
-      plugin.dump(
-        typeof modelResponses === 'boolean'
-          ? 'model_responses.json'
-          : (modelResponses as string),
-      );
+
+    for (const plugin of plugins) {
+      if (plugin instanceof AgentEventCapturePlugin) {
+        plugin.dump(
+          typeof events === 'boolean'
+            ? `events_turn_${i}.json`
+            : (events as string),
+        );
+      }
+      if (plugin instanceof ModelEventCapturePlugin) {
+        plugin.dump(
+          typeof modelResponses === 'boolean'
+            ? `model_responses_turn_${i}.json`
+            : (modelResponses as string),
+        );
+      }
     }
+
+    i++;
   }
 }

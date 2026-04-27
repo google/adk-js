@@ -20,6 +20,7 @@ describe(
     beforeAll(async () => {
       goServer = new AdkGoServer({
         serverDir: path.resolve(__dirname, 'go_backend'),
+        startFailureTimeout: TIMEOUT,
       });
       await goServer.start();
     }, TIMEOUT);

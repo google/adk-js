@@ -1,0 +1,113 @@
+[
+  {
+    "invocationId": "e-419ebcb3-fa9d-47ff-9861-3881c4f147b1",
+    "author": "skill_user_agent",
+    "id": "AX5szJmW",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774041063,
+    "content": {
+      "parts": [
+        {
+          "functionCall": {
+            "name": "load_skill_resource",
+            "args": {
+              "skill_name": "weather-skill",
+              "path": "references/weather_info.md"
+            },
+            "id": "adk-aca240c1-1af6-4a46-b331-bb8fb6cc0ed5"
+          },
+          "thoughtSignature": "CqYCAb4+9vt8DV1YfPF4YgfCEFdkoMTlI2nWXklCTKtHpVJ9PDiJISmdhd+r5cMhsaDlACbwKTpg9SMtMbmhyIWRRK9frLP6J5ftyXI9EsDhfMmIy55GT4VuJu/s2cuTeoeHQDKye1YPqnvrG2z/iBV50PTDrRF0z5BgAQSJh8Ibra6gxj1mKMuU3GmIwPy0F++Ch3SyiTacBVYPKPFOL4Qpx4t3sdpX14N3NkdQSGE5hzgbsu56iLQu4V11y1wns+KecrjSa3jlIRlSkvrTkDTcTZU3GWW5DNLqQ3inCOQBGDj5WZesDxggzD8HP6v2yj0K+4hNqDFJ53Fv6CEY739x9QKod7mgAJJ9oNlhWdklHdaJRUA4Y/six+LFUl2me7No4jN2vWNA"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 768,
+      "candidatesTokenCount": 32,
+      "totalTokenCount": 855,
+      "cachedContentTokenCount": 643,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 768
+        }
+      ],
+      "cacheTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 643
+        }
+      ],
+      "thoughtsTokenCount": 55
+    },
+    "finishReason": "STOP"
+  },
+  {
+    "invocationId": "e-419ebcb3-fa9d-47ff-9861-3881c4f147b1",
+    "author": "skill_user_agent",
+    "content": {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "adk-aca240c1-1af6-4a46-b331-bb8fb6cc0ed5",
+            "name": "load_skill_resource",
+            "response": {
+              "skill_name": "weather-skill",
+              "path": "references/weather_info.md",
+              "content": "\n        Weather Information\n        - **Location:** San Francisco, CA\n        - **Temperature:** 68°F (20°C)\n        - **Condition:** Partly Cloudy\n        - **Humidity:** 55%\n        - **Wind Speed:** 10 mph"
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "id": "x3gTQZVY",
+    "longRunningToolIds": [],
+    "timestamp": 1775774042101
+  },
+  {
+    "invocationId": "e-419ebcb3-fa9d-47ff-9861-3881c4f147b1",
+    "author": "skill_user_agent",
+    "id": "zqWl6b16",
+    "actions": {
+      "stateDelta": {},
+      "artifactDelta": {},
+      "requestedAuthConfigs": {},
+      "requestedToolConfirmations": {}
+    },
+    "longRunningToolIds": [],
+    "timestamp": 1775774042102,
+    "content": {
+      "parts": [
+        {
+          "text": "The current weather in San Francisco, CA is:\nTemperature: 68°F (20°C)\nCondition: Partly Cloudy\nHumidity: 55%\nWind Speed: 10 mph"
+        }
+      ],
+      "role": "model"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 901,
+      "candidatesTokenCount": 44,
+      "totalTokenCount": 945,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 901
+        }
+      ]
+    },
+    "finishReason": "STOP"
+  }
+]

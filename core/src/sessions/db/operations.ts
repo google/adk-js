@@ -43,28 +43,20 @@ export async function getConnectionOptionsFromUri(
     throw new Error(`Unsupported database URI: ${uri}`);
   }
 
-  if (uri === 'sqlite://:memory:') {
+  if (uri.startsWith('sqlite://')) {
     return {
       entities: ENTITIES,
-      dbName: ':memory:',
+      dbName:
+        uri === 'sqlite://:memory:'
+          ? ':memory:'
+          : uri.substring('sqlite://'.length),
       driver,
     } as MikroORMOptions;
   }
 
-  const {host, port, username, password, pathname} = new URL(uri);
-  const hostName = host.split(':')[0];
-
-  const dbName = uri.startsWith('sqlite://')
-    ? uri.substring('sqlite://'.length)
-    : pathname.slice(1);
-
   return {
     entities: ENTITIES,
-    dbName,
-    host: hostName,
-    port: port ? parseInt(port) : undefined,
-    user: username,
-    password,
+    clientUrl: uri,
     driver,
   } as MikroORMOptions;
 }

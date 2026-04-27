@@ -19,7 +19,7 @@ export {InvocationContext} from './agents/invocation_context.js';
 export type {InvocationContextParams} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
-export {LlmAgent, isLlmAgent} from './agents/llm_agent.js';
+export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
 export type {
   AfterModelCallback,
   AfterToolCallback,
@@ -37,6 +37,7 @@ export type {
 export {LoopAgent, isLoopAgent} from './agents/loop_agent.js';
 export type {LoopAgentConfig} from './agents/loop_agent.js';
 export {ParallelAgent, isParallelAgent} from './agents/parallel_agent.js';
+export {AgentTransferLlmRequestProcessor} from './agents/processors/agent_transfer_llm_request_processor.js';
 export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
@@ -47,6 +48,8 @@ export {
 } from './agents/processors/content_request_processor.js';
 export {ContextCompactorRequestProcessor} from './agents/processors/context_compactor_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
+export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
+export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
@@ -69,16 +72,33 @@ export type {
   ServiceAccount,
   ServiceAccountCredential,
 } from './auth/auth_credential.js';
+export {AuthHandler} from './auth/auth_handler.js';
+export {AuthProviderRegistry} from './auth/auth_provider_registry.js';
+export {OAuthGrantType} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
+export type {BaseAuthProvider} from './auth/base_auth_provider.js';
 export type {BaseCredentialService} from './auth/credential_service/base_credential_service.js';
+export {InMemoryCredentialService} from './auth/credential_service/in_memory_credential_service.js';
+export {SessionStateCredentialService} from './auth/credential_service/session_state_credential_service.js';
+export {CredentialExchangeError} from './auth/exchanger/base_credential_exchanger.js';
+export type {
+  BaseCredentialExchanger,
+  ExchangeResult,
+} from './auth/exchanger/base_credential_exchanger.js';
+export {OAuth2CredentialExchanger} from './auth/oauth2/oauth2_credential_exchanger.js';
+export {OAuth2DiscoveryManager} from './auth/oauth2/oauth2_discovery.js';
+export type {BaseCredentialRefresher} from './auth/refresher/base_credential_refresher.js';
+export {CredentialRefresherRegistry} from './auth/refresher/credential_refresher_registry.js';
 export {BaseCodeExecutor} from './code_executors/base_code_executor.js';
 export type {ExecuteCodeParams} from './code_executors/base_code_executor.js';
 export {BuiltInCodeExecutor} from './code_executors/built_in_code_executor.js';
-export type {
-  CodeExecutionInput,
-  CodeExecutionResult,
-  File,
+export {
+  CodeExecutionLanguage,
+  FileContentEncoding,
+  type CodeExecutionInput,
+  type CodeExecutionResult,
+  type File,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
@@ -137,7 +157,9 @@ export type {LlmRequest} from './models/llm_request.js';
 export type {LlmResponse} from './models/llm_response.js';
 export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
-export {BasePlugin} from './plugins/base_plugin.js';
+export {RoutedLlm} from './models/routed_llm.js';
+export type {LlmRouter} from './models/routed_llm.js';
+export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
 export {
@@ -207,7 +229,14 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
+export type {Frontmatter, Resources, Script, Skill} from './skills/skill.js';
+export {ListSkillsTool} from './tools/skill/list_skills_tool.js';
+export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
+export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
+export {SkillToolset} from './tools/skill/skill_toolset.js';
+
 export * from './artifacts/base_artifact_service.js';
+export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';

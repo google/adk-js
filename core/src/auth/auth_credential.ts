@@ -26,6 +26,11 @@ export interface HttpAuth {
    */
   scheme: string;
   credentials: HttpCredentials;
+
+  /**
+   * Additional HTTP headers to include in the request.
+   */
+  additionalHeaders?: Record<string, string>;
 }
 
 /**
@@ -39,7 +44,9 @@ export interface OAuth2Auth {
    * verify the state
    */
   authUri?: string;
+  nonce?: string;
   state?: string;
+  codeVerifier?: string;
   /**
    * tool or adk can decide the redirect_uri if they don't want client to decide
    */
@@ -48,8 +55,11 @@ export interface OAuth2Auth {
   authCode?: string;
   accessToken?: string;
   refreshToken?: string;
+  idToken?: string;
   expiresAt?: number;
   expiresIn?: number;
+  audience?: string;
+  tokenEndpointAuthMethod?: string;
 }
 
 /**
@@ -133,6 +143,16 @@ export interface ServiceAccount {
   serviceAccountCredential?: ServiceAccountCredential;
   scopes?: string[];
   useDefaultCredential?: boolean;
+
+  /**
+   * If true, get an ID token instead of an access token.
+   */
+  useIdToken?: boolean;
+
+  /**
+   * The audience for the ID token. Required if useIdToken is true.
+   */
+  audience?: string;
 }
 
 /*
