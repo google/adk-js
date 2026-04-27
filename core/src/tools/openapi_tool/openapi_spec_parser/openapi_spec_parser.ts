@@ -44,153 +44,9 @@ export class OpenApiSpecParser {
 
   @experimental
   public parse(openapiSpec: OpenAPIV3.Document): ParsedOperation[] {
-    const resolvedSpec = this.resolveReferences(openapiSpec);
-    const sanitizedSpec = this.sanitizeSchemaTypes(resolvedSpec);
+    const resolvedSpec = resolveReferences(openapiSpec);
+    const sanitizedSpec = sanitizeSchemaTypes(resolvedSpec);
     return this.collectOperations(sanitizedSpec);
-  }
-
-  private resolveReferences(spec: OpenAPIV3.Document): OpenAPIV3.Document {
-    const resolvedCache = new Map<string, unknown>();
-    const specCopy = JSON.parse(JSON.stringify(spec)); // Deep copy
-
-    const resolveRef = (
-      refString: string,
-      currentDoc: OpenAPIV3.Document,
-    ): unknown => {
-      const parts = refString.split('/');
-      if (parts[0] !== '#') {
-        throw new Error(`External references not supported: ${refString}`);
-      }
-
-      let current: unknown = currentDoc;
-      for (const part of parts.slice(1)) {
-        if (
-          typeof current === 'object' &&
-          current !== null &&
-          part in current
-        ) {
-          current = (current as Record<string, unknown>)[part];
-        } else {
-          return undefined;
-        }
-      }
-      return current;
-    };
-
-    const recursiveResolve = (
-      obj: unknown,
-      currentDoc: OpenAPIV3.Document,
-      seenRefs = new Set<string>(),
-    ): unknown => {
-      if (typeof obj !== 'object' || obj === null) {
-        return obj;
-      }
-
-      if (Array.isArray(obj)) {
-        return obj.map((item) => recursiveResolve(item, currentDoc, seenRefs));
-      }
-
-      const objRecord = obj as Record<string, unknown>;
-      if ('$ref' in objRecord && typeof objRecord['$ref'] === 'string') {
-        const refString = objRecord['$ref'] as string;
-
-        if (seenRefs.has(refString) && !resolvedCache.has(refString)) {
-          // Circular reference detected. Break cycle.
-          const copy = {...objRecord};
-          delete copy['$ref'];
-          return copy;
-        }
-
-        seenRefs.add(refString);
-
-        if (resolvedCache.has(refString)) {
-          return resolvedCache.get(refString);
-        }
-
-        let resolvedValue = resolveRef(refString, currentDoc);
-        if (resolvedValue !== undefined) {
-          resolvedValue = recursiveResolve(resolvedValue, currentDoc, seenRefs);
-          resolvedCache.set(refString, resolvedValue);
-          return resolvedValue;
-        } else {
-          return obj;
-        }
-      }
-
-      const newDict: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(objRecord)) {
-        newDict[key] = recursiveResolve(value, currentDoc, seenRefs);
-      }
-      return newDict;
-    };
-
-    return recursiveResolve(specCopy, specCopy) as OpenAPIV3.Document;
-  }
-
-  private sanitizeSchemaTypes(
-    openapiSpec: OpenAPIV3.Document,
-  ): OpenAPIV3.Document {
-    const specCopy = JSON.parse(JSON.stringify(openapiSpec));
-
-    const sanitizeTypeField = (schemaDict: Record<string, unknown>) => {
-      if (!('type' in schemaDict)) return;
-
-      const typeValue = schemaDict['type'];
-      if (typeof typeValue === 'string') {
-        const normalizedType = typeValue.toLowerCase();
-        if (VALID_SCHEMA_TYPES.has(normalizedType)) {
-          schemaDict['type'] = normalizedType;
-        } else {
-          delete schemaDict['type'];
-        }
-        return;
-      }
-
-      if (Array.isArray(typeValue)) {
-        const validTypes: string[] = [];
-        for (const entry of typeValue) {
-          if (typeof entry !== 'string') continue;
-          const normalizedEntry = entry.toLowerCase();
-          if (
-            VALID_SCHEMA_TYPES.has(normalizedEntry) &&
-            !validTypes.includes(normalizedEntry)
-          ) {
-            validTypes.push(normalizedEntry);
-          }
-        }
-        if (validTypes.length > 0) {
-          schemaDict['type'] = validTypes;
-        } else {
-          delete schemaDict['type'];
-        }
-      }
-    };
-
-    const sanitizeRecursive = (obj: unknown, inSchema: boolean): unknown => {
-      if (typeof obj !== 'object' || obj === null) {
-        return obj;
-      }
-
-      if (Array.isArray(obj)) {
-        return obj.map((item) => sanitizeRecursive(item, inSchema));
-      }
-
-      const objRecord = obj as Record<string, unknown>;
-      if (inSchema) {
-        sanitizeTypeField(objRecord);
-      }
-
-      for (const [key, value] of Object.entries(objRecord)) {
-        const isSchemaContainer = key === 'schema' || key === 'schemas';
-        objRecord[key] = sanitizeRecursive(
-          value,
-          inSchema || isSchemaContainer,
-        );
-      }
-      return objRecord;
-    };
-
-    return sanitizeRecursive(specCopy, false) as OpenAPIV3.Document;
   }
 
   private collectOperations(spec: OpenAPIV3.Document): ParsedOperation[] {
@@ -264,4 +120,141 @@ export class OpenApiSpecParser {
 
     return operations;
   }
+}
+
+function resolveReferences(spec: OpenAPIV3.Document): OpenAPIV3.Document {
+  const resolvedCache = new Map<string, unknown>();
+  const specCopy = JSON.parse(JSON.stringify(spec)); // Deep copy
+
+  const resolveRef = (
+    refString: string,
+    currentDoc: OpenAPIV3.Document,
+  ): unknown => {
+    const parts = refString.split('/');
+    if (parts[0] !== '#') {
+      throw new Error(`External references not supported: ${refString}`);
+    }
+
+    let current: unknown = currentDoc;
+    for (const part of parts.slice(1)) {
+      if (typeof current === 'object' && current !== null && part in current) {
+        current = (current as Record<string, unknown>)[part];
+      } else {
+        return undefined;
+      }
+    }
+    return current;
+  };
+
+  const recursiveResolve = (
+    obj: unknown,
+    currentDoc: OpenAPIV3.Document,
+    seenRefs = new Set<string>(),
+  ): unknown => {
+    if (typeof obj !== 'object' || obj === null) {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map((item) => recursiveResolve(item, currentDoc, seenRefs));
+    }
+
+    const objRecord = obj as Record<string, unknown>;
+    if ('$ref' in objRecord && typeof objRecord['$ref'] === 'string') {
+      const refString = objRecord['$ref'] as string;
+
+      if (seenRefs.has(refString) && !resolvedCache.has(refString)) {
+        // Circular reference detected. Break cycle.
+        const copy = {...objRecord};
+        delete copy['$ref'];
+        return copy;
+      }
+
+      seenRefs.add(refString);
+
+      if (resolvedCache.has(refString)) {
+        return resolvedCache.get(refString);
+      }
+
+      let resolvedValue = resolveRef(refString, currentDoc);
+      if (resolvedValue !== undefined) {
+        resolvedValue = recursiveResolve(resolvedValue, currentDoc, seenRefs);
+        resolvedCache.set(refString, resolvedValue);
+        return resolvedValue;
+      } else {
+        return obj;
+      }
+    }
+
+    const newDict: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(objRecord)) {
+      newDict[key] = recursiveResolve(value, currentDoc, seenRefs);
+    }
+    return newDict;
+  };
+
+  return recursiveResolve(specCopy, specCopy) as OpenAPIV3.Document;
+}
+
+function sanitizeSchemaTypes(
+  openapiSpec: OpenAPIV3.Document,
+): OpenAPIV3.Document {
+  const specCopy = JSON.parse(JSON.stringify(openapiSpec));
+
+  const sanitizeTypeField = (schemaDict: Record<string, unknown>) => {
+    if (!('type' in schemaDict)) return;
+
+    const typeValue = schemaDict['type'];
+    if (typeof typeValue === 'string') {
+      const normalizedType = typeValue.toLowerCase();
+      if (VALID_SCHEMA_TYPES.has(normalizedType)) {
+        schemaDict['type'] = normalizedType;
+      } else {
+        delete schemaDict['type'];
+      }
+      return;
+    }
+
+    if (Array.isArray(typeValue)) {
+      const validTypes: string[] = [];
+      for (const entry of typeValue) {
+        if (typeof entry !== 'string') continue;
+        const normalizedEntry = entry.toLowerCase();
+        if (
+          VALID_SCHEMA_TYPES.has(normalizedEntry) &&
+          !validTypes.includes(normalizedEntry)
+        ) {
+          validTypes.push(normalizedEntry);
+        }
+      }
+      if (validTypes.length > 0) {
+        schemaDict['type'] = validTypes;
+      } else {
+        delete schemaDict['type'];
+      }
+    }
+  };
+
+  const sanitizeRecursive = (obj: unknown, inSchema: boolean): unknown => {
+    if (typeof obj !== 'object' || obj === null) {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map((item) => sanitizeRecursive(item, inSchema));
+    }
+
+    const objRecord = obj as Record<string, unknown>;
+    if (inSchema) {
+      sanitizeTypeField(objRecord);
+    }
+
+    for (const [key, value] of Object.entries(objRecord)) {
+      const isSchemaContainer = key === 'schema' || key === 'schemas';
+      objRecord[key] = sanitizeRecursive(value, inSchema || isSchemaContainer);
+    }
+    return objRecord;
+  };
+
+  return sanitizeRecursive(specCopy, false) as OpenAPIV3.Document;
 }
