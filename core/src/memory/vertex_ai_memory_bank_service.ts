@@ -15,7 +15,7 @@ import {
   MemoryMetadataValue,
   RetrieveAgentEngineMemoriesRequestParameters,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
-import {Content, Part} from '@google/genai';
+import {Content, Part, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -27,8 +27,79 @@ import {
 } from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
 
+interface MemoryEntryWithMetadata extends MemoryEntry {
+  customMetadata?: Record<string, unknown>;
+}
+
+const GENERATE_MEMORIES_KNOWN_FIELDS = [
+  'disableConsolidation',
+  'waitForCompletion',
+  'revisionLabels',
+  'revisionExpireTime',
+  'revisionTtl',
+  'disableMemoryRevisions',
+  'metadataMergeStrategy',
+  'allowedTopics',
+];
+
+const CREATE_MEMORY_KNOWN_FIELDS = [
+  'displayName',
+  'description',
+  'waitForCompletion',
+  'ttl',
+  'expireTime',
+  'revisionExpireTime',
+  'revisionTtl',
+  'disableMemoryRevisions',
+  'topics',
+  'memoryId',
+];
+
 const ENABLE_CONSOLIDATION_KEY = 'enable_consolidation';
 const MAX_DIRECT_MEMORIES_PER_GENERATE_CALL = 5;
+
+function shouldFilterOutEvent(content?: Content): boolean {
+  return !(content?.parts || []).some(
+    (p) => p.text || p.inlineData || p.fileData,
+  );
+}
+
+function toVertexMetadataValue(
+  key: string,
+  value: unknown,
+): MemoryMetadataValue | undefined {
+  if (typeof value === 'boolean') {
+    return {boolValue: value};
+  }
+  if (typeof value === 'number') {
+    return {doubleValue: value};
+  }
+  if (typeof value === 'string') {
+    return {stringValue: value};
+  }
+  if (value instanceof Date) {
+    return {timestampValue: value.toISOString()};
+  }
+  if (typeof value === 'object' && value !== null) {
+    const v = value as Partial<MemoryMetadataValue>;
+    if (
+      v.boolValue !== undefined ||
+      v.doubleValue !== undefined ||
+      v.stringValue !== undefined ||
+      v.timestampValue !== undefined
+    ) {
+      return v as MemoryMetadataValue;
+    }
+    return {stringValue: JSON.stringify(value)};
+  }
+  if (value === null || value === undefined) {
+    logger.warn(
+      `Ignoring custom metadata key ${key} because its value is null or undefined.`,
+    );
+    return undefined;
+  }
+  return {stringValue: String(value)};
+}
 
 export interface VertexAiMemoryBankServiceOptions {
   projectId?: string;
@@ -84,7 +155,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
   }
 
   async addSessionToMemory(session: Session): Promise<void> {
-    await this._addEventsToMemoryFromEvents({
+    await this.addEventsToMemoryFromEvents({
       appName: session.appName,
       userId: session.userId,
       eventsToProcess: session.events,
@@ -101,7 +172,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     sessionId?: string;
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    await this._addEventsToMemoryFromEvents({
+    await this.addEventsToMemoryFromEvents({
       appName: request.appName,
       userId: request.userId,
       eventsToProcess: request.events,
@@ -118,12 +189,11 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    if (this._isConsolidationEnabled(request.customMetadata)) {
-      await this._addMemoriesViaGenerateDirectMemoriesSource(request);
-      return;
+    if (this.isConsolidationEnabled(request.customMetadata)) {
+      return this.addMemoriesViaGenerateDirectMemoriesSource(request);
     }
 
-    await this._addMemoriesViaCreate(request);
+    await this.addMemoriesViaCreate(request);
   }
 
   async searchMemory(
@@ -142,7 +212,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     const retrievedMemoriesResponse =
       await this.memories.retrieveInternal(params);
 
-    logger.info('Search memory response received.');
+    logger.debug('Search memory response received.');
 
     const memoryEvents: MemoryEntry[] = [];
     const retrievedMemories = retrievedMemoriesResponse.retrievedMemories || [];
@@ -150,11 +220,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     for (const retrievedMemory of retrievedMemories) {
       logger.debug(`Retrieved memory: ${JSON.stringify(retrievedMemory)}`);
       if (retrievedMemory.memory && retrievedMemory.memory.fact) {
-        const part: Part = {text: retrievedMemory.memory.fact};
-        const content: Content = {
-          parts: [part],
-          role: 'user',
-        };
+        const content = createUserContent(retrievedMemory.memory.fact);
         memoryEvents.push({
           author: 'user',
           content: content,
@@ -166,7 +232,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return {memories: memoryEvents};
   }
 
-  private async _addEventsToMemoryFromEvents(request: {
+  private async addEventsToMemoryFromEvents(request: {
     appName: string;
     userId: string;
     eventsToProcess: Event[];
@@ -174,19 +240,17 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
   }): Promise<void> {
     const directEvents: GenerateMemoriesRequestDirectContentsSourceEvent[] = [];
     for (const event of request.eventsToProcess) {
-      if (this._shouldFilterOutEvent(event.content)) {
+      if (shouldFilterOutEvent(event.content)) {
         continue;
       }
-      if (event.content) {
-        // Content might need to be serialized or dumped as in Python
-        directEvents.push({
-          content: JSON.parse(JSON.stringify(event.content)),
-        });
-      }
+      // Content might need to be serialized or dumped as in Python
+      directEvents.push({
+        content: JSON.parse(JSON.stringify(event.content)),
+      });
     }
 
     if (directEvents.length > 0) {
-      const config = this._buildGenerateMemoriesConfig(request.customMetadata);
+      const config = this.buildGenerateMemoriesConfig(request.customMetadata);
       const params: GenerateAgentEngineMemoriesRequestParameters = {
         name: `reasoningEngines/${this.agentEngineId}`,
         directContentsSource: {events: directEvents},
@@ -197,36 +261,34 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         config: config,
       };
       const operation = await this.memories.generateInternal(params);
-      logger.info('Generate memory response received.');
+      logger.debug('Generate memory response received.');
       logger.debug(`Generate memory response: ${JSON.stringify(operation)}`);
     } else {
       logger.info('No events to add to memory.');
     }
   }
 
-  private async _addMemoriesViaCreate(request: {
+  private async addMemoriesViaCreate(request: {
     appName: string;
     userId: string;
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    const validatedMemories = this._normalizeMemoriesForCreate(
-      request.memories,
-    );
+    const validatedMemories = this.normalizeMemoriesForCreate(request.memories);
 
     for (let index = 0; index < validatedMemories.length; index++) {
       const memory = validatedMemories[index];
-      const memoryFact = this._memoryEntryToFact(memory, index);
+      const memoryFact = this.memoryEntryToFact(memory, index);
 
       // We don't have customMetadata on MemoryEntry in JS yet, so we pass undefined or handle it if we extend it.
       // For now, we assume it's not there as per the current interface.
-      const memoryMetadata = this._mergeCustomMetadataForMemory({
+      const memoryMetadata = this.mergeCustomMetadataForMemory({
         customMetadata: request.customMetadata,
         memory: memory,
       });
 
-      const memoryRevisionLabels = this._revisionLabelsForMemory(memory);
-      const config = this._buildCreateMemoryConfig({
+      const memoryRevisionLabels = this.revisionLabelsForMemory(memory);
+      const config = this.buildCreateMemoryConfig({
         customMetadata: memoryMetadata,
         memoryRevisionLabels,
       });
@@ -246,21 +308,19 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
   }
 
-  private async _addMemoriesViaGenerateDirectMemoriesSource(request: {
+  private async addMemoriesViaGenerateDirectMemoriesSource(request: {
     appName: string;
     userId: string;
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    const validatedMemories = this._normalizeMemoriesForCreate(
-      request.memories,
-    );
+    const validatedMemories = this.normalizeMemoriesForCreate(request.memories);
     const memoryTexts = validatedMemories.map((m, i) =>
-      this._memoryEntryToFact(m, i),
+      this.memoryEntryToFact(m, i),
     );
 
-    const config = this._buildGenerateMemoriesConfig(request.customMetadata);
-    const memoryBatches = this._iterMemoryBatches(memoryTexts);
+    const config = this.buildGenerateMemoriesConfig(request.customMetadata);
+    const memoryBatches = this.iterMemoryBatches(memoryTexts);
 
     for (const memoryBatch of memoryBatches) {
       const params: GenerateAgentEngineMemoriesRequestParameters = {
@@ -282,24 +342,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
   }
 
-  private _shouldFilterOutEvent(content?: Content): boolean {
-    if (!content || !content.parts) {
-      return true;
-    }
-    for (const part of content.parts) {
-      const explicitPart: Part = part;
-      if (
-        explicitPart.text ||
-        explicitPart.inlineData ||
-        explicitPart.fileData
-      ) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private _buildGenerateMemoriesConfig(
+  private buildGenerateMemoriesConfig(
     customMetadata?: Record<string, unknown>,
   ): GenerateAgentEngineMemoriesConfig {
     const config: Record<string, unknown> = {waitForCompletion: false};
@@ -327,7 +370,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       if (key === 'metadata') {
         if (value === null || value === undefined) continue;
         if (typeof value === 'object' && !Array.isArray(value)) {
-          config['metadata'] = this._buildVertexMetadata(
+          config['metadata'] = this.buildVertexMetadata(
             value as Record<string, unknown>,
           );
         } else {
@@ -340,18 +383,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 
       // In JS we assume the fields are supported if they are in the type.
       // We just map them if they are known fields.
-      const knownFields = [
-        'disableConsolidation',
-        'waitForCompletion',
-        'revisionLabels',
-        'revisionExpireTime',
-        'revisionTtl',
-        'disableMemoryRevisions',
-        'metadataMergeStrategy',
-        'allowedTopics',
-      ];
-
-      if (knownFields.includes(key)) {
+      if (GENERATE_MEMORIES_KNOWN_FIELDS.includes(key)) {
         if (value !== null && value !== undefined) {
           config[key] = value;
         }
@@ -363,11 +395,11 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     if (Object.keys(metadataByKey).length > 0) {
       const existingMetadata = config['metadata'];
       if (!existingMetadata) {
-        config['metadata'] = this._buildVertexMetadata(metadataByKey);
+        config['metadata'] = this.buildVertexMetadata(metadataByKey);
       } else {
         config['metadata'] = {
           ...existingMetadata,
-          ...this._buildVertexMetadata(metadataByKey),
+          ...this.buildVertexMetadata(metadataByKey),
         };
       }
     }
@@ -375,7 +407,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return config as GenerateAgentEngineMemoriesConfig;
   }
 
-  private _buildCreateMemoryConfig(params: {
+  private buildCreateMemoryConfig(params: {
     customMetadata?: Record<string, unknown>;
     memoryRevisionLabels?: Record<string, string>;
   }): AgentEngineMemoryConfig {
@@ -397,7 +429,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       if (key === 'metadata') {
         if (value === null || value === undefined) continue;
         if (typeof value === 'object' && !Array.isArray(value)) {
-          config['metadata'] = this._buildVertexMetadata(
+          config['metadata'] = this.buildVertexMetadata(
             value as Record<string, unknown>,
           );
         } else {
@@ -409,7 +441,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       }
       if (key === 'revisionLabels') {
         if (value === null || value === undefined) continue;
-        const extractedLabels = this._extractRevisionLabels(
+        const extractedLabels = this.extractRevisionLabels(
           value,
           'customMetadata["revisionLabels"]',
         );
@@ -419,18 +451,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         continue;
       }
 
-      const knownFields = [
-        'displayName',
-        'description',
-        'waitForCompletion',
-        'ttl',
-        'expireTime',
-        'revisionExpireTime',
-        'revisionTtl',
-        'disableMemoryRevisions',
-        'topics',
-        'memoryId',
-      ];
+      const knownFields = CREATE_MEMORY_KNOWN_FIELDS;
 
       if (knownFields.includes(key)) {
         if (value !== null && value !== undefined) {
@@ -444,11 +465,11 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     if (Object.keys(metadataByKey).length > 0) {
       const existingMetadata = config['metadata'];
       if (!existingMetadata) {
-        config['metadata'] = this._buildVertexMetadata(metadataByKey);
+        config['metadata'] = this.buildVertexMetadata(metadataByKey);
       } else {
         config['metadata'] = {
           ...existingMetadata,
-          ...this._buildVertexMetadata(metadataByKey),
+          ...this.buildVertexMetadata(metadataByKey),
         };
       }
     }
@@ -464,7 +485,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return config as AgentEngineMemoryConfig;
   }
 
-  private _normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
+  private normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
     if (!Array.isArray(memories)) {
       throw new TypeError('memories must be a sequence of memory items.');
     }
@@ -474,8 +495,8 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return memories;
   }
 
-  private _memoryEntryToFact(memory: MemoryEntry, index: number): string {
-    if (this._shouldFilterOutEvent(memory.content)) {
+  private memoryEntryToFact(memory: MemoryEntry, index: number): string {
+    if (shouldFilterOutEvent(memory.content)) {
       throw new Error(`memories[${index}] must include text.`);
     }
 
@@ -503,7 +524,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return textParts.join('\n');
   }
 
-  private _mergeCustomMetadataForMemory(params: {
+  private mergeCustomMetadataForMemory(params: {
     customMetadata?: Record<string, unknown>;
     memory: MemoryEntry;
   }): Record<string, unknown> | undefined {
@@ -514,9 +535,6 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
 
     // Check if memory has customMetadata (it might if passed by user, even if not in interface)
-    interface MemoryEntryWithMetadata extends MemoryEntry {
-      customMetadata?: Record<string, unknown>;
-    }
     const memoryWithMetadata = params.memory as MemoryEntryWithMetadata;
     if (memoryWithMetadata.customMetadata) {
       Object.assign(mergedMetadata, memoryWithMetadata.customMetadata);
@@ -528,7 +546,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return mergedMetadata;
   }
 
-  private _revisionLabelsForMemory(
+  private revisionLabelsForMemory(
     memory: MemoryEntry,
   ): Record<string, string> | undefined {
     const revisionLabels: Record<string, string> = {};
@@ -545,7 +563,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return revisionLabels;
   }
 
-  private _extractRevisionLabels(
+  private extractRevisionLabels(
     value: unknown,
     source: string,
   ): Record<string, string> | undefined {
@@ -571,7 +589,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return revisionLabels;
   }
 
-  private _isConsolidationEnabled(
+  private isConsolidationEnabled(
     customMetadata?: Record<string, unknown>,
   ): boolean {
     if (!customMetadata) {
@@ -589,7 +607,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return enableConsolidation;
   }
 
-  private _iterMemoryBatches(memories: string[]): string[][] {
+  private iterMemoryBatches(memories: string[]): string[][] {
     const memoryBatches: string[][] = [];
     for (
       let index = 0;
@@ -603,54 +621,16 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     return memoryBatches;
   }
 
-  private _buildVertexMetadata(
+  private buildVertexMetadata(
     metadataByKey: Record<string, unknown>,
   ): Record<string, MemoryMetadataValue> {
     const vertexMetadata: Record<string, MemoryMetadataValue> = {};
     for (const [key, value] of Object.entries(metadataByKey)) {
-      const convertedValue = this._toVertexMetadataValue(key, value);
+      const convertedValue = toVertexMetadataValue(key, value);
       if (convertedValue !== undefined) {
         vertexMetadata[key] = convertedValue;
       }
     }
     return vertexMetadata;
-  }
-
-  private _toVertexMetadataValue(
-    key: string,
-    value: unknown,
-  ): MemoryMetadataValue | undefined {
-    if (typeof value === 'boolean') {
-      return {boolValue: value};
-    }
-    if (typeof value === 'number') {
-      return {doubleValue: value};
-    }
-    if (typeof value === 'string') {
-      return {stringValue: value};
-    }
-    if (value instanceof Date) {
-      return {timestampValue: value.toISOString()};
-    }
-    if (typeof value === 'object' && value !== null) {
-      // Check if it already matches the structure
-      const v = value as Partial<MemoryMetadataValue>;
-      if (
-        v.boolValue !== undefined ||
-        v.doubleValue !== undefined ||
-        v.stringValue !== undefined ||
-        v.timestampValue !== undefined
-      ) {
-        return v as MemoryMetadataValue;
-      }
-      return {stringValue: JSON.stringify(value)};
-    }
-    if (value === null || value === undefined) {
-      logger.warn(
-        `Ignoring custom metadata key ${key} because its value is null or undefined.`,
-      );
-      return undefined;
-    }
-    return {stringValue: String(value)};
   }
 }
