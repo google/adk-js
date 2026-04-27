@@ -186,7 +186,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    if (this.isConsolidationEnabled(request.customMetadata)) {
+    if (isConsolidationEnabled(request.customMetadata)) {
       return this.addMemoriesViaGenerateDirectMemoriesSource(request);
     }
 
@@ -247,7 +247,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
 
     if (directEvents.length > 0) {
-      const config = this.buildGenerateMemoriesConfig(request.customMetadata);
+      const config = buildGenerateMemoriesConfig(request.customMetadata);
       const params = {
         name: `reasoningEngines/${this.agentEngineId}`,
         directContentsSource: {events: directEvents},
@@ -271,20 +271,20 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    const validatedMemories = this.normalizeMemoriesForCreate(request.memories);
+    const validatedMemories = normalizeMemoriesForCreate(request.memories);
 
     for (let index = 0; index < validatedMemories.length; index++) {
       const memory = validatedMemories[index];
-      const memoryFact = this.memoryEntryToFact(memory, index);
+      const memoryFact = memoryEntryToFact(memory, index);
 
       // We don't have customMetadata on MemoryEntry in JS yet, so we pass undefined or handle it if we extend it.
       // For now, we assume it's not there as per the current interface.
-      const memoryMetadata = this.mergeCustomMetadataForMemory({
+      const memoryMetadata = mergeCustomMetadataForMemory({
         customMetadata: request.customMetadata,
         memory: memory,
       });
 
-      const memoryRevisionLabels = this.revisionLabelsForMemory(memory);
+      const memoryRevisionLabels = revisionLabelsForMemory(memory);
       const config = buildCreateMemoryConfig({
         customMetadata: memoryMetadata,
         memoryRevisionLabels,
@@ -311,13 +311,13 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     memories: MemoryEntry[];
     customMetadata?: Record<string, unknown>;
   }): Promise<void> {
-    const validatedMemories = this.normalizeMemoriesForCreate(request.memories);
+    const validatedMemories = normalizeMemoriesForCreate(request.memories);
     const memoryTexts = validatedMemories.map((m, i) =>
-      this.memoryEntryToFact(m, i),
+      memoryEntryToFact(m, i),
     );
 
-    const config = this.buildGenerateMemoriesConfig(request.customMetadata);
-    const memoryBatches = this.iterMemoryBatches(memoryTexts);
+    const config = buildGenerateMemoriesConfig(request.customMetadata);
+    const memoryBatches = iterMemoryBatches(memoryTexts);
 
     for (const memoryBatch of memoryBatches) {
       const params = {
@@ -337,180 +337,6 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         `Generate direct memory response: ${JSON.stringify(operation)}`,
       );
     }
-  }
-
-  private buildGenerateMemoriesConfig(
-    customMetadata?: Record<string, unknown>,
-  ): GenerateAgentEngineMemoriesConfig {
-    const config: Record<string, unknown> = {waitForCompletion: false};
-    if (!customMetadata) {
-      return config;
-    }
-
-    logger.debug(
-      `Memory generation metadata: ${JSON.stringify(customMetadata)}`,
-    );
-
-    const metadataByKey: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(customMetadata)) {
-      if (key === ENABLE_CONSOLIDATION_KEY) {
-        continue;
-      }
-      if (key === 'ttl') {
-        if (value === null || value === undefined) continue;
-        if (customMetadata['revisionTtl'] === undefined) {
-          config['revisionTtl'] = value as string;
-        }
-        continue;
-      }
-      if (key === 'metadata') {
-        if (value === null || value === undefined) continue;
-        if (typeof value === 'object' && !Array.isArray(value)) {
-          config['metadata'] = buildVertexMetadata(
-            value as Record<string, unknown>,
-          );
-        } else {
-          logger.warn(
-            'Ignoring metadata because customMetadata["metadata"] is not an object.',
-          );
-        }
-        continue;
-      }
-
-      // In JS we assume the fields are supported if they are in the type.
-      // We just map them if they are known fields.
-      if (GENERATE_MEMORIES_KNOWN_FIELDS.includes(key)) {
-        if (value !== null && value !== undefined) {
-          config[key] = value;
-        }
-      } else {
-        metadataByKey[key] = value;
-      }
-    }
-
-    if (Object.keys(metadataByKey).length > 0) {
-      const existingMetadata = config['metadata'];
-      if (!existingMetadata) {
-        config['metadata'] = buildVertexMetadata(metadataByKey);
-      } else {
-        config['metadata'] = {
-          ...existingMetadata,
-          ...buildVertexMetadata(metadataByKey),
-        };
-      }
-    }
-
-    return config as GenerateAgentEngineMemoriesConfig;
-  }
-
-  private normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
-    if (!Array.isArray(memories)) {
-      throw new TypeError('memories must be a sequence of memory items.');
-    }
-    if (memories.length === 0) {
-      throw new Error('memories must contain at least one entry.');
-    }
-    return memories;
-  }
-
-  private memoryEntryToFact(memory: MemoryEntry, index: number): string {
-    if (shouldFilterOutEvent(memory.content)) {
-      throw new Error(`memories[${index}] must include text.`);
-    }
-
-    const textParts: string[] = [];
-    if (memory.content && memory.content.parts) {
-      for (const part of memory.content.parts) {
-        if (part.inlineData || part.fileData) {
-          throw new Error(
-            `memories[${index}] must include text only; inlineData and fileData are not supported.`,
-          );
-        }
-        if (part.text) {
-          const strippedText = part.text.trim();
-          if (strippedText) {
-            textParts.push(strippedText);
-          }
-        }
-      }
-    }
-
-    if (textParts.length === 0) {
-      throw new Error(`memories[${index}] must include non-whitespace text.`);
-    }
-    return textParts.join('\n');
-  }
-
-  private mergeCustomMetadataForMemory(params: {
-    customMetadata?: Record<string, unknown>;
-    memory: MemoryEntry;
-  }): Record<string, unknown> | undefined {
-    const mergedMetadata: Record<string, unknown> = {};
-
-    if (params.customMetadata) {
-      Object.assign(mergedMetadata, params.customMetadata);
-    }
-
-    // Check if memory has customMetadata (it might if passed by user, even if not in interface)
-    const memoryWithMetadata = params.memory as MemoryEntryWithMetadata;
-    if (memoryWithMetadata.customMetadata) {
-      Object.assign(mergedMetadata, memoryWithMetadata.customMetadata);
-    }
-
-    if (Object.keys(mergedMetadata).length === 0) {
-      return undefined;
-    }
-    return mergedMetadata;
-  }
-
-  private revisionLabelsForMemory(
-    memory: MemoryEntry,
-  ): Record<string, string> | undefined {
-    const revisionLabels: Record<string, string> = {};
-    if (memory.author) {
-      revisionLabels['author'] = memory.author;
-    }
-    if (memory.timestamp) {
-      revisionLabels['timestamp'] = memory.timestamp;
-    }
-
-    if (Object.keys(revisionLabels).length === 0) {
-      return undefined;
-    }
-    return revisionLabels;
-  }
-
-  private isConsolidationEnabled(
-    customMetadata?: Record<string, unknown>,
-  ): boolean {
-    if (!customMetadata) {
-      return false;
-    }
-    const enableConsolidation = customMetadata[ENABLE_CONSOLIDATION_KEY];
-    if (enableConsolidation === undefined) {
-      return false;
-    }
-    if (typeof enableConsolidation !== 'boolean') {
-      throw new TypeError(
-        `customMetadata["${ENABLE_CONSOLIDATION_KEY}"] must be a bool.`,
-      );
-    }
-    return enableConsolidation;
-  }
-
-  private iterMemoryBatches(memories: string[]): string[][] {
-    const memoryBatches: string[][] = [];
-    for (
-      let index = 0;
-      index < memories.length;
-      index += MAX_DIRECT_MEMORIES_PER_GENERATE_CALL
-    ) {
-      memoryBatches.push(
-        memories.slice(index, index + MAX_DIRECT_MEMORIES_PER_GENERATE_CALL),
-      );
-    }
-    return memoryBatches;
   }
 }
 
@@ -629,4 +455,178 @@ function buildVertexMetadata(
     }
   }
   return vertexMetadata;
+}
+
+// Standalone utility functions
+
+function buildGenerateMemoriesConfig(
+  customMetadata?: Record<string, unknown>,
+): GenerateAgentEngineMemoriesConfig {
+  const config: Record<string, unknown> = {waitForCompletion: false};
+  if (!customMetadata) {
+    return config;
+  }
+
+  logger.debug(`Memory generation metadata: ${JSON.stringify(customMetadata)}`);
+
+  const metadataByKey: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(customMetadata)) {
+    if (key === ENABLE_CONSOLIDATION_KEY) {
+      continue;
+    }
+    if (key === 'ttl') {
+      if (value === null || value === undefined) continue;
+      if (customMetadata['revisionTtl'] === undefined) {
+        config['revisionTtl'] = value as string;
+      }
+      continue;
+    }
+    if (key === 'metadata') {
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        config['metadata'] = buildVertexMetadata(
+          value as Record<string, unknown>,
+        );
+      } else {
+        logger.warn(
+          'Ignoring metadata because customMetadata["metadata"] is not an object.',
+        );
+      }
+      continue;
+    }
+
+    // In JS we assume the fields are supported if they are in the type.
+    // We just map them if they are known fields.
+    if (GENERATE_MEMORIES_KNOWN_FIELDS.includes(key)) {
+      if (value !== null && value !== undefined) {
+        config[key] = value;
+      }
+    } else {
+      metadataByKey[key] = value;
+    }
+  }
+
+  if (Object.keys(metadataByKey).length > 0) {
+    const existingMetadata = config['metadata'];
+    if (!existingMetadata) {
+      config['metadata'] = buildVertexMetadata(metadataByKey);
+    } else {
+      config['metadata'] = {
+        ...existingMetadata,
+        ...buildVertexMetadata(metadataByKey),
+      };
+    }
+  }
+
+  return config as GenerateAgentEngineMemoriesConfig;
+}
+
+function normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
+  if (!Array.isArray(memories)) {
+    throw new TypeError('memories must be a sequence of memory items.');
+  }
+  if (memories.length === 0) {
+    throw new Error('memories must contain at least one entry.');
+  }
+  return memories;
+}
+
+function memoryEntryToFact(memory: MemoryEntry, index: number): string {
+  if (shouldFilterOutEvent(memory.content)) {
+    throw new Error(`memories[${index}] must include text.`);
+  }
+
+  const textParts: string[] = [];
+  if (memory.content && memory.content.parts) {
+    for (const part of memory.content.parts) {
+      if (part.inlineData || part.fileData) {
+        throw new Error(
+          `memories[${index}] must include text only; inlineData and fileData are not supported.`,
+        );
+      }
+      if (part.text) {
+        const strippedText = part.text.trim();
+        if (strippedText) {
+          textParts.push(strippedText);
+        }
+      }
+    }
+  }
+
+  if (textParts.length === 0) {
+    throw new Error(`memories[${index}] must include non-whitespace text.`);
+  }
+  return textParts.join('\n');
+}
+
+function mergeCustomMetadataForMemory(params: {
+  customMetadata?: Record<string, unknown>;
+  memory: MemoryEntry;
+}): Record<string, unknown> | undefined {
+  const mergedMetadata: Record<string, unknown> = {};
+
+  if (params.customMetadata) {
+    Object.assign(mergedMetadata, params.customMetadata);
+  }
+
+  // Check if memory has customMetadata (it might if passed by user, even if not in interface)
+  const memoryWithMetadata = params.memory as MemoryEntryWithMetadata;
+  if (memoryWithMetadata.customMetadata) {
+    Object.assign(mergedMetadata, memoryWithMetadata.customMetadata);
+  }
+
+  if (Object.keys(mergedMetadata).length === 0) {
+    return undefined;
+  }
+  return mergedMetadata;
+}
+
+function revisionLabelsForMemory(
+  memory: MemoryEntry,
+): Record<string, string> | undefined {
+  const revisionLabels: Record<string, string> = {};
+  if (memory.author) {
+    revisionLabels['author'] = memory.author;
+  }
+  if (memory.timestamp) {
+    revisionLabels['timestamp'] = memory.timestamp;
+  }
+
+  if (Object.keys(revisionLabels).length === 0) {
+    return undefined;
+  }
+  return revisionLabels;
+}
+
+function isConsolidationEnabled(
+  customMetadata?: Record<string, unknown>,
+): boolean {
+  if (!customMetadata) {
+    return false;
+  }
+  const enableConsolidation = customMetadata[ENABLE_CONSOLIDATION_KEY];
+  if (enableConsolidation === undefined) {
+    return false;
+  }
+  if (typeof enableConsolidation !== 'boolean') {
+    throw new TypeError(
+      `customMetadata["${ENABLE_CONSOLIDATION_KEY}"] must be a bool.`,
+    );
+  }
+  return enableConsolidation;
+}
+
+function iterMemoryBatches(memories: string[]): string[][] {
+  const memoryBatches: string[][] = [];
+  for (
+    let index = 0;
+    index < memories.length;
+    index += MAX_DIRECT_MEMORIES_PER_GENERATE_CALL
+  ) {
+    memoryBatches.push(
+      memories.slice(index, index + MAX_DIRECT_MEMORIES_PER_GENERATE_CALL),
+    );
+  }
+  return memoryBatches;
 }
