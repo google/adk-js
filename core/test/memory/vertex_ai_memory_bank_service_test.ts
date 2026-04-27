@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
+import {Client} from '@google-cloud/vertexai';
+import {
+  Event,
+  MemoryEntry,
+  createEvent,
+  createSession,
+  getLogger,
+} from '@google/adk';
 import {Content, Part} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {Event} from '../../src/events/event.js';
-import {MemoryEntry} from '../../src/memory/memory_entry.js';
 import {
   VertexAiMemoryBankService,
   VertexAiMemoryBankServiceOptions,
 } from '../../src/memory/vertex_ai_memory_bank_service.js';
-import {Session} from '../../src/sessions/session.js';
-import {logger} from '../../src/utils/logger.js';
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
@@ -77,7 +80,9 @@ describe('VertexAiMemoryBankService', () => {
   });
 
   it('warns if agentEngineId looks like a full path', () => {
-    const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const loggerSpy = vi
+      .spyOn(getLogger(), 'warn')
+      .mockImplementation(() => {});
     new VertexAiMemoryBankService({
       agentEngineId: 'projects/p/locations/l/reasoningEngines/456',
       client: {
@@ -94,15 +99,20 @@ describe('VertexAiMemoryBankService', () => {
 
   describe('addSessionToMemory', () => {
     it('calls generateInternal with events', async () => {
-      const session = {
+      const session = createSession({
+        id: 'test-session-id',
         appName: 'test-app',
         userId: 'test-user',
-        events: [
-          {
-            content: {parts: [{text: 'event 1'}]} as Content,
-          } as Event,
-        ],
-      } as Session;
+        events: [],
+        lastUpdateTime: Date.now(),
+      });
+      session.events.push(
+        createEvent({
+          author: 'user',
+          content: {parts: [{text: 'event 1'}]},
+          timestamp: Date.now(),
+        }),
+      );
 
       await service.addSessionToMemory(session);
 
@@ -118,15 +128,20 @@ describe('VertexAiMemoryBankService', () => {
     });
 
     it('filters out events without text or data', async () => {
-      const session = {
+      const session = createSession({
+        id: 'test-session-id',
         appName: 'test-app',
         userId: 'test-user',
-        events: [
-          {
-            content: {parts: []} as unknown as Content,
-          } as Event,
-        ],
-      } as Session;
+        events: [],
+        lastUpdateTime: Date.now(),
+      });
+      session.events.push(
+        createEvent({
+          author: 'user',
+          content: {parts: []},
+          timestamp: Date.now(),
+        }),
+      );
 
       await service.addSessionToMemory(session);
 
@@ -439,7 +454,9 @@ describe('VertexAiMemoryBankService', () => {
     });
 
     it('ignores non-string revision labels and logs warning', async () => {
-      const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const loggerSpy = vi
+        .spyOn(getLogger(), 'warn')
+        .mockImplementation(() => {});
       const memories = [{content: {parts: [{text: 'fact'}]} as Content}];
       await service.addMemory({
         appName: 'test-app',
@@ -506,7 +523,9 @@ describe('VertexAiMemoryBankService', () => {
     });
 
     it('warns and returns undefined if revisionLabels is not an object', async () => {
-      const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const loggerSpy = vi
+        .spyOn(getLogger(), 'warn')
+        .mockImplementation(() => {});
       const memories = [{content: {parts: [{text: 'fact'}]} as Content}];
       await service.addMemory({
         appName: 'test-app',
@@ -558,7 +577,9 @@ describe('VertexAiMemoryBankService', () => {
     });
 
     it('warns if metadata is not an object in create config', async () => {
-      const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const loggerSpy = vi
+        .spyOn(getLogger(), 'warn')
+        .mockImplementation(() => {});
       const memories = [{content: {parts: [{text: 'fact'}]} as Content}];
       await service.addMemory({
         appName: 'test-app',

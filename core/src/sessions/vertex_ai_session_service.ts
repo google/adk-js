@@ -96,7 +96,7 @@ export class VertexAiSessionService extends BaseSessionService {
     }
   }
 
-  private _getReasoningEngineId(appName: string): string {
+  private getReasoningEngineId(appName: string): string {
     if (this.agentEngineId) {
       return this.agentEngineId;
     }
@@ -120,7 +120,7 @@ export class VertexAiSessionService extends BaseSessionService {
     state,
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
-    const reasoningEngineId = this._getReasoningEngineId(appName);
+    const reasoningEngineId = this.getReasoningEngineId(appName);
     let apiResponse = await this.sessions.createInternal({
       name: `reasoningEngines/${reasoningEngineId}`,
       userId: userId,
@@ -171,7 +171,7 @@ export class VertexAiSessionService extends BaseSessionService {
     sessionId,
     config,
   }: GetSessionRequest): Promise<Session | undefined> {
-    const reasoningEngineId = this._getReasoningEngineId(appName);
+    const reasoningEngineId = this.getReasoningEngineId(appName);
     const sessionResourceName = `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`;
 
     try {
@@ -245,7 +245,7 @@ export class VertexAiSessionService extends BaseSessionService {
     appName,
     userId,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
-    const reasoningEngineId = this._getReasoningEngineId(appName);
+    const reasoningEngineId = this.getReasoningEngineId(appName);
     const adkSessions: Session[] = [];
     let pageToken: string | undefined = undefined;
 
@@ -253,7 +253,7 @@ export class VertexAiSessionService extends BaseSessionService {
       const response = await this.sessions.listInternal({
         name: `reasoningEngines/${reasoningEngineId}`,
         config: {
-          ...(userId ? {filter: `userId="${userId}"`} : {}),
+          ...(userId ? {filter: `user_id="${userId}"`} : {}),
           ...(pageToken ? {pageToken} : {}),
         },
       });
@@ -286,7 +286,7 @@ export class VertexAiSessionService extends BaseSessionService {
     userId: _userId,
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
-    const reasoningEngineId = this._getReasoningEngineId(appName);
+    const reasoningEngineId = this.getReasoningEngineId(appName);
     await this.sessions.delete({
       name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
     });
@@ -299,7 +299,7 @@ export class VertexAiSessionService extends BaseSessionService {
     await super.appendEvent({session, event});
     session.lastUpdateTime = event.timestamp;
 
-    const reasoningEngineId = this._getReasoningEngineId(session.appName);
+    const reasoningEngineId = this.getReasoningEngineId(session.appName);
 
     const customMetadata: Record<string, unknown> = {...event.customMetadata};
     if (isCompactedEvent(event)) {

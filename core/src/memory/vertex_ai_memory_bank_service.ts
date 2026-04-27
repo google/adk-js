@@ -8,14 +8,11 @@ import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Memories} from '@google-cloud/vertexai/build/src/genai/memories.js';
 import {
   AgentEngineMemoryConfig,
-  CreateAgentEngineMemoryRequestParameters,
   GenerateAgentEngineMemoriesConfig,
-  GenerateAgentEngineMemoriesRequestParameters,
   GenerateMemoriesRequestDirectContentsSourceEvent,
   MemoryMetadataValue,
-  RetrieveAgentEngineMemoriesRequestParameters,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
-import {Content, Part, createUserContent} from '@google/genai';
+import {Content, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -199,7 +196,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
   async searchMemory(
     request: SearchMemoryRequest,
   ): Promise<SearchMemoryResponse> {
-    const params: RetrieveAgentEngineMemoriesRequestParameters = {
+    const params = {
       name: `reasoningEngines/${this.agentEngineId}`,
       scope: {
         app_name: request.appName,
@@ -251,7 +248,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 
     if (directEvents.length > 0) {
       const config = this.buildGenerateMemoriesConfig(request.customMetadata);
-      const params: GenerateAgentEngineMemoriesRequestParameters = {
+      const params = {
         name: `reasoningEngines/${this.agentEngineId}`,
         directContentsSource: {events: directEvents},
         scope: {
@@ -293,7 +290,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         memoryRevisionLabels,
       });
 
-      const params: CreateAgentEngineMemoryRequestParameters = {
+      const params = {
         name: `reasoningEngines/${this.agentEngineId}`,
         fact: memoryFact,
         scope: {
@@ -323,7 +320,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     const memoryBatches = this.iterMemoryBatches(memoryTexts);
 
     for (const memoryBatch of memoryBatches) {
-      const params: GenerateAgentEngineMemoriesRequestParameters = {
+      const params = {
         name: `reasoningEngines/${this.agentEngineId}`,
         directMemoriesSource: {
           directMemories: memoryBatch.map((fact) => ({fact})),
@@ -503,14 +500,13 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     const textParts: string[] = [];
     if (memory.content && memory.content.parts) {
       for (const part of memory.content.parts) {
-        const explicitPart: Part = part;
-        if (explicitPart.inlineData || explicitPart.fileData) {
+        if (part.inlineData || part.fileData) {
           throw new Error(
             `memories[${index}] must include text only; inlineData and fileData are not supported.`,
           );
         }
-        if (explicitPart.text) {
-          const strippedText = explicitPart.text.trim();
+        if (part.text) {
+          const strippedText = part.text.trim();
           if (strippedText) {
             textParts.push(strippedText);
           }
