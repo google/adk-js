@@ -53,6 +53,7 @@ interface ServerOptions {
   logger?: Logger;
   logLevel?: LogLevel;
   a2a?: boolean;
+  reloadAgents?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
@@ -99,7 +100,11 @@ export class AdkApiServer {
       options.artifactService ?? new InMemoryArtifactService();
     this.agentLoader =
       options.agentLoader ??
-      new AgentLoader(options.agentsDir, options.agentFileLoadOptions);
+      new AgentLoader(
+        options.agentsDir,
+        options.agentFileLoadOptions,
+        options.reloadAgents ?? false,
+      );
     this.serveDebugUI = options.serveDebugUI ?? false;
     this.allowOrigins = options.allowOrigins;
     this.otelToCloud = options.otelToCloud ?? false;

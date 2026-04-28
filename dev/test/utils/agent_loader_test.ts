@@ -613,5 +613,28 @@ describe('AgentLoader', () => {
       expect(agents).not.toContain('bad_agent_dir');
       await loader.disposeAll();
     });
+
+    it('resets preload cache when invalidateAll is called (simulates file-change reload)', async () => {
+      const loader = new AgentLoader(tempAgentsDir);
+
+      // Initial load should populate the cache and mark as preloaded
+      await loader.listAgents();
+      expect(
+        (loader as unknown as {agentsAlreadyPreloaded: boolean})
+          .agentsAlreadyPreloaded,
+      ).toBe(true);
+
+      // Simulate what the fs.watch callback does when a file changes
+      (loader as unknown as {invalidateAll: () => void}).invalidateAll();
+
+      // After invalidation the preloaded flag is reset so that the next
+      // request triggers a full re-scan from disk
+      expect(
+        (loader as unknown as {agentsAlreadyPreloaded: boolean})
+          .agentsAlreadyPreloaded,
+      ).toBe(false);
+
+      await loader.disposeAll();
+    });
   });
 });

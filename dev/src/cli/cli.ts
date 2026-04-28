@@ -143,6 +143,10 @@ const A2A_OPTION = new Option(
   '--a2a [boolean]',
   'Optional. Whether to enable A2A for web/api server. Default: false',
 ).default(false);
+const RELOAD_AGENTS_OPTION = new Option(
+  '--reload_agents [boolean]',
+  'Optional. Watch agent files for changes and automatically reload them. Default: false',
+).default(false);
 const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
 AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
 
@@ -206,6 +210,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
       setAdkCoreLogLevel(logLevel);
@@ -223,6 +228,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          reloadAgents: getBoolean(options['reload_agents']),
         });
 
         await server.start();
@@ -248,6 +254,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
       setAdkCoreLogLevel(logLevel);
@@ -265,6 +272,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          reloadAgents: getBoolean(options['reload_agents']),
         });
         await server.start();
       } catch (error) {
