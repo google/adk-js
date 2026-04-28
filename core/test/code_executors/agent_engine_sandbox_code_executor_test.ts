@@ -277,6 +277,30 @@ describe('AgentEngineSandboxCodeExecutor', () => {
                 },
               },
             },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('image.png').toString('base64'),
+                },
+              },
+            },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('image.jpg').toString('base64'),
+                },
+              },
+            },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('unknown.ext').toString('base64'),
+                },
+              },
+            },
           ],
         },
       );
@@ -291,6 +315,196 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       });
 
       expect(result.outputFiles[0].mimeType).toBe('text/csv');
+      expect(result.outputFiles[1].mimeType).toBe('image/png');
+      expect(result.outputFiles[2].mimeType).toBe('image/jpeg');
+      expect(result.outputFiles[3].mimeType).toBe('application/octet-stream');
+    });
+
+    it('throws error if agent engine creation operation times out', async () => {
+      mockClient.agentEnginesInternal.createInternal.mockResolvedValue({
+        name: 'operations/create-engine-op',
+        done: false,
+      });
+      mockClient.agentEnginesInternal.getAgentOperationInternal.mockResolvedValue(
+        {
+          done: false,
+        },
+      );
+
+      vi.useFakeTimers();
+
+      const executePromise = executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      await Promise.all([
+        expect(executePromise).rejects.toThrow(
+          'Agent Engine creation operation operations/create-engine-op did not complete in time.',
+        ),
+        vi.runAllTimersAsync(),
+      ]);
+
+      vi.useRealTimers();
+    });
+
+    it('throws error if sandbox creation operation times out', async () => {
+      mockClient.agentEnginesInternal.sandboxes.createInternal.mockResolvedValue(
+        {
+          name: 'operations/create-sandbox-op',
+          done: false,
+        },
+      );
+      mockClient.agentEnginesInternal.sandboxes.getSandboxOperationInternal.mockResolvedValue(
+        {
+          done: false,
+        },
+      );
+
+      vi.useFakeTimers();
+
+      const executePromise = executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      await Promise.all([
+        expect(executePromise).rejects.toThrow(
+          'Sandbox creation operation operations/create-sandbox-op did not complete in time.',
+        ),
+        vi.runAllTimersAsync(),
+      ]);
+
+      vi.useRealTimers();
+    });
+
+    it('initializes session state if missing', async () => {
+      const contextWithoutState = {
+        session: {
+          id: 'session-1',
+          appName: '123',
+          userId: 'user-1',
+          events: [],
+          lastUpdateTime: Date.now(),
+        },
+      } as unknown as InvocationContext;
+
+      await executor.executeCode({
+        invocationContext: contextWithoutState,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(contextWithoutState.session?.state).toEqual({
+        sandbox_name:
+          'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+      });
+    });
+
+    it('uses provided sandboxResourceName directly', async () => {
+      executor = new AgentEngineSandboxCodeExecutor({
+        sandboxResourceName:
+          'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+        client: mockClient,
+      });
+
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.getInternal,
+      ).not.toHaveBeenCalled();
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.createInternal,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('creates new sandbox if getInternal throws error', async () => {
+      invocationContext.session!.state!['sandbox_name'] =
+        'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456';
+      mockClient.agentEnginesInternal.sandboxes.getInternal.mockRejectedValue(
+        new Error('API Error'),
+      );
+
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.createInternal,
+      ).toHaveBeenCalled();
+    });
+    it('uses provided agentEngineResourceName directly', async () => {
+      executor = new AgentEngineSandboxCodeExecutor({
+        agentEngineResourceName:
+          'projects/test-project/locations/us-central1/reasoningEngines/123',
+        client: mockClient,
+      });
+
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(
+        mockClient.agentEnginesInternal.createInternal,
+      ).not.toHaveBeenCalled();
+    });
+    it('creates default client if not provided', () => {
+      executor = new AgentEngineSandboxCodeExecutor({
+        projectId: 'test-project',
+      });
+      expect(executor['client']).toBeDefined();
+    });
+
+    it('handles invalid JSON in output', async () => {
+      mockClient.agentEnginesInternal.sandboxes.executeCodeInternal.mockResolvedValue(
+        {
+          outputs: [
+            {
+              mimeType: 'application/json',
+              data: Buffer.from('invalid json').toString('base64'),
+            },
+          ],
+        },
+      );
+
+      const result = await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(result.stdout).toBe('invalid json');
     });
   });
 });
