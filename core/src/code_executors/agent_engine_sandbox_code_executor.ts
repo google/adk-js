@@ -4,13 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {
   Chunk,
-  CreateAgentEngineRequestParameters,
+  Client,
   ReasoningEngine,
   SandboxEnvironment,
-} from '@google-cloud/vertexai/build/src/genai/types.js';
+} from '@google-cloud/vertexai';
+import {experimental} from '../utils/experimental.js';
+
+const SANDBOX_PATTERN =
+  /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)\/sandboxEnvironments\/(\d+)$/;
+const ENGINE_PATTERN =
+  /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)$/;
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {logger} from '../utils/logger.js';
@@ -56,6 +61,7 @@ export interface AgentEngineSandboxCodeExecutorOptions {
 /**
  * A code executor that uses Agent Engine Code Execution Sandbox to execute code.
  */
+@experimental
 export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
   sandboxResourceName?: string;
   agentEngineResourceName?: string;
@@ -72,13 +78,8 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
     this.location =
       options.location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 
-    const sandboxPattern =
-      /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)\/sandboxEnvironments\/(\d+)$/;
-    const enginePattern =
-      /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)$/;
-
     if (this.sandboxResourceName) {
-      const match = this.sandboxResourceName.match(sandboxPattern);
+      const match = this.sandboxResourceName.match(SANDBOX_PATTERN);
       if (match) {
         this.projectId = match[1];
         this.location = match[2];
@@ -88,7 +89,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         );
       }
     } else if (this.agentEngineResourceName) {
-      const match = this.agentEngineResourceName.match(enginePattern);
+      const match = this.agentEngineResourceName.match(ENGINE_PATTERN);
       if (match) {
         this.projectId = match[1];
         this.location = match[2];
@@ -212,7 +213,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
 
     if (!this.agentEngineCreationPromise) {
       this.agentEngineCreationPromise = (async () => {
-        logger.info(
+        logger.debug(
           'No Agent Engine resource name provided. Creating a new one...',
         );
         const operation = await this.client.agentEnginesInternal.createInternal(
@@ -220,7 +221,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
             config: {
               displayName: 'default_engine',
             },
-          } as CreateAgentEngineRequestParameters,
+          },
         );
 
         let apiResponse = operation;
@@ -242,7 +243,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
 
         const response = apiResponse.response as ReasoningEngine;
         this.agentEngineResourceName = response.name;
-        logger.info(`Created Agent Engine: ${this.agentEngineResourceName}`);
+        logger.debug(`Created Agent Engine: ${this.agentEngineResourceName}`);
         return this.agentEngineResourceName!;
       })();
     }
@@ -285,7 +286,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
     }
 
     if (createNewSandbox) {
-      logger.info('Creating a new code execution sandbox...');
+      logger.debug('Creating a new code execution sandbox...');
       const operation =
         await this.client.agentEnginesInternal.sandboxes.createInternal({
           name: agentEngineName,
