@@ -19,6 +19,7 @@ export interface TestApiServerParams {
   artifactServiceUri?: string;
   a2a?: boolean;
   startFailureTimeout?: number;
+  web?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 10000;
@@ -61,7 +62,7 @@ export class AdkTsApiServer extends BaseTestServer {
     );
     const args = [
       cliPath,
-      'api_server',
+      params.web ? 'web' : 'api_server',
       params.agentsDir,
       '--port',
       this.port.toString(),
