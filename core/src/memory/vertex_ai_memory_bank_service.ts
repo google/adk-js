@@ -9,9 +9,9 @@ import {
   Client,
   GenerateAgentEngineMemoriesConfig,
   GenerateMemoriesRequestDirectContentsSourceEvent,
+  Memories,
   MemoryMetadataValue,
 } from '@google-cloud/vertexai';
-import {Memories} from '@google-cloud/vertexai/build/src/memories.js';
 import {Content, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
