@@ -120,9 +120,13 @@ export class AgentTool extends BaseTool {
     args,
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
-    if (this.skipSummarization) {
-      toolContext.actions.skipSummarization = true;
-    }
+    // Note: skipSummarization is intentionally not propagated to
+    // toolContext.actions here. Setting it on the shared EventActions would
+    // leak onto the tool-response event returned to the parent agent, causing
+    // isFinalResponse() to treat that event as terminal and prematurely
+    // terminate the parent's run loop. The sub-agent's output is already
+    // returned verbatim below, which is the intended effect of
+    // skipSummarization.
 
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
     const content: Content = {

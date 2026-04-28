@@ -249,6 +249,53 @@ describe('AgentTool', () => {
     expect(result).toBe('');
   });
 
+  it('does not set skipSummarization on toolContext actions when skipSummarization is true', async () => {
+    const mockAgent = {
+      name: 'sub-agent',
+    } as unknown as LlmAgent;
+
+    const tool = new AgentTool({agent: mockAgent, skipSummarization: true});
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+
+    const toolContext = new Context({
+      invocationContext,
+    });
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'result'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    await tool.runAsync({args: {request: 'hello'}, toolContext});
+
+    // skipSummarization must NOT be set on the parent's EventActions.
+    // Setting it would cause isFinalResponse() to treat the tool-response
+    // event as terminal, prematurely breaking the parent agent's run loop.
+    expect(toolContext.actions.skipSummarization).toBeFalsy();
+  });
+
   it('handles abort signal during execution', async () => {
     const mockAgent = {
       name: 'sub-agent',
