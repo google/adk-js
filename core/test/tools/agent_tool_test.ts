@@ -40,7 +40,7 @@ describe('AgentTool', () => {
     const tool = new AgentTool({agent: mockAgent});
 
     const mockSessionService = new InMemorySessionService();
-    vi.spyOn(mockSessionService, 'createSession');
+    vi.spyOn(mockSessionService, 'getOrCreateSession');
 
     const session = createSession({
       id: 'parent-session',
@@ -88,8 +88,8 @@ describe('AgentTool', () => {
 
     expect(result).toBe('hello');
 
-    // Verify session creation called with parent context
-    expect(mockSessionService.createSession).toHaveBeenCalledWith(
+    // Verify getOrCreateSession called with parent context
+    expect(mockSessionService.getOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
         appName: 'sub-agent',
         userId: 'parent-user',
@@ -101,6 +101,65 @@ describe('AgentTool', () => {
     expect(toolContext.state.update).toHaveBeenCalledWith({
       someKey: 'someValue',
     });
+  });
+
+  it('reuses existing session on second invocation within the same parent session', async () => {
+    const mockAgent = {
+      name: 'sub-agent',
+    } as unknown as LlmAgent;
+
+    const tool = new AgentTool({agent: mockAgent});
+
+    const mockSessionService = new InMemorySessionService();
+    vi.spyOn(mockSessionService, 'getOrCreateSession').mockResolvedValue(
+      createSession({
+        id: 'parent-session',
+        appName: 'sub-agent',
+        userId: 'parent-user',
+      }),
+    );
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      sessionService: mockSessionService,
+    });
+
+    const toolContext = new Context({invocationContext});
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'result'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    // Invoke twice simulating two turns in the same parent session
+    await tool.runAsync({args: {request: 'first'}, toolContext});
+    await tool.runAsync({args: {request: 'second'}, toolContext});
+
+    // getOrCreateSession should be called twice, returning the existing
+    // session on the second call rather than throwing a duplicate-session error
+    expect(mockSessionService.getOrCreateSession).toHaveBeenCalledTimes(2);
+    expect(mockSessionService.getOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({sessionId: 'parent-session'}),
+    );
   });
 
   it('handles abort signal before execution', async () => {
