@@ -19,7 +19,7 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "bin": {
-    "adk": "./dist/cli_entrypoint.mjs"
+    "adk": "./dist/esm/cli_entrypoint.js"
   },
   "exports": {
     ".": {

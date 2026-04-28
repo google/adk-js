@@ -29,15 +29,26 @@ import {MCPSessionManager} from './mcp_session_manager.js';
  * invoked, which in turn establishes an MCP session, sends a `callTool`
  * request with the provided arguments, and returns the result from the
  * remote tool.
+ *
+ * The originalName parameter allows the tool to track the native tool name
+ * exposed by the MCP server. This is critical when the toolset applies a
+ * prefix to tool names (e.g., for LLM namespace disambiguation), ensuring
+ * the correct original name is used when executing on the server.
  */
 export class MCPTool extends BaseTool {
   private readonly mcpTool: Tool;
   private readonly mcpSessionManager: MCPSessionManager;
+  private readonly originalName: string;
 
-  constructor(mcpTool: Tool, mcpSessionManager: MCPSessionManager) {
+  constructor(
+    mcpTool: Tool,
+    mcpSessionManager: MCPSessionManager,
+    originalName?: string,
+  ) {
     super({name: mcpTool.name, description: mcpTool.description || ''});
     this.mcpTool = mcpTool;
     this.mcpSessionManager = mcpSessionManager;
+    this.originalName = originalName || mcpTool.name;
   }
 
   override _getDeclaration(): FunctionDeclaration {
@@ -55,7 +66,7 @@ export class MCPTool extends BaseTool {
     const session = await this.mcpSessionManager.createSession();
 
     const callRequest: CallToolRequest = {} as CallToolRequest;
-    callRequest.params = {name: this.mcpTool.name, arguments: request.args};
+    callRequest.params = {name: this.originalName, arguments: request.args};
     const result = await session.callTool(callRequest.params, undefined, {
       signal: request.toolContext.abortSignal,
     });
