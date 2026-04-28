@@ -15,6 +15,7 @@ import {
 } from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
+import {experimental} from '../utils/experimental.js';
 
 import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
@@ -52,9 +53,9 @@ export interface VertexAiSessionServiceOptions {
 }
 
 /**
- * @experimental (Experimental, subject to change)
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
+@experimental
 export class VertexAiSessionService extends BaseSessionService {
   private sessions: Sessions;
   private agentEngineId?: string;
