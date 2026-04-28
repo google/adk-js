@@ -38,14 +38,6 @@ async function main() {
   await Promise.all([
     esbuild.build({
       ...commonOptions,
-      entryPoints: ['./src/cli_entrypoint.ts'],
-      outfile: 'dist/cli_entrypoint.mjs',
-      format: 'esm',
-      bundle: true,
-      minify: true,
-    }),
-    esbuild.build({
-      ...commonOptions,
       entryPoints: ['./src/**/*.ts'],
       outdir: 'dist/esm',
       format: 'esm',
@@ -64,7 +56,8 @@ async function main() {
 
   // Run file operations sequentially to avoid race conditions
   await writeFile('./dist/cjs/package.json', '{"type": "commonjs"}');
-  await execAsync('cp -r ./src/browser ./dist/browser');
+  await execAsync('cp -r ./src/browser ./dist/esm/browser');
+  await execAsync('cp -r ./src/browser ./dist/cjs/browser');
 }
 
 main().catch((err) => {
