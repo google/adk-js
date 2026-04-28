@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '@google/adk/agents/invocation_context.js';
-import {CodeExecutionLanguage} from '@google/adk/code_executors/code_execution_utils.js';
+import {
+  AgentEngineSandboxCodeExecutor,
+  CodeExecutionLanguage,
+  InvocationContext,
+} from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-
-import {AgentEngineSandboxCodeExecutor} from '@google/adk';
 
 describe('AgentEngineSandboxCodeExecutor', () => {
   let executor: AgentEngineSandboxCodeExecutor;
