@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/google/adk-js/compare/devtools-v1.0.0...devtools-v1.1.0) (2026-04-28)
+
+
+### Bug Fixes
+
+* fix adk web ui source code serving path ([#309](https://github.com/google/adk-js/issues/309)) ([b92c238](https://github.com/google/adk-js/commit/b92c2387622cedec880227ed6a6af4b5559d43e3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.0.0 to ^1.1.0
+
 ## [1.0.0](https://github.com/google/adk-js/compare/devtools-v0.6.1...devtools-v1.0.0) (2026-04-21)
 
 
