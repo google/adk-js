@@ -64,8 +64,7 @@ async function main() {
 
   // Run file operations sequentially to avoid race conditions
   await writeFile('./dist/cjs/package.json', '{"type": "commonjs"}');
-  await execAsync('cp -r ./src/browser ./dist/esm/browser');
-  await execAsync('cp -r ./src/browser ./dist/cjs/browser');
+  await execAsync('cp -r ./src/browser ./dist/browser');
 }
 
 main().catch((err) => {
