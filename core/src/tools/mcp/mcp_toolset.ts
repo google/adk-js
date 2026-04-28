@@ -24,6 +24,11 @@ import {MCPTool} from './mcp_tool.js';
  * The toolset can be configured with a filter to selectively expose a subset
  * of the tools provided by the MCP server.
  *
+ * It can also be configured with a prefix. If provided, all tools discovered
+ * from the MCP server will have their names prefixed with `${prefix}_`. When the
+ * LLM invokes the prefixed tool, this toolset transparently strips the prefix
+ * before sending the request to the underlying MCP server.
+ *
  * Usage:
  *   import { MCPToolset } from '@google/adk';
  *   import { StreamableHTTPConnectionParamsSchema } from '@google/adk';
@@ -65,7 +70,7 @@ export class MCPToolset extends BaseToolset {
         ...tool,
         name: this.prefix ? `${this.prefix}_${tool.name}` : tool.name,
       };
-      return new MCPTool(toolWithPrefix, this.mcpSessionManager);
+      return new MCPTool(toolWithPrefix, this.mcpSessionManager, tool.name);
     });
   }
 
