@@ -223,6 +223,15 @@ export {
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export type {VertexRagRetrievalToolConfig} from './tools/vertex_rag_retrieval_tool.js';
+export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
+export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
+export type {
+  DataStoreParams,
+  SearchEngineParams,
+  VertexAISearchConfig,
+  VertexAISearchDataStoreSpec,
+  VertexAiSearchToolParams,
+} from './tools/vertex_ai_search_tool.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';
