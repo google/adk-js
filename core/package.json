@@ -37,7 +37,7 @@
     "test": "vitest",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
-    "prepublishOnly": "npm run build:bundle"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
