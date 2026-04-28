@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Client} from '@google-cloud/vertexai';
+import {Memories} from '@google-cloud/vertexai/build/src/genai/memories.js';
 import {
   AgentEngineMemoryConfig,
-  Client,
   GenerateAgentEngineMemoriesConfig,
   GenerateMemoriesRequestDirectContentsSourceEvent,
-  Memories,
   MemoryMetadataValue,
-} from '@google-cloud/vertexai';
+} from '@google-cloud/vertexai/build/src/genai/types.js';
 import {Content, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
