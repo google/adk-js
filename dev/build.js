@@ -38,14 +38,6 @@ async function main() {
   await Promise.all([
     esbuild.build({
       ...commonOptions,
-      entryPoints: ['./src/cli_entrypoint.ts'],
-      outfile: 'dist/cli_entrypoint.mjs',
-      format: 'esm',
-      bundle: true,
-      minify: true,
-    }),
-    esbuild.build({
-      ...commonOptions,
       entryPoints: ['./src/**/*.ts'],
       outdir: 'dist/esm',
       format: 'esm',

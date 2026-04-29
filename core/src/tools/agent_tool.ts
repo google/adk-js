@@ -151,7 +151,7 @@ export class AgentTool extends BaseTool {
       credentialService: toolContext.invocationContext.credentialService,
     });
 
-    const session = await runner.sessionService.createSession({
+    const session = await runner.sessionService.getOrCreateSession({
       appName: this.agent.name,
       userId: toolContext.invocationContext.userId,
       sessionId: toolContext.invocationContext.session.id,
