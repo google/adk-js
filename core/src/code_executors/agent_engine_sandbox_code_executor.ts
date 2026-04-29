@@ -5,13 +5,12 @@
  */
 
 import {
-  Chunk,
   Client,
   ReasoningEngine,
   SandboxEnvironment,
 } from '@google-cloud/vertexai';
-import {guessMimeType} from '../utils/file_utils.js';
 import {experimental} from '../utils/experimental.js';
+import {guessMimeType} from '../utils/file_utils.js';
 
 const SANDBOX_PATTERN =
   /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)\/sandboxEnvironments\/(\d+)$/;
@@ -25,6 +24,9 @@ import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {CodeExecutionResult, File} from './code_execution_utils.js';
 
 const DEFAULT_MAX_ATTEMPTS = 30;
+const DEFAULT_SANDBOX_TTL = '31536000s';
+const DEFAULT_SANDBOX_DISPLAY_NAME = 'default_sandbox';
+const DEFAULT_ENGINE_DISPLAY_NAME = 'default_engine';
 
 /**
  * Options for AgentEngineSandboxCodeExecutor.
@@ -125,7 +127,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
       agentEngineName,
     );
 
-    const inputs: Chunk[] = [
+    const inputs = [
       {
         mimeType: 'application/json',
         data: Buffer.from(
@@ -224,7 +226,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         const operation = await this.client.agentEnginesInternal.createInternal(
           {
             config: {
-              displayName: 'default_engine',
+              displayName: DEFAULT_ENGINE_DISPLAY_NAME,
             },
           },
         );
@@ -299,8 +301,8 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
             codeExecutionEnvironment: {},
           },
           config: {
-            displayName: 'default_sandbox',
-            ttl: '31536000s', // 1 year
+            displayName: DEFAULT_SANDBOX_DISPLAY_NAME,
+            ttl: DEFAULT_SANDBOX_TTL,
           },
         });
 
