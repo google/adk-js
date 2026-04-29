@@ -35,7 +35,6 @@ export function createGoogleSearchAgent(model: string | BaseLlm): LlmAgent {
  * A tool that wraps a sub-agent that only uses google_search tool.
  *
  * This is a workaround to support using google_search tool with other tools.
- * @experimental
  */
 @experimental
 export class GoogleSearchAgentTool extends AgentTool {

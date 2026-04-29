@@ -5,24 +5,20 @@
  */
 
 import {
+  BaseLlm,
   BaseTool,
   Context,
   createEventActions,
+  createGoogleSearchAgent,
+  GOOGLE_SEARCH,
+  GoogleSearchAgentTool,
+  GoogleSearchTool,
   LlmAgent,
+  LlmRequest,
   Runner,
 } from '@google/adk';
 import {Tool} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
-import {BaseLlm} from '../../src/models/base_llm.js';
-import {LlmRequest} from '../../src/models/llm_request.js';
-import {
-  createGoogleSearchAgent,
-  GoogleSearchAgentTool,
-} from '../../src/tools/google_search_agent_tool.js';
-import {
-  GOOGLE_SEARCH,
-  GoogleSearchTool,
-} from '../../src/tools/google_search_tool.js';
 
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {
   const actual =
