@@ -92,7 +92,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
   it('defaults location to us-central1 if missing in env', () => {
     vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
     executor = new AgentEngineSandboxCodeExecutor({projectId: 'test-project'});
-    expect((executor as any).location).toBe('us-central1');
+    expect(executor['location']).toBe('us-central1');
   });
 
   it('uses location from options if provided', () => {
@@ -100,7 +100,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       projectId: 'test-project',
       location: 'custom-location',
     });
-    expect((executor as any).location).toBe('custom-location');
+    expect(executor['location']).toBe('custom-location');
   });
 
   it('parses project and location from sandboxResourceName', () => {
