@@ -4,13 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  Client,
-  ReasoningEngine,
-  SandboxEnvironment,
-} from '@google-cloud/vertexai';
+import {Client} from '@google-cloud/vertexai';
 import {experimental} from '../utils/experimental.js';
 import {guessMimeType} from '../utils/file_utils.js';
+
+interface LocalChunk {
+  data?: string;
+  mimeType?: string;
+  metadata?: {
+    attributes?: Record<string, string>;
+  };
+}
 
 const SANDBOX_PATTERN =
   /^projects\/([a-zA-Z0-9-_]+)\/locations\/([a-zA-Z0-9-_]+)\/reasoningEngines\/(\d+)\/sandboxEnvironments\/(\d+)$/;
@@ -127,7 +131,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
       agentEngineName,
     );
 
-    const inputs = [
+    const inputs: LocalChunk[] = [
       {
         mimeType: 'application/json',
         data: Buffer.from(
@@ -248,7 +252,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
           );
         }
 
-        const response = apiResponse.response as ReasoningEngine;
+        const response = apiResponse.response as {name?: string};
         this.agentEngineResourceName = response.name;
         logger.debug(`Created Agent Engine: ${this.agentEngineResourceName}`);
         return this.agentEngineResourceName!;
@@ -325,7 +329,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         );
       }
 
-      const response = apiResponse.response as SandboxEnvironment;
+      const response = apiResponse.response as {name?: string};
       sandboxName = response.name!;
 
       if (invocationContext.session) {
