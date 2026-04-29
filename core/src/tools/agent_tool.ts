@@ -172,6 +172,7 @@ export class AgentTool extends BaseTool {
     }
 
     let lastEvent: Event | undefined;
+    let lastGroundingMetadata: unknown = undefined;
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
@@ -185,6 +186,9 @@ export class AgentTool extends BaseTool {
       if (event.actions.stateDelta) {
         toolContext.state.update(event.actions.stateDelta);
       }
+      if (event.groundingMetadata) {
+        lastGroundingMetadata = event.groundingMetadata;
+      }
 
       lastEvent = event;
     }
@@ -193,9 +197,9 @@ export class AgentTool extends BaseTool {
       return '';
     }
 
-    if (this.propagateGroundingMetadata && lastEvent.groundingMetadata) {
+    if (this.propagateGroundingMetadata && lastGroundingMetadata) {
       toolContext.state.update({
-        'temp:_adk_grounding_metadata': lastEvent.groundingMetadata,
+        'temp:grounding_metadata': lastGroundingMetadata,
       });
     }
 

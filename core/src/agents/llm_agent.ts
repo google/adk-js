@@ -320,8 +320,9 @@ async function convertToolUnionToTools(
     // Wrap google_search tool with AgentTool if there are multiple tools because
     // the built-in tools cannot be used together with other tools.
     // TODO(b/448114567): Remove once the workaround is no longer needed.
-    if (multipleTools && toolUnion instanceof GoogleSearchTool) {
-      if (toolUnion.bypassMultiToolsLimit) {
+    if (multipleTools && toolUnion.name === 'google_search') {
+      const searchTool = toolUnion as unknown as GoogleSearchTool;
+      if (searchTool.bypassMultiToolsLimit) {
         const {createGoogleSearchAgent, GoogleSearchAgentTool} =
           await import('../tools/google_search_agent_tool.js');
         return [new GoogleSearchAgentTool(createGoogleSearchAgent(model!))];
@@ -770,6 +771,8 @@ export class LlmAgent extends BaseAgent {
         await convertToolUnionToTools(
           toolUnion,
           new ReadonlyContext(invocationContext),
+          this.canonicalModel,
+          this.tools.length > 1,
         )
       ).filter((tool) => {
         // If allowedTools is not set, allow all tools. Otherwise, only allow
@@ -780,7 +783,6 @@ export class LlmAgent extends BaseAgent {
           llmRequest.allowedTools.includes(tool.name)
         );
       });
-
       for (const tool of tools) {
         await tool.processLlmRequest({toolContext, llmRequest});
 
