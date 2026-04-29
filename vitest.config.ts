@@ -9,6 +9,7 @@ import {defineConfig} from 'vitest/config';
 
 export default defineConfig({
   test: {
+    alias: {'@google/adk': path.resolve(__dirname, './core/src')},
     projects: [
       {
         test: {

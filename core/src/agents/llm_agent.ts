@@ -29,6 +29,7 @@ import {LLMRegistry} from '../models/registry.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
+import {GoogleSearchTool} from '../tools/google_search_tool.js';
 
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
@@ -312,8 +313,20 @@ export interface LlmAgentConfig extends BaseAgentConfig {
 async function convertToolUnionToTools(
   toolUnion: ToolUnion,
   context?: ReadonlyContext,
+  model?: string | BaseLlm,
+  multipleTools: boolean = false,
 ): Promise<BaseTool[]> {
   if (isBaseTool(toolUnion)) {
+    // Wrap google_search tool with AgentTool if there are multiple tools because
+    // the built-in tools cannot be used together with other tools.
+    // TODO(b/448114567): Remove once the workaround is no longer needed.
+    if (multipleTools && toolUnion instanceof GoogleSearchTool) {
+      if (toolUnion.bypassMultiToolsLimit) {
+        const {createGoogleSearchAgent, GoogleSearchAgentTool} =
+          await import('../tools/google_search_agent_tool.js');
+        return [new GoogleSearchAgentTool(createGoogleSearchAgent(model!))];
+      }
+    }
     return [toolUnion];
   }
   return await toolUnion.getTools(context);
@@ -539,8 +552,14 @@ export class LlmAgent extends BaseAgent {
    */
   async canonicalTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const resolvedTools: BaseTool[] = [];
+    const multipleTools = this.tools.length > 1;
     for (const toolUnion of this.tools) {
-      const tools = await convertToolUnionToTools(toolUnion, context);
+      const tools = await convertToolUnionToTools(
+        toolUnion,
+        context,
+        this.canonicalModel,
+        multipleTools,
+      );
       resolvedTools.push(...tools);
     }
     return resolvedTools;

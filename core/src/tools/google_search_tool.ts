@@ -17,8 +17,13 @@ import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
  * perform local code execution.
  */
 export class GoogleSearchTool extends BaseTool {
-  constructor() {
+  readonly bypassMultiToolsLimit: boolean;
+  readonly model?: string;
+
+  constructor(options: {bypassMultiToolsLimit?: boolean; model?: string} = {}) {
     super({name: 'google_search', description: 'Google Search Tool'});
+    this.bypassMultiToolsLimit = options.bypassMultiToolsLimit ?? false;
+    this.model = options.model;
   }
 
   runAsync(): Promise<unknown> {
@@ -30,6 +35,10 @@ export class GoogleSearchTool extends BaseTool {
   override async processLlmRequest({
     llmRequest,
   }: ToolProcessLlmRequest): Promise<void> {
+    if (this.model) {
+      llmRequest.model = this.model;
+    }
+
     if (!llmRequest.model) {
       return;
     }

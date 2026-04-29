@@ -30,6 +30,11 @@ export interface AgentToolConfig {
    * Whether to skip summarization of the agent output.
    */
   skipSummarization?: boolean;
+
+  /**
+   * Whether to propagate grounding metadata from agent to parent context state.
+   */
+  propagateGroundingMetadata?: boolean;
 }
 
 /**
@@ -69,6 +74,8 @@ export class AgentTool extends BaseTool {
 
   private readonly skipSummarization: boolean;
 
+  private readonly propagateGroundingMetadata: boolean;
+
   constructor(config: AgentToolConfig) {
     super({
       name: config.agent.name,
@@ -76,6 +83,8 @@ export class AgentTool extends BaseTool {
     });
     this.agent = config.agent;
     this.skipSummarization = config.skipSummarization || false;
+    this.propagateGroundingMetadata =
+      config.propagateGroundingMetadata || false;
   }
 
   override _getDeclaration(): FunctionDeclaration {
@@ -182,6 +191,12 @@ export class AgentTool extends BaseTool {
 
     if (!lastEvent?.content?.parts?.length) {
       return '';
+    }
+
+    if (this.propagateGroundingMetadata && lastEvent.groundingMetadata) {
+      toolContext.state.update({
+        'temp:_adk_grounding_metadata': lastEvent.groundingMetadata,
+      });
     }
 
     const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
