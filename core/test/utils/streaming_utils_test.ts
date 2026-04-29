@@ -493,5 +493,59 @@ describe('StreamingResponseAggregator', () => {
         },
       ]);
     });
+
+    it('should yield final response when last chunk has no candidates (progressive mode)', async () => {
+      const aggregator = new StreamingResponseAggregator(true);
+
+      // First chunk: function call with candidates
+      const chunkWithCandidate = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {city: 'Seattle'},
+              } as FunctionCall,
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      // Final chunk: no candidates (Gemini stream termination signal)
+      const emptyChunk = new GenerateContentResponse();
+      emptyChunk.candidates = [];
+
+      for await (const _ of aggregator.processResponse(chunkWithCandidate)) {
+        // consume
+      }
+      for await (const _ of aggregator.processResponse(emptyChunk)) {
+        // consume
+      }
+
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeTruthy();
+      expect(finalResponse?.partial).toBe(false);
+      expect(finalResponse?.content?.parts).toHaveLength(1);
+      expect(finalResponse?.content?.parts?.[0]?.functionCall?.name).toBe(
+        'get_weather',
+      );
+    });
+  });
+
+  describe('Non-Progressive Mode', () => {
+    it('should return undefined from close() when no data accumulated and last chunk has no candidates', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      const emptyChunk = new GenerateContentResponse();
+      emptyChunk.candidates = [];
+
+      for await (const _ of aggregator.processResponse(emptyChunk)) {
+        // consume
+      }
+
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeUndefined();
+    });
   });
 });
