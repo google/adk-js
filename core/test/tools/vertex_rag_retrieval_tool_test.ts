@@ -21,8 +21,10 @@ function makeLlmRequest(model = 'gemini-2.0-flash') {
 
 describe('VertexRagRetrievalTool', () => {
   describe('processLlmRequest', () => {
-    it('adds retrieval.vertexRagStore with ragCorpus to llmRequest.config.tools', async () => {
-      const tool = new VertexRagRetrievalTool({ragCorpus: RAG_CORPUS});
+    it('adds retrieval.vertexRagStore to llmRequest.config.tools', async () => {
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
       const llmRequest = makeLlmRequest();
 
       await tool.processLlmRequest({llmRequest} as never);
@@ -37,9 +39,9 @@ describe('VertexRagRetrievalTool', () => {
       });
     });
 
-    it('sets similarityTopK when provided', async () => {
+    it('passes through similarityTopK when provided', async () => {
       const tool = new VertexRagRetrievalTool({
-        ragCorpus: RAG_CORPUS,
+        ragResources: [{ragCorpus: RAG_CORPUS}],
         similarityTopK: 10,
       });
       const llmRequest = makeLlmRequest();
@@ -51,10 +53,10 @@ describe('VertexRagRetrievalTool', () => {
       expect(vertexRagStore.similarityTopK).toBe(10);
     });
 
-    it('sets ragRetrievalConfig.filter.vectorDistanceThreshold when provided', async () => {
+    it('passes through ragRetrievalConfig when provided', async () => {
       const tool = new VertexRagRetrievalTool({
-        ragCorpus: RAG_CORPUS,
-        vectorDistanceThreshold: 0.5,
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+        ragRetrievalConfig: {filter: {vectorDistanceThreshold: 0.5}},
       });
       const llmRequest = makeLlmRequest();
 
@@ -68,7 +70,9 @@ describe('VertexRagRetrievalTool', () => {
     });
 
     it('does not set optional fields when not provided', async () => {
-      const tool = new VertexRagRetrievalTool({ragCorpus: RAG_CORPUS});
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
       const llmRequest = makeLlmRequest();
 
       await tool.processLlmRequest({llmRequest} as never);
@@ -80,7 +84,9 @@ describe('VertexRagRetrievalTool', () => {
     });
 
     it('initializes llmRequest.config and tools if not present', async () => {
-      const tool = new VertexRagRetrievalTool({ragCorpus: RAG_CORPUS});
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
       const llmRequest = {model: 'gemini-2.0-flash', contents: []} as never;
 
       await tool.processLlmRequest({llmRequest} as never);
@@ -91,7 +97,9 @@ describe('VertexRagRetrievalTool', () => {
     });
 
     it('appends to existing tools without removing them', async () => {
-      const tool = new VertexRagRetrievalTool({ragCorpus: RAG_CORPUS});
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
       const llmRequest = makeLlmRequest();
       llmRequest.config.tools = [{googleSearch: {}}] as never;
 
@@ -104,7 +112,9 @@ describe('VertexRagRetrievalTool', () => {
 
   describe('runAsync', () => {
     it('resolves immediately (server-side tool)', async () => {
-      const tool = new VertexRagRetrievalTool({ragCorpus: RAG_CORPUS});
+      const tool = new VertexRagRetrievalTool({
+        ragResources: [{ragCorpus: RAG_CORPUS}],
+      });
       const result = await tool.runAsync({} as never);
       expect(result).toBeUndefined();
     });
