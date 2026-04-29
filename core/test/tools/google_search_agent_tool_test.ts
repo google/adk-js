@@ -94,7 +94,7 @@ describe('GoogleSearchAgentTool', () => {
 
       // Verify state update called with grounding metadata
       expect(toolContext.state.update).toHaveBeenCalledWith({
-        'temp:_adk_grounding_metadata': mockGroundingMetadata,
+        'temp:grounding_metadata': mockGroundingMetadata,
       });
     });
   });

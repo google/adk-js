@@ -1,13 +1,17 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 import {GenerateContentConfig} from '@google/genai';
 
 import {isGemini1Model, isGeminiModel} from '../utils/model_name.js';
 
-import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
+import {
+  BaseTool,
+  RunAsyncToolRequest,
+  ToolProcessLlmRequest,
+} from './base_tool.js';
 
 /**
  * A built-in tool that is automatically invoked by Gemini 2 models to retrieve
@@ -26,7 +30,7 @@ export class GoogleSearchTool extends BaseTool {
     this.model = options.model;
   }
 
-  runAsync(): Promise<unknown> {
+  runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
     // This is a built-in tool on server side, it's triggered by setting the
     // corresponding request parameters.
     return Promise.resolve();

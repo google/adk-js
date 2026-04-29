@@ -6,6 +6,7 @@
 
 import {LlmAgent} from '../agents/llm_agent.js';
 import {BaseLlm} from '../models/base_llm.js';
+import {experimental} from '../utils/experimental.js';
 import {AgentTool} from './agent_tool.js';
 import {GOOGLE_SEARCH} from './google_search_tool.js';
 
@@ -36,6 +37,7 @@ export function createGoogleSearchAgent(model: string | BaseLlm): LlmAgent {
  * This is a workaround to support using google_search tool with other tools.
  * @experimental
  */
+@experimental
 export class GoogleSearchAgentTool extends AgentTool {
   constructor(agent: LlmAgent) {
     super({
