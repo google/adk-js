@@ -164,7 +164,7 @@ export class AdkApiServer {
       });
       app.use(
         '/dev-ui',
-        express.static(path.join(__dirname, './browser'), {
+        express.static(path.join(__dirname, '../browser'), {
           setHeaders: (res: Response, path: string) => {
             if (path.endsWith('.js')) {
               res.setHeader('Content-Type', 'text/javascript');

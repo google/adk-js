@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/google/adk-js/compare/adk-v1.0.0...adk-v1.1.0) (2026-04-28)
+
+
+### Features
+
+* add UrlContextTool for Gemini 2+ URL context grounding ([#303](https://github.com/google/adk-js/issues/303)) ([5c37ccf](https://github.com/google/adk-js/commit/5c37ccf53499ee9130e595051f15a31cef97a32b)), closes [#282](https://github.com/google/adk-js/issues/282)
+* Vertex AI Search Tool ([#296](https://github.com/google/adk-js/issues/296)) ([c06fd03](https://github.com/google/adk-js/commit/c06fd03102f01304b32b1c2aec6a550d0963e6bd))
+
+
+### Bug Fixes
+
+* fix adk web ui source code serving path ([#309](https://github.com/google/adk-js/issues/309)) ([b92c238](https://github.com/google/adk-js/commit/b92c2387622cedec880227ed6a6af4b5559d43e3))
+* **mcp:** strip prefix during tool execution ([#299](https://github.com/google/adk-js/issues/299)) ([6f7146b](https://github.com/google/adk-js/commit/6f7146ba6595cd3eb69ff9cdbd04ca9b3f6c26a5))
+* use getOrCreateSession in AgentTool to allow reuse within the same session ([#302](https://github.com/google/adk-js/issues/302)) ([5920ea5](https://github.com/google/adk-js/commit/5920ea59bef0b51cd13f89ea76203027e9fe4301)), closes [#294](https://github.com/google/adk-js/issues/294)
+
 ## [1.0.0](https://github.com/google/adk-js/compare/adk-v0.6.1...adk-v1.0.0) (2026-04-21)
 
 
