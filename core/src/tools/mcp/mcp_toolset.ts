@@ -6,6 +6,7 @@
 
 import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 
+import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
@@ -54,7 +55,7 @@ export class MCPToolset extends BaseToolset {
     this.mcpSessionManager = new MCPSessionManager(connectionParams);
   }
 
-  async getTools(): Promise<BaseTool[]> {
+  async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const session = await this.mcpSessionManager.createSession();
 
     const listResult = (await session.listTools()) as ListToolsResult;
@@ -63,8 +64,7 @@ export class MCPToolset extends BaseToolset {
       logger.debug(`tool: ${tool.name}`);
     }
 
-    // TODO: respect context (e.g. tool filter)
-    return listResult.tools.map((tool) => {
+    const tools = listResult.tools.map((tool) => {
       // Create a cloned tool definition with the prefixed name
       const toolWithPrefix = {
         ...tool,
@@ -72,6 +72,31 @@ export class MCPToolset extends BaseToolset {
       };
       return new MCPTool(toolWithPrefix, this.mcpSessionManager, tool.name);
     });
+
+    // Apply toolFilter when specified.
+    // An empty array (the default) means no filter — all tools are returned.
+    const filter = this.toolFilter;
+    if (!filter || (Array.isArray(filter) && filter.length === 0)) {
+      return tools;
+    }
+
+    if (Array.isArray(filter)) {
+      // String-array filter: match against the (possibly-prefixed) tool name.
+      return tools.filter((tool) => (filter as string[]).includes(tool.name));
+    }
+
+    if (context) {
+      // Predicate filter: requires a ReadonlyContext to evaluate.
+      return tools.filter((tool) => filter(tool, context));
+    }
+
+    // Predicate filter requested but no context provided — return all tools
+    // and log a warning so callers are aware the filter was not applied.
+    logger.warn(
+      'MCPToolset: a ToolPredicate toolFilter was provided but getTools() ' +
+        'was called without a ReadonlyContext. The filter will not be applied.',
+    );
+    return tools;
   }
 
   async close(): Promise<void> {}
