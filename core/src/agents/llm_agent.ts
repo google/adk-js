@@ -505,6 +505,24 @@ export class LlmAgent extends BaseAgent {
   }
 
   /**
+   * Gets the model (string or instance) for tools, searching ancestors if needed.
+   * Avoids instantiating the model if it's a string.
+   */
+  private getModelForTools(): string | BaseLlm | undefined {
+    if (this.model) {
+      return this.model;
+    }
+    let ancestorAgent = this.parentAgent;
+    while (ancestorAgent) {
+      if (isLlmAgent(ancestorAgent) && ancestorAgent.model) {
+        return ancestorAgent.model;
+      }
+      ancestorAgent = ancestorAgent.parentAgent;
+    }
+    return undefined;
+  }
+
+  /**
    * The resolved instruction field to construct instruction for this
    * agent.
    *
@@ -554,11 +572,12 @@ export class LlmAgent extends BaseAgent {
   async canonicalTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const resolvedTools: BaseTool[] = [];
     const multipleTools = this.tools.length > 1;
+    const modelForTools = this.getModelForTools();
     for (const toolUnion of this.tools) {
       const tools = await convertToolUnionToTools(
         toolUnion,
         context,
-        this.canonicalModel,
+        modelForTools,
         multipleTools,
       );
       resolvedTools.push(...tools);
@@ -771,7 +790,7 @@ export class LlmAgent extends BaseAgent {
         await convertToolUnionToTools(
           toolUnion,
           new ReadonlyContext(invocationContext),
-          this.canonicalModel,
+          this.getModelForTools(),
           this.tools.length > 1,
         )
       ).filter((tool) => {
