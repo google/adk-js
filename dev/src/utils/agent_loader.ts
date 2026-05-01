@@ -23,6 +23,9 @@ import {
   removeFolder,
   tryToFindFileRecursively,
 } from './file_utils.js';
+import {AdkLogger} from './logger.js';
+
+const logger = new AdkLogger({label: 'AgentLoader', colorize: {all: true}});
 
 /**
  * Supported file extensions for JavaScript and TypeScript.
@@ -335,22 +338,17 @@ export class AgentLoader {
         {recursive: true},
         (_event, filename) => {
           if (filename && isJsFile(path.extname(filename))) {
-            console.log(
-              `[AgentLoader] Detected change in ${filename}, reloading agents...`,
-            );
+            logger.info(`Detected change in ${filename}, reloading agents...`);
             this.invalidateAll();
           }
         },
       );
 
       this.watcher.on('error', (err) => {
-        console.warn('[AgentLoader] File watcher error:', err.message);
+        logger.warn('File watcher error:', err.message);
       });
     } catch (err) {
-      console.warn(
-        '[AgentLoader] Could not start file watcher:',
-        (err as Error).message,
-      );
+      logger.warn('Could not start file watcher:', (err as Error).message);
     }
   }
 

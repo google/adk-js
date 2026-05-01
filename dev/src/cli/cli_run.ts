@@ -15,6 +15,7 @@ import {
   Runner,
   Session,
 } from '@google/adk';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -101,16 +102,30 @@ interface RunInteractivelyOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
+  onAgentFileReloaded?: (subscribe: (newAgent: BaseAgent) => void) => void;
 }
 async function runInteractively(
   options: RunInteractivelyOptions,
 ): Promise<void> {
-  const runner = new Runner({
-    appName: options.rootAgent.name,
-    agent: options.rootAgent,
+  let currentAgent = options.rootAgent;
+  let runner = new Runner({
+    appName: currentAgent.name,
+    agent: currentAgent,
     artifactService: options.artifactService,
     sessionService: options.sessionService,
     memoryService: options.memoryService,
+  });
+
+  options.onAgentFileReloaded?.((newAgent: BaseAgent) => {
+    currentAgent = newAgent;
+    runner = new Runner({
+      appName: newAgent.name,
+      agent: newAgent,
+      artifactService: options.artifactService,
+      sessionService: options.sessionService,
+      memoryService: options.memoryService,
+    });
+    console.log(`Agent reloaded. New runner created with existing session.`);
   });
 
   while (true) {
@@ -155,6 +170,7 @@ export interface RunAgentOptions {
   memoryService?: BaseMemoryService;
   otelToCloud?: boolean;
   agentFileLoadOptions?: AgentFileOptions;
+  reloadAgents?: boolean;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   try {
@@ -175,50 +191,87 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       userId,
     });
 
-    if (options.inputFile) {
-      session =
-        (await runFromInputFile({
-          appName: rootAgent.name,
-          userId,
-          agent: rootAgent,
-          artifactService,
-          sessionService,
-          memoryService,
-          filePath: options.inputFile,
-        })) || session;
-    } else if (options.savedSessionFile) {
-      const loadedSession = await loadFileData<Session>(
-        options.savedSessionFile,
-      );
-      if (loadedSession) {
-        for (const event of loadedSession.events) {
-          await sessionService.appendEvent({session, event});
-          const content = event.content;
-          if (content && content.parts?.length) {
-            const text = content.parts.map((part) => part.text || '').join('');
-            if (text) {
-              console.log(`[${event.author}]: ${text}`);
+    const reloadSubscribers: Array<(agent: BaseAgent) => void> = [];
+    let watcher: fs.FSWatcher | undefined;
+
+    if (options.reloadAgents) {
+      const agentFilePath = path.join(dirname, options.agentPath);
+      watcher = fs.watch(agentFilePath, async () => {
+        try {
+          await using reloadedFile = new AgentFile(
+            agentFilePath,
+            options.agentFileLoadOptions,
+          );
+          const newAgent = await reloadedFile.load();
+          for (const subscriber of reloadSubscribers) {
+            subscriber(newAgent);
+          }
+        } catch (err) {
+          console.warn('Failed to reload agent:', (err as Error).message);
+        }
+      });
+    }
+
+    const onAgentFileReloaded = (subscribe: (agent: BaseAgent) => void) => {
+      reloadSubscribers.push(subscribe);
+    };
+
+    try {
+      if (options.inputFile) {
+        session =
+          (await runFromInputFile({
+            appName: rootAgent.name,
+            userId,
+            agent: rootAgent,
+            artifactService,
+            sessionService,
+            memoryService,
+            filePath: options.inputFile,
+          })) || session;
+      } else if (options.savedSessionFile) {
+        const loadedSession = await loadFileData<Session>(
+          options.savedSessionFile,
+        );
+        if (loadedSession) {
+          for (const event of loadedSession.events) {
+            await sessionService.appendEvent({session, event});
+            const content = event.content;
+            if (content && content.parts?.length) {
+              const text = content.parts
+                .map((part) => part.text || '')
+                .join('');
+              if (text) {
+                console.log(`[${event.author}]: ${text}`);
+              }
             }
           }
         }
-      }
 
-      await runInteractively({
-        rootAgent,
-        artifactService,
-        sessionService,
-        memoryService,
-        session,
-      });
-    } else {
-      console.log(`Running agent ${rootAgent.name}, type exit to exit.`);
-      await runInteractively({
-        rootAgent,
-        artifactService,
-        sessionService,
-        memoryService,
-        session,
-      });
+        await runInteractively({
+          rootAgent,
+          artifactService,
+          sessionService,
+          memoryService,
+          session,
+          onAgentFileReloaded: options.reloadAgents
+            ? onAgentFileReloaded
+            : undefined,
+        });
+      } else {
+        console.log(`Running agent ${rootAgent.name}, type exit to exit.`);
+        await runInteractively({
+          rootAgent,
+          artifactService,
+          sessionService,
+          memoryService,
+          session,
+          onAgentFileReloaded: options.reloadAgents
+            ? onAgentFileReloaded
+            : undefined,
+        });
+      }
+    } finally {
+      watcher?.close();
     }
 
     if (options.saveSession) {
