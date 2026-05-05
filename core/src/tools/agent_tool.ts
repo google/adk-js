@@ -185,7 +185,9 @@ export class AgentTool extends BaseTool {
     }
 
     const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
+    // Exclude thoughts from the merged text.
     const mergedText = lastEvent.content.parts
+      .filter((part) => !part.thought)
       .map((part) => part.text)
       .filter((text) => text)
       .join('\n');

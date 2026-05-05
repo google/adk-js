@@ -209,6 +209,31 @@ describe('Event Utils', () => {
       });
       expect(stringifyContent(event)).toBe('HelloWorld');
     });
+
+    it('ignores parts marked as thought', () => {
+      const event = createEvent({
+        content: {
+          parts: [
+            {text: 'reasoning about the user request', thought: true},
+            {text: 'Hello'},
+            {text: 'World'},
+          ],
+        },
+      });
+      expect(stringifyContent(event)).toBe('HelloWorld');
+    });
+
+    it('returns empty string when all parts are thoughts', () => {
+      const event = createEvent({
+        content: {
+          parts: [
+            {text: 'first thought', thought: true},
+            {text: 'second thought', thought: true},
+          ],
+        },
+      });
+      expect(stringifyContent(event)).toBe('');
+    });
   });
 
   describe('createNewEventId', () => {
