@@ -457,8 +457,6 @@ function buildVertexMetadata(
   return vertexMetadata;
 }
 
-// Standalone utility functions
-
 function buildGenerateMemoriesConfig(
   customMetadata?: Record<string, unknown>,
 ): GenerateAgentEngineMemoriesConfig {
