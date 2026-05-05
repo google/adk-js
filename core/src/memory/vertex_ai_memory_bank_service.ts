@@ -533,10 +533,6 @@ function normalizeMemoriesForCreate(memories: MemoryEntry[]): MemoryEntry[] {
 }
 
 function memoryEntryToFact(memory: MemoryEntry, index: number): string {
-  if (shouldFilterOutEvent(memory.content)) {
-    throw new Error(`memories[${index}] must include text.`);
-  }
-
   const textParts: string[] = [];
   if (memory.content && memory.content.parts) {
     for (const part of memory.content.parts) {

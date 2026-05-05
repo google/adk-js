@@ -46,12 +46,6 @@ describe('VertexAiMemoryBankService', () => {
       }),
     };
 
-    // We need to cast mockMemories to any to pass it as Memories
-    // In a real scenario, we might need to mock the Client too if we don't pass memories directly.
-    // Since we updated the constructor to take client, we can mock client or we can update constructor to take memories.
-    // Wait, I didn't update the constructor to take memories! I updated it to take client.
-    // Let's mock the client instead.
-
     const mockClient = {
       agentEnginesInternal: {
         memories: mockMemories,
@@ -234,7 +228,7 @@ describe('VertexAiMemoryBankService', () => {
           userId: 'test-user',
           memories: [{content: {parts: []} as unknown as Content}],
         }),
-      ).rejects.toThrow('memories[0] must include text.');
+      ).rejects.toThrow('memories[0] must include non-whitespace text.');
     });
 
     it('throws error if memory includes inlineData', async () => {

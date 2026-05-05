@@ -5,11 +5,16 @@
  */
 
 import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
-import {createEvent, LlmAgent, LOAD_MEMORY, Runner} from '@google/adk';
+import {
+  createEvent,
+  InMemorySessionService,
+  LlmAgent,
+  LOAD_MEMORY,
+  Runner,
+  VertexAiMemoryBankService,
+} from '@google/adk';
 import {createUserContent} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {VertexAiMemoryBankService} from '../../../core/src/memory/vertex_ai_memory_bank_service.js';
-import {InMemorySessionService} from '../../../core/src/sessions/in_memory_session_service.js';
 import {GeminiWithMockResponses} from '../test_case_utils.js';
 
 describe('VertexAiMemoryBankService Integration', () => {
