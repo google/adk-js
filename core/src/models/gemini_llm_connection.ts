@@ -126,6 +126,17 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       return;
     }
     logger.debug('Sending LLM new content', content);
+    // Single text-part user content goes through the realtime-input path so it
+    // interleaves with the audio stream. Gemini 3.1 Flash Live ignores
+    // sendClientContent text turns; 2.5 and earlier accept either path.
+    if (
+      content.role === 'user' &&
+      content.parts?.length === 1 &&
+      typeof content.parts[0].text === 'string'
+    ) {
+      this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
+      return;
+    }
     this.geminiSession.sendClientContent({
       turns: [content],
       turnComplete: true,
@@ -139,6 +150,15 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob.');
+    const mime = blob.mimeType ?? '';
+    if (mime.startsWith('audio/')) {
+      this.geminiSession.sendRealtimeInput({audio: blob});
+      return;
+    }
+    if (mime.startsWith('image/')) {
+      this.geminiSession.sendRealtimeInput({video: blob});
+      return;
+    }
     this.geminiSession.sendRealtimeInput({media: blob});
   }
 
@@ -261,7 +281,9 @@ export class GeminiLlmConnection implements BaseLlmConnection {
             interrupted: serverContent.interrupted,
             groundingMetadata: serverContent.groundingMetadata,
           };
-          break;
+          // turnComplete is just an in-stream signal here — keep iterating
+          // so the same `receive()` covers all turns until the websocket
+          // closes (kind: 'close') or the consumer closes the connection.
         }
 
         if (serverContent.interrupted) {
