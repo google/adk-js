@@ -19,7 +19,10 @@ import {GoogleLLMVariant} from '../utils/variant_utils.js';
 import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
-import {GeminiLlmConnection} from './gemini_llm_connection.js';
+import {
+  GeminiLlmConnection,
+  IncomingMessageBuffer,
+} from './gemini_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {createLlmResponse, LlmResponse} from './llm_response.js';
 
@@ -272,15 +275,26 @@ export class Gemini extends BaseLlm {
 
     llmRequest.liveConnectConfig.tools = llmRequest.config?.tools;
 
+    const incomingMessages = new IncomingMessageBuffer();
     const liveSession = await this.liveApiClient.live.connect({
       model: llmRequest.model ?? this.model,
       config: llmRequest.liveConnectConfig,
       callbacks: {
-        // TODO - b/425992518: GenAI SDK inconsistent API, missing methods.
-        onmessage: () => {},
+        onmessage: (message) =>
+          incomingMessages.push({kind: 'message', message}),
+        onerror: (event) =>
+          incomingMessages.push({
+            kind: 'error',
+            error: errorFromEvent(event),
+          }),
+        onclose: () => incomingMessages.push({kind: 'close'}),
       },
     });
-    return new GeminiLlmConnection(liveSession);
+    return new GeminiLlmConnection(
+      liveSession,
+      incomingMessages,
+      this.apiBackend,
+    );
   }
 
   private preprocessRequest(llmRequest: LlmRequest): void {
@@ -310,6 +324,21 @@ function removeDisplayNameIfPresent(
   if (dataObj && (dataObj as FileData).displayName) {
     (dataObj as FileData).displayName = undefined;
   }
+}
+
+function errorFromEvent(event: unknown): Error {
+  if (event instanceof Error) {
+    return event;
+  }
+  if (
+    typeof event === 'object' &&
+    event !== null &&
+    'message' in event &&
+    typeof (event as {message: unknown}).message === 'string'
+  ) {
+    return new Error((event as {message: string}).message);
+  }
+  return new Error('Live connection error');
 }
 
 export function geminiInitParams({

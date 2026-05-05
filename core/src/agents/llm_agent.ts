@@ -17,12 +17,14 @@ import {
   createNewEventId,
   Event,
   getFunctionCalls,
+  getFunctionResponses,
   isFinalResponse,
 } from '../events/event.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
 import {BaseLlm, isBaseLlm} from '../models/base_llm.js';
+import {BaseLlmConnection} from '../models/base_llm_connection.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
@@ -55,6 +57,7 @@ import {
 
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext} from './invocation_context.js';
+import {LiveRequest, LiveRequestQueue} from './live_request_queue.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {CODE_EXECUTION_REQUEST_PROCESSOR} from './processors/code_execution_request_processor.js';
@@ -707,13 +710,340 @@ export class LlmAgent extends BaseAgent {
   // --------------------------------------------------------------------------
   // #START LlmFlow Logic
   // --------------------------------------------------------------------------
-  // eslint-disable-next-line require-yield
+  /**
+   * Runs the bidirectional (live) flow for this agent.
+   *
+   * Establishes a live connection to the model, drains the invocation's
+   * `liveRequestQueue` into the connection on a parallel task, and yields
+   * events derived from server messages until the queue closes, the model
+   * finishes, or an agent transfer occurs.
+   */
   private async *runLiveFlow(
-    _invocationContext: InvocationContext,
+    invocationContext: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    // TODO - b/425992518: remove dummy logic, implement this.
-    await Promise.resolve();
-    throw new Error('LlmAgent.runLiveFlow not implemented');
+    if (!invocationContext.liveRequestQueue) {
+      throw new Error('liveRequestQueue is required for LlmAgent.runLiveFlow.');
+    }
+
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    // =========================================================================
+    // Preprocess: same processors as runAsync. Yields agent-emitted events
+    // (e.g. instruction injection metadata events) to the caller.
+    // =========================================================================
+    for await (const event of this.runLivePreprocess(
+      invocationContext,
+      llmRequest,
+    )) {
+      yield event;
+    }
+
+    if (
+      invocationContext.endInvocation ||
+      invocationContext.abortSignal?.aborted
+    ) {
+      return;
+    }
+
+    // =========================================================================
+    // Apply live-only request config from the run config.
+    // =========================================================================
+    const runConfig = invocationContext.runConfig;
+    if (runConfig) {
+      const liveConfig = llmRequest.liveConnectConfig;
+      if (runConfig.responseModalities) {
+        liveConfig.responseModalities = runConfig.responseModalities;
+      }
+      if (runConfig.speechConfig) {
+        liveConfig.speechConfig = runConfig.speechConfig;
+      }
+      if (runConfig.outputAudioTranscription) {
+        liveConfig.outputAudioTranscription =
+          runConfig.outputAudioTranscription;
+      }
+      if (runConfig.inputAudioTranscription) {
+        liveConfig.inputAudioTranscription = runConfig.inputAudioTranscription;
+      }
+      if (runConfig.realtimeInputConfig) {
+        liveConfig.realtimeInputConfig = runConfig.realtimeInputConfig;
+      }
+      if (runConfig.proactivity) {
+        liveConfig.proactivity = runConfig.proactivity;
+      }
+      if (runConfig.enableAffectiveDialog) {
+        liveConfig.enableAffectiveDialog = runConfig.enableAffectiveDialog;
+      }
+    }
+
+    const llm = this.canonicalModel;
+    const connection = await llm.connect(llmRequest);
+
+    if (llmRequest.contents.length > 0) {
+      await connection.sendHistory(llmRequest.contents);
+    }
+
+    const sendTask = this.runSendLoop(
+      connection,
+      invocationContext.liveRequestQueue,
+      invocationContext.abortSignal,
+    );
+    sendTask.catch((error) => {
+      logger.error('Error in live send loop:', error);
+    });
+
+    try {
+      yield* this.runReceiveLoop(invocationContext, connection, llmRequest);
+    } finally {
+      try {
+        await connection.close();
+      } catch (error) {
+        logger.warn('Error closing live connection:', error);
+      }
+      // Surface any error from the send loop to ensure clean teardown.
+      await sendTask.catch(() => undefined);
+    }
+  }
+
+  private async *runLivePreprocess(
+    invocationContext: InvocationContext,
+    llmRequest: LlmRequest,
+  ): AsyncGenerator<Event, void, void> {
+    for (const processor of this.requestProcessors) {
+      for await (const event of processor.runAsync(
+        invocationContext,
+        llmRequest,
+      )) {
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+        yield event;
+      }
+    }
+    for (const toolUnion of this.tools) {
+      const toolContext = new Context({invocationContext});
+      const tools = (
+        await convertToolUnionToTools(
+          toolUnion,
+          new ReadonlyContext(invocationContext),
+        )
+      ).filter(
+        (tool) =>
+          !llmRequest.allowedTools ||
+          llmRequest.allowedTools.includes(tool.name),
+      );
+      for (const tool of tools) {
+        await tool.processLlmRequest({toolContext, llmRequest});
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+      }
+    }
+  }
+
+  private async runSendLoop(
+    connection: BaseLlmConnection,
+    liveRequestQueue: LiveRequestQueue,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    for await (const liveRequest of liveRequestQueue) {
+      if (abortSignal?.aborted) {
+        return;
+      }
+      try {
+        await this.dispatchLiveRequest(connection, liveRequest);
+      } catch (error) {
+        logger.error('Error dispatching live request to model:', error);
+        throw error;
+      }
+      if (liveRequest.close) {
+        return;
+      }
+    }
+  }
+
+  private async dispatchLiveRequest(
+    connection: BaseLlmConnection,
+    liveRequest: LiveRequest,
+  ): Promise<void> {
+    if (liveRequest.close) {
+      await connection.close();
+      return;
+    }
+    if (liveRequest.activityStart) {
+      await connection.sendActivityStart?.();
+      return;
+    }
+    if (liveRequest.activityEnd) {
+      await connection.sendActivityEnd?.();
+      return;
+    }
+    if (liveRequest.blob) {
+      await connection.sendRealtime(liveRequest.blob);
+      return;
+    }
+    if (liveRequest.content) {
+      await connection.sendContent(liveRequest.content);
+    }
+  }
+
+  private async *runReceiveLoop(
+    invocationContext: InvocationContext,
+    connection: BaseLlmConnection,
+    llmRequest: LlmRequest,
+  ): AsyncGenerator<Event, void, void> {
+    for await (const llmResponse of connection.receive()) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      const author = isUserAuthoredResponse(llmResponse) ? 'user' : this.name;
+
+      const modelResponseEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author,
+        branch: invocationContext.branch,
+      });
+
+      for await (const event of this.postprocessLive(
+        invocationContext,
+        llmRequest,
+        llmResponse,
+        modelResponseEvent,
+      )) {
+        yield event;
+
+        // Send function responses back to the model so it can continue.
+        // Use the connection directly (rather than the live request queue)
+        // because the queue may already be closed while we still need to
+        // ferry tool results back over the open websocket.
+        if (getFunctionResponses(event).length > 0 && event.content) {
+          await connection.sendContent(event.content);
+        }
+
+        // Handle agent transfer triggered by a transfer_to_agent function
+        // response. The active connection is closed and the destination
+        // sub-agent's runLive is yielded into the same generator.
+        const transferTo = event.actions?.transferToAgent;
+        if (transferTo) {
+          await connection.close();
+          const subAgent =
+            invocationContext.agent.rootAgent.findAgent(transferTo);
+          if (subAgent) {
+            const previousAgent = invocationContext.agent;
+            invocationContext.agent = subAgent;
+            try {
+              for await (const subEvent of subAgent.runLive(
+                invocationContext,
+              )) {
+                yield subEvent;
+              }
+            } finally {
+              invocationContext.agent = previousAgent;
+            }
+          }
+          return;
+        }
+      }
+    }
+  }
+
+  private async *postprocessLive(
+    invocationContext: InvocationContext,
+    llmRequest: LlmRequest,
+    llmResponse: LlmResponse,
+    modelResponseEvent: Event,
+  ): AsyncGenerator<Event, void, void> {
+    for (const processor of this.responseProcessors) {
+      for await (const event of processor.runAsync(
+        invocationContext,
+        llmResponse,
+      )) {
+        yield event;
+      }
+    }
+
+    // Skip purely empty responses, but allow control signals to surface.
+    if (
+      !llmResponse.content &&
+      !llmResponse.errorCode &&
+      !llmResponse.interrupted &&
+      !llmResponse.turnComplete &&
+      !llmResponse.inputTranscription &&
+      !llmResponse.outputTranscription &&
+      !llmResponse.usageMetadata &&
+      !llmResponse.liveSessionResumptionUpdate
+    ) {
+      return;
+    }
+
+    if (llmResponse.liveSessionResumptionUpdate) {
+      yield createEvent({
+        ...modelResponseEvent,
+        liveSessionResumptionUpdate: llmResponse.liveSessionResumptionUpdate,
+      });
+      return;
+    }
+
+    if (llmResponse.inputTranscription) {
+      yield createEvent({
+        ...modelResponseEvent,
+        inputTranscription: llmResponse.inputTranscription,
+        partial: llmResponse.partial,
+      });
+      return;
+    }
+    if (llmResponse.outputTranscription) {
+      yield createEvent({
+        ...modelResponseEvent,
+        outputTranscription: llmResponse.outputTranscription,
+        partial: llmResponse.partial,
+      });
+      return;
+    }
+
+    const mergedEvent = createEvent({
+      ...modelResponseEvent,
+      ...llmResponse,
+    });
+
+    if (mergedEvent.content) {
+      const functionCalls = getFunctionCalls(mergedEvent);
+      if (functionCalls.length) {
+        populateClientFunctionCallId(mergedEvent);
+        mergedEvent.longRunningToolIds = Array.from(
+          getLongRunningFunctionCalls(functionCalls, llmRequest.toolsDict),
+        );
+      }
+    }
+
+    yield mergedEvent;
+
+    // Execute any function calls returned in this event.
+    if (!getFunctionCalls(mergedEvent).length) {
+      return;
+    }
+
+    const functionResponseEvent = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent: mergedEvent,
+      toolsDict: llmRequest.toolsDict,
+      beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
+      afterToolCallbacks: this.canonicalAfterToolCallbacks,
+    });
+    if (!functionResponseEvent) {
+      return;
+    }
+    const authEvent = generateAuthEvent(
+      invocationContext,
+      functionResponseEvent,
+    );
+    if (authEvent) {
+      yield authEvent;
+    }
+    yield functionResponseEvent;
   }
 
   private async *runOneStepAsync(
@@ -1219,4 +1549,18 @@ export class LlmAgent extends BaseAgent {
   // TODO - b/425992518: omitted Py LlmAgent features.
   // - code_executor
   // - configurable agents by yaml config
+}
+
+/**
+ * Determines whether a live response should be authored as 'user'.
+ *
+ * Input transcription represents the user's spoken input, and any explicit
+ * user-role content (e.g. echoed function responses) likewise belongs to the
+ * user side of the transcript.
+ */
+function isUserAuthoredResponse(llmResponse: LlmResponse): boolean {
+  if (llmResponse.inputTranscription) {
+    return true;
+  }
+  return llmResponse.content?.role === 'user';
 }
