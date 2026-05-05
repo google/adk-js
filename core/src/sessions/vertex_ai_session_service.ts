@@ -36,6 +36,8 @@ import {
 import {createSession, Session} from './session.js';
 
 const DEFAULT_MAX_ATTEMPTS = 30;
+const GRPC_NOT_FOUND = 5;
+const HTTP_NOT_FOUND = 404;
 
 /**
  * Checks if the given URI is a Vertex AI session service URI.
@@ -132,10 +134,13 @@ export class VertexAiSessionService extends BaseSessionService {
 
     let attempts = 0;
     while (!apiResponse.done && attempts < DEFAULT_MAX_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      apiResponse = await this.sessions.getSessionOperationInternal({
-        operationName: operationName,
-      });
+      const [nextResponse] = await Promise.all([
+        this.sessions.getSessionOperationInternal({
+          operationName: operationName,
+        }),
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ]);
+      apiResponse = nextResponse;
       attempts++;
     }
 
@@ -228,7 +233,7 @@ export class VertexAiSessionService extends BaseSessionService {
       return session;
     } catch (error: unknown) {
       const err = error as {code?: number; message?: string};
-      if (err.code === 5 || err.code === 404) {
+      if (err.code === GRPC_NOT_FOUND || err.code === HTTP_NOT_FOUND) {
         return undefined;
       }
       logger.error(`Error getting session from Vertex AI: ${err.message}`);

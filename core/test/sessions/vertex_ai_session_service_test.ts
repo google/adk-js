@@ -371,6 +371,18 @@ describe('VertexAiSessionService', () => {
       expect(session).toBeUndefined();
     });
 
+    it('returns undefined if session does not exist (code 404)', async () => {
+      mockClient.get.mockRejectedValueOnce({code: 404, message: 'Not found'});
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+    });
+
     it('falls back to empty array if sessionEvents is missing in getSession', async () => {
       mockClient.get.mockResolvedValue({
         name: 'reasoningEngines/12345/sessions/my-session-id',
