@@ -157,7 +157,11 @@ export function stringifyContent(event: Event): string {
     return '';
   }
 
-  return event.content.parts.map((part) => part.text ?? '').join('');
+  // Exclude thoughts from the context.
+  return event.content.parts
+    .filter((part) => !part.thought)
+    .map((part) => part.text ?? '')
+    .join('');
 }
 
 const ASCII_LETTERS_AND_NUMBERS =

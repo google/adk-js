@@ -329,10 +329,6 @@ export class StreamingResponseAggregator {
   }
 
   close(): LlmResponse | undefined {
-    if (!this.response?.candidates || this.response.candidates.length === 0) {
-      return;
-    }
-
     if (this.isProgressiveMode) {
       this.flushTextBufferToSequence();
       this.flushFunctionCallToSequence();
@@ -342,8 +338,11 @@ export class StreamingResponseAggregator {
         return;
       }
 
-      const candidate = this.response.candidates[0];
-      const finishReason = this.finishReason ?? candidate.finishReason;
+      // Use the candidate from the last response that carried one. Gemini may
+      // send a trailing empty chunk (no candidates) to signal stream end; we
+      // must not discard accumulated parts in that case.
+      const candidate = this.response?.candidates?.[0];
+      const finishReason = this.finishReason ?? candidate?.finishReason;
 
       return {
         content: {
@@ -357,19 +356,17 @@ export class StreamingResponseAggregator {
         errorMessage:
           finishReason === FinishReason.STOP
             ? undefined
-            : candidate.finishMessage,
+            : candidate?.finishMessage,
         usageMetadata: this.usageMetadata,
         finishReason: finishReason,
         partial: false,
       };
     }
 
-    // Non-progressive SSE streaming
-    if (
-      (this.text || this.thoughtText) &&
-      this.response.candidates &&
-      this.response.candidates.length > 0
-    ) {
+    // Non-progressive SSE streaming: use this.finishReason which is accumulated
+    // across all chunks, falling back to the last candidate when available.
+    // This handles the case where the final Gemini chunk carries no candidates.
+    if (this.text || this.thoughtText) {
       const parts: Part[] = [];
       if (this.thoughtText) {
         parts.push({text: this.thoughtText, thought: true});
@@ -377,8 +374,8 @@ export class StreamingResponseAggregator {
       if (this.text) {
         parts.push({text: this.text});
       }
-      const candidate = this.response.candidates[0];
-      const finishReason = candidate.finishReason;
+      const candidate = this.response?.candidates?.[0];
+      const finishReason = this.finishReason ?? candidate?.finishReason;
       return {
         content: {
           role: 'model',
@@ -391,7 +388,7 @@ export class StreamingResponseAggregator {
         errorMessage:
           finishReason === FinishReason.STOP
             ? undefined
-            : candidate.finishMessage,
+            : candidate?.finishMessage,
         usageMetadata: this.usageMetadata,
         finishReason: finishReason,
         partial: false,

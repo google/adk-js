@@ -4,14 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import {exec} from 'node:child_process';
-import {writeFile} from 'node:fs/promises';
-import {promisify} from 'node:util';
+import {cp, writeFile} from 'node:fs/promises';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
-
-const execAsync = promisify(exec);
 
 const licenseHeaderText = `/**
   * @license
@@ -56,8 +52,8 @@ async function main() {
 
   // Run file operations sequentially to avoid race conditions
   await writeFile('./dist/cjs/package.json', '{"type": "commonjs"}');
-  await execAsync('cp -r ./src/browser ./dist/esm/browser');
-  await execAsync('cp -r ./src/browser ./dist/cjs/browser');
+  await cp('./src/browser', './dist/esm/browser', {recursive: true});
+  await cp('./src/browser', './dist/cjs/browser', {recursive: true});
 }
 
 main().catch((err) => {
