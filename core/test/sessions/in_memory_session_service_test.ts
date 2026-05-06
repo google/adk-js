@@ -198,6 +198,15 @@ describe('InMemorySessionService', () => {
       expect(response.sessions).toEqual([]);
     });
 
+    it('returns empty list if sessions exist for other users but not target user', async () => {
+      await service.createSession({appName: 'app', userId: 'user1'});
+      const response = await service.listSessions({
+        appName: 'app',
+        userId: 'user2',
+      });
+      expect(response.sessions).toEqual([]);
+    });
+
     it('returns list of sessions without events', async () => {
       const appName = 'app';
       const userId = 'user';
@@ -209,6 +218,113 @@ describe('InMemorySessionService', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].events).toEqual([]);
       expect(response.sessions[1].events).toEqual([]);
+    });
+
+    it('returns sorted list of sessions by lastUpdateTime DESC', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 2000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 1000}),
+      });
+
+      const response = await service.listSessions({appName, userId});
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions[0].id).toBe('s1'); // 2000 > 1000
+      expect(response.sessions[1].id).toBe('s2');
+    });
+
+    it('respects pageSize limit', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      await service.createSession({appName, userId});
+      await service.createSession({appName, userId});
+      await service.createSession({appName, userId});
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 2,
+      });
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.nextPageToken).toBe('2');
+    });
+
+    it('respects pageToken offset', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      const s3 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's3',
+      });
+
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 3000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 2000}),
+      });
+      await service.appendEvent({
+        session: s3,
+        event: createEvent({timestamp: 1000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 1,
+        pageToken: '1',
+      });
+
+      expect(response.sessions).toHaveLength(1);
+      expect(response.sessions[0].id).toBe('s2');
+      expect(response.nextPageToken).toBe('2');
+    });
+
+    it('returns undefined nextPageToken when no more sessions', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      await service.createSession({appName, userId});
+      await service.createSession({appName, userId});
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 2,
+      });
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.nextPageToken).toBeUndefined();
     });
   });
 

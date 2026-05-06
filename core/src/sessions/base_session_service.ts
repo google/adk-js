@@ -57,6 +57,10 @@ export interface ListSessionsRequest {
   appName: string;
   /** The ID of the user. */
   userId: string;
+  /** The maximum number of sessions to return. */
+  pageSize?: number;
+  /** A page token received from a previous generator call. */
+  pageToken?: string;
 }
 
 /**
@@ -89,6 +93,8 @@ export interface AppendEventRequest {
 export interface ListSessionsResponse {
   /** A list of sessions. */
   sessions: Session[];
+  /** A token to retrieve the next page of results. */
+  nextPageToken?: string;
 }
 
 /**

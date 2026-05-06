@@ -254,6 +254,8 @@ export class DatabaseSessionService extends BaseSessionService {
   async listSessions({
     appName,
     userId,
+    pageSize,
+    pageToken,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
     await this.init();
     const em = this.orm!.em.fork();
@@ -263,7 +265,28 @@ export class DatabaseSessionService extends BaseSessionService {
       where.userId = userId;
     }
 
-    const storageSessions = await em.find(StorageSession, where);
+    let offset = 0;
+    if (pageToken) {
+      const parsed = parseInt(pageToken, 10);
+      if (!isNaN(parsed)) {
+        offset = parsed;
+      }
+    }
+
+    const findOptions = {
+      orderBy: {updateTime: 'DESC', id: 'ASC'} as const,
+      ...(pageSize !== undefined ? {limit: pageSize + 1, offset} : {}),
+    };
+
+    const storageSessions = await em.find(StorageSession, where, findOptions);
+
+    let hasMore = false;
+    let sessionsToProcess = storageSessions;
+    if (pageSize !== undefined && storageSessions.length > pageSize) {
+      hasMore = true;
+      sessionsToProcess = storageSessions.slice(0, pageSize);
+    }
+
     const appStateModel = await em.findOne(StorageAppState, {appName});
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
@@ -278,7 +301,7 @@ export class DatabaseSessionService extends BaseSessionService {
       }
     }
 
-    const sessions = storageSessions.map((ss) => {
+    const sessions = sessionsToProcess.map((ss) => {
       const uState = userStateMap[ss.userId] || {};
       const merged = mergeStates(appState, uState, ss.state);
       return createSession({
@@ -291,7 +314,12 @@ export class DatabaseSessionService extends BaseSessionService {
       });
     });
 
-    return {sessions};
+    let nextPageToken: string | undefined;
+    if (hasMore && pageSize !== undefined) {
+      nextPageToken = (offset + pageSize).toString();
+    }
+
+    return {sessions, nextPageToken};
   }
 
   async deleteSession({

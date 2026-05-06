@@ -134,13 +134,36 @@ export class InMemorySessionService extends BaseSessionService {
   listSessions({
     appName,
     userId,
+    pageSize,
+    pageToken,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
     if (!this.sessions[appName] || !this.sessions[appName][userId]) {
       return Promise.resolve({sessions: []});
     }
 
+    const allSessions = Object.values(this.sessions[appName][userId]);
+
+    // Sort by lastUpdateTime DESC, then by id ASC for stability
+    allSessions.sort((a, b) => {
+      if (b.lastUpdateTime !== a.lastUpdateTime) {
+        return b.lastUpdateTime - a.lastUpdateTime;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    let offset = 0;
+    if (pageToken) {
+      const parsed = parseInt(pageToken, 10);
+      if (!isNaN(parsed)) {
+        offset = parsed;
+      }
+    }
+
+    const limit = pageSize !== undefined ? pageSize : allSessions.length;
+    const paginatedSessions = allSessions.slice(offset, offset + limit);
+
     const sessionsWithoutEvents: Session[] = [];
-    for (const session of Object.values(this.sessions[appName][userId])) {
+    for (const session of paginatedSessions) {
       sessionsWithoutEvents.push(
         createSession({
           id: session.id,
@@ -153,7 +176,15 @@ export class InMemorySessionService extends BaseSessionService {
       );
     }
 
-    return Promise.resolve({sessions: sessionsWithoutEvents});
+    let nextPageToken: string | undefined;
+    if (pageSize !== undefined && offset + pageSize < allSessions.length) {
+      nextPageToken = (offset + pageSize).toString();
+    }
+
+    return Promise.resolve({
+      sessions: sessionsWithoutEvents,
+      nextPageToken,
+    });
   }
 
   async deleteSession({

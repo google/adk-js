@@ -70,28 +70,6 @@ describe('DatabaseSessionService', () => {
     expect(session?.state['key']).toBe('value');
   });
 
-  it('should list sessions', async () => {
-    await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
-    });
-    await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's2',
-    });
-
-    const response = await service.listSessions({
-      appName: 'test-app',
-      userId: 'test-user',
-    });
-
-    expect(response.sessions.length).toBe(2);
-    const ids = response.sessions.map((s) => s.id).sort();
-    expect(ids).toEqual(['s1', 's2']);
-  });
-
   it('should delete a session', async () => {
     await service.createSession({
       appName: 'test-app',
@@ -199,9 +177,11 @@ describe('DatabaseSessionService', () => {
       appName: 'test-app',
       userId: 'user1',
       sessionId: 's2',
+      state: {[State.USER_PREFIX + 'pref2']: 'B'},
     });
 
     expect(s2.state[State.USER_PREFIX + 'pref']).toBe('A');
+    expect(s2.state[State.USER_PREFIX + 'pref2']).toBe('B');
 
     // Update user state in s2
     const event = createEvent({
@@ -278,35 +258,158 @@ describe('DatabaseSessionService', () => {
     expect(after2?.events[0].id).toBe(e3.id);
   });
 
-  it('should filter sessions by userId in listSessions', async () => {
-    await service.createSession({
-      appName: 'app1',
-      userId: 'u1',
-      sessionId: 's1',
-    });
-    await service.createSession({
-      appName: 'app1',
-      userId: 'u2',
-      sessionId: 's2',
-    });
-    await service.createSession({
-      appName: 'app2', // Diff app
-      userId: 'u1',
-      sessionId: 's3',
+  describe('listSessions', () => {
+    it('should list sessions', async () => {
+      await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's1',
+      });
+      await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's2',
+      });
+
+      const response = await service.listSessions({
+        appName: 'test-app',
+        userId: 'test-user',
+      });
+
+      expect(response.sessions.length).toBe(2);
+      const ids = response.sessions.map((s) => s.id).sort();
+      expect(ids).toEqual(['s1', 's2']);
     });
 
-    const listU1 = await service.listSessions({
-      appName: 'app1',
-      userId: 'u1',
-    });
-    expect(listU1.sessions.length).toBe(1);
-    expect(listU1.sessions[0].id).toBe('s1');
+    it('should filter sessions by userId in listSessions', async () => {
+      await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+      await service.createSession({
+        appName: 'app1',
+        userId: 'u2',
+        sessionId: 's2',
+      });
+      await service.createSession({
+        appName: 'app2',
+        userId: 'u1',
+        sessionId: 's3',
+      });
 
-    const listAll = await service.listSessions({
-      appName: 'app1',
-      userId: 'u1',
+      const listU1 = await service.listSessions({
+        appName: 'app1',
+        userId: 'u1',
+      });
+      expect(listU1.sessions.length).toBe(1);
+      expect(listU1.sessions[0].id).toBe('s1');
+
+      const listAll = await service.listSessions({
+        appName: 'app1',
+        userId: 'u1',
+      });
+      expect(listAll.sessions.length).toBe(1);
     });
-    expect(listAll.sessions.length).toBe(1);
+
+    it('should return sorted list of sessions by updateTime DESC', async () => {
+      const appName = 'test-app';
+      const userId = 'test-user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      await service.createSession({appName, userId, sessionId: 's2'});
+
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: Date.now() + 1000}),
+      });
+
+      const response = await service.listSessions({appName, userId});
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions[0].id).toBe('s1');
+      expect(response.sessions[1].id).toBe('s2');
+    });
+
+    it('should respect pageSize limit', async () => {
+      const appName = 'test-app';
+      const userId = 'test-user';
+      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({appName, userId, sessionId: 's2'});
+      await service.createSession({appName, userId, sessionId: 's3'});
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 2,
+      });
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.nextPageToken).toBe('2');
+    });
+
+    it('should respect pageToken offset', async () => {
+      const appName = 'test-app';
+      const userId = 'test-user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      const s3 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's3',
+      });
+
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 3000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 2000}),
+      });
+      await service.appendEvent({
+        session: s3,
+        event: createEvent({timestamp: 1000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 1,
+        pageToken: '1',
+      });
+
+      expect(response.sessions).toHaveLength(1);
+      expect(response.sessions[0].id).toBe('s2');
+      expect(response.nextPageToken).toBe('2');
+    });
+
+    it('should return undefined nextPageToken when no more sessions', async () => {
+      const appName = 'test-app';
+      const userId = 'test-user';
+      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({appName, userId, sessionId: 's2'});
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        pageSize: 2,
+      });
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.nextPageToken).toBeUndefined();
+    });
   });
 
   it('should handle errors', async () => {
