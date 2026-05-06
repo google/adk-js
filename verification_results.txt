@@ -1,0 +1,3 @@
+Verification Results for Git Private Exclusions and GH Path:
+1. GH CLI is available and works. Path: /usr/local/google/home/amaadmartin/bin/gh, Version: 2.47.0.
+2. Git Private Exclusions work as expected. Metadata files are successfully ignored in both adk-js and adk-python.
