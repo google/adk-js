@@ -335,14 +335,12 @@ export async function handleFunctionCallList({
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
 }): Promise<Event | null> {
-  const functionResponseEvents: Event[] = [];
-
   // Note: only function ids INCLUDED in the filters will be executed.
   const filteredFunctionCalls = functionCalls.filter((functionCall) => {
     return !filters || (functionCall.id && filters.has(functionCall.id));
   });
 
-  for (const functionCall of filteredFunctionCalls) {
+  const promises = filteredFunctionCalls.map(async (functionCall) => {
     let toolConfirmation = undefined;
     if (toolConfirmationDict && functionCall.id) {
       toolConfirmation = toolConfirmationDict[functionCall.id];
@@ -455,7 +453,7 @@ export async function handleFunctionCallList({
     // TODO - b/425992518: state event polluting runtime, consider fix.
     // Allow long running function to return None as response.
     if (tool.isLongRunning && !functionResponse) {
-      continue;
+      return null;
     }
 
     if (functionResponseError) {
@@ -488,8 +486,13 @@ export async function handleFunctionCallList({
       args: functionArgs,
       functionResponseEvent: functionResponseEvent.id,
     });
-    functionResponseEvents.push(functionResponseEvent);
-  }
+    return functionResponseEvent;
+  });
+
+  const results = await Promise.all(promises);
+  const functionResponseEvents = results.filter(
+    (event): event is Event => event !== null,
+  );
 
   if (!functionResponseEvents.length) {
     return null;

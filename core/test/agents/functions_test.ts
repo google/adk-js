@@ -332,6 +332,192 @@ describe('handleFunctionCallList', () => {
       }),
     );
   });
+
+  it('should execute multiple tools in parallel', async () => {
+    const start = Date.now();
+    const delay = 100; // 100ms
+
+    const slowTool1 = new FunctionTool({
+      name: 'slowTool1',
+      description: 'slow tool 1',
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return {result: 'slowTool1 executed'};
+      },
+    });
+
+    const slowTool2 = new FunctionTool({
+      name: 'slowTool2',
+      description: 'slow tool 2',
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return {result: 'slowTool2 executed'};
+      },
+    });
+
+    const functionCall1: FunctionCall = {
+      id: 'call_1',
+      name: 'slowTool1',
+      args: {},
+    };
+    const functionCall2: FunctionCall = {
+      id: 'call_2',
+      name: 'slowTool2',
+      args: {},
+    };
+
+    const localToolsDict = {
+      'slowTool1': slowTool1,
+      'slowTool2': slowTool2,
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [functionCall1, functionCall2],
+      toolsDict: localToolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const duration = Date.now() - start;
+
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts!.length).toBe(2);
+    // If parallel, duration should be close to `delay` (100ms), definitely less than `2 * delay` (200ms).
+    expect(duration).toBeLessThan(delay * 1.8); // Using 1.8 to be safe against slow CI environments
+  });
+
+  it('should return null if no function calls are provided', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).toBeNull();
+  });
+
+  it('should throw an error if tool is not found in toolsDict', async () => {
+    const missingFunctionCall: FunctionCall = {
+      id: 'call_missing',
+      name: 'missingTool',
+      args: {},
+    };
+    await expect(
+      handleFunctionCallList({
+        invocationContext,
+        functionCalls: [missingFunctionCall],
+        toolsDict,
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      }),
+    ).rejects.toThrow('Function missingTool is not found in the toolsDict.');
+  });
+
+  it('should handle long running tool returning no response', async () => {
+    const longTool = new FunctionTool({
+      name: 'longTool',
+      description: 'long tool',
+      parameters: z.object({}),
+      execute: async () => {
+        return undefined;
+      },
+      isLongRunning: true,
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call_long', name: 'longTool', args: {}}],
+      toolsDict: {'longTool': longTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).toBeNull();
+  });
+
+  it('should wrap primitive tool response in an object', async () => {
+    const primitiveTool = new FunctionTool({
+      name: 'primitiveTool',
+      description: 'primitive tool',
+      parameters: z.object({}),
+      execute: async () => {
+        return 'primitive response';
+      },
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call_prim', name: 'primitiveTool', args: {}}],
+      toolsDict: {'primitiveTool': primitiveTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'primitive response',
+    });
+  });
+
+  it('should pass tool confirmation to tool execution', async () => {
+    const mockTool = new FunctionTool({
+      name: 'mockTool',
+      description: 'mock tool',
+      parameters: z.object({}),
+      execute: async () => ({result: 'ok'}),
+    });
+
+    const runAsyncSpy = vi.spyOn(mockTool, 'runAsync');
+    const toolConfirmation = new ToolConfirmation({
+      hint: 'confirm this tool',
+      confirmed: true,
+    });
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call_1', name: 'mockTool', args: {}}],
+      toolsDict: {'mockTool': mockTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+      toolConfirmationDict: {'call_1': toolConfirmation},
+    });
+
+    expect(runAsyncSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: {},
+        toolContext: expect.objectContaining({
+          toolConfirmation: toolConfirmation,
+        }),
+      }),
+    );
+  });
+
+  it('should handle non-Error thrown during tool execution', async () => {
+    const badTool = new FunctionTool({
+      name: 'badTool',
+      description: 'bad tool',
+      parameters: z.object({}),
+      execute: async () => {
+        throw 'string error';
+      },
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call_bad', name: 'badTool', args: {}}],
+      toolsDict: {'badTool': badTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      error: "Error in tool 'badTool': string error",
+    });
+  });
 });
 
 describe('generateAuthEvent', () => {
