@@ -59,6 +59,7 @@ export class MCPToolset extends BaseToolset {
     const session = await this.mcpSessionManager.createSession();
 
     const listResult = (await session.listTools()) as ListToolsResult;
+    await session.close();
     logger.debug(`number of tools: ${listResult.tools.length}`);
     for (const tool of listResult.tools) {
       logger.debug(`tool: ${tool.name}`);
