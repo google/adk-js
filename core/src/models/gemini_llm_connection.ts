@@ -306,6 +306,18 @@ export class GeminiLlmConnection implements BaseLlmConnection {
         }
       }
 
+      // Fork: flush tool calls immediately rather than waiting for
+      // turnComplete. Gemini 3.1 Flash Live emits a toolCall message and
+      // then waits for the tool response without emitting turnComplete
+      // first, so the upstream flush at turnComplete (above) never fires
+      // for tool-call turns. Combined with the fork's multi-turn
+      // receive(), buffered tool calls would otherwise be stranded until
+      // the websocket closes.
+      if (toolCallParts.length > 0) {
+        yield {content: {role: 'model', parts: toolCallParts}};
+        toolCallParts = [];
+      }
+
       if (message.sessionResumptionUpdate) {
         yield {liveSessionResumptionUpdate: message.sessionResumptionUpdate};
       }
