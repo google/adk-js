@@ -24,6 +24,7 @@ import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
 import {deployToCloudRun} from './cli_deploy.js';
+import {deployToAgentEngine} from './cli_deploy_agent_engine.js';
 import {runAgent} from './cli_run.js';
 
 dotenv.config({quiet: true});
@@ -415,6 +416,80 @@ export function createProgram(): Command {
         logger.error('Error deploying agent:', (error as Error).message);
       }
     });
+
+  const registerAgentEngineCommand = (cmd: Command) => {
+    cmd
+      .addArgument(AGENT_DIR_ARGUMENT)
+      .allowUnknownOption()
+      .allowExcessArguments()
+      .addOption(PORT_OPTION)
+      .option(
+        '--project [string]',
+        'Optional. Google Cloud project to deploy the agent. If not set, default project from gcloud config is used',
+      )
+      .option(
+        '--region [string]',
+        'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
+      )
+      .option(
+        '--display_name [string]',
+        'Optional. The display name for the Reasoning Engine. Defaults to agent directory name.',
+      )
+      .option(
+        '--description [string]',
+        'Optional. The description for the Reasoning Engine.',
+      )
+      .option(
+        '--temp_folder [string]',
+        'Optional. Temp folder for the generated source files (default: a timestamped folder in the system temp directory).',
+        getTempDir('agent_engine_deploy_src'),
+      )
+      .option(
+        '--adk_version [string]',
+        'Optional. ADK version to use. If not set, default to the latest version available on npm',
+        'latest',
+      )
+      .option(
+        '--with_ui [boolean]',
+        'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
+        false,
+      )
+      .addOption(ORIGINS_OPTION)
+      .addOption(VERBOSE_OPTION)
+      .addOption(LOG_LEVEL_OPTION)
+      .addOption(SESSION_SERVICE_URI_OPTION)
+      .addOption(ARTIFACT_SERVICE_URI_OPTION)
+      .addOption(COMPILE_AGENT_FILE)
+      .addOption(BUNDLE_AGENT_FILE)
+      .addOption(AGENT_FILE_MODULE_TYPE)
+      .addOption(A2A_OPTION)
+      .action(async (agentPath: string, options: Record<string, string>) => {
+        try {
+          await deployToAgentEngine({
+            agentPath: getAbsolutePath(agentPath),
+            project: options['project'],
+            region: options['region'],
+            displayName: options['display_name'],
+            description: options['description'],
+            tempFolder: options['temp_folder'],
+            port: parseInt(options['port'], 10),
+            withUi: getBoolean(options['with_ui']),
+            logLevel: options['log_level'],
+            adkVersion: options['adk_version'],
+            allowOrigins: options['allow_origins'],
+            sessionServiceUri: options['session_service_uri'],
+            artifactServiceUri: options['artifact_service_uri'],
+            agentFileLoadOptions: getAgentFileOptions(options),
+            a2a: getBoolean(options['a2a']),
+          });
+        } catch (error) {
+          logger.error('Error deploying agent:', (error as Error).message);
+        }
+      });
+  };
+
+  registerAgentEngineCommand(DEPLOY_COMMAND.command('agent_engine'));
+  registerAgentEngineCommand(DEPLOY_COMMAND.command('reasoning_engine'));
 
   const CONFORMANCE_COMMAND = program
     .command('integration')
