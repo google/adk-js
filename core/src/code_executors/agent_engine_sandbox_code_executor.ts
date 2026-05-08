@@ -10,6 +10,7 @@ import {
   ReasoningEngine,
   SandboxEnvironment,
 } from '@google-cloud/vertexai';
+import {guessMimeType} from '../utils/file_utils.js';
 import {experimental} from '../utils/experimental.js';
 
 const SANDBOX_PATTERN =
@@ -173,8 +174,16 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
             );
             try {
               const jsonData = JSON.parse(jsonStr);
-              stdout = jsonData.msg_out || '';
-              stderr = jsonData.msg_err || '';
+              if (jsonData.msg_out !== undefined) {
+                stdout = jsonData.msg_out;
+              } else {
+                stdout = '';
+              }
+              if (jsonData.msg_err !== undefined) {
+                stderr = jsonData.msg_err;
+              } else {
+                stderr = '';
+              }
             } catch (e) {
               logger.warn('Failed to parse JSON output from sandbox', e);
               stdout = jsonStr;
@@ -183,17 +192,13 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         } else {
           let mimeType = output.mimeType;
           const name = fileName || 'output_file';
-          if (!mimeType && name) {
-            const ext = name.split('.').pop();
-            if (ext === 'csv') mimeType = 'text/csv';
-            else if (ext === 'png') mimeType = 'image/png';
-            else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-            else mimeType = 'application/octet-stream';
+          if (!mimeType) {
+            mimeType = guessMimeType(name);
           }
           outputFiles.push({
             name: name,
             content: output.data || '',
-            mimeType: mimeType || 'application/octet-stream',
+            mimeType: mimeType,
           });
         }
       }

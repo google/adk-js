@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  AgentEngineSandboxCodeExecutor,
-  CodeExecutionLanguage,
-  InvocationContext,
-} from '@google/adk';
+import { AgentEngineSandboxCodeExecutor } from '@google/adk/code_executors/agent_engine_sandbox_code_executor.js';
+import { CodeExecutionLanguage } from '@google/adk/code_executors/code_execution_utils.js';
+import { InvocationContext } from '@google/adk/agents/invocation_context.js';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 describe('AgentEngineSandboxCodeExecutor', () => {
@@ -89,6 +87,20 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     expect(() => new AgentEngineSandboxCodeExecutor({})).toThrow(
       'Project ID is required.',
     );
+  });
+
+  it('defaults location to us-central1 if missing in env', () => {
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    executor = new AgentEngineSandboxCodeExecutor({projectId: 'test-project'});
+    expect((executor as any).location).toBe('us-central1');
+  });
+
+  it('uses location from options if provided', () => {
+    executor = new AgentEngineSandboxCodeExecutor({
+      projectId: 'test-project',
+      location: 'custom-location',
+    });
+    expect((executor as any).location).toBe('custom-location');
   });
 
   it('parses project and location from sandboxResourceName', () => {
@@ -302,6 +314,30 @@ describe('AgentEngineSandboxCodeExecutor', () => {
                 },
               },
             },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('doc.pdf').toString('base64'),
+                },
+              },
+            },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('data.json').toString('base64'),
+                },
+              },
+            },
+            {
+              data: 'base64data',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('file.').toString('base64'),
+                },
+              },
+            },
           ],
         },
       );
@@ -319,6 +355,63 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       expect(result.outputFiles[1].mimeType).toBe('image/png');
       expect(result.outputFiles[2].mimeType).toBe('image/jpeg');
       expect(result.outputFiles[3].mimeType).toBe('application/octet-stream');
+      expect(result.outputFiles[4].mimeType).toBe('application/pdf');
+      expect(result.outputFiles[5].mimeType).toBe('application/json');
+      expect(result.outputFiles[6].mimeType).toBe('application/octet-stream');
+    });
+
+    it('uses default file name if missing in output attributes', async () => {
+      mockClient.agentEnginesInternal.sandboxes.executeCodeInternal.mockResolvedValue(
+        {
+          outputs: [
+            {
+              mimeType: 'text/plain',
+              data: 'base64data',
+            },
+          ],
+        },
+      );
+
+      const result = await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(result.outputFiles).toHaveLength(1);
+      expect(result.outputFiles[0].name).toBe('output_file');
+    });
+
+    it('uses empty string if data is missing in output', async () => {
+      mockClient.agentEnginesInternal.sandboxes.executeCodeInternal.mockResolvedValue(
+        {
+          outputs: [
+            {
+              mimeType: 'text/plain',
+              metadata: {
+                attributes: {
+                  file_name: Buffer.from('log.txt').toString('base64'),
+                },
+              },
+            },
+          ],
+        },
+      );
+
+      const result = await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(result.outputFiles).toHaveLength(1);
+      expect(result.outputFiles[0].content).toBe('');
     });
 
     it('throws error if agent engine creation operation times out', async () => {
@@ -506,6 +599,31 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       });
 
       expect(result.stdout).toBe('invalid json');
+    });
+
+    it('handles missing msg_out and msg_err in JSON output', async () => {
+      mockClient.agentEnginesInternal.sandboxes.executeCodeInternal.mockResolvedValue(
+        {
+          outputs: [
+            {
+              mimeType: 'application/json',
+              data: Buffer.from(JSON.stringify({})).toString('base64'),
+            },
+          ],
+        },
+      );
+
+      const result = await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('');
     });
   });
 });
