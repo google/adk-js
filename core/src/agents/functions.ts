@@ -10,6 +10,7 @@ import {isEmpty} from 'lodash-es';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event, getFunctionCalls} from '../events/event.js';
 import {mergeEventActions} from '../events/event_actions.js';
+import {AgentTool, isAgentTool} from '../tools/agent_tool.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -311,6 +312,126 @@ export async function handleFunctionCallsAsync({
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
   });
+}
+
+/**
+ * Handles function calls and yields events from {@link AgentTool} sub-agents
+ * as they are produced, then yields the final merged function-response event
+ * last.
+ *
+ * Non-{@link AgentTool} calls are delegated to {@link handleFunctionCallList}
+ * (preserving plugin/before/after-callback semantics). {@link AgentTool} calls
+ * are streamed via {@link AgentTool.runAsyncWithEvents} so the parent runner
+ * can surface sub-agent activity in real time. The caller is expected to
+ * identify the terminal function-response event via
+ * {@link getFunctionResponses}.
+ */
+export async function* handleFunctionCallsStreamingAsync({
+  invocationContext,
+  functionCallEvent,
+  toolsDict,
+  beforeToolCallbacks,
+  afterToolCallbacks,
+  toolConfirmationDict,
+}: {
+  invocationContext: InvocationContext;
+  functionCallEvent: Event;
+  toolsDict: Record<string, BaseTool>;
+  beforeToolCallbacks: SingleBeforeToolCallback[];
+  afterToolCallbacks: SingleAfterToolCallback[];
+  toolConfirmationDict?: Record<string, ToolConfirmation>;
+}): AsyncGenerator<Event> {
+  const functionCalls = getFunctionCalls(functionCallEvent);
+  if (!functionCalls.length) {
+    return;
+  }
+
+  const agentToolCalls: Array<{call: FunctionCall; tool: AgentTool}> = [];
+  const regularCalls: FunctionCall[] = [];
+  for (const functionCall of functionCalls) {
+    const tool = functionCall.name ? toolsDict[functionCall.name] : undefined;
+    if (tool && isAgentTool(tool)) {
+      agentToolCalls.push({call: functionCall, tool});
+    } else {
+      regularCalls.push(functionCall);
+    }
+  }
+
+  // Stream sub-agent events for each AgentTool call and build response events.
+  const agentToolResponseEvents: Event[] = [];
+  for (const {call, tool} of agentToolCalls) {
+    const toolContext = new Context({
+      invocationContext,
+      functionCallId: call.id || undefined,
+      toolConfirmation:
+        toolConfirmationDict && call.id
+          ? toolConfirmationDict[call.id]
+          : undefined,
+    });
+
+    let lastContent: Content | undefined;
+    for await (const event of tool.runAsyncWithEvents({
+      args: call.args ?? {},
+      toolContext,
+    })) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      if (event.content) {
+        lastContent = event.content;
+      }
+      yield event;
+    }
+
+    const toolResult = tool.buildToolResultFromContent(lastContent);
+    const responseValue =
+      typeof toolResult !== 'object' || toolResult == null
+        ? {result: toolResult}
+        : (toolResult as Record<string, unknown>);
+
+    agentToolResponseEvents.push(
+      createEvent({
+        invocationId: invocationContext.invocationId,
+        author: invocationContext.agent.name,
+        content: createUserContent({
+          functionResponse: {
+            id: call.id,
+            name: tool.name,
+            response: responseValue,
+          },
+        }),
+        actions: toolContext.actions,
+        branch: invocationContext.branch,
+      }),
+    );
+  }
+
+  // Run any remaining (non-AgentTool) calls through the standard pipeline.
+  let regularResponseEvent: Event | null = null;
+  if (regularCalls.length) {
+    regularResponseEvent = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: regularCalls,
+      toolsDict,
+      beforeToolCallbacks,
+      afterToolCallbacks,
+      toolConfirmationDict,
+    });
+  }
+
+  const allResponseEvents: Event[] = [];
+  if (regularResponseEvent) {
+    allResponseEvents.push(regularResponseEvent);
+  }
+  allResponseEvents.push(...agentToolResponseEvents);
+
+  if (!allResponseEvents.length) {
+    return;
+  }
+
+  yield allResponseEvents.length === 1
+    ? allResponseEvents[0]
+    : mergeParallelFunctionResponseEvents(allResponseEvents);
 }
 
 /**
