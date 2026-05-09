@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {RemoteA2AAgent} from '../../src/a2a/a2a_remote_agent.js';
-import {ReadonlyContext} from '../../src/agents/readonly_context.js';
 import {
   _cleanName,
   _isGoogleApi,
@@ -10,8 +8,10 @@ import {
   AgentRegistrySingleMCPToolset,
   GCP_MCP_SERVER_DESTINATION_ID,
   ProtocolType,
-} from '../../src/integrations/agent_registry/agent_registry.js';
-import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
+  ReadonlyContext,
+  RemoteA2AAgent,
+  StreamableHTTPConnectionParams,
+} from '../../src/index.js';
 
 // Mock google-auth-library
 let shouldAuthThrow = false;
