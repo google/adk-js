@@ -5,9 +5,7 @@
  */
 
 import {describe, expect, it, vi} from 'vitest';
-import {injectSessionState} from '../../src/agents/instructions.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {ReadonlyContext} from '../../src/agents/readonly_context.js';
+import {injectSessionState, InvocationContext, ReadonlyContext} from '@google/adk';
 
 /**
  * Builds a minimal ReadonlyContext backed by a plain-object invocation context.
