@@ -5,6 +5,7 @@
  */
 
 import {Client} from '@google-cloud/vertexai';
+import {Language} from '@google-cloud/vertexai/build/src/genai/types.js';
 import {experimental} from '../utils/experimental.js';
 import {guessMimeType} from '../utils/file_utils.js';
 
@@ -25,9 +26,13 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {logger} from '../utils/logger.js';
 
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
-import {CodeExecutionResult, File} from './code_execution_utils.js';
+import {
+  CodeExecutionLanguage,
+  CodeExecutionResult,
+  File,
+} from './code_execution_utils.js';
 
-const DEFAULT_MAX_ATTEMPTS = 30;
+const DEFAULT_MAX_ATTEMPTS = 180;
 const DEFAULT_SANDBOX_TTL = '31536000s';
 const DEFAULT_SANDBOX_DISPLAY_NAME = 'default_sandbox';
 const DEFAULT_ENGINE_DISPLAY_NAME = 'default_engine';
@@ -63,6 +68,20 @@ export interface AgentEngineSandboxCodeExecutorOptions {
    * Primarily for testing.
    */
   client?: Client;
+}
+
+/**
+ * A code executor that uses Agent Engine Code Execution Sandbox to execute code.
+ */
+function mapLanguage(lang: CodeExecutionLanguage): Language {
+  switch (lang) {
+    case CodeExecutionLanguage.PYTHON:
+      return Language.LANGUAGE_PYTHON;
+    case CodeExecutionLanguage.JAVASCRIPT:
+      return Language.LANGUAGE_JAVASCRIPT;
+    default:
+      throw new Error(`Unsupported language for Agent Engine Sandbox: ${lang}`);
+  }
 }
 
 /**
@@ -125,10 +144,13 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
   ): Promise<CodeExecutionResult> {
     const {invocationContext, codeExecutionInput} = params;
 
+    const language = mapLanguage(codeExecutionInput.language);
+
     const agentEngineName = await this.getOrCreateAgentEngine();
     const sandboxName = await this.getOrCreateSandbox(
       invocationContext,
       agentEngineName,
+      language,
     );
 
     const inputs: LocalChunk[] = [
@@ -265,13 +287,15 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
   private async getOrCreateSandbox(
     invocationContext: InvocationContext,
     agentEngineName: string,
+    language: Language,
   ): Promise<string> {
     if (this.sandboxResourceName) {
       return this.sandboxResourceName;
     }
 
-    // Try to get from session state
-    let sandboxName = invocationContext.session?.state?.['sandbox_name'] as
+    // Try to get from session state with language-specific key
+    const stateKey = `sandbox_name_${language.toLowerCase()}`;
+    let sandboxName = invocationContext.session?.state?.[stateKey] as
       | string
       | undefined;
     let createNewSandbox = false;
@@ -297,12 +321,14 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
     }
 
     if (createNewSandbox) {
-      logger.debug('Creating a new code execution sandbox...');
+      logger.debug(`Creating a new ${language} code execution sandbox...`);
       const operation =
         await this.client.agentEnginesInternal.sandboxes.createInternal({
           name: agentEngineName,
           spec: {
-            codeExecutionEnvironment: {},
+            codeExecutionEnvironment: {
+              codeLanguage: language,
+            },
           },
           config: {
             displayName: DEFAULT_SANDBOX_DISPLAY_NAME,
@@ -336,7 +362,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
         if (!invocationContext.session.state) {
           invocationContext.session.state = {};
         }
-        invocationContext.session.state['sandbox_name'] = sandboxName;
+        invocationContext.session.state[stateKey] = sandboxName;
       }
     }
 

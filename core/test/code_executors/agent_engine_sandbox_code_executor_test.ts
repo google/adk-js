@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '@google/adk/agents/invocation_context.js';
-import {AgentEngineSandboxCodeExecutor} from '@google/adk/code_executors/agent_engine_sandbox_code_executor.js';
-import {CodeExecutionLanguage} from '@google/adk/code_executors/code_execution_utils.js';
+import {Client} from '@google-cloud/vertexai';
+import {
+  AgentEngineSandboxCodeExecutor,
+  CodeExecutionLanguage,
+  InvocationContext,
+} from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 describe('AgentEngineSandboxCodeExecutor', () => {
@@ -78,7 +81,9 @@ describe('AgentEngineSandboxCodeExecutor', () => {
   });
 
   it('can be initialized with project and location from env', () => {
-    executor = new AgentEngineSandboxCodeExecutor({client: mockClient});
+    executor = new AgentEngineSandboxCodeExecutor({
+      client: mockClient as unknown as Client,
+    });
     expect(executor).toBeDefined();
   });
 
@@ -107,7 +112,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     executor = new AgentEngineSandboxCodeExecutor({
       sandboxResourceName:
         'projects/custom-p/locations/custom-l/reasoningEngines/123/sandboxEnvironments/456',
-      client: mockClient,
+      client: mockClient as unknown as Client,
     });
     expect(executor).toBeDefined();
   });
@@ -116,7 +121,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     executor = new AgentEngineSandboxCodeExecutor({
       agentEngineResourceName:
         'projects/custom-p/locations/custom-l/reasoningEngines/123',
-      client: mockClient,
+      client: mockClient as unknown as Client,
     });
     expect(executor).toBeDefined();
   });
@@ -151,7 +156,9 @@ describe('AgentEngineSandboxCodeExecutor', () => {
           state: {},
         },
       } as unknown as InvocationContext;
-      executor = new AgentEngineSandboxCodeExecutor({client: mockClient});
+      executor = new AgentEngineSandboxCodeExecutor({
+        client: mockClient as unknown as Client,
+      });
     });
 
     it('creates agent engine and sandbox if not provided', async () => {
@@ -172,7 +179,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     });
 
     it('reuses existing sandbox from session state', async () => {
-      invocationContext.session!.state!['sandbox_name'] =
+      invocationContext.session!.state!['sandbox_name_language_python'] =
         'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456';
 
       await executor.executeCode({
@@ -191,7 +198,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     });
 
     it('creates new sandbox if existing one is not running', async () => {
-      invocationContext.session!.state!['sandbox_name'] =
+      invocationContext.session!.state!['sandbox_name_language_python'] =
         'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456';
       mockClient.agentEnginesInternal.sandboxes.getInternal.mockResolvedValue({
         state: 'STATE_EXPIRED',
@@ -501,7 +508,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       });
 
       expect(contextWithoutState.session?.state).toEqual({
-        sandbox_name:
+        sandbox_name_language_python:
           'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
       });
     });
@@ -510,7 +517,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       executor = new AgentEngineSandboxCodeExecutor({
         sandboxResourceName:
           'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
-        client: mockClient,
+        client: mockClient as unknown as Client,
       });
 
       await executor.executeCode({
@@ -531,7 +538,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
     });
 
     it('creates new sandbox if getInternal throws error', async () => {
-      invocationContext.session!.state!['sandbox_name'] =
+      invocationContext.session!.state!['sandbox_name_language_python'] =
         'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456';
       mockClient.agentEnginesInternal.sandboxes.getInternal.mockRejectedValue(
         new Error('API Error'),
@@ -554,7 +561,7 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       executor = new AgentEngineSandboxCodeExecutor({
         agentEngineResourceName:
           'projects/test-project/locations/us-central1/reasoningEngines/123',
-        client: mockClient,
+        client: mockClient as unknown as Client,
       });
 
       await executor.executeCode({
@@ -624,6 +631,33 @@ describe('AgentEngineSandboxCodeExecutor', () => {
 
       expect(result.stdout).toBe('');
       expect(result.stderr).toBe('');
+    });
+    it('creates sandbox with LANGUAGE_JAVASCRIPT for JAVASCRIPT language', async () => {
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'console.log("hello")',
+          language: CodeExecutionLanguage.JAVASCRIPT,
+          inputFiles: [],
+        },
+      });
+
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.createInternal,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spec: {
+            codeExecutionEnvironment: {
+              codeLanguage: 'LANGUAGE_JAVASCRIPT',
+            },
+          },
+        }),
+      );
+
+      expect(invocationContext.session?.state).toEqual({
+        sandbox_name_language_javascript:
+          'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+      });
     });
   });
 });
