@@ -44,6 +44,7 @@
     "@google-cloud/opentelemetry-cloud-monitoring-exporter": "^0.21.0",
     "@google-cloud/opentelemetry-cloud-trace-exporter": "^3.0.0",
     "@google-cloud/storage": "^7.17.1",
+    "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^1.37.0",
     "@mikro-orm/core": "^6.6.10",
     "@mikro-orm/reflection": "^6.6.6",
