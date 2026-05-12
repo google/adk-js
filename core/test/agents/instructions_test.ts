@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {InvocationContext, ReadonlyContext} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 import {injectSessionState} from '../../src/agents/instructions.js';
-import {InvocationContext, ReadonlyContext} from '@google/adk';
 
 /**
  * Builds a minimal ReadonlyContext backed by a plain-object invocation context.
