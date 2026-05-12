@@ -9,7 +9,7 @@ import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {
   deployToAgentEngine,
   DeployToAgentEngineOptions,
-} from '../../src/cli/cli_deploy_agent_engine.js';
+} from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
   isFile,

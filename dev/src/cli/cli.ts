@@ -23,9 +23,9 @@ import {getTempDir} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
-import {deployToCloudRun} from './cli_deploy.js';
-import {deployToAgentEngine} from './cli_deploy_agent_engine.js';
 import {runAgent} from './cli_run.js';
+import {deployToAgentEngine} from './deploy/cli_deploy_agent_engine.js';
+import {deployToCloudRun} from './deploy/cli_deploy_cloud_run.js';
 
 dotenv.config({quiet: true});
 
@@ -145,6 +145,32 @@ const A2A_OPTION = new Option(
 ).default(false);
 const AGENT_FILE_MODULE_TYPE = new Option('--file_type <string>', 'Optional. ');
 AGENT_FILE_MODULE_TYPE.argChoices = [FileModuleType.CJS, FileModuleType.ESM];
+
+// Reusable deployment CLI option constants
+export const PROJECT_DEPLOY_OPTION = new Option(
+  '--project [string]',
+  'Optional. Google Cloud project to deploy the agent. If not set, default project from gcloud config is used',
+);
+export const REGION_DEPLOY_OPTION = new Option(
+  '--region [string]',
+  'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
+);
+export const ADK_VERSION_OPTION = new Option(
+  '--adk_version [string]',
+  'Optional. ADK version to use. If not set, default to the latest version available on npm',
+).default('latest');
+export const WITH_UI_OPTION = new Option(
+  '--with_ui [boolean]',
+  'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
+).default(false);
+export const DISPLAY_NAME_OPTION = new Option(
+  '--display_name [string]',
+  'Optional. The display name for the Reasoning Engine. Defaults to agent directory name.',
+);
+export const DESCRIPTION_OPTION = new Option(
+  '--description [string]',
+  'Optional. The description for the Reasoning Engine.',
+);
 
 /**
  * Creates the ADK CLI program.
@@ -343,14 +369,8 @@ export function createProgram(): Command {
     .allowUnknownOption()
     .allowExcessArguments()
     .addOption(PORT_OPTION)
-    .option(
-      '--project [string]',
-      'Optional. Google Cloud project to deploy the agent. If not set, default project from gcloud config is used',
-    )
-    .option(
-      '--region [string]',
-      'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
-    )
+    .addOption(PROJECT_DEPLOY_OPTION)
+    .addOption(REGION_DEPLOY_OPTION)
     .option(
       '--service_name [string]',
       'Optional. The service name to use in Cloud Run. Default: "adk-default-service-name"',
@@ -361,16 +381,8 @@ export function createProgram(): Command {
       'Optional. Temp folder for the generated Cloud Run source files (default: a timestamped folder in the system temp directory).',
       getTempDir('cloud_run_deploy_src'),
     )
-    .option(
-      '--adk_version [string]',
-      'Optional. ADK version to use in the Cloud Run service. If not set, default to the latest version available on npm',
-      'latest',
-    )
-    .option(
-      '--with_ui [boolean]',
-      'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
-      false,
-    )
+    .addOption(ADK_VERSION_OPTION)
+    .addOption(WITH_UI_OPTION)
     .addOption(ORIGINS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
@@ -423,37 +435,17 @@ export function createProgram(): Command {
       .allowUnknownOption()
       .allowExcessArguments()
       .addOption(PORT_OPTION)
-      .option(
-        '--project [string]',
-        'Optional. Google Cloud project to deploy the agent. If not set, default project from gcloud config is used',
-      )
-      .option(
-        '--region [string]',
-        'Optional. Google Cloud region to deploy the agent. If not set, default run/region from gcloud config is used',
-      )
-      .option(
-        '--display_name [string]',
-        'Optional. The display name for the Reasoning Engine. Defaults to agent directory name.',
-      )
-      .option(
-        '--description [string]',
-        'Optional. The description for the Reasoning Engine.',
-      )
+      .addOption(PROJECT_DEPLOY_OPTION)
+      .addOption(REGION_DEPLOY_OPTION)
+      .addOption(DISPLAY_NAME_OPTION)
+      .addOption(DESCRIPTION_OPTION)
       .option(
         '--temp_folder [string]',
         'Optional. Temp folder for the generated source files (default: a timestamped folder in the system temp directory).',
         getTempDir('agent_engine_deploy_src'),
       )
-      .option(
-        '--adk_version [string]',
-        'Optional. ADK version to use. If not set, default to the latest version available on npm',
-        'latest',
-      )
-      .option(
-        '--with_ui [boolean]',
-        'Optional. Deploy ADK Web UI if set. (default: deploy ADK API server only)',
-        false,
-      )
+      .addOption(ADK_VERSION_OPTION)
+      .addOption(WITH_UI_OPTION)
       .addOption(ORIGINS_OPTION)
       .addOption(VERBOSE_OPTION)
       .addOption(LOG_LEVEL_OPTION)
