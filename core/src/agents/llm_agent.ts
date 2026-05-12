@@ -29,6 +29,10 @@ import {LLMRegistry} from '../models/registry.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
+import {
+  createGoogleSearchAgent,
+  GoogleSearchAgentTool,
+} from '../tools/google_search_agent_tool.js';
 import {GoogleSearchTool} from '../tools/google_search_tool.js';
 
 import {logger} from '../utils/logger.js';
@@ -323,8 +327,6 @@ async function convertToolUnionToTools(
     if (multipleTools && toolUnion.name === 'google_search') {
       const searchTool = toolUnion as unknown as GoogleSearchTool;
       if (searchTool.bypassMultiToolsLimit) {
-        const {createGoogleSearchAgent, GoogleSearchAgentTool} =
-          await import('../tools/google_search_agent_tool.js');
         return [new GoogleSearchAgentTool(createGoogleSearchAgent(model!))];
       }
     }
