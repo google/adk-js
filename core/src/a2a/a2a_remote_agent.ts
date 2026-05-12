@@ -46,6 +46,13 @@ export type A2AStreamEventData =
 /**
  * Callback called before sending a request to the remote agent.
  * Allows modifying the request parameters.
+ *
+ * @param ctx - The current invocation context, providing access to session
+ *   state, agent metadata, and services.
+ * @param params - The A2A message send parameters that will be sent to the
+ *   remote agent. Mutations to this object are reflected in the outgoing
+ *   request.
+ * @returns A Promise or void. Returning a rejected Promise aborts the request.
  */
 export type BeforeA2ARequestCallback = (
   ctx: InvocationContext,
@@ -55,6 +62,13 @@ export type BeforeA2ARequestCallback = (
 /**
  * Callback called after receiving a response from the remote agent.
  * Allows inspecting or modifying the response.
+ *
+ * @param ctx - The current invocation context, providing access to session
+ *   state, agent metadata, and services.
+ * @param resp - The raw A2A stream event data received from the remote agent,
+ *   before conversion to an ADK event.
+ * @returns A Promise or void. Returning a rejected Promise stops further
+ *   processing of the response.
  */
 export type AfterA2ARequestCallback = (
   ctx: InvocationContext,
