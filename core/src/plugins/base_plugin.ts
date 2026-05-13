@@ -23,6 +23,10 @@ export enum ContextCompactionTrigger {
   Auto = 'Auto',
 }
 
+type ShortCircuit = {
+  shortCircuit: boolean;
+};
+
 /**
  * Base class for creating plugins.
  *
@@ -135,7 +139,7 @@ export abstract class BasePlugin {
   async onUserMessageCallback(params: {
     invocationContext: InvocationContext;
     userMessage: Content;
-  }): Promise<Content | undefined> {
+  }): Promise<(Content & ShortCircuit) | undefined> {
     return;
   }
 
@@ -154,7 +158,7 @@ export abstract class BasePlugin {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeRunCallback(params: {
     invocationContext: InvocationContext;
-  }): Promise<Content | undefined> {
+  }): Promise<(Content & ShortCircuit) | undefined> {
     return;
   }
 
@@ -174,7 +178,7 @@ export abstract class BasePlugin {
   async onEventCallback(params: {
     invocationContext: InvocationContext;
     event: Event;
-  }): Promise<Event | undefined> {
+  }): Promise<(Event & ShortCircuit) | undefined> {
     return;
   }
 
@@ -210,7 +214,7 @@ export abstract class BasePlugin {
   async beforeAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<Content | undefined> {
+  }): Promise<(Content & ShortCircuit) | undefined> {
     return;
   }
 
@@ -230,7 +234,7 @@ export abstract class BasePlugin {
   async afterAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<Content | undefined> {
+  }): Promise<(Content & ShortCircuit) | undefined> {
     return;
   }
 
@@ -251,7 +255,7 @@ export abstract class BasePlugin {
   async beforeModelCallback(params: {
     callbackContext: Context;
     llmRequest: LlmRequest;
-  }): Promise<LlmResponse | undefined> {
+  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
     return;
   }
 
@@ -271,7 +275,7 @@ export abstract class BasePlugin {
   async afterModelCallback(params: {
     callbackContext: Context;
     llmResponse: LlmResponse;
-  }): Promise<LlmResponse | undefined> {
+  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
     return;
   }
 
@@ -294,7 +298,7 @@ export abstract class BasePlugin {
     callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
-  }): Promise<LlmResponse | undefined> {
+  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
     return;
   }
 
@@ -315,7 +319,7 @@ export abstract class BasePlugin {
   async beforeToolSelection(params: {
     callbackContext: Context;
     tools: Readonly<Record<string, BaseTool>>;
-  }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
+  }): Promise<(Readonly<Record<string, BaseTool>> & ShortCircuit) | undefined> {
     return;
   }
 

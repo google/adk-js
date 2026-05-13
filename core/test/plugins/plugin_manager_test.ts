@@ -219,6 +219,62 @@ describe('PluginManager', () => {
     expect(plugin2.callLog).not.toContain('beforeRunCallback');
   });
 
+  it('should continue when a plugin returns { shortCircuit: false, ... }', async () => {
+    const transformed = {message: 'translated'} as unknown as Record<
+      string,
+      unknown
+    >;
+    plugin1.returnValues['afterToolCallback'] = {
+      shortCircuit: false,
+      ...transformed,
+    };
+    service.registerPlugin(plugin1);
+    service.registerPlugin(plugin2);
+
+    const result = await service.runAfterToolCallback({
+      tool: {} as BaseTool,
+      toolArgs: {},
+      toolContext: {} as Context,
+      result: {message: 'original'},
+    });
+
+    expect(plugin1.callLog).toContain('afterToolCallback');
+    expect(plugin2.callLog).toContain('afterToolCallback');
+    expect(result).toEqual(transformed);
+    expect((result as Record<string, unknown>).shortCircuit).toBeUndefined();
+  });
+
+  it('should pipe transformed value into the next plugin', async () => {
+    let plugin2Received: Record<string, unknown> | undefined;
+    plugin1.returnValues['afterToolCallback'] = {
+      shortCircuit: false,
+      message: 'translated',
+    };
+    plugin2 = new (class extends TestPlugin {
+      override async afterToolCallback(params: {
+        tool: BaseTool;
+        toolArgs: Record<string, unknown>;
+        toolContext: Context;
+        result: Record<string, unknown>;
+      }) {
+        plugin2Received = params.result;
+        return undefined;
+      }
+    })('plugin2');
+
+    service.registerPlugin(plugin1);
+    service.registerPlugin(plugin2);
+
+    await service.runAfterToolCallback({
+      tool: {} as BaseTool,
+      toolArgs: {},
+      toolContext: {} as Context,
+      result: {message: 'original'},
+    });
+
+    expect(plugin2Received).toEqual({message: 'translated'});
+  });
+
   it('should call all plugins if no plugin returns a value', async () => {
     service.registerPlugin(plugin1);
     service.registerPlugin(plugin2);

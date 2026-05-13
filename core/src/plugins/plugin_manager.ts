@@ -30,6 +30,13 @@ import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
  * for that specific event is halted, and the returned value is propagated up
  * the call stack. This allows plugins to short-circuit operations like agent
  * runs, tool calls, or model requests.
+ *
+ * A plugin can opt out of the early exit by returning a payload that includes
+ * a literal `shortCircuit: false` field; in that case the remaining fields
+ * (with `shortCircuit` stripped) are forwarded to the next plugin as the new
+ * value of the transformed input field, and execution continues. Returning a
+ * payload with `shortCircuit: true` (or omitting the field entirely) preserves
+ * the legacy early-exit behavior.
  */
 export class PluginManager {
   private readonly plugins: Set<BasePlugin> = new Set();
@@ -83,9 +90,19 @@ export class PluginManager {
    * Runs the same callback for all plugins. This is a utility method to reduce
    * duplication below.
    *
+   * Plugins receive the latest transformed value (via `latest`); the caller is
+   * responsible for splicing it into the right field of the plugin params. If
+   * no prior plugin produced a value, `latest` is `undefined` and the caller
+   * should fall back to the original input.
+   *
+   * A plugin return value of `undefined` continues the chain unchanged. A
+   * return value containing `shortCircuit: false` strips the flag and forwards
+   * the remaining fields to subsequent plugins; any other return value is
+   * treated as a short-circuit (legacy behavior) and returned as-is.
+   *
    * @param plugins The set of plugins to run
    * @param callback A closure containing the callback method to run on each
-   *     plugin
+   *     plugin. Receives the latest transformed value, or `undefined`.
    * @param callbackName The name of the function being called in the closure
    *     above. Used for logging purposes.
    * @returns A promise containing the plugin method result. Must be casted to
@@ -93,25 +110,38 @@ export class PluginManager {
    */
   private async runCallbacks(
     plugins: Set<BasePlugin>,
-    callback: (plugin: BasePlugin) => Promise<unknown>,
+    callback: (plugin: BasePlugin, latest: unknown) => Promise<unknown>,
     callbackName: string,
   ): Promise<unknown> {
+    let current: unknown = undefined;
     for (const plugin of plugins) {
       try {
-        const result = await callback(plugin);
-        if (result !== undefined) {
-          logger.debug(
-            `Plugin '${plugin.name}' returned a value for callback '${callbackName}', exiting early.`,
-          );
-          return result;
+        const result = await callback(plugin, current);
+        if (result === undefined) continue;
+        if (
+          typeof result === 'object' &&
+          result !== null &&
+          'shortCircuit' in result &&
+          (result as {shortCircuit: unknown}).shortCircuit === false
+        ) {
+          const {shortCircuit: _omit, ...rest} = result as Record<
+            string,
+            unknown
+          >;
+          current = rest;
+          continue;
         }
+        logger.debug(
+          `Plugin '${plugin.name}' returned a value for callback '${callbackName}', exiting early.`,
+        );
+        return result;
       } catch (e) {
         const errorMessage = `Error in plugin '${plugin.name}' during '${callbackName}' callback: ${e}`;
         logger.error(errorMessage);
         throw new Error(errorMessage);
       }
     }
-    return undefined;
+    return current;
   }
 
   /**
@@ -126,8 +156,11 @@ export class PluginManager {
   }): Promise<Content | undefined> {
     return (await this.runCallbacks(
       this.plugins,
-      (plugin: BasePlugin) =>
-        plugin.onUserMessageCallback({userMessage, invocationContext}),
+      (plugin: BasePlugin, latest: unknown) =>
+        plugin.onUserMessageCallback({
+          userMessage: (latest as Content) ?? userMessage,
+          invocationContext,
+        }),
       'onUserMessageCallback',
     )) as Content | undefined;
   }
@@ -174,8 +207,11 @@ export class PluginManager {
   }): Promise<Event | undefined> {
     return (await this.runCallbacks(
       this.plugins,
-      (plugin: BasePlugin) =>
-        plugin.onEventCallback({invocationContext, event}),
+      (plugin: BasePlugin, latest: unknown) =>
+        plugin.onEventCallback({
+          invocationContext,
+          event: (latest as Event) ?? event,
+        }),
       'onEventCallback',
     )) as Event | undefined;
   }
@@ -228,8 +264,11 @@ export class PluginManager {
   }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
     return (await this.runCallbacks(
       this.plugins,
-      (plugin: BasePlugin) =>
-        plugin.beforeToolSelection({callbackContext, tools}),
+      (plugin: BasePlugin, latest: unknown) =>
+        plugin.beforeToolSelection({
+          callbackContext,
+          tools: (latest as Readonly<Record<string, BaseTool>>) ?? tools,
+        }),
       'beforeToolSelection',
     )) as Readonly<Record<string, BaseTool>> | undefined;
   }
@@ -306,8 +345,13 @@ export class PluginManager {
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.runCallbacks(
       this.plugins,
-      (plugin: BasePlugin) =>
-        plugin.afterToolCallback({tool, toolArgs, toolContext, result}),
+      (plugin: BasePlugin, latest: unknown) =>
+        plugin.afterToolCallback({
+          tool,
+          toolArgs,
+          toolContext,
+          result: (latest as Record<string, unknown>) ?? result,
+        }),
       'afterToolCallback',
     )) as Record<string, unknown> | undefined;
   }
@@ -362,8 +406,11 @@ export class PluginManager {
   }): Promise<LlmResponse | undefined> {
     return (await this.runCallbacks(
       this.plugins,
-      (plugin: BasePlugin) =>
-        plugin.afterModelCallback({callbackContext, llmResponse}),
+      (plugin: BasePlugin, latest: unknown) =>
+        plugin.afterModelCallback({
+          callbackContext,
+          llmResponse: (latest as LlmResponse) ?? llmResponse,
+        }),
       'afterModelCallback',
     )) as LlmResponse | undefined;
   }
