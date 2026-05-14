@@ -495,6 +495,14 @@ export class Runner {
     liveRequestQueue: LiveRequestQueue;
     runConfig?: RunConfig;
     abortSignal?: AbortSignal;
+    /**
+     * Optional session resumption handle observed from a prior `runLive`
+     * cycle on the same conversation. When set, the agent's live flow will
+     * open the connection with `liveConnectConfig.sessionResumption.handle`
+     * so the server restores its state instead of relying on client-side
+     * history replay.
+     */
+    liveSessionResumptionHandle?: string;
   }): AsyncGenerator<Event, void, undefined> {
     if (!params.liveRequestQueue) {
       throw new Error('liveRequestQueue is required for runLive.');
@@ -551,6 +559,7 @@ export class Runner {
             pluginManager: this.pluginManager,
             liveRequestQueue: params.liveRequestQueue,
             abortSignal: params.abortSignal,
+            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
           });
 
           invocationContext.agent = this.determineAgentForResumption(

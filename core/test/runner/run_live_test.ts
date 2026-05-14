@@ -418,6 +418,58 @@ describe('Runner.runLive', () => {
     ).toBeUndefined();
   });
 
+  it('uses an externally provided session resumption handle on first connect', async () => {
+    const llm = new FakeLiveLlm([{turnComplete: true}]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    // Seed contents so without a handle the runner would call sendHistory.
+    const session = (await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    }))!;
+    await sessionService.appendEvent({
+      session,
+      event: {
+        invocationId: 'seed',
+        author: 'user',
+        id: 'seed-evt',
+        actions: {
+          stateDelta: {},
+          artifactDelta: {},
+          requestedAuthConfigs: {},
+          requestedToolConfirmations: {},
+        },
+        longRunningToolIds: [],
+        timestamp: Date.now(),
+        content: {role: 'user', parts: [{text: 'hello'}]},
+      } as Event,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+      liveSessionResumptionHandle: 'external-handle',
+    })) {
+      // drain
+    }
+
+    // History was skipped because the caller supplied a handle.
+    expect(llm.connections[0].historyCalls.length).toBe(0);
+    expect(
+      llm.llmRequestsSeen[0].liveConnectConfig?.sessionResumption?.handle,
+    ).toBe('external-handle');
+  });
+
   it('does not reconnect when no resumption handle has been captured', async () => {
     const llm = new FakeLiveLlm([
       [{goAway: {timeLeft: '1s'}}],
