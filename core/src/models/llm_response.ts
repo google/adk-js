@@ -11,6 +11,7 @@ import {
   GenerateContentResponse,
   GenerateContentResponseUsageMetadata,
   GroundingMetadata,
+  LiveServerGoAway,
   LiveServerSessionResumptionUpdate,
   Transcription,
 } from '@google/genai';
@@ -84,6 +85,12 @@ export interface LlmResponse {
    * The session resumption update of the LlmResponse
    */
   liveSessionResumptionUpdate?: LiveServerSessionResumptionUpdate;
+
+  /**
+   * Server-side signal that the live connection will be closed soon. The
+   * caller should reconnect using the latest session resumption handle.
+   */
+  goAway?: LiveServerGoAway;
 
   /**
    * Audio transcription of user input.

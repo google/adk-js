@@ -40,6 +40,7 @@ export interface InvocationContextParams {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
+  liveSessionResumptionHandle?: string;
 }
 
 /**
@@ -192,6 +193,14 @@ export class InvocationContext {
   readonly abortSignal?: AbortSignal;
 
   /**
+   * Most recent Gemini Live session resumption handle. Updated from
+   * `sessionResumptionUpdate` events on the active connection and replayed
+   * via `liveConnectConfig.sessionResumption` when reconnecting so the
+   * server can restore in-flight state without client-side history replay.
+   */
+  liveSessionResumptionHandle?: string;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -210,6 +219,7 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
+    this.liveSessionResumptionHandle = params.liveSessionResumptionHandle;
   }
 
   /**

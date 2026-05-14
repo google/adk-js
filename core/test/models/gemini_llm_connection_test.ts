@@ -30,8 +30,11 @@ function createFakeSession(): FakeSession {
   };
 }
 
+const GEMINI_31 = 'gemini-3.1-flash-live-preview';
+const GEMINI_25 = 'gemini-2.5-flash-live-preview';
+
 function createConnection(
-  apiBackend: GoogleLLMVariant = GoogleLLMVariant.GEMINI_API,
+  options: {apiBackend?: GoogleLLMVariant; modelVersion?: string} = {},
 ): {
   connection: GeminiLlmConnection;
   session: FakeSession;
@@ -42,35 +45,43 @@ function createConnection(
   const connection = new GeminiLlmConnection(
     session as unknown as Session,
     buffer,
-    apiBackend,
+    options.apiBackend ?? GoogleLLMVariant.GEMINI_API,
+    options.modelVersion ?? GEMINI_31,
   );
   return {connection, session, buffer};
 }
 
 describe('GeminiLlmConnection.sendRealtime', () => {
-  it('routes audio blobs through audio:', async () => {
+  it('routes audio blobs through audio: on Gemini 3.1', async () => {
     const {connection, session} = createConnection();
     const blob: Blob = {data: 'AAA=', mimeType: 'audio/pcm;rate=16000'};
     await connection.sendRealtime(blob);
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({audio: blob});
   });
 
-  it('routes image blobs through video:', async () => {
+  it('routes image blobs through video: on Gemini 3.1', async () => {
     const {connection, session} = createConnection();
     const blob: Blob = {data: 'AAA=', mimeType: 'image/jpeg'};
     await connection.sendRealtime(blob);
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({video: blob});
   });
 
-  it('falls back to media: for other mime types', async () => {
+  it('drops unknown mime types on Gemini 3.1 instead of guessing', async () => {
     const {connection, session} = createConnection();
     const blob: Blob = {data: 'AAA=', mimeType: 'application/octet-stream'};
+    await connection.sendRealtime(blob);
+    expect(session.sendRealtimeInput).not.toHaveBeenCalled();
+  });
+
+  it('routes blobs through media: on pre-3.1 models', async () => {
+    const {connection, session} = createConnection({modelVersion: GEMINI_25});
+    const blob: Blob = {data: 'AAA=', mimeType: 'audio/pcm;rate=16000'};
     await connection.sendRealtime(blob);
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({media: blob});
   });
 
-  it('falls back to media: when mimeType is missing', async () => {
-    const {connection, session} = createConnection();
+  it('routes blobs with unknown mime via media: on pre-3.1 models', async () => {
+    const {connection, session} = createConnection({modelVersion: GEMINI_25});
     const blob = {data: 'AAA='} as Blob;
     await connection.sendRealtime(blob);
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({media: blob});
@@ -78,11 +89,22 @@ describe('GeminiLlmConnection.sendRealtime', () => {
 });
 
 describe('GeminiLlmConnection.sendContent', () => {
-  it('sends a single user text part via sendRealtimeInput.text', async () => {
+  it('routes single user text via sendRealtimeInput on Gemini 3.1', async () => {
     const {connection, session} = createConnection();
     await connection.sendContent({role: 'user', parts: [{text: 'hello'}]});
     expect(session.sendRealtimeInput).toHaveBeenCalledWith({text: 'hello'});
     expect(session.sendClientContent).not.toHaveBeenCalled();
+  });
+
+  it('routes single user text via sendClientContent on pre-3.1 models', async () => {
+    const {connection, session} = createConnection({modelVersion: GEMINI_25});
+    const content = {role: 'user', parts: [{text: 'hello'}]};
+    await connection.sendContent(content);
+    expect(session.sendClientContent).toHaveBeenCalledWith({
+      turns: [content],
+      turnComplete: true,
+    });
+    expect(session.sendRealtimeInput).not.toHaveBeenCalled();
   });
 
   it('uses sendClientContent for multi-part user content', async () => {
@@ -127,6 +149,58 @@ describe('GeminiLlmConnection.sendContent', () => {
     await expect(connection.sendContent({role: 'user'})).rejects.toThrow(
       'Content must have parts.',
     );
+  });
+});
+
+describe('GeminiLlmConnection.sendHistory', () => {
+  it('does not send when history is empty', async () => {
+    const {connection, session} = createConnection();
+    await connection.sendHistory([]);
+    expect(session.sendClientContent).not.toHaveBeenCalled();
+  });
+
+  it('seals turn when history ends with a user message', async () => {
+    const {connection, session} = createConnection();
+    const history = [
+      {role: 'model', parts: [{text: 'hi'}]},
+      {role: 'user', parts: [{text: 'hello'}]},
+    ];
+    await connection.sendHistory(history);
+    expect(session.sendClientContent).toHaveBeenCalledWith({
+      turns: history,
+      turnComplete: true,
+    });
+  });
+
+  it('leaves turn open when history ends with a model message', async () => {
+    const {connection, session} = createConnection();
+    const history = [
+      {role: 'user', parts: [{text: 'hello'}]},
+      {role: 'model', parts: [{text: 'hi back'}]},
+    ];
+    await connection.sendHistory(history);
+    expect(session.sendClientContent).toHaveBeenCalledWith({
+      turns: history,
+      turnComplete: false,
+    });
+  });
+
+  it('filters out audio parts before sending history', async () => {
+    const {connection, session} = createConnection();
+    const history = [
+      {
+        role: 'model',
+        parts: [
+          {text: 'hello'},
+          {inlineData: {data: 'AAA=', mimeType: 'audio/pcm'}},
+        ],
+      },
+    ];
+    await connection.sendHistory(history);
+    expect(session.sendClientContent).toHaveBeenCalledWith({
+      turns: [{role: 'model', parts: [{text: 'hello'}]}],
+      turnComplete: false,
+    });
   });
 });
 
@@ -200,5 +274,43 @@ describe('GeminiLlmConnection.receive', () => {
     };
 
     await expect(consume()).rejects.toThrow('boom');
+  });
+
+  it('yields goAway events from the server', async () => {
+    const {connection, buffer} = createConnection();
+    const goAway = {timeLeft: '1s'};
+    buffer.push({
+      kind: 'message',
+      message: {goAway} as LiveServerMessage,
+    });
+    buffer.push({kind: 'close'});
+
+    const events: LlmResponse[] = [];
+    for await (const event of connection.receive()) {
+      events.push(event);
+    }
+
+    const goAwayEvents = events.filter((e) => e.goAway);
+    expect(goAwayEvents.length).toBe(1);
+    expect(goAwayEvents[0].goAway).toEqual(goAway);
+  });
+
+  it('yields sessionResumptionUpdate events from the server', async () => {
+    const {connection, buffer} = createConnection();
+    const update = {newHandle: 'handle-123', resumable: true};
+    buffer.push({
+      kind: 'message',
+      message: {sessionResumptionUpdate: update} as LiveServerMessage,
+    });
+    buffer.push({kind: 'close'});
+
+    const events: LlmResponse[] = [];
+    for await (const event of connection.receive()) {
+      events.push(event);
+    }
+
+    const resumeEvents = events.filter((e) => e.liveSessionResumptionUpdate);
+    expect(resumeEvents.length).toBe(1);
+    expect(resumeEvents[0].liveSessionResumptionUpdate).toEqual(update);
   });
 });

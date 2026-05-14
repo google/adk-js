@@ -15,6 +15,7 @@ import {
 } from '@google/genai';
 
 import {logger} from '../utils/logger.js';
+import {isGemini31FlashLive} from '../utils/model_name.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
@@ -79,13 +80,23 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     private readonly geminiSession: Session,
     private readonly incomingMessages: IncomingMessageBuffer,
     private readonly apiBackend: GoogleLLMVariant = GoogleLLMVariant.GEMINI_API,
+    private readonly modelVersion?: string,
   ) {}
 
   /**
    * Sends the conversation history to the gemini model.
    *
+   * Called once on a freshly opened connection when there is no session
+   * resumption handle. With a handle the server already holds the state, so
+   * the caller skips this method entirely.
+   *
    * Audio parts are filtered out: the live API does not accept previous-turn
    * audio via `sendClientContent`, and any audio has already been transcribed.
+   *
+   * `turnComplete` is set to true only when the last turn is from the user --
+   * a fresh user message (or function response) that the model must respond
+   * to. When the last turn is from the model, the server replays the history
+   * as past context and waits for new user input via the live request queue.
    *
    * @param history The conversation history to send to the model.
    */
@@ -126,12 +137,14 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       return;
     }
     logger.debug('Sending LLM new content', content);
-    // Single text-part user content goes through the realtime-input path so it
-    // interleaves with the audio stream. Gemini 3.1 Flash Live ignores
-    // sendClientContent text turns; 2.5 and earlier accept either path.
+    // Gemini 3.1 Flash Live ignores sendClientContent text turns, so single
+    // text-part user content must go through the realtime-input path. Earlier
+    // models accept either path; prefer sendClientContent to avoid surprising
+    // semantics differences with the activity-detection / interruption logic.
     if (
+      isGemini31FlashLive(this.modelVersion) &&
       content.role === 'user' &&
-      content.parts?.length === 1 &&
+      content.parts.length === 1 &&
       typeof content.parts[0].text === 'string'
     ) {
       this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
@@ -146,17 +159,27 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   /**
    * Sends a chunk of audio or a frame of video to the model in realtime.
    *
+   * Gemini 3.1 Flash Live splits realtime inputs into typed channels (`audio`,
+   * `video`); earlier models accept a generic `media` blob with any mime.
+   *
    * @param blob The blob to send to the model.
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob.');
-    const mime = blob.mimeType ?? '';
-    if (mime.startsWith('audio/')) {
-      this.geminiSession.sendRealtimeInput({audio: blob});
-      return;
-    }
-    if (mime.startsWith('image/')) {
-      this.geminiSession.sendRealtimeInput({video: blob});
+    if (isGemini31FlashLive(this.modelVersion)) {
+      const mime = blob.mimeType ?? '';
+      if (mime.startsWith('audio/')) {
+        this.geminiSession.sendRealtimeInput({audio: blob});
+        return;
+      }
+      if (mime.startsWith('image/')) {
+        this.geminiSession.sendRealtimeInput({video: blob});
+        return;
+      }
+      logger.warn(
+        'Blob not sent. Unknown or empty mime type for sendRealtimeInput:',
+        mime,
+      );
       return;
     }
     this.geminiSession.sendRealtimeInput({media: blob});
@@ -320,6 +343,11 @@ export class GeminiLlmConnection implements BaseLlmConnection {
 
       if (message.sessionResumptionUpdate) {
         yield {liveSessionResumptionUpdate: message.sessionResumptionUpdate};
+      }
+
+      if (message.goAway) {
+        logger.debug('Received GoAway message', message.goAway);
+        yield {goAway: message.goAway};
       }
     }
 

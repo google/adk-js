@@ -100,3 +100,22 @@ export function isGemini2OrAbove(modelString: string): boolean {
 export function isGeminiModelIdCheckDisabled(): boolean {
   return getBooleanEnvVar('ADK_DISABLE_GEMINI_MODEL_ID_CHECK');
 }
+
+/**
+ * Check if the model is a Gemini 3.1 Flash Live model.
+ *
+ * Gemini 3.1 Flash Live has different live API semantics from earlier models:
+ * - User text input must use `sendRealtimeInput({text})`; `sendClientContent`
+ *   text turns are ignored.
+ * - Tool calls are emitted without a preceding `turnComplete`, so receivers
+ *   must flush them eagerly.
+ *
+ * @param modelString Either a simple model name or path-based model name
+ * @return true if it's a Gemini 3.1 Flash Live model, false otherwise.
+ */
+export function isGemini31FlashLive(modelString: string | undefined): boolean {
+  if (!modelString) {
+    return false;
+  }
+  return extractModelName(modelString).startsWith('gemini-3.1-flash-live');
+}

@@ -55,9 +55,11 @@ class RecordingConnection implements BaseLlmConnection {
 class FakeLiveLlm extends BaseLlm {
   connection?: RecordingConnection;
   llmRequestSeen?: LlmRequest;
+  readonly connections: RecordingConnection[] = [];
+  readonly llmRequestsSeen: LlmRequest[] = [];
 
   constructor(
-    private readonly responses: LlmResponse[],
+    private readonly responses: LlmResponse[] | LlmResponse[][],
     model = 'fake-live-llm',
   ) {
     super({model});
@@ -73,8 +75,19 @@ class FakeLiveLlm extends BaseLlm {
   }
 
   override async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    // Snapshot the request as the caller may mutate `liveConnectConfig`
+    // across reconnect attempts (e.g. setting `sessionResumption.handle`).
     this.llmRequestSeen = llmRequest;
-    this.connection = new RecordingConnection(this.responses);
+    this.llmRequestsSeen.push(
+      JSON.parse(JSON.stringify(llmRequest)) as LlmRequest,
+    );
+    const isSequence =
+      Array.isArray(this.responses) && Array.isArray(this.responses[0]);
+    const responses = isSequence
+      ? ((this.responses as LlmResponse[][])[this.connections.length] ?? [])
+      : (this.responses as LlmResponse[]);
+    this.connection = new RecordingConnection(responses);
+    this.connections.push(this.connection);
     return this.connection;
   }
 }
@@ -304,5 +317,132 @@ describe('Runner.runLive', () => {
     expect(llm.connection!.contentCalls.length).toBe(1);
     const sentBack = llm.connection!.contentCalls[0];
     expect(sentBack.parts?.[0]?.functionResponse?.name).toBe('echo');
+  });
+
+  it('captures sessionResumptionUpdate handles into invocation context', async () => {
+    const llm = new FakeLiveLlm([
+      {liveSessionResumptionUpdate: {newHandle: 'handle-1'}},
+      {liveSessionResumptionUpdate: {newHandle: 'handle-2'}},
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    const resumeEvents = events.filter((e) => e.liveSessionResumptionUpdate);
+    expect(resumeEvents.length).toBe(2);
+    expect(resumeEvents[1].liveSessionResumptionUpdate?.newHandle).toBe(
+      'handle-2',
+    );
+  });
+
+  it('reconnects with session handle on goAway and skips history replay', async () => {
+    const llm = new FakeLiveLlm([
+      [
+        {liveSessionResumptionUpdate: {newHandle: 'handle-1'}},
+        {goAway: {timeLeft: '1s'}},
+      ],
+      [{turnComplete: true}],
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    // Seed a content event so contents is non-empty on the first connect.
+    const session = (await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    }))!;
+    await sessionService.appendEvent({
+      session,
+      event: {
+        invocationId: 'seed',
+        author: 'user',
+        id: 'seed-evt',
+        actions: {
+          stateDelta: {},
+          artifactDelta: {},
+          requestedAuthConfigs: {},
+          requestedToolConfirmations: {},
+        },
+        longRunningToolIds: [],
+        timestamp: Date.now(),
+        content: {role: 'user', parts: [{text: 'hello'}]},
+      } as Event,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    expect(llm.connections.length).toBe(2);
+    // First connection received history, second skipped it.
+    expect(llm.connections[0].historyCalls.length).toBe(1);
+    expect(llm.connections[1].historyCalls.length).toBe(0);
+    // Second connect carried the captured resumption handle.
+    expect(
+      llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
+    ).toBe('handle-1');
+    expect(
+      llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.transparent,
+    ).toBe(true);
+    // First connect had no resumption handle set.
+    expect(
+      llm.llmRequestsSeen[0].liveConnectConfig?.sessionResumption?.handle,
+    ).toBeUndefined();
+  });
+
+  it('does not reconnect when no resumption handle has been captured', async () => {
+    const llm = new FakeLiveLlm([
+      [{goAway: {timeLeft: '1s'}}],
+      [{turnComplete: true}],
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    await expect(async () => {
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+    }).rejects.toThrow(/live reconnect requested/);
+
+    expect(llm.connections.length).toBe(1);
   });
 });

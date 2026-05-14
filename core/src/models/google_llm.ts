@@ -294,6 +294,7 @@ export class Gemini extends BaseLlm {
       liveSession,
       incomingMessages,
       this.apiBackend,
+      llmRequest.model ?? this.model,
     );
   }
 
