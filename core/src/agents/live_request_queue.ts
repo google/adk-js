@@ -55,17 +55,38 @@ export class LiveRequestQueue {
   /**
    * Retrieves a request from the queue. If the queue is empty, it will
    * wait until a request is available.
+   *
+   * @param abortSignal Optional signal. If it aborts while this call is
+   *     waiting, the pending waiter is removed from the queue and the
+   *     returned promise rejects -- so a torn-down consumer does not strand
+   *     a waiter that would later consume (and drop) a request.
    * @returns A promise that resolves with the next available request.
    */
-  async get(): Promise<LiveRequest> {
+  async get(abortSignal?: AbortSignal): Promise<LiveRequest> {
     if (this.queue.length > 0) {
       return this.queue.shift()!;
     }
     if (this.isClosed) {
       return {close: true};
     }
-    return new Promise<LiveRequest>((resolve) => {
-      this.resolveFnFifoQueue.push(resolve);
+    if (abortSignal?.aborted) {
+      throw new Error('LiveRequestQueue.get() was aborted.');
+    }
+    return new Promise<LiveRequest>((resolve, reject) => {
+      let resolveFn: PromiseResolveFn;
+      const onAbort = () => {
+        const index = this.resolveFnFifoQueue.indexOf(resolveFn);
+        if (index !== -1) {
+          this.resolveFnFifoQueue.splice(index, 1);
+        }
+        reject(new Error('LiveRequestQueue.get() was aborted.'));
+      };
+      resolveFn = (req: LiveRequest) => {
+        abortSignal?.removeEventListener('abort', onAbort);
+        resolve(req);
+      };
+      this.resolveFnFifoQueue.push(resolveFn);
+      abortSignal?.addEventListener('abort', onAbort, {once: true});
     });
   }
 

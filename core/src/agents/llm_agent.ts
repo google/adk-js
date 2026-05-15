@@ -78,7 +78,9 @@ const MAX_LIVE_RECONNECT_ATTEMPTS = 5;
 
 /**
  * Delay before closing the parent connection on agent transfer. Gives the
- * server-side model a moment to flush any pending audio for the final turn.
+ * server-side model a moment to flush any pending audio for the final turn
+ * before teardown. Mirrors `DEFAULT_TRANSFER_AGENT_DELAY` (1.0s) in the Python
+ * ADK live flow; the value is an empirical heuristic, not a guarantee.
  */
 const TRANSFER_AGENT_DELAY_MS = 1000;
 
@@ -137,7 +139,10 @@ function combineAbortSignals(
       break;
     }
     signal.addEventListener('abort', () => controller.abort(signal.reason), {
-      once: true,
+      // Auto-remove when the combined signal aborts, so listeners are not
+      // left behind on a long-lived input signal (e.g. the invocation's
+      // abortSignal) across reconnect attempts.
+      signal: controller.signal,
     });
   }
   return controller.signal;
@@ -933,7 +938,12 @@ export class LlmAgent extends BaseAgent {
 
       let reconnect = false;
       try {
-        yield* this.runReceiveLoop(invocationContext, connection, llmRequest);
+        yield* this.runReceiveLoop(
+          invocationContext,
+          connection,
+          llmRequest,
+          sendAbort,
+        );
       } catch (err) {
         const canReconnect =
           !!invocationContext.liveSessionResumptionHandle &&
@@ -1010,9 +1020,21 @@ export class LlmAgent extends BaseAgent {
     liveRequestQueue: LiveRequestQueue,
     abortSignal?: AbortSignal,
   ): Promise<void> {
-    for await (const liveRequest of liveRequestQueue) {
+    while (true) {
       if (abortSignal?.aborted) {
         return;
+      }
+      let liveRequest: LiveRequest;
+      try {
+        // Pass the abort signal so a parked read is released on teardown
+        // (reconnect, agent transfer) instead of stranding a waiter that
+        // would later steal a request from the next connection's send loop.
+        liveRequest = await liveRequestQueue.get(abortSignal);
+      } catch (error) {
+        if (abortSignal?.aborted) {
+          return;
+        }
+        throw error;
       }
       try {
         await this.dispatchLiveRequest(connection, liveRequest);
@@ -1058,6 +1080,7 @@ export class LlmAgent extends BaseAgent {
     invocationContext: InvocationContext,
     connection: BaseLlmConnection,
     llmRequest: LlmRequest,
+    sendAbort: AbortController,
   ): AsyncGenerator<Event, void, void> {
     for await (const llmResponse of connection.receive()) {
       if (invocationContext.abortSignal?.aborted) {
@@ -1102,7 +1125,7 @@ export class LlmAgent extends BaseAgent {
         // the queue at end-of-input before the model finishes ferrying tool
         // results back. Python's queue tolerates post-close sends, but
         // porting that semantics is out of scope here.
-        if (getFunctionResponses(event).length > 0 && event.content) {
+        if (event.content && getFunctionResponses(event).length > 0) {
           await connection.sendContent(event.content);
         }
 
@@ -1114,6 +1137,10 @@ export class LlmAgent extends BaseAgent {
           // Brief delay lets the model finish flushing pending audio for
           // the in-flight turn before we tear down the connection.
           await sleep(TRANSFER_AGENT_DELAY_MS);
+          // Stop the parent send loop before the sub-agent starts its own,
+          // so the two never consume the shared liveRequestQueue
+          // concurrently (mirrors `send_task.cancel()` in the Python flow).
+          sendAbort.abort();
           await connection.close();
           const subAgent =
             invocationContext.agent.rootAgent.findAgent(transferTo);
@@ -1171,6 +1198,11 @@ export class LlmAgent extends BaseAgent {
       return;
     }
 
+    // The connection layer (GeminiLlmConnection.receive) emits resumption
+    // updates and transcriptions as standalone, single-field responses --
+    // never combined with `content`. Each is therefore handled with an early
+    // return; if that invariant changes, co-located fields would be dropped
+    // here and these branches would need to merge instead.
     if (llmResponse.liveSessionResumptionUpdate) {
       yield createEvent({
         ...modelResponseEvent,
@@ -1201,20 +1233,18 @@ export class LlmAgent extends BaseAgent {
       ...llmResponse,
     });
 
-    if (mergedEvent.content) {
-      const functionCalls = getFunctionCalls(mergedEvent);
-      if (functionCalls.length) {
-        populateClientFunctionCallId(mergedEvent);
-        mergedEvent.longRunningToolIds = Array.from(
-          getLongRunningFunctionCalls(functionCalls, llmRequest.toolsDict),
-        );
-      }
+    const functionCalls = getFunctionCalls(mergedEvent);
+    if (mergedEvent.content && functionCalls.length) {
+      populateClientFunctionCallId(mergedEvent);
+      mergedEvent.longRunningToolIds = Array.from(
+        getLongRunningFunctionCalls(functionCalls, llmRequest.toolsDict),
+      );
     }
 
     yield mergedEvent;
 
     // Execute any function calls returned in this event.
-    if (!getFunctionCalls(mergedEvent).length) {
+    if (!functionCalls.length) {
       return;
     }
 

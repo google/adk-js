@@ -9,7 +9,6 @@ import {
   Content,
   FunctionResponse,
   LiveServerMessage,
-  Part,
   Session,
   Transcription,
 } from '@google/genai';
@@ -209,7 +208,6 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
     let aggregatedText = '';
-    let toolCallParts: Part[] = [];
 
     while (true) {
       const record = await this.incomingMessages.pull();
@@ -295,10 +293,6 @@ export class GeminiLlmConnection implements BaseLlmConnection {
             yield buildFullTextResponse(aggregatedText);
             aggregatedText = '';
           }
-          if (toolCallParts.length > 0) {
-            yield {content: {role: 'model', parts: toolCallParts}};
-            toolCallParts = [];
-          }
           yield {
             turnComplete: true,
             interrupted: serverContent.interrupted,
@@ -319,26 +313,18 @@ export class GeminiLlmConnection implements BaseLlmConnection {
         }
       }
 
+      // Gemini 3.1 Flash Live emits a toolCall message without a following
+      // turnComplete, so tool calls are surfaced as soon as they arrive
+      // rather than buffered until turn end.
       if (message.toolCall?.functionCalls?.length) {
         if (aggregatedText) {
           yield buildFullTextResponse(aggregatedText);
           aggregatedText = '';
         }
-        for (const functionCall of message.toolCall.functionCalls) {
-          toolCallParts.push({functionCall});
-        }
-      }
-
-      // Fork: flush tool calls immediately rather than waiting for
-      // turnComplete. Gemini 3.1 Flash Live emits a toolCall message and
-      // then waits for the tool response without emitting turnComplete
-      // first, so the upstream flush at turnComplete (above) never fires
-      // for tool-call turns. Combined with the fork's multi-turn
-      // receive(), buffered tool calls would otherwise be stranded until
-      // the websocket closes.
-      if (toolCallParts.length > 0) {
-        yield {content: {role: 'model', parts: toolCallParts}};
-        toolCallParts = [];
+        const parts = message.toolCall.functionCalls.map((functionCall) => ({
+          functionCall,
+        }));
+        yield {content: {role: 'model', parts}};
       }
 
       if (message.sessionResumptionUpdate) {
@@ -349,10 +335,6 @@ export class GeminiLlmConnection implements BaseLlmConnection {
         logger.debug('Received GoAway message', message.goAway);
         yield {goAway: message.goAway};
       }
-    }
-
-    if (toolCallParts.length > 0) {
-      yield {content: {role: 'model', parts: toolCallParts}};
     }
   }
 

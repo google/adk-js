@@ -125,6 +125,50 @@ describe('LiveRequestQueue', () => {
     }).toThrowError('Cannot send to a closed queue.');
   });
 
+  it('should reject a waiting get() when its abort signal fires', async () => {
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const getPromise = queue.get(controller.signal);
+
+    controller.abort();
+
+    await expect(getPromise).rejects.toThrow('aborted');
+  });
+
+  it('should throw immediately from get() when the signal is already aborted', async () => {
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(queue.get(controller.signal)).rejects.toThrow('aborted');
+  });
+
+  it('should not let an aborted get() consume a later request', async () => {
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const abortedGet = queue.get(controller.signal);
+
+    controller.abort();
+    await expect(abortedGet).rejects.toThrow('aborted');
+
+    // The request sent after the abort must reach the next live get(), not
+    // the waiter that was torn down.
+    const request: LiveRequest = {content: createUserContent('after-abort')};
+    const liveGet = queue.get();
+    queue.send(request);
+    expect(await liveGet).toEqual(request);
+  });
+
+  it('should still resolve a get() whose abort signal never fires', async () => {
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const getPromise = queue.get(controller.signal);
+
+    const request: LiveRequest = {content: createUserContent('req')};
+    queue.send(request);
+    expect(await getPromise).toEqual(request);
+  });
+
   it('should drain remaining items after close, then return close signal', async () => {
     const queue = new LiveRequestQueue();
     const request1 = {content: createUserContent('item1')};
