@@ -275,6 +275,42 @@ describe('PluginManager', () => {
     expect(plugin2Received).toEqual({message: 'translated'});
   });
 
+  it('strips the shortCircuit flag from a short-circuiting return value', async () => {
+    plugin1.returnValues['afterToolCallback'] = {
+      shortCircuit: true,
+      message: 'replaced',
+    };
+    service.registerPlugin(plugin1);
+    service.registerPlugin(plugin2);
+
+    const result = await service.runAfterToolCallback({
+      tool: mockTool,
+      toolArgs: {},
+      toolContext: mockToolContext,
+      result: {message: 'original'},
+    });
+
+    expect(result).toEqual({message: 'replaced'});
+    expect((result as Record<string, unknown>).shortCircuit).toBeUndefined();
+    expect(plugin2.callLog).not.toContain('afterToolCallback');
+  });
+
+  it('short-circuits when shortCircuit is omitted from the return value', async () => {
+    plugin1.returnValues['afterToolCallback'] = {message: 'replaced'};
+    service.registerPlugin(plugin1);
+    service.registerPlugin(plugin2);
+
+    const result = await service.runAfterToolCallback({
+      tool: mockTool,
+      toolArgs: {},
+      toolContext: mockToolContext,
+      result: {message: 'original'},
+    });
+
+    expect(result).toEqual({message: 'replaced'});
+    expect(plugin2.callLog).not.toContain('afterToolCallback');
+  });
+
   it('should call all plugins if no plugin returns a value', async () => {
     service.registerPlugin(plugin1);
     service.registerPlugin(plugin2);

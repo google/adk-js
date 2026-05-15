@@ -23,8 +23,16 @@ export enum ContextCompactionTrigger {
   Auto = 'Auto',
 }
 
-type ShortCircuit = {
-  shortCircuit: boolean;
+/**
+ * Optional control flag a plugin callback may merge into its return value to
+ * decide whether to short-circuit the callback chain. Omitting the flag, or
+ * setting it to `true`, keeps the default behavior: the returned value
+ * short-circuits the remaining plugins and is propagated up. Setting it to
+ * `false` lets the chain continue, forwarding the rest of the payload to the
+ * next plugin.
+ */
+type ShortCircuitControl = {
+  shortCircuit?: boolean;
 };
 
 /**
@@ -139,7 +147,7 @@ export abstract class BasePlugin {
   async onUserMessageCallback(params: {
     invocationContext: InvocationContext;
     userMessage: Content;
-  }): Promise<(Content & ShortCircuit) | undefined> {
+  }): Promise<(Content & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -158,7 +166,7 @@ export abstract class BasePlugin {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeRunCallback(params: {
     invocationContext: InvocationContext;
-  }): Promise<(Content & ShortCircuit) | undefined> {
+  }): Promise<(Content & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -178,7 +186,7 @@ export abstract class BasePlugin {
   async onEventCallback(params: {
     invocationContext: InvocationContext;
     event: Event;
-  }): Promise<(Event & ShortCircuit) | undefined> {
+  }): Promise<(Event & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -214,7 +222,7 @@ export abstract class BasePlugin {
   async beforeAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<(Content & ShortCircuit) | undefined> {
+  }): Promise<(Content & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -234,7 +242,7 @@ export abstract class BasePlugin {
   async afterAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<(Content & ShortCircuit) | undefined> {
+  }): Promise<(Content & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -255,7 +263,7 @@ export abstract class BasePlugin {
   async beforeModelCallback(params: {
     callbackContext: Context;
     llmRequest: LlmRequest;
-  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
+  }): Promise<(LlmResponse & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -275,7 +283,7 @@ export abstract class BasePlugin {
   async afterModelCallback(params: {
     callbackContext: Context;
     llmResponse: LlmResponse;
-  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
+  }): Promise<(LlmResponse & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -298,7 +306,7 @@ export abstract class BasePlugin {
     callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
-  }): Promise<(LlmResponse & ShortCircuit) | undefined> {
+  }): Promise<(LlmResponse & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -319,7 +327,7 @@ export abstract class BasePlugin {
   async beforeToolSelection(params: {
     callbackContext: Context;
     tools: Readonly<Record<string, BaseTool>>;
-  }): Promise<(Readonly<Record<string, BaseTool>> & ShortCircuit) | undefined> {
+  }): Promise<(Readonly<Record<string, BaseTool>> & ShortCircuitControl) | undefined> {
     return;
   }
 
@@ -403,7 +411,7 @@ export abstract class BasePlugin {
     toolArgs: Record<string, unknown>;
     toolContext: Context;
     result: Record<string, unknown>;
-  }): Promise<Record<string, unknown> | undefined> {
+  }): Promise<(Record<string, unknown> & ShortCircuitControl) | undefined> {
     return;
   }
 

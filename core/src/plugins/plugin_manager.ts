@@ -96,9 +96,10 @@ export class PluginManager {
    * should fall back to the original input.
    *
    * A plugin return value of `undefined` continues the chain unchanged. A
-   * return value containing `shortCircuit: false` strips the flag and forwards
-   * the remaining fields to subsequent plugins; any other return value is
-   * treated as a short-circuit (legacy behavior) and returned as-is.
+   * return value with `shortCircuit: false` strips the flag and forwards the
+   * remaining fields to subsequent plugins. Any other return value short-
+   * circuits the chain; a `shortCircuit` flag, if present, is stripped before
+   * the value is returned.
    *
    * @param plugins The set of plugins to run
    * @param callback A closure containing the callback method to run on each
@@ -118,23 +119,27 @@ export class PluginManager {
       try {
         const result = await callback(plugin, current);
         if (result === undefined) continue;
+
+        let value: unknown = result;
         if (
           typeof result === 'object' &&
           result !== null &&
-          'shortCircuit' in result &&
-          (result as {shortCircuit: unknown}).shortCircuit === false
+          'shortCircuit' in result
         ) {
-          const {shortCircuit: _omit, ...rest} = result as Record<
+          const {shortCircuit = true, ...data} = result as Record<
             string,
             unknown
           >;
-          current = rest;
-          continue;
+          value = data;
+          if (shortCircuit === false) {
+            current = data;
+            continue;
+          }
         }
         logger.debug(
           `Plugin '${plugin.name}' returned a value for callback '${callbackName}', exiting early.`,
         );
-        return result;
+        return value;
       } catch (e) {
         const errorMessage = `Error in plugin '${plugin.name}' during '${callbackName}' callback: ${e}`;
         logger.error(errorMessage);
