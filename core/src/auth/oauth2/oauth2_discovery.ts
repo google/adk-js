@@ -170,6 +170,28 @@ export class OAuth2DiscoveryManager {
   }
 }
 
+
+/**
+ * Normalises the hostname returned by the WHATWG URL parser so that
+ * IPv4-mapped IPv6 addresses (e.g. [::ffff:7f00:1]) are converted to
+ * their canonical dotted-decimal IPv4 form (127.0.0.1) before any
+ * blocklist checks are applied.
+ *
+ * Without this step an attacker can bypass every IPv4 block by encoding
+ * the address as its IPv4-mapped IPv6 equivalent (CWE-918).
+ */
+function normaliseHostname(raw: string): string {
+  const stripped = raw.replace(/^\[|\]$/g, '');
+  const m = stripped.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (m) {
+    const hi = parseInt(m[1], 16);
+    const lo = parseInt(m[2], 16);
+    return [(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff].join('.');
+  }
+  const mDot = stripped.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mDot) return mDot[1];
+  return raw;
+}
 function validateDiscoveryUrl(urlStr: string): boolean {
   try {
     const url = new URL(urlStr);
@@ -178,13 +200,14 @@ function validateDiscoveryUrl(urlStr: string): boolean {
       return false;
     }
 
-    const host = url.hostname.toLowerCase();
+    const host = normaliseHostname(url.hostname.toLowerCase());
 
     // Block localhost and common private IP ranges
     if (
       host === 'localhost' ||
       host === '127.0.0.1' ||
-      host === '[::1]' ||
+      host === '[::1]'     ||
+      host === '0.0.0.0'   ||
       host.startsWith('10.') ||
       host.startsWith('192.168.') ||
       host.startsWith('169.254.')
@@ -203,6 +226,21 @@ function validateDiscoveryUrl(urlStr: string): boolean {
       }
     }
 
+
+    // RFC 6598: CGNAT shared space 100.64.0.0/10
+    const cgnatMatch = host.match(/^100\.(\d+)\./);
+    if (cgnatMatch) {
+      const secondOctet = parseInt(cgnatMatch[1], 10);
+      if (secondOctet >= 64 && secondOctet <= 127) {
+        logger.warn(`Unsafe host for discovery URL: ${host}`);
+        return false;
+      }
+    }
+    // Block IPv6 ULA (fc00::/7) and link-local (fe80::/10).
+    if (/^\[(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/i.test(url.hostname)) {
+      logger.warn(`Unsafe host for discovery URL: ${url.hostname}`);
+      return false;
+    }
     return true;
   } catch (e) {
     logger.warn(`Failed to parse URL for validation ${urlStr}: ${e}`);
