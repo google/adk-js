@@ -8,17 +8,26 @@ import {MCPSessionManager} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {describe, expect, it, vi} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.hoisted(() => {
   vi.resetModules();
 });
 
+const clients = vi.hoisted(
+  () => [] as Array<{close: ReturnType<typeof vi.fn>}>,
+);
+
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => ({
-      connect: vi.fn().mockResolvedValue(undefined),
-    })),
+    Client: vi.fn().mockImplementation(() => {
+      const client = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      clients.push(client);
+      return client;
+    }),
   };
 });
 
@@ -35,6 +44,11 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
 });
 
 describe('MCPSessionManager', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clients.length = 0;
+  });
+
   it('creates an stdio client', async () => {
     const manager = new MCPSessionManager({
       type: 'StdioConnectionParams',
@@ -156,5 +170,37 @@ describe('MCPSessionManager', () => {
         requestInit: {},
       },
     );
+  });
+
+  it('closes all created clients', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+    });
+
+    await manager.createSession();
+    await manager.createSession();
+    await manager.close();
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0].close).toHaveBeenCalledTimes(1);
+    expect(clients[1].close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close clients again after a successful close', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+    });
+
+    await manager.createSession();
+    await manager.close();
+    await manager.close();
+
+    expect(clients[0].close).toHaveBeenCalledTimes(1);
   });
 });

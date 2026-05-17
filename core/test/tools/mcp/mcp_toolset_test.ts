@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it, vi} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
 import {MCPToolset} from '../../../src/tools/mcp/mcp_toolset.js';
@@ -13,17 +13,26 @@ vi.hoisted(() => {
   vi.resetModules();
 });
 
+const clients = vi.hoisted(
+  () => [] as Array<{close: ReturnType<typeof vi.fn>}>,
+);
+
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => ({
-      connect: vi.fn().mockResolvedValue(undefined),
-      listTools: vi.fn().mockResolvedValue({
-        tools: [
-          {name: 'test-tool', description: 'A test tool', inputSchema: {}},
-          {name: 'other-tool', description: 'Another tool', inputSchema: {}},
-        ],
-      }),
-    })),
+    Client: vi.fn().mockImplementation(() => {
+      const client = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockResolvedValue({
+          tools: [
+            {name: 'test-tool', description: 'A test tool', inputSchema: {}},
+            {name: 'other-tool', description: 'Another tool', inputSchema: {}},
+          ],
+        }),
+      };
+      clients.push(client);
+      return client;
+    }),
   };
 });
 
@@ -39,6 +48,11 @@ const stdioParams = {
 } as unknown as MCPConnectionParams;
 
 describe('MCPToolset', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clients.length = 0;
+  });
+
   it('discovers tools without prefix', async () => {
     const toolset = new MCPToolset(stdioParams);
     const tools = await toolset.getTools();
@@ -113,5 +127,17 @@ describe('MCPToolset', () => {
 
       expect(tools).toHaveLength(2);
     });
+  });
+
+  it('closes sessions created while discovering tools', async () => {
+    const toolset = new MCPToolset(stdioParams);
+
+    await toolset.getTools();
+    await toolset.getTools();
+    await toolset.close();
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0].close).toHaveBeenCalledTimes(1);
+    expect(clients[1].close).toHaveBeenCalledTimes(1);
   });
 });

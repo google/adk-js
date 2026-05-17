@@ -72,6 +72,7 @@ export type MCPConnectionParams =
  */
 export class MCPSessionManager {
   private readonly connectionParams: MCPConnectionParams;
+  private readonly sessions = new Set<Client>();
 
   constructor(connectionParams: MCPConnectionParams) {
     this.connectionParams = connectionParams;
@@ -113,6 +114,16 @@ export class MCPSessionManager {
       }
     }
 
+    this.sessions.add(client);
     return client;
+  }
+
+  async close(): Promise<void> {
+    await Promise.all(
+      Array.from(this.sessions).map(async (session) => {
+        await session.close();
+        this.sessions.delete(session);
+      }),
+    );
   }
 }

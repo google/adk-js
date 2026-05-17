@@ -99,5 +99,7 @@ export class MCPToolset extends BaseToolset {
     return tools;
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    await this.mcpSessionManager.close();
+  }
 }
