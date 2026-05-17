@@ -174,6 +174,10 @@ export class InMemorySessionService extends BaseSessionService {
     session,
     event,
   }: AppendEventRequest): Promise<Event> {
+    if (event.partial) {
+      return event;
+    }
+
     await super.appendEvent({session, event});
     session.lastUpdateTime = event.timestamp;
 

@@ -264,6 +264,31 @@ describe('InMemorySessionService', () => {
       expect(retrievedSession?.lastUpdateTime).toBe(timestamp);
     });
 
+    it('ignores partial events without updating the session', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const initialUpdateTime = session.lastUpdateTime;
+      const partialEvent = createEvent({
+        partial: true,
+        timestamp: initialUpdateTime + 1000,
+      });
+
+      await service.appendEvent({session, event: partialEvent});
+
+      expect(session.events).toEqual([]);
+      expect(session.lastUpdateTime).toBe(initialUpdateTime);
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession?.events).toEqual([]);
+      expect(retrievedSession?.lastUpdateTime).toBe(initialUpdateTime);
+    });
+
     it('updates app state', async () => {
       const appName = 'app';
       const userId = 'user';
