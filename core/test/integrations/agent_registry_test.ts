@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import {beforeEach, describe, expect, it, vi} from 'vitest';
