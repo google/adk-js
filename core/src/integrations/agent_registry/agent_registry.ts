@@ -88,6 +88,16 @@ export function _cleanName(name: string): string {
   return clean;
 }
 
+/**
+ * A specialized BaseToolset subclass designed to represent a single registered MCP server.
+ *
+ * Unlike a standard MCPToolset, this class:
+ * 1. Supports a dynamic `headerProvider` to fetch/refresh authorization and custom headers
+ *    immediately before establishing the MCP connection session.
+ * 2. Automatically injects the special `gcp.mcp.server.destination.id` telemetry metadata
+ *    identifier into all resolved tools' custom metadata, allowing downstream execute_tool
+ *    traces to be correctly attributed.
+ */
 export class AgentRegistrySingleMCPToolset extends BaseToolset {
   readonly destinationResourceId?: string;
   readonly connectionParams: StreamableHTTPConnectionParams;
@@ -116,13 +126,20 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     this.authCredential = options.authCredential;
   }
 
+  /**
+   * Connects to the underlying MCP server, retrieves tool definitions, prefixes tool names,
+   * and injects destination telemetry metadata.
+   */
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const headers: Record<string, string> = {};
+
+    // Resolve dynamic headers from the header provider (e.g., refreshing GCP tokens)
     if (this.headerProvider) {
       const providerHeaders = await this.headerProvider(context);
       Object.assign(headers, providerHeaders);
     }
 
+    // Merge resolved headers into transport request options
     const connectionParamsCopy: StreamableHTTPConnectionParams = {
       ...this.connectionParams,
       transportOptions: {
@@ -137,9 +154,11 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       },
     };
 
+    // Establish session using MCPSessionManager
     const sessionManager = new MCPSessionManager(connectionParamsCopy);
     const session = await sessionManager.createSession();
 
+    // Retrieve tools from the remote server and map them to MCPTools
     const listResult = (await session.listTools()) as ListToolsResult;
     const tools = listResult.tools.map((tool) => {
       const prefixedName = this.prefix
@@ -151,6 +170,7 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
         tool.name,
       );
 
+      // Inject gcp.mcp.server.destination.id telemetry key for tracing tools execution
       const toolAsAny = mcpTool as any;
       if (this.destinationResourceId) {
         if (!toolAsAny.customMetadata) {
@@ -162,6 +182,7 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
       return mcpTool;
     });
 
+    // Apply toolFilter selection when specified
     const filter = this.toolFilter;
     if (!filter || (Array.isArray(filter) && filter.length === 0)) {
       return tools;
@@ -173,6 +194,16 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   async close(): Promise<void> {}
 }
 
+/**
+ * Client for interacting with the Google Cloud Agent Registry service.
+ *
+ * Unlike a standard REST client library, this class provides higher-level
+ * abstractions for ADK integration. It surfaces the agent registry service
+ * methods along with helper methods like `getMcpToolset` and
+ * `getRemoteA2AAgent` that automatically resolve connection details,
+ * manage OAuth authentication schemes, and handle GCP credentials to produce
+ * ready-to-use ADK components.
+ */
 export class AgentRegistry {
   readonly projectId: string;
   readonly location: string;
@@ -195,11 +226,17 @@ export class AgentRegistry {
     this._basePath = `projects/${this.projectId}/locations/${this.location}`;
     this._headerProvider = options.headerProvider;
 
+    // Set up Google Application Default Credentials (ADC) with core cloud platform scopes
     this._auth = new GoogleAuth({
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
   }
 
+  /**
+   * Resolves default Google Cloud credentials and returns standard headers.
+   * Automatically caches, fetches, and handles refreshing expired OAuth tokens.
+   * Injects the billing/quota project identifier `x-goog-user-project` if present.
+   */
   async _getAuthHeaders(): Promise<Record<string, string>> {
     try {
       const client = await this._auth.getClient();
@@ -211,7 +248,7 @@ export class AgentRegistry {
       }
       authHeaders['Content-Type'] = 'application/json';
 
-      // Attach quota project ID if available
+      // Inject quota project ID for usage and billing tracking
       const quotaProjectId =
         (client as any).quotaProjectId || (this._auth as any).quotaProjectId;
       if (quotaProjectId) {
@@ -225,11 +262,16 @@ export class AgentRegistry {
     }
   }
 
+  /**
+   * Helper function to execute HTTP GET requests against the Agent Registry API.
+   * Handles path resolution, search query params compilation, and auth headers fetching.
+   */
   async _makeRequest(
     path: string,
     params?: Record<string, string>,
   ): Promise<any> {
     let url: string;
+    // Support absolute resource paths (starting with projects/) or relative paths (resolved inside base path)
     if (path.startsWith('projects/')) {
       url = `${AGENT_REGISTRY_BASE_URL}/${path}`;
     } else {
@@ -262,6 +304,10 @@ export class AgentRegistry {
     }
   }
 
+  /**
+   * Parses connection interfaces list from registry metadata and returns the first match
+   * corresponding to requested protocol types and binding options.
+   */
   _getConnectionUri(
     resourceDetails: any,
     filters?: {
