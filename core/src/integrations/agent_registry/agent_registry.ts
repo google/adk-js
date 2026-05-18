@@ -240,11 +240,27 @@ export class AgentRegistry {
   async _getAuthHeaders(): Promise<Record<string, string>> {
     try {
       const client = await this._auth.getClient();
-      const headers = await client.getRequestHeaders();
+      const headers = await client.getRequestHeaders(
+        'https://agentregistry.googleapis.com',
+      );
       const authHeaders: Record<string, string> = {};
       const rawHeaders = headers as any;
-      if (rawHeaders['Authorization']) {
-        authHeaders['Authorization'] = rawHeaders['Authorization'];
+      const authKey = Object.keys(rawHeaders).find(
+        (k) => k.toLowerCase() === 'authorization',
+      );
+      let token = authKey ? rawHeaders[authKey] : undefined;
+
+      // Fallback directly to the populated credentials object if headers are empty
+      if (
+        !token &&
+        client.credentials &&
+        (client.credentials as any).access_token
+      ) {
+        token = `Bearer ${(client.credentials as any).access_token}`;
+      }
+
+      if (token) {
+        authHeaders['Authorization'] = token;
       }
       authHeaders['Content-Type'] = 'application/json';
 
