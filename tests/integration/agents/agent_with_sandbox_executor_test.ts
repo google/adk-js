@@ -109,8 +109,6 @@ describe('Agent with AgentEngineSandboxCodeExecutor', () => {
     // 3. Execution result
     // 4. Final model response
 
-    console.log('Events:', JSON.stringify(events, null, 2));
-
     expect(events.length).toBeGreaterThanOrEqual(3);
 
     // Check if we got a code execution result event
