@@ -71,3 +71,29 @@ export async function materializeFiles(
 
   return createdFiles;
 }
+
+export const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
+  'pdf': 'application/pdf',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'png': 'image/png',
+  'gif': 'image/gif',
+  'csv': 'text/csv',
+  'json': 'application/json',
+  'xml': 'application/xml',
+  'sh': 'text/x-shellscript',
+  'bash': 'text/x-shellscript',
+  'py': 'text/x-python',
+  'js': 'text/javascript',
+  'cjs': 'text/javascript',
+  'mjs': 'text/javascript',
+  'ts': 'text/javascript',
+  'cts': 'text/javascript',
+  'mts': 'text/javascript',
+};
+
+export function guessMimeType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() || '';
+
+  return EXTENSION_TO_MIME_TYPE[ext] || 'application/octet-stream';
+}
