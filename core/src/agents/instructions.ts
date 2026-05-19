@@ -70,7 +70,12 @@ export async function injectSessionState(
       if (!artifact) {
         throw new Error(`Artifact ${fileName} not found.`);
       }
-      return String(artifact);
+      const artifactRaw = String(artifact);
+      const artifactEscaped = artifactRaw
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return `<value>${artifactEscaped}</value>`;
     }
 
     // Step 3: Handle state variable injection.
