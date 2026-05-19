@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Agent, Gemini, InMemoryRunner, createUserContent} from '@google/adk';
+import {Agent, Gemini, InMemoryRunner} from '@google/adk';
+import {createUserContent} from '@google/genai';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
