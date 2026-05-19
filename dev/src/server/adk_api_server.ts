@@ -56,6 +56,17 @@ interface ServerOptions {
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
+function toSessionScopedDelta(
+  delta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!delta) return undefined;
+  return Object.fromEntries(
+    Object.entries(delta).filter(
+      ([k]) => !k.startsWith('app:') && !k.startsWith('user:'),
+    ),
+  );
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -728,7 +739,7 @@ export class AdkApiServer {
           userId,
           sessionId,
           newMessage,
-          stateDelta,
+          stateDelta: toSessionScopedDelta(stateDelta),
         })) {
           events.push(e);
         }
@@ -778,7 +789,7 @@ export class AdkApiServer {
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
-          stateDelta,
+          stateDelta: toSessionScopedDelta(stateDelta),
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
