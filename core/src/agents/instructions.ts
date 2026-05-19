@@ -161,7 +161,12 @@ export async function injectSessionState(
     lastEnd = pm.index + pm.raw.length;
   }
   result.push(template.slice(lastEnd));
-  return result.join('');
+
+  return result
+    .join('')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
