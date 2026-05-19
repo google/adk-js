@@ -79,7 +79,12 @@ export async function injectSessionState(
     }
 
     if (key in invocationContext.session.state) {
-      return String(invocationContext.session.state[key]);
+      const raw = String(invocationContext.session.state[key]);
+      const escaped = raw
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return `<value>${escaped}</value>`;
     }
 
     if (isOptional) {
