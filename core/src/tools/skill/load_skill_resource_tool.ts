@@ -7,6 +7,7 @@
 import {FunctionDeclaration, Type} from '@google/genai';
 import path from 'node:path';
 import {experimental} from '../../utils/experimental.js';
+import {guessMimeType} from '../../utils/file_utils.js';
 import {
   BaseTool,
   RunAsyncToolRequest,
@@ -16,32 +17,6 @@ import {SkillToolset} from './skill_toolset.js';
 
 const BINARY_FILE_DETECTED_MSG =
   'Binary file detected. The content has been injected into the conversation history for you to analyze.';
-
-const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
-  'pdf': 'application/pdf',
-  'jpg': 'image/jpeg',
-  'jpeg': 'image/jpeg',
-  'png': 'image/png',
-  'gif': 'image/gif',
-  'csv': 'text/csv',
-  'json': 'application/json',
-  'xml': 'application/xml',
-  'sh': 'text/x-shellscript',
-  'bash': 'text/x-shellscript',
-  'py': 'text/x-python',
-  'js': 'text/javascript',
-  'cjs': 'text/javascript',
-  'mjs': 'text/javascript',
-  'ts': 'text/javascript',
-  'cts': 'text/javascript',
-  'mts': 'text/javascript',
-};
-
-function guessMimeType(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() || '';
-
-  return EXTENSION_TO_MIME_TYPE[ext] || 'application/octet-stream';
-}
 
 @experimental
 export class LoadSkillResourceTool extends BaseTool {

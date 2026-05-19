@@ -23,9 +23,15 @@ export type {
 export {toA2a} from './a2a/agent_to_a2a.js';
 export type {ToA2aOptions} from './a2a/agent_to_a2a.js';
 export type {ExecutorContext} from './a2a/executor_context.js';
+export {InvocationContext} from './agents/invocation_context.js';
 export {FileArtifactService} from './artifacts/file_artifact_service.js';
 export {GcsArtifactService} from './artifacts/gcs_artifact_service.js';
 export {getArtifactServiceFromUri} from './artifacts/registry.js';
+export {
+  AgentEngineSandboxCodeExecutor,
+  type AgentEngineSandboxCodeExecutorOptions,
+} from './code_executors/agent_engine_sandbox_code_executor.js';
+export {CodeExecutionLanguage} from './code_executors/code_execution_utils.js';
 export {
   UnsafeLocalCodeExecutor,
   type UnsafeLocalCodeExecutorOptions,
