@@ -35,6 +35,12 @@ export function createGoogleSearchAgent(model: string | BaseLlm): LlmAgent {
  * A tool that wraps a sub-agent that only uses google_search tool.
  *
  * This is a workaround to support using google_search tool with other tools.
+ * It is automatically used when `bypassMultiToolsLimit` is set to `true` on
+ * `GoogleSearchTool` and there are multiple tools configured for an agent.
+ * This is necessary because Gemini models do not support using built-in search
+ * tools alongside other custom tools.
+ *
+ * TODO(b/448114567): Remove once the workaround is no longer needed.
  */
 @experimental
 export class GoogleSearchAgentTool extends AgentTool {
