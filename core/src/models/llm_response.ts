@@ -94,6 +94,11 @@ export interface LlmResponse {
    * Audio transcription of model output.
    */
   outputTranscription?: Transcription;
+
+  /**
+   * The interaction ID returned by the model, if any.
+   */
+  interactionId?: string;
 }
 
 /**
