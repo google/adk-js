@@ -496,6 +496,46 @@ describe('interactions_utils', () => {
       );
     });
 
+    it('should convert function declarations without required parameters', () => {
+      const config = {
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: 'tool1_no_req',
+                description: 'desc_no_req',
+                parameters: {
+                  type: 'OBJECT',
+                  properties: {
+                    param1: {type: 'STRING'},
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const expected = [
+        {
+          type: 'function',
+          name: 'tool1_no_req',
+          description: 'desc_no_req',
+          parameters: {
+            type: 'object',
+            properties: {
+              param1: {type: 'STRING'},
+            },
+            required: undefined,
+          },
+        },
+      ];
+
+      expect(convertToolsConfigToInteractionsFormat(config as any)).toEqual(
+        expected,
+      );
+    });
+
     it('should convert function declarations with parametersJsonSchema and urlContext', () => {
       const config = {
         tools: [

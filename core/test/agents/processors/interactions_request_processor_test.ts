@@ -224,4 +224,29 @@ describe('InteractionsRequestProcessor', () => {
 
     expect(llmRequest.previousInteractionId).toBe('int-2');
   });
+
+  it('should do nothing if agent is not LlmAgent', async () => {
+    const rawEvents: Event[] = [
+      createMockEvent('1', 'test_agent', 'main', 'int-1'),
+    ];
+    const invocationContext = createMockInvocationContext(
+      rawEvents,
+      new MockLlm(),
+    );
+    (invocationContext as any).agent = {name: 'not-an-llm-agent'};
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    for await (const _ of INTERACTIONS_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // intentionally empty
+    }
+
+    expect(llmRequest.previousInteractionId).toBeUndefined();
+  });
 });
