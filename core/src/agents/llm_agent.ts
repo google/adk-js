@@ -62,6 +62,7 @@ import {CONTENT_REQUEST_PROCESSOR} from './processors/content_request_processor.
 import {ContextCompactorRequestProcessor} from './processors/context_compactor_request_processor.js';
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
+import {INTERACTIONS_REQUEST_PROCESSOR} from './processors/interactions_request_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from './processors/tool_filter_request_processor.js';
 import {ReadonlyContext} from './readonly_context.js';
@@ -396,6 +397,7 @@ export class LlmAgent extends BaseAgent {
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
+      INTERACTIONS_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
       TOOL_FILTER_REQUEST_PROCESSOR,
     ];

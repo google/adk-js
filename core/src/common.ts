@@ -47,6 +47,10 @@ export {
   ContentRequestProcessor,
 } from './agents/processors/content_request_processor.js';
 export {ContextCompactorRequestProcessor} from './agents/processors/context_compactor_request_processor.js';
+export {
+  INTERACTIONS_REQUEST_PROCESSOR,
+  InteractionsRequestProcessor,
+} from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
