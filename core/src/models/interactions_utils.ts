@@ -190,6 +190,23 @@ function encodeToBase64(data: string | Uint8Array): string {
 }
 
 /**
+ * Helper to determine interaction media type from mimeType string.
+ */
+function getInteractionMediaType(
+  mimeType: string,
+): 'image' | 'audio' | 'video' | 'document' {
+  if (mimeType.startsWith('image/')) {
+    return 'image';
+  } else if (mimeType.startsWith('audio/')) {
+    return 'audio';
+  } else if (mimeType.startsWith('video/')) {
+    return 'video';
+  } else {
+    return 'document';
+  }
+}
+
+/**
  * Extracts the latest turn contents for interactions API.
  */
 export function getLatestUserContents(contents: Content[]): Content[] {
@@ -300,60 +317,20 @@ export function convertPartToInteractionContent(
 
   if (extPart.inlineData !== undefined && extPart.inlineData !== null) {
     const mimeType = extPart.inlineData.mimeType || '';
-    if (mimeType.startsWith('image/')) {
-      return {
-        type: 'image',
-        data: extPart.inlineData.data,
-        mime_type: mimeType,
-      };
-    } else if (mimeType.startsWith('audio/')) {
-      return {
-        type: 'audio',
-        data: extPart.inlineData.data,
-        mime_type: mimeType,
-      };
-    } else if (mimeType.startsWith('video/')) {
-      return {
-        type: 'video',
-        data: extPart.inlineData.data,
-        mime_type: mimeType,
-      };
-    } else {
-      return {
-        type: 'document',
-        data: extPart.inlineData.data,
-        mime_type: mimeType,
-      };
-    }
+    return {
+      type: getInteractionMediaType(mimeType),
+      data: extPart.inlineData.data,
+      mime_type: mimeType,
+    };
   }
 
   if (extPart.fileData !== undefined && extPart.fileData !== null) {
     const mimeType = extPart.fileData.mimeType || '';
-    if (mimeType.startsWith('image/')) {
-      return {
-        type: 'image',
-        uri: extPart.fileData.fileUri,
-        mime_type: mimeType,
-      };
-    } else if (mimeType.startsWith('audio/')) {
-      return {
-        type: 'audio',
-        uri: extPart.fileData.fileUri,
-        mime_type: mimeType,
-      };
-    } else if (mimeType.startsWith('video/')) {
-      return {
-        type: 'video',
-        uri: extPart.fileData.fileUri,
-        mime_type: mimeType,
-      };
-    } else {
-      return {
-        type: 'document',
-        uri: extPart.fileData.fileUri,
-        mime_type: mimeType,
-      };
-    }
+    return {
+      type: getInteractionMediaType(mimeType),
+      uri: extPart.fileData.fileUri,
+      mime_type: mimeType,
+    };
   }
 
   if (extPart.thought) {
