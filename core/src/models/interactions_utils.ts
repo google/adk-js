@@ -21,9 +21,23 @@ import {LlmResponse} from './llm_response.js';
 
 // --- Helper Interfaces for Strong Typing ---
 
-interface ExtendedPart extends Part {
-  thoughtSignature?: string | Uint8Array | null;
+interface ExtendedPart {
+  text?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  functionCall?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  functionResponse?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  inlineData?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fileData?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  thoughtSignature?: any;
   thought?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  codeExecutionResult?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  executableCode?: any;
 }
 
 interface ExtendedTool {
@@ -153,7 +167,7 @@ interface InteractionSSEEvent {
   id?: string;
 }
 
-interface GoogleGenAIWithInteractions extends GoogleGenAI {
+interface GoogleGenAIWithInteractions {
   interactions: {
     create(params: {
       model?: string;
@@ -251,7 +265,7 @@ export function getLatestUserContents(contents: Content[]): Content[] {
 export function convertPartToInteractionContent(
   part: Part,
 ): InteractionContent | null {
-  const extPart = part as ExtendedPart;
+  const extPart = part as unknown as ExtendedPart;
 
   if (extPart.text !== undefined && extPart.text !== null) {
     return {type: 'text', text: extPart.text};
@@ -261,7 +275,7 @@ export function convertPartToInteractionContent(
     const result: InteractionFunctionCall = {
       type: 'function_call',
       id: extPart.functionCall.id || '',
-      name: extPart.functionCall.name,
+      name: extPart.functionCall.name || '',
       arguments: (extPart.functionCall.args as Record<string, unknown>) || {},
     };
     if (
@@ -345,8 +359,8 @@ export function convertPartToInteractionContent(
       type: 'code_execution_call',
       id: '',
       arguments: {
-        code: extPart.executableCode.code,
-        language: extPart.executableCode.language,
+        code: extPart.executableCode.code || '',
+        language: extPart.executableCode.language || 'PYTHON',
       },
     };
   }
@@ -560,7 +574,8 @@ export function convertInteractionOutputToPart(
     return {
       executableCode: {
         code: args.code || '',
-        language: args.language || 'PYTHON',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        language: (args.language || 'PYTHON') as any,
       },
     };
   }
@@ -891,7 +906,8 @@ export async function* generateContentViaInteractions(
   );
 
   let currentInteractionId = previousInteractionId;
-  const clientWithInteractions = apiClient as GoogleGenAIWithInteractions;
+  const clientWithInteractions =
+    apiClient as unknown as GoogleGenAIWithInteractions;
 
   if (stream) {
     const responses = await clientWithInteractions.interactions.create({
