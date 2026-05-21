@@ -171,25 +171,6 @@ interface GoogleGenAIWithInteractions extends GoogleGenAI {
 // --- Helper Functions ---
 
 /**
- * Helper to encode string or Uint8Array to base64.
- */
-function encodeToBase64(data: string | Uint8Array): string {
-  if (typeof data === 'string') {
-    return base64Encode(data);
-  }
-  if (isBrowser()) {
-    let binary = '';
-    const len = data.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(data[i]);
-    }
-    // eslint-disable-next-line no-undef
-    return window.btoa(binary);
-  }
-  return Buffer.from(data).toString('base64');
-}
-
-/**
  * Helper to determine interaction media type from mimeType string.
  */
 function getInteractionMediaType(
@@ -287,7 +268,7 @@ export function convertPartToInteractionContent(
       extPart.thoughtSignature !== undefined &&
       extPart.thoughtSignature !== null
     ) {
-      result['thought_signature'] = encodeToBase64(extPart.thoughtSignature);
+      result['thought_signature'] = base64Encode(extPart.thoughtSignature);
     }
     return result;
   }
@@ -339,7 +320,7 @@ export function convertPartToInteractionContent(
       extPart.thoughtSignature !== undefined &&
       extPart.thoughtSignature !== null
     ) {
-      result['signature'] = encodeToBase64(extPart.thoughtSignature);
+      result['signature'] = base64Encode(extPart.thoughtSignature);
     }
     return result;
   }
