@@ -20,6 +20,11 @@ import {isLlmAgent} from '../llm_agent.js';
 import {ReadonlyContext} from '../readonly_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
+/**
+ * Resumes tool calls that were paused for user confirmation. Scans the session
+ * event history for pending confirmation responses and re-invokes the
+ * corresponding tools before the next LLM turn.
+ */
 export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProcessor {
   /** Handles tool confirmation information to build the LLM request. */
   override async *runAsync(
