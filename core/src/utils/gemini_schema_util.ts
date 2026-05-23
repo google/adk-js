@@ -16,7 +16,7 @@ const MCPToolSchemaObject = z.object({
 type MCPToolSchema = z.infer<typeof MCPToolSchemaObject>;
 type MCPTypeArrayItem = string | {type: string};
 
-function toGeminiType(mcpType: string): Type {
+function toGeminiType(mcpType: string | undefined): Type {
   if (!mcpType) return Type.TYPE_UNSPECIFIED;
 
   switch (mcpType.toLowerCase()) {
@@ -93,6 +93,24 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         mcp.type = 'array';
       } else if (isNullable) {
         mcp.type = 'null';
+      } else if (mcp.enum) {
+        // enum-only schema: infer type from enum values if all are the same
+        // primitive type, otherwise leave type undefined (TYPE_UNSPECIFIED)
+        const enumTypes = new Set(
+          (mcp.enum as unknown[]).map((v) => typeof v),
+        );
+        if (enumTypes.size === 1) {
+          const jsType = [...enumTypes][0];
+          if (jsType === 'string') mcp.type = 'string';
+          else if (jsType === 'number') mcp.type = 'number';
+          else if (jsType === 'boolean') mcp.type = 'boolean';
+        }
+      } else if (mcp.const !== undefined) {
+        // const-only schema: infer type from the const value
+        const jsType = typeof mcp.const;
+        if (jsType === 'string') mcp.type = 'string';
+        else if (jsType === 'number') mcp.type = 'number';
+        else if (jsType === 'boolean') mcp.type = 'boolean';
       }
     }
 
@@ -109,6 +127,10 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
     if (mcp.description) {
       geminiSchema.description = mcp.description;
+    }
+
+    if (mcp.enum) {
+      geminiSchema.enum = (mcp.enum as unknown[]).map(String);
     }
 
     if (isNullable && mcp.type !== 'null') {
