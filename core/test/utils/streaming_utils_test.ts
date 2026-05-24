@@ -344,6 +344,62 @@ describe('StreamingResponseAggregator', () => {
           functionCall: {
             name: 'get_weather',
             args: {location: 'San Francisco'},
+            id: 'mocked-fc-id',
+          },
+        },
+      ]);
+    });
+
+    it('should preserve tool calls in the final aggregated response', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      const response1 = createResponse({
+        content: {parts: [{text: 'Let me help with that. '}]},
+        finishReason: FinishReason.STOP,
+      });
+
+      const response2 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'showForecastChart',
+                args: {location: 'San Francisco'},
+              },
+            },
+            {
+              functionCall: {
+                name: 'showQuickActions',
+                args: {actions: ['Refresh', 'Share']},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      for await (const _ of aggregator.processResponse(response1)) {
+        // Consume the stream to test it
+      }
+      for await (const _ of aggregator.processResponse(response2)) {
+        // Consume the stream to test it
+      }
+
+      const finalResponse = aggregator.close();
+      expect(finalResponse?.content?.parts).toEqual([
+        {text: 'Let me help with that. '},
+        {
+          functionCall: {
+            name: 'showForecastChart',
+            args: {location: 'San Francisco'},
+            id: 'mocked-fc-id',
+          },
+        },
+        {
+          functionCall: {
+            name: 'showQuickActions',
+            args: {actions: ['Refresh', 'Share']},
+            id: 'mocked-fc-id',
           },
         },
       ]);

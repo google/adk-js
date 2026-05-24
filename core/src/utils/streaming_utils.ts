@@ -74,6 +74,18 @@ export class StreamingResponseAggregator {
     this.currentTextIsThought = undefined;
   }
 
+  private flushNonProgressiveTextToSequence(): void {
+    if (this.thoughtText) {
+      this.partsSequence.push({text: this.thoughtText, thought: true});
+      this.thoughtText = '';
+    }
+
+    if (this.text) {
+      this.partsSequence.push({text: this.text});
+      this.text = '';
+    }
+  }
+
   private getValueFromPartialArg(
     partialArg: PartialArg,
     jsonPath: string,
@@ -288,42 +300,47 @@ export class StreamingResponseAggregator {
     }
 
     // Non-progressive SSE streaming
-    if (
-      llmResponse.content &&
-      llmResponse.content.parts &&
-      typeof llmResponse.content.parts[0]?.text === 'string'
-    ) {
-      const part0 = llmResponse.content.parts[0];
-      const partText = part0.text || '';
-      if (part0.thought) {
-        this.thoughtText += partText;
-      } else {
-        this.text += partText;
+    let sawTextPart = false;
+    if (llmResponse.content?.parts) {
+      for (const part of llmResponse.content.parts) {
+        if (typeof part.text === 'string') {
+          sawTextPart = true;
+          if (part.thought) {
+            this.thoughtText += part.text;
+          } else {
+            this.text += part.text;
+          }
+          continue;
+        }
+
+        if (this.thoughtText || this.text) {
+          const parts: Part[] = [];
+          if (this.thoughtText) {
+            parts.push({text: this.thoughtText, thought: true});
+          }
+          if (this.text) {
+            parts.push({text: this.text});
+          }
+          yield {
+            content: {
+              role: 'model',
+              parts: parts,
+            },
+            usageMetadata: llmResponse.usageMetadata,
+            partial: false,
+          };
+          this.flushNonProgressiveTextToSequence();
+        }
+
+        if (part.functionCall && !part.functionCall.id) {
+          part.functionCall.id = generateClientFunctionCallId();
+        }
+        this.partsSequence.push(part);
       }
+    }
+
+    if (sawTextPart) {
       llmResponse.partial = true;
-    } else if (
-      (this.thoughtText || this.text) &&
-      (!llmResponse.content ||
-        !llmResponse.content.parts ||
-        !llmResponse.content.parts[0]?.inlineData)
-    ) {
-      const parts: Part[] = [];
-      if (this.thoughtText) {
-        parts.push({text: this.thoughtText, thought: true});
-      }
-      if (this.text) {
-        parts.push({text: this.text});
-      }
-      yield {
-        content: {
-          role: 'model',
-          parts: parts,
-        },
-        usageMetadata: llmResponse.usageMetadata,
-        partial: false,
-      };
-      this.thoughtText = '';
-      this.text = '';
     }
     yield llmResponse;
   }
@@ -366,14 +383,9 @@ export class StreamingResponseAggregator {
     // Non-progressive SSE streaming: use this.finishReason which is accumulated
     // across all chunks, falling back to the last candidate when available.
     // This handles the case where the final Gemini chunk carries no candidates.
-    if (this.text || this.thoughtText) {
-      const parts: Part[] = [];
-      if (this.thoughtText) {
-        parts.push({text: this.thoughtText, thought: true});
-      }
-      if (this.text) {
-        parts.push({text: this.text});
-      }
+    if (this.text || this.thoughtText || this.partsSequence.length > 0) {
+      this.flushNonProgressiveTextToSequence();
+      const parts = [...this.partsSequence];
       const candidate = this.response?.candidates?.[0];
       const finishReason = this.finishReason ?? candidate?.finishReason;
       return {
