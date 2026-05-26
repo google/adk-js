@@ -88,6 +88,13 @@ export class AdkApiServer {
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;
+  private readonly runningAgents: Record<
+    string,
+    {
+      runner: Runner;
+      abortController: AbortController;
+    }
+  > = {};
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -718,17 +725,33 @@ export class AdkApiServer {
         return;
       }
 
+      const runningAgentKey = getRunnerKey(appName, userId, sessionId);
+      if (this.runningAgents[runningAgentKey]) {
+        const error = 'Agent is already running';
+
+        res.status(400).json({error});
+        this.logger.error(error);
+        return;
+      }
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
         const runner = await this.getRunner(agent, appName);
+        const abortController = new AbortController();
         const events: Event[] = [];
+
+        this.runningAgents[runningAgentKey] = {
+          runner,
+          abortController,
+        };
 
         for await (const e of runner.runAsync({
           userId,
           sessionId,
           newMessage,
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           events.push(e);
         }
@@ -739,6 +762,8 @@ export class AdkApiServer {
 
         res.status(500).json({error});
         this.logger.error(error);
+      } finally {
+        delete this.runningAgents[runningAgentKey];
       }
     });
 
@@ -760,15 +785,30 @@ export class AdkApiServer {
         return;
       }
 
+      const runningAgentKey = getRunnerKey(appName, userId, sessionId);
+      if (this.runningAgents[runningAgentKey]) {
+        const error = 'Agent is already running';
+
+        res.status(400).json({error});
+        this.logger.error(error);
+        return;
+      }
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
         const runner = await this.getRunner(agent, appName);
+        const abortController = new AbortController();
 
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
+
+        this.runningAgents[runningAgentKey] = {
+          runner,
+          abortController,
+        };
 
         for await (const event of runner.runAsync({
           userId,
@@ -778,6 +818,7 @@ export class AdkApiServer {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
@@ -795,7 +836,40 @@ export class AdkApiServer {
           res.status(500).json({error});
           this.logger.error(error);
         }
+      } finally {
+        delete this.runningAgents[runningAgentKey];
       }
+    });
+
+    app.post('/abort', async (req: Request, res: Response) => {
+      const {appName, userId, sessionId} = req.body;
+
+      const session = await this.sessionService.getSession({
+        appName,
+        userId,
+        sessionId,
+      });
+
+      if (!session) {
+        const error = `Session not found: ${sessionId}`;
+
+        res.status(404).json({error});
+        this.logger.error(error);
+        return;
+      }
+
+      const runningAgentKey = getRunnerKey(appName, userId, sessionId);
+      const runningAgent = this.runningAgents[runningAgentKey];
+      if (!runningAgent) {
+        const error = 'Agent is not running';
+
+        res.status(400).json({error});
+        this.logger.error(error);
+        return;
+      }
+
+      runningAgent.abortController.abort();
+      res.status(200).send();
     });
   }
 
@@ -869,4 +943,12 @@ export class AdkApiServer {
 
     return this.runnerCache[appName];
   }
+}
+
+function getRunnerKey(
+  appName: string,
+  userId: string,
+  sessionId: string,
+): string {
+  return `${appName}:${userId}:${sessionId}`;
 }

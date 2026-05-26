@@ -25,7 +25,7 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {z} from 'zod';
 
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
-import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {AgentFile, AgentLoader} from '../../src/utils/agent_loader.js';
 
 /**
  * Http client for testing the AdkWebServer. It makes real http requests to the
@@ -134,6 +134,65 @@ class TestAgent extends LlmAgent {
     });
 
     return;
+  }
+
+  async *runLiveImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {
+        parts: [
+          {
+            text: 'test live content',
+          },
+        ],
+        role: 'model',
+      },
+    });
+  }
+}
+
+class AbortableTestAgent extends LlmAgent {
+  async *runAsyncImpl(
+    context: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {
+        parts: [
+          {
+            text: 'First Event',
+          },
+        ],
+        role: 'model',
+      },
+    });
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (context.abortSignal?.aborted) {
+        return;
+      }
+    }
+
+    yield createEvent({
+      invocationId: context.invocationId,
+      author: this.name,
+      branch: context.branch,
+      content: {
+        parts: [
+          {
+            text: 'Second Event',
+          },
+        ],
+        role: 'model',
+      },
+    });
   }
 
   async *runLiveImpl(
@@ -689,6 +748,172 @@ describe('AdkWebServer', () => {
         expect((e as {response: {status: number}}).response.status).toBe(500);
       } finally {
         agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
+  });
+
+  describe('abort', () => {
+    it('should abort a running agent in run_sse', async () => {
+      const abortableAgent = new AbortableTestAgent({
+        name: 'abortableAgent',
+        description: 'abortable test agent',
+        tools: [],
+      });
+
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = () =>
+        Promise.resolve({
+          load() {
+            return Promise.resolve(abortableAgent);
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        } as unknown as AgentFile);
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      try {
+        const response = await fetch(`${server.url}/run_sse`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+            streaming: true,
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+
+        // Read the first event
+        const {value: chunk1, done: done1} = await reader.read();
+        expect(done1).toBe(false);
+        const text1 = decoder.decode(chunk1);
+        expect(text1).toContain('First Event');
+
+        // Make abort call
+        const abortResponse = await client.post('/abort', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        });
+        expect(abortResponse.status).toBe(200);
+
+        // Try to read more, it should end prematurely without emitting 'Second Event'
+        let completeText = '';
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) {
+            break;
+          }
+          completeText += decoder.decode(value);
+        }
+
+        expect(completeText).not.toContain('Second Event');
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
+
+    it('should abort a running agent in run', async () => {
+      const abortableAgent = new AbortableTestAgent({
+        name: 'abortableAgent',
+        description: 'abortable test agent',
+        tools: [],
+      });
+
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = () =>
+        Promise.resolve({
+          load() {
+            return Promise.resolve(abortableAgent);
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        } as unknown as AgentFile);
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      try {
+        // Start the run without awaiting
+        const runPromise = client.post<Event[]>('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+        });
+
+        // Wait a little bit for the agent execution to start
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        // Call abort
+        const abortResponse = await client.post('/abort', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        });
+        expect(abortResponse.status).toBe(200);
+
+        // Await the run response
+        const runResponse = await runPromise;
+        expect(runResponse.status).toBe(200);
+
+        // The events array should only contain the First Event, not the Second Event
+        expect(runResponse.data).toBeDefined();
+        expect(runResponse.data!.length).toBe(1);
+        expect(runResponse.data![0].content?.parts?.[0].text).toBe(
+          'First Event',
+        );
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
+
+    it('should return 400 when aborting an agent that is not running', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      try {
+        await client.post('/abort', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+        });
+        expect.fail('Should have failed with 400');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(400);
+        expect((e as {message: string}).message).toBe('Agent is not running');
+      }
+    });
+
+    it('should return 404 when aborting a session that does not exist', async () => {
+      try {
+        await client.post('/abort', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'missingSessionId',
+        });
+        expect.fail('Should have failed with 404');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(404);
+        expect((e as {message: string}).message).toContain('Session not found');
       }
     });
   });
