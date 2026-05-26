@@ -158,6 +158,7 @@ export class Runner {
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
     runConfig?: RunConfig;
+    customMetadata?: Record<string, unknown>;
   }): AsyncGenerator<Event, void, undefined> {
     const session = await this.sessionService.createSession({
       appName: this.appName,
@@ -172,6 +173,7 @@ export class Runner {
         newMessage: params.newMessage,
         stateDelta: params.stateDelta,
         runConfig: params.runConfig,
+        customMetadata: params.customMetadata,
       });
     } finally {
       await this.sessionService.deleteSession({
@@ -201,6 +203,7 @@ export class Runner {
     stateDelta?: Record<string, unknown>;
     runConfig?: RunConfig;
     abortSignal?: AbortSignal;
+    customMetadata?: Record<string, unknown>;
   }): AsyncGenerator<Event, void, undefined> {
     const {userId, sessionId, stateDelta} = params;
     const runConfig = createRunConfig(params.runConfig);
@@ -313,6 +316,7 @@ export class Runner {
                   ? createEventActions({stateDelta})
                   : undefined,
                 content: newMessage,
+                customMetadata: params.customMetadata,
               }),
             });
             if (params.abortSignal?.aborted) {
