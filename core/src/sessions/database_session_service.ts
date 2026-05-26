@@ -254,6 +254,10 @@ export class DatabaseSessionService extends BaseSessionService {
   async listSessions({
     appName,
     userId,
+    limit,
+    offset,
+    page,
+    order,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
     await this.init();
     const em = this.orm!.em.fork();
@@ -263,7 +267,63 @@ export class DatabaseSessionService extends BaseSessionService {
       where.userId = userId;
     }
 
-    const storageSessions = await em.find(StorageSession, where);
+    const orderBy =
+      order === 'asc'
+        ? {updateTime: 'ASC' as const, id: 'ASC' as const}
+        : order === 'desc'
+          ? {updateTime: 'DESC' as const, id: 'ASC' as const}
+          : undefined;
+
+    let storageSessions;
+    let paginationMeta: Pick<
+      ListSessionsResponse,
+      'page' | 'limit' | 'totalItems' | 'totalPages'
+    >;
+
+    if (limit !== undefined) {
+      const totalItems = await em.count(StorageSession, where);
+      const totalPages = limit === 0 ? 0 : Math.ceil(totalItems / limit);
+
+      let effectiveOffset: number;
+      let effectivePage: number;
+      if (page !== undefined) {
+        effectiveOffset = (page - 1) * limit;
+        effectivePage = page;
+      } else {
+        effectiveOffset = offset ?? 0;
+        effectivePage =
+          limit === 0 ? 1 : Math.floor(effectiveOffset / limit) + 1;
+      }
+
+      storageSessions = await em.find(StorageSession, where, {
+        orderBy,
+        limit,
+        offset: effectiveOffset,
+      });
+      paginationMeta = {page: effectivePage, limit, totalItems, totalPages};
+    } else if (offset) {
+      const totalItems = await em.count(StorageSession, where);
+      storageSessions = await em.find(StorageSession, where, {
+        orderBy,
+        offset,
+      });
+      paginationMeta = {
+        page: 1,
+        limit: totalItems,
+        totalItems,
+        totalPages: totalItems === 0 ? 0 : 1,
+      };
+    } else {
+      storageSessions = await em.find(StorageSession, where, {orderBy});
+      const totalItems = storageSessions.length;
+      paginationMeta = {
+        page: 1,
+        limit: totalItems,
+        totalItems,
+        totalPages: totalItems === 0 ? 0 : 1,
+      };
+    }
+
     const appStateModel = await em.findOne(StorageAppState, {appName});
     const appState = appStateModel?.state || {};
     const userStateMap: Record<string, Record<string, unknown>> = {};
@@ -291,7 +351,7 @@ export class DatabaseSessionService extends BaseSessionService {
       });
     });
 
-    return {sessions};
+    return {sessions, ...paginationMeta};
   }
 
   async deleteSession({
