@@ -104,14 +104,14 @@ agents:
 - **Getting Started**: https://adk.dev/get-started/typescript
 - **Samples**: https://github.com/google/adk-samples
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions from the community! Whether it's bug reports, feature
 requests, documentation improvements, or code contributions, please see the
 [contributing guide](https://adk.dev/community/contributing-guide/) and
 [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 
-## License
+## 📄 License
 
 This project is licensed under the Apache 2.0 License - see the
 [LICENSE](LICENSE) file for details.
