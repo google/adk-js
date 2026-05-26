@@ -22,8 +22,9 @@ export type ToolInputParameters =
   | Schema
   | undefined;
 
-/*
- * The arguments of the function tool.
+/**
+ * The arguments passed to the function tool's `execute` callback, inferred
+ * from the `parameters` schema type.
  */
 export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
   TParameters extends z3.ZodObject<infer T, infer U, infer V>
@@ -34,8 +35,8 @@ export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
         ? unknown
         : string;
 
-/*
- * The function to execute by the tool.
+/**
+ * The signature of the user-provided function executed by a {@link FunctionTool}.
  */
 export type ToolExecuteFunction<TParameters extends ToolInputParameters> = (
   input: ToolExecuteArgument<TParameters>,
@@ -92,6 +93,14 @@ export function isFunctionTool(obj: unknown): obj is FunctionTool {
   );
 }
 
+/**
+ * A tool that wraps a user-defined function, making it callable by an LLM.
+ *
+ * The function's name, description, and parameter schema are exposed to the
+ * model as a function declaration. When the model requests a call, the
+ * framework validates the arguments and invokes the user-provided `execute`
+ * callback.
+ */
 export class FunctionTool<
   TParameters extends ToolInputParameters = undefined,
 > extends BaseTool {
@@ -124,7 +133,8 @@ export class FunctionTool<
   }
 
   /**
-   * Provide a schema for the function.
+   * Returns the function declaration derived from the tool's name, description,
+   * and parameter schema.
    */
   override _getDeclaration(): FunctionDeclaration {
     return {
@@ -135,7 +145,11 @@ export class FunctionTool<
   }
 
   /**
-   * Logic for running the tool.
+   * Validates the model-provided arguments against the parameter schema and
+   * invokes the user-defined `execute` function.
+   *
+   * @param req The tool request containing arguments and tool context.
+   * @returns A promise resolving to the function's return value.
    */
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
