@@ -57,6 +57,14 @@ export interface ListSessionsRequest {
   appName: string;
   /** The ID of the user. */
   userId: string;
+  /** Maximum number of sessions to return. */
+  limit?: number;
+  /** Zero-based index of the first session to return. Ignored if `page` is set. */
+  offset?: number;
+  /** 1-based page number. Requires `limit`. Takes precedence over `offset`. */
+  page?: number;
+  /** Sort direction by last update time. No ordering is applied if omitted. */
+  order?: 'asc' | 'desc';
 }
 
 /**
@@ -85,10 +93,20 @@ export interface AppendEventRequest {
  * The response of listing sessions.
  *
  * The events and states are not set within each Session object.
+ * When no pagination params were requested, `page` is 1, `limit` equals
+ * `totalItems`, and `totalPages` is 1 (or 0 when there are no sessions).
  */
 export interface ListSessionsResponse {
   /** A list of sessions. */
   sessions: Session[];
+  /** Current page number (1-based). */
+  page: number;
+  /** Page size used. Equals `totalItems` when no limit was requested. */
+  limit: number;
+  /** Total number of sessions matching the request. */
+  totalItems: number;
+  /** Total number of pages. */
+  totalPages: number;
 }
 
 /**

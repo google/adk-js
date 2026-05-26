@@ -10,11 +10,15 @@ import {LlmResponse} from '../../models/llm_response.js';
 import {InvocationContext} from '../invocation_context.js';
 
 /**
- * Base class for LLM request processor.
+ * Base class for LLM request processors. Implementations mutate or augment
+ * the {@link LlmRequest} before it is sent to the model.
  */
 export abstract class BaseLlmRequestProcessor {
   /**
-   * Runs the processor.
+   * Runs the processor, optionally yielding intermediate {@link Event}s.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmRequest - The request object to populate or mutate in place.
    */
   abstract runAsync(
     invocationContext: InvocationContext,
@@ -23,11 +27,15 @@ export abstract class BaseLlmRequestProcessor {
 }
 
 /**
- * Base class for LLM response processor.
+ * Base class for LLM response processors. Implementations inspect or
+ * transform the {@link LlmResponse} after it is received from the model.
  */
 export abstract class BaseLlmResponseProcessor {
   /**
-   * Processes the LLM response.
+   * Runs the processor, optionally yielding intermediate {@link Event}s.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmResponse - The response received from the model.
    */
   abstract runAsync(
     invocationContext: InvocationContext,
