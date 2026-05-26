@@ -16,7 +16,7 @@ import {
   Runner,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -610,5 +610,80 @@ describe('Runner error handling', () => {
     expect(error?.message).toContain(
       `Session not found: ${nonExistentSessionId}`,
     );
+  });
+});
+
+describe('Runner customMetadata support', () => {
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let agent: MockLlmAgent;
+  let runner: Runner;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    agent = new MockLlmAgent('test_agent');
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+  });
+
+  it('should propagate customMetadata in runAsync and attach to user event', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const customMetadata = {testKey: 'testValue', anotherKey: 123};
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      customMetadata,
+    })) {
+      events.push(event);
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    expect(updatedSession).not.toBeNull();
+    expect(updatedSession!.events).toHaveLength(2);
+
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.author).toBe('user');
+    expect(userEvent.customMetadata).toEqual(customMetadata);
+  });
+
+  it('should propagate customMetadata in runEphemeral and attach to user event', async () => {
+    const customMetadata = {testKey: 'testValue', anotherKey: 123};
+    const appendEventSpy = vi.spyOn(sessionService, 'appendEvent');
+
+    const events: Event[] = [];
+    for await (const event of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      customMetadata,
+    })) {
+      events.push(event);
+    }
+
+    const userEventCall = appendEventSpy.mock.calls.find(
+      (call) => call[0].event.author === 'user',
+    );
+
+    expect(userEventCall).toBeDefined();
+    expect(userEventCall![0].event.customMetadata).toEqual(customMetadata);
+
+    appendEventSpy.mockRestore();
   });
 });
