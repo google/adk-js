@@ -18,6 +18,7 @@ import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
  */
 
 export class ExitLoopTool extends BaseTool {
+  /** Creates an ExitLoopTool with its fixed name and description. */
   constructor() {
     super({
       name: 'exit_loop',
@@ -26,6 +27,7 @@ export class ExitLoopTool extends BaseTool {
     });
   }
 
+  /** Returns the function declaration for this tool. */
   override _getDeclaration(): FunctionDeclaration {
     return {
       name: this.name,
@@ -33,6 +35,13 @@ export class ExitLoopTool extends BaseTool {
     };
   }
 
+  /**
+   * Sets `escalate` and `skipSummarization` on the event actions, signalling
+   * the {@link LoopAgent} to stop iterating.
+   *
+   * @param request The tool request containing the current tool context.
+   * @returns An empty string response.
+   */
   override async runAsync({
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {

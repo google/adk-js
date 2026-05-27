@@ -196,6 +196,10 @@ describe('InMemorySessionService', () => {
         userId: 'user',
       });
       expect(response.sessions).toEqual([]);
+      expect(response.page).toBe(1);
+      expect(response.limit).toBe(0);
+      expect(response.totalItems).toBe(0);
+      expect(response.totalPages).toBe(0);
     });
 
     it('returns list of sessions without events', async () => {
@@ -209,6 +213,326 @@ describe('InMemorySessionService', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].events).toEqual([]);
       expect(response.sessions[1].events).toEqual([]);
+    });
+
+    it('limit on empty result → returns pagination metadata with zeros', async () => {
+      const response = await service.listSessions({
+        appName: 'app',
+        userId: 'user',
+        limit: 10,
+      });
+      expect(response.sessions).toEqual([]);
+      expect(response.totalItems).toBe(0);
+      expect(response.totalPages).toBe(0);
+      expect(response.page).toBe(1);
+      expect(response.limit).toBe(10);
+    });
+
+    it('no pagination params → returns all sessions with page=1', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      await service.createSession({appName, userId});
+      await service.createSession({appName, userId});
+
+      const response = await service.listSessions({appName, userId});
+
+      expect(response.page).toBe(1);
+      expect(response.limit).toBe(2);
+      expect(response.totalItems).toBe(2);
+      expect(response.totalPages).toBe(1);
+    });
+
+    it('order asc returns oldest-first', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      const s3 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's3',
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 3000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 1000}),
+      });
+      await service.appendEvent({
+        session: s3,
+        event: createEvent({timestamp: 2000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        order: 'asc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s2', 's3', 's1']);
+    });
+
+    it('order desc returns newest-first', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      const s3 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's3',
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 3000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 1000}),
+      });
+      await service.appendEvent({
+        session: s3,
+        event: createEvent({timestamp: 2000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        order: 'desc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s1', 's3', 's2']);
+    });
+
+    it('tie-breaking by id when lastUpdateTime values are equal', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 1000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 1000}),
+      });
+
+      const asc = await service.listSessions({appName, userId, order: 'asc'});
+      expect(asc.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+
+      const desc = await service.listSessions({appName, userId, order: 'desc'});
+      expect(desc.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+    });
+
+    it('limit returns only N sessions', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      for (let i = 1; i <= 5; i++) {
+        await service.createSession({appName, userId, sessionId: `s${i}`});
+      }
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        limit: 3,
+        order: 'asc',
+      });
+
+      expect(response.sessions).toHaveLength(3);
+      expect(response.totalItems).toBe(5);
+      expect(response.totalPages).toBe(2);
+    });
+
+    it('offset skips N sessions', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      const s3 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's3',
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 1000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 2000}),
+      });
+      await service.appendEvent({
+        session: s3,
+        event: createEvent({timestamp: 3000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        limit: 2,
+        offset: 1,
+        order: 'asc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s2', 's3']);
+    });
+
+    it('page + limit returns correct slice', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      for (let i = 1; i <= 5; i++) {
+        const s = await service.createSession({
+          appName,
+          userId,
+          sessionId: `s${i}`,
+        });
+        await service.appendEvent({
+          session: s,
+          event: createEvent({timestamp: i * 1000}),
+        });
+      }
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        page: 2,
+        limit: 2,
+        order: 'asc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s3', 's4']);
+      expect(response.page).toBe(2);
+      expect(response.limit).toBe(2);
+      expect(response.totalItems).toBe(5);
+      expect(response.totalPages).toBe(3);
+    });
+
+    it('offset beyond total → empty sessions with correct metadata', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      await service.createSession({appName, userId, sessionId: 's1'});
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        limit: 2,
+        offset: 10,
+      });
+
+      expect(response.sessions).toEqual([]);
+      expect(response.totalItems).toBe(1);
+      expect(response.totalPages).toBe(1);
+    });
+
+    it('limit=0 returns empty sessions and totalPages=0', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      await service.createSession({appName, userId, sessionId: 's1'});
+
+      const response = await service.listSessions({appName, userId, limit: 0});
+
+      expect(response.sessions).toEqual([]);
+      expect(response.totalItems).toBe(1);
+      expect(response.totalPages).toBe(0);
+    });
+
+    it('order without limit returns all sessions sorted with page=1', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      const s1 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's1',
+      });
+      const s2 = await service.createSession({
+        appName,
+        userId,
+        sessionId: 's2',
+      });
+      await service.appendEvent({
+        session: s1,
+        event: createEvent({timestamp: 2000}),
+      });
+      await service.appendEvent({
+        session: s2,
+        event: createEvent({timestamp: 1000}),
+      });
+
+      const response = await service.listSessions({
+        appName,
+        userId,
+        order: 'desc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+      expect(response.page).toBe(1);
+      expect(response.limit).toBe(2);
+      expect(response.totalItems).toBe(2);
+      expect(response.totalPages).toBe(1);
+    });
+
+    it('page takes precedence over offset when both are provided', async () => {
+      const appName = 'app';
+      const userId = 'user';
+      for (let i = 1; i <= 5; i++) {
+        const s = await service.createSession({
+          appName,
+          userId,
+          sessionId: `s${i}`,
+        });
+        await service.appendEvent({
+          session: s,
+          event: createEvent({timestamp: i * 1000}),
+        });
+      }
+
+      // page=2, limit=2 → sessions 3,4; offset=0 should be ignored
+      const response = await service.listSessions({
+        appName,
+        userId,
+        page: 2,
+        limit: 2,
+        offset: 0,
+        order: 'asc',
+      });
+
+      expect(response.sessions.map((s) => s.id)).toEqual(['s3', 's4']);
+      expect(response.page).toBe(2);
     });
   });
 

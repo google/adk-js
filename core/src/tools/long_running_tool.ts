@@ -12,19 +12,19 @@ import {
   ToolOptions,
 } from './function_tool.js';
 
-/**
- * A function tool that returns the result asynchronously.
- *
- * This tool is used for long-running operations that may take a significant
- * amount of time to complete. The framework will call the function. Once the
- * function returns, the response will be returned asynchronously to the
- * framework which is identified by the function_call_id.
- */
-
 const LONG_RUNNING_INSTRUCTION = `
 
 NOTE: This is a long-running operation. Do not call this tool again if it has already returned some intermediate or pending status.`;
 
+/**
+ * A {@link FunctionTool} for long-running operations whose result is returned
+ * asynchronously.
+ *
+ * The framework invokes the user-provided function and delivers the response
+ * back to the model once it completes, identified by the `function_call_id`.
+ * The model is also instructed not to re-invoke the tool while a call is
+ * already in flight.
+ */
 export class LongRunningFunctionTool<
   TParameters extends ToolInputParameters = undefined,
 > extends FunctionTool<TParameters> {
@@ -37,7 +37,8 @@ export class LongRunningFunctionTool<
   }
 
   /**
-   * Provide a schema for the function.
+   * Returns the function declaration with an appended instruction warning the
+   * model not to re-invoke the tool while it is still running.
    */
   override _getDeclaration(): FunctionDeclaration {
     const declaration = super._getDeclaration();

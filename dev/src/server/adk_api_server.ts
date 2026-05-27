@@ -182,7 +182,6 @@ export class AdkApiServer {
       );
     }
 
-    app.use(express.urlencoded({limit: '50mb', extended: true}));
     app.use(
       express.json({
         limit: '50mb',
@@ -767,7 +766,6 @@ export class AdkApiServer {
 
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
