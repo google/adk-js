@@ -35,19 +35,17 @@ export class InMemoryRunner extends Runner {
   /**
    * Creates a new InMemoryRunner instance.
    *
+   * @param params The configuration for the runner.
    * @param params.agent The root agent to run.
    * @param params.appName The application name. Defaults to `'InMemoryRunner'`.
    * @param params.plugins An optional list of plugins.
    */
-  constructor({
-    agent,
-    appName = 'InMemoryRunner',
-    plugins = [],
-  }: {
+  constructor(params: {
     agent: BaseAgent;
     appName?: string;
     plugins?: BasePlugin[];
   }) {
+    const {agent, appName = 'InMemoryRunner', plugins = []} = params;
     super({
       appName,
       agent,
