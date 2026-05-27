@@ -18,6 +18,8 @@ import {
 } from '../../../../auth/exchanger/base_credential_exchanger.js';
 import {experimental} from '../../../../utils/experimental.js';
 
+const DEFAULT_SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
+
 /**
  * Fetches credentials for Google Service Account.
  * Ported from Python implementation.
@@ -54,9 +56,7 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
   ): Promise<ExchangeResult> {
     try {
       const auth = new GoogleAuth({
-        scopes: saConfig.scopes || [
-          'https://www.googleapis.com/auth/cloud-platform',
-        ],
+        scopes: saConfig.scopes || DEFAULT_SCOPES,
       });
       const client = await auth.getClient();
       const tokenResponse = await client.getAccessToken();
