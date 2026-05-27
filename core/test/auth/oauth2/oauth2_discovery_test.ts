@@ -369,32 +369,86 @@ describe('OAuth2DiscoveryManager', () => {
       await manager.discoverAuthServerMetadata(url);
       return (fetch as ReturnType<typeof vi.fn>).mock.calls.length === 0;
     }
-    it('blocks localhost', async () => { expect(await isBlocked('https://localhost/')).toBe(true); });
-    it('blocks 127.0.0.1', async () => { expect(await isBlocked('https://127.0.0.1/')).toBe(true); });
-    it('blocks [::1]', async () => { expect(await isBlocked('https://[::1]/')).toBe(true); });
-    it('blocks 0.0.0.0', async () => { expect(await isBlocked('https://0.0.0.0/')).toBe(true); });
-    it('blocks [::ffff:7f00:1] IPv4-mapped 127.0.0.1', async () => { expect(await isBlocked('https://[::ffff:7f00:1]/')).toBe(true); });
-    it('blocks [::ffff:a9fe:a9fe] IPv4-mapped 169.254.169.254', async () => { expect(await isBlocked('https://[::ffff:a9fe:a9fe]/')).toBe(true); });
-    it('blocks [::ffff:a00:1] IPv4-mapped 10.0.0.1', async () => { expect(await isBlocked('https://[::ffff:a00:1]/')).toBe(true); });
-    it('blocks [::ffff:ac10:1] IPv4-mapped 172.16.0.1', async () => { expect(await isBlocked('https://[::ffff:ac10:1]/')).toBe(true); });
-    it('blocks [::ffff:c0a8:101] IPv4-mapped 192.168.1.1', async () => { expect(await isBlocked('https://[::ffff:c0a8:101]/')).toBe(true); });
-    it('blocks 10.0.0.1', async () => { expect(await isBlocked('https://10.0.0.1/')).toBe(true); });
-    it('blocks 192.168.1.1', async () => { expect(await isBlocked('https://192.168.1.1/')).toBe(true); });
-    it('blocks 169.254.169.254', async () => { expect(await isBlocked('https://169.254.169.254/')).toBe(true); });
-    it('blocks 172.16.0.1', async () => { expect(await isBlocked('https://172.16.0.1/')).toBe(true); });
-    it('blocks 172.31.0.1', async () => { expect(await isBlocked('https://172.31.0.1/')).toBe(true); });
-    it('allows 172.15.0.1', async () => { expect(await isBlocked('https://172.15.0.1/')).toBe(false); });
-    it('allows 172.32.0.1', async () => { expect(await isBlocked('https://172.32.0.1/')).toBe(false); });
-    it('blocks 100.64.0.1 CGNAT', async () => { expect(await isBlocked('https://100.64.0.1/')).toBe(true); });
-    it('blocks 100.127.0.1 CGNAT upper edge', async () => { expect(await isBlocked('https://100.127.0.1/')).toBe(true); });
-    it('allows 100.63.0.1 below CGNAT', async () => { expect(await isBlocked('https://100.63.0.1/')).toBe(false); });
-    it('blocks [fc00::1] IPv6 ULA', async () => { expect(await isBlocked('https://[fc00::1]/')).toBe(true); });
-    it('blocks [fd00::1] IPv6 ULA fd::/8', async () => { expect(await isBlocked('https://[fd00::1]/')).toBe(true); });
-    it('blocks [fdab:1234::1] IPv6 ULA fd::/8', async () => { expect(await isBlocked('https://[fdab:1234::1]/')).toBe(true); });
-    it('blocks [fe80::1] IPv6 link-local', async () => { expect(await isBlocked('https://[fe80::1]/')).toBe(true); });
-    it('blocks [febf::1] IPv6 link-local upper edge', async () => { expect(await isBlocked('https://[febf::1]/')).toBe(true); });
-    it('allows accounts.google.com', async () => { expect(await isBlocked('https://accounts.google.com/')).toBe(false); });
-    it('allows login.microsoftonline.com', async () => { expect(await isBlocked('https://login.microsoftonline.com/')).toBe(false); });
-    it('blocks non-https scheme', async () => { expect(await isBlocked('http://example.com/')).toBe(true); });
+    it('blocks localhost', async () => {
+      expect(await isBlocked('https://localhost/')).toBe(true);
+    });
+    it('blocks 127.0.0.1', async () => {
+      expect(await isBlocked('https://127.0.0.1/')).toBe(true);
+    });
+    it('blocks [::1]', async () => {
+      expect(await isBlocked('https://[::1]/')).toBe(true);
+    });
+    it('blocks 0.0.0.0', async () => {
+      expect(await isBlocked('https://0.0.0.0/')).toBe(true);
+    });
+    it('blocks [::ffff:7f00:1] IPv4-mapped 127.0.0.1', async () => {
+      expect(await isBlocked('https://[::ffff:7f00:1]/')).toBe(true);
+    });
+    it('blocks [::ffff:a9fe:a9fe] IPv4-mapped 169.254.169.254', async () => {
+      expect(await isBlocked('https://[::ffff:a9fe:a9fe]/')).toBe(true);
+    });
+    it('blocks [::ffff:a00:1] IPv4-mapped 10.0.0.1', async () => {
+      expect(await isBlocked('https://[::ffff:a00:1]/')).toBe(true);
+    });
+    it('blocks [::ffff:ac10:1] IPv4-mapped 172.16.0.1', async () => {
+      expect(await isBlocked('https://[::ffff:ac10:1]/')).toBe(true);
+    });
+    it('blocks [::ffff:c0a8:101] IPv4-mapped 192.168.1.1', async () => {
+      expect(await isBlocked('https://[::ffff:c0a8:101]/')).toBe(true);
+    });
+    it('blocks 10.0.0.1', async () => {
+      expect(await isBlocked('https://10.0.0.1/')).toBe(true);
+    });
+    it('blocks 192.168.1.1', async () => {
+      expect(await isBlocked('https://192.168.1.1/')).toBe(true);
+    });
+    it('blocks 169.254.169.254', async () => {
+      expect(await isBlocked('https://169.254.169.254/')).toBe(true);
+    });
+    it('blocks 172.16.0.1', async () => {
+      expect(await isBlocked('https://172.16.0.1/')).toBe(true);
+    });
+    it('blocks 172.31.0.1', async () => {
+      expect(await isBlocked('https://172.31.0.1/')).toBe(true);
+    });
+    it('allows 172.15.0.1', async () => {
+      expect(await isBlocked('https://172.15.0.1/')).toBe(false);
+    });
+    it('allows 172.32.0.1', async () => {
+      expect(await isBlocked('https://172.32.0.1/')).toBe(false);
+    });
+    it('blocks 100.64.0.1 CGNAT', async () => {
+      expect(await isBlocked('https://100.64.0.1/')).toBe(true);
+    });
+    it('blocks 100.127.0.1 CGNAT upper edge', async () => {
+      expect(await isBlocked('https://100.127.0.1/')).toBe(true);
+    });
+    it('allows 100.63.0.1 below CGNAT', async () => {
+      expect(await isBlocked('https://100.63.0.1/')).toBe(false);
+    });
+    it('blocks [fc00::1] IPv6 ULA', async () => {
+      expect(await isBlocked('https://[fc00::1]/')).toBe(true);
+    });
+    it('blocks [fd00::1] IPv6 ULA fd::/8', async () => {
+      expect(await isBlocked('https://[fd00::1]/')).toBe(true);
+    });
+    it('blocks [fdab:1234::1] IPv6 ULA fd::/8', async () => {
+      expect(await isBlocked('https://[fdab:1234::1]/')).toBe(true);
+    });
+    it('blocks [fe80::1] IPv6 link-local', async () => {
+      expect(await isBlocked('https://[fe80::1]/')).toBe(true);
+    });
+    it('blocks [febf::1] IPv6 link-local upper edge', async () => {
+      expect(await isBlocked('https://[febf::1]/')).toBe(true);
+    });
+    it('allows accounts.google.com', async () => {
+      expect(await isBlocked('https://accounts.google.com/')).toBe(false);
+    });
+    it('allows login.microsoftonline.com', async () => {
+      expect(await isBlocked('https://login.microsoftonline.com/')).toBe(false);
+    });
+    it('blocks non-https scheme', async () => {
+      expect(await isBlocked('http://example.com/')).toBe(true);
+    });
   });
 });
