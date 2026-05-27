@@ -247,6 +247,8 @@ function buildResponseEvent(
   let responseResult: Record<string, unknown>;
   if (typeof functionResult !== 'object' || functionResult == null) {
     responseResult = {result: functionResult};
+  } else if (Array.isArray(functionResult)) {
+    responseResult = {results: functionResult};
   } else {
     responseResult = functionResult as Record<string, unknown>;
   }
@@ -465,6 +467,8 @@ export async function handleFunctionCallList({
       functionResponse == null
     ) {
       functionResponse = {result: functionResponse};
+    } else if (Array.isArray(functionResponse)) {
+      functionResponse = {results: functionResponse};
     }
 
     // Builds the function response event.
