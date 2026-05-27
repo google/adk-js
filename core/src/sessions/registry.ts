@@ -13,6 +13,10 @@ import {
   InMemorySessionService,
   isInMemoryConnectionString,
 } from './in_memory_session_service.js';
+import {
+  VertexAiSessionService,
+  isVertexAiConnectionString,
+} from './vertex_ai_session_service.js';
 
 export function getSessionServiceFromUri(uri: string): BaseSessionService {
   if (isInMemoryConnectionString(uri)) {
@@ -21,6 +25,11 @@ export function getSessionServiceFromUri(uri: string): BaseSessionService {
 
   if (isDatabaseConnectionString(uri)) {
     return new DatabaseSessionService(uri);
+  }
+
+  if (isVertexAiConnectionString(uri)) {
+    // uri is something like vertexai://projects/abc/locations/us-central1
+    return new VertexAiSessionService({});
   }
 
   throw new Error(`Unsupported session service URI: ${uri}`);

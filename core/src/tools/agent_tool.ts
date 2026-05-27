@@ -14,6 +14,8 @@ import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
+import {State} from '../sessions/state.js';
+
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ForwardingArtifactService} from './forwarding_artifact_service.js';
 
@@ -151,7 +153,7 @@ export class AgentTool extends BaseTool {
       credentialService: toolContext.invocationContext.credentialService,
     });
 
-    const session = await runner.sessionService.createSession({
+    const session = await runner.sessionService.getOrCreateSession({
       appName: this.agent.name,
       userId: toolContext.invocationContext.userId,
       sessionId: toolContext.invocationContext.session.id,
@@ -174,7 +176,14 @@ export class AgentTool extends BaseTool {
       }
 
       if (event.actions.stateDelta) {
-        toolContext.state.update(event.actions.stateDelta);
+        const filteredDelta = Object.fromEntries(
+          Object.entries(event.actions.stateDelta).filter(
+            ([key]) => !key.startsWith(State.TEMP_PREFIX),
+          ),
+        );
+        if (Object.keys(filteredDelta).length > 0) {
+          toolContext.state.update(filteredDelta);
+        }
       }
 
       lastEvent = event;
@@ -185,7 +194,9 @@ export class AgentTool extends BaseTool {
     }
 
     const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
+    // Exclude thoughts from the merged text.
     const mergedText = lastEvent.content.parts
+      .filter((part) => !part.thought)
       .map((part) => part.text)
       .filter((text) => text)
       .join('\n');

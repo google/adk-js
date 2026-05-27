@@ -19,6 +19,7 @@ export interface TestApiServerParams {
   artifactServiceUri?: string;
   a2a?: boolean;
   startFailureTimeout?: number;
+  serveDebugUI?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 10000;
@@ -57,11 +58,11 @@ export class AdkTsApiServer extends BaseTestServer {
   private getAdkCliArgs(params: TestApiServerParams): string[] {
     const cliPath = path.resolve(
       __dirname,
-      '../../dev/dist/cli_entrypoint.mjs',
+      '../../dev/dist/esm/cli_entrypoint.js',
     );
     const args = [
       cliPath,
-      'api_server',
+      params.serveDebugUI ? 'web' : 'api_server',
       params.agentsDir,
       '--port',
       this.port.toString(),
