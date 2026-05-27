@@ -147,6 +147,8 @@ export type {
 } from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
+export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.js';
+export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
@@ -209,6 +211,10 @@ export type {
   ToolInputParameters,
   ToolOptions,
 } from './tools/function_tool.js';
+export {
+  GOOGLE_MAPS_GROUNDING,
+  GoogleMapsGroundingTool,
+} from './tools/google_maps_grounding_tool.js';
 export {GOOGLE_SEARCH, GoogleSearchTool} from './tools/google_search_tool.js';
 export {
   LOAD_ARTIFACTS,
@@ -221,7 +227,6 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
-export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {
@@ -231,6 +236,7 @@ export type {
   VertexAISearchDataStoreSpec,
   VertexAiSearchToolParams,
 } from './tools/vertex_ai_search_tool.js';
+export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove} from './utils/model_name.js';

@@ -209,6 +209,31 @@ describe('Event Utils', () => {
       });
       expect(stringifyContent(event)).toBe('HelloWorld');
     });
+
+    it('ignores parts marked as thought', () => {
+      const event = createEvent({
+        content: {
+          parts: [
+            {text: 'reasoning about the user request', thought: true},
+            {text: 'Hello'},
+            {text: 'World'},
+          ],
+        },
+      });
+      expect(stringifyContent(event)).toBe('HelloWorld');
+    });
+
+    it('returns empty string when all parts are thoughts', () => {
+      const event = createEvent({
+        content: {
+          parts: [
+            {text: 'first thought', thought: true},
+            {text: 'second thought', thought: true},
+          ],
+        },
+      });
+      expect(stringifyContent(event)).toBe('');
+    });
   });
 
   describe('createNewEventId', () => {
@@ -233,6 +258,22 @@ describe('Event Utils', () => {
       expect(camelEvent.invocationId).toBe('inv1');
       expect(camelEvent.actions?.stateDelta).toEqual({some_key: 'value'});
     });
+
+    it('preserves customMetadata keys during conversion to camelCase', () => {
+      const snakeEvent = {
+        id: '123',
+        invocation_id: 'inv1',
+        custom_metadata: {
+          'preserve-my-key': 'value',
+          NestedKey: 'value2',
+        },
+      };
+      const camelEvent = transformToCamelCaseEvent(snakeEvent);
+      expect(camelEvent.customMetadata).toEqual({
+        'preserve-my-key': 'value',
+        NestedKey: 'value2',
+      });
+    });
   });
 
   describe('transformToSnakeCaseEvent', () => {
@@ -250,6 +291,22 @@ describe('Event Utils', () => {
       expect(
         (snakeEvent.actions as Record<string, unknown>).state_delta,
       ).toEqual({someKey: 'value'});
+    });
+
+    it('preserves customMetadata keys during conversion to snake_case', () => {
+      const camelEvent = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        customMetadata: {
+          'preserve-my-key': 'value',
+          NestedKey: 'value2',
+        },
+      });
+      const snakeEvent = transformToSnakeCaseEvent(camelEvent);
+      expect(snakeEvent.custom_metadata).toEqual({
+        'preserve-my-key': 'value',
+        NestedKey: 'value2',
+      });
     });
   });
 });
