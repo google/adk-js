@@ -96,9 +96,7 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
       } else if (mcp.enum) {
         // enum-only schema: infer type from enum values if all are the same
         // primitive type, otherwise leave type undefined (TYPE_UNSPECIFIED)
-        const enumTypes = new Set(
-          (mcp.enum as unknown[]).map((v) => typeof v),
-        );
+        const enumTypes = new Set((mcp.enum as unknown[]).map((v) => typeof v));
         if (enumTypes.size === 1) {
           const jsType = [...enumTypes][0];
           if (jsType === 'string') mcp.type = 'string';
@@ -106,11 +104,13 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
           else if (jsType === 'boolean') mcp.type = 'boolean';
         }
       } else if (mcp.const !== undefined) {
-        // const-only schema: infer type from the const value
+        // const-only schema: infer type from the const value and forward as
+        // a single-element enum so the constraint is preserved in Gemini schema
         const jsType = typeof mcp.const;
         if (jsType === 'string') mcp.type = 'string';
         else if (jsType === 'number') mcp.type = 'number';
         else if (jsType === 'boolean') mcp.type = 'boolean';
+        mcp = {...mcp, enum: [mcp.const]};
       }
     }
 

@@ -404,8 +404,10 @@ describe('toGeminiSchema', () => {
     const schema = toGeminiSchema(input as unknown as MCPToolSchema);
 
     // const is not a Gemini Schema field; type is inferred from the const value
+    // and the value is forwarded as a single-element enum
     expect(schema).toEqual({
       type: Type.STRING,
+      enum: ['fixed-value'],
     });
   });
 
@@ -422,6 +424,7 @@ describe('toGeminiSchema', () => {
 
     expect(schema).toEqual({
       type: Type.NUMBER,
+      enum: ['42'],
     });
   });
 
