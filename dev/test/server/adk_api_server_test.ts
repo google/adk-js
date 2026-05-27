@@ -18,10 +18,11 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  Runner,
   Session,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
@@ -579,6 +580,34 @@ describe('AdkWebServer', () => {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
     });
+
+    it('should pass abortSignal to Runner.runAsync in /run', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.abortSignal).toBeDefined();
+      expect(runAsyncParams.abortSignal).toBeInstanceOf(AbortSignal);
+
+      spy.mockRestore();
+    });
   });
 
   describe('run_sse', () => {
@@ -690,6 +719,34 @@ describe('AdkWebServer', () => {
       } finally {
         agentLoader.getAgentFile = originalGetAgentFile;
       }
+    });
+
+    it('should pass abortSignal to Runner.runAsync in /run_sse', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run_sse', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.abortSignal).toBeDefined();
+      expect(runAsyncParams.abortSignal).toBeInstanceOf(AbortSignal);
+
+      spy.mockRestore();
     });
   });
 

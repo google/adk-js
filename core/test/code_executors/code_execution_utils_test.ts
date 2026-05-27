@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Language, Outcome} from '@google/genai';
+import {Content, Language, Outcome} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
   CodeExecutionLanguage,
@@ -137,7 +137,7 @@ describe('extractCodeAndTruncateContent', () => {
   });
 
   it('returns empty string when parts is undefined', () => {
-    const content = {role: 'model'} as any;
+    const content = {role: 'model'} as unknown as Content;
     expect(extractCodeAndTruncateContent(content, PYTHON_DELIMITERS)).toBe('');
   });
 
@@ -183,8 +183,12 @@ describe('extractCodeAndTruncateContent', () => {
     const result = extractCodeAndTruncateContent(content, PYTHON_DELIMITERS);
     expect(result).toBe('x = 1');
     // prefix text part should be present
-    const textParts = content.parts.filter((p) => p.text && !('executableCode' in p));
-    expect(textParts.some((p) => p.text!.includes('Here is the code:'))).toBe(true);
+    const textParts = content.parts.filter(
+      (p) => p.text && !('executableCode' in p),
+    );
+    expect(textParts.some((p) => p.text!.includes('Here is the code:'))).toBe(
+      true,
+    );
   });
 
   it('returns empty string when no code block found in text', () => {
@@ -232,10 +236,7 @@ describe('extractCodeAndTruncateContent', () => {
 
   it('handles multi-part text joined together', () => {
     const content = {
-      parts: [
-        {text: 'Part 1\n'},
-        {text: '```python\nmy_code()\n```'},
-      ],
+      parts: [{text: 'Part 1\n'}, {text: '```python\nmy_code()\n```'}],
       role: 'model',
     };
     const result = extractCodeAndTruncateContent(content, PYTHON_DELIMITERS);
@@ -257,7 +258,7 @@ describe('convertCodeExecutionParts', () => {
   });
 
   it('does nothing when parts is undefined', () => {
-    const content = {role: 'model'} as any;
+    const content = {role: 'model'} as unknown as Content;
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
     expect(content.parts).toBeUndefined();
   });
