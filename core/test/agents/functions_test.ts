@@ -132,6 +132,37 @@ describe('handleFunctionCallList', () => {
     });
   });
 
+  it('should wrap array responses into a {results: array} object', async () => {
+    const arrayTool = new FunctionTool({
+      name: 'arrayTool',
+      description: 'returns array',
+      parameters: z.object({}),
+      execute: async () => {
+        return ['item1', 'item2'];
+      },
+    });
+
+    const arrayFunctionCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'arrayTool',
+      args: {},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [arrayFunctionCall],
+      toolsDict: {'arrayTool': arrayTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
+      results: ['item1', 'item2'],
+    });
+  });
+
   it('should execute beforeToolCallback and return its result', async () => {
     const beforeToolCallback: SingleBeforeToolCallback = async () => {
       return {result: 'beforeToolCallback executed'};

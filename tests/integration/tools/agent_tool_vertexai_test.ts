@@ -4,16 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   AgentTool,
-  InMemoryMemoryService,
   LlmAgent,
   Runner,
+  VertexAiMemoryBankService,
   VertexAiSessionService,
 } from '@google/adk';
 import {FinishReason} from '@google/genai';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {
   GeminiWithMockResponses,
   RawGenerateContentResponse,
@@ -144,6 +145,13 @@ describe('AgentTool (Vertex AI)', () => {
           };
         },
       },
+      agentEnginesInternal: {
+        memories: {
+          createInternal: vi.fn().mockResolvedValue({done: true}),
+          generateInternal: vi.fn().mockResolvedValue({done: true}),
+          retrieveInternal: vi.fn().mockResolvedValue({retrievedMemories: []}),
+        },
+      },
     };
 
     const sessionService = new VertexAiSessionService({
@@ -151,7 +159,10 @@ describe('AgentTool (Vertex AI)', () => {
       location: 'us-west1',
       sessions: mockClient as unknown as Sessions,
     });
-    const memoryService = new InMemoryMemoryService();
+    const memoryService = new VertexAiMemoryBankService({
+      agentEngineId: '9208858483368132608',
+      client: mockClient as unknown as Client,
+    });
 
     const createdSession = await sessionService.createSession({
       appName:
