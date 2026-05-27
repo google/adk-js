@@ -116,14 +116,20 @@ export class AgentTool extends BaseTool {
     return declaration;
   }
 
-  override async runAsync({
+  /**
+   * Sets up the Runner and Session for sub-agent execution.
+   *
+   * Shared by {@link runAsync} and {@link runAsyncWithEvents}.
+   */
+  private async setupRunnerAndSession({
     args,
     toolContext,
-  }: RunAsyncToolRequest): Promise<unknown> {
-    if (this.skipSummarization) {
-      toolContext.actions.skipSummarization = true;
-    }
-
+  }: RunAsyncToolRequest): Promise<{
+    runner: Runner;
+    content: Content;
+    sessionUserId: string;
+    sessionId: string;
+  }> {
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
     const content: Content = {
       role: 'user',
@@ -158,15 +164,55 @@ export class AgentTool extends BaseTool {
       state: toolContext.state.toRecord(),
     });
 
+    return {
+      runner,
+      content,
+      sessionUserId: session.userId,
+      sessionId: session.id,
+    };
+  }
+
+  /**
+   * Builds the tool result from the last content event of the sub-agent.
+   *
+   * Excludes thought parts and applies the output schema (if any).
+   */
+  buildToolResultFromContent(lastContent: Content | undefined): unknown {
+    if (!lastContent?.parts?.length) {
+      return '';
+    }
+    const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
+    const mergedText = lastContent.parts
+      .filter((part) => !part.thought)
+      .map((part) => part.text)
+      .filter((text) => text)
+      .join('\n');
+    // TODO - b/425992518: In case of output schema, the output should be
+    // validated. Consider similar logic to one we have in Python ADK.
+    return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
+  }
+
+  override async runAsync({
+    args,
+    toolContext,
+  }: RunAsyncToolRequest): Promise<unknown> {
+    if (this.skipSummarization) {
+      toolContext.actions.skipSummarization = true;
+    }
+
+    const {runner, content, sessionUserId, sessionId} =
+      await this.setupRunnerAndSession({args, toolContext});
+
     if (toolContext.abortSignal?.aborted) {
       return '';
     }
 
     let lastEvent: Event | undefined;
     for await (const event of runner.runAsync({
-      userId: session.userId,
-      sessionId: session.id,
+      userId: sessionUserId,
+      sessionId,
       newMessage: content,
+      runConfig: toolContext.invocationContext.runConfig,
       abortSignal: toolContext.abortSignal,
     })) {
       if (toolContext.abortSignal?.aborted) {
@@ -180,20 +226,48 @@ export class AgentTool extends BaseTool {
       lastEvent = event;
     }
 
-    if (!lastEvent?.content?.parts?.length) {
-      return '';
+    return this.buildToolResultFromContent(lastEvent?.content);
+  }
+
+  /**
+   * Runs the wrapped agent and yields the sub-agent's events as they are
+   * produced, providing real-time visibility into sub-agent progress.
+   *
+   * Counterpart to {@link runAsync}; the caller is responsible for tracking
+   * the last content event and building the final tool result via
+   * {@link buildToolResultFromContent}.
+   */
+  async *runAsyncWithEvents({
+    args,
+    toolContext,
+  }: RunAsyncToolRequest): AsyncGenerator<Event> {
+    if (this.skipSummarization) {
+      toolContext.actions.skipSummarization = true;
     }
 
-    const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
-    // Exclude thoughts from the merged text.
-    const mergedText = lastEvent.content.parts
-      .filter((part) => !part.thought)
-      .map((part) => part.text)
-      .filter((text) => text)
-      .join('\n');
+    const {runner, content, sessionUserId, sessionId} =
+      await this.setupRunnerAndSession({args, toolContext});
 
-    // TODO - b/425992518: In case of output schema, the output should be
-    // validated. Consider similar logic to one we have in Python ADK.
-    return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
+    if (toolContext.abortSignal?.aborted) {
+      return;
+    }
+
+    for await (const event of runner.runAsync({
+      userId: sessionUserId,
+      sessionId,
+      newMessage: content,
+      runConfig: toolContext.invocationContext.runConfig,
+      abortSignal: toolContext.abortSignal,
+    })) {
+      if (toolContext.abortSignal?.aborted) {
+        return;
+      }
+
+      if (event.actions.stateDelta) {
+        toolContext.state.update(event.actions.stateDelta);
+      }
+
+      yield event;
+    }
   }
 }

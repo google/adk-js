@@ -49,7 +49,7 @@ import {
   generateAuthEvent,
   generateRequestConfirmationEvent,
   getLongRunningFunctionCalls,
-  handleFunctionCallsAsync,
+  handleFunctionCallsStreamingAsync,
   populateClientFunctionCallId,
 } from './functions.js';
 
@@ -907,13 +907,30 @@ export class LlmAgent extends BaseAgent {
     // Call functions
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
-    const functionResponseEvent = await handleFunctionCallsAsync({
+    // Use the streaming variant so events from AgentTool sub-agents are
+    // surfaced live (Issue parity with adk-python PR #3991). The terminal
+    // event of the generator is always the merged function-response event;
+    // hold the latest event in a one-step buffer so we yield every
+    // intermediate sub-agent event (including the sub-agent's own tool
+    // responses) and capture only the final one as the response.
+    let functionResponseEvent: Event | null = null;
+    let pendingEvent: Event | null = null;
+    for await (const event of handleFunctionCallsStreamingAsync({
       invocationContext: invocationContext,
       functionCallEvent: mergedEvent,
       toolsDict: llmRequest.toolsDict,
       beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
       afterToolCallbacks: this.canonicalAfterToolCallbacks,
-    });
+    })) {
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      if (pendingEvent) {
+        yield pendingEvent;
+      }
+      pendingEvent = event;
+    }
+    functionResponseEvent = pendingEvent;
 
     if (!functionResponseEvent || invocationContext.abortSignal?.aborted) {
       return;
