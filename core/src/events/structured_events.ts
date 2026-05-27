@@ -15,17 +15,30 @@ import {Event, isFinalResponse} from './event.js';
 
 /**
  * The types of events that can be parsed from a raw Event.
+ *
+ * Each value corresponds to one category of structured output that
+ * {@link toStructuredEvents} may produce from a raw {@link Event}.
  */
 export enum EventType {
+  /** A reasoning trace (thought) emitted by the model. */
   THOUGHT = 'thought',
+  /** A text delta intended for the end user. */
   CONTENT = 'content',
+  /** A request from the model to execute a tool (function call). */
   TOOL_CALL = 'tool_call',
+  /** The result returned by a tool execution (function response). */
   TOOL_RESULT = 'tool_result',
+  /** A request from the model to execute code. */
   CALL_CODE = 'call_code',
+  /** The result of a code execution. */
   CODE_RESULT = 'code_result',
+  /** A runtime error signalled via `event.errorCode`. */
   ERROR = 'error',
+  /** A generic activity or status update. */
   ACTIVITY = 'activity',
+  /** A request for the user to confirm one or more tool calls. */
   TOOL_CONFIRMATION = 'tool_confirmation',
+  /** The agent has produced its final response for this turn. */
   FINISHED = 'finished',
 }
 

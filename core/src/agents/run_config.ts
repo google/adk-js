@@ -101,6 +101,21 @@ export interface RunConfig {
   pauseOnToolCalls?: boolean;
 }
 
+/**
+ * Creates a {@link RunConfig} with production-safe defaults.
+ *
+ * Default values applied when the corresponding field is absent from `params`:
+ * - `saveInputBlobsAsArtifacts` → `false`
+ * - `supportCfc` → `false`
+ * - `enableAffectiveDialog` → `false`
+ * - `streamingMode` → {@link StreamingMode.NONE}
+ * - `maxLlmCalls` → `500` (validated via `validateMaxLlmCalls`)
+ * - `pauseOnToolCalls` → `false`
+ *
+ * @param params - Optional partial {@link RunConfig} overriding defaults.
+ * @returns A merged {@link RunConfig} object.
+ * @throws {Error} When `params.maxLlmCalls` exceeds `Number.MAX_SAFE_INTEGER`.
+ */
 export function createRunConfig(params: Partial<RunConfig> = {}) {
   return {
     saveInputBlobsAsArtifacts: false,
