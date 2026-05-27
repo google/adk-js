@@ -803,7 +803,7 @@ export class AdkApiServer {
     await this.init();
 
     return new Promise((resolve, reject) => {
-      this.server = this.app.listen(this.port, async () => {
+      this.server = this.app.listen(this.port, this.host, async () => {
         try {
           if (this.a2a) {
             await this.initA2A();

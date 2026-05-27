@@ -895,5 +895,46 @@ describe('AdkWebServer', () => {
         await duplicateServer.stop().catch(() => {});
       }
     });
+
+    it('should default to listening on localhost', async () => {
+      const defaultServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await defaultServer.start();
+      try {
+        const address = (
+          defaultServer as unknown as {
+            server: {address: () => {address: string}};
+          }
+        ).server.address();
+        expect(address.address).toMatch(/127\.0\.0\.1|::1|localhost/);
+      } finally {
+        await defaultServer.stop();
+      }
+    });
+
+    it('should listen on specified host', async () => {
+      const specificServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        host: '127.0.0.1',
+      });
+      await specificServer.start();
+      try {
+        const address = (
+          specificServer as unknown as {
+            server: {address: () => {address: string}};
+          }
+        ).server.address();
+        expect(address.address).toBe('127.0.0.1');
+      } finally {
+        await specificServer.stop();
+      }
+    });
   });
 });
