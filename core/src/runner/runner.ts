@@ -47,10 +47,30 @@ export interface RunnerConfig {
    * The agent to run.
    */
   agent: BaseAgent;
+
+  /**
+   * An optional list of plugins to apply globally across all agents.
+   */
   plugins?: BasePlugin[];
+
+  /**
+   * An optional service for storing and retrieving artifacts.
+   */
   artifactService?: BaseArtifactService;
+
+  /**
+   * The service for managing sessions.
+   */
   sessionService: BaseSessionService;
+
+  /**
+   * An optional service for storing and querying agent memory.
+   */
   memoryService?: BaseMemoryService;
+
+  /**
+   * An optional service for managing authentication credentials.
+   */
   credentialService?: BaseCredentialService;
 }
 
@@ -74,6 +94,31 @@ export function isRunner(obj: unknown): obj is Runner {
   );
 }
 
+/**
+ * Orchestrates agent execution for a given application.
+ *
+ * The Runner manages the full lifecycle of an agent invocation: it loads the
+ * session, invokes plugin callbacks, runs the root agent, and yields the
+ * resulting events. Use {@link InMemoryRunner} for quick prototyping without
+ * external services.
+ *
+ * Example:
+ * ```typescript
+ * const runner = new Runner({
+ *   appName: 'my_app',
+ *   agent: myAgent,
+ *   sessionService: new InMemorySessionService(),
+ * });
+ *
+ * for await (const event of runner.runAsync({
+ *   userId: 'user1',
+ *   sessionId: 'session1',
+ *   newMessage: {parts: [{text: 'Hello'}]},
+ * })) {
+ *   console.log(event);
+ * }
+ * ```
+ */
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
@@ -84,6 +129,11 @@ export class Runner {
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
 
+  /**
+   * Creates a new Runner instance.
+   *
+   * @param input The configuration for the runner.
+   */
   constructor(input: RunnerConfig) {
     this.appName = input.appName;
     this.agent = input.agent;
