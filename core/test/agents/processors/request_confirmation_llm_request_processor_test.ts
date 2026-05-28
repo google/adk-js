@@ -175,9 +175,8 @@ describe('RequestConfirmationLlmRequestProcessor', () => {
   });
 
   it('should yield event when handleFunctionCallList returns an event', async () => {
-    const {handleFunctionCallList} = await import(
-      '../../../src/agents/functions.js'
-    );
+    const {handleFunctionCallList} =
+      await import('../../../src/agents/functions.js');
     const mockFunctionCallList = vi.mocked(handleFunctionCallList);
 
     const fakeResponseEvent = createEvent({
@@ -185,7 +184,15 @@ describe('RequestConfirmationLlmRequestProcessor', () => {
       author: 'test_agent',
       content: {
         role: 'model',
-        parts: [{functionResponse: {id: 'original-fc-1', name: 'my_tool', response: {result: 'ok'}}}],
+        parts: [
+          {
+            functionResponse: {
+              id: 'original-fc-1',
+              name: 'my_tool',
+              response: {result: 'ok'},
+            },
+          },
+        ],
       },
     });
     mockFunctionCallList.mockResolvedValueOnce(fakeResponseEvent);
@@ -250,9 +257,8 @@ describe('RequestConfirmationLlmRequestProcessor', () => {
   });
 
   it('should yield no events when handleFunctionCallList returns null', async () => {
-    const {handleFunctionCallList} = await import(
-      '../../../src/agents/functions.js'
-    );
+    const {handleFunctionCallList} =
+      await import('../../../src/agents/functions.js');
     const mockFunctionCallList = vi.mocked(handleFunctionCallList);
     mockFunctionCallList.mockResolvedValueOnce(null);
 

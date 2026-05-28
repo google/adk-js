@@ -194,6 +194,11 @@ export class AgentFile {
           'pg-query-stream',
           'tedious',
           'libsql',
+          // Optional peer dependencies of vite and eslint that are not
+          // installed and MUST NOT be bundled.
+          'lightningcss',
+          'jiti',
+          'jiti/package.json',
         ],
       });
 
