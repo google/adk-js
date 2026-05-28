@@ -4,11 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import {
   AgentRegistry,
   AgentRegistrySingleMCPToolset,
+  Event,
   GCP_MCP_SERVER_DESTINATION_ID,
   LlmAgent,
   ReadonlyContext,
@@ -82,7 +81,11 @@ describe('AgentRegistry Integration E2E', () => {
     };
 
     // 1. Stub the REST fetch responses from Google Cloud Agent Registry API
-    (global.fetch as any).mockImplementation(async (url: string) => {
+    (
+      global.fetch as unknown as {
+        mockImplementation: (impl: (url: string) => Promise<unknown>) => void;
+      }
+    ).mockImplementation(async (url: string) => {
       if (url.includes('mcpServers/billing')) {
         return {
           ok: true,
@@ -119,9 +122,11 @@ describe('AgentRegistry Integration E2E', () => {
     expect(tools).toHaveLength(1);
     expect(tools[0].name).toBe('Billing_Server_retrieve_billing_data');
 
-    const toolAsAny = tools[0] as any;
-    expect(toolAsAny.customMetadata).toBeDefined();
-    expect(toolAsAny.customMetadata[GCP_MCP_SERVER_DESTINATION_ID]).toBe(
+    const toolWrapper = tools[0] as unknown as {
+      customMetadata: Record<string, unknown>;
+    };
+    expect(toolWrapper.customMetadata).toBeDefined();
+    expect(toolWrapper.customMetadata[GCP_MCP_SERVER_DESTINATION_ID]).toBe(
       'urn:mcp:gcp:billing-server',
     );
 
@@ -152,7 +157,7 @@ describe('AgentRegistry Integration E2E', () => {
     const {run} = await createRunner(agent);
 
     // 5. Execute the integrated workflow session
-    const events: any[] = [];
+    const events: Event[] = [];
     for await (const event of run('Check my billing status')) {
       events.push(event);
     }
@@ -160,7 +165,7 @@ describe('AgentRegistry Integration E2E', () => {
     // Verify the flow executed and terminated cleanly
     expect(events.length).toBeGreaterThan(0);
     const finalEvent = events[events.length - 1];
-    expect(finalEvent.content.parts[0].text).toBe(
+    expect(finalEvent.content?.parts?.[0]?.text).toBe(
       'Retrieved GCP billing info: $0.00',
     );
   });
