@@ -228,6 +228,7 @@ export function createProgram(): Command {
         await server.start();
       } catch (error) {
         logger.error('Error starting web server:', (error as Error).message);
+        process.exit(1);
       }
     });
 
@@ -268,6 +269,7 @@ export function createProgram(): Command {
         await server.start();
       } catch (error) {
         logger.error('Error starting API server:', (error as Error).message);
+        process.exit(1);
       }
     });
 

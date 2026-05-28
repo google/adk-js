@@ -14,6 +14,8 @@ import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
+import {State} from '../sessions/state.js';
+
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 import {ForwardingArtifactService} from './forwarding_artifact_service.js';
 
@@ -120,9 +122,13 @@ export class AgentTool extends BaseTool {
     args,
     toolContext,
   }: RunAsyncToolRequest): Promise<unknown> {
-    if (this.skipSummarization) {
-      toolContext.actions.skipSummarization = true;
-    }
+    // Note: skipSummarization is intentionally not propagated to
+    // toolContext.actions here. Setting it on the shared EventActions would
+    // leak onto the tool-response event returned to the parent agent, causing
+    // isFinalResponse() to treat that event as terminal and prematurely
+    // terminate the parent's run loop. The sub-agent's output is already
+    // returned verbatim below, which is the intended effect of
+    // skipSummarization.
 
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
     const content: Content = {
@@ -174,7 +180,14 @@ export class AgentTool extends BaseTool {
       }
 
       if (event.actions.stateDelta) {
-        toolContext.state.update(event.actions.stateDelta);
+        const filteredDelta = Object.fromEntries(
+          Object.entries(event.actions.stateDelta).filter(
+            ([key]) => !key.startsWith(State.TEMP_PREFIX),
+          ),
+        );
+        if (Object.keys(filteredDelta).length > 0) {
+          toolContext.state.update(filteredDelta);
+        }
       }
 
       lastEvent = event;
