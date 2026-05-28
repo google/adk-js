@@ -553,6 +553,240 @@ describe('VertexAiSessionService', () => {
         new Date('2026-04-09T13:00:00Z').getTime(),
       );
     });
+
+    it('returns pagination metadata with page=1 and totalPages=1 for non-empty result', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {name: 'projects/p/locations/l/sessions/s1', userId: 'testUser'},
+          {name: 'projects/p/locations/l/sessions/s2', userId: 'testUser'},
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(2);
+      expect(result.totalItems).toBe(2);
+      expect(result.totalPages).toBe(1);
+    });
+
+    it('returns pagination metadata with totalPages=0 for empty result', async () => {
+      mockClient.listInternal.mockResolvedValue({});
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      expect(result.sessions).toEqual([]);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(0);
+      expect(result.totalItems).toBe(0);
+      expect(result.totalPages).toBe(0);
+    });
+
+    it('aggregates multi-page API responses into a single result with correct metadata', async () => {
+      mockClient.listInternal
+        .mockResolvedValueOnce({
+          sessions: [
+            {name: 'projects/p/locations/l/sessions/s1', userId: 'testUser'},
+          ],
+          nextPageToken: 'token-page-2',
+        })
+        .mockResolvedValueOnce({
+          sessions: [
+            {name: 'projects/p/locations/l/sessions/s2', userId: 'testUser'},
+            {name: 'projects/p/locations/l/sessions/s3', userId: 'testUser'},
+          ],
+        });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      expect(result.sessions).toHaveLength(3);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(3);
+      expect(result.totalItems).toBe(3);
+      expect(result.totalPages).toBe(1);
+    });
+
+    it('order asc sorts sessions by lastUpdateTime ascending', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s3',
+            userId: 'testUser',
+            updateTime: '2026-01-03T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            updateTime: '2026-01-01T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s2',
+            userId: 'testUser',
+            updateTime: '2026-01-02T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+        order: 'asc',
+      });
+
+      expect(result.sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+    });
+
+    it('order desc sorts sessions by lastUpdateTime descending', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            updateTime: '2026-01-01T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s3',
+            userId: 'testUser',
+            updateTime: '2026-01-03T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s2',
+            userId: 'testUser',
+            updateTime: '2026-01-02T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+        order: 'desc',
+      });
+
+      expect(result.sessions.map((s) => s.id)).toEqual(['s3', 's2', 's1']);
+    });
+
+    it('limit returns correct slice and metadata', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            updateTime: '2026-01-01T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s2',
+            userId: 'testUser',
+            updateTime: '2026-01-02T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s3',
+            userId: 'testUser',
+            updateTime: '2026-01-03T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+        limit: 2,
+        order: 'asc',
+      });
+
+      expect(result.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+      expect(result.totalItems).toBe(3);
+      expect(result.totalPages).toBe(2);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(2);
+    });
+
+    it('page + limit returns correct slice', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            updateTime: '2026-01-01T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s2',
+            userId: 'testUser',
+            updateTime: '2026-01-02T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s3',
+            userId: 'testUser',
+            updateTime: '2026-01-03T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s4',
+            userId: 'testUser',
+            updateTime: '2026-01-04T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s5',
+            userId: 'testUser',
+            updateTime: '2026-01-05T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+        page: 2,
+        limit: 2,
+        order: 'asc',
+      });
+
+      expect(result.sessions.map((s) => s.id)).toEqual(['s3', 's4']);
+      expect(result.page).toBe(2);
+      expect(result.limit).toBe(2);
+      expect(result.totalItems).toBe(5);
+      expect(result.totalPages).toBe(3);
+    });
+
+    it('offset skips sessions correctly', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            updateTime: '2026-01-01T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s2',
+            userId: 'testUser',
+            updateTime: '2026-01-02T00:00:00Z',
+          },
+          {
+            name: 'projects/p/locations/l/sessions/s3',
+            userId: 'testUser',
+            updateTime: '2026-01-03T00:00:00Z',
+          },
+        ],
+      });
+
+      const result = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+        limit: 2,
+        offset: 1,
+        order: 'asc',
+      });
+
+      expect(result.sessions.map((s) => s.id)).toEqual(['s2', 's3']);
+    });
   });
 
   describe('deleteSession', () => {

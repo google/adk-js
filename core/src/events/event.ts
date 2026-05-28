@@ -197,6 +197,7 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'actions.requestedAuthConfigs',
   'actions.requestedToolConfirmations',
   'actions.customMetadata',
+  'customMetadata',
   'content.parts.functionCall.args',
   'content.parts.functionResponse.response',
 ];
@@ -215,6 +216,7 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'actions.requested_auth_configs',
   'actions.requested_tool_confirmations',
   'actions.custom_metadata',
+  'custom_metadata',
   'content.parts.function_call.args',
   'content.parts.function_response.response',
 ];
