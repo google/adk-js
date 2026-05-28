@@ -182,7 +182,6 @@ export class AdkApiServer {
       );
     }
 
-    app.use(express.urlencoded({limit: '50mb', extended: true}));
     app.use(
       express.json({
         limit: '50mb',
@@ -718,6 +717,18 @@ export class AdkApiServer {
         return;
       }
 
+      const abortController = new AbortController();
+      let responseCompleted = false;
+
+      req.on('close', () => {
+        if (!responseCompleted) {
+          this.logger.info(
+            `HTTP connection closed. Aborting agent execution for session ${sessionId}`,
+          );
+          abortController.abort();
+        }
+      });
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
@@ -729,10 +740,12 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           events.push(e);
         }
 
+        responseCompleted = true;
         res.json(events);
       } catch (e: unknown) {
         const error = `Failed to run agent: ${e}`;
@@ -760,6 +773,18 @@ export class AdkApiServer {
         return;
       }
 
+      const abortController = new AbortController();
+      let responseCompleted = false;
+
+      req.on('close', () => {
+        if (!responseCompleted) {
+          this.logger.info(
+            `HTTP connection closed. Aborting agent SSE execution for session ${sessionId}`,
+          );
+          abortController.abort();
+        }
+      });
+
       try {
         await using agentFile = await this.agentLoader.getAgentFile(appName);
         const agent = await agentFile.load();
@@ -778,17 +803,24 @@ export class AdkApiServer {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
           stateDelta,
+          abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
         }
 
+        responseCompleted = true;
         res.end();
       } catch (e: unknown) {
         if (res.headersSent) {
-          const error = (e as Error).message;
-
-          res.end(`data: ${JSON.stringify({error})}\n\n`);
-          this.logger.error(error);
+          if (!responseCompleted) {
+            const error = (e as Error).message;
+            this.logger.error(error);
+            try {
+              res.end(`data: ${JSON.stringify({error})}\n\n`);
+            } catch {
+              // Ignore errors from res.end when the response has already been sent.
+            }
+          }
         } else {
           const error = `Failed to run agent: ${e}`;
 
