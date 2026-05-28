@@ -35,10 +35,22 @@ async function getUserInput(prompt: string): Promise<string> {
   });
 
   return new Promise<string>((resolve) => {
-    rl.question(prompt, (answer) => {
+    let settled = false;
+    const finish = (answer: string) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       rl.close();
       resolve(answer);
-    });
+    };
+
+    rl.once('close', () => finish('exit'));
+    if (process.stdin.readableEnded || process.stdin.destroyed) {
+      finish('exit');
+      return;
+    }
+    rl.question(prompt, finish);
   });
 }
 
