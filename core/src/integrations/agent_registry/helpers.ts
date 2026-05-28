@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export function _isGoogleApi(url: string): boolean {
+export function isGoogleApi(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
@@ -16,7 +16,7 @@ export function _isGoogleApi(url: string): boolean {
   }
 }
 
-export function _cleanName(name: string): string {
+export function cleanName(name: string): string {
   let clean = name.replace(/[^a-zA-Z0-9_]/g, '_');
   clean = clean.replace(/_+/g, '_');
   clean = clean.replace(/^_+|_+$/g, '');

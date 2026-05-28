@@ -8,11 +8,11 @@
 
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
-  _cleanName,
-  _isGoogleApi,
   AgentRegistry,
   AgentRegistrySingleMCPToolset,
+  cleanName,
   GCP_MCP_SERVER_DESTINATION_ID,
+  isGoogleApi,
   ProtocolType,
   ReadonlyContext,
   RemoteA2AAgent,
@@ -65,26 +65,24 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
 });
 
 describe('AgentRegistry Helpers', () => {
-  describe('_isGoogleApi', () => {
+  describe('isGoogleApi', () => {
     it('should return true for Google APIs', () => {
-      expect(_isGoogleApi('https://agentregistry.googleapis.com/v1')).toBe(
-        true,
-      );
-      expect(_isGoogleApi('https://googleapis.com')).toBe(true);
+      expect(isGoogleApi('https://agentregistry.googleapis.com/v1')).toBe(true);
+      expect(isGoogleApi('https://googleapis.com')).toBe(true);
     });
 
     it('should return false for non-Google APIs', () => {
-      expect(_isGoogleApi('https://example.com')).toBe(false);
-      expect(_isGoogleApi('invalid-url')).toBe(false);
+      expect(isGoogleApi('https://example.com')).toBe(false);
+      expect(isGoogleApi('invalid-url')).toBe(false);
     });
   });
 
-  describe('_cleanName', () => {
+  describe('cleanName', () => {
     it('should clean string to valid JS identifiers', () => {
-      expect(_cleanName('my-agent-name')).toBe('my_agent_name');
-      expect(_cleanName('agent@123')).toBe('agent_123');
-      expect(_cleanName('__agent__')).toBe('agent');
-      expect(_cleanName('123agent')).toBe('_123agent');
+      expect(cleanName('my-agent-name')).toBe('my_agent_name');
+      expect(cleanName('agent@123')).toBe('agent_123');
+      expect(cleanName('__agent__')).toBe('agent');
+      expect(cleanName('123agent')).toBe('_123agent');
     });
   });
 });
@@ -117,9 +115,9 @@ describe('AgentRegistry', () => {
     });
   });
 
-  describe('_getAuthHeaders', () => {
+  describe('getAuthHeaders', () => {
     it('should return authorization headers and quota project ID', async () => {
-      const headers = await registry._getAuthHeaders();
+      const headers = await registry.getAuthHeaders();
       expect(headers['Authorization']).toBe('Bearer fake-token');
       expect(headers['Content-Type']).toBe('application/json');
       expect(headers['x-goog-user-project']).toBe('quota-project-123');
@@ -129,7 +127,7 @@ describe('AgentRegistry', () => {
       mockClientQuotaProjectId = undefined;
       mockQuotaProjectId = 'quota-project-auth';
       try {
-        const headers = await registry._getAuthHeaders();
+        const headers = await registry.getAuthHeaders();
         expect(headers['x-goog-user-project']).toBe('quota-project-auth');
       } finally {
         mockClientQuotaProjectId = 'quota-project-123';
@@ -141,7 +139,7 @@ describe('AgentRegistry', () => {
       mockClientQuotaProjectId = undefined;
       mockQuotaProjectId = undefined;
       try {
-        const headers = await registry._getAuthHeaders();
+        const headers = await registry.getAuthHeaders();
         expect(headers['x-goog-user-project']).toBeUndefined();
       } finally {
         mockClientQuotaProjectId = 'quota-project-123';
@@ -150,7 +148,7 @@ describe('AgentRegistry', () => {
     });
   });
 
-  describe('_makeRequest', () => {
+  describe('makeRequest', () => {
     it('should fetch and return JSON data', async () => {
       const mockResponse = {data: 'test'};
       (global.fetch as any).mockResolvedValue({
@@ -158,7 +156,7 @@ describe('AgentRegistry', () => {
         json: vi.fn().mockResolvedValue(mockResponse),
       });
 
-      const res = await registry._makeRequest('mcpServers', {filter: 'name'});
+      const res = await registry.makeRequest('mcpServers', {filter: 'name'});
       expect(res).toEqual(mockResponse);
       expect(global.fetch).toHaveBeenCalledWith(
         'https://agentregistry.googleapis.com/v1alpha/projects/test-project/locations/global/mcpServers?filter=name',
@@ -177,7 +175,7 @@ describe('AgentRegistry', () => {
         json: vi.fn().mockResolvedValue({}),
       });
 
-      await registry._makeRequest(
+      await registry.makeRequest(
         'projects/other-p/locations/other-l/endpoints/e',
       );
       expect(global.fetch).toHaveBeenCalledWith(
@@ -193,20 +191,20 @@ describe('AgentRegistry', () => {
         text: vi.fn().mockResolvedValue('Not Found'),
       });
 
-      await expect(registry._makeRequest('mcpServers')).rejects.toThrow(
+      await expect(registry.makeRequest('mcpServers')).rejects.toThrow(
         'API request failed with status 404: Not Found',
       );
     });
 
     it('should throw wrapped error on fetch error', async () => {
       (global.fetch as any).mockRejectedValue(new Error('Network Error'));
-      await expect(registry._makeRequest('mcpServers')).rejects.toThrow(
+      await expect(registry.makeRequest('mcpServers')).rejects.toThrow(
         'API request failed: Network Error',
       );
     });
   });
 
-  describe('_getConnectionUri', () => {
+  describe('getConnectionUri', () => {
     it('should return connection details matching protocol type and binding', () => {
       const resource = {
         protocols: [
@@ -220,7 +218,7 @@ describe('AgentRegistry', () => {
         ],
       };
 
-      const connection = registry._getConnectionUri(resource, {
+      const connection = registry.getConnectionUri(resource, {
         protocolType: ProtocolType.A2A_AGENT,
       });
       expect(connection.url).toBe('https://agent-endpoint.com');
@@ -233,14 +231,14 @@ describe('AgentRegistry', () => {
         interfaces: [{url: 'https://mcp.com', protocolBinding: 'JSONRPC'}],
       };
 
-      const connection = registry._getConnectionUri(resource);
+      const connection = registry.getConnectionUri(resource);
       expect(connection.url).toBe('https://mcp.com');
       expect(connection.protocolBinding).toBe('JSONRPC');
     });
 
     it('should return empty if no match', () => {
       const resource = {};
-      const connection = registry._getConnectionUri(resource);
+      const connection = registry.getConnectionUri(resource);
       expect(connection.url).toBeUndefined();
     });
 
@@ -248,7 +246,7 @@ describe('AgentRegistry', () => {
       const resource = {
         interfaces: [{protocolBinding: 'JSONRPC'}],
       };
-      const connection = registry._getConnectionUri(resource);
+      const connection = registry.getConnectionUri(resource);
       expect(connection.url).toBeUndefined();
     });
 
@@ -260,7 +258,7 @@ describe('AgentRegistry', () => {
           },
         ],
       };
-      const connection = registry._getConnectionUri(resource, {
+      const connection = registry.getConnectionUri(resource, {
         protocolType: ProtocolType.A2A_AGENT,
       });
       expect(connection.url).toBeUndefined();
@@ -269,14 +267,14 @@ describe('AgentRegistry', () => {
 
   describe('MCP Server Methods', () => {
     it('should list MCP servers with params', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({mcpServers: []});
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({mcpServers: []});
       const res = await registry.listMcpServers({
         filterStr: 'name',
         pageSize: 10,
         pageToken: 'token',
       });
       expect(res).toEqual({mcpServers: []});
-      expect(registry._makeRequest).toHaveBeenCalledWith('mcpServers', {
+      expect(registry.makeRequest).toHaveBeenCalledWith('mcpServers', {
         filter: 'name',
         pageSize: '10',
         pageToken: 'token',
@@ -284,10 +282,10 @@ describe('AgentRegistry', () => {
     });
 
     it('should get MCP server details', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({name: 'mcp-1'});
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({name: 'mcp-1'});
       const res = await registry.getMcpServer('mcpServers/mcp-1');
       expect(res).toEqual({name: 'mcp-1'});
-      expect(registry._makeRequest).toHaveBeenCalledWith('mcpServers/mcp-1');
+      expect(registry.makeRequest).toHaveBeenCalledWith('mcpServers/mcp-1');
     });
 
     it('should get MCP toolset with combined headers and destination ID', async () => {
@@ -339,7 +337,7 @@ describe('AgentRegistry', () => {
       };
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -369,7 +367,7 @@ describe('AgentRegistry', () => {
       };
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -399,7 +397,7 @@ describe('AgentRegistry', () => {
       };
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -422,7 +420,7 @@ describe('AgentRegistry', () => {
       };
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -448,7 +446,7 @@ describe('AgentRegistry', () => {
       };
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -465,7 +463,7 @@ describe('AgentRegistry', () => {
       const bindingsData = {};
 
       vi.spyOn(registry, 'getMcpServer').mockResolvedValue(serverDetails);
-      vi.spyOn(registry, '_makeRequest').mockImplementation(async (path) => {
+      vi.spyOn(registry, 'makeRequest').mockImplementation(async (path) => {
         if (path === 'bindings') return bindingsData;
         return {};
       });
@@ -477,13 +475,13 @@ describe('AgentRegistry', () => {
 
   describe('Endpoint Methods', () => {
     it('should list endpoints with page token', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({endpoints: []});
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({endpoints: []});
       await registry.listEndpoints({
         pageToken: 'token-789',
         pageSize: 5,
         filterStr: 'test',
       });
-      expect(registry._makeRequest).toHaveBeenCalledWith('endpoints', {
+      expect(registry.makeRequest).toHaveBeenCalledWith('endpoints', {
         filter: 'test',
         pageSize: '5',
         pageToken: 'token-789',
@@ -491,12 +489,12 @@ describe('AgentRegistry', () => {
     });
 
     it('should get endpoint directly', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({
         name: 'endpoints/ep-1',
       });
       const res = await registry.getEndpoint('endpoints/ep-1');
       expect(res.name).toBe('endpoints/ep-1');
-      expect(registry._makeRequest).toHaveBeenCalledWith('endpoints/ep-1');
+      expect(registry.makeRequest).toHaveBeenCalledWith('endpoints/ep-1');
     });
 
     it('should get model name from endpoint Connection URI', async () => {
@@ -543,9 +541,9 @@ describe('AgentRegistry', () => {
 
   describe('Agent Methods', () => {
     it('should list agents', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({agents: []});
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({agents: []});
       await registry.listAgents();
-      expect(registry._makeRequest).toHaveBeenCalledWith('agents', {});
+      expect(registry.makeRequest).toHaveBeenCalledWith('agents', {});
     });
 
     it('should construct RemoteA2AAgent from agent card content directly', async () => {
@@ -634,23 +632,23 @@ describe('AgentRegistry', () => {
     });
 
     it('should get agent info directly', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({
         displayName: 'AgentName',
       });
       const res = await registry.getAgentInfo('agents/agent-1');
       expect(res.displayName).toBe('AgentName');
-      expect(registry._makeRequest).toHaveBeenCalledWith('agents/agent-1');
+      expect(registry.makeRequest).toHaveBeenCalledWith('agents/agent-1');
     });
 
     it('should list agents with all parameters', async () => {
-      vi.spyOn(registry, '_makeRequest').mockResolvedValue({agents: []});
+      vi.spyOn(registry, 'makeRequest').mockResolvedValue({agents: []});
       const res = await registry.listAgents({
         filterStr: 'active',
         pageSize: 20,
         pageToken: 'token123',
       });
       expect(res).toEqual({agents: []});
-      expect(registry._makeRequest).toHaveBeenCalledWith('agents', {
+      expect(registry.makeRequest).toHaveBeenCalledWith('agents', {
         filter: 'active',
         pageSize: '20',
         pageToken: 'token123',
@@ -853,7 +851,7 @@ describe('AgentRegistry', () => {
   });
 
   describe('Edge cases for auth headers and connection URI filters', () => {
-    it('should throw error if getClient throws an error in _getAuthHeaders', async () => {
+    it('should throw error if getClient throws an error in getAuthHeaders', async () => {
       shouldAuthThrow = true;
 
       const badRegistry = new AgentRegistry({
@@ -862,7 +860,7 @@ describe('AgentRegistry', () => {
       });
 
       try {
-        await expect(badRegistry._getAuthHeaders()).rejects.toThrow(
+        await expect(badRegistry.getAuthHeaders()).rejects.toThrow(
           'Failed to refresh Google Cloud credentials: Auth error',
         );
       } finally {
@@ -870,7 +868,7 @@ describe('AgentRegistry', () => {
       }
     });
 
-    it('should skip protocol if type does not match in _getConnectionUri', () => {
+    it('should skip protocol if type does not match in getConnectionUri', () => {
       const resource = {
         protocols: [
           {
@@ -882,13 +880,13 @@ describe('AgentRegistry', () => {
         ],
       };
 
-      const connection = registry._getConnectionUri(resource, {
+      const connection = registry.getConnectionUri(resource, {
         protocolType: ProtocolType.A2A_AGENT,
       });
       expect(connection.url).toBeUndefined();
     });
 
-    it('should skip interface if protocolBinding does not match in _getConnectionUri', () => {
+    it('should skip interface if protocolBinding does not match in getConnectionUri', () => {
       const resource = {
         protocols: [
           {
@@ -898,7 +896,7 @@ describe('AgentRegistry', () => {
         ],
       };
 
-      const connection = registry._getConnectionUri(resource, {
+      const connection = registry.getConnectionUri(resource, {
         protocolType: ProtocolType.A2A_AGENT,
         protocolBinding: 'HTTP+JSON',
       });

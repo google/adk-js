@@ -19,7 +19,7 @@ import {AuthScheme} from '../../auth/auth_schemes.js';
 import {StreamableHTTPConnectionParams} from '../../tools/mcp/mcp_session_manager.js';
 import {logger} from '../../utils/logger.js';
 import {AgentRegistrySingleMCPToolset} from './agent_registry_mcp_toolset.js';
-import {_cleanName, _isGoogleApi} from './helpers.js';
+import {cleanName, isGoogleApi} from './helpers.js';
 import {
   AGENT_REGISTRY_BASE_URL,
   AgentInfo,
@@ -89,7 +89,7 @@ export class AgentRegistry {
    * Automatically caches, fetches, and handles refreshing expired OAuth tokens.
    * Injects the billing/quota project identifier `x-goog-user-project` if present.
    */
-  async _getAuthHeaders(): Promise<Record<string, string>> {
+  async getAuthHeaders(): Promise<Record<string, string>> {
     try {
       const client = await this.auth.getClient();
       const headers = await client.getRequestHeaders(
@@ -134,7 +134,7 @@ export class AgentRegistry {
    * Helper function to execute HTTP GET requests against the Agent Registry API.
    * Handles path resolution, search query params compilation, and auth headers fetching.
    */
-  async _makeRequest<T = unknown>(
+  async makeRequest<T = unknown>(
     path: string,
     params?: Record<string, string>,
   ): Promise<T> {
@@ -152,7 +152,7 @@ export class AgentRegistry {
     }
 
     try {
-      const headers = await this._getAuthHeaders();
+      const headers = await this.getAuthHeaders();
       const res = await fetch(url, {
         method: 'GET',
         headers,
@@ -177,7 +177,7 @@ export class AgentRegistry {
    * Parses connection interfaces list from registry metadata and returns the first match
    * corresponding to requested protocol types and binding options.
    */
-  _getConnectionUri(
+  getConnectionUri(
     resourceDetails: {
       interfaces?: Array<{url?: string; protocolBinding?: string}>;
       protocols?: Array<{
@@ -242,11 +242,11 @@ export class AgentRegistry {
     if (options?.pageToken) {
       params['pageToken'] = options.pageToken;
     }
-    return this._makeRequest<ListMcpServersResponse>('mcpServers', params);
+    return this.makeRequest<ListMcpServersResponse>('mcpServers', params);
   }
 
   async getMcpServer(name: string): Promise<McpServer> {
-    return this._makeRequest<McpServer>(name);
+    return this.makeRequest<McpServer>(name);
   }
 
   async getMcpToolset(
@@ -258,15 +258,15 @@ export class AgentRegistry {
     },
   ): Promise<AgentRegistrySingleMCPToolset> {
     const serverDetails = await this.getMcpServer(mcpServerName);
-    const name = _cleanName(serverDetails.displayName || mcpServerName);
+    const name = cleanName(serverDetails.displayName || mcpServerName);
     const mcpServerId = serverDetails.mcpServerId;
 
-    let endpointUri = this._getConnectionUri(serverDetails, {
+    let endpointUri = this.getConnectionUri(serverDetails, {
       protocolBinding: 'JSONRPC',
     }).url;
 
     if (!endpointUri) {
-      endpointUri = this._getConnectionUri(serverDetails, {
+      endpointUri = this.getConnectionUri(serverDetails, {
         protocolBinding: 'HTTP+JSON',
       }).url;
     }
@@ -282,7 +282,7 @@ export class AgentRegistry {
     if (mcpServerId && !authScheme) {
       try {
         const bindingsData =
-          await this._makeRequest<ListBindingsResponse>('bindings');
+          await this.makeRequest<ListBindingsResponse>('bindings');
         const bindings = bindingsData.bindings || [];
         for (const b of bindings) {
           const targetId = b.target?.identifier || '';
@@ -316,9 +316,9 @@ export class AgentRegistry {
       if (
         !authScheme &&
         !options?.authCredential &&
-        _isGoogleApi(endpointUri!)
+        isGoogleApi(endpointUri!)
       ) {
-        Object.assign(headers, await this._getAuthHeaders());
+        Object.assign(headers, await this.getAuthHeaders());
       }
       if (this.headerProvider && context) {
         Object.assign(headers, this.headerProvider(context));
@@ -353,16 +353,16 @@ export class AgentRegistry {
     if (options?.pageToken) {
       params['pageToken'] = options.pageToken;
     }
-    return this._makeRequest<ListEndpointsResponse>('endpoints', params);
+    return this.makeRequest<ListEndpointsResponse>('endpoints', params);
   }
 
   async getEndpoint(name: string): Promise<Endpoint> {
-    return this._makeRequest<Endpoint>(name);
+    return this.makeRequest<Endpoint>(name);
   }
 
   async getModelName(endpointName: string): Promise<string> {
     const endpointDetails = await this.getEndpoint(endpointName);
-    const {url} = this._getConnectionUri(endpointDetails);
+    const {url} = this.getConnectionUri(endpointDetails);
     if (!url) {
       throw new Error(`Connection URI not found for endpoint: ${endpointName}`);
     }
@@ -396,11 +396,11 @@ export class AgentRegistry {
     if (options?.pageToken) {
       params['pageToken'] = options.pageToken;
     }
-    return this._makeRequest<ListAgentsResponse>('agents', params);
+    return this.makeRequest<ListAgentsResponse>('agents', params);
   }
 
   async getAgentInfo(name: string): Promise<AgentInfo> {
-    return this._makeRequest<AgentInfo>(name);
+    return this.makeRequest<AgentInfo>(name);
   }
 
   async getRemoteA2AAgent(
@@ -417,7 +417,7 @@ export class AgentRegistry {
     const cardContent = card.content;
     if (card.type === 'A2A_AGENT_CARD' && cardContent) {
       const agentCard: AgentCard = cardContent;
-      const name = _cleanName(agentCard.name);
+      const name = cleanName(agentCard.name);
 
       return new RemoteA2AAgent({
         name,
@@ -428,11 +428,11 @@ export class AgentRegistry {
       });
     }
 
-    const name = _cleanName(agentInfo.displayName || agentName);
+    const name = cleanName(agentInfo.displayName || agentName);
     const description = agentInfo.description || '';
     const version = agentInfo.version || '';
 
-    const {url, protocolVersion, protocolBinding} = this._getConnectionUri(
+    const {url, protocolVersion, protocolBinding} = this.getConnectionUri(
       agentInfo,
       {
         protocolType: ProtocolType.A2A_AGENT,
