@@ -170,7 +170,6 @@ export class OAuth2DiscoveryManager {
   }
 }
 
-
 /**
  * Normalises the hostname returned by the WHATWG URL parser so that
  * IPv4-mapped IPv6 addresses (e.g. [::ffff:7f00:1]) are converted to
@@ -206,8 +205,8 @@ function validateDiscoveryUrl(urlStr: string): boolean {
     if (
       host === 'localhost' ||
       host === '127.0.0.1' ||
-      host === '[::1]'     ||
-      host === '0.0.0.0'   ||
+      host === '[::1]' ||
+      host === '0.0.0.0' ||
       host.startsWith('10.') ||
       host.startsWith('192.168.') ||
       host.startsWith('169.254.')
@@ -225,7 +224,6 @@ function validateDiscoveryUrl(urlStr: string): boolean {
         return false;
       }
     }
-
 
     // RFC 6598: CGNAT shared space 100.64.0.0/10
     const cgnatMatch = host.match(/^100\.(\d+)\./);
