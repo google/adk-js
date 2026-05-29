@@ -80,6 +80,14 @@ export class MCPSessionManager {
 
   async createSession(): Promise<Client> {
     const client = new Client({name: 'MCPClient', version: '1.0.0'});
+    const close = client.close.bind(client);
+    client.close = async () => {
+      if (!this.sessions.has(client)) {
+        return;
+      }
+      this.sessions.delete(client);
+      await close();
+    };
 
     switch (this.connectionParams.type) {
       case 'StdioConnectionParams':
@@ -120,10 +128,7 @@ export class MCPSessionManager {
 
   async close(): Promise<void> {
     await Promise.all(
-      Array.from(this.sessions).map(async (session) => {
-        await session.close();
-        this.sessions.delete(session);
-      }),
+      Array.from(this.sessions).map(async (session) => await session.close()),
     );
   }
 }

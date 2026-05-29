@@ -13,16 +13,16 @@ vi.hoisted(() => {
   vi.resetModules();
 });
 
-const clients = vi.hoisted(
-  () => [] as Array<{close: ReturnType<typeof vi.fn>}>,
-);
+const clients = vi.hoisted(() => [] as Array<unknown>);
+const closeSpies = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
     Client: vi.fn().mockImplementation(() => {
+      const close = vi.fn().mockResolvedValue(undefined);
       const client = {
         connect: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
+        close,
         listTools: vi.fn().mockResolvedValue({
           tools: [
             {name: 'test-tool', description: 'A test tool', inputSchema: {}},
@@ -31,6 +31,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
         }),
       };
       clients.push(client);
+      closeSpies.push(close);
       return client;
     }),
   };
@@ -51,6 +52,7 @@ describe('MCPToolset', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clients.length = 0;
+    closeSpies.length = 0;
   });
 
   it('discovers tools without prefix', async () => {
@@ -137,7 +139,7 @@ describe('MCPToolset', () => {
     await toolset.close();
 
     expect(clients).toHaveLength(2);
-    expect(clients[0].close).toHaveBeenCalledTimes(1);
-    expect(clients[1].close).toHaveBeenCalledTimes(1);
+    expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+    expect(closeSpies[1]).toHaveBeenCalledTimes(1);
   });
 });

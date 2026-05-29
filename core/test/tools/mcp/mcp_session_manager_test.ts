@@ -14,18 +14,17 @@ vi.hoisted(() => {
   vi.resetModules();
 });
 
-const clients = vi.hoisted(
-  () => [] as Array<{close: ReturnType<typeof vi.fn>}>,
-);
+const closeSpies = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
     Client: vi.fn().mockImplementation(() => {
+      const close = vi.fn().mockResolvedValue(undefined);
       const client = {
         connect: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
+        close,
       };
-      clients.push(client);
+      closeSpies.push(close);
       return client;
     }),
   };
@@ -46,7 +45,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
 describe('MCPSessionManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clients.length = 0;
+    closeSpies.length = 0;
   });
 
   it('creates an stdio client', async () => {
@@ -184,9 +183,9 @@ describe('MCPSessionManager', () => {
     await manager.createSession();
     await manager.close();
 
-    expect(clients).toHaveLength(2);
-    expect(clients[0].close).toHaveBeenCalledTimes(1);
-    expect(clients[1].close).toHaveBeenCalledTimes(1);
+    expect(closeSpies).toHaveLength(2);
+    expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+    expect(closeSpies[1]).toHaveBeenCalledTimes(1);
   });
 
   it('does not close clients again after a successful close', async () => {
@@ -201,6 +200,21 @@ describe('MCPSessionManager', () => {
     await manager.close();
     await manager.close();
 
-    expect(clients[0].close).toHaveBeenCalledTimes(1);
+    expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close clients that were already closed directly', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+      },
+    });
+
+    const client = await manager.createSession();
+    await client.close();
+    await manager.close();
+
+    expect(closeSpies[0]).toHaveBeenCalledTimes(1);
   });
 });
