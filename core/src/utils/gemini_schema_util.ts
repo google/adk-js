@@ -107,10 +107,11 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         // const-only schema: infer type from the const value and forward as
         // a single-element enum so the constraint is preserved in Gemini schema
         const jsType = typeof mcp.const;
-        if (jsType === 'string') mcp.type = 'string';
-        else if (jsType === 'number') mcp.type = 'number';
-        else if (jsType === 'boolean') mcp.type = 'boolean';
-        mcp = {...mcp, enum: [mcp.const]};
+        let inferredType: string | undefined;
+        if (jsType === 'string') inferredType = 'string';
+        else if (jsType === 'number') inferredType = 'number';
+        else if (jsType === 'boolean') inferredType = 'boolean';
+        mcp = {...mcp, type: inferredType, enum: [mcp.const]};
       }
     }
 
