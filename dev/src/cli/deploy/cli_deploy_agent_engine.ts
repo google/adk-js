@@ -9,10 +9,12 @@ import * as path from 'node:path';
 import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {ReasoningEngine as VertexReasoningEngine} from '@google-cloud/vertexai/build/src/genai/types.js';
 
-import {AgentFileOptions, AgentLoader} from '../../utils/agent_loader.js';
-import {isFile, isFolderExists, saveToFile} from '../../utils/file_utils.js';
+import {AgentLoader} from '../../utils/agent_loader.js';
+import {isFile, isFolderExists} from '../../utils/file_utils.js';
 import {
+  BaseDeployOptions,
   copyAgentFiles,
+  createDockerFile,
   createPackageJson,
   resolveDefaultFromGcloudConfig,
   spawnAsync,
@@ -20,114 +22,10 @@ import {
 
 const DEFAULT_MAX_ATTEMPTS = 30;
 
-export interface DeployToAgentEngineOptions {
-  agentPath: string;
-  project?: string;
-  region?: string;
+export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   displayName?: string;
   description?: string;
-  tempFolder: string;
-  adkVersion: string;
-  port: number;
-  withUi: boolean;
-  logLevel: string;
-  allowOrigins?: string;
-  sessionServiceUri?: string;
-  artifactServiceUri?: string;
-  agentFileLoadOptions?: AgentFileOptions;
-  a2a?: boolean;
   stagingBucket?: string;
-}
-
-export function createDockerFileContent(options: {
-  appName: string;
-  project: string;
-  region: string;
-  port: number;
-  withUi: boolean;
-  logLevel: string;
-  allowOrigins?: string;
-  sessionServiceUri?: string;
-  artifactServiceUri?: string;
-  a2a?: boolean;
-}): string {
-  const adkCommand = options.withUi ? 'web' : 'api_server';
-  const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
-
-  if (options.logLevel) {
-    adkServerOptions.push(`--log_level=${options.logLevel}`);
-  }
-
-  if (options.allowOrigins) {
-    adkServerOptions.push(`--allow_origins=${options.allowOrigins}`);
-  }
-
-  if (options.artifactServiceUri) {
-    adkServerOptions.push(
-      `--artifact_service_uri=${options.artifactServiceUri}`,
-    );
-  }
-
-  if (options.sessionServiceUri) {
-    adkServerOptions.push(`--session_service_uri=${options.sessionServiceUri}`);
-  }
-
-  if (options.a2a) {
-    adkServerOptions.push('--a2a');
-  }
-
-  return `
-FROM node:lts-alpine
-WORKDIR /app
-
-# Create a non-root user
-RUN adduser --disabled-password --gecos "" myuser
-
-# Switch to the non-root user
-USER myuser
-
-# Set up environment variables
-ENV PATH="/home/myuser/.local/bin:$PATH"
-ENV GOOGLE_GENAI_USE_VERTEXAI=1
-ENV GOOGLE_CLOUD_PROJECT=${options.project}
-ENV GOOGLE_CLOUD_LOCATION=${options.region}
-
-# Copy application files
-COPY --chown=myuser:myuser "agents/${options.appName}/" "/app/agents/${
-    options.appName
-  }/"
-COPY --chown=myuser:myuser "package.json" "/app/package.json"
-COPY --chown=myuser:myuser "package-lock.json" "/app/package-lock.json"
-COPY --chown=myuser:myuser "node_modules" "/app/node_modules"
-
-# Install Agent Deps
-RUN npm install @google/adk-devtools@latest
-RUN npm install --production
-
-EXPOSE ${options.port}
-
-CMD npx adk ${adkCommand} /app/agents/${options.appName} ${adkServerOptions.join(
-    ' ',
-  )}`;
-}
-
-async function createDockerFile(
-  targetFolder: string,
-  options: {
-    appName: string;
-    project: string;
-    region: string;
-    port: number;
-    withUi: boolean;
-    logLevel: string;
-    allowOrigins?: string;
-    sessionServiceUri?: string;
-    artifactServiceUri?: string;
-    a2a?: boolean;
-  },
-) {
-  const dockerFilePath = path.join(targetFolder, 'Dockerfile');
-  await saveToFile(dockerFilePath, createDockerFileContent(options));
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
@@ -212,6 +110,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         options.tempFolder,
         '--project',
         options.project,
+        '--suppress-logs',
       ],
       {stdio: 'inherit'},
     );

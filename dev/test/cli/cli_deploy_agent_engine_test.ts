@@ -154,6 +154,7 @@ describe('deployToAgentEngine', () => {
         '/tmp/test-deploy',
         '--project',
         'test-project',
+        '--suppress-logs',
       ]),
       expect.any(Object),
     );
