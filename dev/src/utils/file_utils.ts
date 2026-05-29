@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -110,7 +111,7 @@ export function getTempDir(prefix?: string): string {
     pathParts.push(prefix);
   }
 
-  pathParts.push(Date.now().toString());
+  pathParts.push(crypto.randomUUID());
 
   return path.join(...pathParts);
 }

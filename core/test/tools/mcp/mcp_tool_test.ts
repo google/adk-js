@@ -24,6 +24,7 @@ describe('MCPTool', () => {
 
     const mockClient = {
       callTool: vi.fn().mockResolvedValue({content: []}),
+      close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Client;
 
     const mockSessionManager = {
@@ -60,6 +61,7 @@ describe('MCPTool', () => {
 
     const mockClient = {
       callTool: vi.fn().mockResolvedValue({content: []}),
+      close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Client;
 
     const mockSessionManager = {

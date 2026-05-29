@@ -122,12 +122,16 @@ describe('file_utils', () => {
     );
   });
 
-  it('getTempDir uses os.tmpdir and optional prefix and Date.now', () => {
+  it('getTempDir uses os.tmpdir and optional prefix and crypto.randomUUID', () => {
     osMock.tmpdir.mockReturnValue('/tmp');
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234567890);
     const dir = getTempDir('myprefix');
-    expect(dir).toBe(path.join('/tmp', 'myprefix', '1234567890'));
-    nowSpy.mockRestore();
+    const basename = path.basename(dir);
+    const parentDir = path.dirname(dir);
+
+    expect(parentDir).toBe(path.join('/tmp', 'myprefix'));
+    expect(basename).toMatch(
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+    );
   });
 
   it('tryToFindFileRecursively finds a file in a parent folder', async () => {
