@@ -29,6 +29,16 @@ const FUNCTION_RESPONSE_SUFFIX = '\n```\n';
 /**
  * Converts a list of examples to a string that can be used in a system
  * instruction.
+ *
+ * When `model` is undefined or contains `"gemini-2"`, function calls and
+ * responses are formatted with plain triple-backtick fences. For other model
+ * names the legacy `tool_code` / `tool_outputs` fences are used instead.
+ *
+ * @param examples - The few-shot examples to convert.
+ * @param model - Optional model name used to select the function-call fence
+ *   style. Defaults to the gemini-2 style when omitted.
+ * @returns A formatted string wrapped in `<EXAMPLES>…</EXAMPLES>` tags,
+ *   suitable for inclusion in a system instruction.
  */
 export function convertExamplesToText(
   examples: Example[],
@@ -87,6 +97,21 @@ export function convertExamplesToText(
   return `${EXAMPLES_INTRO}${examplesStr}${EXAMPLES_END}`;
 }
 
+/**
+ * Builds the few-shot portion of a system instruction from a list of examples
+ * or a {@link BaseExampleProvider}.
+ *
+ * @param examples - Either an array of {@link Example} objects or a
+ *   {@link BaseExampleProvider} whose `getExamples` method is called with
+ *   `query` to obtain the examples dynamically.
+ * @param query - The user query passed to {@link BaseExampleProvider.getExamples}
+ *   when `examples` is a provider. Ignored when `examples` is an array.
+ * @param model - Optional model name forwarded to
+ *   {@link convertExamplesToText} to select the function-call fence style.
+ * @returns A formatted string ready to be appended to a system instruction.
+ * @throws {Error} When `examples` is neither an array nor a
+ *   {@link BaseExampleProvider}.
+ */
 export function buildExampleSi(
   examples: Example[] | BaseExampleProvider,
   query: string,
