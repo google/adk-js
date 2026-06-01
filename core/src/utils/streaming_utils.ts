@@ -47,6 +47,7 @@ export class StreamingResponseAggregator {
   private currentFcId?: string;
   private currentThoughtSignature?: string | Uint8Array;
   private lastThoughtSignature?: string | Uint8Array;
+  private sawFunctionCall = false;
 
   constructor(
     private readonly isProgressiveMode: boolean = isFeatureEnabled(
@@ -234,8 +235,27 @@ export class StreamingResponseAggregator {
   async *processResponse(
     response: GenerateContentResponse,
   ): AsyncGenerator<LlmResponse, void, void> {
-    this.response = response;
     const llmResponse = createLlmResponse(response);
+    const parts = llmResponse.content?.parts ?? [];
+
+    if (parts.some((part) => part.functionCall)) {
+      this.sawFunctionCall = true;
+    }
+
+    // Gemini thinking models emit an empty text chunk with finishReason
+    // STOP after a function call. The aggregator would treat it as a
+    // final model turn and prevent the agent from making the follow-up
+    // call, so drop it before it reaches the aggregator.
+    if (
+      this.sawFunctionCall &&
+      llmResponse.finishReason === FinishReason.STOP &&
+      parts.length > 0 &&
+      parts.every(isEmptyContentPart)
+    ) {
+      return;
+    }
+
+    this.response = response;
     this.usageMetadata = llmResponse.usageMetadata;
     if (llmResponse.groundingMetadata) {
       this.groundingMetadata = llmResponse.groundingMetadata;
@@ -288,42 +308,61 @@ export class StreamingResponseAggregator {
     }
 
     // Non-progressive SSE streaming
-    if (
-      llmResponse.content &&
-      llmResponse.content.parts &&
-      typeof llmResponse.content.parts[0]?.text === 'string'
-    ) {
-      const part0 = llmResponse.content.parts[0];
-      const partText = part0.text || '';
-      if (part0.thought) {
-        this.thoughtText += partText;
-      } else {
-        this.text += partText;
+    if (llmResponse.content?.parts) {
+      const nonTextParts: Part[] = [];
+      let sawTextPart = false;
+
+      for (const part of llmResponse.content.parts) {
+        if (typeof part.text === 'string') {
+          sawTextPart = true;
+          if (part.thought) {
+            this.thoughtText += part.text;
+          } else {
+            this.text += part.text;
+          }
+          continue;
+        }
+
+        if (part.functionCall && !part.functionCall.id) {
+          part.functionCall.id = generateClientFunctionCallId();
+        }
+        nonTextParts.push(part);
       }
-      llmResponse.partial = true;
-    } else if (
-      (this.thoughtText || this.text) &&
-      (!llmResponse.content ||
-        !llmResponse.content.parts ||
-        !llmResponse.content.parts[0]?.inlineData)
-    ) {
-      const parts: Part[] = [];
-      if (this.thoughtText) {
-        parts.push({text: this.thoughtText, thought: true});
+
+      if (nonTextParts.length > 0) {
+        if (this.thoughtText || this.text) {
+          const parts: Part[] = [];
+          if (this.thoughtText) {
+            parts.push({text: this.thoughtText, thought: true});
+          }
+          if (this.text) {
+            parts.push({text: this.text});
+          }
+          yield {
+            content: {
+              role: 'model',
+              parts: parts,
+            },
+            usageMetadata: llmResponse.usageMetadata,
+            partial: false,
+          };
+          this.thoughtText = '';
+          this.text = '';
+        }
+        yield {
+          ...llmResponse,
+          content: {
+            role: llmResponse.content.role,
+            parts: nonTextParts,
+          },
+          partial: false,
+        };
+        return;
       }
-      if (this.text) {
-        parts.push({text: this.text});
+
+      if (sawTextPart) {
+        llmResponse.partial = true;
       }
-      yield {
-        content: {
-          role: 'model',
-          parts: parts,
-        },
-        usageMetadata: llmResponse.usageMetadata,
-        partial: false,
-      };
-      this.thoughtText = '';
-      this.text = '';
     }
     yield llmResponse;
   }
@@ -397,4 +436,18 @@ export class StreamingResponseAggregator {
 
     return undefined;
   }
+}
+
+/**
+ * Checks if a response part has no meaningful content (empty text, no tool calls, etc.)
+ */
+export function isEmptyContentPart(part: Part): boolean {
+  return (
+    !part.functionCall &&
+    !part.functionResponse &&
+    !part.inlineData &&
+    !part.executableCode &&
+    !part.codeExecutionResult &&
+    (!part.text || part.text === '')
+  );
 }

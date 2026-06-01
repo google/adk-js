@@ -8,6 +8,7 @@ import {
   Gemini,
   GeminiParams,
   LlmRequest,
+  LlmResponse,
   geminiInitParams,
   version,
 } from '@google/adk';
@@ -370,6 +371,217 @@ describe('GoogleLlm', () => {
       abortController.abort();
 
       await expect(generator.next()).rejects.toThrow('Aborted');
+    });
+  });
+
+  describe('generateContentAsync streaming', () => {
+    /**
+     * Creates a Gemini instance with a mock apiClient whose
+     * generateContentStream yields the given raw responses as individual
+     * streaming chunks.
+     */
+    function createStreamingGemini(
+      rawChunks: Array<{
+        candidates?: Array<{
+          content?: {role?: string; parts?: Array<Record<string, unknown>>};
+          finishReason?: string;
+          finishMessage?: string;
+        }>;
+        usageMetadata?: Record<string, unknown>;
+      }>,
+    ): Gemini {
+      const gemini = new Gemini({apiKey: 'test-key'});
+
+      const chunks = rawChunks.map((raw) => {
+        const response = new GenerateContentResponse();
+        response.candidates =
+          raw.candidates as GenerateContentResponse['candidates'];
+        response.usageMetadata =
+          raw.usageMetadata as GenerateContentResponse['usageMetadata'];
+        return response;
+      });
+
+      const mockModels = {
+        async generateContentStream(
+          _req: unknown,
+        ): Promise<AsyncGenerator<GenerateContentResponse>> {
+          return (async function* () {
+            for (const chunk of chunks) {
+              yield chunk;
+            }
+          })();
+        },
+        async generateContent(_req: unknown): Promise<GenerateContentResponse> {
+          return chunks[0];
+        },
+      };
+
+      const mockClient = {
+        models: mockModels,
+        vertexai: false,
+      };
+
+      Object.defineProperty(gemini, 'apiClient', {
+        get: () => mockClient as unknown as GoogleGenAI,
+      });
+
+      return gemini;
+    }
+
+    /** Collects all yielded LlmResponses from generateContentAsync. */
+    async function collectResponses(
+      gemini: Gemini,
+      stream: boolean,
+    ): Promise<LlmResponse[]> {
+      const results: LlmResponse[] = [];
+      for await (const response of gemini.generateContentAsync(
+        {
+          contents: [{role: 'user', parts: [{text: 'hello'}]}],
+          liveConnectConfig: {},
+          toolsDict: {},
+        },
+        stream,
+      )) {
+        results.push(response);
+      }
+      return results;
+    }
+
+    it('should suppress empty finalization chunk after a function call', async () => {
+      const gemini = createStreamingGemini([
+        // Chunk 1: function call
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    functionCall: {
+                      name: 'get_weather',
+                      args: {location: 'Seattle'},
+                    },
+                  },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+        // Chunk 2: empty text finalization (the bug trigger)
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: ''}],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      // Only the function call chunk should be yielded; the empty
+      // finalization chunk must be suppressed.
+      expect(responses).toHaveLength(1);
+      expect(responses[0].content?.parts?.[0]?.functionCall).toBeDefined();
+      expect(responses[0].content?.parts?.[0]?.functionCall?.name).toBe(
+        'get_weather',
+      );
+    });
+
+    it('should still yield non-empty text chunks after a function call', async () => {
+      const gemini = createStreamingGemini([
+        // Chunk 1: function call
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    functionCall: {
+                      name: 'get_weather',
+                      args: {location: 'Seattle'},
+                    },
+                  },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+        // Chunk 2: real text response (should NOT be suppressed)
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'The weather in Seattle is sunny.'}],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      // Both the function call and the text response should be yielded.
+      // The text accumulation logic marks text chunks as partial and then
+      // flushes them, so we expect:
+      // 1. The function call chunk
+      // 2. The text chunk (marked partial)
+      // 3. A flush of accumulated text
+      expect(responses.length).toBeGreaterThanOrEqual(2);
+      expect(responses[0].content?.parts?.[0]?.functionCall?.name).toBe(
+        'get_weather',
+      );
+      // One of the later responses should contain the text
+      const textResponses = responses.filter((r) =>
+        r.content?.parts?.some(
+          (p) => p.text && p.text === 'The weather in Seattle is sunny.',
+        ),
+      );
+      expect(textResponses.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should yield empty finalization chunk when no function call preceded it', async () => {
+      const gemini = createStreamingGemini([
+        // Chunk 1: text response
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: 'Hello there!'}],
+              },
+            },
+          ],
+        },
+        // Chunk 2: empty text finalization (no preceding function call)
+        {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{text: ''}],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+      ]);
+
+      const responses = await collectResponses(gemini, true);
+
+      // Without a preceding function call, the empty finalization should
+      // still be yielded (along with the flush of accumulated text).
+      // We expect at least the text chunk, the flush, and the finalization.
+      expect(responses.length).toBeGreaterThanOrEqual(2);
     });
   });
 });
