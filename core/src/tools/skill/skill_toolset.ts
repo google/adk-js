@@ -20,6 +20,7 @@ import {LoadSkillResourceTool} from './load_skill_resource_tool.js';
 import {LoadSkillTool} from './load_skill_tool.js';
 import {RunSkillInlineScriptTool} from './run_skill_inline_script_tool.js';
 import {RunSkillScriptTool} from './run_skill_script_tool.js';
+import {SearchSkillsTool} from './search_skills_tool.js';
 
 const DEFAULT_SKILL_SYSTEM_INSTRUCTION = `You can use specialized 'skills' to help you with complex tasks. You MUST use the skill tools to interact with these skills.
 
@@ -70,6 +71,10 @@ export class SkillToolset extends BaseToolset {
       new RunSkillScriptTool(this),
       new RunSkillInlineScriptTool(this),
     ];
+
+    if (this.registry) {
+      this.tools.push(new SearchSkillsTool(this));
+    }
   }
 
   override async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
@@ -126,6 +131,12 @@ export class SkillToolset extends BaseToolset {
     const skillsXml = formatSkillsAsXml(skills);
 
     const instructions = [DEFAULT_SKILL_SYSTEM_INSTRUCTION, skillsXml];
+
+    if (this.registry) {
+      instructions.push(
+        '\nIf the locally available skills are not sufficient to complete your task, you can use the `search_skills` tool to discover additional skills from the registry.',
+      );
+    }
 
     appendInstructions(llmRequest, instructions);
   }

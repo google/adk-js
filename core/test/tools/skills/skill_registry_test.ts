@@ -13,6 +13,7 @@ import {
   LoadSkillResourceTool,
   LoadSkillTool,
   RunSkillScriptTool,
+  SearchSkillsTool,
   Skill,
   SkillToolset,
   loadSkillFromZipBuffer,
@@ -223,6 +224,98 @@ Instruction body`;
     });
   });
 
+  describe('SearchSkillsTool', () => {
+    it('throws error if toolset has no registry', () => {
+      const toolset = new SkillToolset([]);
+      expect(() => new SearchSkillsTool(toolset)).toThrow(
+        'SearchSkillsTool requires a configured skill registry.',
+      );
+    });
+
+    it('returns declaration with search_skills', () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn(),
+        searchToolDescription: vi
+          .fn()
+          .mockReturnValue('Custom search description'),
+      };
+
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const dec = tool._getDeclaration();
+      expect(dec.name).toBe('search_skills');
+      expect(dec.description).toBe('Custom search description');
+    });
+
+    it('runAsync validates missing query', async () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn(),
+      };
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const res = (await tool.runAsync({
+        args: {},
+        toolContext: createMockContext(),
+      })) as Record<string, unknown>;
+      expect(res.error_code).toBe('INVALID_ARGUMENTS');
+    });
+
+    it('runAsync searches registry and filters local skills', async () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn().mockResolvedValue([
+          {name: 'remote-only', description: 'remote'},
+          {name: 'already-local', description: 'local'},
+        ]),
+      };
+      const localSkill: Skill = {
+        frontmatter: {name: 'already-local', description: 'desc'},
+        instructions: 'inst',
+      };
+
+      const toolset = new SkillToolset([localSkill], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const res = (await tool.runAsync({
+        args: {query: 'skills'},
+        toolContext: createMockContext(),
+      })) as Array<Record<string, unknown>>;
+
+      expect(res.length).toBe(1);
+      expect(res[0].name).toBe('remote-only');
+    });
+
+    it('runAsync returns error on registry exception', async () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn().mockRejectedValue(new Error('Registry failure')),
+      };
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const res = (await tool.runAsync({
+        args: {query: 'skills'},
+        toolContext: createMockContext(),
+      })) as Record<string, unknown>;
+      expect(res.error_code).toBe('REGISTRY_ERROR');
+    });
+
+    it('runAsync returns error on string throw', async () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn().mockRejectedValue('String error failure'),
+      };
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const tool = new SearchSkillsTool(toolset);
+      const res = (await tool.runAsync({
+        args: {query: 'skills'},
+        toolContext: createMockContext(),
+      })) as Record<string, unknown>;
+      expect(res.error_code).toBe('REGISTRY_ERROR');
+      expect(res.error).toContain('String error failure');
+    });
+  });
+
   describe('SkillToolset upgraded capabilities', () => {
     it('getOrFetchSkill returns local skill', async () => {
       const localSkill: Skill = {
@@ -272,6 +365,21 @@ Instruction body`;
       await expect(
         toolset.getOrFetchSkill('bad-skill', 'inv-1'),
       ).rejects.toThrow('Registry error');
+    });
+
+    it('processLlmRequest appends search instruction if registry configured', async () => {
+      const mockRegistry = {
+        getSkill: vi.fn(),
+        searchSkills: vi.fn(),
+      };
+      const toolset = new SkillToolset([], {registry: mockRegistry});
+      const req: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+      };
+      await toolset.processLlmRequest(createMockContext(), req);
+      expect(req.config?.systemInstruction).toContain('search_skills');
     });
   });
 
