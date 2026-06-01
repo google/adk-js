@@ -16,6 +16,12 @@ export interface ApiParameter {
   required: boolean;
 }
 
+/**
+ * Parses an OpenAPI OperationObject and extracts its parameters, request body, and return value.
+ *
+ * It maps OpenAPI parameters and request bodies into a flat list of `ApiParameter` objects
+ * that are compatible with Gemini's tool function declarations.
+ */
 @experimental
 export class OperationParser {
   private params: ApiParameter[] = [];
@@ -172,11 +178,21 @@ export class OperationParser {
     }
   }
 
+  /**
+   * Gets the list of parsed parameters extracted from the OpenAPI operation.
+   *
+   * @returns An array of parsed parameters.
+   */
   @experimental
   public getParameters(): ApiParameter[] {
     return this.params;
   }
 
+  /**
+   * Generates a JSON schema representing the arguments of the tool function call.
+   *
+   * @returns A JSON Schema object.
+   */
   @experimental
   public getJsonSchema(): Record<string, unknown> {
     const properties: Record<string, unknown> = {};
@@ -197,6 +213,12 @@ export class OperationParser {
     };
   }
 
+  /**
+   * Gets a valid tool function name derived from the operation's operationId.
+   *
+   * @throws {Error} If the operation does not have an operationId.
+   * @returns A string representing the function name.
+   */
   @experimental
   public getFunctionName(): string {
     const operationId = this.operation.operationId;
@@ -206,6 +228,11 @@ export class OperationParser {
     return this.getParamName(operationId).substring(0, 60);
   }
 
+  /**
+   * Gets the description of the tool, derived from the operation's description or summary.
+   *
+   * @returns A string representing the description.
+   */
   @experimental
   public getDescription(): string {
     return this.operation.description || this.operation.summary || '';

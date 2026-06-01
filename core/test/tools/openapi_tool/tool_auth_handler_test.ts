@@ -4,10 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {AuthCredentialTypes, Context, ToolAuthHandler} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {Context} from '../../../src/agents/context.js';
-import {AuthCredentialTypes} from '../../../src/auth/auth_credential.js';
-import {ToolAuthHandler} from '../../../src/tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 
 // Mock AutoAuthCredentialExchanger
 vi.mock(

@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {OperationParser} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
-import {OperationParser} from '../../../src/tools/openapi_tool/openapi_spec_parser/operation_parser.js';
 
 describe('OperationParser', () => {
   it('should throw error if operationId is missing', () => {
