@@ -19,40 +19,29 @@ import {generateClientFunctionCallId} from '../agents/functions.js';
 import {FeatureName, isFeatureEnabled} from '../features/feature_registry.js';
 import {createLlmResponse, LlmResponse} from '../models/llm_response.js';
 
+interface StreamingStrategy {
+  processResponse(
+    llmResponse: LlmResponse,
+  ): AsyncGenerator<LlmResponse, void, void>;
+  close(): Part[] | undefined;
+}
+
 /**
- * Aggregates partial streaming responses.
- *
- * It aggregates content from partial responses, and generates LlmResponses for
- * individual (partial) model responses, as well as for aggregated content.
+ * Progressive strategy for SSE streaming mode: flushes parts as they arrive.
  */
-export class StreamingResponseAggregator {
-  private usageMetadata?: GenerateContentResponseUsageMetadata;
-  private groundingMetadata?: GroundingMetadata;
-  private citationMetadata?: CitationMetadata;
-  private response?: GenerateContentResponse;
-
-  // For non-progressive SSE streaming mode
-  private text = '';
-  private thoughtText = '';
-
-  // For progressive SSE streaming mode: accumulate parts in order
+class ProgressiveStrategy implements StreamingStrategy {
   private partsSequence: Part[] = [];
   private currentTextBuffer = '';
   private currentTextIsThought?: boolean;
-  private finishReason?: FinishReason;
 
   // For streaming function call arguments
   private currentFcName?: string;
   private currentFcArgs: Record<string, unknown> = {};
   private currentFcId?: string;
   private currentThoughtSignature?: string | Uint8Array;
-  private lastThoughtSignature?: string | Uint8Array;
-  private sawFunctionCall = false;
 
   constructor(
-    private readonly isProgressiveMode: boolean = isFeatureEnabled(
-      FeatureName.PROGRESSIVE_SSE_STREAMING,
-    ),
+    private readonly lastThoughtSignatureRef: {value?: string | Uint8Array},
   ) {}
 
   private flushTextBufferToSequence(): void {
@@ -207,9 +196,9 @@ export class StreamingResponseAggregator {
     }
 
     if (part.thoughtSignature) {
-      this.lastThoughtSignature = part.thoughtSignature;
-    } else if (this.lastThoughtSignature) {
-      part.thoughtSignature = this.lastThoughtSignature.toString();
+      this.lastThoughtSignatureRef.value = part.thoughtSignature;
+    } else if (this.lastThoughtSignatureRef.value) {
+      part.thoughtSignature = this.lastThoughtSignatureRef.value.toString();
     }
 
     if (fc.partialArgs || fc.willContinue) {
@@ -233,81 +222,58 @@ export class StreamingResponseAggregator {
   }
 
   async *processResponse(
-    response: GenerateContentResponse,
+    llmResponse: LlmResponse,
   ): AsyncGenerator<LlmResponse, void, void> {
-    const llmResponse = createLlmResponse(response);
-    const parts = llmResponse.content?.parts ?? [];
-
-    if (parts.some((part) => part.functionCall)) {
-      this.sawFunctionCall = true;
-    }
-
-    // Gemini thinking models emit an empty text chunk with finishReason
-    // STOP after a function call. The aggregator would treat it as a
-    // final model turn and prevent the agent from making the follow-up
-    // call, so drop it before it reaches the aggregator.
-    if (
-      this.sawFunctionCall &&
-      llmResponse.finishReason === FinishReason.STOP &&
-      parts.length > 0 &&
-      parts.every(isEmptyContentPart)
-    ) {
-      return;
-    }
-
-    this.response = response;
-    this.usageMetadata = llmResponse.usageMetadata;
-    if (llmResponse.groundingMetadata) {
-      this.groundingMetadata = llmResponse.groundingMetadata;
-    }
-    if (llmResponse.citationMetadata) {
-      this.citationMetadata = llmResponse.citationMetadata;
-    }
-
-    if (llmResponse.finishReason) {
-      this.finishReason = llmResponse.finishReason;
-    }
     if (llmResponse.content && llmResponse.content.parts) {
       for (const part of llmResponse.content.parts) {
-        if (part.thoughtSignature) {
-          this.lastThoughtSignature = part.thoughtSignature;
-        } else if (part.functionCall && this.lastThoughtSignature) {
-          part.thoughtSignature = this.lastThoughtSignature.toString();
-        }
-      }
-    }
-
-    if (this.isProgressiveMode) {
-      if (llmResponse.content && llmResponse.content.parts) {
-        for (const part of llmResponse.content.parts) {
-          if (part.text) {
-            const isThought = part.thought ?? false;
-            if (
-              this.currentTextBuffer &&
-              isThought !== this.currentTextIsThought
-            ) {
-              this.flushTextBufferToSequence();
-            }
-
-            if (!this.currentTextBuffer) {
-              this.currentTextIsThought = isThought;
-            }
-            this.currentTextBuffer += part.text;
-          } else if (part.functionCall) {
-            this.processFunctionCallPart(part);
-          } else {
+        if (part.text) {
+          const isThought = part.thought ?? false;
+          if (
+            this.currentTextBuffer &&
+            isThought !== this.currentTextIsThought
+          ) {
             this.flushTextBufferToSequence();
-            this.partsSequence.push(part);
           }
+
+          if (!this.currentTextBuffer) {
+            this.currentTextIsThought = isThought;
+          }
+          this.currentTextBuffer += part.text;
+        } else if (part.functionCall) {
+          this.processFunctionCallPart(part);
+        } else {
+          this.flushTextBufferToSequence();
+          this.partsSequence.push(part);
         }
       }
-
-      llmResponse.partial = true;
-      yield llmResponse;
-      return;
     }
 
-    // Non-progressive SSE streaming
+    llmResponse.partial = true;
+    yield llmResponse;
+  }
+
+  close(): Part[] | undefined {
+    this.flushTextBufferToSequence();
+    this.flushFunctionCallToSequence();
+
+    const finalParts = this.partsSequence;
+    if (finalParts.length === 0) {
+      return undefined;
+    }
+    return finalParts;
+  }
+}
+
+/**
+ * Non-progressive strategy for SSE streaming mode: accumulates parts and flushes at boundaries.
+ */
+class NonProgressiveStrategy implements StreamingStrategy {
+  private text = '';
+  private thoughtText = '';
+
+  async *processResponse(
+    llmResponse: LlmResponse,
+  ): AsyncGenerator<LlmResponse, void, void> {
     if (llmResponse.content?.parts) {
       const nonTextParts: Part[] = [];
       let sawTextPart = false;
@@ -367,44 +333,7 @@ export class StreamingResponseAggregator {
     yield llmResponse;
   }
 
-  close(): LlmResponse | undefined {
-    if (this.isProgressiveMode) {
-      this.flushTextBufferToSequence();
-      this.flushFunctionCallToSequence();
-
-      const finalParts = this.partsSequence;
-      if (finalParts.length === 0) {
-        return;
-      }
-
-      // Use the candidate from the last response that carried one. Gemini may
-      // send a trailing empty chunk (no candidates) to signal stream end; we
-      // must not discard accumulated parts in that case.
-      const candidate = this.response?.candidates?.[0];
-      const finishReason = this.finishReason ?? candidate?.finishReason;
-
-      return {
-        content: {
-          role: 'model',
-          parts: finalParts,
-        },
-        groundingMetadata: this.groundingMetadata,
-        citationMetadata: this.citationMetadata,
-        errorCode:
-          finishReason === FinishReason.STOP ? undefined : finishReason,
-        errorMessage:
-          finishReason === FinishReason.STOP
-            ? undefined
-            : candidate?.finishMessage,
-        usageMetadata: this.usageMetadata,
-        finishReason: finishReason,
-        partial: false,
-      };
-    }
-
-    // Non-progressive SSE streaming: use this.finishReason which is accumulated
-    // across all chunks, falling back to the last candidate when available.
-    // This handles the case where the final Gemini chunk carries no candidates.
+  close(): Part[] | undefined {
     if (this.text || this.thoughtText) {
       const parts: Part[] = [];
       if (this.thoughtText) {
@@ -413,28 +342,115 @@ export class StreamingResponseAggregator {
       if (this.text) {
         parts.push({text: this.text});
       }
-      const candidate = this.response?.candidates?.[0];
-      const finishReason = this.finishReason ?? candidate?.finishReason;
-      return {
-        content: {
-          role: 'model',
-          parts: parts,
-        },
-        groundingMetadata: this.groundingMetadata,
-        citationMetadata: this.citationMetadata,
-        errorCode:
-          finishReason === FinishReason.STOP ? undefined : finishReason,
-        errorMessage:
-          finishReason === FinishReason.STOP
-            ? undefined
-            : candidate?.finishMessage,
-        usageMetadata: this.usageMetadata,
-        finishReason: finishReason,
-        partial: false,
-      };
+      return parts;
+    }
+    return undefined;
+  }
+}
+
+/**
+ * Aggregates partial streaming responses.
+ *
+ * It aggregates content from partial responses, and generates LlmResponses for
+ * individual (partial) model responses, as well as for aggregated content.
+ */
+export class StreamingResponseAggregator {
+  private usageMetadata?: GenerateContentResponseUsageMetadata;
+  private groundingMetadata?: GroundingMetadata;
+  private citationMetadata?: CitationMetadata;
+  private response?: GenerateContentResponse;
+  private finishReason?: FinishReason;
+
+  private lastThoughtSignature: {value?: string | Uint8Array} = {};
+  private sawFunctionCall = false;
+  private readonly strategy: StreamingStrategy;
+
+  constructor(
+    private readonly isProgressiveMode: boolean = isFeatureEnabled(
+      FeatureName.PROGRESSIVE_SSE_STREAMING,
+    ),
+  ) {
+    this.strategy = this.isProgressiveMode
+      ? new ProgressiveStrategy(this.lastThoughtSignature)
+      : new NonProgressiveStrategy();
+  }
+
+  async *processResponse(
+    response: GenerateContentResponse,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    const llmResponse = createLlmResponse(response);
+    const parts = llmResponse.content?.parts ?? [];
+
+    if (parts.some((part) => part.functionCall)) {
+      this.sawFunctionCall = true;
     }
 
-    return undefined;
+    // Gemini thinking models emit an empty text chunk with finishReason
+    // STOP after a function call. The aggregator would treat it as a
+    // final model turn and prevent the agent from making the follow-up
+    // call, so drop it before it reaches the aggregator.
+    if (
+      this.sawFunctionCall &&
+      llmResponse.finishReason === FinishReason.STOP &&
+      parts.length > 0 &&
+      parts.every(isEmptyContentPart)
+    ) {
+      return;
+    }
+
+    this.response = response;
+    this.usageMetadata = llmResponse.usageMetadata;
+    if (llmResponse.groundingMetadata) {
+      this.groundingMetadata = llmResponse.groundingMetadata;
+    }
+    if (llmResponse.citationMetadata) {
+      this.citationMetadata = llmResponse.citationMetadata;
+    }
+
+    if (llmResponse.finishReason) {
+      this.finishReason = llmResponse.finishReason;
+    }
+    if (llmResponse.content && llmResponse.content.parts) {
+      for (const part of llmResponse.content.parts) {
+        if (part.thoughtSignature) {
+          this.lastThoughtSignature.value = part.thoughtSignature;
+        } else if (part.functionCall && this.lastThoughtSignature.value) {
+          part.thoughtSignature = this.lastThoughtSignature.value.toString();
+        }
+      }
+    }
+
+    yield* this.strategy.processResponse(llmResponse);
+  }
+
+  close(): LlmResponse | undefined {
+    const finalParts = this.strategy.close();
+    if (!finalParts) {
+      return undefined;
+    }
+
+    // Use the candidate from the last response that carried one. Gemini may
+    // send a trailing empty chunk (no candidates) to signal stream end; we
+    // must not discard accumulated parts in that case.
+    const candidate = this.response?.candidates?.[0];
+    const finishReason = this.finishReason ?? candidate?.finishReason;
+
+    return {
+      content: {
+        role: 'model',
+        parts: finalParts,
+      },
+      groundingMetadata: this.groundingMetadata,
+      citationMetadata: this.citationMetadata,
+      errorCode: finishReason === FinishReason.STOP ? undefined : finishReason,
+      errorMessage:
+        finishReason === FinishReason.STOP
+          ? undefined
+          : candidate?.finishMessage,
+      usageMetadata: this.usageMetadata,
+      finishReason: finishReason,
+      partial: false,
+    };
   }
 }
 
