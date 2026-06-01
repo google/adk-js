@@ -4,18 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import {
   Content,
   FinishReason,
-  FunctionCall,
-  FunctionResponse,
   GenerateContentConfig,
   GoogleGenAI,
   Interactions,
   Outcome,
   Part,
 } from '@google/genai';
-import {base64Encode, isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
@@ -29,8 +28,10 @@ export interface ExtendedInteraction extends Interactions.Interaction {
   };
 }
 
-export interface ExtendedInteractionStatusUpdate
-  extends Omit<Interactions.InteractionStatusUpdate, 'error'> {
+export interface ExtendedInteractionStatusUpdate extends Omit<
+  Interactions.InteractionStatusUpdate,
+  'error'
+> {
   error?: {
     code: string;
     message: string;
@@ -38,8 +39,10 @@ export interface ExtendedInteractionStatusUpdate
 }
 
 // Runtime event types can be more relaxed than compile-time
-export interface ExtendedInteractionSSEEvent
-  extends Omit<Interactions.InteractionSSEEvent, 'error' | 'interaction_id' | 'status'> {
+export interface ExtendedInteractionSSEEvent extends Omit<
+  Interactions.InteractionSSEEvent,
+  'error' | 'interaction_id' | 'status' | 'event_type'
+> {
   event_type?: string;
   eventType?: string;
   delta?: {
@@ -148,52 +151,11 @@ export function getLatestUserContents(contents: Content[]): Content[] {
 }
 
 /**
- * Convert a Part to an interaction content object.
+ * Convert a Part to a media content object (Interactions.Content).
  */
-export function convertPartToInteractionContent(
-  part: Part,
-): Interactions.Content | null {
+function convertPartToMediaContent(part: Part): Interactions.Content | null {
   if (part.text !== undefined && part.text !== null) {
     return {type: 'text', text: part.text};
-  }
-
-  if (part.functionCall !== undefined && part.functionCall !== null) {
-    const result: Interactions.FunctionCallContent = {
-      type: 'function_call',
-      id: part.functionCall.id || '',
-      name: part.functionCall.name || '',
-      arguments: (part.functionCall.args as Record<string, unknown>) || {},
-    };
-    if (
-      part.thoughtSignature !== undefined &&
-      part.thoughtSignature !== null
-    ) {
-      result.signature = base64Encode(part.thoughtSignature);
-    }
-    return result;
-  }
-
-  if (
-    part.functionResponse !== undefined &&
-    part.functionResponse !== null
-  ) {
-    let resultValue: unknown = part.functionResponse.response;
-    if (
-      typeof resultValue !== 'object' &&
-      typeof resultValue !== 'string' &&
-      !Array.isArray(resultValue)
-    ) {
-      resultValue = String(resultValue);
-    }
-    logger.debug(
-      `Converting function_response: name=${part.functionResponse.name}, call_id=${part.functionResponse.id}`,
-    );
-    return {
-      type: 'function_result',
-      name: part.functionResponse.name || '',
-      call_id: part.functionResponse.id || '',
-      result: resultValue,
-    };
   }
 
   if (part.inlineData !== undefined && part.inlineData !== null) {
@@ -202,7 +164,7 @@ export function convertPartToInteractionContent(
       type: getInteractionMediaType(mimeType),
       data: part.inlineData.data,
       mime_type: mimeType,
-    } as Interactions.Content;
+    } as any;
   }
 
   if (part.fileData !== undefined && part.fileData !== null) {
@@ -211,81 +173,245 @@ export function convertPartToInteractionContent(
       type: getInteractionMediaType(mimeType),
       uri: part.fileData.fileUri,
       mime_type: mimeType,
-    } as Interactions.Content;
-  }
-
-  if (part.thought) {
-    const result: Interactions.ThoughtContent = {type: 'thought'};
-    if (
-      part.thoughtSignature !== undefined &&
-      part.thoughtSignature !== null
-    ) {
-      result.signature = base64Encode(part.thoughtSignature);
-    }
-    return result;
-  }
-
-  if (
-    part.codeExecutionResult !== undefined &&
-    part.codeExecutionResult !== null
-  ) {
-    const isError =
-      part.codeExecutionResult.outcome === Outcome.OUTCOME_FAILED ||
-      part.codeExecutionResult.outcome === Outcome.OUTCOME_DEADLINE_EXCEEDED;
-    return {
-      type: 'code_execution_result',
-      call_id: '',
-      result: part.codeExecutionResult.output || '',
-      is_error: isError,
-    };
-  }
-
-  if (part.executableCode !== undefined && part.executableCode !== null) {
-    return {
-      type: 'code_execution_call',
-      id: '',
-      arguments: {
-        code: part.executableCode.code || '',
-        language: part.executableCode.language || 'PYTHON',
-      },
-    };
+    } as any;
   }
 
   return null;
 }
 
 /**
- * Convert a Content to a TurnParam object.
+ * Convert a Content to a list of Steps.
  */
-export function convertContentToTurn(content: Content): Interactions.Turn {
-  const contents: Interactions.Content[] = [];
-  if (content.parts) {
-    for (const part of content.parts) {
-      const interactionContent = convertPartToInteractionContent(part);
-      if (interactionContent) {
-        contents.push(interactionContent);
+export function convertContentToSteps(content: Content): Interactions.Step[] {
+  const steps: Interactions.Step[] = [];
+  const role = content.role || 'user';
+
+  if (role === 'user') {
+    const mediaContents: Interactions.Content[] = [];
+    if (content.parts) {
+      for (const part of content.parts) {
+        if (part.functionResponse) {
+          steps.push({
+            type: 'function_result',
+            call_id: part.functionResponse.id || '',
+            name: part.functionResponse.name || '',
+            result: part.functionResponse.response,
+          } as Interactions.FunctionResultStep);
+        } else if (part.codeExecutionResult) {
+          const isError =
+            part.codeExecutionResult.outcome === Outcome.OUTCOME_FAILED ||
+            part.codeExecutionResult.outcome ===
+              Outcome.OUTCOME_DEADLINE_EXCEEDED;
+          steps.push({
+            type: 'code_execution_result',
+            call_id: '',
+            result: part.codeExecutionResult.output || '',
+            is_error: isError,
+          } as Interactions.CodeExecutionResultStep);
+        } else {
+          const mediaContent = convertPartToMediaContent(part);
+          if (mediaContent) {
+            mediaContents.push(mediaContent);
+          }
+        }
       }
+    }
+    if (mediaContents.length > 0) {
+      steps.push({
+        type: 'user_input',
+        content: mediaContents,
+      } as Interactions.UserInputStep);
+    }
+  } else if (role === 'model') {
+    const mediaContents: Interactions.Content[] = [];
+    if (content.parts) {
+      for (const part of content.parts) {
+        if (part.functionCall) {
+          const step: Interactions.FunctionCallStep = {
+            type: 'function_call',
+            id: part.functionCall.id || '',
+            name: part.functionCall.name || '',
+            arguments:
+              (part.functionCall.args as Record<string, unknown>) || {},
+          };
+          if (part.thoughtSignature) {
+            step.signature = part.thoughtSignature;
+          }
+          steps.push(step);
+        } else if (part.executableCode) {
+          steps.push({
+            type: 'code_execution_call',
+            id: '',
+            arguments: {
+              code: part.executableCode.code || '',
+              language: 'python',
+            },
+          } as Interactions.CodeExecutionCallStep);
+        } else if (part.thought) {
+          const step: Interactions.ThoughtStep = {
+            type: 'thought',
+          };
+          if (part.thoughtSignature) {
+            step.signature = part.thoughtSignature;
+          }
+          steps.push(step);
+        } else {
+          const mediaContent = convertPartToMediaContent(part);
+          if (mediaContent) {
+            mediaContents.push(mediaContent);
+          }
+        }
+      }
+    }
+    if (mediaContents.length > 0) {
+      steps.push({
+        type: 'model_output',
+        content: mediaContents,
+      } as Interactions.ModelOutputStep);
     }
   }
 
-  return {
-    role: content.role || 'user',
-    content: contents,
-  };
+  return steps;
 }
 
 /**
- * Convert a list of Content objects to turns.
+ * Convert a media content (Interactions.Content) to a Part.
  */
-export function convertContentsToTurns(contents: Content[]): Interactions.Turn[] {
-  const turns: Interactions.Turn[] = [];
-  for (const content of contents) {
-    const turn = convertContentToTurn(content);
-    if (turn.content && turn.content.length > 0) {
-      turns.push(turn);
+function convertMediaContentToPart(content: Interactions.Content): Part | null {
+  if (content.type === 'text') {
+    return {text: content.text || ''};
+  }
+
+  if (
+    content.type === 'image' ||
+    content.type === 'audio' ||
+    content.type === 'video' ||
+    content.type === 'document'
+  ) {
+    const media = content as any;
+    if (media.data) {
+      return {
+        inlineData: {
+          data: media.data,
+          mimeType: media.mime_type || '',
+        },
+      };
+    } else if (media.uri) {
+      return {
+        fileData: {
+          fileUri: media.uri,
+          mimeType: media.mime_type || '',
+        },
+      };
     }
   }
-  return turns;
+  return null;
+}
+
+/**
+ * Convert a Step to a list of Parts.
+ */
+export function convertStepToParts(step: Interactions.Step): Part[] {
+  if (!step || !step.type) {
+    return [];
+  }
+
+  switch (step.type) {
+    case 'model_output': {
+      const modelOutputStep = step as Interactions.ModelOutputStep;
+      const parts: Part[] = [];
+      if (modelOutputStep.content) {
+        for (const content of modelOutputStep.content) {
+          const part = convertMediaContentToPart(content);
+          if (part) {
+            parts.push(part);
+          }
+        }
+      }
+      return parts;
+    }
+    case 'user_input': {
+      const userInputStep = step as Interactions.UserInputStep;
+      const parts: Part[] = [];
+      if (userInputStep.content) {
+        for (const content of userInputStep.content) {
+          const part = convertMediaContentToPart(content);
+          if (part) {
+            parts.push(part);
+          }
+        }
+      }
+      return parts;
+    }
+    case 'function_call': {
+      const functionCallStep = step as Interactions.FunctionCallStep;
+      const part: Part = {
+        functionCall: {
+          id: functionCallStep.id,
+          name: functionCallStep.name,
+          args: functionCallStep.arguments || {},
+        },
+      };
+      if (functionCallStep.signature) {
+        part.thoughtSignature = functionCallStep.signature;
+      }
+      return [part];
+    }
+    case 'function_result': {
+      const functionResultStep = step as Interactions.FunctionResultStep;
+      const result = functionResultStep.result;
+      return [
+        {
+          functionResponse: {
+            id: functionResultStep.call_id,
+            name: functionResultStep.name || '',
+            response:
+              typeof result === 'object' && result !== null
+                ? (result as Record<string, unknown>)
+                : {output: result},
+          },
+        },
+      ];
+    }
+    case 'code_execution_call': {
+      const codeExecutionCallStep = step as Interactions.CodeExecutionCallStep;
+      const args = codeExecutionCallStep.arguments || {};
+      return [
+        {
+          executableCode: {
+            code: args.code || '',
+            language: (args.language || 'PYTHON').toUpperCase() as any,
+          },
+        },
+      ];
+    }
+    case 'code_execution_result': {
+      const codeExecutionResultStep =
+        step as Interactions.CodeExecutionResultStep;
+      return [
+        {
+          codeExecutionResult: {
+            output: codeExecutionResultStep.result || '',
+            outcome: codeExecutionResultStep.is_error
+              ? Outcome.OUTCOME_FAILED
+              : Outcome.OUTCOME_OK,
+          },
+        },
+      ];
+    }
+    case 'thought': {
+      const thoughtStep = step as Interactions.ThoughtStep;
+      const part: Part = {
+        thought: true,
+      };
+      if (thoughtStep.signature) {
+        part.thoughtSignature = thoughtStep.signature;
+      }
+      return [part];
+    }
+    default:
+      return [];
+  }
 }
 
 /**
@@ -350,131 +476,42 @@ export function convertToolsConfigToInteractionsFormat(
 }
 
 /**
- * Convert interaction output to a Part.
+ * Helper to find the last element in an array matching a predicate.
  */
-export function convertInteractionOutputToPart(
-  output: Interactions.Content,
-): Part | null {
-  if (!output || !output.type) {
-    return null;
-  }
-
-  const outputType = output.type;
-
-  if (outputType === 'text') {
-    return {text: output.text || ''};
-  }
-
-  if (outputType === 'function_call') {
-    logger.debug(
-      `Converting function_call output: name=${output.name}, id=${output.id}`,
-    );
-    let thoughtSignature: Uint8Array | undefined = undefined;
-    const thoughtSigValue = output.signature;
-    if (thoughtSigValue && typeof thoughtSigValue === 'string') {
-      if (isBrowser()) {
-        // eslint-disable-next-line no-undef
-        const binaryString = window.atob(thoughtSigValue);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        thoughtSignature = bytes;
-      } else {
-        thoughtSignature = Buffer.from(thoughtSigValue, 'base64');
-      }
-    }
-    return {
-      functionCall: {
-        id: output.id,
-        name: output.name,
-        args: output.arguments || {},
-      } as FunctionCall,
-      thoughtSignature: thoughtSignature as any,
-    };
-  }
-
-  if (outputType === 'function_result') {
-    const result = output.result;
-    return {
-      functionResponse: {
-        id: output.call_id,
-        response: typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {output: result},
-      } as FunctionResponse,
-    };
-  }
-
-  if (outputType === 'image') {
-    if (output.data) {
-      return {
-        inlineData: {
-          data: output.data,
-          mimeType: output.mime_type || '',
-        },
-      };
-    } else if (output.uri) {
-      return {
-        fileData: {
-          fileUri: output.uri,
-          mimeType: output.mime_type || '',
-        },
-      };
+function findLastPart(
+  parts: Part[],
+  predicate: (p: Part) => boolean,
+): Part | undefined {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (predicate(parts[i])) {
+      return parts[i];
     }
   }
+  return undefined;
+}
 
-  if (outputType === 'audio') {
-    if (output.data) {
-      return {
-        inlineData: {
-          data: output.data,
-          mimeType: output.mime_type || '',
-        },
-      };
-    } else if (output.uri) {
-      return {
-        fileData: {
-          fileUri: output.uri,
-          mimeType: output.mime_type || '',
-        },
-      };
+/**
+ * Extract the latest model generated parts from a list of steps.
+ */
+export function getLatestModelParts(steps: Interactions.Step[]): Part[] {
+  if (!steps || steps.length === 0) {
+    return [];
+  }
+
+  const latestParts: Part[] = [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (
+      step.type === 'user_input' ||
+      step.type === 'function_result' ||
+      step.type === 'code_execution_result'
+    ) {
+      break;
     }
+    const parts = convertStepToParts(step);
+    latestParts.unshift(...parts);
   }
-
-  if (outputType === 'thought') {
-    return null;
-  }
-
-  if (outputType === 'code_execution_result') {
-    return {
-      codeExecutionResult: {
-        output: output.result || '',
-        outcome: output.is_error ? Outcome.OUTCOME_FAILED : Outcome.OUTCOME_OK,
-      },
-    };
-  }
-
-  if (outputType === 'code_execution_call') {
-    const args = output.arguments || {};
-    return {
-      executableCode: {
-        code: args.code || '',
-        language: (args.language || 'PYTHON') as any,
-      },
-    };
-  }
-
-  if (outputType === 'google_search_result') {
-    if (output.result && Array.isArray(output.result)) {
-      const resultsText = output.result
-        .filter((r) => r)
-        .map((r) => (typeof r === 'object' ? JSON.stringify(r) : String(r)))
-        .join('\n');
-      return {text: resultsText};
-    }
-  }
-
-  return null;
+  return latestParts;
 }
 
 /**
@@ -497,15 +534,7 @@ export function convertInteractionToLlmResponse(
     };
   }
 
-  const parts: Part[] = [];
-  if (interaction.outputs) {
-    for (const output of interaction.outputs) {
-      const part = convertInteractionOutputToPart(output);
-      if (part) {
-        parts.push(part);
-      }
-    }
-  }
+  const parts = getLatestModelParts(interaction.steps || []);
 
   let content: Content | undefined = undefined;
   if (parts.length > 0) {
@@ -552,15 +581,48 @@ export function convertInteractionEventToLlmResponse(
 ): LlmResponse | null {
   const eventType = event.event_type || event.eventType;
 
-  if (eventType === 'content.delta') {
-    const delta = event.delta;
+  if (eventType === 'step.start') {
+    const stepStart = event as unknown as Interactions.StepStart;
+    const step = stepStart.step;
+    if (step.type === 'function_call') {
+      const part: Part = {
+        functionCall: {
+          id: step.id,
+          name: step.name,
+          args: {},
+        },
+        partMetadata: {
+          accumulatedArgs: '',
+          isComplete: false,
+        },
+      };
+      if (step.signature) {
+        part.thoughtSignature = step.signature;
+      }
+      aggregatedParts.push(part);
+      return null;
+    }
+    if (step.type === 'thought') {
+      const part: Part = {
+        thought: true,
+        partMetadata: {
+          isComplete: false,
+        },
+      };
+      if (step.signature) {
+        part.thoughtSignature = step.signature;
+      }
+      aggregatedParts.push(part);
+      return null;
+    }
+  } else if (eventType === 'step.delta') {
+    const stepDelta = event as unknown as Interactions.StepDelta;
+    const delta = stepDelta.delta;
     if (!delta) {
       return null;
     }
 
-    const deltaType = delta.type;
-
-    if (deltaType === 'text') {
+    if (delta.type === 'text') {
       const text = delta.text || '';
       if (text) {
         const part: Part = {text: text};
@@ -572,53 +634,39 @@ export function convertInteractionEventToLlmResponse(
           interactionId: interactionId,
         };
       }
-    } else if (deltaType === 'function_call') {
-      if (delta.name) {
-        let thoughtSignature: Uint8Array | undefined = undefined;
-        const thoughtSigValue = delta.signature || delta.thought_signature;
-        if (thoughtSigValue && typeof thoughtSigValue === 'string') {
-          if (isBrowser()) {
-            // eslint-disable-next-line no-undef
-            const binaryString = window.atob(thoughtSigValue);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            thoughtSignature = bytes;
-          } else {
-            thoughtSignature = Buffer.from(thoughtSigValue, 'base64');
-          }
-        }
-        const part: Part = {
-          functionCall: {
-            id: delta.id || '',
-            name: delta.name,
-            args: delta.arguments || {},
-          } as FunctionCall,
-          thoughtSignature: thoughtSignature as any,
-        };
-        aggregatedParts.push(part);
-        return null;
+    } else if (delta.type === 'arguments_delta') {
+      const activePart = findLastPart(
+        aggregatedParts,
+        (p) =>
+          !!(p.functionCall && p.partMetadata && !p.partMetadata.isComplete),
+      );
+      if (activePart && activePart.partMetadata && delta.arguments) {
+        activePart.partMetadata.accumulatedArgs =
+          (activePart.partMetadata.accumulatedArgs as string) + delta.arguments;
       }
-    } else if (deltaType === 'image') {
-      if (delta.data || delta.uri) {
-        let part: Part;
-        if (delta.data) {
-          part = {
-            inlineData: {
-              data: delta.data,
-              mimeType: delta.mime_type,
-            },
-          };
-        } else {
-          part = {
-            fileData: {
-              fileUri: delta.uri,
-              mimeType: delta.mime_type,
-            },
-          };
-        }
+      return null;
+    } else if (delta.type === 'thought_signature') {
+      const activePart = findLastPart(
+        aggregatedParts,
+        (p) =>
+          !!(
+            (p.thought || p.functionCall) &&
+            p.partMetadata &&
+            !p.partMetadata.isComplete
+          ),
+      );
+      if (activePart && delta.signature) {
+        activePart.thoughtSignature = delta.signature;
+      }
+      return null;
+    } else if (
+      delta.type === 'image' ||
+      delta.type === 'audio' ||
+      delta.type === 'video' ||
+      delta.type === 'document'
+    ) {
+      const part = convertMediaContentToPart(delta as any);
+      if (part) {
         aggregatedParts.push(part);
         return {
           content: {role: 'model', parts: [part]},
@@ -628,21 +676,55 @@ export function convertInteractionEventToLlmResponse(
         };
       }
     }
-  } else if (eventType === 'content.stop') {
-    if (aggregatedParts.length > 0) {
-      return {
-        content: {role: 'model', parts: [...aggregatedParts]},
-        partial: false,
-        turnComplete: false,
-        interactionId: interactionId,
-      };
-    }
-  } else if (eventType === 'interaction') {
-    return convertInteractionToLlmResponse(
-      event as unknown as ExtendedInteraction,
+  } else if (eventType === 'step.stop') {
+    const activePart = findLastPart(
+      aggregatedParts,
+      (p) => !!(p.partMetadata && !p.partMetadata.isComplete),
     );
+    if (activePart && activePart.partMetadata) {
+      activePart.partMetadata.isComplete = true;
+      if (activePart.functionCall) {
+        const accumulatedArgs = activePart.partMetadata
+          .accumulatedArgs as string;
+        try {
+          activePart.functionCall.args = accumulatedArgs
+            ? JSON.parse(accumulatedArgs)
+            : {};
+        } catch (e) {
+          logger.error(
+            `Failed to parse accumulated arguments: ${accumulatedArgs}`,
+            e,
+          );
+          activePart.functionCall.args = {};
+        }
+        delete activePart.partMetadata;
+
+        return {
+          content: {role: 'model', parts: [activePart]},
+          partial: false,
+          turnComplete: false,
+          interactionId: interactionId,
+        };
+      }
+      if (activePart.thought) {
+        delete activePart.partMetadata;
+        return null;
+      }
+    }
+  } else if (eventType === 'interaction.completed') {
+    return {
+      content:
+        aggregatedParts.length > 0
+          ? {role: 'model', parts: [...aggregatedParts]}
+          : undefined,
+      partial: false,
+      turnComplete: true,
+      finishReason: 'STOP' as FinishReason,
+      interactionId: interactionId,
+    };
   } else if (eventType === 'interaction.status_update') {
-    const status = event.status;
+    const statusUpdate = event as unknown as ExtendedInteractionStatusUpdate;
+    const status = statusUpdate.status;
     if (status === 'completed' || status === 'requires_action') {
       return {
         content:
@@ -655,7 +737,7 @@ export function convertInteractionEventToLlmResponse(
         interactionId: interactionId,
       };
     } else if (status === 'failed') {
-      const error = event.error;
+      const error = statusUpdate.error;
       return {
         errorCode: error ? error.code : 'UNKNOWN_ERROR',
         errorMessage: error ? error.message : 'Unknown error',
@@ -776,7 +858,12 @@ export async function* generateContentViaInteractions(
     contents = getLatestUserContents(contents);
   }
 
-  const inputTurns = convertContentsToTurns(contents);
+  const inputSteps: Interactions.Step[] = [];
+  if (contents) {
+    for (const content of contents) {
+      inputSteps.push(...convertContentToSteps(content));
+    }
+  }
   const interactionTools = convertToolsConfigToInteractionsFormat(
     llmRequest.config || {},
   );
@@ -791,9 +878,9 @@ export async function* generateContentViaInteractions(
   let currentInteractionId = previousInteractionId;
 
   if (stream) {
-    const responses = await apiClient.interactions.create({
+    const responses: any = await apiClient.interactions.create({
       model: llmRequest.model,
-      input: inputTurns,
+      input: inputSteps,
       stream: true,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
@@ -831,7 +918,7 @@ export async function* generateContentViaInteractions(
   } else {
     const interaction = await apiClient.interactions.create({
       model: llmRequest.model,
-      input: inputTurns,
+      input: inputSteps,
       stream: false,
       system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
