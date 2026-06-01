@@ -8,8 +8,8 @@ import {LogLevel, setLogLevel} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createProgram} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
-import {deployToCloudRun} from '../../src/cli/cli_deploy.js';
 import {runAgent} from '../../src/cli/cli_run.js';
+import {deployToCloudRun} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
 import {AdkApiServer} from '../../src/server/adk_api_server.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
@@ -24,7 +24,7 @@ vi.mock('../../src/cli/cli_create', () => ({
   createAgent: vi.fn(),
 }));
 
-vi.mock('../../src/cli/cli_deploy', () => ({
+vi.mock('../../src/cli/deploy/cli_deploy_cloud_run', () => ({
   deployToCloudRun: vi.fn(),
 }));
 

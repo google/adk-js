@@ -10,7 +10,7 @@ import {
   createDockerFileContent,
   CreateDockerFileContentOptions,
   deployToCloudRun,
-} from '../../src/cli/cli_deploy.js';
+} from '../../src/cli/deploy/cli_deploy_cloud_run.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
   isFile,
