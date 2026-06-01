@@ -3,15 +3,13 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import {
   Content,
   FinishReason,
   GenerateContentConfig,
   GoogleGenAI,
   Interactions,
+  Language,
   Outcome,
   Part,
 } from '@google/genai';
@@ -20,6 +18,21 @@ import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
 // --- Helper Interfaces for Strong Typing ---
+
+interface ExtendedTool {
+  functionDeclarations?: Array<{
+    name: string;
+    description?: string;
+    parameters?: {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    parametersJsonSchema?: unknown;
+  }>;
+  googleSearch?: unknown;
+  codeExecution?: unknown;
+  urlContext?: unknown;
+}
 
 export interface ExtendedInteraction extends Interactions.Interaction {
   error?: {
@@ -164,7 +177,7 @@ function convertPartToMediaContent(part: Part): Interactions.Content | null {
       type: getInteractionMediaType(mimeType),
       data: part.inlineData.data,
       mime_type: mimeType,
-    } as any;
+    } as Interactions.Content;
   }
 
   if (part.fileData !== undefined && part.fileData !== null) {
@@ -173,7 +186,7 @@ function convertPartToMediaContent(part: Part): Interactions.Content | null {
       type: getInteractionMediaType(mimeType),
       uri: part.fileData.fileUri,
       mime_type: mimeType,
-    } as any;
+    } as Interactions.Content;
   }
 
   return null;
@@ -288,7 +301,11 @@ function convertMediaContentToPart(content: Interactions.Content): Part | null {
     content.type === 'video' ||
     content.type === 'document'
   ) {
-    const media = content as any;
+    const media = content as {
+      data?: string;
+      uri?: string;
+      mime_type?: string;
+    };
     if (media.data) {
       return {
         inlineData: {
@@ -380,7 +397,7 @@ export function convertStepToParts(step: Interactions.Step): Part[] {
         {
           executableCode: {
             code: args.code || '',
-            language: (args.language || 'PYTHON').toUpperCase() as any,
+            language: (args.language || 'PYTHON').toUpperCase() as Language,
           },
         },
       ];
@@ -426,15 +443,20 @@ export function convertToolsConfigToInteractionsFormat(
 
   const interactionTools: Interactions.Tool[] = [];
   for (const tool of config.tools) {
-    const t = tool as any;
+    const t = tool as ExtendedTool;
     if (t.functionDeclarations) {
       for (const funcDecl of t.functionDeclarations) {
-        const funcTool: any = {
+        const funcTool: {
+          type: 'function';
+          name: string;
+          description?: string;
+          parameters?: unknown;
+        } = {
           type: 'function',
           name: funcDecl.name,
         };
         if (funcDecl.description) {
-          funcTool['description'] = funcDecl.description;
+          funcTool.description = funcDecl.description;
         }
         if (funcDecl.parameters) {
           if (funcDecl.parameters.properties) {
@@ -444,7 +466,7 @@ export function convertToolsConfigToInteractionsFormat(
             )) {
               props[k] = JSON.parse(JSON.stringify(v));
             }
-            funcTool['parameters'] = {
+            funcTool.parameters = {
               type: 'object',
               properties: props,
               required: funcDecl.parameters.required
@@ -453,7 +475,7 @@ export function convertToolsConfigToInteractionsFormat(
             };
           }
         } else if (funcDecl.parametersJsonSchema) {
-          funcTool['parameters'] = funcDecl.parametersJsonSchema;
+          funcTool.parameters = funcDecl.parametersJsonSchema;
         }
         interactionTools.push(funcTool as Interactions.Tool);
       }
@@ -665,7 +687,7 @@ export function convertInteractionEventToLlmResponse(
       delta.type === 'video' ||
       delta.type === 'document'
     ) {
-      const part = convertMediaContentToPart(delta as any);
+      const part = convertMediaContentToPart(delta as Interactions.Content);
       if (part) {
         aggregatedParts.push(part);
         return {
@@ -878,8 +900,8 @@ export async function* generateContentViaInteractions(
   let currentInteractionId = previousInteractionId;
 
   if (stream) {
-    const responses: any = await apiClient.interactions.create({
-      model: llmRequest.model,
+    const responses = (await apiClient.interactions.create({
+      model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
       stream: true,
       system_instruction: systemInstruction,
@@ -887,7 +909,7 @@ export async function* generateContentViaInteractions(
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
-    } as any); // cast to any because SDK typings might still be tricky under some conditions
+    })) as AsyncIterable<ExtendedInteractionSSEEvent>;
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
@@ -916,8 +938,8 @@ export async function* generateContentViaInteractions(
       };
     }
   } else {
-    const interaction = await apiClient.interactions.create({
-      model: llmRequest.model,
+    const interaction = (await apiClient.interactions.create({
+      model: (llmRequest.model || 'gemini-2.5-flash') as 'gemini-2.5-flash',
       input: inputSteps,
       stream: false,
       system_instruction: systemInstruction,
@@ -925,9 +947,9 @@ export async function* generateContentViaInteractions(
       generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
       previous_interaction_id: previousInteractionId,
-    } as any);
+    })) as ExtendedInteraction;
 
     logger.info('Interaction response received from the model.');
-    yield convertInteractionToLlmResponse(interaction as ExtendedInteraction);
+    yield convertInteractionToLlmResponse(interaction);
   }
 }

@@ -13,6 +13,7 @@ import {
   FunctionResponse,
   GenerateContentConfig,
   Interactions,
+  Language,
   Outcome,
   Part,
 } from '@google/genai';
@@ -316,7 +317,7 @@ describe('interactions_utils', () => {
           {
             executableCode: {
               code: 'print("hello")',
-              language: 'PYTHON',
+              language: Language.PYTHON,
             },
           },
         ],
@@ -2008,7 +2009,7 @@ describe('interactions_utils', () => {
           {
             executableCode: {
               code: 'print(1)',
-              language: 'python',
+              language: Language.PYTHON,
             },
           },
         ],
