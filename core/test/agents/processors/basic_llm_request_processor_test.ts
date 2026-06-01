@@ -5,9 +5,10 @@
  */
 
 import {
+  BaseAgent,
   BaseLlm,
   BaseLlmConnection,
-  BaseAgent,
+  createSession,
   InvocationContext,
   LlmAgent,
   LLMRegistry,
@@ -15,9 +16,8 @@ import {
   LlmResponse,
   PluginManager,
   RunConfig,
-  createSession,
 } from '@google/adk';
-import {Content, Blob as GenaiBlob} from '@google/genai';
+import {Content, Blob as GenaiBlob, Modality} from '@google/genai';
 import {beforeAll, describe, expect, it} from 'vitest';
 import {BASIC_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/basic_llm_request_processor.js';
 
@@ -174,7 +174,7 @@ describe('BasicLlmRequestProcessor', () => {
       model: 'test-basic-processor-model',
     });
     const runConfig: RunConfig = {
-      responseModalities: ['AUDIO' as any],
+      responseModalities: ['AUDIO' as unknown as Modality],
       speechConfig: {voiceConfig: {prebuiltVoiceConfig: {voiceName: 'Puck'}}},
       outputAudioTranscription: {},
       inputAudioTranscription: {},
