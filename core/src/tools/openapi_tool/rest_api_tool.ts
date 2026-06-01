@@ -15,11 +15,7 @@ import {applyCredential} from './auth/auth_helpers.js';
 import {OperationParser} from './openapi_spec_parser/operation_parser.js';
 import {ToolAuthHandler} from './openapi_spec_parser/tool_auth_handler.js';
 
-export interface OperationEndpoint {
-  baseUrl: string;
-  path: string;
-  method: string;
-}
+import {OperationEndpoint} from './openapi_spec_parser/openapi_spec_parser.js';
 
 @experimental
 export class RestApiTool extends BaseTool {

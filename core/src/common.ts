@@ -269,6 +269,7 @@ export {OperationParser} from './tools/openapi_tool/openapi_spec_parser/operatio
 export type {ApiParameter} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
 export {ToolAuthHandler} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 export type {AuthPreparationResult} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export {RestApiTool} from './tools/openapi_tool/rest_api_tool.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
