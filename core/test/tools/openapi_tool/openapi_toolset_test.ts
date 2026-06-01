@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {OpenApiSpecParser, OpenAPIToolset, ReadonlyContext} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
-import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
-import {OpenApiSpecParser} from '../../../src/tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
-import {OpenAPIToolset} from '../../../src/tools/openapi_tool/openapi_toolset.js';
 
 describe('OpenAPIToolset', () => {
   const mockSpec: OpenAPIV3.Document = {
