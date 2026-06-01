@@ -58,8 +58,12 @@ export class MCPToolset extends BaseToolset {
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const session = await this.mcpSessionManager.createSession();
 
-    const listResult = (await session.listTools()) as ListToolsResult;
-    await session.close();
+    let listResult: ListToolsResult;
+    try {
+      listResult = (await session.listTools()) as ListToolsResult;
+    } finally {
+      await this.mcpSessionManager.closeSession(session);
+    }
     logger.debug(`number of tools: ${listResult.tools.length}`);
     for (const tool of listResult.tools) {
       logger.debug(`tool: ${tool.name}`);
