@@ -329,6 +329,105 @@ describe('toGeminiSchema', () => {
     });
   });
 
+  it('handles enum-only schema (no type field) without crashing', () => {
+    const input = {
+      enum: ['red', 'green', 'blue'],
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: ['red', 'green', 'blue'],
+    });
+  });
+
+  it('handles enum-only schema with description', () => {
+    const input = {
+      description: 'A color value',
+      enum: ['red', 'green', 'blue'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      description: 'A color value',
+      enum: ['red', 'green', 'blue'],
+    });
+  });
+
+  it('handles enum-only schema with mixed types (no type inferred)', () => {
+    const input = {
+      enum: ['red', 1, true],
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.TYPE_UNSPECIFIED,
+      enum: ['red', '1', 'true'],
+    });
+  });
+
+  it('handles enum with explicit type field', () => {
+    const input = {
+      type: 'string' as const,
+      enum: ['asc', 'desc'],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: ['asc', 'desc'],
+    });
+  });
+
+  it('handles const-only schema with string value', () => {
+    const input = {
+      const: 'fixed-value',
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    // const is not a Gemini Schema field; type is inferred from the const value
+    // and the value is forwarded as a single-element enum
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: ['fixed-value'],
+    });
+  });
+
+  it('handles const-only schema with numeric value', () => {
+    const input = {
+      const: 42,
+    };
+
+    expect(() =>
+      toGeminiSchema(input as unknown as MCPToolSchema),
+    ).not.toThrow();
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.NUMBER,
+      enum: ['42'],
+    });
+  });
+
   it('handles anyOf with multiple non-null object types', () => {
     const input = {
       anyOf: [

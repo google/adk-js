@@ -62,7 +62,15 @@ export interface EventActions {
 }
 
 /**
- * Creates an EventActions object.
+ * Creates an {@link EventActions} object with default empty-dict values for
+ * all dictionary fields.
+ *
+ * @param state - Optional partial {@link EventActions} whose properties
+ *   override the defaults. Dictionary fields (`stateDelta`, `artifactDelta`,
+ *   `requestedAuthConfigs`, `requestedToolConfirmations`) default to `{}`;
+ *   scalar fields (`skipSummarization`, `transferToAgent`, `escalate`) default
+ *   to `undefined`.
+ * @returns A fully populated {@link EventActions} object.
  */
 export function createEventActions(
   state: Partial<EventActions> = {},
@@ -77,13 +85,23 @@ export function createEventActions(
 }
 
 /**
- * Merges a list of EventActions objects into a single EventActions object.
+ * Merges a list of {@link EventActions} objects into a single
+ * {@link EventActions} object.
  *
- * 1. It merges dictionaries (stateDelta, artifactDelta, requestedAuthConfigs)
- * by adding all the properties from each source.
+ * Merge semantics:
+ * 1. **Dictionary fields** (`stateDelta`, `artifactDelta`,
+ *    `requestedAuthConfigs`, `requestedToolConfirmations`) — all entries from
+ *    every source are combined via `Object.assign`. Later sources win on
+ *    duplicate keys.
+ * 2. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
+ *    last-writer-wins: the value from the last source that sets the field is
+ *    kept.
  *
- * 2. For other properties (skipSummarization,transferToAgent, escalate), the
- * last one wins.
+ * @param sources - Ordered list of partial {@link EventActions} to merge.
+ *   Falsy entries are silently skipped.
+ * @param target - Optional base {@link EventActions} to merge into. When
+ *   provided it is used as the starting state before applying `sources`.
+ * @returns A new {@link EventActions} containing the merged result.
  */
 export function mergeEventActions(
   sources: Array<Partial<EventActions>>,

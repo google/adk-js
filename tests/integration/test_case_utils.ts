@@ -284,8 +284,22 @@ export abstract class BaseTestServer {
 
     await new Promise<void>((resolve, reject) => {
       let started = false;
+      const stdoutChunks: string[] = [];
+
       this.serverProcess!.stdout.on('data', (data) => {
         const message = data.toString();
+        stdoutChunks.push(message);
+
+        // Find URL like http://localhost:12345
+        const urlMatch = message.match(/http:\/\/localhost:([0-9]+)/i);
+        if (urlMatch && urlMatch[1]) {
+          const parsedPort = parseInt(urlMatch[1], 10);
+          if (parsedPort > 0) {
+            this.port = parsedPort;
+            this.url = `http://${this.host}:${this.port}`;
+          }
+        }
+
         if (message.includes(startMessage)) {
           started = true;
           console.log(successLogMessage);
@@ -311,6 +325,9 @@ export abstract class BaseTestServer {
         console.error(`${serverName} exited with code ${code}`);
 
         if (!started) {
+          console.error(
+            `${serverName} Captured stdout before premature exit:\n${stdoutChunks.join('')}`,
+          );
           reject(
             new Error(`${serverName} exited prematurely with code ${code}`),
           );
