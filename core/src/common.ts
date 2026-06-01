@@ -244,6 +244,8 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
+export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
+export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
 export {
   loadAllSkillsInDir,
   loadSkillFromDir,

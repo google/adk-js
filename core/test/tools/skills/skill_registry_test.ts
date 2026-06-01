@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Client} from '@google-cloud/vertexai';
 import {
   Context,
+  GCPSkillRegistry,
   InvocationContext,
   LlmRequest,
   LoadSkillResourceTool,
@@ -65,6 +67,159 @@ Instruction body`;
       expect(() => loadSkillFromZipBuffer(zip.toBuffer())).toThrow(
         'SKILL.md not found in zipped filesystem.',
       );
+    });
+  });
+
+  describe('GCPSkillRegistry', () => {
+    it('initializes with default options', () => {
+      const envProj = process.env.GOOGLE_CLOUD_PROJECT;
+      process.env.GOOGLE_CLOUD_PROJECT = 'mock-env-proj';
+      const reg = new GCPSkillRegistry();
+      expect(reg).toBeDefined();
+      if (envProj === undefined) {
+        delete process.env.GOOGLE_CLOUD_PROJECT;
+      } else {
+        process.env.GOOGLE_CLOUD_PROJECT = envProj;
+      }
+    });
+
+    it('getSkill fetches and extracts a zipped skill', async () => {
+      const zipBuffer = createValidZipBuffer();
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({
+              zippedFilesystem: zipBuffer.toString('base64'),
+            }),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const skill = await reg.getSkill('test-remote-skill');
+      expect(skill.frontmatter.name).toBe('test-remote-skill');
+    });
+
+    it('getSkill handles zipped_filesystem snake_case format', async () => {
+      const zipBuffer = createValidZipBuffer();
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({
+              zipped_filesystem: zipBuffer.toString('base64'),
+            }),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const skill = await reg.getSkill('test-remote-skill');
+      expect(skill.frontmatter.name).toBe('test-remote-skill');
+    });
+
+    it('getSkill throws error if zippedFilesystem is missing', async () => {
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({}),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      await expect(reg.getSkill('missing-zip')).rejects.toThrow(
+        "Skill 'missing-zip' does not contain zipped filesystem.",
+      );
+    });
+
+    it('searchSkills retrieves and formats search results', async () => {
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({
+              retrievedSkills: [
+                {
+                  skillName: 'projects/proj/locations/loc/skills/found-skill',
+                  description: 'A found skill',
+                },
+              ],
+            }),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const results = await reg.searchSkills('find skill');
+      expect(results.length).toBe(1);
+      expect(results[0].name).toBe('found-skill');
+      expect(results[0].description).toBe('A found skill');
+    });
+
+    it('searchSkills handles snake_case retrieved_skills response', async () => {
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({
+              retrieved_skills: [
+                {
+                  skill_name: 'projects/proj/locations/loc/skills/found-skill',
+                  description: 'A found skill',
+                },
+              ],
+            }),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const results = await reg.searchSkills('find skill');
+      expect(results.length).toBe(1);
+      expect(results[0].name).toBe('found-skill');
+    });
+
+    it('searchSkills returns empty array when retrievedSkills is empty', async () => {
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({}),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const results = await reg.searchSkills('find skill');
+      expect(results.length).toBe(0);
+    });
+    it('searchSkills handles empty skillName and description fallback', async () => {
+      const mockClient = {
+        apiClient: {
+          request: vi.fn().mockResolvedValue({
+            json: vi.fn().mockResolvedValue({
+              retrievedSkills: [{}],
+            }),
+          }),
+        },
+      };
+
+      const reg = new GCPSkillRegistry({
+        client: mockClient as unknown as Client,
+      });
+      const results = await reg.searchSkills('find skill');
+      expect(results.length).toBe(1);
+      expect(results[0].name).toBe('');
+      expect(results[0].description).toBe('');
     });
   });
 
