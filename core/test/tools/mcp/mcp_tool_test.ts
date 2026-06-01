@@ -29,6 +29,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -66,6 +67,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     // Pass 'test-tool' as originalName
@@ -108,6 +110,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);

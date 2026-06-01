@@ -100,5 +100,10 @@ export class MCPToolset extends BaseToolset {
     return tools;
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    const sessions = this.mcpSessionManager.getActiveSessions();
+    await Promise.allSettled(
+      sessions.map((session) => this.mcpSessionManager.closeSession(session)),
+    );
+  }
 }
