@@ -11,6 +11,7 @@ import {
   FunctionResponse,
   GenerateContentConfig,
   GoogleGenAI,
+  Interactions,
   Outcome,
   Part,
 } from '@google/genai';
@@ -21,124 +22,24 @@ import {LlmResponse} from './llm_response.js';
 
 // --- Helper Interfaces for Strong Typing ---
 
-interface ExtendedPart {
-  text?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  functionCall?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  functionResponse?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inlineData?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  fileData?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  thoughtSignature?: any;
-  thought?: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  codeExecutionResult?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  executableCode?: any;
-}
-
-interface ExtendedTool {
-  functionDeclarations?: Array<{
-    name: string;
-    description?: string;
-    parameters?: {
-      properties?: Record<string, unknown>;
-      required?: string[];
-    };
-    parametersJsonSchema?: unknown;
-  }>;
-  googleSearch?: unknown;
-  codeExecution?: unknown;
-  urlContext?: unknown;
-}
-
-interface InteractionTextContent {
-  type: 'text';
-  text: string;
-}
-
-interface InteractionFunctionCall {
-  type: 'function_call';
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  thought_signature?: string;
-}
-
-interface InteractionFunctionResult {
-  type: 'function_result';
-  name: string;
-  call_id: string;
-  result: unknown;
-}
-
-interface InteractionMediaContent {
-  type: 'image' | 'audio' | 'video' | 'document';
-  data?: string;
-  uri?: string;
-  mime_type: string;
-}
-
-interface InteractionThought {
-  type: 'thought';
-  signature?: string;
-}
-
-interface InteractionCodeExecutionCall {
-  type: 'code_execution_call';
-  id: string;
-  arguments: {
-    code: string;
-    language: string;
-  };
-}
-
-interface InteractionCodeExecutionResult {
-  type: 'code_execution_result';
-  call_id: string;
-  result: string;
-  is_error: boolean;
-}
-
-type InteractionContent =
-  | InteractionTextContent
-  | InteractionFunctionCall
-  | InteractionFunctionResult
-  | InteractionMediaContent
-  | InteractionThought
-  | InteractionCodeExecutionCall
-  | InteractionCodeExecutionResult;
-
-interface InteractionTurn {
-  role: string;
-  content: InteractionContent[];
-}
-
-interface InteractionTool {
-  type: 'function' | 'google_search' | 'code_execution' | 'url_context';
-  name?: string;
-  description?: string;
-  parameters?: unknown;
-}
-
-interface InteractionResponse {
-  id: string;
-  status: 'completed' | 'requires_action' | 'failed' | string;
+export interface ExtendedInteraction extends Interactions.Interaction {
   error?: {
     code: string;
     message: string;
   };
-  outputs?: Record<string, unknown>[];
-  usage?: {
-    total_input_tokens?: number;
-    total_output_tokens?: number;
+}
+
+export interface ExtendedInteractionStatusUpdate
+  extends Omit<Interactions.InteractionStatusUpdate, 'error'> {
+  error?: {
+    code: string;
+    message: string;
   };
 }
 
-interface InteractionSSEEvent {
+// Runtime event types can be more relaxed than compile-time
+export interface ExtendedInteractionSSEEvent
+  extends Omit<Interactions.InteractionSSEEvent, 'error' | 'interaction_id' | 'status'> {
   event_type?: string;
   eventType?: string;
   delta?: {
@@ -148,6 +49,7 @@ interface InteractionSSEEvent {
     id?: string;
     arguments?: Record<string, unknown>;
     thought_signature?: string;
+    signature?: string;
     data?: string;
     uri?: string;
     mime_type: string;
@@ -167,21 +69,6 @@ interface InteractionSSEEvent {
   id?: string;
 }
 
-interface GoogleGenAIWithInteractions {
-  interactions: {
-    create(params: {
-      model?: string;
-      input: InteractionTurn[];
-      stream: boolean;
-      systemInstruction?: string;
-      tools?: InteractionTool[];
-      generationConfig?: Record<string, unknown>;
-      previousInteractionId?: string;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }): Promise<any>; // We keep 'any' here as the SDK return type is complex (stream vs non-stream)
-  };
-}
-
 // --- Helper Functions ---
 
 /**
@@ -190,14 +77,15 @@ interface GoogleGenAIWithInteractions {
 function getInteractionMediaType(
   mimeType: string,
 ): 'image' | 'audio' | 'video' | 'document' {
-  if (mimeType.startsWith('image/')) {
-    return 'image';
-  } else if (mimeType.startsWith('audio/')) {
-    return 'audio';
-  } else if (mimeType.startsWith('video/')) {
-    return 'video';
-  } else {
-    return 'document';
+  switch (mimeType.split('/')[0]) {
+    case 'image':
+      return 'image';
+    case 'audio':
+      return 'audio';
+    case 'video':
+      return 'video';
+    default:
+      return 'document';
   }
 }
 
@@ -264,34 +152,32 @@ export function getLatestUserContents(contents: Content[]): Content[] {
  */
 export function convertPartToInteractionContent(
   part: Part,
-): InteractionContent | null {
-  const extPart = part as unknown as ExtendedPart;
-
-  if (extPart.text !== undefined && extPart.text !== null) {
-    return {type: 'text', text: extPart.text};
+): Interactions.Content | null {
+  if (part.text !== undefined && part.text !== null) {
+    return {type: 'text', text: part.text};
   }
 
-  if (extPart.functionCall !== undefined && extPart.functionCall !== null) {
-    const result: InteractionFunctionCall = {
+  if (part.functionCall !== undefined && part.functionCall !== null) {
+    const result: Interactions.FunctionCallContent = {
       type: 'function_call',
-      id: extPart.functionCall.id || '',
-      name: extPart.functionCall.name || '',
-      arguments: (extPart.functionCall.args as Record<string, unknown>) || {},
+      id: part.functionCall.id || '',
+      name: part.functionCall.name || '',
+      arguments: (part.functionCall.args as Record<string, unknown>) || {},
     };
     if (
-      extPart.thoughtSignature !== undefined &&
-      extPart.thoughtSignature !== null
+      part.thoughtSignature !== undefined &&
+      part.thoughtSignature !== null
     ) {
-      result['thought_signature'] = base64Encode(extPart.thoughtSignature);
+      result.signature = base64Encode(part.thoughtSignature);
     }
     return result;
   }
 
   if (
-    extPart.functionResponse !== undefined &&
-    extPart.functionResponse !== null
+    part.functionResponse !== undefined &&
+    part.functionResponse !== null
   ) {
-    let resultValue: unknown = extPart.functionResponse.response;
+    let resultValue: unknown = part.functionResponse.response;
     if (
       typeof resultValue !== 'object' &&
       typeof resultValue !== 'string' &&
@@ -300,67 +186,67 @@ export function convertPartToInteractionContent(
       resultValue = String(resultValue);
     }
     logger.debug(
-      `Converting function_response: name=${extPart.functionResponse.name}, call_id=${extPart.functionResponse.id}`,
+      `Converting function_response: name=${part.functionResponse.name}, call_id=${part.functionResponse.id}`,
     );
     return {
       type: 'function_result',
-      name: extPart.functionResponse.name || '',
-      call_id: extPart.functionResponse.id || '',
+      name: part.functionResponse.name || '',
+      call_id: part.functionResponse.id || '',
       result: resultValue,
     };
   }
 
-  if (extPart.inlineData !== undefined && extPart.inlineData !== null) {
-    const mimeType = extPart.inlineData.mimeType || '';
+  if (part.inlineData !== undefined && part.inlineData !== null) {
+    const mimeType = part.inlineData.mimeType || '';
     return {
       type: getInteractionMediaType(mimeType),
-      data: extPart.inlineData.data,
+      data: part.inlineData.data,
       mime_type: mimeType,
-    };
+    } as Interactions.Content;
   }
 
-  if (extPart.fileData !== undefined && extPart.fileData !== null) {
-    const mimeType = extPart.fileData.mimeType || '';
+  if (part.fileData !== undefined && part.fileData !== null) {
+    const mimeType = part.fileData.mimeType || '';
     return {
       type: getInteractionMediaType(mimeType),
-      uri: extPart.fileData.fileUri,
+      uri: part.fileData.fileUri,
       mime_type: mimeType,
-    };
+    } as Interactions.Content;
   }
 
-  if (extPart.thought) {
-    const result: InteractionThought = {type: 'thought'};
+  if (part.thought) {
+    const result: Interactions.ThoughtContent = {type: 'thought'};
     if (
-      extPart.thoughtSignature !== undefined &&
-      extPart.thoughtSignature !== null
+      part.thoughtSignature !== undefined &&
+      part.thoughtSignature !== null
     ) {
-      result['signature'] = base64Encode(extPart.thoughtSignature);
+      result.signature = base64Encode(part.thoughtSignature);
     }
     return result;
   }
 
   if (
-    extPart.codeExecutionResult !== undefined &&
-    extPart.codeExecutionResult !== null
+    part.codeExecutionResult !== undefined &&
+    part.codeExecutionResult !== null
   ) {
     const isError =
-      extPart.codeExecutionResult.outcome === Outcome.OUTCOME_FAILED ||
-      extPart.codeExecutionResult.outcome === Outcome.OUTCOME_DEADLINE_EXCEEDED;
+      part.codeExecutionResult.outcome === Outcome.OUTCOME_FAILED ||
+      part.codeExecutionResult.outcome === Outcome.OUTCOME_DEADLINE_EXCEEDED;
     return {
       type: 'code_execution_result',
       call_id: '',
-      result: extPart.codeExecutionResult.output || '',
+      result: part.codeExecutionResult.output || '',
       is_error: isError,
     };
   }
 
-  if (extPart.executableCode !== undefined && extPart.executableCode !== null) {
+  if (part.executableCode !== undefined && part.executableCode !== null) {
     return {
       type: 'code_execution_call',
       id: '',
       arguments: {
-        code: extPart.executableCode.code || '',
-        language: extPart.executableCode.language || 'PYTHON',
+        code: part.executableCode.code || '',
+        language: part.executableCode.language || 'PYTHON',
       },
     };
   }
@@ -371,8 +257,8 @@ export function convertPartToInteractionContent(
 /**
  * Convert a Content to a TurnParam object.
  */
-export function convertContentToTurn(content: Content): InteractionTurn {
-  const contents: InteractionContent[] = [];
+export function convertContentToTurn(content: Content): Interactions.Turn {
+  const contents: Interactions.Content[] = [];
   if (content.parts) {
     for (const part of content.parts) {
       const interactionContent = convertPartToInteractionContent(part);
@@ -391,8 +277,8 @@ export function convertContentToTurn(content: Content): InteractionTurn {
 /**
  * Convert a list of Content objects to turns.
  */
-export function convertContentsToTurns(contents: Content[]): InteractionTurn[] {
-  const turns: InteractionTurn[] = [];
+export function convertContentsToTurns(contents: Content[]): Interactions.Turn[] {
+  const turns: Interactions.Turn[] = [];
   for (const content of contents) {
     const turn = convertContentToTurn(content);
     if (turn.content && turn.content.length > 0) {
@@ -407,17 +293,17 @@ export function convertContentsToTurns(contents: Content[]): InteractionTurn[] {
  */
 export function convertToolsConfigToInteractionsFormat(
   config: GenerateContentConfig,
-): InteractionTool[] {
+): Interactions.Tool[] {
   if (!config.tools) {
     return [];
   }
 
-  const interactionTools: InteractionTool[] = [];
+  const interactionTools: Interactions.Tool[] = [];
   for (const tool of config.tools) {
-    const t = tool as ExtendedTool;
+    const t = tool as any;
     if (t.functionDeclarations) {
       for (const funcDecl of t.functionDeclarations) {
-        const funcTool: InteractionTool = {
+        const funcTool: any = {
           type: 'function',
           name: funcDecl.name,
         };
@@ -443,20 +329,20 @@ export function convertToolsConfigToInteractionsFormat(
         } else if (funcDecl.parametersJsonSchema) {
           funcTool['parameters'] = funcDecl.parametersJsonSchema;
         }
-        interactionTools.push(funcTool);
+        interactionTools.push(funcTool as Interactions.Tool);
       }
     }
 
     if (t.googleSearch) {
-      interactionTools.push({type: 'google_search'});
+      interactionTools.push({type: 'google_search'} as Interactions.Tool);
     }
 
     if (t.codeExecution) {
-      interactionTools.push({type: 'code_execution'});
+      interactionTools.push({type: 'code_execution'} as Interactions.Tool);
     }
 
     if (t.urlContext) {
-      interactionTools.push({type: 'url_context'});
+      interactionTools.push({type: 'url_context'} as Interactions.Tool);
     }
   }
 
@@ -467,16 +353,16 @@ export function convertToolsConfigToInteractionsFormat(
  * Convert interaction output to a Part.
  */
 export function convertInteractionOutputToPart(
-  output: Record<string, unknown>,
+  output: Interactions.Content,
 ): Part | null {
   if (!output || !output.type) {
     return null;
   }
 
-  const outputType = output.type as string;
+  const outputType = output.type;
 
   if (outputType === 'text') {
-    return {text: (output.text as string) || ''};
+    return {text: output.text || ''};
   }
 
   if (outputType === 'function_call') {
@@ -484,7 +370,7 @@ export function convertInteractionOutputToPart(
       `Converting function_call output: name=${output.name}, id=${output.id}`,
     );
     let thoughtSignature: Uint8Array | undefined = undefined;
-    const thoughtSigValue = output.thought_signature;
+    const thoughtSigValue = output.signature;
     if (thoughtSigValue && typeof thoughtSigValue === 'string') {
       if (isBrowser()) {
         // eslint-disable-next-line no-undef
@@ -501,12 +387,11 @@ export function convertInteractionOutputToPart(
     }
     return {
       functionCall: {
-        id: output.id as string,
-        name: output.name as string,
-        args: (output.arguments as Record<string, unknown>) || {},
+        id: output.id,
+        name: output.name,
+        args: output.arguments || {},
       } as FunctionCall,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      thoughtSignature: thoughtSignature as any, // Keep any here if Part thoughtSignature is strict
+      thoughtSignature: thoughtSignature as any,
     };
   }
 
@@ -514,8 +399,8 @@ export function convertInteractionOutputToPart(
     const result = output.result;
     return {
       functionResponse: {
-        id: output.call_id as string,
-        response: result,
+        id: output.call_id,
+        response: typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {output: result},
       } as FunctionResponse,
     };
   }
@@ -524,15 +409,15 @@ export function convertInteractionOutputToPart(
     if (output.data) {
       return {
         inlineData: {
-          data: output.data as string,
-          mimeType: output.mime_type as string,
+          data: output.data,
+          mimeType: output.mime_type || '',
         },
       };
     } else if (output.uri) {
       return {
         fileData: {
-          fileUri: output.uri as string,
-          mimeType: output.mime_type as string,
+          fileUri: output.uri,
+          mimeType: output.mime_type || '',
         },
       };
     }
@@ -542,15 +427,15 @@ export function convertInteractionOutputToPart(
     if (output.data) {
       return {
         inlineData: {
-          data: output.data as string,
-          mimeType: output.mime_type as string,
+          data: output.data,
+          mimeType: output.mime_type || '',
         },
       };
     } else if (output.uri) {
       return {
         fileData: {
-          fileUri: output.uri as string,
-          mimeType: output.mime_type as string,
+          fileUri: output.uri,
+          mimeType: output.mime_type || '',
         },
       };
     }
@@ -563,18 +448,17 @@ export function convertInteractionOutputToPart(
   if (outputType === 'code_execution_result') {
     return {
       codeExecutionResult: {
-        output: (output.result as string) || '',
+        output: output.result || '',
         outcome: output.is_error ? Outcome.OUTCOME_FAILED : Outcome.OUTCOME_OK,
       },
     };
   }
 
   if (outputType === 'code_execution_call') {
-    const args = (output.arguments as Record<string, string>) || {};
+    const args = output.arguments || {};
     return {
       executableCode: {
         code: args.code || '',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         language: (args.language || 'PYTHON') as any,
       },
     };
@@ -597,7 +481,7 @@ export function convertInteractionOutputToPart(
  * Convert Interaction response to an LlmResponse.
  */
 export function convertInteractionToLlmResponse(
-  interaction: InteractionResponse,
+  interaction: ExtendedInteraction,
 ): LlmResponse {
   if (interaction.status === 'failed') {
     let errorMsg = 'Unknown error';
@@ -662,7 +546,7 @@ export function convertInteractionToLlmResponse(
  * Convert InteractionSSEEvent to LlmResponse.
  */
 export function convertInteractionEventToLlmResponse(
-  event: InteractionSSEEvent,
+  event: ExtendedInteractionSSEEvent,
   aggregatedParts: Part[],
   interactionId?: string,
 ): LlmResponse | null {
@@ -691,7 +575,7 @@ export function convertInteractionEventToLlmResponse(
     } else if (deltaType === 'function_call') {
       if (delta.name) {
         let thoughtSignature: Uint8Array | undefined = undefined;
-        const thoughtSigValue = delta.thought_signature;
+        const thoughtSigValue = delta.signature || delta.thought_signature;
         if (thoughtSigValue && typeof thoughtSigValue === 'string') {
           if (isBrowser()) {
             // eslint-disable-next-line no-undef
@@ -712,7 +596,6 @@ export function convertInteractionEventToLlmResponse(
             name: delta.name,
             args: delta.arguments || {},
           } as FunctionCall,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           thoughtSignature: thoughtSignature as any,
         };
         aggregatedParts.push(part);
@@ -756,7 +639,7 @@ export function convertInteractionEventToLlmResponse(
     }
   } else if (eventType === 'interaction') {
     return convertInteractionToLlmResponse(
-      event as unknown as InteractionResponse,
+      event as unknown as ExtendedInteraction,
     );
   } else if (eventType === 'interaction.status_update') {
     const status = event.status;
@@ -782,8 +665,8 @@ export function convertInteractionEventToLlmResponse(
     }
   } else if (eventType === 'error') {
     return {
-      errorCode: event.code || 'UNKNOWN_ERROR',
-      errorMessage: event.message || 'Unknown error',
+      errorCode: event.error?.code || event.code || 'UNKNOWN_ERROR',
+      errorMessage: event.error?.message || event.message || 'Unknown error',
       turnComplete: true,
       interactionId: interactionId,
     };
@@ -863,7 +746,7 @@ export function extractSystemInstruction(
  * Extract stream interaction ID helper.
  */
 function extractStreamInteractionId(
-  event: InteractionSSEEvent,
+  event: ExtendedInteractionSSEEvent,
 ): string | undefined {
   if (event.interaction_id || event.interactionId) {
     return event.interaction_id || event.interactionId;
@@ -906,24 +789,22 @@ export async function* generateContentViaInteractions(
   );
 
   let currentInteractionId = previousInteractionId;
-  const clientWithInteractions =
-    apiClient as unknown as GoogleGenAIWithInteractions;
 
   if (stream) {
-    const responses = await clientWithInteractions.interactions.create({
+    const responses = await apiClient.interactions.create({
       model: llmRequest.model,
       input: inputTurns,
       stream: true,
-      systemInstruction: systemInstruction,
+      system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
-      generationConfig:
+      generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
-      previousInteractionId: previousInteractionId,
-    });
+      previous_interaction_id: previousInteractionId,
+    } as any); // cast to any because SDK typings might still be tricky under some conditions
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
-      const sseEvent = event as InteractionSSEEvent;
+      const sseEvent = event as ExtendedInteractionSSEEvent;
       const interactionId = extractStreamInteractionId(sseEvent);
       if (interactionId) {
         currentInteractionId = interactionId;
@@ -948,18 +829,18 @@ export async function* generateContentViaInteractions(
       };
     }
   } else {
-    const interaction = await clientWithInteractions.interactions.create({
+    const interaction = await apiClient.interactions.create({
       model: llmRequest.model,
       input: inputTurns,
       stream: false,
-      systemInstruction: systemInstruction,
+      system_instruction: systemInstruction,
       tools: interactionTools.length > 0 ? interactionTools : undefined,
-      generationConfig:
+      generation_config:
         Object.keys(generationConfig).length > 0 ? generationConfig : undefined,
-      previousInteractionId: previousInteractionId,
-    });
+      previous_interaction_id: previousInteractionId,
+    } as any);
 
     logger.info('Interaction response received from the model.');
-    yield convertInteractionToLlmResponse(interaction as InteractionResponse);
+    yield convertInteractionToLlmResponse(interaction as ExtendedInteraction);
   }
 }

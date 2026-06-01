@@ -161,7 +161,7 @@ describe('interactions_utils', () => {
         id: 'call-123',
         name: 'test_tool',
         arguments: {a: 1},
-        thought_signature: 'c2lnLWRhdGE=',
+        signature: 'c2lnLWRhdGE=',
       });
     });
 
@@ -380,7 +380,7 @@ describe('interactions_utils', () => {
         id: 'call-123',
         name: 'test_tool',
         arguments: {a: 1},
-        thought_signature: 'c2lnLWRhdGEtc3RyaW5n',
+        signature: 'c2lnLWRhdGEtc3RyaW5n',
       });
     });
 
@@ -400,7 +400,7 @@ describe('interactions_utils', () => {
       };
 
       const result = convertPartToInteractionContent(part);
-      expect(result?.thought_signature).toBe('c2lnLWRhdGEtYnJvd3Nlcg==');
+      expect(result?.signature).toBe('c2lnLWRhdGEtYnJvd3Nlcg==');
 
       (global as any).window = originalWindow;
     });
@@ -806,10 +806,10 @@ describe('interactions_utils', () => {
           },
         ],
         stream: false,
-        systemInstruction: undefined,
+        system_instruction: undefined,
         tools: undefined,
-        generationConfig: undefined,
-        previousInteractionId: undefined,
+        generation_config: undefined,
+        previous_interaction_id: undefined,
       });
     });
 
@@ -941,10 +941,10 @@ describe('interactions_utils', () => {
           },
         ],
         stream: false,
-        systemInstruction: undefined,
+        system_instruction: undefined,
         tools: undefined,
-        generationConfig: undefined,
-        previousInteractionId: 'int-prev',
+        generation_config: undefined,
+        previous_interaction_id: 'int-prev',
       });
     });
 
@@ -1052,14 +1052,14 @@ describe('interactions_utils', () => {
           },
         ],
         stream: false,
-        systemInstruction: undefined,
+        system_instruction: undefined,
         tools: [
           {
             type: 'function',
             name: 'my_tool',
           },
         ],
-        generationConfig: {
+        generation_config: {
           temperature: 0.7,
           top_p: 0.9,
           top_k: 40,
@@ -1068,7 +1068,7 @@ describe('interactions_utils', () => {
           presence_penalty: 0.5,
           frequency_penalty: 0.5,
         },
-        previousInteractionId: undefined,
+        previous_interaction_id: undefined,
       });
     });
 
@@ -1115,17 +1115,17 @@ describe('interactions_utils', () => {
           },
         ],
         stream: true,
-        systemInstruction: undefined,
+        system_instruction: undefined,
         tools: [
           {
             type: 'function',
             name: 'my_tool',
           },
         ],
-        generationConfig: {
+        generation_config: {
           temperature: 0.5,
         },
-        previousInteractionId: undefined,
+        previous_interaction_id: undefined,
       });
     });
   });
@@ -1189,7 +1189,7 @@ describe('interactions_utils', () => {
         type: 'function_call',
         id: 'call-1',
         name: 'my_tool',
-        thought_signature: 123 as any,
+        signature: 123 as any,
       };
       const part = convertInteractionOutputToPart(output);
       expect(part?.thoughtSignature).toBeUndefined();
@@ -1206,7 +1206,7 @@ describe('interactions_utils', () => {
         id: 'call-1',
         name: 'my_tool',
         arguments: {a: 1},
-        thought_signature: 'YmFzZTY0ZGF0YQ==',
+        signature: 'YmFzZTY0ZGF0YQ==',
       };
 
       const part = convertInteractionOutputToPart(output);
@@ -1224,7 +1224,7 @@ describe('interactions_utils', () => {
         id: 'call-1',
         name: 'my_tool',
         arguments: {a: 1},
-        thought_signature: 'YmFzZTY0ZGF0YQ==',
+        signature: 'YmFzZTY0ZGF0YQ==',
       };
       const part = convertInteractionOutputToPart(output);
       expect(part?.thoughtSignature).toBeInstanceOf(Buffer);
