@@ -43,6 +43,12 @@ import {toA2AParts, toGenAIPart, toGenAIParts} from './part_converter_utils.js';
 
 /**
  * Converts a session Event to an A2A Message.
+ *
+ * @param event - The ADK event to convert.
+ * @param appName - The name of the ADK application.
+ * @param userId - The ID of the current user.
+ * @param sessionId - The ID of the current session.
+ * @returns An A2A message with the event's parts and metadata.
  */
 export function toA2AMessage(
   event: AdkEvent,
@@ -63,7 +69,14 @@ export function toA2AMessage(
 }
 
 /**
- * Converts an A2A Event to a Session Event.
+ * Converts an A2A Event to an ADK Session Event.
+ *
+ * @param event - The A2A event to convert (message, task, artifact update, or
+ *   status update).
+ * @param invocationId - The ADK invocation ID to attach to the resulting event.
+ * @param agentName - The name of the agent to use as the event author.
+ * @returns The converted ADK event, or `undefined` if the A2A event type
+ *   produces no content.
  */
 export function toAdkEvent(
   event: A2AEvent,
