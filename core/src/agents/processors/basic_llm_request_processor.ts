@@ -16,6 +16,13 @@ import {BaseLlmRequestProcessor} from './base_llm_processor.js';
  * connect settings.
  */
 export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
+  /**
+   * Populates model name, generation config, output schema, and live connect
+   * settings on the request from the agent and run config.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmRequest - The request object to populate in place.
+   */
   // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,
