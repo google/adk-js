@@ -18,6 +18,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
     Client: vi.fn().mockImplementation(() => ({
       connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
     })),
   };
 });
@@ -156,5 +157,28 @@ describe('MCPSessionManager', () => {
         requestInit: {},
       },
     );
+  });
+
+  it('tracks active sessions and cleans them up', async () => {
+    const manager = new MCPSessionManager({
+      type: 'StdioConnectionParams',
+      serverParams: {
+        command: 'test-command',
+        args: ['arg1', 'arg2'],
+      },
+    });
+
+    expect(manager.getActiveSessions()).toEqual([]);
+
+    const client1 = await manager.createSession();
+    const client2 = await manager.createSession();
+
+    expect(manager.getActiveSessions()).toEqual([client1, client2]);
+
+    await manager.closeSession(client1);
+    expect(manager.getActiveSessions()).toEqual([client2]);
+
+    await manager.closeSession(client2);
+    expect(manager.getActiveSessions()).toEqual([]);
   });
 });

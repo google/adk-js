@@ -29,6 +29,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -66,6 +67,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     // Pass 'test-tool' as originalName
@@ -108,6 +110,7 @@ describe('MCPTool', () => {
 
     const mockSessionManager = {
       createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
     const tool = new MCPTool(mockTool, mockSessionManager);
@@ -126,5 +129,39 @@ describe('MCPTool', () => {
     await expect(tool.runAsync({args: {}, toolContext})).rejects.toThrow(
       'Aborted',
     );
+  });
+
+  it('closes session even when callTool throws an error', async () => {
+    const mockTool: Tool = {
+      name: 'test-tool',
+      description: 'A test tool',
+      inputSchema: {type: 'object', properties: {}},
+    };
+
+    const mockClient = {
+      callTool: vi.fn().mockRejectedValue(new Error('Call failed')),
+    } as unknown as Client;
+
+    const mockSessionManager = {
+      createSession: vi.fn().mockResolvedValue(mockClient),
+      closeSession: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MCPSessionManager;
+
+    const tool = new MCPTool(mockTool, mockSessionManager);
+
+    const invocationContext = {
+      abortSignal: new AbortController().signal,
+      session: {state: {}},
+    } as unknown as InvocationContext;
+
+    const toolContext = new Context({invocationContext});
+
+    // Assert that the tool still propagates the error
+    await expect(tool.runAsync({args: {}, toolContext})).rejects.toThrow(
+      'Call failed',
+    );
+
+    // Assert that closeSession was still called despite the error
+    expect(mockSessionManager.closeSession).toHaveBeenCalledWith(mockClient);
   });
 });
