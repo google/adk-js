@@ -12,7 +12,10 @@ import {
   Part,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
-import {StreamingResponseAggregator} from '../../src/utils/streaming_utils.js';
+import {
+  isEmptyContentPart,
+  StreamingResponseAggregator,
+} from '../../src/utils/streaming_utils.js';
 
 // Mock generateClientFunctionCallId to return a fixed ID for testing
 vi.mock('../../src/agents/functions.js', async () => {
@@ -648,6 +651,84 @@ describe('StreamingResponseAggregator', () => {
 
       const finalResponse = aggregator.close();
       expect(finalResponse).toBeUndefined();
+    });
+  });
+
+  describe('Metadata and Helper checks', () => {
+    it('isEmptyContentPart should correctly identify non-empty parts with fileData', () => {
+      const filePart: Part = {
+        fileData: {
+          fileUri: 'https://example.com/img.png',
+          mimeType: 'image/png',
+        },
+      };
+      expect(isEmptyContentPart(filePart)).toBe(false);
+
+      const emptyPart: Part = {
+        text: '',
+      };
+      expect(isEmptyContentPart(emptyPart)).toBe(true);
+    });
+
+    it('should capture metadata on trailing empty chunk early return', async () => {
+      const aggregator = new StreamingResponseAggregator(true);
+
+      // 1. Simulate function call
+      const response1 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      for await (const _ of aggregator.processResponse(response1)) {
+        // consume
+      }
+
+      // 2. Simulate trailing empty STOP chunk with metadata
+      const response2 = createResponse({
+        content: {
+          parts: [{text: ''}],
+        },
+        finishReason: FinishReason.STOP,
+        groundingMetadata: {
+          groundingChunks: [
+            {web: {uri: 'https://google.com', title: 'Google'}},
+          ],
+        },
+      });
+      response2.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      const yieldResults = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        yieldResults.push(res);
+      }
+
+      // verify that it returned early (yielded nothing new)
+      expect(yieldResults).toHaveLength(0);
+
+      // 3. Close the aggregator and verify metadata was preserved
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeTruthy();
+      expect(finalResponse?.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+      expect(finalResponse?.groundingMetadata).toEqual({
+        groundingChunks: [{web: {uri: 'https://google.com', title: 'Google'}}],
+      });
     });
   });
 });

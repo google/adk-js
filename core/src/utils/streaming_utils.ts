@@ -40,10 +40,6 @@ class ProgressiveStrategy implements StreamingStrategy {
   private currentFcId?: string;
   private currentThoughtSignature?: string | Uint8Array;
 
-  constructor(
-    private readonly lastThoughtSignatureRef: {value?: string | Uint8Array},
-  ) {}
-
   private flushTextBufferToSequence(): void {
     if (!this.currentTextBuffer) {
       return;
@@ -193,12 +189,6 @@ class ProgressiveStrategy implements StreamingStrategy {
     const fc = part.functionCall as FunctionCall;
     if (!fc) {
       return;
-    }
-
-    if (part.thoughtSignature) {
-      this.lastThoughtSignatureRef.value = part.thoughtSignature;
-    } else if (this.lastThoughtSignatureRef.value) {
-      part.thoughtSignature = this.lastThoughtSignatureRef.value.toString();
     }
 
     if (fc.partialArgs || fc.willContinue) {
@@ -371,7 +361,7 @@ export class StreamingResponseAggregator {
     ),
   ) {
     this.strategy = this.isProgressiveMode
-      ? new ProgressiveStrategy(this.lastThoughtSignature)
+      ? new ProgressiveStrategy()
       : new NonProgressiveStrategy();
   }
 
@@ -395,6 +385,18 @@ export class StreamingResponseAggregator {
       parts.length > 0 &&
       parts.every(isEmptyContentPart)
     ) {
+      if (llmResponse.usageMetadata) {
+        this.usageMetadata = llmResponse.usageMetadata;
+      }
+      if (llmResponse.groundingMetadata) {
+        this.groundingMetadata = llmResponse.groundingMetadata;
+      }
+      if (llmResponse.citationMetadata) {
+        this.citationMetadata = llmResponse.citationMetadata;
+      }
+      if (llmResponse.finishReason) {
+        this.finishReason = llmResponse.finishReason;
+      }
       return;
     }
 
@@ -461,6 +463,7 @@ export function isEmptyContentPart(part: Part): boolean {
   return (
     !part.functionCall &&
     !part.functionResponse &&
+    !part.fileData &&
     !part.inlineData &&
     !part.executableCode &&
     !part.codeExecutionResult &&
