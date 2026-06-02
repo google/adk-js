@@ -65,13 +65,15 @@ export class MCPTool extends BaseTool {
   override async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
     const session = await this.mcpSessionManager.createSession();
 
-    const callRequest: CallToolRequest = {} as CallToolRequest;
-    callRequest.params = {name: this.originalName, arguments: request.args};
-    const result = await session.callTool(callRequest.params, undefined, {
-      signal: request.toolContext.abortSignal,
-    });
-    await session.close();
-
-    return result as CallToolResult;
+    try {
+      const callRequest: CallToolRequest = {} as CallToolRequest;
+      callRequest.params = {name: this.originalName, arguments: request.args};
+      const result = await session.callTool(callRequest.params, undefined, {
+        signal: request.toolContext.abortSignal,
+      });
+      return result as CallToolResult;
+    } finally {
+      await this.mcpSessionManager.closeSession(session);
+    }
   }
 }
