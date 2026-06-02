@@ -7,7 +7,9 @@
 import {Gemini, LlmRequest} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
-describe('Live Gemini Live Connection E2E', () => {
+const isCI = process.env.CI === 'true';
+
+describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
   const project = 'amaadmartin-claw-15058';
   const location = 'us-central1';
 
@@ -16,14 +18,14 @@ describe('Live Gemini Live Connection E2E', () => {
       `Connecting to Live API using project: ${project}, location: ${location}`,
     );
     const llm = new Gemini({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.5-flash',
       vertexai: true,
       project,
       location,
     });
 
     const request: LlmRequest = {
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.5-flash',
       liveConnectConfig: {
         responseModalities: ['text'],
       },

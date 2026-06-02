@@ -56,12 +56,19 @@ describe('isGemini2OrAbove', () => {
 });
 
 describe('isGemini31FlashLive', () => {
-  it('should return true for valid Gemini 3.1 Flash Live models', () => {
+  it('should return true for valid Gemini 3.x Flash Live models', () => {
     expect(isGemini31FlashLive('gemini-3.1-flash-live')).toBe(true);
     expect(isGemini31FlashLive('gemini-3.1-flash-live-preview')).toBe(true);
+    expect(isGemini31FlashLive('gemini-3.5-flash-live')).toBe(true);
+    expect(isGemini31FlashLive('gemini-3.5-flash-live-preview')).toBe(true);
     expect(
       isGemini31FlashLive(
         'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.1-flash-live-001',
+      ),
+    ).toBe(true);
+    expect(
+      isGemini31FlashLive(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.5-flash-live-001',
       ),
     ).toBe(true);
   });

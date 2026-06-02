@@ -105,7 +105,7 @@ export function isGemini31FlashLive(modelString: string | undefined): boolean {
     return false;
   }
   const modelName = extractModelName(modelString);
-  return modelName.startsWith('gemini-3.1-flash-live');
+  return modelName.startsWith('gemini-3.') && modelName.includes('-flash-live');
 }
 
 /**
