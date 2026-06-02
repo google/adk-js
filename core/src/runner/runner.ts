@@ -31,6 +31,7 @@ import {
   runAsyncGeneratorWithOtelContext,
   tracer,
 } from '../telemetry/tracing.js';
+import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 
@@ -404,6 +405,8 @@ export class Runner {
       );
     } finally {
       span.end();
+      const toolsets = getAllToolsets(this.agent);
+      await Promise.allSettled(toolsets.map((t) => t.close()));
     }
   }
 
@@ -562,4 +565,29 @@ function findEventByLastFunctionResponseId(events: Event[]): Event | null {
     }
   }
   return null;
+}
+
+function getAllToolsets(agent: BaseAgent): BaseToolset[] {
+  const toolsets: BaseToolset[] = [];
+  const visited = new Set<BaseAgent>();
+
+  function traverse(curr: BaseAgent) {
+    if (visited.has(curr)) return;
+    visited.add(curr);
+
+    if (isLlmAgent(curr)) {
+      for (const tool of curr.tools) {
+        if (isBaseToolset(tool)) {
+          toolsets.push(tool);
+        }
+      }
+    }
+
+    for (const sub of curr.subAgents) {
+      traverse(sub);
+    }
+  }
+
+  traverse(agent);
+  return toolsets;
 }
