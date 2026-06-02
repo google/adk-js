@@ -10,8 +10,11 @@ import {describe, expect, it} from 'vitest';
 const isCI = process.env.CI === 'true';
 
 describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
-  const project = 'amaadmartin-claw-15058';
-  const location = 'us-central1';
+  const project =
+    process.env.GCP_PROJECT ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    'placeholder-project';
+  const location = process.env.GCP_LOCATION || 'us-central1';
 
   it('should connect and stream responses from Gemini Live using Vertex AI', async () => {
     console.log(
