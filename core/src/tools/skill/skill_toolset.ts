@@ -10,7 +10,9 @@ import {BaseCodeExecutor} from '../../code_executors/base_code_executor.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
 import {formatSkillsAsXml} from '../../skills/prompt.js';
 import {Skill} from '../../skills/skill.js';
+import {SkillRegistry} from '../../skills/skill_registry.js';
 import {experimental} from '../../utils/experimental.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset} from '../base_toolset.js';
 import {ListSkillsTool} from './list_skills_tool.js';
@@ -41,13 +43,16 @@ export class SkillToolset extends BaseToolset {
   private tools: BaseTool[];
   public additionalTools: Array<BaseTool | BaseToolset>;
   public codeExecutor?: BaseCodeExecutor;
+  public registry?: SkillRegistry;
   private toolCache = new Map<string, BaseTool[]>();
+  private fetchedSkillCache = new Map<string, Map<string, Skill>>();
 
   constructor(
     skills: Record<string, Skill> | Skill[],
     options: {
       codeExecutor?: BaseCodeExecutor;
       additionalTools?: Array<BaseTool | BaseToolset>;
+      registry?: SkillRegistry;
     } = {},
   ) {
     super([], 'adk_skill_toolset');
@@ -56,6 +61,7 @@ export class SkillToolset extends BaseToolset {
       : skills;
     this.codeExecutor = options.codeExecutor;
     this.additionalTools = options.additionalTools || [];
+    this.registry = options.registry;
 
     this.tools = [
       new ListSkillsTool(this),
@@ -71,10 +77,43 @@ export class SkillToolset extends BaseToolset {
     return [...this.tools, ...dynamicTools];
   }
 
-  override async close(): Promise<void> {}
+  override async close(): Promise<void> {
+    this.fetchedSkillCache.clear();
+  }
 
   getSkill(name: string): Skill | undefined {
     return this.skills[name];
+  }
+
+  async getOrFetchSkill(
+    name: string,
+    invocationId?: string,
+  ): Promise<Skill | undefined> {
+    if (this.skills[name]) {
+      return this.skills[name];
+    }
+    if (!this.registry) {
+      return undefined;
+    }
+
+    const contextKey = invocationId || 'default';
+    if (!this.fetchedSkillCache.has(contextKey)) {
+      this.fetchedSkillCache.set(contextKey, new Map());
+    }
+
+    const cache = this.fetchedSkillCache.get(contextKey)!;
+    if (cache.has(name)) {
+      return cache.get(name)!;
+    }
+
+    try {
+      const skill = await this.registry.getSkill(name);
+      cache.set(name, skill);
+      return skill;
+    } catch (e: unknown) {
+      logger.warn(`Failed to fetch skill '${name}' from registry: ${e}`);
+      throw e;
+    }
   }
 
   override async processLlmRequest(
@@ -86,10 +125,9 @@ export class SkillToolset extends BaseToolset {
     const skills = Object.values(this.skills);
     const skillsXml = formatSkillsAsXml(skills);
 
-    appendInstructions(llmRequest, [
-      DEFAULT_SKILL_SYSTEM_INSTRUCTION,
-      skillsXml,
-    ]);
+    const instructions = [DEFAULT_SKILL_SYSTEM_INSTRUCTION, skillsXml];
+
+    appendInstructions(llmRequest, instructions);
   }
 
   private async resolveAdditionalTools(
@@ -110,7 +148,7 @@ export class SkillToolset extends BaseToolset {
 
     const additionalToolNames = new Set<string>();
     for (const skillName of activatedSkills) {
-      const skill = this.skills[skillName];
+      const skill = await this.getOrFetchSkill(skillName, context.invocationId);
       if (skill && skill.frontmatter.metadata) {
         const tools = skill.frontmatter.metadata[
           'adk_additional_tools'

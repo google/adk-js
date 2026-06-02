@@ -79,7 +79,19 @@ export class RunSkillScriptTool extends BaseTool {
       };
     }
 
-    const skill = this.toolset.getSkill(skillName);
+    let skill;
+    try {
+      skill = await this.toolset.getOrFetchSkill(
+        skillName,
+        toolContext.invocationId,
+      );
+    } catch (e: unknown) {
+      return {
+        error: `Failed to fetch skill '${skillName}' from registry: ${(e as Error).message || e}`,
+        errorCode: 'REGISTRY_ERROR',
+      };
+    }
+
     if (!skill) {
       return {
         error: `Skill '${skillName}' not found.`,
