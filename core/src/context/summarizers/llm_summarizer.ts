@@ -13,8 +13,14 @@ import {BaseLlm} from '../../models/base_llm.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {BaseSummarizer} from './base_summarizer.js';
 
+/** Options for constructing an {@link LlmSummarizer}. */
 export interface LlmSummarizerOptions {
+  /** The LLM instance used to generate the summary. */
   llm: BaseLlm;
+  /**
+   * Optional system prompt prepended to the formatted events. Defaults to a
+   * built-in summarization prompt when omitted.
+   */
   prompt?: string;
 }
 
@@ -32,11 +38,22 @@ export class LlmSummarizer implements BaseSummarizer {
   private readonly llm: BaseLlm;
   private readonly prompt: string;
 
+  /**
+   * @param options - Configuration specifying the LLM and optional prompt.
+   */
   constructor(options: LlmSummarizerOptions) {
     this.llm = options.llm;
     this.prompt = options.prompt || DEFAULT_PROMPT;
   }
 
+  /**
+   * Summarizes a list of events into a single {@link CompactedEvent} using the
+   * configured LLM.
+   *
+   * @param events - The events to summarize. Must be non-empty.
+   * @returns A promise resolving to the compacted representation.
+   * @throws {Error} If `events` is empty or the LLM returns no content.
+   */
   async summarize(events: Event[]): Promise<CompactedEvent> {
     if (events.length === 0) {
       throw new Error('Cannot summarize an empty list of events.');
