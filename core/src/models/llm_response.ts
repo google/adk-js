@@ -11,6 +11,7 @@ import {
   GenerateContentResponse,
   GenerateContentResponseUsageMetadata,
   GroundingMetadata,
+  LiveServerGoAway,
   LiveServerSessionResumptionUpdate,
   Transcription,
 } from '@google/genai';
@@ -94,6 +95,15 @@ export interface LlmResponse {
    * Audio transcription of model output.
    */
   outputTranscription?: Transcription;
+
+  /** The model version used to generate the response. */
+  modelVersion?: string;
+
+  /** The session ID of the Live session. */
+  liveSessionId?: string;
+
+  /** The GoAway signal from the Live model. */
+  goAway?: LiveServerGoAway;
 }
 
 /**
