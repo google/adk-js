@@ -150,7 +150,7 @@ export class DatabaseSessionService extends BaseSessionService {
           appStateDelta[key.replace(State.APP_PREFIX, '')] = value;
         } else if (key.startsWith(State.USER_PREFIX)) {
           userStateDelta[key.replace(State.USER_PREFIX, '')] = value;
-        } else {
+        } else if (!key.startsWith(State.TEMP_PREFIX)) {
           sessionState[key] = value;
         }
       }
@@ -451,7 +451,7 @@ export class DatabaseSessionService extends BaseSessionService {
             appDelta[key.replace(State.APP_PREFIX, '')] = value;
           } else if (key.startsWith(State.USER_PREFIX)) {
             userDelta[key.replace(State.USER_PREFIX, '')] = value;
-          } else {
+          } else if (!key.startsWith(State.TEMP_PREFIX)) {
             sessionDelta[key] = value;
           }
         }

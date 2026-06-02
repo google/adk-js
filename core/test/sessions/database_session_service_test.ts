@@ -51,6 +51,22 @@ describe('DatabaseSessionService', () => {
     expect(session.state['foo']).toBe('bar');
   });
 
+  it('should filter out temporary state keys prefixed with temp: on creation', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      state: {
+        'foo': 'bar',
+        [`${State.TEMP_PREFIX}temp`]: 'value',
+      },
+      sessionId: 'test-session-id-2',
+    });
+
+    expect(session.id).toBe('test-session-id-2');
+    expect(session.state['foo']).toBe('bar');
+    expect(session.state[`${State.TEMP_PREFIX}temp`]).toBeUndefined();
+  });
+
   it('should get a session', async () => {
     await service.createSession({
       appName: 'test-app',

@@ -5,7 +5,7 @@
  */
 
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
-import {createEvent, VertexAiSessionService} from '@google/adk';
+import {createEvent, State, VertexAiSessionService} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -164,6 +164,25 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(session.id).toBe('test-id'); // Read from mock name 'test-id'
+      expect(session.appName).toBe('12345');
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {sessionState: {foo: 'bar'}},
+      });
+    });
+
+    it('filters out temporary state keys prefixed with temp:', async () => {
+      const session = await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        state: {
+          foo: 'bar',
+          [`${State.TEMP_PREFIX}tempKey`]: 'tempValue',
+        },
+      });
+
+      expect(session.id).toBe('test-id');
       expect(session.appName).toBe('12345');
       expect(mockClient.createInternal).toHaveBeenCalledWith({
         name: 'reasoningEngines/12345',
