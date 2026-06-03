@@ -4,12 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
+import {exec} from 'node:child_process';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
+import {pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import {
   AgentFile,
@@ -17,6 +18,9 @@ import {
   replaceDirnamePlugin,
 } from '../../src/utils/agent_loader.js';
 import * as fileUtils from '../../src/utils/file_utils.js';
+
+const execAsync = promisify(exec);
+
 vi.mock('../../src/utils/file_utils.js', () => ({
   getTempDir: vi.fn(),
   isFile: vi.fn(),
@@ -111,11 +115,11 @@ describe('AgentLoader', () => {
   const compiledPath = (fileName: string) => path.join(tempLoaderDir, fileName);
 
   beforeEach(async () => {
-    const tmpRoot = path.resolve(__dirname, '../../dist/tmp-test');
-    await fs.mkdir(tmpRoot, {recursive: true});
-    tempAgentsDir = await fs.mkdtemp(path.join(tmpRoot, 'agent-loader-test-'));
+    tempAgentsDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent-loader-test'),
+    );
     tempLoaderDir = await fs.mkdtemp(
-      path.join(tmpRoot, 'agent-loader-output-test-'),
+      path.join(os.tmpdir(), 'agent-loader-output-test'),
     );
     (fileUtils.getTempDir as Mock).mockImplementation(() => tempLoaderDir);
     (fileUtils.isFileExists as Mock).mockImplementation(() => true);
@@ -135,6 +139,7 @@ describe('AgentLoader', () => {
     (fileUtils.tryToFindFileRecursively as Mock).mockImplementation(
       async (_sourceFolder, fileName) => path.join(tempAgentsDir, fileName),
     );
+    await initNpmProject();
   });
 
   afterEach(async () => {
@@ -142,6 +147,21 @@ describe('AgentLoader', () => {
     await fs.rm(tempLoaderDir, {recursive: true, force: true});
     vi.clearAllMocks();
   });
+
+  async function initNpmProject() {
+    await fs.writeFile(
+      path.join(tempAgentsDir, 'package.json'),
+      JSON.stringify({
+        name: 'test-agents',
+        version: '1.0.0',
+        dependencies: {
+          '@google/adk': `file:${path.dirname(require.resolve('@google/adk'))}`,
+        },
+      }),
+    );
+
+    await execAsync('npm install', {cwd: tempAgentsDir});
+  }
 
   describe('AgentFile', () => {
     it('loads .js agent file', async () => {
