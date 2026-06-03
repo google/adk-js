@@ -230,6 +230,21 @@ export function trimTempDeltaState(event: Event): Event {
 }
 
 /**
+ * Removes temporary state keys from the state.
+ */
+export function trimTempState(
+  state: Record<string, unknown>,
+): Record<string, unknown> {
+  const filteredState: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (!key.startsWith(State.TEMP_PREFIX)) {
+      filteredState[key] = value;
+    }
+  }
+  return filteredState;
+}
+
+/**
  * Merges app state, user state, and session state.
  *
  * @param appState The application state.
