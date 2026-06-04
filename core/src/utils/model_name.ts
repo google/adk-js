@@ -95,12 +95,12 @@ export function isGemini2OrAbove(modelString: string): boolean {
 }
 
 /**
- * Check if the model is a Gemini 3.1 Flash Live model.
+ * Check if the model is a Gemini 3.x Flash Live model.
  *
  * @param modelString Either a simple model name or path-based model name
- * @return true if it's a Gemini 3.1 Flash Live model, false otherwise.
+ * @return true if it's a Gemini 3.x Flash Live model, false otherwise.
  */
-export function isGemini31FlashLive(modelString: string | undefined): boolean {
+export function isGemini3xFlashLive(modelString: string | undefined): boolean {
   if (!modelString) {
     return false;
   }

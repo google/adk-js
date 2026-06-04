@@ -31,7 +31,7 @@ describe('GeminiLlmConnection', () => {
   });
 
   describe('sendHistory', () => {
-    it('should send history with turnComplete based on role for non-Gemini 3.1', async () => {
+    it('should send history with turnComplete based on role for non-Gemini 3.x', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-2.5-flash',
@@ -49,7 +49,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should send history with turnComplete=true for Gemini 3.1', async () => {
+    it('should send history with turnComplete=true for Gemini 3.x', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -102,7 +102,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should use sendRealtimeInput for Gemini 3.1 single-part text', async () => {
+    it('should use sendRealtimeInput for Gemini 3.x single-part text', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -118,7 +118,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should use sendClientContent for non-Gemini 3.1 single-part text', async () => {
+    it('should use sendClientContent for non-Gemini 3.x single-part text', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-2.5-flash',
@@ -147,7 +147,7 @@ describe('GeminiLlmConnection', () => {
   });
 
   describe('sendRealtime', () => {
-    it('should use sendRealtimeInput with media for non-Gemini 3.1/non-Native-Audio', async () => {
+    it('should use sendRealtimeInput with media for non-Gemini 3.x/non-Native-Audio', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-2.5-flash',
@@ -161,7 +161,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should use sendRealtimeInput with audio for Gemini 3.1 audio', async () => {
+    it('should use sendRealtimeInput with audio for Gemini 3.x audio', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -175,7 +175,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should use sendRealtimeInput with video for Gemini 3.1 image', async () => {
+    it('should use sendRealtimeInput with video for Gemini 3.x image', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -203,7 +203,7 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
-    it('should warn and not send if unknown mime type for Gemini 3.1', async () => {
+    it('should warn and not send if unknown mime type for Gemini 3.x', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -623,7 +623,7 @@ describe('GeminiLlmConnection', () => {
       expect((await generator.next()).done).toBe(true);
     });
 
-    it('should buffer tool calls and yield at turnComplete for non-Gemini 3.1', async () => {
+    it('should buffer tool calls and yield at turnComplete for non-Gemini 3.x', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-2.5-flash',
@@ -643,7 +643,7 @@ describe('GeminiLlmConnection', () => {
         },
       });
 
-      // For non-Gemini 3.1, tool call is buffered.
+      // For non-Gemini 3.x, tool call is buffered.
       // So we don't get anything on toolCall message (except if there was text, but there isn't).
       // On turnComplete, it should yield the aggregated tool calls first, then turnComplete.
       const res1 = await generator.next();
@@ -664,7 +664,7 @@ describe('GeminiLlmConnection', () => {
       expect((await generator.next()).done).toBe(true);
     });
 
-    it('should yield tool calls immediately for Gemini 3.1', async () => {
+    it('should yield tool calls immediately for Gemini 3.x', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         'gemini-3.1-flash-live',
@@ -759,7 +759,7 @@ describe('GeminiLlmConnection', () => {
       expect((await generator.next()).done).toBe(true);
     });
 
-    it('should handle undefined modelVersion in isGemini31FlashLive check', async () => {
+    it('should handle undefined modelVersion in isGemini3xFlashLive check', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
         undefined,

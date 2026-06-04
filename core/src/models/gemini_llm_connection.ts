@@ -15,7 +15,7 @@ import {
 } from '@google/genai';
 
 import {logger} from '../utils/logger.js';
-import {isGemini31FlashLive} from '../utils/model_name.js';
+import {isGemini3xFlashLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
@@ -47,10 +47,10 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     );
 
     if (contents.length > 0) {
-      const isGemini31 = isGemini31FlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
       this.geminiSession.sendClientContent({
         turns: contents,
-        turnComplete: isGemini31
+        turnComplete: isGemini3x
           ? true
           : contents[contents.length - 1].role === 'user',
       });
@@ -83,9 +83,9 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       });
     } else {
       logger.debug('Sending LLM new content', content);
-      const isGemini31 = isGemini31FlashLive(this.modelVersion);
-      if (isGemini31 && content.parts.length === 1 && content.parts[0].text) {
-        logger.debug('Using sendRealtimeInput for Gemini 3.1 text input');
+      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
+        logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
       } else {
         this.geminiSession.sendClientContent({
@@ -103,10 +103,10 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob:', blob);
-    const isGemini31 = isGemini31FlashLive(this.modelVersion);
+    const isGemini3x = isGemini3xFlashLive(this.modelVersion);
     const isNativeAudio = this.modelVersion?.includes('native-audio');
 
-    if (isGemini31 || isNativeAudio) {
+    if (isGemini3x || isNativeAudio) {
       if (blob.mimeType?.startsWith('audio/')) {
         this.geminiSession.sendRealtimeInput({audio: blob});
       } else if (blob.mimeType?.startsWith('image/')) {
@@ -381,10 +381,10 @@ export class GeminiLlmConnection implements BaseLlmConnection {
           );
         }
 
-        const isGemini31 = isGemini31FlashLive(this.modelVersion);
-        if (isGemini31 && toolCallParts.length > 0) {
+        const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+        if (isGemini3x && toolCallParts.length > 0) {
           logger.debug(
-            'Yielding toolCallParts immediately for Gemini 3.1 live tool call',
+            'Yielding toolCallParts immediately for Gemini 3.x live tool call',
           );
           yield {
             content: {role: 'model', parts: toolCallParts},
