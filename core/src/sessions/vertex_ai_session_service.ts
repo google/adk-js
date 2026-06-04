@@ -32,6 +32,7 @@ import {
   GetSessionRequest,
   ListSessionsRequest,
   ListSessionsResponse,
+  trimTempState,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 
@@ -121,11 +122,12 @@ export class VertexAiSessionService extends BaseSessionService {
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
     const reasoningEngineId = this.getReasoningEngineId(appName);
+    const filteredState = state ? trimTempState(state) : undefined;
     let apiResponse = await this.sessions.createInternal({
       name: `reasoningEngines/${reasoningEngineId}`,
       userId: userId,
       config: {
-        ...(state ? {sessionState: state} : {}),
+        ...(filteredState ? {sessionState: filteredState} : {}),
         ...(sessionId ? {sessionId} : {}),
       },
     });
