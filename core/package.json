@@ -60,6 +60,7 @@
     "@opentelemetry/sdk-metrics": "^2.1.0",
     "@opentelemetry/sdk-trace-base": "^2.1.0",
     "@opentelemetry/sdk-trace-node": "^2.1.0",
+    "exa-js": "^2.12.1",
     "express": "^4.22.1",
     "google-auth-library": "^10.3.0",
     "js-yaml": "^4.1.1",

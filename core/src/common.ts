@@ -203,6 +203,16 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {ExaSearchTool} from './tools/exa_search_tool.js';
+export type {
+  ExaCategory,
+  ExaContentsOptions,
+  ExaSearchToolArgs,
+  ExaSearchToolParams,
+  ExaSearchToolResponse,
+  ExaSearchToolResult,
+  ExaSearchType,
+} from './tools/exa_search_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
