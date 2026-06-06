@@ -6,12 +6,13 @@
 
 import {
   BaseAgent,
+  createSession,
+  FunctionTool,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   PluginManager,
   ReadonlyContext,
-  createSession,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/instructions_llm_request_processor.js';
@@ -157,6 +158,46 @@ describe('InstructionsLlmRequestProcessor', () => {
     expect(llmRequest.config?.systemInstruction).toContain('Local instruction');
     expect(llmRequest.config?.systemInstruction).toBe(
       'Global instruction\n\nLocal instruction',
+    );
+  });
+
+  it('should append set_model_response instruction when outputSchema and tools are present', async () => {
+    const outputSchema = {
+      type: 'object' as const,
+      properties: {
+        answer: {type: 'string' as const},
+      },
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-2.5-flash',
+      instruction: 'Base instruction',
+      outputSchema,
+      tools: [
+        new FunctionTool({
+          name: 'some_tool',
+          description: 'A test tool',
+          execute: () => 'result',
+        }),
+      ],
+    });
+
+    const invocationContext = createMockInvocationContext(agent);
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+
+    for await (const _ of INSTRUCTIONS_LLM_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // intentionally empty
+    }
+
+    expect(llmRequest.config?.systemInstruction).toContain(
+      'To output the final result, you must call the "set_model_response" function with the appropriate values. Do not output anything else.',
     );
   });
 });

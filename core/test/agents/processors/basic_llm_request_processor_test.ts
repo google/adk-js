@@ -9,6 +9,7 @@ import {
   BaseLlm,
   BaseLlmConnection,
   createSession,
+  FunctionTool,
   InvocationContext,
   LlmAgent,
   LLMRegistry,
@@ -166,6 +167,34 @@ describe('BasicLlmRequestProcessor', () => {
 
     expect(llmRequest.config?.responseSchema).toBeDefined();
     expect(llmRequest.config?.responseMimeType).toBe('application/json');
+  });
+
+  it('should not set outputSchema in config when agent has outputSchema and tools', async () => {
+    const outputSchema = {
+      type: 'object' as const,
+      properties: {
+        answer: {type: 'string' as const},
+      },
+    };
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'test-basic-processor-model',
+      outputSchema,
+      tools: [
+        new FunctionTool({
+          name: 'some_tool',
+          description: 'A test tool',
+          execute: () => 'result',
+        }),
+      ],
+    });
+    const invocationContext = createMockInvocationContext(agent);
+    const llmRequest = makeLlmRequest();
+
+    await runProcessor(invocationContext, llmRequest);
+
+    expect(llmRequest.config?.responseSchema).toBeUndefined();
+    expect(llmRequest.config?.responseMimeType).toBeUndefined();
   });
 
   it('should populate liveConnectConfig from runConfig', async () => {

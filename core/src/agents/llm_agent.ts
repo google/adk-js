@@ -6,6 +6,7 @@
 
 import {GenerateContentConfig, Schema} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
+import {FunctionTool} from '../tools/function_tool.js';
 
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
@@ -743,7 +744,23 @@ export class LlmAgent extends BaseAgent {
     }
     // TODO - b/425992518: check if tool preprocessors can be simplified.
     // Run pre-processors for tools.
-    for (const toolUnion of this.tools) {
+    const allTools = [...this.tools];
+    if (this.outputSchema && allTools.length > 0) {
+      const setModelResponseTool = new FunctionTool({
+        name: 'set_model_response',
+        description:
+          'Call this tool to submit your final response conforming to the output schema. Use this tool only when you have collected all the information and are ready to return the final answer.',
+        parameters: this.outputSchema,
+        execute: async (args, toolContext) => {
+          if (toolContext) {
+            toolContext.actions.skipSummarization = true;
+          }
+          return JSON.stringify(args);
+        },
+      });
+      allTools.push(setModelResponseTool);
+    }
+    for (const toolUnion of allTools) {
       const toolContext = new Context({invocationContext});
 
       // process all tools from this tool union
@@ -758,7 +775,8 @@ export class LlmAgent extends BaseAgent {
         // The allowedTools set is populated by request processors.
         return (
           !llmRequest.allowedTools ||
-          llmRequest.allowedTools.includes(tool.name)
+          llmRequest.allowedTools.includes(tool.name) ||
+          tool.name === 'set_model_response'
         );
       });
 
@@ -880,8 +898,14 @@ export class LlmAgent extends BaseAgent {
 
     if (mergedEvent.content) {
       const functionCalls = getFunctionCalls(mergedEvent);
-      if (functionCalls?.length) {
-        // TODO - b/425992518: rename topopulate if missing.
+      const setModelResponseCall = functionCalls.find(
+        (call) => call.name === 'set_model_response',
+      );
+      if (setModelResponseCall) {
+        const args = setModelResponseCall.args;
+        mergedEvent.content.parts = [{text: JSON.stringify(args)}];
+        mergedEvent.actions.skipSummarization = true;
+      } else if (functionCalls && functionCalls.length) {
         populateClientFunctionCallId(mergedEvent);
         // TODO - b/425992518: hacky, transaction log, simplify.
         // Long running is a property of tool in registry.

@@ -30,7 +30,7 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest.model = agent.canonicalModel.model;
 
     llmRequest.config = {...(agent.generateContentConfig ?? {})};
-    if (agent.outputSchema) {
+    if (agent.outputSchema && (!agent.tools || agent.tools.length === 0)) {
       setOutputSchema(llmRequest, agent.outputSchema);
     }
 
