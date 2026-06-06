@@ -15,7 +15,23 @@ import {
   getCurrentTurnContents,
 } from './content_processor_utils.js';
 
+/**
+ * Populates {@link LlmRequest.contents} from the session event history.
+ *
+ * When a {@link CompactedEvent} exists in the session, only the most recent
+ * compacted event and the raw events that follow it are included, eliding
+ * earlier history. The extent of context included depends on the agent's
+ * `includeContents` setting: `'default'` sends the full visible history while
+ * any other value sends only the current-turn context.
+ */
 export class ContentRequestProcessor implements BaseLlmRequestProcessor {
+  /**
+   * Fills {@link LlmRequest.contents} based on the session event history and
+   * agent configuration.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmRequest - The request whose contents field will be populated.
+   */
   // eslint-disable-next-line require-yield
   async *runAsync(
     invocationContext: InvocationContext,

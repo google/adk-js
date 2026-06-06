@@ -14,6 +14,13 @@ import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent, LlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
+/**
+ * Augments the {@link LlmRequest} to support agent transfer. When the current
+ * agent has reachable transfer targets (sub-agents, peer agents, or a parent
+ * agent), this processor registers a `transfer_to_agent` function tool and
+ * appends instructions describing each candidate so the model can choose to
+ * hand off control.
+ */
 export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
   private readonly toolName = 'transfer_to_agent' as const;
   private readonly tool = new FunctionTool({
@@ -32,6 +39,13 @@ export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     },
   });
 
+  /**
+   * Appends transfer instructions and registers the `transfer_to_agent` tool
+   * when the agent has reachable transfer targets.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmRequest - The request to augment with transfer instructions and the transfer tool.
+   */
   // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,
