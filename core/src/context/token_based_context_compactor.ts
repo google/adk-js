@@ -132,7 +132,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       compactedEvent.actions = {
         stateDelta: {},
         artifactDelta: {},
-        requestedAuthConfigs: [],
+        requestedAuthConfigs: {},
         requestedToolConfirmations: {},
       };
     }

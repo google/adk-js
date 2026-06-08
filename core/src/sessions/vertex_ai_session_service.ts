@@ -17,6 +17,7 @@ import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {experimental} from '../utils/experimental.js';
 
+import {AuthConfig} from '../auth/auth_tool.js';
 import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
@@ -480,7 +481,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     stateDelta: (actions['stateDelta'] as {[key: string]: unknown}) || {},
     artifactDelta: (actions['artifactDelta'] as {[key: string]: number}) || {},
     requestedAuthConfigs:
-      (actions.requestedAuthConfigs as Record<string, unknown>) || {},
+      (actions.requestedAuthConfigs as Record<string, AuthConfig>) || {},
     requestedToolConfirmations:
       ((actions as Record<string, unknown>)[
         'requestedToolConfirmations'
