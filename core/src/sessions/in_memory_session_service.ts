@@ -18,6 +18,7 @@ import {
   ListSessionsRequest,
   ListSessionsResponse,
   mergeStates,
+  trimTempState,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
@@ -57,11 +58,12 @@ export class InMemorySessionService extends BaseSessionService {
     state,
     sessionId,
   }: CreateSessionRequest): Promise<Session> {
+    const filteredState = state ? trimTempState(state) : undefined;
     const session = createSession({
       id: sessionId || randomUUID(),
       appName,
       userId,
-      state,
+      state: filteredState,
       events: [],
       lastUpdateTime: Date.now(),
     });

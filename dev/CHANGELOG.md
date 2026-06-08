@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.0](https://github.com/google/adk-js/compare/devtools-v1.1.0...devtools-v1.2.0) (2026-06-02)
+
+
+### Features
+
+* abort agent execution on HTTP connection disconnected ([#382](https://github.com/google/adk-js/issues/382)) ([e7776cc](https://github.com/google/adk-js/commit/e7776ccbfbeb7657c0f0a3411173ae9bbf2ec0dd))
+* Add Agent Engine deployment support ([#335](https://github.com/google/adk-js/issues/335)) ([3e901a5](https://github.com/google/adk-js/commit/3e901a5b2d4c291628c9f88f223803a7e9269531))
+
+
+### Bug Fixes
+
+* mark lightningcss and jiti as external in agent_loader esbuild to fix adk web on missing optional deps ([#319](https://github.com/google/adk-js/issues/319)) ([ab625c9](https://github.com/google/adk-js/commit/ab625c9e29a4385f474df6bc5fd2426f96aea41e))
+* remove hardcoded Access-Control-Allow-Origin wildcard from run_sse ([#360](https://github.com/google/adk-js/issues/360)) ([d2db989](https://github.com/google/adk-js/commit/d2db989334f85b5fd00039364bd0754ae1691bab))
+* replace unix cp with node.js fs.cp in dev/build.js for windows compatibility ([#318](https://github.com/google/adk-js/issues/318)) ([53ee7eb](https://github.com/google/adk-js/commit/53ee7eb0f301b8bf617afb4cf7b0e9b1d7f8c9a9))
+* Resolve CORS vulnerability by disabling express.urlencoded parser ([#378](https://github.com/google/adk-js/issues/378)) ([1fe631f](https://github.com/google/adk-js/commit/1fe631f55a730aee2e4141f3dd7b6e8e9f756b86))
+* **server:** restrict AdkApiServer to listen on configured host ([#383](https://github.com/google/adk-js/issues/383)) ([7be8c81](https://github.com/google/adk-js/commit/7be8c8145a6ff37f5f3863b254f374b2c7072c18))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.1.0 to ^1.2.0
+
 ## [1.1.0](https://github.com/google/adk-js/compare/devtools-v1.0.0...devtools-v1.1.0) (2026-04-28)
 
 

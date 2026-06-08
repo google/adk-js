@@ -12,7 +12,10 @@ import {
   Part,
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
-import {StreamingResponseAggregator} from '../../src/utils/streaming_utils.js';
+import {
+  isEmptyContentPart,
+  StreamingResponseAggregator,
+} from '../../src/utils/streaming_utils.js';
 
 // Mock generateClientFunctionCallId to return a fixed ID for testing
 vi.mock('../../src/agents/functions.js', async () => {
@@ -344,6 +347,108 @@ describe('StreamingResponseAggregator', () => {
           functionCall: {
             name: 'get_weather',
             args: {location: 'San Francisco'},
+            id: 'mocked-fc-id',
+          },
+        },
+      ]);
+    });
+
+    it('should preserve tool calls without replaying them from close', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      const response1 = createResponse({
+        content: {parts: [{text: 'Let me help with that. '}]},
+        finishReason: FinishReason.STOP,
+      });
+
+      const response2 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'showForecastChart',
+                args: {location: 'San Francisco'},
+              },
+            },
+            {
+              functionCall: {
+                name: 'showQuickActions',
+                args: {actions: ['Refresh', 'Share']},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      const results = [];
+      for await (const res of aggregator.processResponse(response1)) {
+        results.push(res);
+      }
+      for await (const res of aggregator.processResponse(response2)) {
+        results.push(res);
+      }
+
+      expect(results.length).toBe(3);
+      expect(results[1].content?.parts).toEqual([
+        {text: 'Let me help with that. '},
+      ]);
+      expect(results[2].content?.parts).toEqual([
+        {
+          functionCall: {
+            name: 'showForecastChart',
+            args: {location: 'San Francisco'},
+            id: 'mocked-fc-id',
+          },
+        },
+        {
+          functionCall: {
+            name: 'showQuickActions',
+            args: {actions: ['Refresh', 'Share']},
+            id: 'mocked-fc-id',
+          },
+        },
+      ]);
+
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeUndefined();
+    });
+
+    it('should split mixed text and tool-call chunks into saveable events', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      const response = createResponse({
+        content: {
+          parts: [
+            {text: 'Let me help with that. '},
+            {
+              functionCall: {
+                name: 'showForecastChart',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      const results = [];
+      for await (const res of aggregator.processResponse(response)) {
+        results.push(res);
+      }
+
+      expect(results.length).toBe(2);
+      expect(results[0].partial).toBe(false);
+      expect(results[0].content?.parts).toEqual([
+        {text: 'Let me help with that. '},
+      ]);
+      expect(results[1].partial).toBe(false);
+      expect(results[1].content?.parts).toEqual([
+        {
+          functionCall: {
+            name: 'showForecastChart',
+            args: {location: 'San Francisco'},
+            id: 'mocked-fc-id',
           },
         },
       ]);
@@ -546,6 +651,84 @@ describe('StreamingResponseAggregator', () => {
 
       const finalResponse = aggregator.close();
       expect(finalResponse).toBeUndefined();
+    });
+  });
+
+  describe('Metadata and Helper checks', () => {
+    it('isEmptyContentPart should correctly identify non-empty parts with fileData', () => {
+      const filePart: Part = {
+        fileData: {
+          fileUri: 'https://example.com/img.png',
+          mimeType: 'image/png',
+        },
+      };
+      expect(isEmptyContentPart(filePart)).toBe(false);
+
+      const emptyPart: Part = {
+        text: '',
+      };
+      expect(isEmptyContentPart(emptyPart)).toBe(true);
+    });
+
+    it('should capture metadata on trailing empty chunk early return', async () => {
+      const aggregator = new StreamingResponseAggregator(true);
+
+      // 1. Simulate function call
+      const response1 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      for await (const _ of aggregator.processResponse(response1)) {
+        // consume
+      }
+
+      // 2. Simulate trailing empty STOP chunk with metadata
+      const response2 = createResponse({
+        content: {
+          parts: [{text: ''}],
+        },
+        finishReason: FinishReason.STOP,
+        groundingMetadata: {
+          groundingChunks: [
+            {web: {uri: 'https://google.com', title: 'Google'}},
+          ],
+        },
+      });
+      response2.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      const yieldResults = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        yieldResults.push(res);
+      }
+
+      // verify that it returned early (yielded nothing new)
+      expect(yieldResults).toHaveLength(0);
+
+      // 3. Close the aggregator and verify metadata was preserved
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeTruthy();
+      expect(finalResponse?.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+      expect(finalResponse?.groundingMetadata).toEqual({
+        groundingChunks: [{web: {uri: 'https://google.com', title: 'Google'}}],
+      });
     });
   });
 });
