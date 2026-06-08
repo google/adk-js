@@ -71,31 +71,40 @@ export class GCPSkillRegistry implements SkillRegistry {
       request(req: {
         path: string;
         httpMethod: string;
-        body: string;
+        body?: string;
         httpOptions?: {apiVersion?: string};
       }): Promise<{json(): Promise<Record<string, unknown>>}>;
     };
 
+    const trimmedQuery = query.trim();
+    const isSearch = trimmedQuery.length > 0;
+    const path = isSearch
+      ? `skills:retrieve?query=${encodeURIComponent(trimmedQuery)}`
+      : 'skills';
+
     const httpResponse = await apiClient.request({
-      path: 'skills:retrieve',
-      httpMethod: 'POST',
-      body: JSON.stringify({query}),
+      path,
+      httpMethod: 'GET',
       httpOptions: {apiVersion: 'v1beta1'},
     });
 
     const response = await httpResponse.json();
-    const retrievedSkills =
-      (response.retrievedSkills as
-        | Array<Record<string, unknown>>
-        | undefined) ||
-      (response.retrieved_skills as Array<Record<string, unknown>> | undefined);
+    const skillsList = isSearch
+      ? (response.retrievedSkills as
+          | Array<Record<string, unknown>>
+          | undefined) ||
+        (response.retrieved_skills as
+          | Array<Record<string, unknown>>
+          | undefined)
+      : (response.skills as Array<Record<string, unknown>> | undefined);
 
     const results: Frontmatter[] = [];
-    if (retrievedSkills && Array.isArray(retrievedSkills)) {
-      for (const s of retrievedSkills) {
+    if (skillsList && Array.isArray(skillsList)) {
+      for (const s of skillsList) {
         const skillNameStr =
           (s.skillName as string | undefined) ||
           (s.skill_name as string | undefined) ||
+          (s.name as string | undefined) ||
           '';
         const descriptionStr = (s.description as string | undefined) || '';
 
