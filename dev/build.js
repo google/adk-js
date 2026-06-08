@@ -80,6 +80,16 @@ function downloadFile(url, dest) {
   });
 }
 
+function unzipFile(zipPath, destDir) {
+  if (process.platform === 'win32') {
+    execSync(
+      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
+    );
+  } else {
+    execSync(`unzip -o "${zipPath}" -d "${destDir}"`);
+  }
+}
+
 async function ensureBrowserAssets() {
   const browserOutputDir = path.join(__dirname, 'dist/browser');
   const versionFile = path.join(browserOutputDir, '.version');
@@ -117,7 +127,7 @@ async function ensureBrowserAssets() {
       await rm(browserOutputDir, {recursive: true, force: true});
     }
     await mkdir(browserOutputDir, {recursive: true});
-    execSync(`tar -xf "${zipCachePath}" -C "${browserOutputDir}"`);
+    unzipFile(zipCachePath, browserOutputDir);
     await writeFile(versionFile, ADK_WEB_VERSION, 'utf8');
     console.log(`[ADK Build] ADK Web assets successfully populated.`);
   }
