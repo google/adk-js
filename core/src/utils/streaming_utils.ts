@@ -388,15 +388,14 @@ export class StreamingResponseAggregator {
       this.sawFunctionCall = true;
     }
 
-    // Gemini thinking models emit an empty text chunk with finishReason
-    // STOP after a function call. The aggregator would treat it as a
-    // final model turn and prevent the agent from making the follow-up
-    // call, so drop it before it reaches the aggregator.
+    // Suppress empty chunks that carry no meaningful content (e.g. trailing empty
+    // STOP chunks or intermediate empty chunks) to avoid yielding empty events
+    // that cause empty bubbles in UI, and to prevent premature agent termination
+    // after tool calls. We only do this if it's not an error finish reason.
     if (
-      this.sawFunctionCall &&
-      llmResponse.finishReason === FinishReason.STOP &&
-      parts.length > 0 &&
-      parts.every(isEmptyContentPart)
+      parts.every(isEmptyContentPart) &&
+      (llmResponse.finishReason === undefined ||
+        llmResponse.finishReason === FinishReason.STOP)
     ) {
       if (llmResponse.usageMetadata) {
         this.usageMetadata = llmResponse.usageMetadata;

@@ -762,5 +762,151 @@ describe('StreamingResponseAggregator', () => {
         groundingChunks: [{web: {uri: 'https://google.com', title: 'Google'}}],
       });
     });
+
+    it('should capture metadata on trailing empty chunk with zero parts early return', async () => {
+      const aggregator = new StreamingResponseAggregator(true);
+
+      // 1. Simulate function call
+      const response1 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      for await (const _ of aggregator.processResponse(response1)) {
+        // consume
+      }
+
+      // 2. Simulate trailing empty STOP chunk with no candidates or empty parts
+      const response2 = new GenerateContentResponse();
+      response2.candidates = [
+        {
+          finishReason: FinishReason.STOP,
+        },
+      ];
+      response2.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      const yieldResults = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        yieldResults.push(res);
+      }
+
+      // verify that it returned early (yielded nothing new)
+      expect(yieldResults).toHaveLength(0);
+
+      // 3. Close the aggregator and verify metadata was preserved
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeTruthy();
+      expect(finalResponse?.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+    });
+  });
+
+  describe('Additional Suppressing Tests in Non-Progressive Mode', () => {
+    it('should suppress trailing empty STOP chunk with zero parts after a function call in non-progressive mode', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      // 1. Chunk with a function call
+      const response1 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      const results1 = [];
+      for await (const res of aggregator.processResponse(response1)) {
+        results1.push(res);
+      }
+      expect(results1).toHaveLength(1);
+      expect(results1[0].content?.parts?.[0]?.functionCall?.name).toBe(
+        'get_weather',
+      );
+
+      // 2. Trailing empty STOP chunk with zero parts
+      const response2 = new GenerateContentResponse();
+      response2.candidates = [
+        {
+          finishReason: FinishReason.STOP,
+        },
+      ];
+
+      const results2 = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        results2.push(res);
+      }
+      expect(results2).toHaveLength(0); // Should be suppressed/returned early
+    });
+
+    it('should suppress trailing empty STOP chunk for normal text streams in non-progressive mode', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      // 1. Chunk with text
+      const response1 = createResponse({
+        content: {parts: [{text: 'Hello '}]},
+        finishReason: FinishReason.STOP,
+      });
+
+      const results1 = [];
+      for await (const res of aggregator.processResponse(response1)) {
+        results1.push(res);
+      }
+      expect(results1).toHaveLength(1);
+
+      // 2. Trailing empty STOP chunk
+      const response2 = new GenerateContentResponse();
+      response2.candidates = [
+        {
+          finishReason: FinishReason.STOP,
+        },
+      ];
+
+      const results2 = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        results2.push(res);
+      }
+      expect(results2).toHaveLength(0); // Should be suppressed
+    });
+
+    it('should NOT suppress trailing empty chunk with non-STOP finish reason in non-progressive mode', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      // 1. Trailing empty chunk with SAFETY block
+      const response = new GenerateContentResponse();
+      response.candidates = [
+        {
+          finishReason: FinishReason.SAFETY,
+        },
+      ];
+
+      const results = [];
+      for await (const res of aggregator.processResponse(response)) {
+        results.push(res);
+      }
+      expect(results).toHaveLength(1); // Should NOT be suppressed, because it is an error
+      expect(results[0].errorCode).toBe(FinishReason.SAFETY);
+    });
   });
 });
