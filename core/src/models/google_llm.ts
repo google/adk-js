@@ -291,15 +291,12 @@ export class Gemini extends BaseLlm {
       config: llmRequest.liveConnectConfig,
       callbacks: {
         onmessage: (message) => {
-          console.log('E2E Debug: onmessage', JSON.stringify(message));
           messageQueue.push(message);
         },
         onerror: (error) => {
-          console.error('E2E Debug: onerror', error);
           messageQueue.error(error);
         },
         onclose: () => {
-          console.log('E2E Debug: onclose');
           messageQueue.close();
         },
       },
