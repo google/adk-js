@@ -86,6 +86,20 @@ describe('InMemorySessionService', () => {
         [`${State.USER_PREFIX}userKey`]: 'userValue',
       });
     });
+
+    it('filters out temporary state keys prefixed with temp:', async () => {
+      const appName = 'test-app';
+      const userId = 'test-user';
+      const state = {
+        normalKey: 'value',
+        [`${State.TEMP_PREFIX}tempKey`]: 'tempValue',
+      };
+
+      const session = await service.createSession({appName, userId, state});
+
+      expect(session.state).toHaveProperty('normalKey', 'value');
+      expect(session.state).not.toHaveProperty(`${State.TEMP_PREFIX}tempKey`);
+    });
   });
 
   describe('getSession', () => {

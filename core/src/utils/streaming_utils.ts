@@ -27,6 +27,12 @@ interface StreamingStrategy {
 }
 
 /**
+ * Property keys that must never be written through a model-controlled JSON
+ * path, to prevent prototype pollution of `Object.prototype`.
+ */
+const UNSAFE_PROPERTY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
  * Progressive strategy for SSE streaming mode: flushes parts as they arrive.
  */
 class ProgressiveStrategy implements StreamingStrategy {
@@ -118,10 +124,17 @@ class ProgressiveStrategy implements StreamingStrategy {
       (p) => p !== '$' && p !== '$[',
     );
 
+    // Reject model-controlled paths that target prototype-chain properties,
+    // which would otherwise pollute `Object.prototype` (e.g.
+    // `$.__proto__.polluted`).
+    if (pathParts.some((part) => UNSAFE_PROPERTY_KEYS.has(String(part)))) {
+      return;
+    }
+
     let current = this.currentFcArgs;
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
-      if (!(part in current)) {
+      if (!Object.prototype.hasOwnProperty.call(current, part)) {
         current[part] = {};
       }
       current = current[part] as Record<string, unknown>;

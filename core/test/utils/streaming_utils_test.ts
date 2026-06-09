@@ -491,6 +491,38 @@ describe('StreamingResponseAggregator', () => {
       ]);
     });
 
+    it('should not pollute Object.prototype via a malicious jsonPath', async () => {
+      const aggregator = new StreamingResponseAggregator(true);
+      const response = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'evil_func',
+                partialArgs: [
+                  {jsonPath: '$.__proto__.polluted', stringValue: 'PWNED'},
+                  {
+                    jsonPath: '$.constructor.prototype.polluted2',
+                    stringValue: 'PWNED',
+                  },
+                ],
+                willContinue: false,
+              } as unknown as FunctionCall,
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      for await (const _ of aggregator.processResponse(response)) {
+        // just consume iterator
+      }
+      aggregator.close();
+
+      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+      expect(({} as Record<string, unknown>)['polluted2']).toBeUndefined();
+    });
+
     it('should handle deeply nested structures and mixed notation', async () => {
       const aggregator = new StreamingResponseAggregator(true);
       const response = createResponse({

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import AdmZip from 'adm-zip';
 import yaml from 'js-yaml';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -323,4 +324,82 @@ export async function loadAllSkillsInDir(
   }
 
   return skills;
+}
+
+/**
+ * Loads a complete skill directly from in-memory zip file buffer.
+ *
+ * @param zipBuffer - The raw Buffer of the zip file containing the skill.
+ * @returns A Skill object with all components loaded.
+ */
+export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
+  const zip = new AdmZip(zipBuffer);
+  const entries = zip.getEntries();
+
+  let skillMdContent = '';
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+    if (entry.entryName.toLowerCase() === 'skill.md') {
+      skillMdContent = entry.getData().toString('utf-8');
+      break;
+    }
+  }
+
+  if (!skillMdContent) {
+    throw new Error('SKILL.md not found in zipped filesystem.');
+  }
+
+  const {frontmatter: parsed, body} = parseSkillMdContent(skillMdContent);
+  const frontmatter = FrontmatterSchema.parse(parsed);
+
+  const references: Record<string, string | Buffer> = {};
+  const assets: Record<string, string | Buffer> = {};
+  const scripts: Record<string, Script> = {};
+
+  function loadZipDir(prefix: string): Record<string, string | Buffer> {
+    const res: Record<string, string | Buffer> = {};
+    const normPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      if (entry.entryName.startsWith(normPrefix)) {
+        if (entry.entryName.includes('__pycache__')) continue;
+        const relativePath = entry.entryName.substring(normPrefix.length);
+        if (!relativePath) continue;
+        const data = entry.getData();
+        try {
+          res[relativePath] = data.toString('utf-8');
+        } catch (_e: unknown) {
+          res[relativePath] = data;
+        }
+      }
+    }
+    return res;
+  }
+
+  const refFiles = loadZipDir('references');
+  for (const [key, val] of Object.entries(refFiles)) {
+    references[key] = val;
+  }
+
+  const assetFiles = loadZipDir('assets');
+  for (const [key, val] of Object.entries(assetFiles)) {
+    assets[key] = val;
+  }
+
+  const rawScripts = loadZipDir('scripts');
+  for (const [key, val] of Object.entries(rawScripts)) {
+    if (typeof val === 'string') {
+      scripts[key] = {src: val};
+    }
+  }
+
+  return {
+    frontmatter,
+    instructions: body,
+    resources: {
+      references,
+      assets,
+      scripts,
+    },
+  };
 }

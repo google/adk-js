@@ -106,7 +106,7 @@ export class CodeExecutorContext {
    * @return A list of input files in the code executor context.
    */
   getInputFiles(): File[] {
-    if (!(INPUT_FILE_KEY in this.sessionState)) {
+    if (!this.sessionState.has(INPUT_FILE_KEY)) {
       return [];
     }
 
@@ -118,7 +118,7 @@ export class CodeExecutorContext {
    * @param inputFiles The input files to add to the session state.
    */
   addInputFiles(inputFiles: File[]) {
-    if (!(INPUT_FILE_KEY in this.sessionState)) {
+    if (!this.sessionState.has(INPUT_FILE_KEY)) {
       this.sessionState.set(INPUT_FILE_KEY, []);
     }
 
@@ -126,7 +126,7 @@ export class CodeExecutorContext {
   }
 
   clearInputFiles() {
-    if (INPUT_FILE_KEY in this.sessionState) {
+    if (this.sessionState.has(INPUT_FILE_KEY)) {
       this.sessionState.set(INPUT_FILE_KEY, []);
     }
 
@@ -141,7 +141,7 @@ export class CodeExecutorContext {
    * @return The error count for the given invocation ID.
    */
   getErrorCount(invocationId: string): number {
-    if (!(ERROR_COUNT_KEY in this.sessionState)) {
+    if (!this.sessionState.has(ERROR_COUNT_KEY)) {
       return 0;
     }
 
@@ -157,7 +157,7 @@ export class CodeExecutorContext {
    * @param invocationId The invocation ID to increment the error count for.
    */
   incrementErrorCount(invocationId: string) {
-    if (!(ERROR_COUNT_KEY in this.sessionState)) {
+    if (!this.sessionState.has(ERROR_COUNT_KEY)) {
       this.sessionState.set(ERROR_COUNT_KEY, {});
     }
 
@@ -171,7 +171,7 @@ export class CodeExecutorContext {
    * @param invocationId The invocation ID to reset the error count for.
    */
   resetErrorCount(invocationId: string) {
-    if (!(ERROR_COUNT_KEY in this.sessionState)) {
+    if (!this.sessionState.has(ERROR_COUNT_KEY)) {
       return;
     }
 
@@ -199,7 +199,7 @@ export class CodeExecutorContext {
     resultStdout,
     resultStderr,
   }: UpdateCodeExecutionResultParams) {
-    if (!(CODE_EXECUTION_RESULTS_KEY in this.sessionState)) {
+    if (!this.sessionState.has(CODE_EXECUTION_RESULTS_KEY)) {
       this.sessionState.set(CODE_EXECUTION_RESULTS_KEY, {});
     }
 
