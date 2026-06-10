@@ -107,9 +107,6 @@ export interface LlmResponse {
 
   /** The session ID of the Live session. */
   liveSessionId?: string;
-
-  /** The GoAway signal from the Live model. */
-  goAway?: LiveServerGoAway;
 }
 
 /**

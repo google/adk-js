@@ -30,6 +30,7 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
 
     const request: LlmRequest = {
       model: 'gemini-live-2.5-flash-native-audio',
+      contents: [],
       liveConnectConfig: {
         responseModalities: [Modality.AUDIO],
         outputAudioTranscription: {},
@@ -100,6 +101,7 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
 
     const request: LlmRequest = {
       model: 'gemini-live-2.5-flash-native-audio',
+      contents: [],
       liveConnectConfig: {
         responseModalities: [Modality.AUDIO],
         outputAudioTranscription: {},
@@ -184,6 +186,7 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
 
     const request: LlmRequest = {
       model: 'gemini-3.1-flash-live-preview-04-2026',
+      contents: [],
       liveConnectConfig: {
         responseModalities: [Modality.AUDIO],
         outputAudioTranscription: {},
