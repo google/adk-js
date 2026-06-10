@@ -237,7 +237,7 @@ export class Gemini extends BaseLlm {
         this._liveApiClient = new GoogleGenAI({
           vertexai: this.vertexai,
           project: this.project,
-          location: 'global',
+          location: this.location || 'global',
           httpOptions: this.getLiveHttpOptions(),
         });
       } else {

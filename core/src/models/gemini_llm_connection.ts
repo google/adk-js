@@ -119,6 +119,20 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   }
 
   /**
+   * Sends an activity start signal to the model.
+   */
+  async sendActivityStart(): Promise<void> {
+    this.geminiSession.sendRealtimeInput({activityStart: {}});
+  }
+
+  /**
+   * Sends an activity end signal to the model.
+   */
+  async sendActivityEnd(): Promise<void> {
+    this.geminiSession.sendRealtimeInput({activityEnd: {}});
+  }
+
+  /**
    * Builds a full text response.
    *
    * The text should not be partial and the returned LlmResponse is not be
@@ -141,10 +155,6 @@ export class GeminiLlmConnection implements BaseLlmConnection {
 
       for (const response of aggregator.processMessage(message)) {
         yield response;
-      }
-
-      if (aggregator.isDone) {
-        break;
       }
     }
 

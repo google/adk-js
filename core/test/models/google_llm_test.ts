@@ -116,7 +116,7 @@ describe('GoogleLlm', () => {
     expect(liveOptions.apiVersion).toBeDefined();
   });
 
-  it('should initialize liveApiClient with global location for Vertex AI', () => {
+  it('should respect configured location for Vertex AI liveApiClient', () => {
     const llm = new TestGemini({
       model: 'projects/p/locations/us-central1/models/gemini-2.5-flash',
       vertexai: true,
@@ -134,7 +134,7 @@ describe('GoogleLlm', () => {
       expect.objectContaining({
         vertexai: true,
         project: 'p',
-        location: 'global',
+        location: 'us-central1',
       }),
     );
   });

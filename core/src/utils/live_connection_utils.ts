@@ -28,8 +28,6 @@ export class LiveResponseAggregator {
   private inputTranscriptionText = '';
   private outputTranscriptionText = '';
 
-  public isDone = false;
-
   constructor(private readonly modelVersion?: string) {}
 
   *processMessage(
@@ -215,8 +213,6 @@ export class LiveResponseAggregator {
           finalResponse.groundingMetadata = finalGrounding;
         }
         yield finalResponse;
-        this.isDone = true;
-        return;
       }
 
       if (serverContent.interrupted) {

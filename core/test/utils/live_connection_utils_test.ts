@@ -26,7 +26,6 @@ describe('LiveResponseAggregator', () => {
         modelVersion: 'gemini-2.5-flash',
       },
     ]);
-    expect(aggregator.isDone).toBe(false);
   });
 
   it('should stream text and yield full response on turnComplete', () => {
@@ -84,7 +83,6 @@ describe('LiveResponseAggregator', () => {
         groundingMetadata: {groundingChunks: []},
       },
     ]);
-    expect(aggregator.isDone).toBe(true);
   });
 
   it('should flush text when transitioning between thought and non-thought', () => {

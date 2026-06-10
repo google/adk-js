@@ -216,6 +216,32 @@ describe('GeminiLlmConnection', () => {
     });
   });
 
+  describe('sendActivityStart', () => {
+    it('should send activityStart client message', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+      await connection.sendActivityStart();
+      expect(mockSession.sendRealtimeInput).toHaveBeenCalledWith({
+        activityStart: {},
+      });
+    });
+  });
+
+  describe('sendActivityEnd', () => {
+    it('should send activityEnd client message', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+      await connection.sendActivityEnd();
+      expect(mockSession.sendRealtimeInput).toHaveBeenCalledWith({
+        activityEnd: {},
+      });
+    });
+  });
+
   describe('close', () => {
     it('should close the session', async () => {
       const connection = new GeminiLlmConnection(
@@ -328,6 +354,7 @@ describe('GeminiLlmConnection', () => {
         groundingMetadata: {groundingChunks: []},
       });
 
+      messageQueue.close();
       expect((await generator.next()).done).toBe(true);
     });
 
@@ -402,6 +429,9 @@ describe('GeminiLlmConnection', () => {
         turnComplete: true,
         modelVersion: 'gemini-2.5-flash',
       });
+
+      messageQueue.close();
+      expect((await generator.next()).done).toBe(true);
     });
 
     it('should handle input transcription partial and finished', async () => {
@@ -661,6 +691,7 @@ describe('GeminiLlmConnection', () => {
         modelVersion: 'gemini-2.5-flash',
       });
 
+      messageQueue.close();
       expect((await generator.next()).done).toBe(true);
     });
 
