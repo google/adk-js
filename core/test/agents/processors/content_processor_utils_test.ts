@@ -735,6 +735,19 @@ describe('getContents', () => {
     expect(contents[1].parts?.[0].text).toBe('hello');
   });
 
+  it('should handle empty agentName in getContents', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{text: 'hello'}],
+      },
+    });
+    const contents = getContents([event], '');
+    expect(contents).toHaveLength(1);
+    expect(contents[0].parts?.[0].text).toBe('hello');
+  });
+
   describe('getCurrentTurnContents', () => {
     it('should return empty list when no events are provided', () => {
       const contents = getCurrentTurnContents([], 'my_agent');
@@ -774,6 +787,15 @@ describe('getContents', () => {
         content: {role: 'model', parts: [{text: 'hello'}]},
       });
       const contents = getCurrentTurnContents([e0], 'my_agent');
+      expect(contents).toEqual([]);
+    });
+
+    it('should handle empty agentName in getCurrentTurnContents', () => {
+      const e0 = createEvent({
+        author: 'other_agent',
+        content: {role: 'model', parts: [{text: 'hello'}]},
+      });
+      const contents = getCurrentTurnContents([e0], '');
       expect(contents).toEqual([]);
     });
   });
