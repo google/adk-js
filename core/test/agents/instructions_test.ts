@@ -47,6 +47,20 @@ describe('injectSessionState', () => {
     );
   });
 
+  it('deduplicates state variable lookups', async () => {
+    let accessCount = 0;
+    const state = {
+      get name() {
+        accessCount++;
+        return 'Alice';
+      },
+    };
+    const ctx = makeContext(state);
+    const result = await injectSessionState('Hello {name} and {name}!', ctx);
+    expect(result).toBe('Hello Alice and Alice!');
+    expect(accessCount).toBe(1);
+  });
+
   it('coerces numeric state values to string', async () => {
     const ctx = makeContext({count: 42});
     expect(await injectSessionState('count={count}', ctx)).toBe('count=42');
@@ -86,6 +100,32 @@ describe('injectSessionState', () => {
     expect(await injectSessionState('value={invalid key}', ctx)).toBe(
       'value={invalid key}',
     );
+  });
+
+  it('passes through keys with too many colons', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('value={a:b:c}', ctx)).toBe(
+      'value={a:b:c}',
+    );
+  });
+
+  it('passes through keys with invalid prefixes', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('value={invalid:key}', ctx)).toBe(
+      'value={invalid:key}',
+    );
+  });
+
+  it('passes through keys with valid prefix but invalid identifier', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('value={app:invalid key}', ctx)).toBe(
+      'value={app:invalid key}',
+    );
+  });
+
+  it('passes through empty placeholders', async () => {
+    const ctx = makeContext({});
+    expect(await injectSessionState('value={}', ctx)).toBe('value={}');
   });
 
   it('replaces app: prefixed keys', async () => {
@@ -144,6 +184,46 @@ describe('injectSessionState', () => {
       await expect(
         injectSessionState('{artifact.missing.txt}', ctx),
       ).rejects.toThrow('Artifact missing.txt not found.');
+    });
+
+    it('deduplicates artifact loads', async () => {
+      const fakeArtifact = 'artifact content';
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(fakeArtifact),
+      };
+
+      const ctx = makeContext({}, mockArtifactService);
+      const result = await injectSessionState(
+        'data={artifact.report.txt} and {artifact.report.txt}',
+        ctx,
+      );
+      expect(result).toBe('data=artifact content and artifact content');
+      expect(mockArtifactService.loadArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves artifacts concurrently', async () => {
+      const delays: Record<string, number> = {
+        'r1.txt': 50,
+        'r2.txt': 50,
+      };
+      const callOrder: string[] = [];
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockImplementation(async ({filename}) => {
+          callOrder.push(`start:${filename}`);
+          await new Promise((resolve) => setTimeout(resolve, delays[filename]));
+          callOrder.push(`end:${filename}`);
+          return `content:${filename}`;
+        }),
+      };
+
+      const ctx = makeContext({}, mockArtifactService);
+      const result = await injectSessionState(
+        '{artifact.r1.txt} and {artifact.r2.txt}',
+        ctx,
+      );
+      expect(result).toBe('content:r1.txt and content:r2.txt');
+      expect(callOrder[0]).toBe('start:r1.txt');
+      expect(callOrder[1]).toBe('start:r2.txt');
     });
   });
 });

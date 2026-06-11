@@ -8,6 +8,51 @@ import {State} from '../sessions/state.js';
 import {ReadonlyContext} from './readonly_context.js';
 
 /**
+ * Resolves a single key from the context (state or artifact).
+ */
+async function resolveKey(
+  key: string,
+  isOptional: boolean,
+  rawMatch: string,
+  readonlyContext: ReadonlyContext,
+): Promise<string> {
+  const invocationContext = readonlyContext.invocationContext;
+
+  // Step 2: handle artifact injection
+  if (key.startsWith('artifact.')) {
+    const fileName = key.substring('artifact.'.length);
+    if (invocationContext.artifactService === undefined) {
+      throw new Error('Artifact service is not initialized.');
+    }
+    const artifact = await invocationContext.artifactService.loadArtifact({
+      appName: invocationContext.session.appName,
+      userId: invocationContext.session.userId,
+      sessionId: invocationContext.session.id,
+      filename: fileName,
+    });
+    if (!artifact) {
+      throw new Error(`Artifact ${fileName} not found.`);
+    }
+    return String(artifact);
+  }
+
+  // Step 3: Handle state variable injection.
+  if (!isValidStateName(key)) {
+    return rawMatch;
+  }
+
+  if (key in invocationContext.session.state) {
+    return String(invocationContext.session.state[key]);
+  }
+
+  if (isOptional) {
+    return '';
+  }
+
+  throw new Error(`Context variable not found: \`${key}\`.`);
+}
+
+/**
  * Populates values in the instruction template, e.g. state, artifact, etc.
  *
  * ```
@@ -36,69 +81,55 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
-  const invocationContext = readonlyContext.invocationContext;
+  const pattern = /\{+[^{}]*}+/g;
+  const matches = Array.from(template.matchAll(pattern));
 
-  /**
-   * Replaces a matched string in the template with the corresponding value from
-   * the context.
-   *
-   * @param match The matched string in the template.
-   * @returns The replaced string.
-   */
-  async function replaceMatchedKeyWithItsValue(
-    match: RegExpMatchArray,
-  ): Promise<string> {
-    // Step 1: extract the key from the match
-    let key = match[0].replace(/^\{+/, '').replace(/\}+$/, '').trim();
+  if (matches.length === 0) {
+    return template;
+  }
+
+  // Map of unique placeholder specifier -> resolution promise
+  const resolutions = new Map<string, Promise<string>>();
+
+  const getSpecifier = (key: string, isOptional: boolean) => {
+    return `${key}${isOptional ? '?' : ''}`;
+  };
+
+  for (const match of matches) {
+    const rawMatch = match[0];
+    let key = rawMatch.replace(/^\{+/, '').replace(/\}+$/, '').trim();
     const isOptional = key.endsWith('?');
     if (isOptional) {
       key = key.slice(0, -1);
     }
 
-    // Step 2: handle artifact injection
-    if (key.startsWith('artifact.')) {
-      const fileName = key.substring('artifact.'.length);
-      if (invocationContext.artifactService === undefined) {
-        throw new Error('Artifact service is not initialized.');
-      }
-      const artifact = await invocationContext.artifactService.loadArtifact({
-        appName: invocationContext.session.appName,
-        userId: invocationContext.session.userId,
-        sessionId: invocationContext.session.id,
-        filename: fileName,
-      });
-      if (!artifact) {
-        throw new Error(`Artifact ${fileName} not found.`);
-      }
-      return String(artifact);
+    const specifier = getSpecifier(key, isOptional);
+    if (!resolutions.has(specifier)) {
+      resolutions.set(
+        specifier,
+        resolveKey(key, isOptional, rawMatch, readonlyContext),
+      );
     }
-
-    // Step 3: Handle state variable injection.
-    if (!isValidStateName(key)) {
-      return match[0];
-    }
-
-    if (key in invocationContext.session.state) {
-      return String(invocationContext.session.state[key]);
-    }
-
-    if (isOptional) {
-      return '';
-    }
-
-    throw new Error(`Context variable not found: \`${key}\`.`);
   }
-  // TODO - b/425992518: enable concurrent repalcement with key deduplication.
-  const pattern = /\{+[^{}]*}+/g;
+
+  // Trigger concurrent resolution of all unique keys
+  await Promise.all(resolutions.values());
+
   const result: string[] = [];
   let lastEnd = 0;
-  const matches = template.matchAll(pattern);
-
   for (const match of matches) {
+    const rawMatch = match[0];
+    let key = rawMatch.replace(/^\{+/, '').replace(/\}+$/, '').trim();
+    const isOptional = key.endsWith('?');
+    if (isOptional) {
+      key = key.slice(0, -1);
+    }
+    const specifier = getSpecifier(key, isOptional);
+
     result.push(template.slice(lastEnd, match.index));
-    const replacement = await replaceMatchedKeyWithItsValue(match);
+    const replacement = await resolutions.get(specifier)!;
     result.push(replacement);
-    lastEnd = match.index! + match[0].length;
+    lastEnd = match.index! + rawMatch.length;
   }
   result.push(template.slice(lastEnd));
   return result.join('');
