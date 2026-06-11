@@ -101,9 +101,6 @@ export class SecurityPlugin extends BasePlugin {
    * Intercepts tool calls, evaluating them against the policy engine before
    * execution and handling confirmation flows for calls that require it.
    *
-   * @param tool - The tool about to be invoked.
-   * @param toolArgs - The arguments supplied to the tool call.
-   * @param toolContext - The current tool execution context.
    * @returns A partial or error response object if the call is blocked or
    *   awaiting confirmation, or `undefined` to allow execution to proceed.
    */
