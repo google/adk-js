@@ -206,14 +206,16 @@ function convertForeignEvent(event: Event): Event {
         text: `[${event.author}] said: ${part.text}`,
       });
     } else if (part.functionCall) {
-      const argsText = safeStringify(part.functionCall.args);
       content.parts?.push({
-        text: `[${event.author}] called tool \`${part.functionCall.name}\` with parameters: ${argsText}`,
+        text: `[${event.author}] called tool \`${part.functionCall.name}\` with parameters: ${safeStringify(
+          part.functionCall.args,
+        )}`,
       });
     } else if (part.functionResponse) {
-      const responseText = safeStringify(part.functionResponse.response);
       content.parts?.push({
-        text: `[${event.author}] tool \`${part.functionResponse.name}\` returned result: ${responseText}`,
+        text: `[${event.author}] tool \`${part.functionResponse.name}\` returned result: ${safeStringify(
+          part.functionResponse.response,
+        )}`,
       });
     } else {
       content.parts?.push(cloneDeep(part));
@@ -263,9 +265,8 @@ export function mergeFunctionResponseEvents(events: Event[]): Event {
     ...events[0],
     content: events[0].content ? cloneDeep(events[0].content) : undefined,
   });
-  const partsInMergedEvent = mergedEvent.content?.parts || [];
-
-  if (partsInMergedEvent.length === 0) {
+  const partsInMergedEvent = mergedEvent.content?.parts;
+  if (!partsInMergedEvent || partsInMergedEvent.length === 0) {
     throw new Error('There should be at least one function_response part.');
   }
 
