@@ -201,10 +201,12 @@ function validateDiscoveryUrl(urlStr: string): boolean {
 
     const host = normaliseHostname(url.hostname.toLowerCase());
 
-    // Block localhost and common private IP ranges
+    // Block localhost, cloud metadata, and common private IP ranges
     if (
       host === 'localhost' ||
-      host === '127.0.0.1' ||
+      host === 'metadata.google.internal' ||
+      host === 'metadata.goog' ||
+      host.startsWith('127.') ||
       host === '[::1]' ||
       host === '0.0.0.0' ||
       host.startsWith('10.') ||
