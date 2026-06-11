@@ -186,6 +186,16 @@ describe('injectSessionState', () => {
       ).rejects.toThrow('Artifact missing.txt not found.');
     });
 
+    it('resolves missing optional artifact to empty string', async () => {
+      const mockArtifactService = {
+        loadArtifact: vi.fn().mockResolvedValue(null),
+      };
+
+      const ctx = makeContext({}, mockArtifactService);
+      const result = await injectSessionState('{artifact.missing.txt?}', ctx);
+      expect(result).toBe('');
+    });
+
     it('deduplicates artifact loads', async () => {
       const fakeArtifact = 'artifact content';
       const mockArtifactService = {
@@ -225,5 +235,26 @@ describe('injectSessionState', () => {
       expect(callOrder[0]).toBe('start:r1.txt');
       expect(callOrder[1]).toBe('start:r2.txt');
     });
+  });
+
+  it('resolves mixed required and optional placeholders for the same key', async () => {
+    const ctx = makeContext({'user:name': 'Alice'});
+    expect(
+      await injectSessionState('Hello {user:name} and {user:name?}!', ctx),
+    ).toBe('Hello Alice and Alice!');
+  });
+
+  it('throws when mixed required and optional placeholders are missing the key', async () => {
+    const ctx = makeContext({});
+    await expect(
+      injectSessionState('Hello {user:name} and {user:name?}!', ctx),
+    ).rejects.toThrow('Context variable not found: `user:name`');
+  });
+
+  it('keeps invalid placeholders as-is even when mixed', async () => {
+    const ctx = makeContext({});
+    expect(
+      await injectSessionState('Hello {invalid key?} and {invalid key}!', ctx),
+    ).toBe('Hello {invalid key?} and {invalid key}!');
   });
 });

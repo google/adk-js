@@ -31,6 +31,9 @@ async function resolveKey(
       filename: fileName,
     });
     if (!artifact) {
+      if (isOptional) {
+        return '';
+      }
       throw new Error(`Artifact ${fileName} not found.`);
     }
     return String(artifact);
@@ -88,48 +91,72 @@ export async function injectSessionState(
     return template;
   }
 
-  // Map of unique placeholder specifier -> resolution promise
-  const resolutions = new Map<string, Promise<string>>();
-
-  const getSpecifier = (key: string, isOptional: boolean) => {
-    return `${key}${isOptional ? '?' : ''}`;
-  };
-
-  for (const match of matches) {
-    const rawMatch = match[0];
-    let key = rawMatch.replace(/^\{+/, '').replace(/\}+$/, '').trim();
+  // Pre-parse matches to avoid redundant string manipulation in loops
+  const parsedMatches = matches.map((match) => {
+    const raw = match[0];
+    let key = raw.replace(/^\{+/, '').replace(/\}+$/, '').trim();
     const isOptional = key.endsWith('?');
     if (isOptional) {
       key = key.slice(0, -1);
     }
+    const isValid = key.startsWith('artifact.') || isValidStateName(key);
+    return {
+      raw,
+      key,
+      isOptional,
+      isValid,
+      index: match.index!,
+    };
+  });
 
-    const specifier = getSpecifier(key, isOptional);
-    if (!resolutions.has(specifier)) {
-      resolutions.set(
-        specifier,
-        resolveKey(key, isOptional, rawMatch, readonlyContext),
-      );
+  // Deduplicate only valid keys by base key, merging optionality
+  const uniqueKeys = new Map<
+    string,
+    {key: string; isOptional: boolean; raw: string}
+  >();
+
+  for (const pm of parsedMatches) {
+    if (!pm.isValid) {
+      continue;
+    }
+    const existing = uniqueKeys.get(pm.key);
+    if (existing) {
+      if (existing.isOptional && !pm.isOptional) {
+        existing.isOptional = false;
+      }
+    } else {
+      uniqueKeys.set(pm.key, {
+        key: pm.key,
+        isOptional: pm.isOptional,
+        raw: pm.raw,
+      });
     }
   }
 
-  // Trigger concurrent resolution of all unique keys
+  // Map of unique key -> resolution promise
+  const resolutions = new Map<string, Promise<string>>();
+  for (const info of uniqueKeys.values()) {
+    resolutions.set(
+      info.key,
+      resolveKey(info.key, info.isOptional, info.raw, readonlyContext),
+    );
+  }
+
+  // Trigger concurrent resolution
   await Promise.all(resolutions.values());
 
+  // Reconstruct template using pre-parsed matches
   const result: string[] = [];
   let lastEnd = 0;
-  for (const match of matches) {
-    const rawMatch = match[0];
-    let key = rawMatch.replace(/^\{+/, '').replace(/\}+$/, '').trim();
-    const isOptional = key.endsWith('?');
-    if (isOptional) {
-      key = key.slice(0, -1);
+  for (const pm of parsedMatches) {
+    result.push(template.slice(lastEnd, pm.index));
+    if (pm.isValid) {
+      const replacement = await resolutions.get(pm.key)!;
+      result.push(replacement);
+    } else {
+      result.push(pm.raw);
     }
-    const specifier = getSpecifier(key, isOptional);
-
-    result.push(template.slice(lastEnd, match.index));
-    const replacement = await resolutions.get(specifier)!;
-    result.push(replacement);
-    lastEnd = match.index! + rawMatch.length;
+    lastEnd = pm.index + pm.raw.length;
   }
   result.push(template.slice(lastEnd));
   return result.join('');
