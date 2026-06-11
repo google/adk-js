@@ -44,6 +44,18 @@ describe('OAuth2DiscoveryManager', () => {
       expect(fetch).not.toHaveBeenCalled();
     });
 
+    it('blocks 127.0.0.0/8 and cloud-metadata hostnames', async () => {
+      for (const url of [
+        'https://127.0.0.2',
+        'https://metadata.google.internal',
+        'https://metadata.goog',
+      ]) {
+        expect(await manager.discoverAuthServerMetadata(url)).toBeUndefined();
+      }
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
     it('tries endpoints in order if path is present', async () => {
       const issuerUrl = 'https://example.com/api';
 
