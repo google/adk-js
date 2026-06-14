@@ -99,7 +99,10 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
     });
 
     console.info('Building and pushing container image using Cloud Builds...');
-    const imageTag = `gcr.io/${options.project}/agent-engine-${appName}:latest`;
+    const repository = 'agent-engine-repo';
+
+    const imageTag = `$
+    {options.region}-docker.pkg.dev/${options.project}/${repository}/agent-engine-${appName}:latest`;
     await spawnAsync(
       'gcloud',
       [
@@ -162,7 +165,13 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         `Reasoning Engine creation operation ${operationName} did not complete in time.`,
       );
     }
-
+    
+    if (apiResponse.error) {
+  throw new Error(
+    `Reasoning Engine deployment failed: ${JSON.stringify(apiResponse.error)}`
+  );
+    }
+    
     const response = apiResponse.response as VertexReasoningEngine;
     console.info(
       `\x1b[32mSuccessfully deployed Reasoning Engine: ${response.name}\x1b[0m`,
