@@ -929,6 +929,142 @@ describe('AdkWebServer', () => {
     });
   });
 
+  describe('Reasoning Engine', () => {
+    it('should return 200 OK on health endpoints when debug UI is disabled', async () => {
+      const healthResponse = await client.get<string>('/health');
+      expect(healthResponse.status).toBe(200);
+      expect(healthResponse.text).toBe('OK');
+
+      const rootResponse = await client.get<string>('/');
+      expect(rootResponse.status).toBe(200);
+      expect(rootResponse.text).toBe('OK');
+    });
+
+    it('should query the agent using reasoning_engine route with valid JSON', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.output).toBeDefined();
+      expect(response.data?.output.length).toBe(3);
+      expect(response.data?.output[0].content?.parts?.[0].text).toBe(
+        "Hello user! I'm streaming you events now!",
+      );
+    });
+
+    it('should auto-create session if not exists on reasoning_engine query', async () => {
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'newSessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.output).toBeDefined();
+
+      const session = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'newSessionId',
+      });
+      expect(session).toBeDefined();
+    });
+
+    it('should support raw body query and parse headers workaround', async () => {
+      const url = `${server.url}/api/reasoning_engine`;
+      const payload = {
+        input: {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'rawSessionId',
+          newMessage: {
+            parts: [{text: 'Hello'}],
+            role: 'user',
+          },
+        },
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json,application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {output: Event[]};
+      expect(data.output).toBeDefined();
+      expect(data.output[0].content?.parts?.[0].text).toBe(
+        "Hello user! I'm streaming you events now!",
+      );
+    });
+
+    it('should return 400 if appName is missing', async () => {
+      try {
+        await client.post('/api/reasoning_engine', {
+          input: {
+            userId: 'testUser',
+            sessionId: 'sessionId',
+          },
+        });
+        expect.fail('Should fail with 400');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(400);
+        expect((e as {message: string}).message).toContain(
+          'appName is required',
+        );
+      }
+    });
+
+    it('should return 500 if execution fails', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = () => Promise.reject(new Error('Load failed'));
+
+      try {
+        await client.post('/api/reasoning_engine', {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+          },
+        });
+        expect.fail('Should fail with 500');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(500);
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
+  });
+
   describe('Startup', () => {
     it('should throw an error if the port is already in use', async () => {
       const portString = server.url.split(':').pop();

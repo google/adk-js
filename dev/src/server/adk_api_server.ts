@@ -766,24 +766,9 @@ export class AdkApiServer {
       this.logger.info(
         `Received Reasoning Engine query headers: ${JSON.stringify(req.headers)}`,
       );
-      let rawBody = '';
-      req.on('data', (chunk) => {
-        rawBody += chunk;
-      });
-      req.on('end', async () => {
-        this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let body: any = {};
-        if (rawBody) {
-          try {
-            body = JSON.parse(rawBody);
-          } catch (e) {
-            this.logger.error(`Failed to parse raw body as JSON: ${e}`);
-          }
-        } else {
-          body = req.body || {};
-        }
-        this.logger.info(`Parsed body: ${JSON.stringify(body)}`);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const executeQuery = async (body: any) => {
         const input = body.input || {};
         const appName = input.appName || body.appName;
         const userId = input.userId || body.userId || 'default-user';
@@ -835,7 +820,34 @@ export class AdkApiServer {
           res.status(500).json({error});
           this.logger.error(error);
         }
-      });
+      };
+
+      const isParsed =
+        req.body && (Object.keys(req.body).length > 0 || !req.readable);
+      if (isParsed) {
+        this.logger.info(
+          `Using already parsed body: ${JSON.stringify(req.body)}`,
+        );
+        await executeQuery(req.body);
+      } else {
+        let rawBody = '';
+        req.on('data', (chunk) => {
+          rawBody += chunk;
+        });
+        req.on('end', async () => {
+          this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let body: any = {};
+          if (rawBody) {
+            try {
+              body = JSON.parse(rawBody);
+            } catch (e) {
+              this.logger.error(`Failed to parse raw body as JSON: ${e}`);
+            }
+          }
+          await executeQuery(body);
+        });
+      }
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
