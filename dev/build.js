@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import {execSync} from 'node:child_process';
 import {createWriteStream, existsSync, unlink} from 'node:fs';
-import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import * as https from 'node:https';
 import * as path from 'node:path';
 import {fileURLToPath} from 'node:url';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
+import AdmZip from 'adm-zip';
 import {shimPlugin} from 'esbuild-shim-plugin';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -48,6 +48,7 @@ function downloadFile(url, dest) {
         response.headers.location
       ) {
         // Follow redirect
+        response.resume();
         downloadFile(response.headers.location, dest)
           .then(resolve)
           .catch(reject);
@@ -81,13 +82,8 @@ function downloadFile(url, dest) {
 }
 
 function unzipFile(zipPath, destDir) {
-  if (process.platform === 'win32') {
-    execSync(
-      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
-    );
-  } else {
-    execSync(`unzip -o "${zipPath}" -d "${destDir}"`);
-  }
+  const zip = new AdmZip(zipPath);
+  zip.extractAllTo(destDir, true);
 }
 
 async function ensureBrowserAssets() {
@@ -116,7 +112,9 @@ async function ensureBrowserAssets() {
         await mkdir(cacheDir, {recursive: true});
       }
       const url = `https://github.com/google/adk-web/releases/download/${ADK_WEB_VERSION}/adk-web-browser.zip`;
-      await downloadFile(url, zipCachePath);
+      const tempZipPath = `${zipCachePath}.tmp`;
+      await downloadFile(url, tempZipPath);
+      await rename(tempZipPath, zipCachePath);
       console.log(
         `[ADK Build] Downloaded and cached ADK Web ${ADK_WEB_VERSION}.`,
       );
