@@ -7,6 +7,8 @@
 import {State} from '../sessions/state.js';
 import {ReadonlyContext} from './readonly_context.js';
 
+const ARTIFACT_PREFIX = 'artifact.';
+
 /**
  * Resolves a single key from the context (state or artifact).
  */
@@ -19,8 +21,8 @@ async function resolveKey(
   const invocationContext = readonlyContext.invocationContext;
 
   // Step 2: handle artifact injection
-  if (key.startsWith('artifact.')) {
-    const fileName = key.substring('artifact.'.length);
+  if (key.startsWith(ARTIFACT_PREFIX)) {
+    const fileName = key.substring(ARTIFACT_PREFIX.length);
     if (invocationContext.artifactService === undefined) {
       throw new Error('Artifact service is not initialized.');
     }
@@ -99,7 +101,7 @@ export async function injectSessionState(
     if (isOptional) {
       key = key.slice(0, -1);
     }
-    const isValid = key.startsWith('artifact.') || isValidStateName(key);
+    const isValid = key.startsWith(ARTIFACT_PREFIX) || isValidStateName(key);
     return {
       raw,
       key,
