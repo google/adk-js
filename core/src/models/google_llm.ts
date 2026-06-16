@@ -10,12 +10,14 @@ import {
   FileData,
   GoogleGenAI,
   HttpOptions,
+  LiveServerMessage,
 } from '@google/genai';
 
 import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
+import {AsyncQueue} from '../utils/async_queue.js';
 import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
@@ -231,10 +233,19 @@ export class Gemini extends BaseLlm {
 
   get liveApiClient(): GoogleGenAI {
     if (!this._liveApiClient) {
-      this._liveApiClient = new GoogleGenAI({
-        apiKey: this.apiKey,
-        httpOptions: this.getLiveHttpOptions(),
-      });
+      if (this.vertexai) {
+        this._liveApiClient = new GoogleGenAI({
+          vertexai: this.vertexai,
+          project: this.project,
+          location: this.location || 'global',
+          httpOptions: this.getLiveHttpOptions(),
+        });
+      } else {
+        this._liveApiClient = new GoogleGenAI({
+          apiKey: this.apiKey,
+          httpOptions: this.getLiveHttpOptions(),
+        });
+      }
     }
     return this._liveApiClient;
   }
@@ -272,15 +283,25 @@ export class Gemini extends BaseLlm {
 
     llmRequest.liveConnectConfig.tools = llmRequest.config?.tools;
 
+    const modelVersion = llmRequest.model ?? this.model;
+    const messageQueue = new AsyncQueue<LiveServerMessage>();
+
     const liveSession = await this.liveApiClient.live.connect({
-      model: llmRequest.model ?? this.model,
+      model: modelVersion,
       config: llmRequest.liveConnectConfig,
       callbacks: {
-        // TODO - b/425992518: GenAI SDK inconsistent API, missing methods.
-        onmessage: () => {},
+        onmessage: (message) => {
+          messageQueue.push(message);
+        },
+        onerror: (error) => {
+          messageQueue.error(error);
+        },
+        onclose: () => {
+          messageQueue.close();
+        },
       },
     });
-    return new GeminiLlmConnection(liveSession);
+    return new GeminiLlmConnection(liveSession, modelVersion, messageQueue);
   }
 
   private preprocessRequest(llmRequest: LlmRequest): void {

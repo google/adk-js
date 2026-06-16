@@ -13,8 +13,19 @@ import {isLlmAgent} from '../llm_agent.js';
 import {ReadonlyContext} from '../readonly_context.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
+/**
+ * Filters the set of tools on the {@link LlmRequest} by delegating to the
+ * active plugin manager's `beforeToolSelection` hook. If no plugin restricts
+ * the tool set, the request is left unchanged.
+ */
 export class ToolFilterRequestProcessor extends BaseLlmRequestProcessor {
-  /** Filters the set of tools on the request based on plugins. */
+  /**
+   * Invokes plugin-based tool filtering and updates {@link LlmRequest.allowedTools}
+   * with the reduced tool set if any plugin returns a filtered result.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param llmRequest - The request whose allowed tools may be restricted.
+   */
   // eslint-disable-next-line require-yield
   override async *runAsync(
     invocationContext: InvocationContext,

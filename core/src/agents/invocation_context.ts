@@ -16,7 +16,6 @@ import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
-import {LiveRequestQueue} from './live_request_queue.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
 
@@ -36,7 +35,6 @@ export interface InvocationContextParams {
   endInvocation?: boolean;
   transcriptionCache?: TranscriptionEntry[];
   runConfig?: RunConfig;
-  liveRequestQueue?: LiveRequestQueue;
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
@@ -172,11 +170,6 @@ export class InvocationContext {
   private readonly invocationCostManager = new InvocationCostManager();
 
   /**
-   * The queue to receive live requests.
-   */
-  liveRequestQueue?: LiveRequestQueue;
-
-  /**
    * The running streaming tools of this invocation.
    */
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
@@ -186,9 +179,6 @@ export class InvocationContext {
    */
   pluginManager: PluginManager;
 
-  /**
-   * The abort signal for the invocation.
-   */
   readonly abortSignal?: AbortSignal;
 
   /**
@@ -206,7 +196,6 @@ export class InvocationContext {
     this.endInvocation = params.endInvocation || false;
     this.transcriptionCache = params.transcriptionCache;
     this.runConfig = params.runConfig;
-    this.liveRequestQueue = params.liveRequestQueue;
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;

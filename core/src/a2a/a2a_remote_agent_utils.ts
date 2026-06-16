@@ -19,7 +19,13 @@ export interface UserFunctionCall {
 }
 
 /**
- * Returns a UserFunctionCall when the event at index has a FunctionResponse.
+ * Returns a UserFunctionCall when the event at `index` contains a
+ * FunctionResponse that can be traced back to a preceding FunctionCall event.
+ *
+ * @param session - The session whose event history to inspect.
+ * @param index - Index of the candidate event to examine.
+ * @returns The matching `UserFunctionCall`, or `undefined` if the event at
+ *   `index` is not a user function-response event or has no preceding call.
  */
 export function getUserFunctionCallAt(
   session: Session,
@@ -62,6 +68,10 @@ export function getUserFunctionCallAt(
 
 /**
  * Checks if an event contains a function call with the given ID.
+ *
+ * @param event - The event to inspect.
+ * @param callId - The function call ID to look for.
+ * @returns `true` if a part in the event has a matching `functionCall.id`.
  */
 export function isFunctionCallEvent(event: AdkEvent, callId: string): boolean {
   if (!event || !event.content || !event.content.parts) {
@@ -75,6 +85,10 @@ export function isFunctionCallEvent(event: AdkEvent, callId: string): boolean {
 
 /**
  * Finds the first part with a FunctionResponse and returns the call ID.
+ *
+ * @param event - The event to inspect.
+ * @returns The `id` of the first FunctionResponse part, or `undefined` if
+ *   none is found.
  */
 export function getFunctionResponseCallId(event: AdkEvent): string | undefined {
   if (!event || !event.content || !event.content.parts) {
@@ -89,8 +103,13 @@ export function getFunctionResponseCallId(event: AdkEvent): string | undefined {
 }
 
 /**
- * Returns content parts for all events not present in the remote session
- * and a2a contextId if found in a remote agent event metadata.
+ * Returns A2A content parts for all events not yet seen by the remote agent,
+ * along with the A2A context ID found in the most recent remote agent event.
+ *
+ * @param ctx - The current invocation context, used to identify the remote
+ *   agent's authored events.
+ * @param session - The local session whose event history to diff.
+ * @returns An object with the missing `parts` and an optional `contextId`.
  */
 export function toMissingRemoteSessionParts(
   ctx: InvocationContext,
@@ -137,7 +156,13 @@ export function toMissingRemoteSessionParts(
 }
 
 /**
- * Wraps an agent event as a user message for context.
+ * Wraps an agent event as a user message so it can be sent as context to a
+ * remote agent that only accepts user-role messages.
+ *
+ * @param ctx - The current invocation context.
+ * @param agentEvent - The agent-authored event to reframe as a user message.
+ * @returns A new event with `author: 'user'` whose parts summarise the
+ *   original agent event's text, function calls, and function responses.
  */
 export function presentAsUserMessage(
   ctx: InvocationContext,

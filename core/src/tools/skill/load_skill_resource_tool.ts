@@ -50,7 +50,10 @@ export class LoadSkillResourceTool extends BaseTool {
     };
   }
 
-  override async runAsync({args}: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync({
+    args,
+    toolContext,
+  }: RunAsyncToolRequest): Promise<unknown> {
     const skillName = args['skill_name'] as string;
     let resourcePath = args['path'] as string;
 
@@ -69,7 +72,19 @@ export class LoadSkillResourceTool extends BaseTool {
 
     resourcePath = path.posix.normalize(resourcePath);
 
-    const skill = this.toolset.getSkill(skillName);
+    let skill;
+    try {
+      skill = await this.toolset.getOrFetchSkill(
+        skillName,
+        toolContext.invocationId,
+      );
+    } catch (e: unknown) {
+      return {
+        error: `Failed to fetch skill '${skillName}' from registry: ${(e as Error).message || e}`,
+        error_code: 'REGISTRY_ERROR',
+      };
+    }
+
     if (!skill) {
       return {
         error: `Skill '${skillName}' not found.`,
@@ -144,7 +159,15 @@ export class LoadSkillResourceTool extends BaseTool {
           const skillName = response['skill_name'] as string;
           const resourcePath = response['path'] as string;
 
-          const skill = this.toolset.getSkill(skillName);
+          let skill;
+          try {
+            skill = await this.toolset.getOrFetchSkill(
+              skillName,
+              request.toolContext.invocationId,
+            );
+          } catch (_e: unknown) {
+            continue;
+          }
           if (!skill) continue;
           const skillResources = skill.resources || {};
 

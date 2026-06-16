@@ -7,12 +7,15 @@
 import {
   BaseAgent,
   BasePlugin,
+  BaseTool,
+  BaseToolset,
   createEvent,
   Event,
   InMemoryRunner,
   InvocationContext,
+  LlmAgent,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 const TEST_USER_ID = 'test_user_id';
 const TEST_MESSAGE = 'Hello, agent!';
@@ -140,5 +143,48 @@ describe('InMemoryRunner', () => {
 
     expect(events1.length).toBeGreaterThan(0);
     expect(events2.length).toBeGreaterThan(0);
+  });
+
+  it('automatically closes stateful toolsets at the end of runAsync', async () => {
+    const closeSpy = vi.fn().mockResolvedValue(undefined);
+
+    class CustomToolset extends BaseToolset {
+      constructor() {
+        super([]);
+      }
+      async getTools(): Promise<BaseTool[]> {
+        return [];
+      }
+      async close(): Promise<void> {
+        await closeSpy();
+      }
+    }
+
+    const toolset = new CustomToolset();
+    const agent = new LlmAgent({
+      name: 'llm_agent',
+      tools: [toolset],
+    });
+
+    const runner = new InMemoryRunner({agent});
+
+    const session = await runner.sessionService.createSession({
+      appName: runner.appName,
+      userId: TEST_USER_ID,
+    });
+
+    try {
+      for await (const _ of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+      })) {
+        // consume events
+      }
+    } catch (_e: unknown) {
+      // Ignore any model-related errors because we only care that finally block closes the toolset!
+    }
+
+    expect(closeSpy).toHaveBeenCalled();
   });
 });

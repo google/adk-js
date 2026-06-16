@@ -13,6 +13,7 @@ import {
 
 export const SCHEMA_VERSION_KEY = 'schema_version';
 export const SCHEMA_VERSION_1_JSON = '1';
+export const STORAGE_KEY_COLUMN_LENGTH = 191;
 
 /**
  * Custom type for serializing and deserializing ADK Event objects.
@@ -46,7 +47,11 @@ export class StorageMetadata {
 
 @Entity({tableName: 'app_states'})
 export class StorageAppState {
-  @PrimaryKey({type: 'string', fieldName: 'app_name'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'app_name',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   appName!: string;
 
   @Property({type: 'json'})
@@ -63,10 +68,18 @@ export class StorageAppState {
 
 @Entity({tableName: 'user_states'})
 export class StorageUserState {
-  @PrimaryKey({type: 'string', fieldName: 'app_name'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'app_name',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   appName!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'user_id'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'user_id',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   userId!: string;
 
   @Property({type: 'json'})
@@ -85,13 +98,21 @@ export class StorageUserState {
 
 @Entity({tableName: 'sessions'})
 export class StorageSession {
-  @PrimaryKey({type: 'string'})
+  @PrimaryKey({type: 'string', length: STORAGE_KEY_COLUMN_LENGTH})
   id!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'app_name'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'app_name',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   appName!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'user_id'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'user_id',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   userId!: string;
 
   @Property({type: 'json'})
@@ -116,16 +137,28 @@ export class StorageSession {
 
 @Entity({tableName: 'events'})
 export class StorageEvent {
-  @PrimaryKey({type: 'string'})
+  @PrimaryKey({type: 'string', length: STORAGE_KEY_COLUMN_LENGTH})
   id!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'app_name'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'app_name',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   appName!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'user_id'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'user_id',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   userId!: string;
 
-  @PrimaryKey({type: 'string', fieldName: 'session_id'})
+  @PrimaryKey({
+    type: 'string',
+    fieldName: 'session_id',
+    length: STORAGE_KEY_COLUMN_LENGTH,
+  })
   sessionId!: string;
 
   @Property({type: 'string', fieldName: 'invocation_id'})

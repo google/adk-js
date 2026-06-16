@@ -448,4 +448,69 @@ describe('AgentTool', () => {
 
     expect(updateMock).not.toHaveBeenCalled();
   });
+
+  it('does not propagate temp: keys from parent state when creating sub-agent session', async () => {
+    const mockAgent = {
+      name: 'sub-agent',
+    } as unknown as LlmAgent;
+
+    const tool = new AgentTool({agent: mockAgent});
+
+    const mockSessionService = new InMemorySessionService();
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+      state: {
+        normalKey: 'parentValue',
+        [`${State.TEMP_PREFIX}tempKey`]: 'tempValue',
+      },
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+      sessionService: mockSessionService,
+    });
+
+    const toolContext = new Context({
+      invocationContext,
+    });
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'hello'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    await tool.runAsync({
+      args: {request: 'hello'},
+      toolContext,
+    });
+
+    // Retrieve the created session from the service
+    const subAgentSession = await mockSessionService.getSession({
+      appName: 'sub-agent',
+      userId: 'parent-user',
+      sessionId: 'parent-session',
+    });
+
+    expect(subAgentSession).toBeDefined();
+    expect(subAgentSession?.state).toHaveProperty('normalKey', 'parentValue');
+    expect(subAgentSession?.state).not.toHaveProperty(
+      `${State.TEMP_PREFIX}tempKey`,
+    );
+  });
 });

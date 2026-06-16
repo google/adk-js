@@ -59,10 +59,10 @@ export default defineConfig({
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 53,
-        branches: 76,
-        functions: 59,
-        lines: 53,
+        statements: 86,
+        branches: 87,
+        functions: 88,
+        lines: 86,
       },
     },
     globalSetup: ['./tests/global_setup.ts'],

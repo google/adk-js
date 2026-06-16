@@ -36,6 +36,19 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   readonly authScheme?: AuthScheme;
   readonly authCredential?: AuthCredential;
 
+  /**
+   * @param options - Configuration for the MCP toolset.
+   * @param options.destinationResourceId - Telemetry identifier injected as
+   *   `gcp.mcp.server.destination.id` into each resolved tool's custom metadata.
+   * @param options.connectionParams - HTTP connection parameters for the MCP server.
+   * @param options.toolFilter - Optional predicate or list of tool names to include.
+   *   When omitted, all tools from the server are returned.
+   * @param options.prefix - Optional prefix prepended to each tool name (e.g. `myServer_toolName`).
+   * @param options.headerProvider - Optional async function called immediately before each
+   *   {@link getTools} invocation to supply or refresh request headers (e.g. GCP auth tokens).
+   * @param options.authScheme - Optional auth scheme forwarded to each resolved tool.
+   * @param options.authCredential - Optional credential forwarded to each resolved tool.
+   */
   constructor(options: {
     destinationResourceId?: string;
     connectionParams: StreamableHTTPConnectionParams;
@@ -56,8 +69,14 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
   }
 
   /**
-   * Connects to the underlying MCP server, retrieves tool definitions, prefixes tool names,
-   * and injects destination telemetry metadata.
+   * Connects to the underlying MCP server, retrieves tool definitions, prefixes
+   * tool names, and injects destination telemetry metadata into each tool.
+   *
+   * The `headerProvider`, if configured, is invoked immediately before the
+   * connection is established so that tokens are always fresh.
+   *
+   * @param context - Optional readonly agent context passed to the header provider.
+   * @returns The resolved and optionally filtered list of {@link MCPTool} instances.
    */
   async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
     const headers: Record<string, string> = {};

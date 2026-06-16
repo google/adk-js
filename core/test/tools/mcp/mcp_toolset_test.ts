@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {describe, expect, it, vi} from 'vitest';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
@@ -113,6 +114,39 @@ describe('MCPToolset', () => {
       const tools = await toolset.getTools();
 
       expect(tools).toHaveLength(2);
+    });
+  });
+
+  describe('cleanup', () => {
+    it('closes the session and leaves activeSessions empty after getTools success', async () => {
+      const toolset = new MCPToolset(stdioParams);
+      const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+      const tools = await toolset.getTools();
+
+      expect(tools).toHaveLength(2);
+      expect(spy).toHaveBeenCalledOnce();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
+    });
+
+    it('closes the session and leaves activeSessions empty even if listTools throws an error', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      const mockClientInstance = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockRejectedValue(new Error('List tools failed')),
+      };
+      vi.mocked(Client).mockImplementationOnce(
+        () => mockClientInstance as unknown as Client,
+      );
+
+      const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+      await expect(toolset.getTools()).rejects.toThrow('List tools failed');
+      expect(spy).toHaveBeenCalledOnce();
+      expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
     });
   });
 });
