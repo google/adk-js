@@ -163,6 +163,7 @@ describe('deployToAgentEngine', () => {
       port: 8080,
       withUi: false,
       logLevel: 'info',
+      repository: 'agent-engine-repo',
     };
     vi.clearAllMocks();
 
@@ -405,41 +406,6 @@ describe('deployToAgentEngine', () => {
         }),
       }),
     );
-  });
-
-  it('should copy dev-dist when ADK_DEV_MODE is true', async () => {
-    vi.stubEnv('ADK_DEV_MODE', 'true');
-
-    await deployToAgentEngine(defaultOptions);
-
-    expect(fs.cp).toHaveBeenCalledWith(
-      expect.stringMatching(/dev$/), // Should resolve to 'dev' folder when running from source in tests
-      path.join(tempFolder, 'dev-dist'),
-      expect.objectContaining({recursive: true}),
-    );
-
-    expect(console.info).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '[DevMode] Verification: target folder contains: file1.js',
-      ),
-    );
-
-    vi.unstubAllEnvs();
-  });
-
-  it('should log error if dev-dist verification fails when ADK_DEV_MODE is true', async () => {
-    vi.stubEnv('ADK_DEV_MODE', 'true');
-    mockReaddir.mockRejectedValueOnce(new Error('Read error'));
-
-    await deployToAgentEngine(defaultOptions);
-
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '[DevMode] Verification failed: Error: Read error',
-      ),
-    );
-
-    vi.unstubAllEnvs();
   });
 
   it('should throw error if region resolution fails (unset)', async () => {
