@@ -5,6 +5,8 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {
   deployToAgentEngine,
@@ -17,6 +19,12 @@ import {
   loadFileData,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
+declare global {
+  var fsMockTempFolder: string | undefined;
+  var fsMockReaddir: Mock | undefined;
+}
+
+const mockReaddir = vi.hoisted(() => vi.fn().mockResolvedValue(['file1.js']));
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
@@ -29,11 +37,82 @@ vi.mock('node:child_process', () => ({
     spawnMock(cmd, args, opts),
 }));
 
-vi.mock('node:fs/promises', () => ({
-  cp: vi.fn().mockResolvedValue(undefined),
-  mkdir: vi.fn().mockResolvedValue(undefined),
-  rm: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const isCoveragePath = (path: unknown) => {
+    const pathStr = typeof path === 'string' ? path : String(path || '');
+    return (
+      pathStr.includes('coverage') ||
+      pathStr.includes('.tmp') ||
+      pathStr.includes('.vitest')
+    );
+  };
+
+  const mockCp = vi.fn().mockImplementation((src, dest, opts) => {
+    if (isCoveragePath(src) || isCoveragePath(dest)) {
+      return actual.cp(src, dest, opts);
+    }
+    const destStr = typeof dest === 'string' ? dest : String(dest || '');
+    const tempFolder = globalThis.fsMockTempFolder;
+    if (tempFolder && destStr.startsWith(tempFolder)) {
+      return Promise.resolve();
+    }
+    return actual.cp(src, dest, opts);
+  });
+
+  const mockMkdir = vi.fn().mockImplementation((path, opts) => {
+    if (isCoveragePath(path)) {
+      return actual.mkdir(path, opts);
+    }
+    return actual.mkdir(path, opts);
+  });
+
+  const mockReaddir = vi.fn().mockImplementation((path, opts) => {
+    if (isCoveragePath(path)) {
+      return actual.readdir(path, opts);
+    }
+    const pathStr = typeof path === 'string' ? path : String(path || '');
+    const tempFolder = globalThis.fsMockTempFolder;
+    process.stdout.write(
+      `[GLOBAL MOCK readdir] path: ${pathStr}, tempFolder: ${tempFolder}\n`,
+    );
+    if (tempFolder && pathStr.startsWith(tempFolder)) {
+      const mockReaddirFn = globalThis.fsMockReaddir;
+      process.stdout.write(
+        `[GLOBAL MOCK readdir] matched tempFolder, mockReaddirFn: ${mockReaddirFn ? 'DEFINED' : 'UNDEFINED'}\n`,
+      );
+      if (mockReaddirFn) {
+        const res = mockReaddirFn(path, opts);
+        process.stdout.write(
+          `[GLOBAL MOCK readdir] mockReaddirFn returned: ${res} (type: ${typeof res})\n`,
+        );
+        return res;
+      }
+      return Promise.resolve([]);
+    }
+    return actual.readdir(path, opts);
+  });
+
+  const mockFs = {
+    ...actual,
+    cp: mockCp,
+    mkdir: mockMkdir,
+    readdir: mockReaddir,
+  };
+
+  if (actual.default) {
+    mockFs.default = {
+      ...actual.default,
+      cp: mockCp,
+      mkdir: mockMkdir,
+      readdir: mockReaddir,
+    };
+  } else {
+    mockFs.default = mockFs;
+  }
+
+  return mockFs;
+});
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentLoader: vi.fn().mockImplementation(() => ({
@@ -66,20 +145,28 @@ vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
 }));
 
 describe('deployToAgentEngine', () => {
-  const defaultOptions: DeployToAgentEngineOptions = {
-    agentPath: 'path/to/agent',
-    displayName: 'test-agent',
-    tempFolder: '/tmp/test-deploy',
-    adkVersion: '1.0.0',
-    project: 'test-project',
-    region: 'us-central1',
-    port: 8080,
-    withUi: false,
-    logLevel: 'info',
-  };
+  let tempFolder: string;
+  let defaultOptions: DeployToAgentEngineOptions;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    tempFolder = path.join(
+      os.tmpdir(),
+      'adk-agent-engine-test-' + Math.random().toString(36).substring(2),
+    );
+    defaultOptions = {
+      agentPath: 'path/to/agent',
+      displayName: 'test-agent',
+      tempFolder,
+      adkVersion: '1.0.0',
+      project: 'test-project',
+      region: 'us-central1',
+      port: 8080,
+      withUi: false,
+      logLevel: 'info',
+    };
     vi.clearAllMocks();
+
+    mockReaddir.mockResolvedValue(['file1.js']);
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -133,12 +220,21 @@ describe('deployToAgentEngine', () => {
       },
     });
 
+    globalThis.fsMockTempFolder = tempFolder;
+    globalThis.fsMockReaddir = mockReaddir;
     vi.stubGlobal('setTimeout', (fn: () => void) => fn());
   });
 
   afterEach(() => {
+    globalThis.fsMockTempFolder = undefined;
+    globalThis.fsMockReaddir = undefined;
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('debug: fs.readdir is mock', () => {
+    console.warn('XXX fs.readdir is mock?', vi.isMockFunction(fs.readdir));
   });
 
   it('should deploy successfully with explicit options', async () => {
@@ -150,8 +246,8 @@ describe('deployToAgentEngine', () => {
         'builds',
         'submit',
         '--tag',
-        'gcr.io/test-project/agent-engine-agent:latest',
-        '/tmp/test-deploy',
+        'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
+        tempFolder,
         '--project',
         'test-project',
         '--suppress-logs',
@@ -165,7 +261,8 @@ describe('deployToAgentEngine', () => {
         description: undefined,
         spec: {
           containerSpec: {
-            imageUri: 'gcr.io/test-project/agent-engine-agent:latest',
+            imageUri:
+              'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
           deploymentSpec: {
             containerConcurrency: 9,
@@ -180,9 +277,66 @@ describe('deployToAgentEngine', () => {
       },
     });
 
-    expect(fs.rm).toHaveBeenCalledWith('/tmp/test-deploy', {
-      recursive: true,
-      force: true,
+    // Verify tempFolder was cleaned up
+    let exists = true;
+    try {
+      await fs.access(tempFolder);
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
+  });
+
+  it('should deploy successfully with all optional parameters', async () => {
+    const optionsWithAll: DeployToAgentEngineOptions = {
+      ...defaultOptions,
+      displayName: 'custom-display-name',
+      description: 'custom-description',
+      stagingBucket: 'custom-bucket',
+      repository: 'custom-repo',
+      allowOrigins: 'http://example.com',
+      sessionServiceUri: 'http://session-service',
+      artifactServiceUri: 'http://artifact-service',
+      a2a: true,
+    };
+
+    await deployToAgentEngine(optionsWithAll);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        'builds',
+        'submit',
+        '--tag',
+        'us-central1-docker.pkg.dev/test-project/custom-repo/agent-engine-agent:latest',
+        tempFolder,
+        '--project',
+        'test-project',
+        '--suppress-logs',
+      ]),
+      expect.any(Object),
+    );
+
+    expect(mockCreateInternal).toHaveBeenCalledWith({
+      config: {
+        displayName: 'custom-display-name',
+        description: 'custom-description',
+        spec: {
+          containerSpec: {
+            imageUri:
+              'us-central1-docker.pkg.dev/test-project/custom-repo/agent-engine-agent:latest',
+          },
+          deploymentSpec: {
+            containerConcurrency: 9,
+            minInstances: 1,
+            maxInstances: 10,
+            resourceLimits: {
+              cpu: '1',
+              memory: '2Gi',
+            },
+          },
+        },
+      },
     });
   });
 
@@ -209,9 +363,142 @@ describe('deployToAgentEngine', () => {
         config: expect.objectContaining({
           spec: expect.objectContaining({
             containerSpec: {
-              imageUri: 'gcr.io/gcloud-project/agent-engine-agent:latest',
+              imageUri:
+                'gcloud-region-docker.pkg.dev/gcloud-project/agent-engine-repo/agent-engine-agent:latest',
             },
           }),
+        }),
+      }),
+    );
+  });
+
+  it('should deploy successfully with custom repository name', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      repository: 'custom-repo',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        'builds',
+        'submit',
+        '--tag',
+        'us-central1-docker.pkg.dev/test-project/custom-repo/agent-engine-agent:latest',
+        tempFolder,
+        '--project',
+        'test-project',
+        '--suppress-logs',
+      ]),
+      expect.any(Object),
+    );
+
+    expect(mockCreateInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          spec: expect.objectContaining({
+            containerSpec: {
+              imageUri:
+                'us-central1-docker.pkg.dev/test-project/custom-repo/agent-engine-agent:latest',
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('should copy dev-dist when ADK_DEV_MODE is true', async () => {
+    vi.stubEnv('ADK_DEV_MODE', 'true');
+
+    await deployToAgentEngine(defaultOptions);
+
+    expect(fs.cp).toHaveBeenCalledWith(
+      expect.stringMatching(/dev$/), // Should resolve to 'dev' folder when running from source in tests
+      path.join(tempFolder, 'dev-dist'),
+      expect.objectContaining({recursive: true}),
+    );
+
+    expect(console.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[DevMode] Verification: target folder contains: file1.js',
+      ),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it('should log error if dev-dist verification fails when ADK_DEV_MODE is true', async () => {
+    vi.stubEnv('ADK_DEV_MODE', 'true');
+    mockReaddir.mockRejectedValueOnce(new Error('Read error'));
+
+    await deployToAgentEngine(defaultOptions);
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '[DevMode] Verification failed: Error: Read error',
+      ),
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it('should throw error if region resolution fails (unset)', async () => {
+    const optionsWithoutRegion = {
+      ...defaultOptions,
+      region: '',
+    };
+
+    execMock.mockImplementation((cmd: string, callback: Callback) => {
+      if (cmd.includes('config get-value project')) {
+        callback(null, {stdout: 'gcloud-project\n'});
+      } else if (cmd.includes('config get-value run/region')) {
+        callback(null, {stdout: ''});
+      } else {
+        callback(null, {stdout: ''});
+      }
+    });
+
+    await expect(deployToAgentEngine(optionsWithoutRegion)).rejects.toThrow(
+      /Region is not specified/,
+    );
+  });
+
+  it('should deploy successfully when agentPath is a file', async () => {
+    (isFile as Mock).mockResolvedValue(true);
+
+    await deployToAgentEngine({
+      ...defaultOptions,
+      agentPath: 'path/to/agent.ts',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        'builds',
+        'submit',
+        '--tag',
+        'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
+        tempFolder,
+        '--project',
+        'test-project',
+        '--suppress-logs',
+      ]),
+      expect.any(Object),
+    );
+  });
+
+  it('should deploy successfully without explicit displayName', async () => {
+    const optionsWithoutDisplayName = {
+      ...defaultOptions,
+      displayName: undefined,
+    };
+
+    await deployToAgentEngine(optionsWithoutDisplayName);
+
+    expect(mockCreateInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          displayName: 'agent',
         }),
       }),
     );
@@ -237,14 +524,18 @@ describe('deployToAgentEngine', () => {
   });
 
   it('should clean up existing temp folder before deploying', async () => {
+    await fs.mkdir(tempFolder, {recursive: true});
     (isFolderExists as Mock).mockResolvedValue(true);
 
     await deployToAgentEngine(defaultOptions);
 
-    expect(fs.rm).toHaveBeenCalledWith('/tmp/test-deploy', {
-      recursive: true,
-      force: true,
-    });
+    let exists = true;
+    try {
+      await fs.access(tempFolder);
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
   });
 
   it('should throw error if required npm packages are missing in package.json', async () => {
@@ -274,26 +565,40 @@ describe('deployToAgentEngine', () => {
   });
 
   it('should throw error if Reasoning Engine creation operation times out', async () => {
-    mockCreateInternal.mockResolvedValue({
-      name: 'operations/test-operation',
-      done: false,
+    let resolveReachedLoop: () => void = () => {};
+    const reachedLoopPromise = new Promise<void>((r) => {
+      resolveReachedLoop = r;
     });
+
+    mockCreateInternal.mockImplementation(() => {
+      resolveReachedLoop();
+      return Promise.resolve({
+        name: 'operations/test-operation',
+        done: false,
+      });
+    });
+
     mockGetAgentOperationInternal.mockResolvedValue({
       name: 'operations/test-operation',
       done: false,
     });
 
+    vi.unstubAllGlobals();
     vi.useFakeTimers();
 
     const deployPromise = deployToAgentEngine(defaultOptions);
 
-    await Promise.all([
-      expect(deployPromise).rejects.toThrow(
-        'Reasoning Engine creation operation operations/test-operation did not complete in time.',
-      ),
-      vi.runAllTimersAsync(),
-    ]);
+    await reachedLoopPromise;
+    await Promise.resolve(); // yield
+
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+
+    await expect(deployPromise).rejects.toThrow(
+      'Reasoning Engine creation operation operations/test-operation did not complete in time.',
+    );
 
     vi.useRealTimers();
-  });
+  }, 30000);
 });

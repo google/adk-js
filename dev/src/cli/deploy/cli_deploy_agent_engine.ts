@@ -26,6 +26,7 @@ export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   displayName?: string;
   description?: string;
   stagingBucket?: string;
+  repository?: string;
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
@@ -49,6 +50,15 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
   }
   if (!options.region) {
     options.region = region;
+  }
+
+  if (!options.repository) {
+    throw new Error(
+      `Artifact Registry repository is not specified.\n` +
+        `Please create a Docker repository in Artifact Registry first and specify it using the --repository flag.\n` +
+        `To create a repository, run:\n` +
+        `  gcloud artifacts repositories create <repository-name> --repository-format=docker --location=${options.region} --project=${options.project}`,
+    );
   }
 
   const agentLoader = new AgentLoader(
@@ -98,8 +108,14 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       a2a: options.a2a,
     });
 
-    console.info('Building and pushing container image using Cloud Builds...');
-    const imageTag = `gcr.io/${options.project}/agent-engine-${appName}:latest`;
+    const imageTag = `${options.region}-docker.pkg.dev/${options.project}/${options.repository}/agent-engine-${appName}:latest`;
+    console.info(
+      `Building and pushing container image to ${imageTag} using Cloud Builds...`,
+    );
+    const logBucket = options.stagingBucket
+      ? `gs://${options.stagingBucket}/logs`
+      : `gs://${options.project}_cloudbuild/logs`;
+
     await spawnAsync(
       'gcloud',
       [
@@ -110,6 +126,8 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         options.tempFolder,
         '--project',
         options.project,
+        '--gcs-log-dir',
+        logBucket,
         '--suppress-logs',
       ],
       {stdio: 'inherit'},
@@ -160,6 +178,12 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
     if (!apiResponse.done) {
       throw new Error(
         `Reasoning Engine creation operation ${operationName} did not complete in time.`,
+      );
+    }
+
+    if (apiResponse.error) {
+      throw new Error(
+        `Reasoning Engine creation failed: [Code ${apiResponse.error.code}] ${apiResponse.error.message}`,
       );
     }
 
