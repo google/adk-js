@@ -18,9 +18,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
   const location = process.env.GCP_LOCATION || 'us-central1';
 
   it('should connect and stream responses from Gemini Live using Vertex AI', async () => {
-    console.log(
-      `Connecting to Live API using project: ${project}, location: ${location}`,
-    );
     const llm = new Gemini({
       model: 'gemini-live-2.5-flash-native-audio',
       vertexai: true,
@@ -62,7 +59,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
         break;
       }
       const response = next.value;
-      console.log('Received response event:', JSON.stringify(response));
 
       if (response.content?.parts) {
         for (const part of response.content.parts) {
@@ -80,7 +76,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
       }
     }
 
-    console.log('Accumulated text response:', accumulatedText);
     expect(accumulatedText.length).toBeGreaterThan(0);
     expect(accumulatedText.toLowerCase()).toMatch(/4|four/);
     expect(gotTurnComplete).toBe(true);
@@ -89,9 +84,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
   }, 30000);
 
   it('should support multi-turn conversations over the same live connection', async () => {
-    console.log(
-      `Connecting to Live API for multi-turn test using project: ${project}, location: ${location}`,
-    );
     const llm = new Gemini({
       model: 'gemini-live-2.5-flash-native-audio',
       vertexai: true,
@@ -118,7 +110,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
     const generator = connection.receive();
 
     // Turn 1: Tell model our name
-    console.log('Sending Turn 1: My name is Alice');
     await connection.sendContent({
       parts: [{text: 'Hello Gemini! My name is Alice.'}],
     });
@@ -136,7 +127,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
     }
 
     // Turn 2: Ask model what our name is
-    console.log('Sending Turn 2: What is my name?');
     await connection.sendContent({
       parts: [{text: 'Can you tell me what my name is?'}],
     });
@@ -165,7 +155,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
       }
     }
 
-    console.log('Multi-turn response:', accumulatedText);
     expect(accumulatedText.toLowerCase()).toContain('alice');
     expect(gotTurnComplete).toBe(true);
 
@@ -174,9 +163,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
 
   // Note: Gemini 3.1 Live is currently in private preview and requires explicit project allowlisting on Vertex AI (yields 1008 Policy Violation otherwise).
   it.skip('should connect and stream responses from Gemini 3.1 Live using Vertex AI', async () => {
-    console.log(
-      `Connecting to Live API using project: ${project}, location: ${location}`,
-    );
     const llm = new Gemini({
       model: 'gemini-3.1-flash-live-preview-04-2026',
       vertexai: true,
@@ -218,7 +204,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
         break;
       }
       const response = next.value;
-      console.log('Received response event:', JSON.stringify(response));
 
       if (response.content?.parts) {
         for (const part of response.content.parts) {
@@ -236,7 +221,6 @@ describe.skipIf(isCI)('Live Gemini Live Connection E2E', () => {
       }
     }
 
-    console.log('Accumulated text response:', accumulatedText);
     expect(accumulatedText.length).toBeGreaterThan(0);
     expect(accumulatedText.toLowerCase()).toMatch(/4|four/);
     expect(gotTurnComplete).toBe(true);
