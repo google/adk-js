@@ -172,6 +172,13 @@ export class AdkApiServer {
           },
         }),
       );
+    } else {
+      app.get('/health', (req: Request, res: Response) => {
+        res.status(200).send('OK');
+      });
+      app.get('/', (req: Request, res: Response) => {
+        res.status(200).send('OK');
+      });
     }
 
     if (this.allowOrigins) {
@@ -753,6 +760,82 @@ export class AdkApiServer {
         res.status(500).json({error});
         this.logger.error(error);
       }
+    });
+
+    app.post('/api/reasoning_engine', async (req: Request, res: Response) => {
+      this.logger.info(
+        `Received Reasoning Engine query headers: ${JSON.stringify(req.headers)}`,
+      );
+      let rawBody = '';
+      req.on('data', (chunk) => {
+        rawBody += chunk;
+      });
+      req.on('end', async () => {
+        this.logger.info(`Received Reasoning Engine raw body: ${rawBody}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let body: any = {};
+        if (rawBody) {
+          try {
+            body = JSON.parse(rawBody);
+          } catch (e) {
+            this.logger.error(`Failed to parse raw body as JSON: ${e}`);
+          }
+        } else {
+          body = req.body || {};
+        }
+        this.logger.info(`Parsed body: ${JSON.stringify(body)}`);
+        const input = body.input || {};
+        const appName = input.appName || body.appName;
+        const userId = input.userId || body.userId || 'default-user';
+        const sessionId =
+          input.sessionId || body.sessionId || 'default-session';
+        const newMessage = input.newMessage || body.newMessage;
+        const stateDelta = input.stateDelta || body.stateDelta;
+        if (!appName) {
+          res.status(400).json({error: 'appName is required in input'});
+          return;
+        }
+        try {
+          let session = await this.sessionService.getSession({
+            appName,
+            userId,
+            sessionId,
+          });
+          if (!session) {
+            this.logger.info(
+              `Session ${sessionId} not found. Creating it automatically.`,
+            );
+            session = await this.sessionService.createSession({
+              appName,
+              userId,
+              sessionId,
+              state: {},
+            });
+          }
+          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agent = await agentFile.load();
+          const runner = await this.getRunner(agent, appName);
+          const events: Event[] = [];
+          const abortController = new AbortController();
+          req.on('close', () => {
+            abortController.abort();
+          });
+          for await (const e of runner.runAsync({
+            userId,
+            sessionId,
+            newMessage,
+            stateDelta,
+            abortSignal: abortController.signal,
+          })) {
+            events.push(e);
+          }
+          res.json({output: events});
+        } catch (e: unknown) {
+          const error = `Failed to run agent via Reasoning Engine API: ${e}`;
+          res.status(500).json({error});
+          this.logger.error(error);
+        }
+      });
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
