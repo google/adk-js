@@ -365,7 +365,6 @@ export class StreamingResponseAggregator {
   private finishReason?: FinishReason;
 
   private lastThoughtSignature: {value?: string | Uint8Array} = {};
-  private sawFunctionCall = false;
   private readonly strategy: StreamingStrategy;
 
   constructor(
@@ -383,10 +382,6 @@ export class StreamingResponseAggregator {
   ): AsyncGenerator<LlmResponse, void, void> {
     const llmResponse = createLlmResponse(response);
     const parts = llmResponse.content?.parts ?? [];
-
-    if (parts.some((part) => part.functionCall)) {
-      this.sawFunctionCall = true;
-    }
 
     // Suppress empty chunks that carry no meaningful content (e.g. trailing empty
     // STOP chunks or intermediate empty chunks) to avoid yielding empty events
@@ -439,7 +434,12 @@ export class StreamingResponseAggregator {
 
   close(): LlmResponse | undefined {
     const finalParts = this.strategy.close();
-    if (!finalParts) {
+    const hasMetadata =
+      this.usageMetadata !== undefined ||
+      this.groundingMetadata !== undefined ||
+      this.citationMetadata !== undefined;
+
+    if (!finalParts && !hasMetadata) {
       return undefined;
     }
 
@@ -452,7 +452,7 @@ export class StreamingResponseAggregator {
     return {
       content: {
         role: 'model',
-        parts: finalParts,
+        parts: finalParts ?? [],
       },
       groundingMetadata: this.groundingMetadata,
       citationMetadata: this.citationMetadata,

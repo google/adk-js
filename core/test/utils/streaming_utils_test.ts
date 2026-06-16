@@ -786,12 +786,9 @@ describe('StreamingResponseAggregator', () => {
       }
 
       // 2. Simulate trailing empty STOP chunk with no candidates or empty parts
-      const response2 = new GenerateContentResponse();
-      response2.candidates = [
-        {
-          finishReason: FinishReason.STOP,
-        },
-      ];
+      const response2 = createResponse({
+        finishReason: FinishReason.STOP,
+      });
       response2.usageMetadata = {
         promptTokenCount: 10,
         candidatesTokenCount: 20,
@@ -813,6 +810,57 @@ describe('StreamingResponseAggregator', () => {
         promptTokenCount: 10,
         candidatesTokenCount: 20,
         totalTokenCount: 30,
+      });
+    });
+
+    it('should preserve metadata in close() when no text parts are accumulated in non-progressive mode', async () => {
+      const aggregator = new StreamingResponseAggregator(false);
+
+      // 1. Simulate a chunk carrying a function call (no text parts)
+      const response1 = createResponse({
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'get_weather',
+                args: {location: 'San Francisco'},
+              },
+            },
+          ],
+        },
+        finishReason: FinishReason.STOP,
+      });
+
+      const results1 = [];
+      for await (const res of aggregator.processResponse(response1)) {
+        results1.push(res);
+      }
+      expect(results1).toHaveLength(1);
+
+      // 2. Trailing empty STOP chunk with usageMetadata
+      const response2 = createResponse({
+        finishReason: FinishReason.STOP,
+      });
+      response2.usageMetadata = {
+        promptTokenCount: 15,
+        candidatesTokenCount: 25,
+        totalTokenCount: 40,
+      };
+
+      const results2 = [];
+      for await (const res of aggregator.processResponse(response2)) {
+        results2.push(res);
+      }
+      expect(results2).toHaveLength(0); // Suppressed early return
+
+      // 3. Call close() and verify metadata is returned and parts array is empty
+      const finalResponse = aggregator.close();
+      expect(finalResponse).toBeDefined();
+      expect(finalResponse?.content?.parts).toEqual([]);
+      expect(finalResponse?.usageMetadata).toEqual({
+        promptTokenCount: 15,
+        candidatesTokenCount: 25,
+        totalTokenCount: 40,
       });
     });
   });
@@ -846,12 +894,9 @@ describe('StreamingResponseAggregator', () => {
       );
 
       // 2. Trailing empty STOP chunk with zero parts
-      const response2 = new GenerateContentResponse();
-      response2.candidates = [
-        {
-          finishReason: FinishReason.STOP,
-        },
-      ];
+      const response2 = createResponse({
+        finishReason: FinishReason.STOP,
+      });
 
       const results2 = [];
       for await (const res of aggregator.processResponse(response2)) {
@@ -876,12 +921,9 @@ describe('StreamingResponseAggregator', () => {
       expect(results1).toHaveLength(1);
 
       // 2. Trailing empty STOP chunk
-      const response2 = new GenerateContentResponse();
-      response2.candidates = [
-        {
-          finishReason: FinishReason.STOP,
-        },
-      ];
+      const response2 = createResponse({
+        finishReason: FinishReason.STOP,
+      });
 
       const results2 = [];
       for await (const res of aggregator.processResponse(response2)) {
@@ -894,12 +936,9 @@ describe('StreamingResponseAggregator', () => {
       const aggregator = new StreamingResponseAggregator(false);
 
       // 1. Trailing empty chunk with SAFETY block
-      const response = new GenerateContentResponse();
-      response.candidates = [
-        {
-          finishReason: FinishReason.SAFETY,
-        },
-      ];
+      const response = createResponse({
+        finishReason: FinishReason.SAFETY,
+      });
 
       const results = [];
       for await (const res of aggregator.processResponse(response)) {

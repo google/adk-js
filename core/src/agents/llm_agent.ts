@@ -17,6 +17,7 @@ import {
   createNewEventId,
   Event,
   getFunctionCalls,
+  getFunctionResponses,
   isFinalResponse,
 } from '../events/event.js';
 
@@ -667,17 +668,36 @@ export class LlmAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
+      let stepHadToolCalls = false;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
         }
 
         lastEvent = event;
+        if (
+          getFunctionCalls(event).length > 0 ||
+          getFunctionResponses(event).length > 0
+        ) {
+          stepHadToolCalls = true;
+        }
         this.maybeSaveOutputToState(event);
         yield event;
       }
 
-      if (!lastEvent || isFinalResponse(lastEvent)) {
+      if (!lastEvent) {
+        break;
+      }
+
+      const isEmptyMetadataEvent =
+        lastEvent.author === this.name &&
+        !lastEvent.partial &&
+        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0);
+
+      if (
+        isFinalResponse(lastEvent) &&
+        !(isEmptyMetadataEvent && stepHadToolCalls)
+      ) {
         break;
       }
 
