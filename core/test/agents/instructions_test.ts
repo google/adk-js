@@ -184,6 +184,47 @@ describe('injectSessionState', () => {
         'val=a &amp;lt; b',
       );
     });
+
+    it('escapes HTML special characters in the template itself', async () => {
+      const ctx = makeContext({name: 'Alice'});
+      expect(
+        await injectSessionState('Use <b>{name}</b> if <needed>', ctx),
+      ).toBe('Use &lt;b&gt;Alice&lt;/b&gt; if &lt;needed&gt;');
+    });
+
+    it('does not recursively resolve placeholders in state values (prevents nested injection)', async () => {
+      const ctx = makeContext({
+        user: '{secret}',
+        secret: 'my-private-key',
+      });
+      expect(await injectSessionState('Hello {user}!', ctx)).toBe(
+        'Hello {secret}!',
+      );
+    });
+
+    it('does not escape quotes in state values', async () => {
+      const ctx = makeContext({quote: 'Alice said "hello" and \'world\''});
+      expect(await injectSessionState('quote={quote}', ctx)).toBe(
+        'quote=Alice said "hello" and \'world\'',
+      );
+    });
+
+    it('preserves backslashes and whitespace control characters in state values', async () => {
+      const ctx = makeContext({path: 'C:\\Program Files\\Node\\n'});
+      expect(await injectSessionState('path={path}', ctx)).toBe(
+        'path=C:\\Program Files\\Node\\n',
+      );
+    });
+
+    it('coerces boolean state values to string', async () => {
+      const ctx = makeContext({flag: true});
+      expect(await injectSessionState('flag={flag}', ctx)).toBe('flag=true');
+    });
+
+    it('coerces null or undefined state values to string', async () => {
+      const ctx = makeContext({val: null});
+      expect(await injectSessionState('val={val}', ctx)).toBe('val=null');
+    });
   });
 
   describe('artifact injection', () => {
