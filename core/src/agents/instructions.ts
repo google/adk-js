@@ -9,6 +9,13 @@ import {ReadonlyContext} from './readonly_context.js';
 
 const ARTIFACT_PREFIX = 'artifact.';
 
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
  * Resolves a single key from the context (state or artifact).
  */
@@ -38,7 +45,7 @@ async function resolveKey(
       }
       throw new Error(`Artifact ${fileName} not found.`);
     }
-    return String(artifact);
+    return escapeHtml(String(artifact));
   }
 
   // Step 3: Handle state variable injection.
@@ -47,7 +54,7 @@ async function resolveKey(
   }
 
   if (key in invocationContext.session.state) {
-    return String(invocationContext.session.state[key]);
+    return escapeHtml(String(invocationContext.session.state[key]));
   }
 
   if (isOptional) {
@@ -162,11 +169,7 @@ export async function injectSessionState(
   }
   result.push(template.slice(lastEnd));
 
-  return result
-    .join('')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return result.join('');
 }
 
 /**

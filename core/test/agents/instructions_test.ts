@@ -185,11 +185,11 @@ describe('injectSessionState', () => {
       );
     });
 
-    it('escapes HTML special characters in the template itself', async () => {
+    it('does not escape HTML special characters in the template itself', async () => {
       const ctx = makeContext({name: 'Alice'});
       expect(
         await injectSessionState('Use <b>{name}</b> if <needed>', ctx),
-      ).toBe('Use &lt;b&gt;Alice&lt;/b&gt; if &lt;needed&gt;');
+      ).toBe('Use <b>Alice</b> if <needed>');
     });
 
     it('does not recursively resolve placeholders in state values (prevents nested injection)', async () => {
