@@ -7,50 +7,57 @@
 import path from 'path';
 import {defineConfig} from 'vitest/config';
 
+const isCI = process.env.GITHUB_ACTIONS === 'true';
+
+const projects = [
+  {
+    test: {
+      name: 'unit:core',
+      environment: 'node',
+      alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+      include: ['core/test/**/*_test.ts'],
+    },
+  },
+  {
+    test: {
+      name: 'unit:dev',
+      environment: 'node',
+      alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+      include: ['dev/test/**/*_test.ts'],
+    },
+  },
+  {
+    test: {
+      name: 'integration',
+      environment: 'node',
+      alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+      include: ['tests/integration/**/*_test.ts'],
+    },
+  },
+  {
+    test: {
+      name: 'cross-language',
+      environment: 'node',
+      alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+      include: ['tests/cross_language/**/*_test.ts'],
+    },
+  },
+];
+
+if (!isCI) {
+  projects.push({
+    test: {
+      name: 'e2e',
+      environment: 'node',
+      alias: {'@google/adk': path.resolve(__dirname, './core/src')},
+      include: ['tests/e2e/**/*_test.ts'],
+    },
+  });
+}
+
 export default defineConfig({
   test: {
-    projects: [
-      {
-        test: {
-          name: 'unit:core',
-          environment: 'node',
-          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
-          include: ['core/test/**/*_test.ts'],
-        },
-      },
-      {
-        test: {
-          name: 'unit:dev',
-          environment: 'node',
-          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
-          include: ['dev/test/**/*_test.ts'],
-        },
-      },
-      {
-        test: {
-          name: 'integration',
-          environment: 'node',
-          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
-          include: ['tests/integration/**/*_test.ts'],
-        },
-      },
-      {
-        test: {
-          name: 'e2e',
-          environment: 'node',
-          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
-          include: ['tests/e2e/**/*_test.ts'],
-        },
-      },
-      {
-        test: {
-          name: 'cross-language',
-          environment: 'node',
-          alias: {'@google/adk': path.resolve(__dirname, './core/src')},
-          include: ['tests/cross_language/**/*_test.ts'],
-        },
-      },
-    ],
+    projects,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json'],

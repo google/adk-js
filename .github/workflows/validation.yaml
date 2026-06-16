@@ -35,7 +35,7 @@ jobs:
         run: npm run build
 
       - name: Run tests and check code coverage
-        run: npx vitest run --project unit:core --project unit:dev --project integration --coverage
+        run: npm run test:coverage
 
       - name: Run lint check
         run: npm run lint
