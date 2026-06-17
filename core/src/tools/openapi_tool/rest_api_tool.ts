@@ -12,7 +12,10 @@ import {AuthCredential} from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {applyCredential} from './auth/auth_helpers.js';
-import {OperationParser} from './openapi_spec_parser/operation_parser.js';
+import {
+  ApiParameter,
+  OperationParser,
+} from './openapi_spec_parser/operation_parser.js';
 import {ToolAuthHandler} from './openapi_spec_parser/tool_auth_handler.js';
 
 import {OperationEndpoint} from './openapi_spec_parser/openapi_spec_parser.js';
@@ -61,32 +64,6 @@ export class RestApiTool extends BaseTool {
   }
 
   @experimental
-  public static fromParsedOperation(
-    parsed: {
-      name: string;
-      description: string;
-      endpoint: OperationEndpoint;
-      operation: OpenAPIV3.OperationObject;
-      authScheme?: OpenAPIV3.SecuritySchemeObject;
-    },
-    options: {
-      preservePropertyNames?: boolean;
-      headerProvider?: (context: ReadonlyContext) => Record<string, string>;
-      credentialKey?: string;
-    } = {},
-  ): RestApiTool {
-    return new RestApiTool(
-      parsed.name,
-      parsed.description,
-      parsed.endpoint,
-      parsed.operation,
-      parsed.authScheme,
-      undefined, // Credential will be filled later or via context
-      options,
-    );
-  }
-
-  @experimental
   override _getDeclaration(): FunctionDeclaration {
     const schema = this.operationParser.getJsonSchema();
     return {
@@ -120,113 +97,32 @@ export class RestApiTool extends BaseTool {
 
     // Prepare request
     const method = this.endpoint.method.toUpperCase();
-    let url = `${this.endpoint.baseUrl}${this.endpoint.path}`;
-
-    const headers: Record<string, string> = {};
-
-    const queryParams = new URLSearchParams();
-    let body: unknown = undefined;
-
-    const parameters = this.operationParser.getParameters();
-    const paramsMap = new Map(parameters.map((p) => [p.name, p]));
-
-    const pathParams: Record<string, string> = {};
-    const bodyData: Record<string, unknown> = {};
-
-    for (const [argName, argValue] of Object.entries(args)) {
-      const param = paramsMap.get(argName);
-      if (!param) continue;
-
-      const originalName = param.originalName;
-      const location = param.paramLocation;
-
-      if (location === 'path') {
-        pathParams[originalName] = String(argValue);
-      } else if (location === 'query') {
-        queryParams.append(originalName, String(argValue));
-      } else if (location === 'header') {
-        headers[originalName] = String(argValue);
-      } else if (location === 'body') {
-        if (
-          originalName === 'body' ||
-          originalName === 'array' ||
-          originalName === ''
-        ) {
-          body = argValue;
-        } else {
-          bodyData[originalName] = argValue;
-        }
-      }
-    }
-
-    // Replace path parameters
-    for (const [key, value] of Object.entries(pathParams)) {
-      url = url.replace(`{${key}}`, value);
-    }
-
-    // Extract query parameters from path if any
-    const urlParts = url.split('?');
-    if (urlParts.length > 1) {
-      const pathQueryParams = new URLSearchParams(urlParts[1]);
-      for (const [key, value] of pathQueryParams.entries()) {
-        queryParams.append(key, value);
-      }
-      url = urlParts[0];
-    }
-
-    // Append query parameters
-    const queryString = queryParams.toString();
-    if (queryString) {
-      url += `?${queryString}`;
-    }
+    const {
+      url: initialUrl,
+      headers,
+      body: parsedBody,
+      bodyData,
+    } = prepareRequestParams(
+      this.endpoint,
+      this.operationParser.getParameters(),
+      args,
+    );
 
     // Handle body
-    const requestBody = this.operation.requestBody;
-    const finalData =
-      body !== undefined
-        ? body
-        : Object.keys(bodyData).length > 0
-          ? bodyData
-          : undefined;
-
-    if (requestBody && 'content' in requestBody) {
-      const content = requestBody.content;
-      for (const [mimeType, _mediaTypeObject] of Object.entries(content)) {
-        if (finalData !== undefined) {
-          if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
-            body =
-              typeof finalData === 'string'
-                ? finalData
-                : JSON.stringify(finalData);
-            headers['Content-Type'] = mimeType;
-          } else if (mimeType === 'application/x-www-form-urlencoded') {
-            body = new URLSearchParams(finalData as Record<string, string>);
-            // Fetch sets content-type automatically for URLSearchParams
-          } else if (mimeType === 'multipart/form-data') {
-            const formData = new FormData();
-            if (typeof finalData === 'object' && finalData !== null) {
-              for (const [key, value] of Object.entries(finalData)) {
-                formData.append(key, String(value));
-              }
-            }
-            body = formData;
-            // Fetch sets content-type with boundary automatically. DO NOT set it.
-          } else if (mimeType === 'text/plain') {
-            body = String(finalData);
-            headers['Content-Type'] = mimeType;
-          }
-        }
-        break; // Process only the first mime type
-      }
-    } else if (finalData !== undefined) {
-      // Fallback to JSON if no requestBody content specified but data exists
-      body =
-        typeof finalData === 'string' ? finalData : JSON.stringify(finalData);
-      headers['Content-Type'] = 'application/json';
-    }
+    const body = prepareRequestBody(
+      this.operation.requestBody,
+      parsedBody,
+      bodyData,
+      headers,
+    );
 
     // Handle Auth
-    url = applyCredential(url, headers, credential, this.authScheme);
+    const url = applyCredential(
+      initialUrl,
+      headers,
+      credential,
+      this.authScheme,
+    );
 
     // Apply dynamic headers from provider
     if (this.headerProvider) {
@@ -254,4 +150,153 @@ export class RestApiTool extends BaseTool {
       };
     }
   }
+}
+
+export interface PreparedParams {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+  bodyData: Record<string, unknown>;
+}
+
+export function prepareRequestParams(
+  endpoint: OperationEndpoint,
+  parameters: ApiParameter[],
+  args: Record<string, unknown>,
+): PreparedParams {
+  const headers: Record<string, string> = {};
+  const queryParams = new URLSearchParams();
+  let body: unknown = undefined;
+
+  const paramsMap = new Map(parameters.map((p) => [p.name, p]));
+  const pathParams: Record<string, string> = {};
+  const bodyData: Record<string, unknown> = {};
+
+  for (const [argName, argValue] of Object.entries(args)) {
+    const param = paramsMap.get(argName);
+    if (!param) continue;
+
+    const originalName = param.originalName;
+    const location = param.paramLocation;
+
+    if (location === 'path') {
+      pathParams[originalName] = String(argValue);
+    } else if (location === 'query') {
+      queryParams.append(originalName, String(argValue));
+    } else if (location === 'header') {
+      headers[originalName] = String(argValue);
+    } else if (location === 'body') {
+      if (
+        originalName === 'body' ||
+        originalName === 'array' ||
+        originalName === ''
+      ) {
+        body = argValue;
+      } else {
+        bodyData[originalName] = argValue;
+      }
+    }
+  }
+
+  let url = `${endpoint.baseUrl}${endpoint.path}`;
+
+  // Replace path parameters
+  for (const [key, value] of Object.entries(pathParams)) {
+    url = url.replace(`{${key}}`, value);
+  }
+
+  // Extract query parameters from path if any
+  const urlParts = url.split('?');
+  if (urlParts.length > 1) {
+    const pathQueryParams = new URLSearchParams(urlParts[1]);
+    for (const [key, value] of pathQueryParams.entries()) {
+      queryParams.append(key, value);
+    }
+    url = urlParts[0];
+  }
+
+  // Append query parameters
+  const queryString = queryParams.toString();
+  if (queryString) {
+    url += `?${queryString}`;
+  }
+
+  return {url, headers, body, bodyData};
+}
+
+export function prepareRequestBody(
+  requestBody:
+    | OpenAPIV3.RequestBodyObject
+    | OpenAPIV3.ReferenceObject
+    | undefined,
+  body: unknown,
+  bodyData: Record<string, unknown>,
+  headers: Record<string, string>,
+): unknown {
+  const finalData =
+    body !== undefined
+      ? body
+      : Object.keys(bodyData).length > 0
+        ? bodyData
+        : undefined;
+
+  if (requestBody && 'content' in requestBody) {
+    const content = requestBody.content;
+    for (const [mimeType, _mediaTypeObject] of Object.entries(content)) {
+      if (finalData !== undefined) {
+        if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
+          headers['Content-Type'] = mimeType;
+          return typeof finalData === 'string'
+            ? finalData
+            : JSON.stringify(finalData);
+        } else if (mimeType === 'application/x-www-form-urlencoded') {
+          return new URLSearchParams(finalData as Record<string, string>);
+        } else if (mimeType === 'multipart/form-data') {
+          const formData = new FormData();
+          if (typeof finalData === 'object' && finalData !== null) {
+            for (const [key, value] of Object.entries(finalData)) {
+              formData.append(key, String(value));
+            }
+          }
+          return formData;
+        } else if (mimeType === 'text/plain') {
+          headers['Content-Type'] = mimeType;
+          return String(finalData);
+        }
+      }
+      break; // Process only the first mime type
+    }
+  } else if (finalData !== undefined) {
+    // Fallback to JSON if no requestBody content specified but data exists
+    headers['Content-Type'] = 'application/json';
+    return typeof finalData === 'string'
+      ? finalData
+      : JSON.stringify(finalData);
+  }
+  return undefined;
+}
+
+export function createRestApiTool(
+  parsed: {
+    name: string;
+    description: string;
+    endpoint: OperationEndpoint;
+    operation: OpenAPIV3.OperationObject;
+    authScheme?: OpenAPIV3.SecuritySchemeObject;
+  },
+  options: {
+    preservePropertyNames?: boolean;
+    headerProvider?: (context: ReadonlyContext) => Record<string, string>;
+    credentialKey?: string;
+  } = {},
+): RestApiTool {
+  return new RestApiTool(
+    parsed.name,
+    parsed.description,
+    parsed.endpoint,
+    parsed.operation,
+    parsed.authScheme,
+    undefined,
+    options,
+  );
 }

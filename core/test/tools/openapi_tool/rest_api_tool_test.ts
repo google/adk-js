@@ -4,9 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Context, RestApiTool, ToolAuthHandler} from '@google/adk';
+import {
+  Context,
+  createRestApiTool,
+  RestApiTool,
+  ToolAuthHandler,
+} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {
+  prepareRequestBody,
+  prepareRequestParams,
+} from '../../../src/tools/openapi_tool/rest_api_tool.js';
 
 describe('RestApiTool', () => {
   afterEach(() => {
@@ -552,5 +561,111 @@ describe('RestApiTool', () => {
         body: JSON.stringify({foo: 'bar'}),
       }),
     );
+  });
+});
+
+describe('RestApiTool Utilities', () => {
+  describe('createRestApiTool', () => {
+    it('should successfully create a RestApiTool instance', () => {
+      const endpoint = {
+        baseUrl: 'http://api.example.com',
+        path: '/test',
+        method: 'GET',
+      };
+      const operation: OpenAPIV3.OperationObject = {responses: {}};
+      const parsed = {
+        name: 'test_tool',
+        description: 'description',
+        endpoint,
+        operation,
+      };
+
+      const tool = createRestApiTool(parsed);
+      expect(tool).toBeInstanceOf(RestApiTool);
+      expect(tool.name).toBe('test_tool');
+      expect(tool.description).toBe('description');
+    });
+  });
+
+  describe('prepareRequestParams', () => {
+    it('should map query, path, and header parameters correctly', () => {
+      const endpoint = {
+        baseUrl: 'http://api.example.com',
+        path: '/users/{userId}/posts',
+        method: 'GET',
+      };
+      const parameters = [
+        {
+          name: 'user_id',
+          originalName: 'userId',
+          paramLocation: 'path',
+          paramSchema: {},
+          required: true,
+        },
+        {
+          name: 'q',
+          originalName: 'q',
+          paramLocation: 'query',
+          paramSchema: {},
+          required: false,
+        },
+        {
+          name: 'x_trace_id',
+          originalName: 'X-Trace-Id',
+          paramLocation: 'header',
+          paramSchema: {},
+          required: false,
+        },
+      ];
+      const args = {
+        user_id: '123',
+        q: 'search query',
+        x_trace_id: 'trace-456',
+      };
+
+      const result = prepareRequestParams(endpoint, parameters, args);
+
+      expect(result.url).toBe(
+        'http://api.example.com/users/123/posts?q=search+query',
+      );
+      expect(result.headers).toEqual({
+        'X-Trace-Id': 'trace-456',
+      });
+    });
+  });
+
+  describe('prepareRequestBody', () => {
+    it('should format JSON body correctly', () => {
+      const requestBody = {
+        content: {
+          'application/json': {
+            schema: {type: 'object'},
+          },
+        },
+      };
+      const body = {foo: 'bar'};
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBe(JSON.stringify(body));
+      expect(headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
+
+    it('should fallback to JSON if no requestBody in spec', () => {
+      const body = {foo: 'bar'};
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(undefined, body, bodyData, headers);
+
+      expect(result).toBe(JSON.stringify(body));
+      expect(headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
   });
 });
