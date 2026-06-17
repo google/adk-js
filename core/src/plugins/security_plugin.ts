@@ -36,21 +36,40 @@ export enum PolicyOutcome {
   ALLOW = 'ALLOW',
 }
 
+/** The result returned by a policy engine after evaluating a tool call. */
 export interface PolicyCheckResult {
+  /** The policy decision: `ALLOW`, `DENY`, or `CONFIRM`. */
   outcome: string;
+  /** Optional human-readable explanation of the decision. */
   reason?: string;
 }
 
+/** Context passed to a policy engine when evaluating a tool call. */
 export interface ToolCallPolicyContext {
+  /** The tool being invoked. */
   tool: BaseTool;
+  /** The arguments supplied to the tool call. */
   toolArgs: Record<string, unknown>;
 }
 
+/** Interface for policy engines that gate tool call execution. */
 export interface BasePolicyEngine {
+  /**
+   * Evaluates whether a tool call should be allowed, denied, or confirmed.
+   *
+   * @param context - The tool and its arguments to evaluate.
+   * @returns A promise resolving to the policy decision.
+   */
   evaluate(context: ToolCallPolicyContext): Promise<PolicyCheckResult>;
 }
 
+/** In-memory policy engine that permits all tool calls. Intended for prototyping. */
 export class InMemoryPolicyEngine implements BasePolicyEngine {
+  /**
+   * Always returns {@link PolicyOutcome.ALLOW} for every tool call.
+   *
+   * @returns A promise resolving to an ALLOW result.
+   */
   async evaluate(): Promise<PolicyCheckResult> {
     // Default permissive implementation
     return Promise.resolve({
@@ -69,11 +88,22 @@ export class InMemoryPolicyEngine implements BasePolicyEngine {
 export class SecurityPlugin extends BasePlugin {
   private readonly policyEngine: BasePolicyEngine;
 
+  /**
+   * @param params - Optional configuration. Defaults to {@link InMemoryPolicyEngine}
+   *   when no policy engine is provided.
+   */
   constructor(params?: {policyEngine?: BasePolicyEngine}) {
     super('security_plugin');
     this.policyEngine = params?.policyEngine ?? new InMemoryPolicyEngine();
   }
 
+  /**
+   * Intercepts tool calls, evaluating them against the policy engine before
+   * execution and handling confirmation flows for calls that require it.
+   *
+   * @returns A partial or error response object if the call is blocked or
+   *   awaiting confirmation, or `undefined` to allow execution to proceed.
+   */
   override async beforeToolCallback({
     tool,
     toolArgs,

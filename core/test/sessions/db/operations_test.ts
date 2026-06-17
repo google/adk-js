@@ -13,8 +13,11 @@ import {
   validateDatabaseSchemaVersion,
 } from '../../../src/sessions/db/operations.js';
 import {
+  ENTITIES,
   SCHEMA_VERSION_1_JSON,
   SCHEMA_VERSION_KEY,
+  STORAGE_KEY_COLUMN_LENGTH,
+  StorageEvent,
   StorageMetadata,
 } from '../../../src/sessions/db/schema.js';
 
@@ -33,6 +36,39 @@ vi.mock('@mikro-orm/mssql', () => ({
 }));
 
 describe('operations', () => {
+  describe('storage schema', () => {
+    let orm: MikroORM;
+
+    afterEach(async () => {
+      if (orm) {
+        await orm.close();
+      }
+    });
+
+    it('keeps events composite key columns within the MySQL index limit', async () => {
+      orm = await MikroORM.init({
+        dbName: ':memory:',
+        driver: SqliteDriver,
+        entities: ENTITIES,
+      });
+
+      const eventProperties = orm.getMetadata().get(StorageEvent.name)
+        .properties as Record<string, {length?: number}>;
+      const keyProperties = ['id', 'appName', 'userId', 'sessionId'];
+
+      for (const keyProperty of keyProperties) {
+        expect(eventProperties[keyProperty].length).toBe(
+          STORAGE_KEY_COLUMN_LENGTH,
+        );
+      }
+
+      const utf8mb4KeyBytes = keyProperties.reduce((total, keyProperty) => {
+        return total + eventProperties[keyProperty].length! * 4;
+      }, 0);
+      expect(utf8mb4KeyBytes).toBeLessThanOrEqual(3072);
+    });
+  });
+
   describe('getConnectionOptionsFromUri', () => {
     it('should parse postgresql URI', async () => {
       const options = await getConnectionOptionsFromUri(

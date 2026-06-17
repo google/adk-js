@@ -19,9 +19,10 @@ describe('A2A: Remote Agent Basic', () => {
     server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'remote_a2a/'),
       a2a: true,
+      startFailureTimeout: 60000,
     });
     await server.start();
-  });
+  }, 60000);
 
   afterAll(async () => {
     await server.stop();

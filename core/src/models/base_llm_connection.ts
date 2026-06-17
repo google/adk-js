@@ -45,6 +45,18 @@ export interface BaseLlmConnection {
   sendRealtime(blob: Blob): Promise<void>;
 
   /**
+   * Optionally signals the start of user activity (e.g. user begins speaking)
+   * for models that support manual activity boundaries.
+   */
+  sendActivityStart?(): Promise<void>;
+
+  /**
+   * Optionally signals the end of user activity (e.g. user finishes speaking)
+   * for models that support manual activity boundaries.
+   */
+  sendActivityEnd?(): Promise<void>;
+
+  /**
    * Receives the model response using the llm server connection.
    *
    * @return A generator of LlmResponse.

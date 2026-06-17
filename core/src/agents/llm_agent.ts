@@ -707,6 +707,20 @@ export class LlmAgent extends BaseAgent {
   // --------------------------------------------------------------------------
   // #START LlmFlow Logic
   // --------------------------------------------------------------------------
+  /**
+   * Runs the bidirectional (live) flow for this agent.
+   *
+   * Establishes a live connection to the model, drains the invocation's
+   * `liveRequestQueue` into the connection on a parallel task, and yields
+   * events derived from server messages until the queue closes, the model
+   * finishes, or an agent transfer occurs.
+   *
+   * If the live connection drops (network failure, server `goAway`) and a
+   * session resumption handle has been observed, the flow transparently
+   * reconnects using that handle up to {@link MAX_LIVE_RECONNECT_ATTEMPTS}
+   * times. Subsequent reconnects skip `sendHistory` because the server
+   * already holds the conversation state associated with the handle.
+   */
   // eslint-disable-next-line require-yield
   private async *runLiveFlow(
     _invocationContext: InvocationContext,

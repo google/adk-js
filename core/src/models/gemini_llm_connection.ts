@@ -1,19 +1,31 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Blob, Content, FunctionResponse, Session} from '@google/genai';
+import {
+  Blob,
+  Content,
+  FunctionResponse,
+  LiveServerMessage,
+  Session,
+} from '@google/genai';
 
+import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
+import {isGemini3xFlashLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
 
 /** The Gemini model connection. */
 export class GeminiLlmConnection implements BaseLlmConnection {
-  constructor(private readonly geminiSession: Session) {}
+  constructor(
+    private readonly geminiSession: Session,
+    private readonly modelVersion?: string,
+    private readonly messageQueue?: AsyncIterable<LiveServerMessage>,
+  ) {}
 
   /**
    * Sends the conversation history to the gemini model.
@@ -31,9 +43,12 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     );
 
     if (contents.length > 0) {
+      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
       this.geminiSession.sendClientContent({
         turns: contents,
-        turnComplete: contents[contents.length - 1].role === 'user',
+        turnComplete: isGemini3x
+          ? true
+          : contents[contents.length - 1].role === 'user',
       });
     } else {
       logger.info('no content is sent');
@@ -64,10 +79,16 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       });
     } else {
       logger.debug('Sending LLM new content', content);
-      this.geminiSession.sendClientContent({
-        turns: [content],
-        turnComplete: true,
-      });
+      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
+        logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
+        this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
+      } else {
+        this.geminiSession.sendClientContent({
+          turns: [content],
+          turnComplete: true,
+        });
+      }
     }
   }
 
@@ -78,7 +99,37 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob:', blob);
-    this.geminiSession.sendRealtimeInput({media: blob});
+    const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+    const isNativeAudio = this.modelVersion?.includes('native-audio');
+
+    if (isGemini3x || isNativeAudio) {
+      if (blob.mimeType?.startsWith('audio/')) {
+        this.geminiSession.sendRealtimeInput({audio: blob});
+      } else if (blob.mimeType?.startsWith('image/')) {
+        this.geminiSession.sendRealtimeInput({video: blob});
+      } else {
+        logger.warn(
+          'Blob not sent. Unknown or empty mime type for sendRealtimeInput:',
+          blob.mimeType,
+        );
+      }
+    } else {
+      this.geminiSession.sendRealtimeInput({media: blob});
+    }
+  }
+
+  /**
+   * Sends an activity start signal to the model.
+   */
+  async sendActivityStart(): Promise<void> {
+    this.geminiSession.sendRealtimeInput({activityStart: {}});
+  }
+
+  /**
+   * Sends an activity end signal to the model.
+   */
+  async sendActivityEnd(): Promise<void> {
+    this.geminiSession.sendRealtimeInput({activityEnd: {}});
   }
 
   /**
@@ -88,21 +139,28 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    * partial.
    *
    * @param text The text to be included in the response.
+   * @param isThought Whether the text is a thought.
+   * @param groundingMetadata The grounding metadata to include.
    * @returns An LlmResponse containing the full text.
    */
-  private buildFullTextResponse(text: string): LlmResponse {
-    return {
-      content: {
-        role: 'model',
-        parts: [{text}],
-      },
-    };
-  }
-
-  // TODO(b/425992518): GenAI SDK inconsistent API, missing methods.
-  // eslint-disable-next-line require-yield
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
-    throw new Error('Not Implemented.');
+    if (!this.messageQueue) {
+      throw new Error('Message queue is not initialized.');
+    }
+
+    const aggregator = new LiveResponseAggregator(this.modelVersion);
+
+    for await (const message of this.messageQueue) {
+      logger.debug('Got LLM Live message:', message);
+
+      for (const response of aggregator.processMessage(message)) {
+        yield response;
+      }
+    }
+
+    for (const response of aggregator.close()) {
+      yield response;
+    }
   }
 
   /**

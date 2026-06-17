@@ -46,6 +46,9 @@ export enum AdkMetadataKeys {
 
 /**
  * Creates ADK Event metadata from an A2A Event.
+ *
+ * @param a2aEvent - The A2A event to extract metadata from.
+ * @returns A record containing the ADK task ID and context ID keys.
  */
 export function getAdkEventMetadata(
   a2aEvent: A2AEvent,
@@ -58,6 +61,12 @@ export function getAdkEventMetadata(
 
 /**
  * Creates A2A Event metadata from an ADK Event.
+ *
+ * @param adkEvent - The ADK event to extract metadata from.
+ * @param appName - The name of the ADK application.
+ * @param userId - The ID of the current user.
+ * @param sessionId - The ID of the current session.
+ * @returns A record of A2A metadata keys populated from the ADK event.
  */
 export function getA2AEventMetadata(
   adkEvent: AdkEvent,
@@ -91,6 +100,11 @@ export function getA2AEventMetadata(
 
 /**
  * Creates A2A Session metadata from ADK Event invocation metadata.
+ *
+ * @param appName - The name of the ADK application.
+ * @param userId - The ID of the current user.
+ * @param sessionId - The ID of the current session.
+ * @returns A record of A2A metadata keys for app name, user ID, and session ID.
  */
 export function getA2ASessionMetadata({
   appName,
@@ -110,6 +124,10 @@ export function getA2ASessionMetadata({
 
 /**
  * Creates A2A Event metadata from ADK Event actions.
+ *
+ * @param actions - The ADK event actions to extract escalation and transfer
+ *   metadata from.
+ * @returns A record with escalate and transfer-to-agent A2A metadata keys.
  */
 export function getA2AEventMetadataFromActions(
   actions: AdkEventActions,
