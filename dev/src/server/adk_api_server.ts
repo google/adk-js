@@ -737,20 +737,18 @@ export class AdkApiServer {
       });
 
       try {
-        await using agentFile = await this.agentLoader.getAgentFile(appName);
-        const agent = await agentFile.load();
-        const runner = await this.getRunner(agent, appName);
         const events: Event[] = [];
-
-        for await (const e of runner.runAsync({
+        await this.executeAgentRun({
+          appName,
           userId,
           sessionId,
           newMessage,
           stateDelta,
           abortSignal: abortController.signal,
-        })) {
-          events.push(e);
-        }
+          onEvent: (e) => {
+            events.push(e);
+          },
+        });
 
         responseCompleted = true;
         res.json(events);
@@ -781,39 +779,28 @@ export class AdkApiServer {
           return;
         }
         try {
-          let session = await this.sessionService.getSession({
+          await this.sessionService.getOrCreateSession({
             appName,
             userId,
             sessionId,
+            state: {},
           });
-          if (!session) {
-            this.logger.info(
-              `Session ${sessionId} not found. Creating it automatically.`,
-            );
-            session = await this.sessionService.createSession({
-              appName,
-              userId,
-              sessionId,
-              state: {},
-            });
-          }
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
-          const agent = await agentFile.load();
-          const runner = await this.getRunner(agent, appName);
           const events: Event[] = [];
           const abortController = new AbortController();
           req.on('close', () => {
             abortController.abort();
           });
-          for await (const e of runner.runAsync({
+          await this.executeAgentRun({
+            appName,
             userId,
             sessionId,
             newMessage,
             stateDelta,
             abortSignal: abortController.signal,
-          })) {
-            events.push(e);
-          }
+            onEvent: (e) => {
+              events.push(e);
+            },
+          });
           res.json({output: events});
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
@@ -881,27 +868,25 @@ export class AdkApiServer {
       });
 
       try {
-        await using agentFile = await this.agentLoader.getAgentFile(appName);
-        const agent = await agentFile.load();
-        const runner = await this.getRunner(agent, appName);
-
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        for await (const event of runner.runAsync({
+        await this.executeAgentRun({
+          appName,
           userId,
           sessionId,
           newMessage,
+          stateDelta,
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
-          stateDelta,
           abortSignal: abortController.signal,
-        })) {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
-        }
+          onEvent: (event) => {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          },
+        });
 
         responseCompleted = true;
         res.end();
@@ -995,5 +980,33 @@ export class AdkApiServer {
     }
 
     return this.runnerCache[appName];
+  }
+
+  private async executeAgentRun(options: {
+    appName: string;
+    userId: string;
+    sessionId: string;
+    newMessage: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    stateDelta?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    runConfig?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    abortSignal: AbortSignal;
+    onEvent: (event: Event) => void | Promise<void>;
+  }) {
+    await using agentFile = await this.agentLoader.getAgentFile(
+      options.appName,
+    );
+    const agent = await agentFile.load();
+    const runner = await this.getRunner(agent, options.appName);
+
+    for await (const event of runner.runAsync({
+      userId: options.userId,
+      sessionId: options.sessionId,
+      newMessage: options.newMessage,
+      runConfig: options.runConfig,
+      stateDelta: options.stateDelta,
+      abortSignal: options.abortSignal,
+    })) {
+      await options.onEvent(event);
+    }
   }
 }
