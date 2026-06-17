@@ -5,6 +5,7 @@
  */
 
 import {
+  AUTH_PREPROCESSOR,
   BaseLlm,
   BaseLlmConnection,
   BaseLlmRequestProcessor,
@@ -782,5 +783,19 @@ describe('LlmAgent Abort Handling', () => {
 
     const secondResult = await generator.next();
     expect(secondResult.done).toBe(true);
+  });
+});
+
+describe('LlmAgent Default Request Processors', () => {
+  it('includes AUTH_PREPROCESSOR in default requestProcessors before CONTENT_REQUEST_PROCESSOR', () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+    });
+    expect(agent.requestProcessors).toContain(AUTH_PREPROCESSOR);
+    const authIndex = agent.requestProcessors.indexOf(AUTH_PREPROCESSOR);
+    const contentIndex = agent.requestProcessors.indexOf(
+      CONTENT_REQUEST_PROCESSOR,
+    );
+    expect(authIndex).toBeLessThan(contentIndex);
   });
 });

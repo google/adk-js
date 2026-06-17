@@ -55,6 +55,7 @@ import {
   populateClientFunctionCallId,
 } from './functions.js';
 
+import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {InvocationContext} from './invocation_context.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
@@ -394,6 +395,7 @@ export class LlmAgent extends BaseAgent {
     // Orders matter, don't change. Append new processors to the end
     this.requestProcessors = config.requestProcessors ?? [
       BASIC_LLM_REQUEST_PROCESSOR,
+      AUTH_PREPROCESSOR,
       IDENTITY_LLM_REQUEST_PROCESSOR,
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
