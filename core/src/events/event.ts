@@ -89,7 +89,9 @@ export function createEvent(params: Partial<Event> = {}): Event {
 export function isFinalResponse(event: Event) {
   if (
     event.actions.skipSummarization ||
-    (event.longRunningToolIds && event.longRunningToolIds.length > 0)
+    (event.longRunningToolIds && event.longRunningToolIds.length > 0) ||
+    (event.actions.requestedAuthConfigs &&
+      Object.keys(event.actions.requestedAuthConfigs).length > 0)
   ) {
     return true;
   }

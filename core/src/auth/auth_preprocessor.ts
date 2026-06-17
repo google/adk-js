@@ -20,9 +20,16 @@ import {
 import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {AuthHandler} from './auth_handler.js';
-import {AuthConfig, AuthToolArguments} from './auth_tool.js';
+import {AuthConfig} from './auth_tool.js';
 
 const TOOLSET_AUTH_CREDENTIAL_ID_PREFIX = '_adk_toolset_auth_';
+
+interface RequestCredentialArgs {
+  authConfig?: AuthConfig;
+  auth_config?: AuthConfig;
+  functionCallId?: string;
+  function_call_id?: string;
+}
 
 async function storeAuthAndCollectResumeTargets(
   events: Event[],
@@ -39,18 +46,16 @@ async function storeAuthAndCollectResumeTargets(
         authFcIds.has(functionCall.id) &&
         functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
       ) {
-        const args = functionCall.args as unknown as AuthToolArguments;
-        if (args && args.authConfig) {
-          requestedAuthConfigById[functionCall.id] = args.authConfig;
+        const args = functionCall.args as RequestCredentialArgs;
+        const authConfig = args?.authConfig ?? args?.auth_config;
+        if (authConfig) {
+          requestedAuthConfigById[functionCall.id] = authConfig;
         }
       }
     }
   }
 
   for (const fcId of authFcIds) {
-    if (!(fcId in authResponses)) {
-      continue;
-    }
     const authConfig = authResponses[fcId] as AuthConfig;
     const requestedAuthConfig = requestedAuthConfigById[fcId];
     if (requestedAuthConfig && requestedAuthConfig.credentialKey) {
@@ -72,14 +77,13 @@ async function storeAuthAndCollectResumeTargets(
           functionCall.id === fcId &&
           functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
         ) {
-          const args = functionCall.args as unknown as AuthToolArguments;
-          if (args && args.functionCallId) {
-            if (
-              args.functionCallId.startsWith(TOOLSET_AUTH_CREDENTIAL_ID_PREFIX)
-            ) {
+          const args = functionCall.args as RequestCredentialArgs;
+          const functionCallId = args?.functionCallId ?? args?.function_call_id;
+          if (functionCallId) {
+            if (functionCallId.startsWith(TOOLSET_AUTH_CREDENTIAL_ID_PREFIX)) {
               continue;
             }
-            toolsToResume.add(args.functionCallId);
+            toolsToResume.add(functionCallId);
           }
         }
       }

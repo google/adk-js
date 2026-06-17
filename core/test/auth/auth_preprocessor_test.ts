@@ -97,7 +97,7 @@ describe('AuthPreprocessor', () => {
     const invocationContext = {
       agent: {
         [LLM_AGENT_SYMBOL]: true,
-        canonicalTools: vi.fn().mockResolvedValue([]),
+        canonicalTools: vi.fn().mockResolvedValue([{name: 'someTool'}]),
         canonicalBeforeToolCallbacks: [],
         canonicalAfterToolCallbacks: [],
       },
@@ -111,6 +111,273 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'toolFc1',
+                    name: 'someTool',
+                    args: {},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            content: {
+              parts: [{text: 'thinking...'}],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            id: 'originalEvent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    args: {
+                      authConfig: {credentialKey: 'testKey'},
+                      functionCallId: 'toolFc1',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    response: {authType: 'apiKey', apiKey: 'test'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    let result = await generator.next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({
+      id: 'mockResponseEvent',
+      author: 'system',
+    });
+
+    result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
+  it('processes adk_request_credential responses and resumes tools (snake_case args)', async () => {
+    const invocationContext = {
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+        canonicalTools: vi.fn().mockResolvedValue([{name: 'someTool'}]),
+        canonicalBeforeToolCallbacks: [],
+        canonicalAfterToolCallbacks: [],
+      },
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'agent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'toolFc1',
+                    name: 'someTool',
+                    args: {},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            id: 'originalEvent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    args: {
+                      auth_config: {credentialKey: 'testKey'},
+                      function_call_id: 'toolFc1',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    response: {authType: 'apiKey', apiKey: 'test'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    let result = await generator.next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({
+      id: 'mockResponseEvent',
+      author: 'system',
+    });
+
+    result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
+  it('skips if function responses exist but not for request_credential', async () => {
+    const invocationContext = {
+      agent: {[LLM_AGENT_SYMBOL]: true},
+      session: {
+        events: [
+          {
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'some_other_fc',
+                    name: 'some_other_tool',
+                    response: {},
+                  },
+                },
+              ],
+            },
+          } as Event,
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    const result = await generator.next();
+
+    expect(result.done).toBe(true);
+  });
+
+  it('skips if tools to resume is empty (e.g. toolset auth)', async () => {
+    const invocationContext = {
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+      },
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'agent',
+            id: 'originalEvent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    args: {
+                      authConfig: {credentialKey: 'testKey'},
+                      functionCallId: '_adk_toolset_auth_something',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    response: {authType: 'apiKey', apiKey: 'test'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    const result = await generator.next();
+
+    expect(result.done).toBe(true);
+  });
+
+  it('skips if original function call is not found in history', async () => {
+    const invocationContext = {
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+        canonicalTools: vi.fn().mockResolvedValue([]),
+        canonicalBeforeToolCallbacks: [],
+        canonicalAfterToolCallbacks: [],
+      },
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    response: {authType: 'apiKey', apiKey: 'test'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    const result = await generator.next();
+
+    expect(result.done).toBe(true);
+  });
+
+  it('handles function calls without ids in history', async () => {
+    const invocationContext = {
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+        canonicalTools: vi.fn().mockResolvedValue([]),
+        canonicalBeforeToolCallbacks: [],
+        canonicalAfterToolCallbacks: [],
+      },
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'agent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
                     name: 'someTool',
                     args: {},
                   },
@@ -157,10 +424,6 @@ describe('AuthPreprocessor', () => {
     const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
     const result = await generator.next();
 
-    expect(result.done).toBe(false);
-    expect(result.value).toEqual({
-      id: 'mockResponseEvent',
-      author: 'system',
-    });
+    expect(result.done).toBe(true);
   });
 });

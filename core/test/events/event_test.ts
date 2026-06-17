@@ -68,6 +68,19 @@ describe('Event Utils', () => {
       expect(isFinalResponse(event)).toBe(true);
     });
 
+    it('returns true if requestedAuthConfigs is present and not empty', () => {
+      const event = createEvent({
+        actions: createEventActions({
+          requestedAuthConfigs: {
+            'tool-id': {
+              credentialKey: 'testKey',
+            },
+          },
+        }),
+      });
+      expect(isFinalResponse(event)).toBe(true);
+    });
+
     it('returns false if there are function calls', () => {
       const event = createEvent({
         content: {
