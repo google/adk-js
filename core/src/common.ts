@@ -243,16 +243,36 @@ export type {
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
-export {isGemini2OrAbove} from './utils/model_name.js';
+export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
+export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
+export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
+export {
+  loadAllSkillsInDir,
+  loadSkillFromDir,
+  loadSkillFromZipBuffer,
+  validateSkillDir,
+} from './skills/loader.js';
 export type {Frontmatter, Resources, Script, Skill} from './skills/skill.js';
+export type {SkillRegistry} from './skills/skill_registry.js';
 export {ListSkillsTool} from './tools/skill/list_skills_tool.js';
 export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
 export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
+export {SearchSkillsTool} from './tools/skill/search_skills_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
+
+export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
+export type {
+  OperationEndpoint,
+  ParsedOperation,
+} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
+export {OperationParser} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
+export type {ApiParameter} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
+export {ToolAuthHandler} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export type {AuthPreparationResult} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';

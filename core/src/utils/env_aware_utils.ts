@@ -15,7 +15,11 @@ export function isBrowser() {
  * Generates a random UUID.
  */
 const UUID_MASK = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
-export function randomUUID() {
+export function randomUUID(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
   let uuid = '';
 
   for (let i = 0; i < UUID_MASK.length; i++) {

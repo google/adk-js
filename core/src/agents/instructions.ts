@@ -7,6 +7,56 @@
 import {State} from '../sessions/state.js';
 import {ReadonlyContext} from './readonly_context.js';
 
+const ARTIFACT_PREFIX = 'artifact.';
+
+/**
+ * Resolves a single key from the context (state or artifact).
+ */
+async function resolveKey(
+  key: string,
+  isOptional: boolean,
+  rawMatch: string,
+  readonlyContext: ReadonlyContext,
+): Promise<string> {
+  const invocationContext = readonlyContext.invocationContext;
+
+  // Step 2: handle artifact injection
+  if (key.startsWith(ARTIFACT_PREFIX)) {
+    const fileName = key.substring(ARTIFACT_PREFIX.length);
+    if (invocationContext.artifactService === undefined) {
+      throw new Error('Artifact service is not initialized.');
+    }
+    const artifact = await invocationContext.artifactService.loadArtifact({
+      appName: invocationContext.session.appName,
+      userId: invocationContext.session.userId,
+      sessionId: invocationContext.session.id,
+      filename: fileName,
+    });
+    if (!artifact) {
+      if (isOptional) {
+        return '';
+      }
+      throw new Error(`Artifact ${fileName} not found.`);
+    }
+    return String(artifact);
+  }
+
+  // Step 3: Handle state variable injection.
+  if (!isValidStateName(key)) {
+    return rawMatch;
+  }
+
+  if (key in invocationContext.session.state) {
+    return String(invocationContext.session.state[key]);
+  }
+
+  if (isOptional) {
+    return '';
+  }
+
+  throw new Error(`Context variable not found: \`${key}\`.`);
+}
+
 /**
  * Populates values in the instruction template, e.g. state, artifact, etc.
  *
@@ -36,69 +86,79 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
-  const invocationContext = readonlyContext.invocationContext;
+  const pattern = /\{+[^{}]*}+/g;
+  const matches = Array.from(template.matchAll(pattern));
 
-  /**
-   * Replaces a matched string in the template with the corresponding value from
-   * the context.
-   *
-   * @param match The matched string in the template.
-   * @returns The replaced string.
-   */
-  async function replaceMatchedKeyWithItsValue(
-    match: RegExpMatchArray,
-  ): Promise<string> {
-    // Step 1: extract the key from the match
-    let key = match[0].replace(/^\{+/, '').replace(/\}+$/, '').trim();
+  if (matches.length === 0) {
+    return template;
+  }
+
+  // Pre-parse matches to avoid redundant string manipulation in loops
+  const parsedMatches = matches.map((match) => {
+    const raw = match[0];
+    let key = raw.replace(/^\{+/, '').replace(/\}+$/, '').trim();
     const isOptional = key.endsWith('?');
     if (isOptional) {
       key = key.slice(0, -1);
     }
+    const isValid = key.startsWith(ARTIFACT_PREFIX) || isValidStateName(key);
+    return {
+      raw,
+      key,
+      isOptional,
+      isValid,
+      index: match.index!,
+    };
+  });
 
-    // Step 2: handle artifact injection
-    if (key.startsWith('artifact.')) {
-      const fileName = key.substring('artifact.'.length);
-      if (invocationContext.artifactService === undefined) {
-        throw new Error('Artifact service is not initialized.');
+  // Deduplicate only valid keys by base key, merging optionality
+  const uniqueKeys = new Map<
+    string,
+    {key: string; isOptional: boolean; raw: string}
+  >();
+
+  for (const pm of parsedMatches) {
+    if (!pm.isValid) {
+      continue;
+    }
+    const existing = uniqueKeys.get(pm.key);
+    if (existing) {
+      if (existing.isOptional && !pm.isOptional) {
+        existing.isOptional = false;
       }
-      const artifact = await invocationContext.artifactService.loadArtifact({
-        appName: invocationContext.session.appName,
-        userId: invocationContext.session.userId,
-        sessionId: invocationContext.session.id,
-        filename: fileName,
+    } else {
+      uniqueKeys.set(pm.key, {
+        key: pm.key,
+        isOptional: pm.isOptional,
+        raw: pm.raw,
       });
-      if (!artifact) {
-        throw new Error(`Artifact ${fileName} not found.`);
-      }
-      return String(artifact);
     }
-
-    // Step 3: Handle state variable injection.
-    if (!isValidStateName(key)) {
-      return match[0];
-    }
-
-    if (key in invocationContext.session.state) {
-      return String(invocationContext.session.state[key]);
-    }
-
-    if (isOptional) {
-      return '';
-    }
-
-    throw new Error(`Context variable not found: \`${key}\`.`);
   }
-  // TODO - b/425992518: enable concurrent repalcement with key deduplication.
-  const pattern = /\{+[^{}]*}+/g;
+
+  // Map of unique key -> resolution promise
+  const resolutions = new Map<string, Promise<string>>();
+  for (const info of uniqueKeys.values()) {
+    resolutions.set(
+      info.key,
+      resolveKey(info.key, info.isOptional, info.raw, readonlyContext),
+    );
+  }
+
+  // Trigger concurrent resolution
+  await Promise.all(resolutions.values());
+
+  // Reconstruct template using pre-parsed matches
   const result: string[] = [];
   let lastEnd = 0;
-  const matches = template.matchAll(pattern);
-
-  for (const match of matches) {
-    result.push(template.slice(lastEnd, match.index));
-    const replacement = await replaceMatchedKeyWithItsValue(match);
-    result.push(replacement);
-    lastEnd = match.index! + match[0].length;
+  for (const pm of parsedMatches) {
+    result.push(template.slice(lastEnd, pm.index));
+    if (pm.isValid) {
+      const replacement = await resolutions.get(pm.key)!;
+      result.push(replacement);
+    } else {
+      result.push(pm.raw);
+    }
+    lastEnd = pm.index + pm.raw.length;
   }
   result.push(template.slice(lastEnd));
   return result.join('');

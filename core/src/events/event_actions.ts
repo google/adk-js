@@ -4,11 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {AuthConfig} from '../auth/auth_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-
-// TODO: b/425992518 - Replace 'any' with a proper AuthConfig.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AuthConfig = any;
 
 /**
  * Represents the actions attached to an event.

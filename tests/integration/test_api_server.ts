@@ -22,7 +22,7 @@ export interface TestApiServerParams {
   serveDebugUI?: boolean;
 }
 
-const DEFAULT_TIMEOUT = 10000;
+const DEFAULT_TIMEOUT = 60000;
 
 /**
  * ADK API server for testing via the CLI. This is useful for integration tests

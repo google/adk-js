@@ -29,6 +29,14 @@ vi.mock('@google/genai', async (importOriginal) => {
         generateContentStream: vi.fn(),
         generateContent: vi.fn(),
       },
+      live: {
+        connect: vi.fn().mockResolvedValue({
+          sendClientContent: vi.fn(),
+          sendToolResponse: vi.fn(),
+          sendRealtimeInput: vi.fn(),
+          close: vi.fn(),
+        }),
+      },
       vertexai: options.vertexai || false,
     })),
   };
@@ -106,6 +114,29 @@ describe('GoogleLlm', () => {
     expect(liveOptions.headers!['x-custom-header']).toBeUndefined();
     expect(liveOptions.headers!['x-goog-api-client']).toContain('google-adk/');
     expect(liveOptions.apiVersion).toBeDefined();
+  });
+
+  it('should respect configured location for Vertex AI liveApiClient', () => {
+    const llm = new TestGemini({
+      model: 'projects/p/locations/us-central1/models/gemini-2.5-flash',
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+    });
+
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    const client = llm.liveApiClient;
+    expect(client).toBeDefined();
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vertexai: true,
+        project: 'p',
+        location: 'us-central1',
+      }),
+    );
   });
 
   describe('generateContentAsync streaming thoughtSignature propagation', () => {
@@ -582,6 +613,44 @@ describe('GoogleLlm', () => {
       // still be yielded (along with the flush of accumulated text).
       // We expect at least the text chunk, the flush, and the finalization.
       expect(responses.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('connect', () => {
+    it('should connect to live API and return a connection object', async () => {
+      const llm = new TestGemini({apiKey: 'test-key'});
+
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        liveConnectConfig: {
+          generationConfig: {responseModalities: ['audio']},
+        },
+        config: {
+          systemInstruction: 'You are a helpful assistant.',
+          tools: [{googleSearch: {}}],
+        },
+        toolsDict: {},
+      };
+
+      const connection = await llm.connect(request);
+      expect(connection).toBeDefined();
+      expect(typeof connection.receive).toBe('function');
+      expect(typeof connection.sendContent).toBe('function');
+      expect(typeof connection.sendRealtime).toBe('function');
+
+      expect(llm.liveApiClient.live.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-2.5-flash',
+          config: expect.objectContaining({
+            generationConfig: {responseModalities: ['audio']},
+            systemInstruction: {
+              role: 'system',
+              parts: [{text: 'You are a helpful assistant.'}],
+            },
+            tools: [{googleSearch: {}}],
+          }),
+        }),
+      );
     });
   });
 });

@@ -35,7 +35,11 @@ enum DataPartType {
 }
 
 /**
- * Converts GenAI Parts to A2A Parts.
+ * Converts an array of GenAI Parts to A2A Parts.
+ *
+ * @param parts - The GenAI parts to convert. Defaults to an empty array.
+ * @param longRunningToolIDs - IDs of function calls that are long-running.
+ * @returns An array of A2A parts.
  */
 export function toA2AParts(
   parts: GenAIPart[] = [],
@@ -45,7 +49,11 @@ export function toA2AParts(
 }
 
 /**
- * Converts a GenAI Part to an A2A Part.
+ * Converts a single GenAI Part to the appropriate A2A Part type.
+ *
+ * @param part - The GenAI part to convert.
+ * @param longRunningToolIDs - IDs of function calls that are long-running.
+ * @returns The corresponding A2A part (text, file, or data).
  */
 export function toA2APart(
   part: GenAIPart,
@@ -64,6 +72,9 @@ export function toA2APart(
 
 /**
  * Converts a GenAI Text Part to an A2A Text Part.
+ *
+ * @param part - The GenAI part containing a text field.
+ * @returns An A2A text part, with thought metadata attached if applicable.
  */
 export function toA2ATextPart(part: GenAIPart): A2APart {
   const a2aPart: A2APart = {kind: 'text', text: part.text || ''};
@@ -79,6 +90,10 @@ export function toA2ATextPart(part: GenAIPart): A2APart {
 
 /**
  * Converts a GenAI File Part to an A2A File Part.
+ *
+ * @param part - The GenAI part containing `fileData` or `inlineData`.
+ * @returns An A2A file part with URI or bytes depending on the source.
+ * @throws {Error} If the part contains neither `fileData` nor `inlineData`.
  */
 export function toA2AFilePart(part: GenAIPart): A2APart {
   const metadata: Record<string, unknown> = {};
@@ -112,7 +127,11 @@ export function toA2AFilePart(part: GenAIPart): A2APart {
 }
 
 /**
- * Converts a GenAI Data Part to an A2A Data Part.
+ * Converts a GenAI Data Part (function call/response or code) to an A2A Data Part.
+ *
+ * @param part - The GenAI part containing structured data.
+ * @param longRunningToolIDs - IDs of function calls that are long-running.
+ * @returns An A2A data part with the appropriate type metadata.
  */
 export function toA2ADataPart(
   part: GenAIPart,
@@ -172,6 +191,12 @@ export function toA2ADataPart(
   };
 }
 
+/**
+ * Converts an A2A Message to a GenAI Content object.
+ *
+ * @param a2aMessage - The A2A message to convert.
+ * @returns A GenAI user or model content object based on the message role.
+ */
 export function toGenAIContent(a2aMessage: Message): GenAIContent {
   const parts = toGenAIParts(a2aMessage.parts);
 
@@ -181,14 +206,21 @@ export function toGenAIContent(a2aMessage: Message): GenAIContent {
 }
 
 /**
- * Converts an A2A Part to a GenAI Part.
+ * Converts an array of A2A Parts to GenAI Parts.
+ *
+ * @param a2aParts - The A2A parts to convert.
+ * @returns An array of GenAI parts.
  */
 export function toGenAIParts(a2aParts: A2APart[]): GenAIPart[] {
   return a2aParts.map((a2aPart) => toGenAIPart(a2aPart));
 }
 
 /**
- * Converts an A2A Part to a GenAI Part.
+ * Converts a single A2A Part to the appropriate GenAI Part type.
+ *
+ * @param a2aPart - The A2A part to convert.
+ * @returns The corresponding GenAI part.
+ * @throws {Error} If the A2A part has an unrecognized `kind`.
  */
 export function toGenAIPart(a2aPart: A2APart): GenAIPart {
   if (a2aPart.kind === 'text') {
@@ -208,6 +240,9 @@ export function toGenAIPart(a2aPart: A2APart): GenAIPart {
 
 /**
  * Converts an A2A Text Part to a GenAI Part.
+ *
+ * @param a2aPart - The A2A text part to convert.
+ * @returns A GenAI part with `text` and optional `thought` flag.
  */
 export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
   return {
@@ -218,6 +253,11 @@ export function toGenAIPartText(a2aPart: A2ATextPart): GenAIPart {
 
 /**
  * Converts an A2A File Part to a GenAI Part.
+ *
+ * @param a2aPart - The A2A file part containing bytes or a URI.
+ * @returns A GenAI part with `inlineData` or `fileData` depending on the
+ *   source, with optional video metadata attached.
+ * @throws {Error} If the file part contains neither bytes nor a URI.
  */
 export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
   const part: GenAIPart = {};
@@ -247,7 +287,12 @@ export function toGenAIPartFile(a2aPart: A2AFilePart): GenAIPart {
 }
 
 /**
- * Converts an A2A Data Part to a GenAI Part.
+ * Converts an A2A Data Part to the appropriate GenAI Part.
+ *
+ * @param a2aPart - The A2A data part containing structured data and type metadata.
+ * @returns A GenAI part with the appropriate function call, function response,
+ *   or code execution fields, falling back to a JSON text part if the type is
+ *   unrecognized.
  */
 export function toGenAIPartData(a2aPart: A2ADataPart): GenAIPart {
   if (!a2aPart.data) {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {isGemini2OrAbove} from '@google/adk';
+import {isGemini2OrAbove, isGemini3xFlashLive} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
 describe('isGemini2OrAbove', () => {
@@ -52,5 +52,31 @@ describe('isGemini2OrAbove', () => {
         expect(isGemini2OrAbove(model)).toBe(false);
       });
     }
+  });
+});
+
+describe('isGemini3xFlashLive', () => {
+  it('should return true for valid Gemini 3.x Flash Live models', () => {
+    expect(isGemini3xFlashLive('gemini-3.1-flash-live')).toBe(true);
+    expect(isGemini3xFlashLive('gemini-3.1-flash-live-preview')).toBe(true);
+    expect(isGemini3xFlashLive('gemini-3.5-flash-live')).toBe(true);
+    expect(isGemini3xFlashLive('gemini-3.5-flash-live-preview')).toBe(true);
+    expect(
+      isGemini3xFlashLive(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.1-flash-live-001',
+      ),
+    ).toBe(true);
+    expect(
+      isGemini3xFlashLive(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.5-flash-live-001',
+      ),
+    ).toBe(true);
+  });
+
+  it('should return false for other models', () => {
+    expect(isGemini3xFlashLive('gemini-2.5-flash')).toBe(false);
+    expect(isGemini3xFlashLive('gemini-3.0-flash')).toBe(false);
+    expect(isGemini3xFlashLive(undefined)).toBe(false);
+    expect(isGemini3xFlashLive('')).toBe(false);
   });
 });

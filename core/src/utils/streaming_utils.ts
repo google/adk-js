@@ -27,6 +27,12 @@ interface StreamingStrategy {
 }
 
 /**
+ * Property keys that must never be written through a model-controlled JSON
+ * path, to prevent prototype pollution of `Object.prototype`.
+ */
+const UNSAFE_PROPERTY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
  * Progressive strategy for SSE streaming mode: flushes parts as they arrive.
  */
 class ProgressiveStrategy implements StreamingStrategy {
@@ -118,10 +124,17 @@ class ProgressiveStrategy implements StreamingStrategy {
       (p) => p !== '$' && p !== '$[',
     );
 
+    // Reject model-controlled paths that target prototype-chain properties,
+    // which would otherwise pollute `Object.prototype` (e.g.
+    // `$.__proto__.polluted`).
+    if (pathParts.some((part) => UNSAFE_PROPERTY_KEYS.has(String(part)))) {
+      return;
+    }
+
     let current = this.currentFcArgs;
     for (let i = 0; i < pathParts.length - 1; i++) {
       const part = pathParts[i];
-      if (!(part in current)) {
+      if (!Object.prototype.hasOwnProperty.call(current, part)) {
         current[part] = {};
       }
       current = current[part] as Record<string, unknown>;
@@ -352,7 +365,6 @@ export class StreamingResponseAggregator {
   private finishReason?: FinishReason;
 
   private lastThoughtSignature: {value?: string | Uint8Array} = {};
-  private sawFunctionCall = false;
   private readonly strategy: StreamingStrategy;
 
   constructor(
@@ -371,19 +383,14 @@ export class StreamingResponseAggregator {
     const llmResponse = createLlmResponse(response);
     const parts = llmResponse.content?.parts ?? [];
 
-    if (parts.some((part) => part.functionCall)) {
-      this.sawFunctionCall = true;
-    }
-
-    // Gemini thinking models emit an empty text chunk with finishReason
-    // STOP after a function call. The aggregator would treat it as a
-    // final model turn and prevent the agent from making the follow-up
-    // call, so drop it before it reaches the aggregator.
+    // Suppress empty chunks that carry no meaningful content (e.g. trailing empty
+    // STOP chunks or intermediate empty chunks) to avoid yielding empty events
+    // that cause empty bubbles in UI, and to prevent premature agent termination
+    // after tool calls. We only do this if it's not an error finish reason.
     if (
-      this.sawFunctionCall &&
-      llmResponse.finishReason === FinishReason.STOP &&
-      parts.length > 0 &&
-      parts.every(isEmptyContentPart)
+      parts.every(isEmptyContentPart) &&
+      (llmResponse.finishReason === undefined ||
+        llmResponse.finishReason === FinishReason.STOP)
     ) {
       if (llmResponse.usageMetadata) {
         this.usageMetadata = llmResponse.usageMetadata;
@@ -427,7 +434,12 @@ export class StreamingResponseAggregator {
 
   close(): LlmResponse | undefined {
     const finalParts = this.strategy.close();
-    if (!finalParts) {
+    const hasMetadata =
+      this.usageMetadata !== undefined ||
+      this.groundingMetadata !== undefined ||
+      this.citationMetadata !== undefined;
+
+    if (!finalParts && !hasMetadata) {
       return undefined;
     }
 
@@ -440,7 +452,7 @@ export class StreamingResponseAggregator {
     return {
       content: {
         role: 'model',
-        parts: finalParts,
+        parts: finalParts ?? [],
       },
       groundingMetadata: this.groundingMetadata,
       citationMetadata: this.citationMetadata,

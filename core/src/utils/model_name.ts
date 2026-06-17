@@ -95,6 +95,20 @@ export function isGemini2OrAbove(modelString: string): boolean {
 }
 
 /**
+ * Check if the model is a Gemini 3.x Flash Live model.
+ *
+ * @param modelString Either a simple model name or path-based model name
+ * @return true if it's a Gemini 3.x Flash Live model, false otherwise.
+ */
+export function isGemini3xFlashLive(modelString: string | undefined): boolean {
+  if (!modelString) {
+    return false;
+  }
+  const modelName = extractModelName(modelString);
+  return modelName.startsWith('gemini-3.') && modelName.includes('-flash-live');
+}
+
+/**
  * Returns True when Gemini model-id validation should be bypassed.
  */
 export function isGeminiModelIdCheckDisabled(): boolean {

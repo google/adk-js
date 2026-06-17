@@ -21,10 +21,22 @@ import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor {
   private compactors: BaseContextCompactor[];
 
+  /**
+   * @param compactors - Ordered list of compactors to evaluate; the first one
+   *   that reports it should compact will perform the compaction.
+   */
   constructor(compactors: BaseContextCompactor[]) {
     this.compactors = compactors;
   }
 
+  /**
+   * Evaluates compactors in priority order. The first compactor that indicates
+   * it should compact will compact the session history, fire plugin hooks, and
+   * yield any newly generated events. Iteration stops after one compaction.
+   *
+   * @param invocationContext - The current invocation context.
+   * @param _llmRequest - Unused; present to satisfy the {@link BaseLlmRequestProcessor} interface.
+   */
   async *runAsync(
     invocationContext: InvocationContext,
     _llmRequest: LlmRequest,

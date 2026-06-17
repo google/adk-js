@@ -9,3 +9,4 @@ tests/**/package-lock.json
 coverage/
 .env
 go.sum
+dev/.cache/
