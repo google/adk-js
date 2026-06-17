@@ -150,7 +150,7 @@ describe('deployToAgentEngine', () => {
         'builds',
         'submit',
         '--tag',
-        'gcr.io/test-project/agent-engine-agent:latest',
+        '$test-region-docker.pkgdev/test-project/agent-engine-repo/agent-engine-agent:latest',
         '/tmp/test-deploy',
         '--project',
         'test-project',
@@ -165,7 +165,7 @@ describe('deployToAgentEngine', () => {
         description: undefined,
         spec: {
           containerSpec: {
-            imageUri: 'gcr.io/test-project/agent-engine-agent:latest',
+            imageUri: '$test-region-docker.pkgdev/test-project/agent-engine-repo/agent-engine-agent:latest',
           },
           deploymentSpec: {
             containerConcurrency: 9,
