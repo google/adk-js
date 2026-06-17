@@ -6,6 +6,7 @@
 
 import {
   BaseLlm,
+  BaseLlmConnection,
   Event,
   getFunctionCalls,
   getFunctionResponses,
@@ -46,6 +47,10 @@ class MockLlm extends BaseLlm {
     if (response) {
       yield response;
     }
+  }
+
+  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    throw new Error('Method not implemented.');
   }
 }
 
@@ -271,7 +276,7 @@ describe('LlmAgent Auth Integration', () => {
       'I got the data: secured_data',
     );
 
-    expect(receivedHeaders).toBeDefined();
-    expect(receivedHeaders['x-api-key']).toBe('secret-api-key');
+    expect(receivedHeaders).not.toBeNull();
+    expect(receivedHeaders!['x-api-key']).toBe('secret-api-key');
   });
 });

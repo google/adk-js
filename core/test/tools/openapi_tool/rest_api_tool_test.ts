@@ -667,5 +667,90 @@ describe('RestApiTool Utilities', () => {
         'Content-Type': 'application/json',
       });
     });
+
+    it('should fallback to JSON and return string as is if finalData is string', () => {
+      const body = 'plain text body';
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(undefined, body, bodyData, headers);
+
+      expect(result).toBe(body);
+      expect(headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
+
+    it('should handle unsupported mime type by returning undefined', () => {
+      const requestBody = {
+        content: {
+          'image/png': {
+            schema: {type: 'string', format: 'binary'},
+          },
+        },
+      };
+      const body = 'fake-binary-data';
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBeUndefined();
+      expect(headers).toEqual({});
+    });
+
+    it('should handle application/json with string body correctly', () => {
+      const requestBody = {
+        content: {
+          'application/json': {
+            schema: {type: 'string'},
+          },
+        },
+      };
+      const body = 'string body';
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBe(body);
+      expect(headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
+
+    it('should handle text/plain body correctly', () => {
+      const requestBody = {
+        content: {
+          'text/plain': {
+            schema: {type: 'string'},
+          },
+        },
+      };
+      const body = 'plain text';
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBe('plain text');
+      expect(headers).toEqual({
+        'Content-Type': 'text/plain',
+      });
+    });
+
+    it('should fallback to JSON if requestBody has no content', () => {
+      const requestBody = {}; // defined but no content
+      const body = {foo: 'bar'};
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBe(JSON.stringify(body));
+      expect(headers).toEqual({
+        'Content-Type': 'application/json',
+      });
+    });
   });
 });

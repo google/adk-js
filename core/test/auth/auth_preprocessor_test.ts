@@ -4,11 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event, createEvent} from '@google/adk';
+import {
+  AUTH_PREPROCESSOR,
+  Event,
+  InvocationContext,
+  createEvent,
+} from '@google/adk';
 import {Mock, describe, expect, it, vi} from 'vitest';
 import {REQUEST_EUC_FUNCTION_CALL_NAME} from '../../src/agents/functions.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {AUTH_PREPROCESSOR} from '../../src/auth/auth_preprocessor.js';
 
 vi.mock('../../src/agents/functions.js', async (importOriginal) => {
   const actual = (await importOriginal()) as {

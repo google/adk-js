@@ -5,6 +5,7 @@
  */
 
 import {
+  AuthConfig,
   createEvent,
   createEventActions,
   getFunctionCalls,
@@ -74,7 +75,7 @@ describe('Event Utils', () => {
           requestedAuthConfigs: {
             'tool-id': {
               credentialKey: 'testKey',
-            },
+            } as unknown as AuthConfig,
           },
         }),
       });
