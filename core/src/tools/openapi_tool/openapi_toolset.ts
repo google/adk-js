@@ -12,7 +12,7 @@ import {experimental} from '../../utils/experimental.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {OpenApiSpecParser} from './openapi_spec_parser/openapi_spec_parser.js';
-import {RestApiTool} from './rest_api_tool.js';
+import {createRestApiTool, RestApiTool} from './rest_api_tool.js';
 
 @experimental
 export class OpenAPIToolset extends BaseToolset {
@@ -61,7 +61,7 @@ export class OpenAPIToolset extends BaseToolset {
         toolName = `${this.prefix}_${toolName}`;
       }
 
-      const tool = RestApiTool.fromParsedOperation(
+      const tool = createRestApiTool(
         {
           name: toolName,
           description: op.description,
