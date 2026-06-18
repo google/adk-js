@@ -570,7 +570,7 @@ describe('RestApiTool', () => {
       path: '/test',
       method: 'GET',
     };
-    const operation = {};
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
       'test_tool',
       'description',
@@ -602,7 +602,7 @@ describe('RestApiTool', () => {
       path: '/test',
       method: 'GET',
     };
-    const operation = {};
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
     const tool = new RestApiTool(
       'test_tool',
       'description',
@@ -748,7 +748,7 @@ describe('RestApiTool Utilities', () => {
 
   describe('prepareRequestBody', () => {
     it('should format JSON body correctly', () => {
-      const requestBody = {
+      const requestBody: OpenAPIV3.RequestBodyObject = {
         content: {
           'application/json': {
             schema: {type: 'object'},
@@ -794,7 +794,7 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should handle unsupported mime type by returning undefined', () => {
-      const requestBody = {
+      const requestBody: OpenAPIV3.RequestBodyObject = {
         content: {
           'image/png': {
             schema: {type: 'string', format: 'binary'},
@@ -812,7 +812,7 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should handle application/json with string body correctly', () => {
-      const requestBody = {
+      const requestBody: OpenAPIV3.RequestBodyObject = {
         content: {
           'application/json': {
             schema: {type: 'string'},
@@ -832,7 +832,7 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should handle text/plain body correctly', () => {
-      const requestBody = {
+      const requestBody: OpenAPIV3.RequestBodyObject = {
         content: {
           'text/plain': {
             schema: {type: 'string'},
@@ -852,7 +852,7 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should fallback to JSON if requestBody has no content', () => {
-      const requestBody = {}; // defined but no content
+      const requestBody = {} as OpenAPIV3.RequestBodyObject; // defined but no content
       const body = {foo: 'bar'};
       const bodyData = {};
       const headers = {};
