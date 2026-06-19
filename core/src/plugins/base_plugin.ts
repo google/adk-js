@@ -166,7 +166,7 @@ export abstract class BasePlugin {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async beforeRunCallback(params: {
     invocationContext: InvocationContext;
-  }): Promise<(Content & ShortCircuitControl) | undefined> {
+  }): Promise<Content | undefined> {
     return;
   }
 
@@ -222,7 +222,7 @@ export abstract class BasePlugin {
   async beforeAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<(Content & ShortCircuitControl) | undefined> {
+  }): Promise<Content | undefined> {
     return;
   }
 
@@ -242,7 +242,7 @@ export abstract class BasePlugin {
   async afterAgentCallback(params: {
     agent: BaseAgent;
     callbackContext: Context;
-  }): Promise<(Content & ShortCircuitControl) | undefined> {
+  }): Promise<Content | undefined> {
     return;
   }
 
@@ -263,7 +263,7 @@ export abstract class BasePlugin {
   async beforeModelCallback(params: {
     callbackContext: Context;
     llmRequest: LlmRequest;
-  }): Promise<(LlmResponse & ShortCircuitControl) | undefined> {
+  }): Promise<LlmResponse | undefined> {
     return;
   }
 
@@ -306,7 +306,7 @@ export abstract class BasePlugin {
     callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
-  }): Promise<(LlmResponse & ShortCircuitControl) | undefined> {
+  }): Promise<LlmResponse | undefined> {
     return;
   }
 
@@ -327,7 +327,9 @@ export abstract class BasePlugin {
   async beforeToolSelection(params: {
     callbackContext: Context;
     tools: Readonly<Record<string, BaseTool>>;
-  }): Promise<(Readonly<Record<string, BaseTool>> & ShortCircuitControl) | undefined> {
+  }): Promise<
+    (Readonly<Record<string, BaseTool>> & ShortCircuitControl) | undefined
+  > {
     return;
   }
 
@@ -412,16 +414,6 @@ export abstract class BasePlugin {
     toolContext: Context;
     result: Record<string, unknown>;
   }): Promise<(Record<string, unknown> & ShortCircuitControl) | undefined> {
-    return;
-  }
-
-  /**
-   * Callback executed when a tool call encounters an error.
-    tool: BaseTool;
-    toolArgs: Record<string, unknown>;
-    toolContext: Context;
-    result: Record<string, unknown>;
-  }): Promise<Record<string, unknown> | undefined> {
     return;
   }
 
