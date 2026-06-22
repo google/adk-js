@@ -17,10 +17,12 @@ import {
   InMemorySessionService,
   Logger,
   LogLevel,
+  RunConfig,
   Runner,
   StreamingMode,
   toA2a,
 } from '@google/adk';
+import {Content} from '@google/genai';
 import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
@@ -983,11 +985,11 @@ export class AdkApiServer {
     appName: string;
     userId: string;
     sessionId: string;
-    newMessage: Parameters<Runner['runAsync']>[0]['newMessage'];
-    stateDelta?: Parameters<Runner['runAsync']>[0]['stateDelta'];
-    runConfig?: Parameters<Runner['runAsync']>[0]['runConfig'];
+    newMessage: Content;
+    stateDelta?: Record<string, unknown>;
+    runConfig?: RunConfig;
     abortSignal: AbortSignal;
-  }): AsyncGenerator<Event, void, undefined> {
+  }): AsyncGenerator<Event> {
     await using agentFile = await this.agentLoader.getAgentFile(
       options.appName,
     );
