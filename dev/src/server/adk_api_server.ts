@@ -983,9 +983,9 @@ export class AdkApiServer {
     appName: string;
     userId: string;
     sessionId: string;
-    newMessage: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    stateDelta?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    runConfig?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    newMessage: Parameters<Runner['runAsync']>[0]['newMessage'];
+    stateDelta?: Parameters<Runner['runAsync']>[0]['stateDelta'];
+    runConfig?: Parameters<Runner['runAsync']>[0]['runConfig'];
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event, void, undefined> {
     await using agentFile = await this.agentLoader.getAgentFile(
