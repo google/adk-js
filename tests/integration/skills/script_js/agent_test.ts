@@ -31,7 +31,7 @@ const TEST_EXECUTION_TIMEOUT = 60000;
 describe('Agent with skills that generates JS script and runs it locally', () => {
   beforeAll(async () => {
     await execAsync('npm install', {cwd: PROJECT_PATH});
-  }, TEST_EXECUTION_TIMEOUT);
+  }, 120000);
 
   it(
     'should run agent with skills successfully',
