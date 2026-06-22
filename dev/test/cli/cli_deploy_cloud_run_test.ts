@@ -30,11 +30,17 @@ vi.mock('node:child_process', () => ({
     spawnMock(cmd, args, opts),
 }));
 
-vi.mock('node:fs/promises', () => ({
-  cp: vi.fn().mockResolvedValue(undefined),
-  mkdir: vi.fn().mockResolvedValue(undefined),
-  rm: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('node:fs/promises', () => {
+  const mockFs = {
+    cp: vi.fn().mockResolvedValue(undefined),
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    rm: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    ...mockFs,
+    default: mockFs,
+  };
+});
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentLoader: vi.fn().mockImplementation(() => ({
