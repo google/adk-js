@@ -738,17 +738,16 @@ export class AdkApiServer {
 
       try {
         const events: Event[] = [];
-        await this.executeAgentRun({
+        for await (const e of this.executeAgentRun({
           appName,
           userId,
           sessionId,
           newMessage,
           stateDelta,
           abortSignal: abortController.signal,
-          onEvent: (e) => {
-            events.push(e);
-          },
-        });
+        })) {
+          events.push(e);
+        }
 
         responseCompleted = true;
         res.json(events);
@@ -790,17 +789,16 @@ export class AdkApiServer {
           req.on('close', () => {
             abortController.abort();
           });
-          await this.executeAgentRun({
+          for await (const e of this.executeAgentRun({
             appName,
             userId,
             sessionId,
             newMessage,
             stateDelta,
             abortSignal: abortController.signal,
-            onEvent: (e) => {
-              events.push(e);
-            },
-          });
+          })) {
+            events.push(e);
+          }
           res.json({output: events});
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
@@ -873,7 +871,7 @@ export class AdkApiServer {
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
-        await this.executeAgentRun({
+        for await (const event of this.executeAgentRun({
           appName,
           userId,
           sessionId,
@@ -883,10 +881,9 @@ export class AdkApiServer {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
           abortSignal: abortController.signal,
-          onEvent: (event) => {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
-          },
-        });
+        })) {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
 
         responseCompleted = true;
         res.end();
@@ -982,7 +979,7 @@ export class AdkApiServer {
     return this.runnerCache[appName];
   }
 
-  private async executeAgentRun(options: {
+  private async *executeAgentRun(options: {
     appName: string;
     userId: string;
     sessionId: string;
@@ -990,23 +987,20 @@ export class AdkApiServer {
     stateDelta?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     runConfig?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     abortSignal: AbortSignal;
-    onEvent: (event: Event) => void | Promise<void>;
-  }) {
+  }): AsyncGenerator<Event, void, undefined> {
     await using agentFile = await this.agentLoader.getAgentFile(
       options.appName,
     );
     const agent = await agentFile.load();
     const runner = await this.getRunner(agent, options.appName);
 
-    for await (const event of runner.runAsync({
+    yield* runner.runAsync({
       userId: options.userId,
       sessionId: options.sessionId,
       newMessage: options.newMessage,
       runConfig: options.runConfig,
       stateDelta: options.stateDelta,
       abortSignal: options.abortSignal,
-    })) {
-      await options.onEvent(event);
-    }
+    });
   }
 }
