@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0](https://github.com/google/adk-js/compare/devtools-v1.2.0...devtools-v1.3.0) (2026-06-22)
+
+
+### Features
+
+* add --reload_agents flag to watch agent files for changes ([#304](https://github.com/google/adk-js/issues/304)) ([b420284](https://github.com/google/adk-js/commit/b420284079a3fd3e37f7e12ea74188a2c7b2bab4))
+* **cli:** deploy agent engine to Artifact Registry instead of GCR (Agent Engine Deployment Artifact registry fix part 2) ([#441](https://github.com/google/adk-js/issues/441)) ([92ceb87](https://github.com/google/adk-js/commit/92ceb87777647fbae2145655fa487a527fa7d5ee))
+* **devtools:** add Reasoning Engine server compatibility routes and headers parser (Agent Engine Deployment Artifact registry fix part 1) ([#440](https://github.com/google/adk-js/issues/440)) ([fd94e49](https://github.com/google/adk-js/commit/fd94e49071ff41869b24bf2db92f4484ab84606d))
+* download ADK Web assets dynamically and serve from shared folder ([#427](https://github.com/google/adk-js/issues/427)) ([b8ee5d8](https://github.com/google/adk-js/commit/b8ee5d81d158f6acdb8b6a343203bdf27e27ff9d))
+
+
+### Bug Fixes
+
+* update default server port from 8000 to 8080 ([#439](https://github.com/google/adk-js/issues/439)) ([9f03632](https://github.com/google/adk-js/commit/9f03632e458d51a14e44ae17031a609c5a875cc8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.2.0 to ^1.3.0
+
 ## [1.2.0](https://github.com/google/adk-js/compare/devtools-v1.1.0...devtools-v1.2.0) (2026-06-02)
 
 
