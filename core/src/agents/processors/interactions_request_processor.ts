@@ -5,7 +5,7 @@
  */
 
 import {Event} from '../../events/event.js';
-import {Gemini} from '../../models/google_llm.js';
+import {isGemini} from '../../models/google_llm.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
@@ -27,7 +27,7 @@ export class InteractionsRequestProcessor implements BaseLlmRequestProcessor {
     }
 
     const model = agent.canonicalModel;
-    if (model instanceof Gemini && model.useInteractionsApi) {
+    if (isGemini(model) && model.useInteractionsApi) {
       const events = invocationContext.session.events;
       for (let i = events.length - 1; i >= 0; i--) {
         const event = events[i];

@@ -12,27 +12,13 @@ import {
   Language,
   Outcome,
   Part,
+  Tool,
 } from '@google/genai';
 import {logger} from '../utils/logger.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
 // --- Helper Interfaces for Strong Typing ---
-
-interface ExtendedTool {
-  functionDeclarations?: Array<{
-    name: string;
-    description?: string;
-    parameters?: {
-      properties?: Record<string, unknown>;
-      required?: string[];
-    };
-    parametersJsonSchema?: unknown;
-  }>;
-  googleSearch?: unknown;
-  codeExecution?: unknown;
-  urlContext?: unknown;
-}
 
 export interface ExtendedInteraction extends Interactions.Interaction {
   error?: {
@@ -49,6 +35,11 @@ export interface ExtendedInteractionStatusUpdate extends Omit<
     code: string;
     message: string;
   };
+}
+
+export interface ExtendedFunctionCallStep
+  extends Interactions.FunctionCallStep {
+  signature?: string;
 }
 
 // Runtime event types can be more relaxed than compile-time
@@ -240,7 +231,7 @@ export function convertContentToSteps(content: Content): Interactions.Step[] {
     if (content.parts) {
       for (const part of content.parts) {
         if (part.functionCall) {
-          const step: Interactions.FunctionCallStep = {
+          const step: ExtendedFunctionCallStep = {
             type: 'function_call',
             id: part.functionCall.id || '',
             name: part.functionCall.name || '',
@@ -361,7 +352,7 @@ export function convertStepToParts(step: Interactions.Step): Part[] {
       return parts;
     }
     case 'function_call': {
-      const functionCallStep = step as Interactions.FunctionCallStep;
+      const functionCallStep = step as ExtendedFunctionCallStep;
       const part: Part = {
         functionCall: {
           id: functionCallStep.id,
@@ -443,7 +434,7 @@ export function convertToolsConfigToInteractionsFormat(
 
   const interactionTools: Interactions.Tool[] = [];
   for (const tool of config.tools) {
-    const t = tool as ExtendedTool;
+    const t = tool as Tool;
     if (t.functionDeclarations) {
       for (const funcDecl of t.functionDeclarations) {
         const funcTool: {
@@ -453,7 +444,7 @@ export function convertToolsConfigToInteractionsFormat(
           parameters?: unknown;
         } = {
           type: 'function',
-          name: funcDecl.name,
+          name: funcDecl.name!,
         };
         if (funcDecl.description) {
           funcTool.description = funcDecl.description;
@@ -607,10 +598,11 @@ export function convertInteractionEventToLlmResponse(
     const stepStart = event as unknown as Interactions.StepStart;
     const step = stepStart.step;
     if (step.type === 'function_call') {
+      const fcStep = step as ExtendedFunctionCallStep;
       const part: Part = {
         functionCall: {
-          id: step.id,
-          name: step.name,
+          id: fcStep.id,
+          name: fcStep.name,
           args: {},
         },
         partMetadata: {
@@ -618,8 +610,8 @@ export function convertInteractionEventToLlmResponse(
           isComplete: false,
         },
       };
-      if (step.signature) {
-        part.thoughtSignature = step.signature;
+      if (fcStep.signature) {
+        part.thoughtSignature = fcStep.signature;
       }
       aggregatedParts.push(part);
       return null;

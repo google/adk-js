@@ -62,10 +62,27 @@ export interface GeminiParams {
   useInteractionsApi?: boolean;
 }
 
+const GEMINI_MODEL_SYMBOL = Symbol.for('google.adk.geminiModel');
+
+/**
+ * Type guard to check if an object is an instance of Gemini.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of Gemini, false otherwise.
+ */
+export function isGemini(obj: unknown): obj is Gemini {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    GEMINI_MODEL_SYMBOL in obj &&
+    obj[GEMINI_MODEL_SYMBOL] === true
+  );
+}
+
 /**
  * Integration for Gemini models.
  */
 export class Gemini extends BaseLlm {
+  readonly [GEMINI_MODEL_SYMBOL] = true;
   private readonly apiKey?: string;
   protected readonly vertexai: boolean;
   private readonly project?: string;
