@@ -19,6 +19,7 @@ import {
 } from '../events/event.js';
 import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {camelCaseKeys} from '../utils/case_utils.js';
 import {AuthHandler} from './auth_handler.js';
 import {AuthConfig} from './auth_tool.js';
 
@@ -26,9 +27,7 @@ const TOOLSET_AUTH_CREDENTIAL_ID_PREFIX = '_adk_toolset_auth_';
 
 interface RequestCredentialArgs {
   authConfig?: AuthConfig;
-  auth_config?: AuthConfig;
   functionCallId?: string;
-  function_call_id?: string;
 }
 
 async function storeAuthAndCollectResumeTargets(
@@ -46,8 +45,8 @@ async function storeAuthAndCollectResumeTargets(
         authFcIds.has(functionCall.id) &&
         functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
       ) {
-        const args = functionCall.args as RequestCredentialArgs;
-        const authConfig = args?.authConfig ?? args?.auth_config;
+        const args = camelCaseKeys(functionCall.args) as RequestCredentialArgs;
+        const authConfig = args?.authConfig;
         if (authConfig) {
           requestedAuthConfigById[functionCall.id] = authConfig;
         }
@@ -77,8 +76,10 @@ async function storeAuthAndCollectResumeTargets(
           functionCall.id === fcId &&
           functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
         ) {
-          const args = functionCall.args as RequestCredentialArgs;
-          const functionCallId = args?.functionCallId ?? args?.function_call_id;
+          const args = camelCaseKeys(
+            functionCall.args,
+          ) as RequestCredentialArgs;
+          const functionCallId = args?.functionCallId;
           if (functionCallId) {
             if (functionCallId.startsWith(TOOLSET_AUTH_CREDENTIAL_ID_PREFIX)) {
               continue;

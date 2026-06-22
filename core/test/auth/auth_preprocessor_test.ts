@@ -250,6 +250,80 @@ describe('AuthPreprocessor', () => {
     expect(result.done).toBe(true);
   });
 
+  it('processes adk_request_credential responses and resumes tools (deep snake_case args)', async () => {
+    const invocationContext = {
+      agent: {
+        [LLM_AGENT_SYMBOL]: true,
+        canonicalTools: vi.fn().mockResolvedValue([{name: 'someTool'}]),
+        canonicalBeforeToolCallbacks: [],
+        canonicalAfterToolCallbacks: [],
+      },
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'agent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'toolFc1',
+                    name: 'someTool',
+                    args: {},
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'agent',
+            id: 'originalEvent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    args: {
+                      auth_config: {credential_key: 'testKey'},
+                      function_call_id: 'toolFc1',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    response: {authType: 'apiKey', apiKey: 'test'},
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    let result = await generator.next();
+
+    expect(result.done).toBe(false);
+    expect(result.value).toEqual({
+      id: 'mockResponseEvent',
+      author: 'system',
+    });
+
+    result = await generator.next();
+    expect(result.done).toBe(true);
+  });
+
   it('skips if function responses exist but not for request_credential', async () => {
     const invocationContext = {
       agent: {[LLM_AGENT_SYMBOL]: true},
