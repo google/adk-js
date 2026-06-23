@@ -13,7 +13,7 @@ import {sendInput} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
-const TEST_EXECUTION_TIMEOUT = 120000;
+const TEST_EXECUTION_TIMEOUT = 40000;
 
 describe.each(['__dirname', '__filename', 'import_meta_url'])(
   'Agent with %s',
@@ -34,7 +34,6 @@ describe.each(['__dirname', '__filename', 'import_meta_url'])(
         const childProcess = spawn('npm', ['run', 'start'], {
           cwd: projectPath,
           shell: true,
-          stdio: ['pipe', 'pipe', 'inherit'],
         });
 
         let response = await sendInput(childProcess, 'Tell me a joke.\n');
