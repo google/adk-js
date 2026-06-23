@@ -186,7 +186,12 @@ export abstract class BaseSessionService {
     event = trimTempDeltaState(event);
 
     this.updateSessionState({session, event});
-    session.events.push(event);
+    const index = session.events.findIndex((e) => e.id === event.id);
+    if (index >= 0) {
+      session.events[index] = event;
+    } else {
+      session.events.push(event);
+    }
 
     return event;
   }

@@ -107,6 +107,8 @@ export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
 export type {LlmSummarizerOptions} from './context/summarizers/llm_summarizer.js';
 export {TokenBasedContextCompactor} from './context/token_based_context_compactor.js';
 export type {TokenBasedContextCompactorOptions} from './context/token_based_context_compactor.js';
+export {TrajectoryThoughtPruningCompactor} from './context/trajectory_thought_pruning_compactor.js';
+export type {TrajectoryThoughtPruningCompactorOptions} from './context/trajectory_thought_pruning_compactor.js';
 export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {isCompactedEvent} from './events/compacted_event.js';
