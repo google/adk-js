@@ -681,15 +681,17 @@ describe('GoogleLlm', () => {
   });
 
   describe('liveApiVersion', () => {
-    it('uses v1beta for Gemini 2.5 live models on the Gemini API', () => {
+    it('uses v1beta1 on the Vertex AI backend', () => {
       const llm = new TestGemini({
-        apiKey: 'test-key',
         model: 'gemini-2.5-flash',
+        vertexai: true,
+        project: 'p',
+        location: 'us-central1',
       });
-      expect(llm.liveApiVersion).toBe('v1beta');
+      expect(llm.liveApiVersion).toBe('v1beta1');
     });
 
-    it('uses v1alpha for other models on the Gemini API', () => {
+    it('uses v1alpha on the Gemini API backend', () => {
       const llm = new TestGemini({
         apiKey: 'test-key',
         model: 'gemini-3.1-flash-live-preview',

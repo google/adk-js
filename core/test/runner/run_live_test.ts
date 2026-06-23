@@ -147,7 +147,7 @@ describe('Runner.runLive', () => {
     }).rejects.toThrow('liveRequestQueue is required');
   });
 
-  it('throws when session does not exist', async () => {
+  it('creates the session when it does not exist', async () => {
     const llm = new FakeLiveLlm([]);
     const agent = new LlmAgent({name: 'agent', model: llm});
     const runner = new Runner({
@@ -158,15 +158,20 @@ describe('Runner.runLive', () => {
     });
     const queue = new LiveRequestQueue();
     queue.close();
-    await expect(async () => {
-      for await (const _ of runner.runLive({
-        userId: TEST_USER_ID,
-        sessionId: 'missing',
-        liveRequestQueue: queue,
-      })) {
-        // no-op
-      }
-    }).rejects.toThrow('Session not found: missing');
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: 'missing',
+      liveRequestQueue: queue,
+    })) {
+      // no-op
+    }
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'missing',
+    });
+    expect(session).toBeDefined();
   });
 
   it('forwards realtime blobs to the connection and yields model events', async () => {
@@ -283,6 +288,64 @@ describe('Runner.runLive', () => {
       (event) => event.outputTranscription !== undefined,
     );
     expect(hasTranscription).toBe(true);
+  });
+
+  it('skips inline video/image media and media in non-first parts', async () => {
+    const videoPart: Content = {
+      role: 'model',
+      parts: [{inlineData: {data: 'AAA=', mimeType: 'video/mp4'}}],
+    };
+    const imagePart: Content = {
+      role: 'model',
+      parts: [{inlineData: {data: 'AAA=', mimeType: 'image/png'}}],
+    };
+    const mixedPart: Content = {
+      role: 'model',
+      parts: [
+        {text: 'ignored'},
+        {inlineData: {data: 'AAA=', mimeType: 'audio/pcm'}},
+      ],
+    };
+    const textPart: Content = {role: 'model', parts: [{text: 'persist me'}]};
+    const llm = new FakeLiveLlm([
+      {content: videoPart},
+      {content: imagePart},
+      {content: mixedPart},
+      {content: textPart, partial: false},
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const persisted = session!.events;
+    const hasInlineMedia = persisted.some((event) =>
+      event.content?.parts?.some((part) => part.inlineData !== undefined),
+    );
+    expect(hasInlineMedia).toBe(false);
+    const hasText = persisted.some((event) =>
+      event.content?.parts?.some((part) => part.text === 'persist me'),
+    );
+    expect(hasText).toBe(true);
   });
 
   it('runs tool calls and sends function responses back to the model', async () => {

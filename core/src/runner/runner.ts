@@ -571,10 +571,10 @@ export class Runner {
   /**
    * Runs the agent in the live (bidirectional streaming) mode.
    *
-   * Audio events that carry raw inline audio bytes are yielded but not
-   * appended to the session to avoid persisting raw audio blobs; events with
-   * `fileData` references and most other live events (transcriptions, tool
-   * calls, usage) are persisted as in `runAsync`.
+   * Model media events that carry raw inline bytes (audio, video, or image)
+   * are yielded but not appended to the session to avoid persisting large
+   * blobs; events with `fileData` references and most other live events
+   * (transcriptions, tool calls, usage) are persisted as in `runAsync`.
    *
    * This feature is **experimental** and its API may change.
    *
@@ -622,7 +622,7 @@ export class Runner {
         ctx,
         this,
         async function* () {
-          const session = await this.sessionService.getSession({
+          const session = await this.sessionService.getOrCreateSession({
             appName: this.appName,
             userId: params.userId,
             sessionId: params.sessionId,
@@ -630,15 +630,6 @@ export class Runner {
 
           if (params.abortSignal?.aborted) {
             return;
-          }
-
-          if (!session) {
-            if (!this.appName) {
-              throw new Error(
-                `Session lookup failed: appName must be provided in runner constructor`,
-              );
-            }
-            throw new Error(`Session not found: ${params.sessionId}`);
           }
 
           const invocationContext = new InvocationContext({
@@ -698,7 +689,7 @@ export class Runner {
               return;
             }
 
-            if (!event.partial && shouldAppendLiveEvent(event)) {
+            if (!event.partial && !isLiveModelMediaEventWithInlineData(event)) {
               await this.sessionService.appendEvent({session, event});
             }
 
@@ -724,22 +715,28 @@ export class Runner {
 }
 
 /**
- * Decides whether a live event should be persisted to the session.
+ * Whether a live event is a model media event carrying inline data (audio,
+ * video, or image).
  *
- * Live model audio events that carry raw inline audio bytes are deliberately
- * skipped to avoid persisting large blobs. Audio referenced via `fileData`
- * (e.g. saved as artifacts) and all non-audio events are persisted.
+ * Such events are deliberately not persisted to the session to avoid storing
+ * large raw blobs. Media referenced via `fileData` (e.g. saved as artifacts)
+ * and all non-media events (transcriptions, tool calls, usage) are persisted
+ * as in `runAsync`.
  */
-function shouldAppendLiveEvent(event: Event): boolean {
+function isLiveModelMediaEventWithInlineData(event: Event): boolean {
   const parts = event.content?.parts;
   if (!parts?.length) {
-    return true;
+    return false;
   }
-  const inlineData = parts[0].inlineData;
-  if (!inlineData?.mimeType?.startsWith('audio/')) {
-    return true;
-  }
-  return false;
+  return parts.some((part) => {
+    const mimeType = part.inlineData?.mimeType?.toLowerCase();
+    return (
+      mimeType !== undefined &&
+      (mimeType.startsWith('audio/') ||
+        mimeType.startsWith('video/') ||
+        mimeType.startsWith('image/'))
+    );
+  });
 }
 
 /**
