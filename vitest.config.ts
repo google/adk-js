@@ -16,7 +16,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['core/test/**/*_test.ts'],
         },
@@ -27,7 +30,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['dev/test/**/*_test.ts'],
         },
@@ -38,7 +44,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['integrations/test/**/*_test.ts'],
         },
@@ -49,7 +58,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['tests/integration/**/*_test.ts'],
         },
@@ -60,7 +72,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['tests/e2e/**/*_test.ts'],
         },
@@ -71,7 +86,10 @@ export default defineConfig({
           environment: 'node',
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
-            '@google/adk-integrations': path.resolve(__dirname, './integrations/src'),
+            '@google/adk-integrations': path.resolve(
+              __dirname,
+              './integrations/src',
+            ),
           },
           include: ['tests/cross_language/**/*_test.ts'],
         },
@@ -80,7 +98,11 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json'],
-      include: ['core/src/**/*.ts', 'dev/src/**/*.ts', 'integrations/src/**/*.ts'],
+      include: [
+        'core/src/**/*.ts',
+        'dev/src/**/*.ts',
+        'integrations/src/**/*.ts',
+      ],
       // Those values are from the npm run test:coverage command run on 2026-02-06
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
