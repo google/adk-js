@@ -10,6 +10,7 @@ import {
   LlmRequest,
   LlmResponse,
   isBaseLlm,
+  runWithClientLabel,
   version,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
@@ -65,6 +66,16 @@ describe('BaseLlm', () => {
     }+remote_reasoning_engine gl-typescript/${process.version}`;
     expect(headers['x-goog-api-client']).toEqual(expectedValue);
     expect(headers['user-agent']).toEqual(expectedValue);
+  });
+
+  it('should include context client label in tracking headers when run within runWithClientLabel', () => {
+    const llm = new TestLlm();
+    const customLabel = 'my-custom-label';
+    runWithClientLabel(customLabel, () => {
+      const headers = llm.getTrackingHeaders();
+      expect(headers['x-goog-api-client']).toContain(customLabel);
+      expect(headers['user-agent']).toContain(customLabel);
+    });
   });
 });
 
