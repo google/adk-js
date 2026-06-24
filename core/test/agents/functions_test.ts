@@ -20,6 +20,7 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {Content, FunctionCall} from '@google/genai';
+import {SpanStatusCode} from '@opentelemetry/api';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
@@ -29,6 +30,27 @@ import {
   populateClientFunctionCallId,
   removeClientFunctionCallId,
 } from '../../src/agents/functions.js';
+import {
+  traceMergedToolCalls,
+  tracer,
+  traceToolCall,
+} from '../../src/telemetry/tracing.js';
+
+const mockSpan = {
+  end: vi.fn(),
+  recordException: vi.fn(),
+  setStatus: vi.fn(),
+};
+
+vi.mock('../../src/telemetry/tracing.js', () => {
+  return {
+    tracer: {
+      startActiveSpan: vi.fn().mockImplementation((name, cb) => cb(mockSpan)),
+    },
+    traceToolCall: vi.fn(),
+    traceMergedToolCalls: vi.fn(),
+  };
+});
 
 // Get the test target function
 const {
@@ -115,6 +137,8 @@ describe('handleFunctionCallList', () => {
       args: {},
     };
     toolsDict = {'testTool': testTool};
+
+    vi.clearAllMocks();
   });
 
   it('should execute tool with no callbacks or plugins', async () => {
@@ -360,6 +384,70 @@ describe('handleFunctionCallList', () => {
         toolContext: expect.objectContaining({
           abortSignal: signal,
         }),
+      }),
+    );
+  });
+
+  it('should trace tool execution', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [functionCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(tracer.startActiveSpan).toHaveBeenCalledWith(
+      `execute_tool ${testTool.name}`,
+      expect.any(Function),
+    );
+    expect(traceToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: testTool,
+        args: functionCall.args,
+        functionResponseEvent: event,
+      }),
+    );
+  });
+
+  it('should record exception on span when tool throws', async () => {
+    const errorFunctionCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'errorTool',
+      args: {},
+    };
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [errorFunctionCall],
+      toolsDict: {'errorTool': errorTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(mockSpan.recordException).toHaveBeenCalledWith(expect.any(Error));
+    expect(mockSpan.setStatus).toHaveBeenCalledWith({
+      code: SpanStatusCode.ERROR,
+      message: expect.stringContaining('tool error message content'),
+    });
+  });
+
+  it('should trace merged tool calls when multiple tools executed', async () => {
+    const functionCall1 = {id: '1', name: 'testTool', args: {}};
+    const functionCall2 = {id: '2', name: 'testTool', args: {}};
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [functionCall1, functionCall2],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(traceMergedToolCalls).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseEventId: event!.id,
+        functionResponseEvent: event,
       }),
     );
   });
