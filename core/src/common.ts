@@ -255,6 +255,11 @@ export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
+export {
+  runWithClientLabel,
+  EVAL_CLIENT_LABEL,
+  getClientLabels,
+} from './utils/client_labels.js';
 
 export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
 export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
