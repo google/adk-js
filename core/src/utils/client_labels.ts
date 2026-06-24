@@ -42,9 +42,9 @@ function _getDefaultLabels(): string[] {
     frameworkLabel = `${frameworkLabel}+${AGENT_ENGINE_TELEMETRY_TAG}`;
   }
 
-  // eslint-disable-next-line no-undef
   const languageLabelDetail = isBrowser()
-    ? parseUserAgent(window.navigator.userAgent)
+    ? // eslint-disable-next-line no-undef
+      parseUserAgent(window.navigator.userAgent)
     : process.version;
 
   const languageLabel = `${LANGUAGE_LABEL}/${languageLabelDetail}`;
