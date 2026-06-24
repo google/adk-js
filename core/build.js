@@ -50,6 +50,12 @@ function build({
     logLevel: 'info',
   };
 
+  if (platform === 'browser') {
+    buildOptions.alias = {
+      'node:async_hooks': './src/utils/async_hooks_shim.ts',
+    };
+  }
+
   // Prepend license header to the top of the file
   if (format === 'cjs' || bundle) {
     buildOptions.banner = {js: licenseHeaderText};
