@@ -63,6 +63,11 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export type {
+  SessionArtifactService,
+  SessionLoadArtifactRequest,
+  SessionSaveArtifactRequest,
+} from './artifacts/session_artifact_service.js';
 export {AuthCredentialTypes} from './auth/auth_credential.js';
 export type {
   AuthCredential,

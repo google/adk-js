@@ -27,9 +27,6 @@ async function resolveKey(
       throw new Error('Artifact service is not initialized.');
     }
     const artifact = await invocationContext.artifactService.loadArtifact({
-      appName: invocationContext.session.appName,
-      userId: invocationContext.session.userId,
-      sessionId: invocationContext.session.id,
       filename: fileName,
     });
     if (!artifact) {

@@ -6,7 +6,7 @@
 
 import {Content} from '@google/genai';
 
-import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
+import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
@@ -23,7 +23,7 @@ import {TranscriptionEntry} from './transcription_entry.js';
  * The parameters for creating an invocation context.
  */
 export interface InvocationContextParams {
-  artifactService?: BaseArtifactService;
+  artifactService?: SessionArtifactService;
   sessionService?: BaseSessionService;
   memoryService?: BaseMemoryService;
   credentialService?: BaseCredentialService;
@@ -111,7 +111,7 @@ class InvocationCostManager {
  *  ```
  */
 export class InvocationContext {
-  readonly artifactService?: BaseArtifactService;
+  readonly artifactService?: SessionArtifactService;
   readonly sessionService?: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;

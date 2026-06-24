@@ -161,9 +161,6 @@ describe('injectSessionState', () => {
       );
       expect(result).toBe('data=artifact content here');
       expect(mockArtifactService.loadArtifact).toHaveBeenCalledWith({
-        appName: 'app',
-        userId: 'user-1',
-        sessionId: 'sess-1',
         filename: 'report.txt',
       });
     });

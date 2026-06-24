@@ -15,6 +15,8 @@ import {
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
+import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
+
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {
   BuiltInCodeExecutor,
@@ -255,7 +257,14 @@ export class Runner {
           }
 
           const invocationContext = new InvocationContext({
-            artifactService: this.artifactService,
+            artifactService: this.artifactService
+              ? new ScopedArtifactService(
+                  this.artifactService,
+                  this.appName,
+                  userId,
+                  sessionId,
+                )
+              : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
             credentialService: this.credentialService,

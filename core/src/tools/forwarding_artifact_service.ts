@@ -11,10 +11,12 @@ import {
   ArtifactVersion,
   BaseArtifactService,
   DeleteArtifactRequest,
+  ListArtifactKeysRequest,
   ListVersionsRequest,
   LoadArtifactRequest,
   SaveArtifactRequest,
 } from '../artifacts/base_artifact_service.js';
+import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 
 import {Context} from '../agents/context.js';
 
@@ -28,8 +30,6 @@ export class ForwardingArtifactService implements BaseArtifactService {
     this.invocationContext = toolContext.invocationContext;
   }
 
-  // TODO - b/425992518: Remove unnecessary parameters. We should rethink the
-  // abstraction layer to make it more clear.
   async saveArtifact(request: SaveArtifactRequest): Promise<number> {
     return this.toolContext.saveArtifact(request.filename, request.artifact);
   }
@@ -38,51 +38,38 @@ export class ForwardingArtifactService implements BaseArtifactService {
     return this.toolContext.loadArtifact(request.filename, request.version);
   }
 
-  async listArtifactKeys(): Promise<string[]> {
+  async listArtifactKeys(_request: ListArtifactKeysRequest): Promise<string[]> {
     return this.toolContext.listArtifacts();
   }
 
-  async deleteArtifact(request: DeleteArtifactRequest): Promise<void> {
-    if (!this.toolContext.invocationContext.artifactService) {
+  private getArtifactService(): SessionArtifactService {
+    const service = this.invocationContext.artifactService;
+    if (!service) {
       throw new Error('Artifact service is not initialized.');
     }
+    return service;
+  }
 
-    return this.toolContext.invocationContext.artifactService.deleteArtifact(
-      request,
-    );
+  async deleteArtifact(request: DeleteArtifactRequest): Promise<void> {
+    return this.getArtifactService().deleteArtifact(request.filename);
   }
 
   async listVersions(request: ListVersionsRequest): Promise<number[]> {
-    if (!this.toolContext.invocationContext.artifactService) {
-      throw new Error('Artifact service is not initialized.');
-    }
-
-    return this.toolContext.invocationContext.artifactService.listVersions(
-      request,
-    );
+    return this.getArtifactService().listVersions(request.filename);
   }
 
-  listArtifactVersions(
+  async listArtifactVersions(
     request: ListVersionsRequest,
   ): Promise<ArtifactVersion[]> {
-    if (!this.toolContext.invocationContext.artifactService) {
-      throw new Error('Artifact service is not initialized.');
-    }
-
-    return this.toolContext.invocationContext.artifactService.listArtifactVersions(
-      request,
-    );
+    return this.getArtifactService().listArtifactVersions(request.filename);
   }
 
-  getArtifactVersion(
+  async getArtifactVersion(
     request: LoadArtifactRequest,
   ): Promise<ArtifactVersion | undefined> {
-    if (!this.toolContext.invocationContext.artifactService) {
-      throw new Error('Artifact service is not initialized.');
-    }
-
-    return this.toolContext.invocationContext.artifactService.getArtifactVersion(
-      request,
-    );
+    return this.getArtifactService().getArtifactVersion({
+      filename: request.filename,
+      version: request.version,
+    });
   }
 }
