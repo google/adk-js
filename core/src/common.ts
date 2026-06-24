@@ -253,6 +253,7 @@ export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
+export {Task} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
@@ -272,6 +273,11 @@ export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
 export {SearchSkillsTool} from './tools/skill/search_skills_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
 
+export * from './artifacts/base_artifact_service.js';
+export * from './features/feature_registry.js';
+export * from './memory/base_memory_service.js';
+export * from './sessions/base_session_service.js';
+export * from './tools/base_tool.js';
 export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 export type {
   OperationEndpoint,
@@ -286,9 +292,3 @@ export {
   RestApiTool,
   createRestApiTool,
 } from './tools/openapi_tool/rest_api_tool.js';
-
-export * from './artifacts/base_artifact_service.js';
-export * from './features/feature_registry.js';
-export * from './memory/base_memory_service.js';
-export * from './sessions/base_session_service.js';
-export * from './tools/base_tool.js';
