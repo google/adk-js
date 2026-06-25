@@ -12,6 +12,7 @@ import {Event} from '../events/event.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {toSchema} from '../utils/schema_utils.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {State} from '../sessions/state.js';
@@ -75,6 +76,9 @@ export class AgentTool extends BaseTool {
     super({
       name: config.agent.name,
       description: config.agent.description || '',
+      outputSchema: isLlmAgent(config.agent)
+        ? config.agent.outputSchema
+        : undefined,
     });
     this.agent = config.agent;
     this.skipSummarization = config.skipSummarization || false;
@@ -90,7 +94,7 @@ export class AgentTool extends BaseTool {
         // TODO(b/425992518): We should not use the agent's input schema as is.
         // It should be validated and possibly transformed. Consider similar
         // logic to one we have in Python ADK.
-        parameters: this.agent.inputSchema,
+        parameters: toSchema(this.agent.inputSchema),
       };
     } else {
       declaration = {

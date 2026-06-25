@@ -14,6 +14,7 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
+import {validateSchema} from '../utils/schema_utils.js';
 import {Context} from './context.js';
 
 import {
@@ -387,6 +388,14 @@ export async function handleFunctionCallList({
           break;
         }
       }
+    }
+
+    if (functionResponse != null && tool.outputSchema) {
+      validateSchema(
+        functionResponse,
+        tool.outputSchema,
+        `beforeToolCallback for tool ${tool.name}`,
+      );
     }
 
     // Step 3: Otherwise, proceed calling the tool normally.

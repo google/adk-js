@@ -17,9 +17,9 @@ import {
 import {z as z3} from 'zod/v3';
 import {toJSONSchema as toJSONSchemaV4, z as z4} from 'zod/v4';
 
-type ZodSchema<T = unknown> = z3.ZodType<T> | z4.ZodType<T>;
+export type ZodSchema<T = unknown> = z3.ZodType<T> | z4.ZodType<T>;
 
-function isZodSchema(obj: unknown): obj is ZodSchema {
+export function isZodSchema(obj: unknown): obj is ZodSchema {
   return (
     obj !== null &&
     typeof obj === 'object' &&

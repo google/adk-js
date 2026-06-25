@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {GenerateContentConfig, Schema} from '@google/genai';
+import {GenerateContentConfig} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 import {FunctionTool} from '../tools/function_tool.js';
-
-import {z as z3} from 'zod/v3';
-import {z as z4} from 'zod/v4';
 
 import {BaseCodeExecutor} from '../code_executors/base_code_executor.js';
 
@@ -40,7 +37,7 @@ import {
   traceCallLlm,
   tracer,
 } from '../telemetry/tracing.js';
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
+import {LlmAgentSchema} from '../utils/schema_utils.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {
   BaseLlmRequestProcessor,
@@ -73,10 +70,7 @@ import {StreamingMode} from './run_config.js';
 /**
  * Input/output schema type for agent.
  */
-export type LlmAgentSchema =
-  | z3.ZodObject<z3.ZodRawShape>
-  | z4.ZodObject<z4.ZodRawShape>
-  | Schema;
+export {LlmAgentSchema};
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (
@@ -357,8 +351,8 @@ export class LlmAgent extends BaseAgent {
   disallowTransferToParent: boolean;
   disallowTransferToPeers: boolean;
   includeContents: 'default' | 'none';
-  inputSchema?: Schema;
-  outputSchema?: Schema;
+  inputSchema?: LlmAgentSchema;
+  outputSchema?: LlmAgentSchema;
   outputKey?: string;
   beforeModelCallback?: BeforeModelCallback;
   afterModelCallback?: AfterModelCallback;
@@ -378,12 +372,8 @@ export class LlmAgent extends BaseAgent {
     this.disallowTransferToParent = config.disallowTransferToParent ?? false;
     this.disallowTransferToPeers = config.disallowTransferToPeers ?? false;
     this.includeContents = config.includeContents ?? 'default';
-    this.inputSchema = isZodObject(config.inputSchema)
-      ? zodObjectToSchema(config.inputSchema)
-      : config.inputSchema;
-    this.outputSchema = isZodObject(config.outputSchema)
-      ? zodObjectToSchema(config.outputSchema)
-      : config.outputSchema;
+    this.inputSchema = config.inputSchema;
+    this.outputSchema = config.outputSchema;
     this.outputKey = config.outputKey;
     this.beforeModelCallback = config.beforeModelCallback;
     this.afterModelCallback = config.afterModelCallback;

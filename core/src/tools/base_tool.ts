@@ -7,6 +7,7 @@
 import {FunctionDeclaration, Tool} from '@google/genai';
 
 import {LlmRequest} from '../models/llm_request.js';
+import {LlmAgentSchema} from '../utils/schema_utils.js';
 import {getGoogleLlmVariant} from '../utils/variant_utils.js';
 
 import {Context} from '../agents/context.js';
@@ -34,6 +35,7 @@ export interface BaseToolParams {
   name: string;
   description: string;
   isLongRunning?: boolean;
+  outputSchema?: LlmAgentSchema;
 }
 
 /**
@@ -66,6 +68,7 @@ export abstract class BaseTool {
   readonly name: string;
   readonly description: string;
   readonly isLongRunning: boolean;
+  readonly outputSchema?: LlmAgentSchema;
 
   /**
    * Base constructor for a tool.
@@ -76,6 +79,7 @@ export abstract class BaseTool {
     this.name = params.name;
     this.description = params.description;
     this.isLongRunning = params.isLongRunning ?? false;
+    this.outputSchema = params.outputSchema;
   }
 
   /**

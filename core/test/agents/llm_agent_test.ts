@@ -17,6 +17,7 @@ import {
   ContextCompactorRequestProcessor,
   createEvent,
   Event,
+  FunctionTool,
   InvocationContext,
   LlmAgent,
   LlmRequest,
@@ -345,9 +346,7 @@ describe('LlmAgent Schema Initialization', () => {
       name: 'test',
       inputSchema: zodSchema,
     });
-    expect(agent.inputSchema).toBeDefined();
-    expect((agent.inputSchema as Schema).type).toBe('OBJECT');
-    expect((agent.inputSchema as Schema).properties?.foo?.type).toBe('STRING');
+    expect(agent.inputSchema).toBe(zodSchema);
   });
 
   it('should initialize inputSchema from Zod v3 object', () => {
@@ -358,9 +357,7 @@ describe('LlmAgent Schema Initialization', () => {
       name: 'test',
       inputSchema: zodSchema,
     });
-    expect(agent.inputSchema).toBeDefined();
-    expect((agent.inputSchema as Schema).type).toBe('OBJECT');
-    expect((agent.inputSchema as Schema).properties?.foo?.type).toBe('STRING');
+    expect(agent.inputSchema).toBe(zodSchema);
   });
 
   it('should initialize outputSchema from Schema object', () => {
@@ -378,9 +375,7 @@ describe('LlmAgent Schema Initialization', () => {
       name: 'test',
       outputSchema: zodSchema,
     });
-    expect(agent.outputSchema).toBeDefined();
-    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
-    expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
+    expect(agent.outputSchema).toBe(zodSchema);
   });
 
   it('should initialize outputSchema from Zod v3 object', () => {
@@ -391,9 +386,7 @@ describe('LlmAgent Schema Initialization', () => {
       name: 'test',
       outputSchema: zodSchema,
     });
-    expect(agent.outputSchema).toBeDefined();
-    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
-    expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
+    expect(agent.outputSchema).toBe(zodSchema);
   });
 
   it('should enforce transfer restrictions when outputSchema is present', () => {
@@ -797,5 +790,132 @@ describe('LlmAgent Default Request Processors', () => {
       CONTENT_REQUEST_PROCESSOR,
     );
     expect(authIndex).toBeLessThan(contentIndex);
+  });
+});
+
+describe('LlmAgent Callback Validation Integration', () => {
+  let schemaTool: BaseTool;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockState: any;
+  let session: Session;
+
+  beforeEach(() => {
+    schemaTool = new FunctionTool({
+      name: 'schemaTool',
+      description: 'mock tool with schema',
+      parameters: z4.object({}),
+      outputSchema: z4.object({
+        result: z4.string(),
+      }),
+      execute: async () => ({result: 'ok'}),
+    });
+    mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+      update: () => {},
+      toRecord: () => ({}),
+    };
+    session = {
+      id: 'sess_123',
+      state: mockState,
+      events: [],
+    } as unknown as Session;
+  });
+
+  class SequentialMockLlm extends BaseLlm {
+    private responseIndex = 0;
+    constructor(private responses: LlmResponse[]) {
+      super({model: 'sequential-mock-llm'});
+    }
+    async *generateContentAsync(
+      _request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      if (this.responseIndex < this.responses.length) {
+        yield this.responses[this.responseIndex++];
+      } else {
+        yield {content: {parts: [{text: 'final response'}]}};
+      }
+    }
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  it('should succeed when beforeToolCallback returns valid response matching schema during agent run', async () => {
+    const functionCallResponse: LlmResponse = {
+      content: {
+        parts: [{functionCall: {name: 'schemaTool', args: {}, id: 'call_1'}}],
+      },
+    };
+    const mockModel = new SequentialMockLlm([functionCallResponse]);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [schemaTool],
+      model: mockModel,
+      beforeToolCallback: async () => {
+        return {result: 'valid_mock_response'};
+      },
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+    });
+
+    const generator = agent.runAsync(invocationContext);
+    const events: Event[] = [];
+    for await (const event of generator) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    const responseEvent = events.find(
+      (e) => e.content?.parts?.[0].functionResponse,
+    );
+    expect(responseEvent).toBeDefined();
+    expect(
+      responseEvent!.content!.parts![0].functionResponse!.response,
+    ).toEqual({
+      result: 'valid_mock_response',
+    });
+  });
+
+  it('should yield error event when beforeToolCallback returns invalid response during agent run', async () => {
+    const functionCallResponse: LlmResponse = {
+      content: {
+        parts: [{functionCall: {name: 'schemaTool', args: {}, id: 'call_1'}}],
+      },
+    };
+    const mockModel = new SequentialMockLlm([functionCallResponse]);
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      tools: [schemaTool],
+      model: mockModel,
+      beforeToolCallback: async () => {
+        return {invalid_field: 'bad'};
+      },
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+    });
+
+    const generator = agent.runAsync(invocationContext);
+    const events: Event[] = [];
+    for await (const event of generator) {
+      events.push(event);
+    }
+
+    const errorEvent = events.find((e) => e.errorCode);
+    expect(errorEvent).toBeDefined();
+    expect(errorEvent!.errorMessage).toContain(
+      'Validation failed for beforeToolCallback for tool schemaTool',
+    );
   });
 });

@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FunctionDeclaration, Schema, Type} from '@google/genai';
+import {FunctionDeclaration, Schema} from '@google/genai';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
+import {LlmAgentSchema, toSchema} from '../utils/schema_utils.js';
+import {isZodObject} from '../utils/simple_zod_to_json.js';
 
 import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
@@ -16,11 +17,7 @@ import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 /**
  * Input parameters of the function tool.
  */
-export type ToolInputParameters =
-  | z3.ZodObject<z3.ZodRawShape>
-  | z4.ZodObject<z4.ZodRawShape>
-  | Schema
-  | undefined;
+export type ToolInputParameters = LlmAgentSchema | undefined;
 
 /**
  * The arguments passed to the function tool's `execute` callback, inferred
@@ -57,21 +54,8 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   parameters?: TParameters;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  outputSchema?: LlmAgentSchema;
 };
-
-function toSchema<TParameters extends ToolInputParameters>(
-  parameters: TParameters,
-): Schema {
-  if (parameters === undefined) {
-    return {type: Type.OBJECT, properties: {}};
-  }
-
-  if (isZodObject(parameters)) {
-    return zodObjectToSchema(parameters);
-  }
-
-  return parameters;
-}
 
 /**
  * A unique symbol to identify ADK agent classes.
@@ -127,6 +111,7 @@ export class FunctionTool<
       name,
       description: options.description,
       isLongRunning: options.isLongRunning,
+      outputSchema: options.outputSchema,
     });
     this.execute = options.execute;
     this.parameters = options.parameters;

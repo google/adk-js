@@ -19,7 +19,7 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {Content, FunctionCall} from '@google/genai';
+import {Content, FunctionCall, Schema} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
@@ -53,6 +53,48 @@ const errorTool = new FunctionTool({
   parameters: z.object({}),
   execute: async () => {
     throw new Error('tool error message content');
+  },
+});
+
+const zodSchemaTool = new FunctionTool({
+  name: 'zodSchemaTool',
+  description: 'tool with zod schema',
+  parameters: z.object({}),
+  outputSchema: z.object({
+    status: z.string(),
+    code: z.number(),
+  }),
+  execute: async () => {
+    return {status: 'ok', code: 200};
+  },
+});
+
+const rawSchemaTool = new FunctionTool({
+  name: 'rawSchemaTool',
+  description: 'tool with raw schema',
+  parameters: z.object({}),
+  outputSchema: {
+    type: 'OBJECT',
+    properties: {
+      status: {type: 'STRING'},
+      code: {type: 'NUMBER'},
+    },
+    required: ['status', 'code'],
+  } as Schema,
+  execute: async () => {
+    return {status: 'ok', code: 200};
+  },
+});
+
+const primitiveSchemaTool = new FunctionTool({
+  name: 'primitiveSchemaTool',
+  description: 'tool with primitive schema',
+  parameters: z.object({}),
+  outputSchema: {
+    type: 'STRING',
+  } as Schema,
+  execute: async () => {
+    return 'ok';
   },
 });
 
@@ -361,6 +403,115 @@ describe('handleFunctionCallList', () => {
           abortSignal: signal,
         }),
       }),
+    );
+  });
+
+  it('should succeed when beforeToolCallback returns valid object matching Zod schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      return {status: 'success', code: 200};
+    };
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: '1', name: 'zodSchemaTool', args: {}}],
+      toolsDict: {'zodSchemaTool': zodSchemaTool},
+      beforeToolCallbacks: [beforeToolCallback],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
+      status: 'success',
+      code: 200,
+    });
+  });
+
+  it('should throw Error when beforeToolCallback returns invalid object not matching Zod schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      return {status: 'success'}; // missing code
+    };
+    await expect(
+      handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: '1', name: 'zodSchemaTool', args: {}}],
+        toolsDict: {'zodSchemaTool': zodSchemaTool},
+        beforeToolCallbacks: [beforeToolCallback],
+        afterToolCallbacks: [],
+      }),
+    ).rejects.toThrow(
+      'Validation failed for beforeToolCallback for tool zodSchemaTool',
+    );
+  });
+
+  it('should succeed when beforeToolCallback returns valid object matching raw Schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      return {status: 'success', code: 200};
+    };
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: '1', name: 'rawSchemaTool', args: {}}],
+      toolsDict: {'rawSchemaTool': rawSchemaTool},
+      beforeToolCallbacks: [beforeToolCallback],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
+      status: 'success',
+      code: 200,
+    });
+  });
+
+  it('should throw Error when beforeToolCallback returns invalid object not matching raw Schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      return {status: 'success'}; // missing code
+    };
+    await expect(
+      handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: '1', name: 'rawSchemaTool', args: {}}],
+        toolsDict: {'rawSchemaTool': rawSchemaTool},
+        beforeToolCallbacks: [beforeToolCallback],
+        afterToolCallbacks: [],
+      }),
+    ).rejects.toThrow(
+      'Validation failed for beforeToolCallback for tool rawSchemaTool',
+    );
+  });
+
+  it('should succeed when beforeToolCallback returns valid primitive matching raw Schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      // @ts-expect-error callback is typed to return Record<string, unknown> but we want to test primitive at runtime
+      return 'success';
+    };
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: '1', name: 'primitiveSchemaTool', args: {}}],
+      toolsDict: {'primitiveSchemaTool': primitiveSchemaTool},
+      beforeToolCallbacks: [beforeToolCallback],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    const definedEvent = event as Event;
+    expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'success',
+    });
+  });
+
+  it('should throw Error when beforeToolCallback returns invalid primitive not matching raw Schema', async () => {
+    const beforeToolCallback: SingleBeforeToolCallback = async () => {
+      // @ts-expect-error callback is typed to return Record<string, unknown> but we want to test primitive at runtime
+      return 123; // expected string
+    };
+    await expect(
+      handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: '1', name: 'primitiveSchemaTool', args: {}}],
+        toolsDict: {'primitiveSchemaTool': primitiveSchemaTool},
+        beforeToolCallbacks: [beforeToolCallback],
+        afterToolCallbacks: [],
+      }),
+    ).rejects.toThrow(
+      'Validation failed for beforeToolCallback for tool primitiveSchemaTool',
     );
   });
 });
