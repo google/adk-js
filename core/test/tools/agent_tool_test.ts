@@ -17,7 +17,9 @@ import {
   Runner,
   State,
 } from '@google/adk';
+import {Content} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
 
 vi.mock('../../src/runner/runner.js', async (importOriginal) => {
   const actual =
@@ -512,5 +514,250 @@ describe('AgentTool', () => {
     expect(subAgentSession?.state).not.toHaveProperty(
       `${State.TEMP_PREFIX}tempKey`,
     );
+  });
+
+  describe('Schema Validation', () => {
+    const LLM_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.llmAgent');
+
+    it('validates input arguments using Zod schema and succeeds', async () => {
+      const schema = z.object({
+        query: z.string(),
+        count: z.number(),
+      });
+
+      const mockAgent = {
+        name: 'sub-agent',
+        [LLM_AGENT_SIGNATURE_SYMBOL]: true,
+        inputSchema: schema,
+      } as unknown as LlmAgent;
+
+      const tool = new AgentTool({agent: mockAgent});
+      const mockSessionService = new InMemorySessionService();
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: mockAgent,
+        session: createSession({
+          id: 'parent',
+          appName: 'sub-agent',
+          userId: 'user',
+        }),
+        pluginManager: new PluginManager([]),
+        sessionService: mockSessionService,
+      });
+      const toolContext = new Context({invocationContext});
+
+      let receivedContent: Content | undefined;
+      const mockRunAsync = async function* (params: {newMessage: Content}) {
+        receivedContent = params.newMessage;
+        yield createEvent({
+          author: 'sub-agent',
+          content: {role: 'model', parts: [{text: 'result'}]},
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation((config) => {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {query: 'test', count: 10},
+        toolContext,
+      });
+
+      expect(result).toBe('result');
+      expect(receivedContent).toBeDefined();
+      expect(JSON.parse(receivedContent.parts[0].text)).toEqual({
+        query: 'test',
+        count: 10,
+      });
+    });
+
+    it('throws error if input validation fails', async () => {
+      const schema = z.object({
+        query: z.string(),
+        count: z.number(),
+      });
+
+      const mockAgent = {
+        name: 'sub-agent',
+        [LLM_AGENT_SIGNATURE_SYMBOL]: true,
+        inputSchema: schema,
+      } as unknown as LlmAgent;
+
+      const tool = new AgentTool({agent: mockAgent});
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: mockAgent,
+        session: createSession({
+          id: 'parent',
+          appName: 'sub-agent',
+          userId: 'user',
+        }),
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      await expect(
+        tool.runAsync({
+          args: {query: 'test', count: 'not-a-number'},
+          toolContext,
+        }),
+      ).rejects.toThrow('Input validation failed');
+    });
+
+    it('validates output using Zod schema and succeeds', async () => {
+      const schema = z.object({
+        reply: z.string(),
+        status: z.number(),
+      });
+
+      const mockAgent = {
+        name: 'sub-agent',
+        [LLM_AGENT_SIGNATURE_SYMBOL]: true,
+        outputSchema: schema,
+      } as unknown as LlmAgent;
+
+      const tool = new AgentTool({agent: mockAgent});
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: mockAgent,
+        session: createSession({
+          id: 'parent',
+          appName: 'sub-agent',
+          userId: 'user',
+        }),
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      const mockRunAsync = async function* () {
+        yield createEvent({
+          author: 'sub-agent',
+          content: {
+            role: 'model',
+            parts: [{text: JSON.stringify({reply: 'ok', status: 200})}],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation((config) => {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {request: 'go'},
+        toolContext,
+      });
+
+      expect(result).toEqual({reply: 'ok', status: 200});
+    });
+
+    it('throws error if output validation fails', async () => {
+      const schema = z.object({
+        reply: z.string(),
+        status: z.number(),
+      });
+
+      const mockAgent = {
+        name: 'sub-agent',
+        [LLM_AGENT_SIGNATURE_SYMBOL]: true,
+        outputSchema: schema,
+      } as unknown as LlmAgent;
+
+      const tool = new AgentTool({agent: mockAgent});
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: mockAgent,
+        session: createSession({
+          id: 'parent',
+          appName: 'sub-agent',
+          userId: 'user',
+        }),
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      const mockRunAsync = async function* () {
+        yield createEvent({
+          author: 'sub-agent',
+          content: {
+            role: 'model',
+            parts: [
+              {text: JSON.stringify({reply: 'ok', status: 'not-a-number'})},
+            ],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation((config) => {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      await expect(
+        tool.runAsync({
+          args: {request: 'go'},
+          toolContext,
+        }),
+      ).rejects.toThrow('Output validation failed');
+    });
+
+    it('skips validation if schema is not Zod (raw GenAI Schema)', async () => {
+      const mockAgent = {
+        name: 'sub-agent',
+        [LLM_AGENT_SIGNATURE_SYMBOL]: true,
+        inputSchema: {type: 'OBJECT', properties: {query: {type: 'STRING'}}},
+        outputSchema: {type: 'OBJECT', properties: {reply: {type: 'STRING'}}},
+      } as unknown as LlmAgent;
+
+      const tool = new AgentTool({agent: mockAgent});
+      const invocationContext = new InvocationContext({
+        invocationId: 'test-invocation',
+        agent: mockAgent,
+        session: createSession({
+          id: 'parent',
+          appName: 'sub-agent',
+          userId: 'user',
+        }),
+        pluginManager: new PluginManager([]),
+      });
+      const toolContext = new Context({invocationContext});
+
+      const mockRunAsync = async function* () {
+        yield createEvent({
+          author: 'sub-agent',
+          content: {
+            role: 'model',
+            parts: [{text: JSON.stringify({reply: 'ok'})}],
+          },
+        });
+      };
+
+      vi.mocked(Runner).mockImplementation((config) => {
+        return {
+          appName: config?.appName,
+          sessionService: config?.sessionService,
+          runAsync: mockRunAsync,
+        } as unknown as Runner;
+      });
+
+      const result = await tool.runAsync({
+        args: {invalidKey: 'value'},
+        toolContext,
+      });
+
+      expect(result).toEqual({reply: 'ok'});
+    });
   });
 });

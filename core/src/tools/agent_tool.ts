@@ -12,6 +12,7 @@ import {Event} from '../events/event.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {Runner} from '../runner/runner.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
+import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {State} from '../sessions/state.js';
@@ -87,10 +88,7 @@ export class AgentTool extends BaseTool {
       declaration = {
         name: this.name,
         description: this.description,
-        // TODO(b/425992518): We should not use the agent's input schema as is.
-        // It should be validated and possibly transformed. Consider similar
-        // logic to one we have in Python ADK.
-        parameters: this.agent.inputSchema,
+        parameters: zodObjectToSchema(this.agent.inputSchema),
       };
     } else {
       declaration = {
@@ -130,16 +128,23 @@ export class AgentTool extends BaseTool {
     // returned verbatim below, which is the intended effect of
     // skipSummarization.
 
+    let validatedArgs = args;
+    if (isLlmAgent(this.agent) && isZodObject(this.agent.inputSchema)) {
+      const result = this.agent.inputSchema.safeParse(args);
+      if (!result.success) {
+        throw new Error(`Input validation failed: ${result.error.message}`);
+      }
+      validatedArgs = result.data as Record<string, unknown>;
+    }
+
     const hasInputSchema = isLlmAgent(this.agent) && this.agent.inputSchema;
     const content: Content = {
       role: 'user',
       parts: [
         {
-          // TODO(b/425992518): Should be validated. Consider similar
-          // logic to one we have in Python ADK.
           text: hasInputSchema
-            ? JSON.stringify(args)
-            : (args['request'] as string),
+            ? JSON.stringify(validatedArgs)
+            : (validatedArgs['request'] as string),
         },
       ],
     };
@@ -197,7 +202,6 @@ export class AgentTool extends BaseTool {
       return '';
     }
 
-    const hasOutputSchema = isLlmAgent(this.agent) && this.agent.outputSchema;
     // Exclude thoughts from the merged text.
     const mergedText = lastEvent.content.parts
       .filter((part) => !part.thought)
@@ -205,8 +209,22 @@ export class AgentTool extends BaseTool {
       .filter((text) => text)
       .join('\n');
 
-    // TODO - b/425992518: In case of output schema, the output should be
-    // validated. Consider similar logic to one we have in Python ADK.
-    return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
+    if (isLlmAgent(this.agent) && this.agent.outputSchema) {
+      let parsedOutput: unknown;
+      try {
+        parsedOutput = JSON.parse(mergedText);
+      } catch (_e) {
+        throw new Error(`Failed to parse output as JSON: ${mergedText}`);
+      }
+      if (isZodObject(this.agent.outputSchema)) {
+        const result = this.agent.outputSchema.safeParse(parsedOutput);
+        if (!result.success) {
+          throw new Error(`Output validation failed: ${result.error.message}`);
+        }
+        return result.data;
+      }
+      return parsedOutput;
+    }
+    return mergedText;
   }
 }

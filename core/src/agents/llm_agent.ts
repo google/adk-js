@@ -40,7 +40,6 @@ import {
   traceCallLlm,
   tracer,
 } from '../telemetry/tracing.js';
-import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {
   BaseLlmRequestProcessor,
@@ -357,8 +356,8 @@ export class LlmAgent extends BaseAgent {
   disallowTransferToParent: boolean;
   disallowTransferToPeers: boolean;
   includeContents: 'default' | 'none';
-  inputSchema?: Schema;
-  outputSchema?: Schema;
+  inputSchema?: LlmAgentSchema;
+  outputSchema?: LlmAgentSchema;
   outputKey?: string;
   beforeModelCallback?: BeforeModelCallback;
   afterModelCallback?: AfterModelCallback;
@@ -378,12 +377,8 @@ export class LlmAgent extends BaseAgent {
     this.disallowTransferToParent = config.disallowTransferToParent ?? false;
     this.disallowTransferToPeers = config.disallowTransferToPeers ?? false;
     this.includeContents = config.includeContents ?? 'default';
-    this.inputSchema = isZodObject(config.inputSchema)
-      ? zodObjectToSchema(config.inputSchema)
-      : config.inputSchema;
-    this.outputSchema = isZodObject(config.outputSchema)
-      ? zodObjectToSchema(config.outputSchema)
-      : config.outputSchema;
+    this.inputSchema = config.inputSchema;
+    this.outputSchema = config.outputSchema;
     this.outputKey = config.outputKey;
     this.beforeModelCallback = config.beforeModelCallback;
     this.afterModelCallback = config.afterModelCallback;

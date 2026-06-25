@@ -6,6 +6,7 @@
 
 import {Event} from '../../events/event.js';
 import {LlmRequest, setOutputSchema} from '../../models/llm_request.js';
+import {zodObjectToSchema} from '../../utils/simple_zod_to_json.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
@@ -38,7 +39,7 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
 
     llmRequest.config = {...(agent.generateContentConfig ?? {})};
     if (agent.outputSchema && (!agent.tools || agent.tools.length === 0)) {
-      setOutputSchema(llmRequest, agent.outputSchema);
+      setOutputSchema(llmRequest, zodObjectToSchema(agent.outputSchema));
     }
 
     if (invocationContext.runConfig) {

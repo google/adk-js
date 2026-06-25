@@ -65,10 +65,10 @@ export function isZodObject(
 }
 
 export function zodObjectToSchema(
-  schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape>,
+  schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape> | Schema,
 ): Schema {
   if (!isZodObject(schema)) {
-    throw new Error('Expected a Zod Object');
+    return schema as Schema;
   }
 
   if (isZodV4Schema(schema)) {
