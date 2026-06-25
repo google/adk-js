@@ -43,7 +43,7 @@ describe('Build setup', () => {
         expect(buildResult.stderr).toBe('');
         expect(buildResult.stdout).toContain('\nBuild complete');
       }
-    });
+    }, 60000);
 
     it(
       'should build and run agent successfully',

@@ -27,7 +27,7 @@ import {
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
@@ -837,5 +837,127 @@ describe('LlmAgent Default Request Processors', () => {
       CONTENT_REQUEST_PROCESSOR,
     );
     expect(authIndex).toBeLessThan(contentIndex);
+  });
+});
+
+describe('Context Cleanup', () => {
+  it('should clear references when cleanup is called', () => {
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: {
+          hasDelta: () => false,
+          get: () => undefined,
+          set: () => {},
+        },
+        events: [],
+      } as unknown as Session,
+      agent: {} as unknown as LlmAgent,
+      pluginManager: new PluginManager(),
+    });
+    const context = new Context({
+      invocationContext,
+    });
+
+    expect(context.eventActions).toBeDefined();
+    expect(context.invocationContext).toBeDefined();
+    expect(context.state).toBeDefined();
+
+    context.cleanup();
+
+    expect(context.eventActions).toBeUndefined();
+    expect(context.invocationContext).toBeUndefined();
+    expect((context as unknown as {_state: unknown})._state).toBeUndefined();
+    expect(() => context.userId).toThrow();
+  });
+});
+
+describe('LlmAgent Callback Context Cleanup', () => {
+  let agent: TestLlmAgent;
+  let invocationContext: InvocationContext;
+  let llmRequest: LlmRequest;
+  let modelResponseEvent: Event;
+
+  beforeEach(() => {
+    agent = new TestLlmAgent({name: 'test_agent'});
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: {
+          hasDelta: () => false,
+          get: () => undefined,
+          set: () => {},
+        },
+        events: [],
+      } as unknown as Session,
+      agent: agent,
+      pluginManager: new PluginManager(),
+    });
+    llmRequest = {contents: [], liveConnectConfig: {}, toolsDict: {}};
+    modelResponseEvent = {id: 'evt_123'} as Event;
+  });
+
+  it('should call cleanup on Context after beforeModelCallback', async () => {
+    const cleanupSpy = vi.spyOn(Context.prototype, 'cleanup');
+    agent.beforeModelCallback = async () => ({
+      content: {parts: [{text: 'before'}]},
+    });
+
+    const generator = agent.testCallLlmAsync(
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+    await generator.next();
+
+    expect(cleanupSpy).toHaveBeenCalled();
+    cleanupSpy.mockRestore();
+  });
+
+  it('should call cleanup on Context after afterModelCallback', async () => {
+    const cleanupSpy = vi.spyOn(Context.prototype, 'cleanup');
+    agent.model = new MockLlm({content: {parts: [{text: 'model response'}]}});
+    agent.afterModelCallback = async () => ({
+      content: {parts: [{text: 'after'}]},
+    });
+
+    const generator = agent.testCallLlmAsync(
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+    await generator.next();
+
+    // handleBeforeModelCallback runs first (cleanup called once)
+    // handleAfterModelCallback runs next (cleanup called twice)
+    expect(cleanupSpy).toHaveBeenCalledTimes(2);
+    cleanupSpy.mockRestore();
+  });
+
+  it('should call cleanup on Context during runAndHandleError when error occurs', async () => {
+    const cleanupSpy = vi.spyOn(Context.prototype, 'cleanup');
+
+    // eslint-disable-next-line require-yield
+    const errorGenerator = async function* () {
+      throw new Error('Test Error');
+    };
+
+    const generator = agent.testRunAndHandleError(
+      errorGenerator(),
+      invocationContext,
+      llmRequest,
+      modelResponseEvent,
+    );
+
+    const responses = [];
+    for await (const response of generator) {
+      responses.push(response);
+    }
+
+    expect(responses.length).toBe(1);
+    expect(cleanupSpy).toHaveBeenCalled();
+    cleanupSpy.mockRestore();
   });
 });

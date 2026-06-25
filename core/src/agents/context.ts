@@ -17,6 +17,13 @@ import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {InvocationContext} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
+interface WritableContext {
+  eventActions?: EventActions;
+  invocationContext?: InvocationContext;
+  _state?: State;
+  toolConfirmation?: ToolConfirmation;
+}
+
 /**
  * The context of various callbacks within an agent run.
  *
@@ -181,5 +188,13 @@ export class Context extends ReadonlyContext {
         confirmed: false,
         payload: payload,
       });
+  }
+
+  cleanup() {
+    const writable = this as unknown as WritableContext;
+    writable.eventActions = undefined;
+    writable.invocationContext = undefined;
+    writable._state = undefined;
+    writable.toolConfirmation = undefined;
   }
 }

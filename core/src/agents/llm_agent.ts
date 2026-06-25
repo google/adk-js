@@ -1130,36 +1130,40 @@ export class LlmAgent extends BaseAgent {
       eventActions: modelResponseEvent.actions,
     });
 
-    // Plugin callbacks before canonical callbacks
-    const beforeModelCallbackResponse =
-      await invocationContext.pluginManager.runBeforeModelCallback({
-        callbackContext,
-        llmRequest,
-      });
-    if (invocationContext.abortSignal?.aborted) {
-      return;
-    }
-
-    if (beforeModelCallbackResponse) {
-      return beforeModelCallbackResponse;
-    }
-
-    // If no override was returned from the plugins, run the canonical callbacks
-    for (const callback of this.canonicalBeforeModelCallbacks) {
-      const callbackResponse = await callback({
-        context: callbackContext,
-        request: llmRequest,
-      });
-
+    try {
+      // Plugin callbacks before canonical callbacks
+      const beforeModelCallbackResponse =
+        await invocationContext.pluginManager.runBeforeModelCallback({
+          callbackContext,
+          llmRequest,
+        });
       if (invocationContext.abortSignal?.aborted) {
         return;
       }
 
-      if (callbackResponse) {
-        return callbackResponse;
+      if (beforeModelCallbackResponse) {
+        return beforeModelCallbackResponse;
       }
+
+      // If no override was returned from the plugins, run the canonical callbacks
+      for (const callback of this.canonicalBeforeModelCallbacks) {
+        const callbackResponse = await callback({
+          context: callbackContext,
+          request: llmRequest,
+        });
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (callbackResponse) {
+          return callbackResponse;
+        }
+      }
+      return undefined;
+    } finally {
+      callbackContext.cleanup();
     }
-    return undefined;
   }
 
   private async handleAfterModelCallback(
@@ -1172,32 +1176,36 @@ export class LlmAgent extends BaseAgent {
       eventActions: modelResponseEvent.actions,
     });
 
-    // Plugin callbacks before canonical callbacks
-    const afterModelCallbackResponse =
-      await invocationContext.pluginManager.runAfterModelCallback({
-        callbackContext,
-        llmResponse,
-      });
-    if (afterModelCallbackResponse) {
-      return afterModelCallbackResponse;
-    }
-
-    // If no override was returned from the plugins, run the canonical callbacks
-    for (const callback of this.canonicalAfterModelCallbacks) {
-      const callbackResponse = await callback({
-        context: callbackContext,
-        response: llmResponse,
-      });
-
-      if (invocationContext.abortSignal?.aborted) {
-        return;
+    try {
+      // Plugin callbacks before canonical callbacks
+      const afterModelCallbackResponse =
+        await invocationContext.pluginManager.runAfterModelCallback({
+          callbackContext,
+          llmResponse,
+        });
+      if (afterModelCallbackResponse) {
+        return afterModelCallbackResponse;
       }
 
-      if (callbackResponse) {
-        return callbackResponse;
+      // If no override was returned from the plugins, run the canonical callbacks
+      for (const callback of this.canonicalAfterModelCallbacks) {
+        const callbackResponse = await callback({
+          context: callbackContext,
+          response: llmResponse,
+        });
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+
+        if (callbackResponse) {
+          return callbackResponse;
+        }
       }
+      return undefined;
+    } finally {
+      callbackContext.cleanup();
     }
-    return undefined;
   }
 
   protected async *runAndHandleError<T extends LlmResponse | Event>(
@@ -1222,54 +1230,58 @@ export class LlmAgent extends BaseAgent {
         eventActions: modelResponseEvent.actions,
       });
 
-      // Wrapped LLM should throw Error-typed errors
-      if (modelError instanceof Error) {
-        // Try plugins to recover from the error
-        const onModelErrorCallbackResponse =
-          await invocationContext.pluginManager.runOnModelErrorCallback({
-            callbackContext: callbackContext,
-            llmRequest: llmRequest,
-            error: modelError as Error,
-          });
+      try {
+        // Wrapped LLM should throw Error-typed errors
+        if (modelError instanceof Error) {
+          // Try plugins to recover from the error
+          const onModelErrorCallbackResponse =
+            await invocationContext.pluginManager.runOnModelErrorCallback({
+              callbackContext: callbackContext,
+              llmRequest: llmRequest,
+              error: modelError as Error,
+            });
 
-        if (onModelErrorCallbackResponse) {
-          yield onModelErrorCallbackResponse as T;
-        } else {
-          // If no plugins, just return the message.
-          let errorCode = 'UNKNOWN_ERROR';
-          let errorMessage = modelError.message;
-
-          try {
-            const errorResponse = JSON.parse(modelError.message) as {
-              error: {code: number; message: string};
-            };
-            if (errorResponse?.error) {
-              errorCode = String(errorResponse.error.code || 'UNKNOWN_ERROR');
-              errorMessage = errorResponse.error.message || errorMessage;
-            }
-          } catch {
-            // Ignore JSON parse error, use original message.
-          }
-
-          if (modelResponseEvent.actions) {
-            // We are yielding an Event
-            yield createEvent({
-              invocationId: invocationContext.invocationId,
-              author: this.name,
-              errorCode,
-              errorMessage,
-            }) as T;
+          if (onModelErrorCallbackResponse) {
+            yield onModelErrorCallbackResponse as T;
           } else {
-            // We are yielding an LlmResponse
-            yield {
-              errorCode,
-              errorMessage,
-            } as T;
+            // If no plugins, just return the message.
+            let errorCode = 'UNKNOWN_ERROR';
+            let errorMessage = modelError.message;
+
+            try {
+              const errorResponse = JSON.parse(modelError.message) as {
+                error: {code: number; message: string};
+              };
+              if (errorResponse?.error) {
+                errorCode = String(errorResponse.error.code || 'UNKNOWN_ERROR');
+                errorMessage = errorResponse.error.message || errorMessage;
+              }
+            } catch {
+              // Ignore JSON parse error, use original message.
+            }
+
+            if (modelResponseEvent.actions) {
+              // We are yielding an Event
+              yield createEvent({
+                invocationId: invocationContext.invocationId,
+                author: this.name,
+                errorCode,
+                errorMessage,
+              }) as T;
+            } else {
+              // We are yielding an LlmResponse
+              yield {
+                errorCode,
+                errorMessage,
+              } as T;
+            }
           }
+        } else {
+          logger.error('Unknown error during response generation', modelError);
+          throw modelError;
         }
-      } else {
-        logger.error('Unknown error during response generation', modelError);
-        throw modelError;
+      } finally {
+        callbackContext.cleanup();
       }
     }
   }

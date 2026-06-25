@@ -6,6 +6,7 @@
 import {
   BasePlugin,
   BaseTool,
+  Context,
   createEvent,
   createEventActions,
   Event,
@@ -363,6 +364,19 @@ describe('handleFunctionCallList', () => {
         }),
       }),
     );
+  });
+
+  it('should call cleanup on toolContext after tool execution', async () => {
+    const cleanupSpy = vi.spyOn(Context.prototype, 'cleanup');
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [functionCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(cleanupSpy).toHaveBeenCalled();
+    cleanupSpy.mockRestore();
   });
 });
 

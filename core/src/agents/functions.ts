@@ -335,142 +335,150 @@ export async function handleFunctionCallList({
       toolConfirmation,
     });
 
-    // TODO - b/436079721: implement [tracer.start_as_current_span]
-    logger.debug(`execute_tool ${tool.name}`);
-    const functionArgs = functionCall.args ?? {};
+    try {
+      // TODO - b/436079721: implement [tracer.start_as_current_span]
+      logger.debug(`execute_tool ${tool.name}`);
+      const functionArgs = functionCall.args ?? {};
 
-    // Step 1: Check if plugin before_tool_callback overrides the function
-    // response.
-    let functionResponse = null;
-    let functionResponseError: string | unknown | undefined;
-    functionResponse =
-      await invocationContext.pluginManager.runBeforeToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-      });
-
-    // Step 2: If no overrides are provided from the plugins, further run the
-    // canonical callback.
-    // TODO - b/425992518: validate the callback response type matches.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of beforeToolCallbacks) {
-        functionResponse = await callback({
+      // Step 1: Check if plugin before_tool_callback overrides the function
+      // response.
+      let functionResponse = null;
+      let functionResponseError: string | unknown | undefined;
+      functionResponse =
+        await invocationContext.pluginManager.runBeforeToolCallback({
           tool: tool,
-          args: functionArgs,
-          context: toolContext,
+          toolArgs: functionArgs,
+          toolContext: toolContext,
         });
-        if (functionResponse) {
-          break;
-        }
-      }
-    }
 
-    // Step 3: Otherwise, proceed calling the tool normally.
-    if (functionResponse == null) {
-      // Cover both null and undefined
-      try {
-        functionResponse = await callToolAsync(tool, functionArgs, toolContext);
-      } catch (e: unknown) {
-        if (e instanceof Error) {
-          const onToolErrorResponse =
-            await invocationContext.pluginManager.runOnToolErrorCallback({
-              tool: tool,
-              toolArgs: functionArgs,
-              toolContext: toolContext,
-              error: e,
-            });
-
-          // Set function response to the result of the error callback and
-          // continue execution, do not shortcut
-          if (onToolErrorResponse) {
-            functionResponse = onToolErrorResponse;
-          } else {
-            // If the error callback returns undefined, use the error message
-            // as the function response error.
-            functionResponseError = e.message;
+      // Step 2: If no overrides are provided from the plugins, further run the
+      // canonical callback.
+      // TODO - b/425992518: validate the callback response type matches.
+      if (functionResponse == null) {
+        // Cover both null and undefined
+        for (const callback of beforeToolCallbacks) {
+          functionResponse = await callback({
+            tool: tool,
+            args: functionArgs,
+            context: toolContext,
+          });
+          if (functionResponse) {
+            break;
           }
-        } else {
-          // If the error is not an Error, use the error object as the function
-          // response error.
-          functionResponseError = e;
         }
       }
-    }
 
-    // Step 4: Check if plugin after_tool_callback overrides the function
-    // response.
-    let alteredFunctionResponse =
-      await invocationContext.pluginManager.runAfterToolCallback({
-        tool: tool,
-        toolArgs: functionArgs,
-        toolContext: toolContext,
-        result: functionResponse,
+      // Step 3: Otherwise, proceed calling the tool normally.
+      if (functionResponse == null) {
+        // Cover both null and undefined
+        try {
+          functionResponse = await callToolAsync(
+            tool,
+            functionArgs,
+            toolContext,
+          );
+        } catch (e: unknown) {
+          if (e instanceof Error) {
+            const onToolErrorResponse =
+              await invocationContext.pluginManager.runOnToolErrorCallback({
+                tool: tool,
+                toolArgs: functionArgs,
+                toolContext: toolContext,
+                error: e,
+              });
+
+            // Set function response to the result of the error callback and
+            // continue execution, do not shortcut
+            if (onToolErrorResponse) {
+              functionResponse = onToolErrorResponse;
+            } else {
+              // If the error callback returns undefined, use the error message
+              // as the function response error.
+              functionResponseError = e.message;
+            }
+          } else {
+            // If the error is not an Error, use the error object as the function
+            // response error.
+            functionResponseError = e;
+          }
+        }
+      }
+
+      // Step 4: Check if plugin after_tool_callback overrides the function
+      // response.
+      let alteredFunctionResponse =
+        await invocationContext.pluginManager.runAfterToolCallback({
+          tool: tool,
+          toolArgs: functionArgs,
+          toolContext: toolContext,
+          result: functionResponse,
+        });
+
+      // Step 5: If no overrides are provided from the plugins, further run the
+      // canonical after_tool_callbacks.
+      if (alteredFunctionResponse == null) {
+        // Cover both null and undefined
+        for (const callback of afterToolCallbacks) {
+          alteredFunctionResponse = await callback({
+            tool: tool,
+            args: functionArgs,
+            context: toolContext,
+            response: functionResponse,
+          });
+          if (alteredFunctionResponse) {
+            break;
+          }
+        }
+      }
+
+      // Step 6: If alternative response exists from after_tool_callback, use it
+      // instead of the original function response.
+      if (alteredFunctionResponse != null) {
+        functionResponse = alteredFunctionResponse;
+      }
+
+      // TODO - b/425992518: state event polluting runtime, consider fix.
+      // Allow long running function to return None as response.
+      if (tool.isLongRunning && !functionResponse) {
+        continue;
+      }
+
+      if (functionResponseError) {
+        functionResponse = {error: functionResponseError};
+      } else if (
+        typeof functionResponse !== 'object' ||
+        functionResponse == null
+      ) {
+        functionResponse = {result: functionResponse};
+      } else if (Array.isArray(functionResponse)) {
+        functionResponse = {results: functionResponse};
+      }
+
+      // Builds the function response event.
+      const functionResponseEvent = createEvent({
+        invocationId: invocationContext.invocationId,
+        author: invocationContext.agent.name,
+        content: createUserContent({
+          functionResponse: {
+            id: toolContext.functionCallId,
+            name: tool.name,
+            response: functionResponse,
+          },
+        }),
+        actions: toolContext.actions,
+        branch: invocationContext.branch,
       });
 
-    // Step 5: If no overrides are provided from the plugins, further run the
-    // canonical after_tool_callbacks.
-    if (alteredFunctionResponse == null) {
-      // Cover both null and undefined
-      for (const callback of afterToolCallbacks) {
-        alteredFunctionResponse = await callback({
-          tool: tool,
-          args: functionArgs,
-          context: toolContext,
-          response: functionResponse,
-        });
-        if (alteredFunctionResponse) {
-          break;
-        }
-      }
+      // TODO - b/436079721: implement [traceToolCall]
+      logger.debug('traceToolCall', {
+        tool: tool.name,
+        args: functionArgs,
+        functionResponseEvent: functionResponseEvent.id,
+      });
+      functionResponseEvents.push(functionResponseEvent);
+    } finally {
+      toolContext.cleanup();
     }
-
-    // Step 6: If alternative response exists from after_tool_callback, use it
-    // instead of the original function response.
-    if (alteredFunctionResponse != null) {
-      functionResponse = alteredFunctionResponse;
-    }
-
-    // TODO - b/425992518: state event polluting runtime, consider fix.
-    // Allow long running function to return None as response.
-    if (tool.isLongRunning && !functionResponse) {
-      continue;
-    }
-
-    if (functionResponseError) {
-      functionResponse = {error: functionResponseError};
-    } else if (
-      typeof functionResponse !== 'object' ||
-      functionResponse == null
-    ) {
-      functionResponse = {result: functionResponse};
-    } else if (Array.isArray(functionResponse)) {
-      functionResponse = {results: functionResponse};
-    }
-
-    // Builds the function response event.
-    const functionResponseEvent = createEvent({
-      invocationId: invocationContext.invocationId,
-      author: invocationContext.agent.name,
-      content: createUserContent({
-        functionResponse: {
-          id: toolContext.functionCallId,
-          name: tool.name,
-          response: functionResponse,
-        },
-      }),
-      actions: toolContext.actions,
-      branch: invocationContext.branch,
-    });
-
-    // TODO - b/436079721: implement [traceToolCall]
-    logger.debug('traceToolCall', {
-      tool: tool.name,
-      args: functionArgs,
-      functionResponseEvent: functionResponseEvent.id,
-    });
-    functionResponseEvents.push(functionResponseEvent);
   }
 
   if (!functionResponseEvents.length) {
