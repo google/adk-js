@@ -32,7 +32,7 @@ export class AdkTsApiServer extends BaseTestServer {
   private params: TestApiServerParams;
 
   constructor(params: TestApiServerParams) {
-    super('localhost', params.port || 0);
+    super('127.0.0.1', params.port || 0);
     this.params = params;
   }
 
@@ -64,6 +64,8 @@ export class AdkTsApiServer extends BaseTestServer {
       cliPath,
       params.serveDebugUI ? 'web' : 'api_server',
       params.agentsDir,
+      '--host',
+      this.host,
       '--port',
       this.port.toString(),
       '--allow_origins',
