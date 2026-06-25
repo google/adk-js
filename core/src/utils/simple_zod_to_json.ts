@@ -65,129 +65,133 @@ export function isZodObject(
 }
 
 export function zodObjectToSchema(
-  schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape>,
+  schema: z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape> | Schema,
 ): Schema {
-  if (!isZodObject(schema)) {
-    throw new Error('Expected a Zod Object');
+  if (isZodSchema(schema)) {
+    if (!isZodObject(schema)) {
+      throw new Error('Expected a Zod Object');
+    }
+
+    if (isZodV4Schema(schema)) {
+      return toJSONSchemaV4(schema, {
+        target: 'openapi-3.0',
+        io: 'input',
+        override: (ctx) => {
+          const {jsonSchema} = ctx;
+
+          if (jsonSchema.additionalProperties !== undefined) {
+            delete jsonSchema.additionalProperties;
+          }
+
+          if (jsonSchema.readOnly !== undefined) {
+            delete jsonSchema.readOnly;
+          }
+
+          if (jsonSchema.maxItems !== undefined) {
+            (jsonSchema as Schema).maxItems = jsonSchema.maxItems.toString();
+          }
+
+          if (jsonSchema.format === 'email' || jsonSchema.format === 'uuid') {
+            delete jsonSchema.pattern;
+          }
+
+          if (jsonSchema.minItems !== undefined) {
+            (jsonSchema as Schema).minItems = jsonSchema.minItems.toString();
+          }
+
+          if (jsonSchema.minLength !== undefined) {
+            (jsonSchema as Schema).minLength = jsonSchema.minLength.toString();
+          }
+
+          if (jsonSchema.maxLength !== undefined) {
+            (jsonSchema as Schema).maxLength = jsonSchema.maxLength.toString();
+          }
+
+          if (jsonSchema.enum?.length === 1 && jsonSchema.enum[0] === null) {
+            (jsonSchema as Schema).type = Type.NULL;
+            delete jsonSchema.enum;
+          }
+
+          if (jsonSchema.type !== undefined) {
+            (jsonSchema as {type: string}).type = (
+              jsonSchema as {type: string}
+            ).type.toUpperCase();
+          }
+        },
+      }) as Schema;
+    }
+
+    if (isZodV3Schema(schema)) {
+      return toJSONSchemaV3(schema, {
+        target: 'openApi3',
+        emailStrategy: 'format:email',
+        postProcess: (jsonSchema) => {
+          if (!jsonSchema) {
+            return;
+          }
+
+          if (
+            (jsonSchema as JsonSchema7ObjectType).additionalProperties !==
+            undefined
+          ) {
+            delete (jsonSchema as JsonSchema7ObjectType).additionalProperties;
+          }
+
+          if ((jsonSchema as JsonSchema7ArrayType).maxItems !== undefined) {
+            (jsonSchema as Schema).maxItems = (
+              jsonSchema as JsonSchema7ArrayType
+            ).maxItems?.toString();
+          }
+
+          if ((jsonSchema as JsonSchema7ArrayType).minItems !== undefined) {
+            (jsonSchema as Schema).minItems = (
+              jsonSchema as JsonSchema7ArrayType
+            ).minItems?.toString();
+          }
+
+          if ((jsonSchema as JsonSchema7StringType).minLength !== undefined) {
+            (jsonSchema as Schema).minLength = (
+              jsonSchema as JsonSchema7StringType
+            ).minLength?.toString();
+          }
+
+          if ((jsonSchema as JsonSchema7StringType).maxLength !== undefined) {
+            (jsonSchema as Schema).maxLength = (
+              jsonSchema as JsonSchema7StringType
+            ).maxLength?.toString();
+          }
+
+          if (
+            (jsonSchema as JsonSchema7EnumType).enum?.length === 1 &&
+            (jsonSchema as JsonSchema7EnumType).enum[0] === 'null'
+          ) {
+            (jsonSchema as Schema).type = Type.NULL;
+            delete (jsonSchema as unknown as {enum?: []}).enum;
+          }
+
+          if (
+            (jsonSchema as JsonSchema7NumberType).type === 'integer' &&
+            (jsonSchema as JsonSchema7BigintType).format !== 'int64'
+          ) {
+            (jsonSchema as JsonSchema7NumberType).minimum ??=
+              Number.MIN_SAFE_INTEGER;
+            (jsonSchema as JsonSchema7NumberType).maximum ??=
+              Number.MAX_SAFE_INTEGER;
+          }
+
+          if ((jsonSchema as {type: string}).type !== undefined) {
+            (jsonSchema as {type: string}).type = (
+              jsonSchema as {type: string}
+            ).type.toUpperCase();
+          }
+
+          return jsonSchema;
+        },
+      }) as Schema;
+    }
+
+    throw new Error('Unsupported Zod schema version.');
   }
 
-  if (isZodV4Schema(schema)) {
-    return toJSONSchemaV4(schema, {
-      target: 'openapi-3.0',
-      io: 'input',
-      override: (ctx) => {
-        const {jsonSchema} = ctx;
-
-        if (jsonSchema.additionalProperties !== undefined) {
-          delete jsonSchema.additionalProperties;
-        }
-
-        if (jsonSchema.readOnly !== undefined) {
-          delete jsonSchema.readOnly;
-        }
-
-        if (jsonSchema.maxItems !== undefined) {
-          (jsonSchema as Schema).maxItems = jsonSchema.maxItems.toString();
-        }
-
-        if (jsonSchema.format === 'email' || jsonSchema.format === 'uuid') {
-          delete jsonSchema.pattern;
-        }
-
-        if (jsonSchema.minItems !== undefined) {
-          (jsonSchema as Schema).minItems = jsonSchema.minItems.toString();
-        }
-
-        if (jsonSchema.minLength !== undefined) {
-          (jsonSchema as Schema).minLength = jsonSchema.minLength.toString();
-        }
-
-        if (jsonSchema.maxLength !== undefined) {
-          (jsonSchema as Schema).maxLength = jsonSchema.maxLength.toString();
-        }
-
-        if (jsonSchema.enum?.length === 1 && jsonSchema.enum[0] === null) {
-          (jsonSchema as Schema).type = Type.NULL;
-          delete jsonSchema.enum;
-        }
-
-        if (jsonSchema.type !== undefined) {
-          (jsonSchema as {type: string}).type = (
-            jsonSchema as {type: string}
-          ).type.toUpperCase();
-        }
-      },
-    }) as Schema;
-  }
-
-  if (isZodV3Schema(schema)) {
-    return toJSONSchemaV3(schema, {
-      target: 'openApi3',
-      emailStrategy: 'format:email',
-      postProcess: (jsonSchema) => {
-        if (!jsonSchema) {
-          return;
-        }
-
-        if (
-          (jsonSchema as JsonSchema7ObjectType).additionalProperties !==
-          undefined
-        ) {
-          delete (jsonSchema as JsonSchema7ObjectType).additionalProperties;
-        }
-
-        if ((jsonSchema as JsonSchema7ArrayType).maxItems !== undefined) {
-          (jsonSchema as Schema).maxItems = (
-            jsonSchema as JsonSchema7ArrayType
-          ).maxItems?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7ArrayType).minItems !== undefined) {
-          (jsonSchema as Schema).minItems = (
-            jsonSchema as JsonSchema7ArrayType
-          ).minItems?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7StringType).minLength !== undefined) {
-          (jsonSchema as Schema).minLength = (
-            jsonSchema as JsonSchema7StringType
-          ).minLength?.toString();
-        }
-
-        if ((jsonSchema as JsonSchema7StringType).maxLength !== undefined) {
-          (jsonSchema as Schema).maxLength = (
-            jsonSchema as JsonSchema7StringType
-          ).maxLength?.toString();
-        }
-
-        if (
-          (jsonSchema as JsonSchema7EnumType).enum?.length === 1 &&
-          (jsonSchema as JsonSchema7EnumType).enum[0] === 'null'
-        ) {
-          (jsonSchema as Schema).type = Type.NULL;
-          delete (jsonSchema as unknown as {enum?: []}).enum;
-        }
-
-        if (
-          (jsonSchema as JsonSchema7NumberType).type === 'integer' &&
-          (jsonSchema as JsonSchema7BigintType).format !== 'int64'
-        ) {
-          (jsonSchema as JsonSchema7NumberType).minimum ??=
-            Number.MIN_SAFE_INTEGER;
-          (jsonSchema as JsonSchema7NumberType).maximum ??=
-            Number.MAX_SAFE_INTEGER;
-        }
-
-        if ((jsonSchema as {type: string}).type !== undefined) {
-          (jsonSchema as {type: string}).type = (
-            jsonSchema as {type: string}
-          ).type.toUpperCase();
-        }
-
-        return jsonSchema;
-      },
-    }) as Schema;
-  }
-
-  throw new Error('Unsupported Zod schema version.');
+  return schema as Schema;
 }

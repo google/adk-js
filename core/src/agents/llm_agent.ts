@@ -359,6 +359,8 @@ export class LlmAgent extends BaseAgent {
   includeContents: 'default' | 'none';
   inputSchema?: Schema;
   outputSchema?: Schema;
+  readonly originalInputSchema?: LlmAgentSchema;
+  readonly originalOutputSchema?: LlmAgentSchema;
   outputKey?: string;
   beforeModelCallback?: BeforeModelCallback;
   afterModelCallback?: AfterModelCallback;
@@ -384,6 +386,8 @@ export class LlmAgent extends BaseAgent {
     this.outputSchema = isZodObject(config.outputSchema)
       ? zodObjectToSchema(config.outputSchema)
       : config.outputSchema;
+    this.originalInputSchema = config.inputSchema;
+    this.originalOutputSchema = config.outputSchema;
     this.outputKey = config.outputKey;
     this.beforeModelCallback = config.beforeModelCallback;
     this.afterModelCallback = config.afterModelCallback;
