@@ -20,7 +20,12 @@ import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
-import {createEvent, Event, getFunctionCalls} from '../events/event.js';
+import {
+  createEvent,
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -308,17 +313,19 @@ export class Runner {
               }
             }
             // Append the user message to the session with optional state delta.
+            const userEvent = createEvent({
+              invocationId: invocationContext.invocationId,
+              author: 'user',
+              actions: stateDelta
+                ? createEventActions({stateDelta})
+                : undefined,
+              content: newMessage,
+              customMetadata: params.customMetadata,
+            });
+            this.updatePendingToolCalls(session, userEvent);
             await this.sessionService.appendEvent({
               session,
-              event: createEvent({
-                invocationId: invocationContext.invocationId,
-                author: 'user',
-                actions: stateDelta
-                  ? createEventActions({stateDelta})
-                  : undefined,
-                content: newMessage,
-                customMetadata: params.customMetadata,
-              }),
+              event: userEvent,
             });
             if (params.abortSignal?.aborted) {
               return;
@@ -376,6 +383,7 @@ export class Runner {
                 }
 
                 if (!event.partial) {
+                  this.updatePendingToolCalls(session, event);
                   await this.sessionService.appendEvent({session, event});
                 }
                 // Step 3: Run the on_event callbacks to optionally modify the event.
@@ -460,13 +468,45 @@ export class Runner {
     session: Session,
     rootAgent: BaseAgent,
   ): BaseAgent {
+    if (!session.events.length) {
+      return rootAgent;
+    }
+
     // =========================================================================
-    // Case 1: If the last event is a function response, this returns the
-    // agent that made the original function call.
+    // Case 1: Use _sys_pending_tool_calls if available, fallback to event scan.
     // =========================================================================
-    const event = findEventByLastFunctionResponseId(session.events);
-    if (event && event.author) {
-      return rootAgent.findAgent(event.author) || rootAgent;
+    const lastEvent = session.events[session.events.length - 1];
+    const functionResponseId = getFunctionResponses(lastEvent)[0]?.id;
+
+    if (functionResponseId) {
+      const agentName = (
+        session.state['_sys_pending_tool_calls'] as Record<string, string>
+      )?.[functionResponseId];
+      if (agentName) {
+        const agent = rootAgent.findAgent(agentName);
+        if (agent) {
+          logger.info(
+            `Resuming agent ${agentName} using pending tool calls state.`,
+          );
+          return agent;
+        }
+        logger.warn(
+          `Agent ${agentName} found in pending tool calls but not in agent tree. Defaulting to root.`,
+        );
+        return rootAgent;
+      } else {
+        // Fallback to scanning event log
+        logger.info(
+          `Tool response ID ${functionResponseId} not found in pending tool calls state. Falling back to event log scan.`,
+        );
+        const event = findEventByFunctionCallId(
+          session.events,
+          functionResponseId,
+        );
+        if (event && event.author) {
+          return rootAgent.findAgent(event.author) || rootAgent;
+        }
+      }
     }
 
     // =========================================================================
@@ -527,38 +567,57 @@ export class Runner {
     }
     return true;
   }
+
+  private updatePendingToolCalls(session: Session, event: Event) {
+    const {author, longRunningToolIds, actions} = event;
+    let pendingToolCallsChanged = false;
+    const pendingToolCalls = {
+      ...(session.state['_sys_pending_tool_calls'] as Record<string, string>),
+    };
+
+    // 1. Add new pending tool calls
+    if (longRunningToolIds?.length && author) {
+      for (const toolCallId of longRunningToolIds) {
+        pendingToolCalls[toolCallId] = author;
+        pendingToolCallsChanged = true;
+      }
+    }
+
+    // 2. Clean up resolved tool calls
+    // We only clean up when the agent steps forward and emits a new event.
+    if (author && author !== 'user' && session.events.length) {
+      const previousEvent = session.events[session.events.length - 1];
+      for (const {id} of getFunctionResponses(previousEvent)) {
+        if (id && pendingToolCalls[id]) {
+          delete pendingToolCalls[id];
+          pendingToolCallsChanged = true;
+          logger.info(
+            `Cleaned up resolved tool call ${id} from pending state.`,
+          );
+        }
+      }
+    }
+
+    if (pendingToolCallsChanged) {
+      actions.stateDelta['_sys_pending_tool_calls'] = pendingToolCalls;
+    }
+  }
   // TODO - b/425992518: Implement runLive and related methods.
 }
 
 /**
  * It iterates through the events in reverse order, and returns the event
  * containing a function call with a functionCall.id matching the
- * functionResponse.id from the last event in the session.
+ * functionCallId.
  */
-// TODO - b/425992518: a hack that used event log as transaction log. Fix.
-function findEventByLastFunctionResponseId(events: Event[]): Event | null {
-  if (!events.length) {
-    return null;
-  }
-
-  const lastEvent = events[events.length - 1];
-  const functionCallId = lastEvent.content?.parts?.find(
-    (part) => part.functionResponse,
-  )?.functionResponse?.id;
-  if (!functionCallId) {
-    return null;
-  }
-
+function findEventByFunctionCallId(
+  events: Event[],
+  functionCallId: string,
+): Event | null {
   // TODO - b/425992518: inefficient search, fix.
   for (let i = events.length - 2; i >= 0; i--) {
     const event = events[i];
-    // Looking for the system long running request euc function call.
-    const functionCalls = getFunctionCalls(event);
-    if (!functionCalls) {
-      continue;
-    }
-
-    for (const functionCall of functionCalls) {
+    for (const functionCall of getFunctionCalls(event)) {
       if (functionCall.id === functionCallId) {
         return event;
       }

@@ -9,6 +9,7 @@ import {
   BasePlugin,
   createEvent,
   Event,
+  getLogger,
   InMemoryArtifactService,
   InMemorySessionService,
   InvocationContext,
@@ -685,5 +686,253 @@ describe('Runner customMetadata support', () => {
     expect(userEventCall![0].event.customMetadata).toEqual(customMetadata);
 
     appendEventSpy.mockRestore();
+  });
+});
+
+describe('Runner pending tool calls tracking', () => {
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let runner: Runner;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+  });
+
+  class DynamicMockAgent extends LlmAgent {
+    yields = 0;
+    constructor(name: string, parentAgent?: BaseAgent) {
+      super({
+        name,
+        model: 'gemini-2.5-flash',
+        subAgents: [],
+        parentAgent,
+      });
+    }
+
+    protected override async *runAsyncImpl(
+      context: InvocationContext,
+    ): AsyncGenerator<Event, void, void> {
+      this.yields++;
+      if (this.yields === 1) {
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_lro_1',
+                  name: 'long_running_tool',
+                  args: {},
+                },
+              },
+            ],
+          },
+          longRunningToolIds: ['call_lro_1'],
+        });
+      } else {
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          content: {role: 'model', parts: [{text: 'Done'}]},
+        });
+      }
+    }
+  }
+
+  it('should populate _sys_pending_tool_calls when agent yields long-running tool calls', async () => {
+    const toolAgent = new DynamicMockAgent('tool_agent');
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: toolAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Run tool'}]},
+    })) {
+      events.push(event);
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    expect(updatedSession).not.toBeNull();
+    const pendingCalls = updatedSession!.state[
+      '_sys_pending_tool_calls'
+    ] as Record<string, string>;
+    expect(pendingCalls).toBeDefined();
+    expect(pendingCalls['call_lro_1']).toBe('tool_agent');
+  });
+
+  it('should resume correct agent using _sys_pending_tool_calls and clean it up', async () => {
+    const rootAgent = new MockLlmAgent('root_agent');
+    const toolAgent = new DynamicMockAgent('tool_agent', rootAgent);
+    rootAgent.subAgents.push(toolAgent);
+
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: rootAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      state: {
+        _sys_pending_tool_calls: {
+          call_lro_1: 'tool_agent',
+        },
+      },
+    });
+
+    const functionResponse: FunctionResponse = {
+      id: 'call_lro_1',
+      name: 'long_running_tool',
+      response: {result: 'success'},
+    };
+
+    // Pretend the agent already yielded once, so it yields 'Done' next.
+    toolAgent.yields = 1;
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{functionResponse}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0].author).toBe('tool_agent');
+    expect(events[0].content?.parts?.[0].text).toBe('Done');
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    expect(updatedSession).not.toBeNull();
+    const pendingCalls = updatedSession!.state[
+      '_sys_pending_tool_calls'
+    ] as Record<string, string>;
+    expect(pendingCalls).toBeDefined();
+    expect(pendingCalls['call_lro_1']).toBeUndefined();
+  });
+
+  it('should fallback to event scanning if _sys_pending_tool_calls is missing', async () => {
+    const rootAgent = new MockLlmAgent('root_agent');
+    const toolAgent = new MockLlmAgent('tool_agent', false, rootAgent);
+    rootAgent.subAgents.push(toolAgent);
+
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: rootAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const functionCall: FunctionCall = {
+      id: 'call_fallback',
+      name: 'some_tool',
+      args: {},
+    };
+    const functionResponse: FunctionResponse = {
+      id: 'call_fallback',
+      name: 'some_tool',
+      response: {},
+    };
+
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'tool_agent',
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    await sessionService.appendEvent({session, event: callEvent});
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{functionResponse}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0].author).toBe('tool_agent');
+  });
+
+  it('should log warning and fallback if agent in pending tool calls is not in tree', async () => {
+    const rootAgent = new MockLlmAgent('root_agent');
+
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: rootAgent,
+      sessionService,
+      artifactService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      state: {
+        _sys_pending_tool_calls: {
+          'call_lro_1': 'missing_agent',
+        },
+      },
+    });
+
+    const functionResponse: FunctionResponse = {
+      id: 'call_lro_1',
+      name: 'long_running_tool',
+      response: {result: 'success'},
+    };
+
+    const loggerInstance = getLogger();
+    const warnSpy = vi.spyOn(loggerInstance, 'warn');
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{functionResponse}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0].author).toBe('root_agent');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Agent missing_agent found in pending tool calls but not in agent tree.',
+      ),
+    );
+
+    warnSpy.mockRestore();
   });
 });
