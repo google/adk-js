@@ -179,7 +179,7 @@ export class OAuth2DiscoveryManager {
  * Without this step an attacker can bypass every IPv4 block by encoding
  * the address as its IPv4-mapped IPv6 equivalent (CWE-918).
  */
-function normaliseHostname(raw: string): string {
+export function normaliseHostname(raw: string): string {
   const stripped = raw.replace(/^\[|\]$/g, '');
   const m = stripped.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
   if (m) {
@@ -191,7 +191,7 @@ function normaliseHostname(raw: string): string {
   if (mDot) return mDot[1];
   return raw;
 }
-function validateDiscoveryUrl(urlStr: string): boolean {
+export function validateDiscoveryUrl(urlStr: string): boolean {
   try {
     const url = new URL(urlStr);
     if (url.protocol !== 'https:') {
