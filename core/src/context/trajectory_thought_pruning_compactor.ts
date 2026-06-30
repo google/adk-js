@@ -5,7 +5,7 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
+import {hasThoughts, pruneThoughts} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 
 /**
@@ -45,7 +45,7 @@ export class TrajectoryThoughtPruningCompactor implements BaseContextCompactor {
       0,
       events.length - this.eventRetentionSize,
     );
-    return olderEvents.some((event) => this.hasThoughts(event));
+    return olderEvents.some((event) => hasThoughts(event));
   }
 
   compact(invocationContext: InvocationContext): void | Promise<void> {
@@ -57,27 +57,9 @@ export class TrajectoryThoughtPruningCompactor implements BaseContextCompactor {
     const pruneLimit = events.length - this.eventRetentionSize;
     for (let i = 0; i < pruneLimit; i++) {
       const event = events[i];
-      if (this.hasThoughts(event)) {
-        events[i] = this.pruneThoughts(event);
+      if (hasThoughts(event)) {
+        events[i] = pruneThoughts(event);
       }
     }
-  }
-
-  private hasThoughts(event: Event): boolean {
-    return !!event.content?.parts?.some((part) => part.thought === true);
-  }
-
-  private pruneThoughts(event: Event): Event {
-    const prunedParts = event.content!.parts!.filter(
-      (part) => part.thought !== true,
-    );
-
-    return {
-      ...event,
-      content: {
-        ...event.content!,
-        parts: prunedParts,
-      },
-    };
   }
 }

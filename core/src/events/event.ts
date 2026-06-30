@@ -166,6 +166,33 @@ export function stringifyContent(event: Event): string {
     .join('');
 }
 
+/**
+ * Returns whether the event contains any thought parts.
+ */
+export function hasThoughts(event: Event): boolean {
+  return !!event.content?.parts?.some((part) => part.thought === true);
+}
+
+/**
+ * Returns a copy of the event with all thought parts removed.
+ */
+export function pruneThoughts(event: Event): Event {
+  if (!event.content?.parts) {
+    return event;
+  }
+  const prunedParts = event.content.parts.filter(
+    (part) => part.thought !== true,
+  );
+
+  return {
+    ...event,
+    content: {
+      ...event.content,
+      parts: prunedParts,
+    },
+  };
+}
+
 const ASCII_LETTERS_AND_NUMBERS =
   'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
