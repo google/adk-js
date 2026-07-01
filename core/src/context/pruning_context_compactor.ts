@@ -39,7 +39,6 @@ export class PruningContextCompactor implements BaseContextCompactor {
         const rule =
           r && this.options.rules.find((rule) => rule.toolName === r.name);
         return rule &&
-          r &&
           getResponseSize(r.response) > (this.options.sizeThreshold ?? 0)
           ? [{response: r, rule}]
           : [];

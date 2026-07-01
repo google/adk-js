@@ -75,9 +75,9 @@ export class TextTruncatingPruner implements BasePruner {
 
     switch (keepLocation) {
       case 'start':
-        return lines.slice(0, maxLines).join('\n') + '\n' + marker;
+        return [...lines.slice(0, maxLines), marker].join('\n');
       case 'end':
-        return marker + '\n' + lines.slice(lines.length - maxLines).join('\n');
+        return [marker, ...lines.slice(lines.length - maxLines)].join('\n');
       case 'both':
         return [
           ...lines.slice(0, Math.ceil(maxLines / 2)),
