@@ -25,18 +25,21 @@ export class HtmlPruner implements BasePruner {
     try {
       const {window: _window, document} = parseHTML(value);
 
-      if (this.options.removeSelectors) {
-        for (const s of this.options.removeSelectors) {
-          document.querySelectorAll(s).forEach((el) => el.remove());
-        }
+      if (this.options.removeSelectors?.length) {
+        document
+          .querySelectorAll(this.options.removeSelectors.join(','))
+          .forEach((el) => el.remove());
       }
 
       if (this.options.keepSelectors?.length && document.body) {
-        const matchedElements = this.options.keepSelectors.flatMap((s) =>
-          [...document.querySelectorAll(s)].map((el) => el.cloneNode(true)),
+        const matched = document.querySelectorAll(
+          this.options.keepSelectors.join(','),
+        );
+        const cloned = Array.from(matched, (el) =>
+          el.cloneNode(true),
         ) as InstanceType<typeof _window.Node>[];
         document.body.innerHTML = '';
-        matchedElements.forEach((el) => document.body!.appendChild(el));
+        cloned.forEach((el) => document.body!.appendChild(el));
       }
 
       if (this.options.textOnly) {
