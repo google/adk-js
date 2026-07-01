@@ -11,7 +11,7 @@ import {
   isScratchpadEvent,
 } from '@google/adk';
 import {createUserContent} from '@google/genai';
-import {describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {GeminiWithMockResponses} from '../../test_case_utils.js';
 import {rootAgent} from './agent.js';
 
@@ -33,6 +33,18 @@ function getActiveEvents(events: Event[]): Event[] {
 }
 
 describe('Anchored Context Compaction', () => {
+  let mockTime = 1000;
+  beforeEach(() => {
+    mockTime = 1000;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      return mockTime++;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should iteratively merge into a persistent scratchpad at index 0', async () => {
     // 4 turns of agent mock responses.
     // Each turn responds with some content and has promptTokenCount of 25 to trigger compaction.
