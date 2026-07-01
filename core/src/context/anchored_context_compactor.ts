@@ -5,12 +5,17 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
-import {Event, getEventTokens} from '../events/event.js';
+import {CompactedEvent, isScratchpadEvent} from '../events/compacted_event.js';
+import {
+  Event,
+  getEventTokens,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
-export interface TokenBasedContextCompactorOptions {
+export interface AnchoredContextCompactorOptions {
   /** The maximum number of tokens to retain in the session history before compaction. */
   tokenThreshold: number;
   /**
@@ -23,43 +28,43 @@ export interface TokenBasedContextCompactorOptions {
 }
 
 /**
- * A context compactor that uses token count to determine when to compact events.
- * Oldest events are summarized into a CompactedEvent when the session
- * history exceeds the token threshold.
+ * A context compactor that maintains a single persistent 'Scratchpad' or
+ * 'State Tracker' event at the top of the context history.
+ *
+ * When compaction is triggered, it merges new raw events into the existing
+ * Scratchpad event and discards them from the active history view.
  */
-export class TokenBasedContextCompactor implements BaseContextCompactor {
+export class AnchoredContextCompactor implements BaseContextCompactor {
   private readonly tokenThreshold: number;
   private readonly eventRetentionSize: number;
   private readonly summarizer: BaseSummarizer;
 
-  constructor(options: TokenBasedContextCompactorOptions) {
+  constructor(options: AnchoredContextCompactorOptions) {
     this.tokenThreshold = options.tokenThreshold;
     this.eventRetentionSize = options.eventRetentionSize;
     this.summarizer = options.summarizer;
   }
 
   private getActiveEvents(events: Event[]): Event[] {
-    let latestCompactedEvent: CompactedEvent | undefined = undefined;
+    let latestScratchpad: CompactedEvent | undefined = undefined;
 
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
-      if (isCompactedEvent(e)) {
-        if (!latestCompactedEvent || e.endTime > latestCompactedEvent.endTime) {
-          latestCompactedEvent = e as CompactedEvent;
-        }
+      if (isScratchpadEvent(e)) {
+        latestScratchpad = e;
+        break;
       }
     }
 
-    if (!latestCompactedEvent) {
+    if (!latestScratchpad) {
       return events;
     }
 
     const activeRawEvents = events.filter(
-      (e) =>
-        !isCompactedEvent(e) && e.timestamp > latestCompactedEvent!.endTime,
+      (e) => e.timestamp > latestScratchpad!.endTime && !isScratchpadEvent(e),
     );
 
-    return [latestCompactedEvent, ...activeRawEvents];
+    return [latestScratchpad, ...activeRawEvents];
   }
 
   shouldCompact(
@@ -67,16 +72,18 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
     const activeEvents = this.getActiveEvents(events);
-    const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
+    const hasScratchpad =
+      activeEvents.length > 0 && isScratchpadEvent(activeEvents[0]);
+    const rawEvents = hasScratchpad ? activeEvents.slice(1) : activeEvents;
 
     if (rawEvents.length <= this.eventRetentionSize) {
       return false;
     }
 
-    let totalTokens = 0;
-    for (const event of activeEvents) {
-      totalTokens += getEventTokens(event);
-    }
+    const totalTokens = activeEvents.reduce(
+      (sum, event) => sum + getEventTokens(event),
+      0,
+    );
 
     return totalTokens > this.tokenThreshold;
   }
@@ -84,7 +91,9 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
     const activeEvents = this.getActiveEvents(events);
-    const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
+    const hasScratchpad =
+      activeEvents.length > 0 && isScratchpadEvent(activeEvents[0]);
+    const rawEvents = hasScratchpad ? activeEvents.slice(1) : activeEvents;
 
     if (rawEvents.length <= this.eventRetentionSize) {
       return;
@@ -102,8 +111,8 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       const previousEvent = rawEvents[retainStartIndex - 1];
 
       if (
-        hasFunctionResponse(eventToRetain) &&
-        hasFunctionCall(previousEvent)
+        getFunctionResponses(eventToRetain).length > 0 &&
+        getFunctionCalls(previousEvent).length > 0
       ) {
         retainStartIndex--;
       } else {
@@ -119,37 +128,38 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
     // Extract raw events to compact.
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
-    const compactedEventPresent = activeEvents.find(isCompactedEvent);
 
-    const eventsToCompact = compactedEventPresent
-      ? [compactedEventPresent, ...rawEventsToCompact]
-      : rawEventsToCompact;
+    let scratchpadEvent: CompactedEvent;
 
-    const compactedEvent = await this.summarizer.summarize(eventsToCompact);
-
-    // Provide default actions and metadata if the summarizer omits it
-    if (!compactedEvent.actions) {
-      compactedEvent.actions = {
-        stateDelta: {},
-        artifactDelta: {},
-        requestedAuthConfigs: {},
-        requestedToolConfirmations: {},
-      };
+    if (hasScratchpad) {
+      const existingScratchpad = activeEvents[0] as CompactedEvent;
+      scratchpadEvent = await this.summarizer.summarize([
+        existingScratchpad,
+        ...rawEventsToCompact,
+      ]);
+    } else {
+      scratchpadEvent = await this.summarizer.summarize(rawEventsToCompact);
     }
 
-    // Append the new compacted event to the session history.
-    invocationContext.session.events.push(compactedEvent);
+    // Ensure the event is marked as scratchpad and has system author.
+    const updatedScratchpad = {
+      ...scratchpadEvent,
+      isScratchpad: true,
+      author: 'system',
+    } as CompactedEvent;
+
+    // Reconstruct the events list: inactive events + new scratchpad + active retained events
+    const inactiveEvents = events.slice(0, events.indexOf(activeEvents[0]));
+    const retainedRawEvents = rawEvents.slice(retainStartIndex);
+
+    const newEventsList = [
+      ...inactiveEvents,
+      updatedScratchpad,
+      ...retainedRawEvents,
+    ];
+
+    // Mutate the original session events array.
+    events.length = 0;
+    events.push(...newEventsList);
   }
-}
-
-function hasFunctionCall(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionCall !== undefined,
-  );
-}
-
-function hasFunctionResponse(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionResponse !== undefined,
-  );
 }
