@@ -107,6 +107,7 @@ export {
   type File,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
+export {CompositeContextCompactor} from './context/composite_context_compactor.js';
 export type {BasePruner} from './context/pruners/base_pruner.js';
 export {HtmlPruner} from './context/pruners/html_pruner.js';
 export type {HtmlPrunerOptions} from './context/pruners/html_pruner.js';
