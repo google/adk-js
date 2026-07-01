@@ -36,16 +36,11 @@ export class PruningContextCompactor implements BaseContextCompactor {
     return (
       event.content?.parts?.flatMap((part) => {
         const r = part.functionResponse;
-        if (!r) {
-          return [];
-        }
-        const rule = this.options.rules.find(
-          (rule) => rule.toolName === r.name,
-        );
-        if (!rule) {
-          return [];
-        }
-        return getResponseSize(r.response) > (this.options.sizeThreshold ?? 0)
+        const rule =
+          r && this.options.rules.find((rule) => rule.toolName === r.name);
+        return rule &&
+          r &&
+          getResponseSize(r.response) > (this.options.sizeThreshold ?? 0)
           ? [{response: r, rule}]
           : [];
       }) ?? []
