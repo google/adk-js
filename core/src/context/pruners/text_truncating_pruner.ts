@@ -78,18 +78,12 @@ export class TextTruncatingPruner implements BasePruner {
         return lines.slice(0, maxLines).join('\n') + '\n' + marker;
       case 'end':
         return marker + '\n' + lines.slice(lines.length - maxLines).join('\n');
-      case 'both': {
-        if (maxLines === 1) {
-          return lines[0] + '\n' + marker;
-        }
-        const startCount = Math.ceil(maxLines / 2);
-        const endCount = Math.floor(maxLines / 2);
+      case 'both':
         return [
-          ...lines.slice(0, startCount),
+          ...lines.slice(0, Math.ceil(maxLines / 2)),
           marker,
-          ...lines.slice(lines.length - endCount),
+          ...lines.slice(lines.length - Math.floor(maxLines / 2)),
         ].join('\n');
-      }
       default:
         throw new Error(`Invalid keepLocation: ${keepLocation}`);
     }
@@ -119,15 +113,12 @@ export class TextTruncatingPruner implements BasePruner {
         return text.slice(0, budget) + marker;
       case 'end':
         return marker + text.slice(text.length - budget);
-      case 'both': {
-        const startCount = Math.ceil(budget / 2);
-        const endCount = Math.floor(budget / 2);
+      case 'both':
         return (
-          text.slice(0, startCount) +
+          text.slice(0, Math.ceil(budget / 2)) +
           marker +
-          text.slice(text.length - endCount)
+          text.slice(text.length - Math.floor(budget / 2))
         );
-      }
       default:
         throw new Error(`Invalid keepLocation: ${keepLocation}`);
     }

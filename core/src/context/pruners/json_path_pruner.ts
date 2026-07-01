@@ -22,8 +22,7 @@ export class JsonPathPruner implements BasePruner {
     }
 
     try {
-      const isArray = Array.isArray(value);
-      const pruned: Record<string, unknown> | unknown[] = isArray ? [] : {};
+      const pruned = Array.isArray(value) ? [] : {};
 
       for (const path of this.options.paths) {
         const pointers = JSONPath({
@@ -32,16 +31,12 @@ export class JsonPathPruner implements BasePruner {
           resultType: 'pointer',
         }) as string[];
 
-        for (const pointer of pointers) {
-          // Convert JSON Pointer (/a/b/c) to lodash path (a.b.c or ['a', 'b', 'c'])
-          const lodashPath = pointer
+        for (const p of pointers) {
+          const lPath = p
             .split('/')
             .slice(1)
-            .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
-
-          const val = get(value, lodashPath);
-
-          set(pruned, lodashPath, val);
+            .map((x) => x.replace(/~1/g, '/').replace(/~0/g, '~'));
+          set(pruned, lPath, get(value, lPath));
         }
       }
 
