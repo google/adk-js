@@ -17,8 +17,9 @@ export class PruningContextCompactor implements BaseContextCompactor {
   constructor(private readonly options: PruningContextCompactorOptions) {}
 
   shouldCompact(invocationContext: InvocationContext): boolean {
-    const events = invocationContext.session.events;
-    return events.some((event) => this.getPrunableResponses(event).length > 0);
+    return invocationContext.session.events.some(
+      (event) => this.getPrunableResponses(event).length > 0,
+    );
   }
 
   async compact(invocationContext: InvocationContext): Promise<void> {

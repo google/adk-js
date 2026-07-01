@@ -23,7 +23,7 @@ export class HtmlPruner implements BasePruner {
     }
 
     try {
-      const {window: _window, document} = parseHTML(value);
+      const {document} = parseHTML(value);
 
       if (this.options.removeSelectors?.length) {
         document
@@ -35,9 +35,7 @@ export class HtmlPruner implements BasePruner {
         const matched = document.querySelectorAll(
           this.options.keepSelectors.join(','),
         );
-        const cloned = Array.from(matched, (el) =>
-          el.cloneNode(true),
-        ) as InstanceType<typeof _window.Node>[];
+        const cloned = Array.from(matched, (el) => el.cloneNode(true));
         document.body.innerHTML = '';
         cloned.forEach((el) => document.body!.appendChild(el));
       }
