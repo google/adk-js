@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {isCompactedEvent} from '../../events/compacted_event.js';
+import {getActiveEvents} from '../../context/compactor_utils.js';
 import {Event} from '../../events/event.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {InvocationContext} from '../invocation_context.js';
@@ -42,34 +42,7 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
       return;
     }
 
-    // The assumption is there's one CompactedEvent considered in any given call to the LLM
-    // since it should be a summary of all previous event history.
-    let events = invocationContext.session.events;
-    const compactedEvents = events.filter(isCompactedEvent);
-    const latestCompactedEvent =
-      compactedEvents.length > 0
-        ? compactedEvents.reduce((latest, current) =>
-            current.endTime > latest.endTime ? current : latest,
-          )
-        : undefined;
-
-    if (latestCompactedEvent) {
-      const remainingEvents = events.filter((event) => {
-        if (event === latestCompactedEvent) {
-          return false;
-        }
-        // Elide all previous compacted events as they are overridden
-        if (isCompactedEvent(event)) {
-          return false;
-        }
-        // Elide raw events covered by the compacted event
-        if (event.timestamp <= latestCompactedEvent.endTime) {
-          return false;
-        }
-        return true;
-      });
-      events = [latestCompactedEvent, ...remainingEvents];
-    }
+    const events = getActiveEvents(invocationContext.session.events);
 
     if (agent.includeContents === 'default') {
       // Include full conversation history

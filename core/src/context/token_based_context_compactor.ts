@@ -5,9 +5,14 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
+import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event, stringifyContent} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
+import {
+  getActiveEvents,
+  hasFunctionCall,
+  hasFunctionResponse,
+} from './compactor_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 export interface TokenBasedContextCompactorOptions {
@@ -38,35 +43,11 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     this.summarizer = options.summarizer;
   }
 
-  private getActiveEvents(events: Event[]): Event[] {
-    let latestCompactedEvent: CompactedEvent | undefined = undefined;
-
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (isCompactedEvent(e)) {
-        if (!latestCompactedEvent || e.endTime > latestCompactedEvent.endTime) {
-          latestCompactedEvent = e as CompactedEvent;
-        }
-      }
-    }
-
-    if (!latestCompactedEvent) {
-      return events;
-    }
-
-    const activeRawEvents = events.filter(
-      (e) =>
-        !isCompactedEvent(e) && e.timestamp > latestCompactedEvent!.endTime,
-    );
-
-    return [latestCompactedEvent, ...activeRawEvents];
-  }
-
   shouldCompact(
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = getActiveEvents(events);
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -83,7 +64,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = getActiveEvents(events);
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -149,16 +130,4 @@ function getEventTokens(event: Event): number {
   // Estimate: 4 chars per token.
   const contentStr = stringifyContent(event);
   return Math.ceil(contentStr.length / 4);
-}
-
-function hasFunctionCall(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionCall !== undefined,
-  );
-}
-
-function hasFunctionResponse(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionResponse !== undefined,
-  );
 }
