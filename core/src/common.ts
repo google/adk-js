@@ -184,6 +184,11 @@ export type {LlmRouter} from './models/routed_llm.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export {PruningPlugin} from './plugins/pruning_plugin.js';
+export type {
+  PruningPluginOptions,
+  PruningPluginRule,
+} from './plugins/pruning_plugin.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
