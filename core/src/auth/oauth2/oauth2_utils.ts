@@ -51,15 +51,11 @@ export async function fetchOAuth2Tokens(
   endpoint: string,
   body: URLSearchParams,
 ): Promise<OAuth2Auth> {
-  // Validate the token endpoint URL against the same SSRF blocklist used for
-  // discovery URLs (validateDiscoveryUrl in oauth2_discovery.ts). Without this
-  // check, an attacker who controls the OpenAPI spec's tokenUrl can direct the
-  // agent to POST credentials to a cloud metadata endpoint (GCP 169.254.169.254,
-  // AWS IMDSv1, Azure IMDS) and receive IAM tokens in the response.
+  // Guard against SSRF: apply the same blocklist used in oauth2_discovery.ts
+  // so callers can't point tokenUrl at a private/cloud-metadata address.
   if (!validateDiscoveryUrl(endpoint)) {
     throw new Error(
-      `SSRF protection: OAuth2 token endpoint '${endpoint}' is not allowed. ` +
-      'The endpoint must use HTTPS and must not target private/loopback/cloud-metadata addresses.',
+      `SSRF protection: OAuth2 token endpoint '${endpoint}' is not allowed. Must use HTTPS and must not target private/loopback/cloud-metadata addresses.`,
     );
   }
   try {
