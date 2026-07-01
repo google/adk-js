@@ -5,20 +5,13 @@
  */
 
 import {Context} from '../agents/context.js';
-import {BasePruner} from '../context/pruners/base_pruner.js';
+import {PruningOptions, PruningRule} from '../context/pruners/base_pruner.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {getResponseSize} from '../utils/size_utils.js';
 import {BasePlugin} from './base_plugin.js';
 
-export interface PruningPluginRule {
-  toolName: string;
-  pruner: BasePruner;
-}
-
-export interface PruningPluginOptions {
-  rules: PruningPluginRule[];
-  sizeThreshold?: number;
-}
+export type PruningPluginOptions = PruningOptions;
+export type PruningPluginRule = PruningRule;
 
 export class PruningPlugin extends BasePlugin {
   constructor(private readonly options: PruningPluginOptions) {
@@ -34,12 +27,9 @@ export class PruningPlugin extends BasePlugin {
     const rule = this.options.rules.find(
       (r) => r.toolName === params.tool.name,
     );
-    if (
-      rule &&
+    return rule &&
       getResponseSize(params.result) > (this.options.sizeThreshold ?? 0)
-    ) {
-      return rule.pruner.prune(params.result) as Record<string, unknown>;
-    }
-    return undefined;
+      ? (rule.pruner.prune(params.result) as Record<string, unknown>)
+      : undefined;
   }
 }

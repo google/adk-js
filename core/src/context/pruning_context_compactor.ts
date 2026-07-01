@@ -9,17 +9,9 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {getResponseSize} from '../utils/size_utils.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
-import {BasePruner} from './pruners/base_pruner.js';
+import {PruningOptions, PruningRule} from './pruners/base_pruner.js';
 
-export interface PruningRule {
-  toolName: string;
-  pruner: BasePruner;
-}
-
-export interface PruningContextCompactorOptions {
-  rules: PruningRule[];
-  sizeThreshold?: number;
-}
+export type PruningContextCompactorOptions = PruningOptions;
 
 export class PruningContextCompactor implements BaseContextCompactor {
   constructor(private readonly options: PruningContextCompactorOptions) {}
@@ -29,13 +21,12 @@ export class PruningContextCompactor implements BaseContextCompactor {
     return events.some((event) => this.getPrunableResponses(event).length > 0);
   }
 
-  compact(invocationContext: InvocationContext): Promise<void> {
+  async compact(invocationContext: InvocationContext): Promise<void> {
     for (const event of invocationContext.session.events) {
       for (const {response, rule} of this.getPrunableResponses(event)) {
         response.response = rule.pruner.prune(response.response);
       }
     }
-    return Promise.resolve();
   }
 
   private getPrunableResponses(

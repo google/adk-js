@@ -16,3 +16,13 @@ export interface BasePruner {
    */
   prune(value: unknown): unknown;
 }
+
+export interface PruningRule {
+  toolName: string;
+  pruner: BasePruner;
+}
+
+export interface PruningOptions {
+  rules: PruningRule[];
+  sizeThreshold?: number;
+}

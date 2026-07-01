@@ -34,12 +34,9 @@ export class HtmlPruner implements BasePruner {
       }
 
       if (this.options.keepSelectors?.length) {
-        const matchedElements: InstanceType<typeof _window.Node>[] = [];
-        for (const s of this.options.keepSelectors) {
-          for (const el of document.querySelectorAll(s)) {
-            matchedElements.push(el.cloneNode(true));
-          }
-        }
+        const matchedElements = this.options.keepSelectors.flatMap((s) =>
+          [...document.querySelectorAll(s)].map((el) => el.cloneNode(true)),
+        ) as InstanceType<typeof _window.Node>[];
         if (document.body) {
           document.body.innerHTML = '';
           for (const el of matchedElements) {

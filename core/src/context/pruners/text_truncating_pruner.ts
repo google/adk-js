@@ -84,9 +84,11 @@ export class TextTruncatingPruner implements BasePruner {
         }
         const startCount = Math.ceil(maxLines / 2);
         const endCount = Math.floor(maxLines / 2);
-        const startLines = lines.slice(0, startCount).join('\n');
-        const endLines = lines.slice(lines.length - endCount).join('\n');
-        return startLines + '\n' + marker + '\n' + endLines;
+        return [
+          ...lines.slice(0, startCount),
+          marker,
+          ...lines.slice(lines.length - endCount),
+        ].join('\n');
       }
       default:
         throw new Error(`Invalid keepLocation: ${keepLocation}`);

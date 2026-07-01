@@ -108,7 +108,11 @@ export {
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export {CompositeContextCompactor} from './context/composite_context_compactor.js';
-export type {BasePruner} from './context/pruners/base_pruner.js';
+export type {
+  BasePruner,
+  PruningOptions,
+  PruningRule,
+} from './context/pruners/base_pruner.js';
 export {HtmlPruner} from './context/pruners/html_pruner.js';
 export type {HtmlPrunerOptions} from './context/pruners/html_pruner.js';
 export {JsonPathPruner} from './context/pruners/json_path_pruner.js';
@@ -116,10 +120,7 @@ export type {JsonPathPrunerOptions} from './context/pruners/json_path_pruner.js'
 export {TextTruncatingPruner} from './context/pruners/text_truncating_pruner.js';
 export type {TextTruncatingPrunerOptions} from './context/pruners/text_truncating_pruner.js';
 export {PruningContextCompactor} from './context/pruning_context_compactor.js';
-export type {
-  PruningContextCompactorOptions,
-  PruningRule,
-} from './context/pruning_context_compactor.js';
+export type {PruningContextCompactorOptions} from './context/pruning_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
 export type {LlmSummarizerOptions} from './context/summarizers/llm_summarizer.js';
