@@ -7,6 +7,7 @@
 import {Context} from '../agents/context.js';
 import {BasePruner} from '../context/pruners/base_pruner.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {getResponseSize} from '../utils/size_utils.js';
 import {BasePlugin} from './base_plugin.js';
 
 export interface PruningPluginRule {
@@ -33,30 +34,12 @@ export class PruningPlugin extends BasePlugin {
     const rule = this.options.rules.find(
       (r) => r.toolName === params.tool.name,
     );
-    if (!rule) {
-      return undefined;
+    if (
+      rule &&
+      getResponseSize(params.result) > (this.options.sizeThreshold ?? 0)
+    ) {
+      return rule.pruner.prune(params.result) as Record<string, unknown>;
     }
-
-    const rawResult = params.result as unknown;
-    const size = this.getResponseSize(rawResult);
-    const threshold = this.options.sizeThreshold ?? 0;
-
-    if (size > threshold) {
-      const pruned = rule.pruner.prune(rawResult);
-      return pruned as Record<string, unknown>;
-    }
-
     return undefined;
-  }
-
-  private getResponseSize(response: unknown): number {
-    if (typeof response === 'string') {
-      return response.length;
-    }
-    try {
-      return JSON.stringify(response).length;
-    } catch {
-      return 0;
-    }
   }
 }

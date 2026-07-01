@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {FunctionResponse} from '@google/genai';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
+import {getResponseSize} from '../utils/size_utils.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {BasePruner} from './pruners/base_pruner.js';
 
@@ -24,72 +26,35 @@ export class PruningContextCompactor implements BaseContextCompactor {
 
   shouldCompact(invocationContext: InvocationContext): boolean {
     const events = invocationContext.session.events;
-    return events.some((event) => this.hasPrunableResponse(event));
+    return events.some((event) => this.getPrunableResponses(event).length > 0);
   }
 
   compact(invocationContext: InvocationContext): Promise<void> {
-    const events = invocationContext.session.events;
-    for (const event of events) {
-      if (this.hasPrunableResponse(event)) {
-        this.pruneEvent(event);
+    for (const event of invocationContext.session.events) {
+      for (const {response, rule} of this.getPrunableResponses(event)) {
+        response.response = rule.pruner.prune(response.response);
       }
     }
     return Promise.resolve();
   }
 
-  private hasPrunableResponse(event: Event): boolean {
-    if (!event.content?.parts) {
-      return false;
-    }
-
-    for (const part of event.content.parts) {
-      if (part.functionResponse) {
-        const response = part.functionResponse;
-        const rule = this.options.rules.find(
-          (r) => r.toolName === response.name,
-        );
-        if (rule) {
-          const size = this.getResponseSize(response.response);
-          const threshold = this.options.sizeThreshold ?? 0;
-          if (size > threshold) {
-            return true;
-          }
+  private getPrunableResponses(
+    event: Event,
+  ): Array<{response: FunctionResponse; rule: PruningRule}> {
+    return (
+      event.content?.parts?.flatMap((part) => {
+        const r = part.functionResponse;
+        if (!r) {
+          return [];
         }
-      }
-    }
-    return false;
-  }
-
-  private pruneEvent(event: Event): void {
-    if (!event.content?.parts) {
-      return;
-    }
-
-    for (const part of event.content.parts) {
-      if (part.functionResponse) {
-        const response = part.functionResponse;
         const rule = this.options.rules.find(
-          (r) => r.toolName === response.name,
+          (rule) => rule.toolName === r.name,
         );
-        if (rule) {
-          const size = this.getResponseSize(response.response);
-          const threshold = this.options.sizeThreshold ?? 0;
-          if (size > threshold) {
-            response.response = rule.pruner.prune(response.response);
-          }
-        }
-      }
-    }
-  }
-
-  private getResponseSize(response: unknown): number {
-    if (typeof response === 'string') {
-      return response.length;
-    }
-    try {
-      return JSON.stringify(response).length;
-    } catch {
-      return 0;
-    }
+        return rule &&
+          getResponseSize(r.response) > (this.options.sizeThreshold ?? 0)
+          ? [{response: r, rule}]
+          : [];
+      }) ?? []
+    );
   }
 }

@@ -12,7 +12,7 @@ export class CompositeContextCompactor implements BaseContextCompactor {
 
   async shouldCompact(invocationContext: InvocationContext): Promise<boolean> {
     for (const compactor of this.compactors) {
-      if (await Promise.resolve(compactor.shouldCompact(invocationContext))) {
+      if (await compactor.shouldCompact(invocationContext)) {
         return true;
       }
     }
@@ -21,11 +21,8 @@ export class CompositeContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     for (const compactor of this.compactors) {
-      const shouldCompact = await Promise.resolve(
-        compactor.shouldCompact(invocationContext),
-      );
-      if (shouldCompact) {
-        await Promise.resolve(compactor.compact(invocationContext));
+      if (await compactor.shouldCompact(invocationContext)) {
+        await compactor.compact(invocationContext);
       }
     }
   }
