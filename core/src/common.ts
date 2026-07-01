@@ -107,6 +107,9 @@ export {
   type File,
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
+export type {BasePruner} from './context/pruners/base_pruner.js';
+export {JsonPathPruner} from './context/pruners/json_path_pruner.js';
+export type {JsonPathPrunerOptions} from './context/pruners/json_path_pruner.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
 export type {LlmSummarizerOptions} from './context/summarizers/llm_summarizer.js';
