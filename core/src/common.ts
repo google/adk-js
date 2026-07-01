@@ -110,6 +110,7 @@ export {
   type CodeExecutionResult,
   type File,
 } from './code_executors/code_execution_utils.js';
+export {AgentControlledContextCompactor} from './context/agent_controlled_context_compactor.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
@@ -215,6 +216,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
