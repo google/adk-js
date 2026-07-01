@@ -15,17 +15,19 @@ const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
 
 const clientLabelLocalStorage = new AsyncLocalStorage<string>();
 
+const USER_AGENT_PATTERNS = [
+  ['Edge', /(?:Edg|Edge|EdgA)\/([0-9.]+)/i],
+  ['Firefox', /(?:Firefox|FxiOS)\/([0-9.]+)/i],
+  ['Chrome', /(?:Chrome|CriOS)\/([0-9.]+)/i],
+  ['Safari', /Version\/([0-9.]+).*Safari/i],
+] as const;
+
 export function parseUserAgent(userAgent: string): string {
   if (!userAgent) {
     return 'Browser';
   }
 
-  for (const [name, regex] of [
-    ['Edge', /(?:Edg|Edge|EdgA)\/([0-9.]+)/i],
-    ['Firefox', /(?:Firefox|FxiOS)\/([0-9.]+)/i],
-    ['Chrome', /(?:Chrome|CriOS)\/([0-9.]+)/i],
-    ['Safari', /Version\/([0-9.]+).*Safari/i],
-  ] as const) {
+  for (const [name, regex] of USER_AGENT_PATTERNS) {
     const match = userAgent.match(regex);
     if (match) {
       return `${name}/${match[1]}`;
@@ -51,6 +53,14 @@ function _getDefaultLabels(): string[] {
   return [frameworkLabel, languageLabel];
 }
 
+/**
+ * Runs the given callback within a context that has the specified client label.
+ * All LLM calls made within this callback will include the client label in their tracking headers.
+ *
+ * @param clientLabel The custom client label to apply.
+ * @param callback The callback function to execute.
+ * @return The result of the callback.
+ */
 export function runWithClientLabel<R>(
   clientLabel: string,
   callback: () => R,
