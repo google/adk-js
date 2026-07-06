@@ -5,13 +5,22 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
+import {getContents} from '../agents/processors/content_processor_utils.js';
 import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
-import {Event, stringifyContent} from '../events/event.js';
+import {Event} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
+/** Rough estimate used when no usage metadata is available. */
+const CHARS_PER_TOKEN = 4;
+
 export interface TokenBasedContextCompactorOptions {
-  /** The maximum number of tokens to retain in the session history before compaction. */
+  /**
+   * Prompt-size threshold (in tokens) that triggers compaction. Compared
+   * against the most recently observed LLM request size
+   * (`usageMetadata.promptTokenCount`), falling back to a character-based
+   * estimate of the effective contents when no usage metadata is available.
+   */
   tokenThreshold: number;
   /**
    * The minimum number of raw events to keep at the end of the session.
@@ -73,12 +82,15 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return false;
     }
 
-    let totalTokens = 0;
-    for (const event of activeEvents) {
-      totalTokens += getEventTokens(event);
+    const promptTokenCount = latestPromptTokenCount(
+      activeEvents,
+      invocationContext,
+    );
+    if (promptTokenCount === undefined) {
+      return false;
     }
 
-    return totalTokens > this.tokenThreshold;
+    return promptTokenCount > this.tokenThreshold;
   }
 
   async compact(invocationContext: InvocationContext): Promise<void> {
@@ -142,13 +154,66 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
   }
 }
 
-function getEventTokens(event: Event): number {
-  if (event.usageMetadata?.promptTokenCount !== undefined) {
-    return event.usageMetadata.promptTokenCount;
+/**
+ * Returns the most recently observed prompt token count, if available.
+ *
+ * Mirrors the Python ADK (`apps/compaction.py::_latest_prompt_token_count`):
+ * each model response's `usageMetadata.promptTokenCount` is the measured size
+ * of the entire request that produced it (system instruction + tools + full
+ * history), so the latest one is used directly. These values must not be
+ * summed across events: each already includes all prior history, so a sum
+ * grows with call count rather than context size.
+ */
+function latestPromptTokenCount(
+  activeEvents: Event[],
+  invocationContext: InvocationContext,
+): number | undefined {
+  for (let i = activeEvents.length - 1; i >= 0; i--) {
+    const count = activeEvents[i].usageMetadata?.promptTokenCount;
+    if (count !== undefined) {
+      return count;
+    }
   }
-  // Estimate: 4 chars per token.
-  const contentStr = stringifyContent(event);
-  return Math.ceil(contentStr.length / 4);
+  return estimatePromptTokenCount(activeEvents, invocationContext);
+}
+
+/**
+ * Returns an approximate prompt token count from the active events.
+ *
+ * Mirrors the effective content-building path used by the content request
+ * processor, so the estimate aligns with what would actually be sent to the
+ * LLM (it cannot account for the system instruction or tool schemas, which
+ * are not derivable from session events).
+ */
+function estimatePromptTokenCount(
+  activeEvents: Event[],
+  invocationContext: InvocationContext,
+): number | undefined {
+  const contents = getContents(
+    activeEvents,
+    invocationContext.agent.name,
+    invocationContext.branch,
+  );
+
+  let totalChars = 0;
+  for (const content of contents) {
+    for (const part of content.parts ?? []) {
+      if (part.text) {
+        totalChars += part.text.length;
+      }
+      if (part.functionCall) {
+        totalChars += JSON.stringify(part.functionCall).length;
+      }
+      if (part.functionResponse) {
+        totalChars += JSON.stringify(part.functionResponse).length;
+      }
+    }
+  }
+
+  if (totalChars <= 0) {
+    return undefined;
+  }
+  return Math.ceil(totalChars / CHARS_PER_TOKEN);
 }
 
 function hasFunctionCall(event: Event): boolean {

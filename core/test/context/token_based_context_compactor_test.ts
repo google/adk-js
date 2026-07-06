@@ -46,11 +46,13 @@ function createMockEvent(
   tokenCount?: number,
   isFuncCall?: boolean,
   isFuncResp?: boolean,
+  text?: string,
 ): Event {
   const event: Event = {
     id,
+    author: 'user',
     timestamp: Date.now(),
-    content: {parts: []},
+    content: {role: 'user', parts: []},
   } as unknown as Event;
   if (tokenCount !== undefined) {
     event.usageMetadata = {promptTokenCount: tokenCount};
@@ -62,6 +64,9 @@ function createMockEvent(
     event.content!.parts!.push({
       functionResponse: {name: 'mock', response: {}},
     });
+  }
+  if (text !== undefined) {
+    event.content!.parts!.push({text});
   }
   return event;
 }
@@ -75,7 +80,7 @@ function createMockInvocationContext(events: Event[]): InvocationContext {
   } as unknown as Session;
   return new InvocationContext({
     invocationId: 'test-invocation',
-    agent: {} as BaseAgent,
+    agent: {name: 'test-agent'} as BaseAgent,
     session,
     pluginManager: new PluginManager([]),
   });
@@ -108,12 +113,12 @@ describe('TokenBasedContextCompactor', () => {
       summarizer: new MockSummarizer(),
     });
 
-    // Total tokens: 5 + 5 + 5 + 5 = 20 > 10. Length = 4 > 2.
+    // Latest observed prompt token count: 15 > 10. Length = 4 > 2.
     const context = createMockInvocationContext([
       createMockEvent('1', 5),
-      createMockEvent('2', 5),
-      createMockEvent('3', 5),
-      createMockEvent('4', 5),
+      createMockEvent('2', 8),
+      createMockEvent('3', 12),
+      createMockEvent('4', 15),
     ]);
 
     expect(await compactor.shouldCompact(context)).toBe(true);
@@ -165,5 +170,89 @@ describe('TokenBasedContextCompactor', () => {
     expect(context.session.events[1].id).toBe('1');
     expect(context.session.events[2].id).toBe('2');
     expect(context.session.events[3].id).toBe('3');
+  });
+
+  it('should use the latest prompt token count, not the sum across events', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+
+    // Each event's promptTokenCount is the full request size of the call that
+    // produced it, so summing re-counts history: 6 + 7 + 8 + 9 = 30 > 10, but
+    // the actual latest request was only 9 tokens — must NOT compact.
+    const context = createMockInvocationContext([
+      createMockEvent('1', 6),
+      createMockEvent('2', 7),
+      createMockEvent('3', 8),
+      createMockEvent('4', 9),
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
+  it('should prefer the newest usage metadata over older events', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+
+    // Newest event with metadata reads 4 (< 10); an older event reads 15.
+    // The latest observation wins - must NOT compact.
+    const context = createMockInvocationContext([
+      createMockEvent('1', 15),
+      createMockEvent('2', 4),
+      createMockEvent('3'), // no usage metadata (e.g. user message)
+      createMockEvent('4'),
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
+  });
+
+  it('should fall back to a character estimate when no usage metadata exists', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+
+    // No event has usageMetadata; text totals 80 chars -> ~20 tokens > 10.
+    const bigText = 'x'.repeat(80);
+    const overThreshold = createMockInvocationContext([
+      createMockEvent('1', undefined, false, false, bigText),
+      createMockEvent('2', undefined, false, false, 'hi'),
+      createMockEvent('3', undefined, false, false, 'hi'),
+      createMockEvent('4', undefined, false, false, 'hi'),
+    ]);
+    expect(await compactor.shouldCompact(overThreshold)).toBe(true);
+
+    // Text totals 8 chars -> ~2 tokens < 10.
+    const underThreshold = createMockInvocationContext([
+      createMockEvent('1', undefined, false, false, 'hi'),
+      createMockEvent('2', undefined, false, false, 'hi'),
+      createMockEvent('3', undefined, false, false, 'hi'),
+      createMockEvent('4', undefined, false, false, 'hi'),
+    ]);
+    expect(await compactor.shouldCompact(underThreshold)).toBe(false);
+  });
+
+  it('should not compact when no token count or estimate is available', async () => {
+    const compactor = new TokenBasedContextCompactor({
+      tokenThreshold: 10,
+      eventRetentionSize: 2,
+      summarizer: new MockSummarizer(),
+    });
+
+    // No usage metadata and no measurable content.
+    const context = createMockInvocationContext([
+      createMockEvent('1'),
+      createMockEvent('2'),
+      createMockEvent('3'),
+      createMockEvent('4'),
+    ]);
+
+    expect(await compactor.shouldCompact(context)).toBe(false);
   });
 });

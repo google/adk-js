@@ -37,9 +37,11 @@ describe('Context Compaction with Tokens', () => {
             },
           },
         ],
+        // This request's measured prompt size exceeds the threshold (40), so
+        // the next turn's request processing triggers compaction.
         usageMetadata: {
-          promptTokenCount: 25,
-          totalTokenCount: 35,
+          promptTokenCount: 45,
+          totalTokenCount: 55,
         },
       },
       {
@@ -85,8 +87,9 @@ describe('Context Compaction with Tokens', () => {
       // intentionally empty
     }
 
-    // Turn 3 - The threshold (40) is low enough that by turn 3, we should exceed it
-    // and compaction should be triggered by the CompactorRequestProcessor.
+    // Turn 3 - The latest observed prompt token count (45, from turn 2's
+    // response) exceeds the threshold (40), so compaction should be triggered
+    // by the CompactorRequestProcessor before this turn's model call.
     for await (const _ of runner.runAsync({
       userId: 'test_user',
       sessionId: session.id,
