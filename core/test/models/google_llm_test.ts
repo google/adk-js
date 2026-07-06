@@ -5,15 +5,20 @@
  */
 
 import {
+  GenerateContentResponse,
+  GoogleGenAI,
+  HttpOptions,
+  Modality,
+} from '@google/genai';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
   Gemini,
   GeminiParams,
   LlmRequest,
   LlmResponse,
   geminiInitParams,
   version,
-} from '@google/adk';
-import {GenerateContentResponse, GoogleGenAI, HttpOptions} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+} from '../../src/index.js';
 
 vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
@@ -148,8 +153,7 @@ describe('GoogleLlm', () => {
         {
           content: {
             role: 'model',
-            parts:
-              parts as GenerateContentResponse['candidates'][0]['content']['parts'],
+            parts: parts as any,
           },
         },
       ];
@@ -622,8 +626,9 @@ describe('GoogleLlm', () => {
 
       const request: LlmRequest = {
         model: 'gemini-2.5-flash',
+        contents: [],
         liveConnectConfig: {
-          generationConfig: {responseModalities: ['audio']},
+          generationConfig: {responseModalities: [Modality.AUDIO]},
         },
         config: {
           systemInstruction: 'You are a helpful assistant.',
@@ -642,7 +647,7 @@ describe('GoogleLlm', () => {
         expect.objectContaining({
           model: 'gemini-2.5-flash',
           config: expect.objectContaining({
-            generationConfig: {responseModalities: ['audio']},
+            generationConfig: {responseModalities: [Modality.AUDIO]},
             systemInstruction: {
               role: 'system',
               parts: [{text: 'You are a helpful assistant.'}],

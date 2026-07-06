@@ -143,7 +143,7 @@ describe('createLlmResponse', () => {
     it('returns blockReason as errorCode', () => {
       const response = makeResponse({
         promptFeedback: {
-          blockReason: 'SAFETY',
+          blockReason: 'SAFETY' as any,
           blockReasonMessage: 'blocked by safety',
         },
       });
@@ -154,7 +154,7 @@ describe('createLlmResponse', () => {
     it('returns blockReasonMessage as errorMessage', () => {
       const response = makeResponse({
         promptFeedback: {
-          blockReason: 'OTHER',
+          blockReason: 'OTHER' as any,
           blockReasonMessage: 'other reason',
         },
       });
@@ -165,7 +165,7 @@ describe('createLlmResponse', () => {
     it('includes usageMetadata in the prompt feedback response', () => {
       const usageMetadata = {totalTokenCount: 5};
       const response = makeResponse({
-        promptFeedback: {blockReason: 'SAFETY', blockReasonMessage: ''},
+        promptFeedback: {blockReason: 'SAFETY' as any, blockReasonMessage: ''},
         usageMetadata,
       });
       const result = createLlmResponse(response);
@@ -174,7 +174,7 @@ describe('createLlmResponse', () => {
 
     it('does not set content', () => {
       const response = makeResponse({
-        promptFeedback: {blockReason: 'SAFETY', blockReasonMessage: ''},
+        promptFeedback: {blockReason: 'SAFETY' as any, blockReasonMessage: ''},
       });
       const result = createLlmResponse(response);
       expect(result.content).toBeUndefined();

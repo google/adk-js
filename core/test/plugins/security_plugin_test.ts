@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseTool, createEvent} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {Context} from '../../src/agents/context.js';
+import {BaseTool, createEvent} from '../../src/index.js';
 import {
   BasePolicyEngine,
   getAskUserConfirmationFunctionCalls,

@@ -10,6 +10,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
+import {LlmRequest} from '../../models/llm_request.js';
 import {ToolConfirmation} from '../../tools/tool_confirmation.js';
 import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
@@ -37,6 +38,7 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
    */
   override async *runAsync(
     invocationContext: InvocationContext,
+    _llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, void> {
     const agent = invocationContext.agent;
     if (!isLlmAgent(agent)) {

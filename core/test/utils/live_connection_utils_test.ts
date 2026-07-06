@@ -4,13 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {GroundingMetadata, LiveServerGoAway} from '@google/genai';
+import {
+  GroundingMetadata,
+  LiveServerGoAway,
+  LiveServerMessage,
+} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {LiveResponseAggregator} from '../../src/utils/live_connection_utils.js';
 
+const wrap = (agg: LiveResponseAggregator) => ({
+  processMessage: (message: any) =>
+    agg.processMessage(message as LiveServerMessage),
+});
+
 describe('LiveResponseAggregator', () => {
   it('should yield usage metadata', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
     const usageMetadata = {
       promptTokenCount: 10,
       candidatesTokenCount: 20,
@@ -29,7 +38,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should stream text and yield full response on turnComplete', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     // Message 1: partial text
     const gen1 = aggregator.processMessage({
@@ -86,7 +95,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should flush text when transitioning between thought and non-thought', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     // Message 1: thought
     const res1 = Array.from(
@@ -157,7 +166,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should handle input transcription partial and finished', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     const res1 = Array.from(
       aggregator.processMessage({
@@ -196,7 +205,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should flush pending transcription on interrupted', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     const res1 = Array.from(
       aggregator.processMessage({
@@ -231,7 +240,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should yield groundingMetadata on partial response', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     const res1 = Array.from(
       aggregator.processMessage({
@@ -262,7 +271,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should buffer tool calls and yield at turnComplete for non-Gemini 3.x', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
 
     const res1 = Array.from(
       aggregator.processMessage({
@@ -296,7 +305,9 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should yield tool calls immediately for Gemini 3.x', () => {
-    const aggregator = new LiveResponseAggregator('gemini-3.1-flash-live');
+    const aggregator = wrap(
+      new LiveResponseAggregator('gemini-3.1-flash-live'),
+    );
 
     const res1 = Array.from(
       aggregator.processMessage({
@@ -317,7 +328,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should yield session resumption update', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
     const resumptionUpdate = {resumed: true};
 
     const res = Array.from(
@@ -332,7 +343,7 @@ describe('LiveResponseAggregator', () => {
   });
 
   it('should yield go away', () => {
-    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+    const aggregator = wrap(new LiveResponseAggregator('gemini-2.5-flash'));
     const goAway = {goAway: true};
 
     const res = Array.from(

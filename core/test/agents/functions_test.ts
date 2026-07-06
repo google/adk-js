@@ -3,6 +3,16 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {Content, FunctionCall} from '@google/genai';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
+import {
+  generateClientFunctionCallId,
+  getLongRunningFunctionCalls,
+  mergeParallelFunctionResponseEvents,
+  populateClientFunctionCallId,
+  removeClientFunctionCallId,
+} from '../../src/agents/functions.js';
 import {
   BasePlugin,
   BaseTool,
@@ -18,7 +28,7 @@ import {
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
   ToolConfirmation,
-} from '@google/adk';
+} from '../../src/index.js';
 import {FunctionCall} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
@@ -405,7 +415,7 @@ describe('generateAuthEvent', () => {
         requestedAuthConfigs: {
           'call_1': 'auth_config_1',
           'call_2': 'auth_config_2',
-        },
+        } as any,
       }),
       content: {role: 'model', parts: []},
     });
@@ -672,7 +682,6 @@ describe('getLongRunningFunctionCalls', () => {
         isLongRunning: false,
       }),
     };
-    // @ts-expect-error ts will argue about toolsDict because getLongRunningFunctionCalls is improted from the source and BaseTool is imported from '@google/adk'.
     const result = getLongRunningFunctionCalls(functionCalls, toolsDict);
     expect(result.has('call-1')).toBe(true);
     expect(result.has('call-2')).toBe(false);

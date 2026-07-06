@@ -47,6 +47,12 @@ export {
   BaseLlmResponseProcessor,
 } from './agents/processors/base_llm_processor.js';
 export {
+  CODE_EXECUTION_REQUEST_PROCESSOR,
+  CodeExecutionRequestProcessor,
+  CodeExecutionResponseProcessor,
+  responseProcessor as codeExecutionResponseProcessor,
+} from './agents/processors/code_execution_request_processor.js';
+export {
   CONTENT_REQUEST_PROCESSOR,
   ContentRequestProcessor,
 } from './agents/processors/content_request_processor.js';

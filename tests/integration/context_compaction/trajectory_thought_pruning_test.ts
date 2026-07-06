@@ -23,7 +23,7 @@ describe('TrajectoryThoughtPruning Integration', () => {
 
     const agent = new Agent({
       name: 'test-agent',
-      instructions: 'You are a helpful assistant.',
+      instruction: 'You are a helpful assistant.',
       contextCompactors: [compactor],
     });
 

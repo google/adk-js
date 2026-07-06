@@ -38,6 +38,7 @@
     "integrations"
   ],
   "devDependencies": {
+    "@google/genai": "^2.9.0",
     "@eslint/js": "^9.37.0",
     "@secretlint/secretlint-rule-pattern": "^11.3.1",
     "@secretlint/secretlint-rule-preset-recommend": "^11.3.1",

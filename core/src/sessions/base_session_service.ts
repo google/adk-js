@@ -50,7 +50,7 @@ export interface ListSessionsRequest {
   /** The name of the application. */
   appName: string;
   /** The ID of the user. */
-  userId: string;
+  userId?: string;
   /** Maximum number of sessions to return. */
   limit?: number;
   /** Zero-based index of the first session to return. Ignored if `page` is set. */

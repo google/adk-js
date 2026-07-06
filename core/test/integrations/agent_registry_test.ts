@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AgentRegistry,
@@ -562,7 +560,7 @@ describe('AgentRegistry', () => {
         },
       };
 
-      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo as any);
       const agent = await registry.getRemoteA2AAgent('agents/agent-1');
       expect(agent).toBeInstanceOf(RemoteA2AAgent);
       expect(agent.name).toBe('CustomAgent');
@@ -701,10 +699,10 @@ describe('AgentRegistry', () => {
         },
       };
 
-      const dummyClient = {};
-      const dummyClientFactory = () => {};
+      const dummyClient: any = {};
+      const dummyClientFactory: any = () => {};
 
-      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo as any);
       const agent = await registry.getRemoteA2AAgent('agents/agent-1', {
         client: dummyClient,
         clientFactory: dummyClientFactory,

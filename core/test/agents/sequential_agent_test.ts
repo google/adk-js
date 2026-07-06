@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {describe, expect, it} from 'vitest';
 import {
   BaseAgent,
   BaseAgentConfig,
@@ -14,8 +15,7 @@ import {
   isSequentialAgent,
   PluginManager,
   SequentialAgent,
-} from '@google/adk';
-import {describe, expect, it} from 'vitest';
+} from '../../src/index.js';
 
 class MockSubAgent extends BaseAgent {
   private eventsToYield: Event[];
@@ -129,7 +129,7 @@ describe('SequentialAgent', () => {
 
     const authors: string[] = [];
     for await (const event of seq.runAsync(context)) {
-      authors.push(event.author);
+      authors.push(event.author!);
     }
 
     expect(authors).toEqual(['sub1', 'sub1', 'sub2']);

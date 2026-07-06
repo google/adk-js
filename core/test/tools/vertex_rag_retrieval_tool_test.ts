@@ -13,7 +13,7 @@ const RAG_CORPUS =
 function makeLlmRequest(model = 'gemini-2.0-flash') {
   return {
     model,
-    config: {},
+    config: {} as any,
     contents: [],
     systemInstruction: undefined,
   };
@@ -115,7 +115,7 @@ describe('VertexRagRetrievalTool', () => {
       const tool = new VertexRagRetrievalTool({
         ragResources: [{ragCorpus: RAG_CORPUS}],
       });
-      const result = await tool.runAsync({} as never);
+      const result = await tool.runAsync();
       expect(result).toBeUndefined();
     });
   });

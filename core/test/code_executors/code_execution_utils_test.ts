@@ -264,7 +264,7 @@ describe('convertCodeExecutionParts', () => {
   });
 
   it('converts last executableCode part to text', () => {
-    const content = {
+    const content: any = {
       parts: [{executableCode: {code: 'x = 1', language: Language.PYTHON}}],
       role: 'model',
     };
@@ -274,7 +274,7 @@ describe('convertCodeExecutionParts', () => {
   });
 
   it('converts single codeExecutionResult part to text and sets role to user', () => {
-    const content = {
+    const content: any = {
       parts: [
         {
           codeExecutionResult: {

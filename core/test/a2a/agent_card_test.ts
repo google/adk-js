@@ -17,7 +17,7 @@ import {
   LoopAgent,
   ParallelAgent,
   SequentialAgent,
-} from '@google/adk';
+} from '../../src/index.js';
 
 // Minimal CustomAgent for testing BaseAgent path
 class CustomAgent extends BaseAgent {

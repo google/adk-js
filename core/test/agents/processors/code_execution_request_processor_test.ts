@@ -4,14 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  BaseAgent,
-  InvocationContext,
-  LlmAgent,
-  LlmRequest,
-  PluginManager,
-  createSession,
-} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
@@ -22,6 +14,14 @@ import {
   ExecuteCodeParams,
 } from '../../../src/code_executors/base_code_executor.js';
 import {CodeExecutionResult} from '../../../src/code_executors/code_execution_utils.js';
+import {
+  BaseAgent,
+  InvocationContext,
+  LlmAgent,
+  LlmRequest,
+  PluginManager,
+  createSession,
+} from '../../../src/index.js';
 
 class MockBaseAgent extends BaseAgent {
   constructor(name: string) {

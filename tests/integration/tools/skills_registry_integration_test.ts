@@ -5,6 +5,8 @@
  */
 
 import {
+  Event,
+  Frontmatter,
   InMemoryRunner,
   LlmAgent,
   Skill,
@@ -23,22 +25,24 @@ class MockSkillRegistry implements SkillRegistry {
     this.skillsMap.set(name, skill);
   }
 
-  async getSkill(name: string): Promise<Skill | undefined> {
-    return this.skillsMap.get(name);
+  async getSkill(name: string): Promise<Skill> {
+    const skill = this.skillsMap.get(name);
+    if (!skill) {
+      throw new Error(`Skill ${name} not found`);
+    }
+    return skill;
   }
 
-  async searchSkills(
-    query: string,
-  ): Promise<Array<{name: string; description: string}>> {
-    const results: Array<{name: string; description: string}> = [];
+  async searchSkills(query: string): Promise<Frontmatter[]> {
+    const results: Frontmatter[] = [];
     for (const [name, skill] of this.skillsMap.entries()) {
       if (
         name.includes(query) ||
-        skill.frontmatter.description?.includes(query)
+        skill.frontmatter.description.includes(query)
       ) {
         results.push({
           name,
-          description: skill.frontmatter.description || '',
+          description: skill.frontmatter.description,
         });
       }
     }
@@ -214,7 +218,7 @@ describe('Skills Registry Integration', () => {
     );
     expect(searchResponseEvent).toBeDefined();
     expect(
-      searchResponseEvent.content.parts[0].functionResponse.response,
+      searchResponseEvent!.content!.parts![0].functionResponse!.response,
     ).toEqual({
       results: [
         {
@@ -235,7 +239,8 @@ describe('Skills Registry Integration', () => {
     );
     expect(loadResponseEvent).toBeDefined();
     expect(
-      loadResponseEvent.content.parts[0].functionResponse.response.instructions,
+      loadResponseEvent!.content!.parts![0].functionResponse!.response!
+        .instructions,
     ).toBe('When asked to solve math, double the number.');
 
     // Verify load_skill_resource tool execution
@@ -251,7 +256,8 @@ describe('Skills Registry Integration', () => {
     );
     expect(resourceResponseEvent).toBeDefined();
     expect(
-      resourceResponseEvent.content.parts[0].functionResponse.response.content,
+      resourceResponseEvent!.content!.parts![0].functionResponse!.response!
+        .content,
     ).toBe('Double of X is 2*X');
 
     // Verify run_skill_script tool execution
@@ -266,7 +272,7 @@ describe('Skills Registry Integration', () => {
     );
     expect(runResponseEvent).toBeDefined();
     expect(
-      runResponseEvent.content.parts[0].functionResponse.response.stdout,
+      runResponseEvent!.content!.parts![0].functionResponse!.response!.stdout,
     ).toContain('42');
   });
 });

@@ -112,7 +112,7 @@ describe('OpenAPIToolset', () => {
     const toolset = new OpenAPIToolset({
       specDict: mockSpec,
       authScheme: {type: 'apiKey', name: 'key', in: 'header'},
-      authCredential: {api_key: 'my-key'},
+      authCredential: {apiKey: 'my-key'} as any,
     });
     const tools = await toolset.getTools();
 
@@ -122,7 +122,7 @@ describe('OpenAPIToolset', () => {
     );
     expect(
       (tools[0] as unknown as Record<string, unknown>).authCredential,
-    ).toEqual({api_key: 'my-key'});
+    ).toEqual({apiKey: 'my-key'});
   });
 
   it('should return all tools when no toolFilter is set and a context is provided', async () => {
@@ -381,9 +381,9 @@ describe('OpenApiSpecParser', () => {
     const operations = parser.parse(specWithInvalidType);
 
     expect(operations.length).toBe(1);
-    const schema = operations[0].operation.responses?.['200']?.content?.[
-      'application/json'
-    ]?.schema as OpenAPIV3.SchemaObject;
+    const schema = (
+      operations[0].operation.responses?.['200'] as OpenAPIV3.ResponseObject
+    )?.content?.['application/json']?.schema as OpenAPIV3.SchemaObject;
     const invalidPropSchema = schema.properties?.[
       'invalidProp'
     ] as OpenAPIV3.SchemaObject;
@@ -426,9 +426,9 @@ describe('OpenApiSpecParser', () => {
     const operations = parser.parse(specWithInvalidArrayType);
 
     expect(operations.length).toBe(1);
-    const schema = operations[0].operation.responses?.['200']?.content?.[
-      'application/json'
-    ]?.schema as OpenAPIV3.SchemaObject;
+    const schema = (
+      operations[0].operation.responses?.['200'] as OpenAPIV3.ResponseObject
+    )?.content?.['application/json']?.schema as OpenAPIV3.SchemaObject;
     const multiPropSchema = schema.properties?.[
       'multiProp'
     ] as OpenAPIV3.SchemaObject;

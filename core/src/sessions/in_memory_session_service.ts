@@ -141,7 +141,12 @@ export class InMemorySessionService extends BaseSessionService {
     page,
     order,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
-    if (!this.sessions[appName] || !this.sessions[appName][userId]) {
+    const appSessions = this.sessions[appName] || {};
+    const sessionsToMap = userId
+      ? Object.values(appSessions[userId] || {})
+      : Object.values(appSessions).flatMap((u) => Object.values(u));
+
+    if (sessionsToMap.length === 0) {
       if (limit !== undefined) {
         const effectiveOffset =
           page !== undefined ? (page - 1) * limit : (offset ?? 0);
@@ -168,16 +173,15 @@ export class InMemorySessionService extends BaseSessionService {
       });
     }
 
-    const all: Session[] = Object.values(this.sessions[appName][userId]).map(
-      (session) =>
-        createSession({
-          id: session.id,
-          appName: session.appName,
-          userId: session.userId,
-          state: {},
-          events: [],
-          lastUpdateTime: session.lastUpdateTime,
-        }),
+    const all: Session[] = sessionsToMap.map((session) =>
+      createSession({
+        id: session.id,
+        appName: session.appName,
+        userId: session.userId,
+        state: {},
+        events: [],
+        lastUpdateTime: session.lastUpdateTime,
+      }),
     );
 
     if (order === 'asc') {

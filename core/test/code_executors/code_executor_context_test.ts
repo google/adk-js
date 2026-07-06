@@ -77,8 +77,8 @@ describe('CodeExecutorContext', () => {
   });
 
   describe('getInputFiles / addInputFiles / clearInputFiles', () => {
-    const file1 = {name: 'f1.txt', content: 'aGVsbG8=', encoding: undefined};
-    const file2 = {name: 'f2.txt', content: 'd29ybGQ=', encoding: undefined};
+    const file1 = {name: 'f1.txt', content: 'aGVsbG8=', mimeType: 'text/plain'};
+    const file2 = {name: 'f2.txt', content: 'd29ybGQ=', mimeType: 'text/plain'};
 
     it('returns an empty array when no input files have been added', () => {
       const {ctx} = makeContext();

@@ -16,7 +16,7 @@ import {
   LlmResponse,
   Session,
   createEventActions,
-} from '@google/adk';
+} from '../../src/index.js';
 import {
   traceAgentInvocation,
   traceCallLlm,
@@ -31,7 +31,6 @@ vi.hoisted(() => {
 vi.mock('@opentelemetry/api');
 
 describe('Telemetry Tracing Functions', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockSpan: any;
   let mockAgent: BaseAgent;
   let mockInvocationContext: InvocationContext;

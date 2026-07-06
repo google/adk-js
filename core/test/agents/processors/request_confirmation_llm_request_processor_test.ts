@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {describe, expect, it, vi} from 'vitest';
+import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/request_confirmation_llm_request_processor.js';
 import {
   BaseAgent,
   InvocationContext,
@@ -13,9 +15,7 @@ import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   createEvent,
   createSession,
-} from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
-import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/request_confirmation_llm_request_processor.js';
+} from '../../../src/index.js';
 
 vi.mock('../../../src/agents/functions.js', async (importOriginal) => {
   const original =

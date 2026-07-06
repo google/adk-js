@@ -11,6 +11,7 @@ import {
   Context,
   ExecuteCodeParams,
   File,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   RunSkillScriptTool,
@@ -209,7 +210,7 @@ describe('RunSkillScriptTool', () => {
     const testFile = {
       name: 'output.txt',
       content: 'hello',
-      contentEncoding: 'utf8',
+      contentEncoding: FileContentEncoding.UTF8,
       mimeType: 'text/plain',
     } as File;
     mockExecutor.mockResult = {

@@ -4,16 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {beforeEach, describe, expect, it} from 'vitest';
 import {
   CodeExecutionLanguage,
+  createSession,
   ExecuteCodeParams,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   PluginManager,
   UnsafeLocalCodeExecutor,
-  createSession,
-} from '@google/adk';
-import {beforeEach, describe, expect, it} from 'vitest';
+} from '../../src/index.js';
 
 function createMockInvocationContext(): InvocationContext {
   const agent = new LlmAgent({
@@ -242,13 +243,13 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'test.txt',
             content: Buffer.from('hello file content').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
           {
             name: 'subdir/data.json',
             content: '{"key": "value"}',
-            contentEncoding: 'utf8',
+            contentEncoding: FileContentEncoding.UTF8,
             mimeType: 'application/json',
           },
         ],
@@ -272,7 +273,7 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'existing_input.txt',
             content: Buffer.from('hello input').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
         ],

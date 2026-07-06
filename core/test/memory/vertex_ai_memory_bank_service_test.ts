@@ -5,6 +5,8 @@
  */
 
 import {Client} from '@google-cloud/vertexai';
+import {Content, Part} from '@google/genai';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   createEvent,
   createSession,
@@ -13,9 +15,7 @@ import {
   MemoryEntry,
   VertexAiMemoryBankService,
   VertexAiMemoryBankServiceOptions,
-} from '@google/adk';
-import {Content, Part} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+} from '../../src/index.js';
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
@@ -277,7 +277,7 @@ describe('VertexAiMemoryBankService', () => {
       );
 
       expect(response.memories).toHaveLength(1);
-      expect(response.memories[0].content.parts[0].text).toBe(
+      expect(response.memories?.[0]?.content?.parts?.[0]?.text).toBe(
         'user likes blue',
       );
     });

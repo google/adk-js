@@ -46,7 +46,7 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'} as any);
 
     const result = await handler.prepareAuthCredentials();
 
@@ -63,7 +63,7 @@ describe('ToolAuthHandler', () => {
       requestCredential: vi.fn(),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'} as any);
 
     const result = await handler.prepareAuthCredentials();
 
@@ -81,7 +81,7 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'} as any);
 
     const result = await handler.prepareAuthCredentials();
 
@@ -99,7 +99,7 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'} as any);
 
     const result = await handler.prepareAuthCredentials();
 

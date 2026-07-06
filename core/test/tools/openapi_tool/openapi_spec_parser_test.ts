@@ -133,7 +133,7 @@ describe('OpenApiSpecParser', () => {
   });
 
   it('should sanitize schema types', () => {
-    const spec: OpenAPIV3.Document = {
+    const spec = {
       openapi: '3.0.0',
       info: {title: 'Sanitize API', version: '1.0.0'},
       paths: {
@@ -157,7 +157,7 @@ describe('OpenApiSpecParser', () => {
           },
         },
       },
-    };
+    } as unknown as OpenAPIV3.Document;
 
     const parser = new OpenApiSpecParser();
     const parsed = parser.parse(spec);
@@ -168,7 +168,9 @@ describe('OpenApiSpecParser', () => {
     const schema = body.content['application/json']
       .schema as OpenAPIV3.SchemaObject;
     expect(schema.type).toBe('object');
-    expect(schema.properties?.age?.type).toBe('integer');
+    expect((schema.properties?.age as OpenAPIV3.SchemaObject)?.type).toBe(
+      'integer',
+    );
     expect(
       (schema.properties?.invalid as OpenAPIV3.SchemaObject).type,
     ).toBeUndefined();

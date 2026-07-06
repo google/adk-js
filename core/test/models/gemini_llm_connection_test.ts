@@ -9,16 +9,14 @@ import {
   Content,
   GroundingMetadata,
   LiveServerGoAway,
-  LiveServerMessage,
 } from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {GeminiLlmConnection} from '../../src/models/gemini_llm_connection.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 
 describe('GeminiLlmConnection', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockSession: any;
-  let messageQueue: AsyncQueue<LiveServerMessage>;
+  let messageQueue: AsyncQueue<any>;
 
   beforeEach(() => {
     mockSession = {
@@ -27,7 +25,7 @@ describe('GeminiLlmConnection', () => {
       sendRealtimeInput: vi.fn(),
       close: vi.fn(),
     };
-    messageQueue = new AsyncQueue<LiveServerMessage>();
+    messageQueue = new AsyncQueue<any>();
   });
 
   describe('sendHistory', () => {
@@ -486,7 +484,7 @@ describe('GeminiLlmConnection', () => {
         'gemini-2.5-flash',
         messageQueue,
       );
-      const generator = connection.receive();
+      const generator = connection.receive() as any;
 
       messageQueue.push({
         serverContent: {
@@ -963,7 +961,7 @@ describe('GeminiLlmConnection', () => {
         'gemini-2.5-flash',
         messageQueue,
       );
-      const generator = connection.receive();
+      const generator = connection.receive() as any;
 
       messageQueue.push({
         serverContent: {

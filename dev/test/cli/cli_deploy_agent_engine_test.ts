@@ -98,16 +98,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     return actual.readdir(path, opts);
   });
 
-  const mockFs: Record<string, unknown> = {
+  const mockFs: any = {
     ...actual,
     cp: mockCp,
     mkdir: mockMkdir,
     readdir: mockReaddir,
   };
 
-  if (actual.default) {
+  const actualAny = actual as any;
+  if (actualAny.default) {
     mockFs.default = {
-      ...actual.default,
+      ...actualAny.default,
       cp: mockCp,
       mkdir: mockMkdir,
       readdir: mockReaddir,

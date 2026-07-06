@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Content} from '@google/genai';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {
   BaseAgent,
   BaseTool,
@@ -13,9 +15,7 @@ import {
   InvocationContext,
   LlmRequest,
   LlmResponse,
-} from '@google/adk';
-import {Content} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+} from '../../src/index.js';
 import {LoggingPlugin} from '../../src/plugins/logging_plugin.js';
 import {resetLogger, setLogger} from '../../src/utils/logger.js';
 

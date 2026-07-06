@@ -7,7 +7,7 @@
 import {GOOGLE_SEARCH, GoogleSearchTool, LlmRequest} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
-function makeRequest(model?: string, tools = []): LlmRequest {
+function makeRequest(model?: string, tools: any[] = []): LlmRequest {
   return {
     model,
     config: {tools},

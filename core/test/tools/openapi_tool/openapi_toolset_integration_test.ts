@@ -47,7 +47,7 @@ describe('OpenAPIToolset Integration', () => {
       ok: true,
       headers: {get: () => 'application/json'},
       json: async () => mockResponse,
-    });
+    } as any);
 
     // Mock context
     const mockContext = {
@@ -82,7 +82,7 @@ describe('OpenAPIToolset Integration', () => {
       ok: true,
       headers: {get: () => 'text/plain'},
       text: async () => 'plain text response',
-    });
+    } as any);
 
     const mockContext = {
       getAuthResponse: vi.fn().mockReturnValue(undefined),

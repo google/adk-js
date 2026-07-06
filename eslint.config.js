@@ -4,36 +4,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import js from "@eslint/js";
-import globals from "globals";
-import tseslint from "typescript-eslint";
-import { defineConfig } from "eslint/config";
+import js from '@eslint/js';
+import {defineConfig} from 'eslint/config';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
 export default defineConfig([
   {
-    ignores: ["**/dist/**", "dev/src/browser/**"],
+    ignores: ['**/dist/**', 'dev/src/browser/**'],
   },
   tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
-    plugins: { js },
-    extends: ["js/recommended"],
+    files: ['**/*.ts'],
+    plugins: {js},
+    extends: ['js/recommended'],
     languageOptions: {
       globals: {
         ...globals.node,
-        ...globals.vitest
+        ...globals.vitest,
       },
     },
     rules: {
-      "no-unused-vars": "off",
-      "@typescript-eslint/no-unused-vars": [
-        "error",
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
         {
-          "argsIgnorePattern": "^_",
-          "varsIgnorePattern": "^_",
-          "caughtErrorsIgnorePattern": "^_"
-        }
-      ]
+          'argsIgnorePattern': '^_',
+          'varsIgnorePattern': '^_',
+          'caughtErrorsIgnorePattern': '^_',
+        },
+      ],
+    },
+  },
+  {
+    files: ['**/test/**/*.ts', 'tests/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 ]);

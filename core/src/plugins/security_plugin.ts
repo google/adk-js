@@ -70,7 +70,7 @@ export class InMemoryPolicyEngine implements BasePolicyEngine {
    *
    * @returns A promise resolving to an ALLOW result.
    */
-  async evaluate(): Promise<PolicyCheckResult> {
+  async evaluate(_context: ToolCallPolicyContext): Promise<PolicyCheckResult> {
     // Default permissive implementation
     return Promise.resolve({
       outcome: PolicyOutcome.ALLOW,

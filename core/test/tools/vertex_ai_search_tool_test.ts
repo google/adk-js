@@ -23,7 +23,7 @@ interface TestTool {
 
 describe('VertexAiSearchTool', () => {
   it('should throw error if neither dataStoreId nor searchEngineId is specified', () => {
-    expect(() => new VertexAiSearchTool({})).toThrowError(
+    expect(() => new VertexAiSearchTool({} as any)).toThrowError(
       'Either dataStoreId or searchEngineId must be specified.',
     );
   });
@@ -34,7 +34,7 @@ describe('VertexAiSearchTool', () => {
         new VertexAiSearchTool({
           dataStoreId: 'ds',
           searchEngineId: 'se',
-        }),
+        } as any),
     ).toThrowError('Either dataStoreId or searchEngineId must be specified.');
   });
 
@@ -44,7 +44,7 @@ describe('VertexAiSearchTool', () => {
         new VertexAiSearchTool({
           dataStoreId: 'ds',
           dataStoreSpecs: [{dataStore: 'ds1'}],
-        }),
+        } as any),
     ).toThrowError(
       'searchEngineId must be specified if dataStoreSpecs is specified.',
     );
@@ -68,10 +68,10 @@ describe('VertexAiSearchTool', () => {
       filter: 'f',
       maxResults: 10,
     });
-    const llmRequest: LlmRequest = {
+    const llmRequest = {
       model: 'gemini-2.0-flash',
       toolsDict: {},
-    };
+    } as LlmRequest;
     const toolContext = {} as Context;
 
     await tool.processLlmRequest({toolContext, llmRequest});
@@ -91,13 +91,13 @@ describe('VertexAiSearchTool', () => {
 
   it('should throw error for Gemini 1.x if other tools are present and bypass is false', async () => {
     const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-    const llmRequest: LlmRequest = {
+    const llmRequest = {
       model: 'gemini-1.5-pro',
       toolsDict: {},
       config: {
         tools: [{functionDeclarations: []}],
       },
-    };
+    } as unknown as LlmRequest;
     const toolContext = {} as Context;
 
     await expect(
@@ -112,13 +112,13 @@ describe('VertexAiSearchTool', () => {
       dataStoreId: 'ds',
       bypassMultiToolsLimit: true,
     });
-    const llmRequest: LlmRequest = {
+    const llmRequest = {
       model: 'gemini-1.5-pro',
       toolsDict: {},
       config: {
         tools: [{functionDeclarations: []}],
       },
-    };
+    } as unknown as LlmRequest;
     const toolContext = {} as Context;
 
     await tool.processLlmRequest({toolContext, llmRequest});
@@ -128,10 +128,10 @@ describe('VertexAiSearchTool', () => {
 
   it('should throw error for non-Gemini model', async () => {
     const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-    const llmRequest: LlmRequest = {
+    const llmRequest = {
       model: 'claude-3',
       toolsDict: {},
-    };
+    } as LlmRequest;
     const toolContext = {} as Context;
 
     await expect(
@@ -155,10 +155,10 @@ describe('VertexAiSearchTool', () => {
     it('should bypass model check if ADK_DISABLE_GEMINI_MODEL_ID_CHECK is true', async () => {
       process.env.ADK_DISABLE_GEMINI_MODEL_ID_CHECK = 'true';
       const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-      const llmRequest: LlmRequest = {
+      const llmRequest = {
         model: 'claude-3',
         toolsDict: {},
-      };
+      } as LlmRequest;
       const toolContext = {} as Context;
 
       await tool.processLlmRequest({toolContext, llmRequest});

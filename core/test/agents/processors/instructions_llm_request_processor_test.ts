@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {describe, expect, it} from 'vitest';
+import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/instructions_llm_request_processor.js';
 import {
   BaseAgent,
   createSession,
@@ -13,9 +15,7 @@ import {
   LlmRequest,
   PluginManager,
   ReadonlyContext,
-} from '@google/adk';
-import {describe, expect, it} from 'vitest';
-import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/instructions_llm_request_processor.js';
+} from '../../../src/index.js';
 
 class MockRootAgent extends BaseAgent {
   constructor(name: string, subAgents: BaseAgent[] = []) {
@@ -172,7 +172,7 @@ describe('InstructionsLlmRequestProcessor', () => {
       name: 'test_agent',
       model: 'gemini-2.5-flash',
       instruction: 'Base instruction',
-      outputSchema,
+      outputSchema: outputSchema as any,
       tools: [
         new FunctionTool({
           name: 'some_tool',

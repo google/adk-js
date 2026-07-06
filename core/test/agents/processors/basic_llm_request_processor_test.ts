@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Content, Blob as GenaiBlob, Modality} from '@google/genai';
+import {beforeAll, describe, expect, it} from 'vitest';
+import {BASIC_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/basic_llm_request_processor.js';
 import {
   BaseAgent,
   BaseLlm,
@@ -17,10 +20,7 @@ import {
   LlmResponse,
   PluginManager,
   RunConfig,
-} from '@google/adk';
-import {Content, Blob as GenaiBlob, Modality} from '@google/genai';
-import {beforeAll, describe, expect, it} from 'vitest';
-import {BASIC_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/basic_llm_request_processor.js';
+} from '../../../src/index.js';
 
 class TestLlmConnection implements BaseLlmConnection {
   async sendHistory(_history: Content[]): Promise<void> {}
@@ -158,7 +158,7 @@ describe('BasicLlmRequestProcessor', () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       model: 'test-basic-processor-model',
-      outputSchema,
+      outputSchema: outputSchema as any,
     });
     const invocationContext = createMockInvocationContext(agent);
     const llmRequest = makeLlmRequest();
@@ -179,7 +179,7 @@ describe('BasicLlmRequestProcessor', () => {
     const agent = new LlmAgent({
       name: 'test_agent',
       model: 'test-basic-processor-model',
-      outputSchema,
+      outputSchema: outputSchema as any,
       tools: [
         new FunctionTool({
           name: 'some_tool',

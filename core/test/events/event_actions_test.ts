@@ -42,13 +42,12 @@ describe('createEventActions', () => {
   it('applies requestedAuthConfigs override', () => {
     const authConfig = {scheme: 'oauth2'};
     const actions = createEventActions({
-      requestedAuthConfigs: {'call-1': authConfig},
+      requestedAuthConfigs: {'call-1': authConfig} as any,
     });
     expect(actions.requestedAuthConfigs).toEqual({'call-1': authConfig});
   });
 
   it('applies requestedToolConfirmations override', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const confirmation = {toolName: 'my_tool'} as any;
     const actions = createEventActions({
       requestedToolConfirmations: {'call-1': confirmation},
@@ -112,13 +111,13 @@ describe('mergeEventActions', () => {
       {
         stateDelta: {},
         artifactDelta: {},
-        requestedAuthConfigs: {'call-1': {scheme: 'oauth2'}},
+        requestedAuthConfigs: {'call-1': {scheme: 'oauth2'}} as any,
         requestedToolConfirmations: {},
       },
       {
         stateDelta: {},
         artifactDelta: {},
-        requestedAuthConfigs: {'call-2': {scheme: 'apiKey'}},
+        requestedAuthConfigs: {'call-2': {scheme: 'apiKey'}} as any,
         requestedToolConfirmations: {},
       },
     ]);
@@ -129,9 +128,8 @@ describe('mergeEventActions', () => {
   });
 
   it('merges requestedToolConfirmations from multiple sources', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const conf1 = {toolName: 'tool-a'} as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const conf2 = {toolName: 'tool-b'} as any;
     const result = mergeEventActions([
       {
@@ -195,7 +193,6 @@ describe('mergeEventActions', () => {
 
   it('ignores falsy sources', () => {
     const result = mergeEventActions([
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       null as any,
       createEventActions({stateDelta: {x: 1}}),
     ]);
