@@ -54,8 +54,8 @@ describe('Context Compaction with Tokens', () => {
           },
         ],
         usageMetadata: {
-          promptTokenCount: 25,
-          totalTokenCount: 35,
+          promptTokenCount: 45,
+          totalTokenCount: 55,
         },
       },
     ]);
