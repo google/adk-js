@@ -219,6 +219,11 @@ export type {
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
+export type {
+  CreateSessionScope,
+  SessionScope,
+  UserScope,
+} from './sessions/session_scope.js';
 export {State} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
@@ -316,4 +321,5 @@ export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
+export * from './sessions/session_scope.js';
 export * from './tools/base_tool.js';
