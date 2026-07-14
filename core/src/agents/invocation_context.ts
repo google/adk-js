@@ -8,6 +8,11 @@ import {Content} from '@google/genai';
 
 import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
@@ -236,6 +241,63 @@ export class InvocationContext {
   incrementLlmCallCount() {
     this.invocationCostManager.incrementAndEnforceLlmCallsLimit(this.runConfig);
   }
+
+  /**
+   * Returns whether to pause the invocation right after this event.
+   *
+   * "Pausing" an invocation is different from "ending" an invocation. A paused
+   * invocation can be resumed later, while an ended invocation cannot.
+   *
+   * Pausing the current agent's run will also pause all the agents that
+   * depend on its execution, i.e. the subsequent agents in a workflow, and the
+   * current agent's ancestors, etc.
+   *
+   * @param event The current event.
+   * @returns Whether to pause the invocation right after this event.
+   */
+  shouldPauseInvocation(event: Event): boolean {
+    const functionCalls = getFunctionCalls(event);
+    if (!event.longRunningToolIds?.length || !functionCalls.length) {
+      return false;
+    }
+
+    const events = this.session?.events || [];
+    let eventIndex = -1;
+    // simplicity: ES2022 lib ceiling, reverse loop avoids tsconfig break (findLastIndex requires ES2023)
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].id === event.id) {
+        eventIndex = i;
+        break;
+      }
+    }
+    const subsequentEvents =
+      eventIndex === -1 ? [] : events.slice(eventIndex + 1);
+    return functionCalls.some(
+      (fc) =>
+        fc.id &&
+        event.longRunningToolIds!.includes(fc.id) &&
+        !subsequentEvents.some(
+          (e) =>
+            e.author === 'user' &&
+            ((e.branch && extractRunIds(e.branch).has(fc.id!)) ||
+              getFunctionResponses(e).some((fr) => fr.id === fc.id)),
+        ),
+    );
+  }
+}
+
+/**
+ * Extracts all run IDs (the part after '@') from all segments in a branch path.
+ *
+ * Example:
+ *   - Path: 'parent@1.child@2.node'
+ *   - Returns: Set {'1', '2'}
+ *
+ * @param branch The dot-separated branch path string.
+ * @returns A set of run IDs found in the branch path.
+ */
+function extractRunIds(branch?: string): Set<string> {
+  return new Set(branch?.match(/@([^.]+)/g)?.map((s) => s.slice(1)) ?? []);
 }
 
 export function newInvocationContextId(): string {
