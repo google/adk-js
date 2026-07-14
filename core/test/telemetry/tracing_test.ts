@@ -215,35 +215,6 @@ describe('Telemetry Tracing Functions', () => {
       );
     });
 
-    it('should set error.type when only errorType parameter is provided', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        functionResponseEvent: mockEvent,
-        errorType: 'TIMEOUT_ERROR',
-      });
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
-        'error.type',
-        'TIMEOUT_ERROR',
-      );
-    });
-
-    it('should ensure error takes precedence over errorType parameter', () => {
-      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
-      traceToolCall({
-        tool: mockTool,
-        args: {},
-        functionResponseEvent: mockEvent,
-        error: new RangeError('Out of range'),
-        errorType: 'OTHER_ERROR',
-      });
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
-        'error.type',
-        'RangeError',
-      );
-    });
-
     it('should set gcp.mcp.server.destination.id when present in tool customMetadata', () => {
       vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
       const toolWithMcp = {
@@ -320,7 +291,7 @@ describe('Telemetry Tracing Functions', () => {
         functionResponseEvent: mockEventWithJson as unknown as Event,
       });
 
-      // Assert - setAttributes is called without tool_response
+      // Assert - setAttributes is called with tool_response merged
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'execute_tool',
         'gen_ai.tool.name': '(merged tools)',
@@ -330,13 +301,8 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.event_id': 'merged-event-id',
         'gcp.vertex.agent.llm_request': '{}',
         'gcp.vertex.agent.llm_response': '{}',
+        'gcp.vertex.agent.tool_response': expect.any(String),
       });
-
-      // tool_response is set separately via setAttribute
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
-        'gcp.vertex.agent.tool_response',
-        expect.any(String),
-      );
     });
 
     it('should respect optional invocationContext for legacy span content capture', () => {
@@ -356,9 +322,10 @@ describe('Telemetry Tracing Functions', () => {
         invocationContext: ctxWithNoCapture,
       });
 
-      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
-        'gcp.vertex.agent.tool_response',
-        '{}',
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'gcp.vertex.agent.tool_response': '{}',
+        }),
       );
     });
   });
@@ -384,6 +351,8 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.session_id': 'test-session-id',
         'gcp.vertex.agent.event_id': 'test-event-id',
         'gcp.vertex.agent.llm_request': expect.stringContaining('test-model'),
+        'gcp.vertex.agent.llm_response':
+          expect.stringContaining('test-response'),
       });
 
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(

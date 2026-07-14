@@ -96,7 +96,6 @@ export interface TraceToolCallParams {
   args: Record<string, unknown>;
   functionResponseEvent?: Event | null;
   error?: unknown;
-  errorType?: string;
   span?: Span;
   invocationContext?: InvocationContext;
 }
@@ -111,7 +110,6 @@ export function traceToolCall({
   args,
   functionResponseEvent,
   error,
-  errorType,
   span,
   invocationContext,
 }: TraceToolCallParams): void {
@@ -135,57 +133,28 @@ export function traceToolCall({
       : '{}',
   });
 
-  if (error !== undefined && error !== null) {
-    if (
-      typeof error === 'object' &&
-      'errorType' in error &&
-      error.errorType != null
-    ) {
-      activeSpan.setAttribute('error.type', String(error.errorType));
-    } else if (typeof error === 'object') {
-      activeSpan.setAttribute('error.type', error.constructor.name);
-    } else {
-      activeSpan.setAttribute('error.type', typeof error);
-    }
-  } else if (errorType != null) {
-    activeSpan.setAttribute('error.type', errorType);
+  if (error != null) {
+    const errorTypeAttr =
+      (error as Record<string, unknown>).errorType ??
+      (typeof error === 'object' ? error.constructor.name : typeof error);
+    activeSpan.setAttribute('error.type', String(errorTypeAttr));
   }
 
-  try {
-    if (
-      tool.customMetadata &&
-      GCP_MCP_SERVER_DESTINATION_ID in tool.customMetadata
-    ) {
-      const destinationId = tool.customMetadata[GCP_MCP_SERVER_DESTINATION_ID];
-      if (destinationId !== undefined && destinationId !== null) {
-        activeSpan.setAttribute(
-          GCP_MCP_SERVER_DESTINATION_ID,
-          String(destinationId),
-        );
-      }
-    }
-  } catch (_e: unknown) {
-    // Never break tool execution on metadata inspection failures
+  const destinationId = tool.customMetadata?.[GCP_MCP_SERVER_DESTINATION_ID];
+  if (destinationId != null) {
+    activeSpan.setAttribute(
+      GCP_MCP_SERVER_DESTINATION_ID,
+      String(destinationId),
+    );
   }
 
   // Tracing tool response
   let toolCallId = '<not specified>';
   let toolResponse: unknown = '<not specified>';
-
-  try {
-    if (functionResponseEvent?.content?.parts) {
-      const responseParts = functionResponseEvent.content.parts;
-      const functionResponse = responseParts[0]?.functionResponse;
-      if (functionResponse?.id) {
-        toolCallId = functionResponse.id;
-      }
-      if (functionResponse?.response) {
-        toolResponse = functionResponse.response;
-      }
-    }
-  } catch (_e: unknown) {
-    // Ignore errors extracting tool response
-  }
+  const functionResponse =
+    functionResponseEvent?.content?.parts?.[0]?.functionResponse;
+  if (functionResponse?.id) toolCallId = functionResponse.id;
+  if (functionResponse?.response) toolResponse = functionResponse.response;
 
   if (typeof toolResponse !== 'object' || toolResponse === null) {
     toolResponse = {result: toolResponse};
@@ -240,14 +209,12 @@ export function traceMergedToolCalls({
     // applicable for tool_response.
     'gcp.vertex.agent.llm_request': '{}',
     'gcp.vertex.agent.llm_response': '{}',
-  });
-
-  span.setAttribute(
-    'gcp.vertex.agent.tool_response',
-    shouldAddRequestResponseToSpans(invocationContext)
+    'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans(
+      invocationContext,
+    )
       ? safeJsonSerialize(functionResponseEvent)
       : '{}',
-  );
+  });
 }
 
 export interface TraceCallLlmParams {
@@ -288,6 +255,11 @@ export function traceCallLlm({
     )
       ? safeJsonSerialize(buildLlmRequestForTrace(llmRequest))
       : '{}',
+    'gcp.vertex.agent.llm_response': shouldAddRequestResponseToSpans(
+      invocationContext,
+    )
+      ? safeJsonSerialize(llmResponse)
+      : '{}',
   });
 
   // Consider removing once GenAI SDK provides a way to record this info.
@@ -301,13 +273,6 @@ export function traceCallLlm({
       llmRequest.config.maxOutputTokens,
     );
   }
-
-  span.setAttribute(
-    'gcp.vertex.agent.llm_response',
-    shouldAddRequestResponseToSpans(invocationContext)
-      ? safeJsonSerialize(llmResponse)
-      : '{}',
-  );
 
   if (llmResponse.usageMetadata) {
     span.setAttribute(
@@ -361,17 +326,10 @@ export function traceSendData({
   span.setAttributes({
     'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
     'gcp.vertex.agent.event_id': eventId,
-  });
-
-  // Once instrumentation is added to the GenAI SDK, consider whether this
-  // information still needs to be recorded by the Agent Development Kit.
-
-  span.setAttribute(
-    'gcp.vertex.agent.data',
-    shouldAddRequestResponseToSpans(invocationContext)
+    'gcp.vertex.agent.data': shouldAddRequestResponseToSpans(invocationContext)
       ? safeJsonSerialize(data)
       : '{}',
-  );
+  });
 }
 
 /**
@@ -468,31 +426,25 @@ export function runAsyncGeneratorWithOtelContext<TThis, T>(
  *
  * @returns false only when ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS is explicitly set to 'false' or '0'
  */
+
 function shouldAddRequestResponseToSpans(
   invocationContext?: InvocationContext,
 ): boolean {
-  if (
-    invocationContext?.runConfig &&
-    'telemetry' in invocationContext.runConfig
-  ) {
-    const telemetry = (invocationContext.runConfig as Record<string, unknown>)
-      .telemetry;
-    if (typeof telemetry === 'object' && telemetry !== null) {
-      if ('shouldAddContentToLegacySpans' in telemetry) {
-        const val = (telemetry as Record<string, unknown>)
-          .shouldAddContentToLegacySpans;
-        return typeof val === 'function' ? val() : Boolean(val);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const telemetry = (invocationContext?.runConfig as any)?.telemetry;
+  if (telemetry) {
+    if (telemetry.shouldAddContentToLegacySpans !== undefined) {
+      return typeof telemetry.shouldAddContentToLegacySpans === 'function'
+        ? telemetry.shouldAddContentToLegacySpans()
+        : Boolean(telemetry.shouldAddContentToLegacySpans);
+    }
+    if (telemetry.captureMessageContent !== undefined) {
+      if (typeof telemetry.captureMessageContent === 'boolean') {
+        return telemetry.captureMessageContent;
       }
-      if ('captureMessageContent' in telemetry) {
-        const val = (telemetry as Record<string, unknown>)
-          .captureMessageContent;
-        if (typeof val === 'boolean') {
-          return val;
-        }
-        if (typeof val === 'string') {
-          const upper = val.toUpperCase();
-          return upper === 'SPAN_ONLY' || upper === 'SPAN_AND_EVENT';
-        }
+      if (typeof telemetry.captureMessageContent === 'string') {
+        const upper = telemetry.captureMessageContent.toUpperCase();
+        return upper === 'SPAN_ONLY' || upper === 'SPAN_AND_EVENT';
       }
     }
   }

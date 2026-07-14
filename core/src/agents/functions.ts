@@ -211,15 +211,6 @@ export function generateRequestConfirmationEvent({
   });
 }
 
-async function callToolAsync(
-  tool: BaseTool,
-  args: Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
-  toolContext: Context,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
-  logger.debug(`callToolAsync ${tool.name}`);
-  return await tool.runAsync({args, toolContext});
-}
 /**
  * Handles function calls.
  * Runtime behavior to pay attention to:
@@ -312,7 +303,8 @@ export async function handleFunctionCallList({
       try {
         // Step 1: Check if plugin before_tool_callback overrides the function
         // response.
-        let functionResponse = null;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let functionResponse: any = null;
         let functionResponseError: string | unknown | undefined;
         functionResponse =
           await invocationContext.pluginManager.runBeforeToolCallback({
@@ -342,11 +334,11 @@ export async function handleFunctionCallList({
         if (functionResponse == null) {
           // Cover both null and undefined
           try {
-            functionResponse = await callToolAsync(
-              tool,
-              functionArgs,
+            logger.debug(`callToolAsync ${tool.name}`);
+            functionResponse = (await tool.runAsync({
+              args: functionArgs,
               toolContext,
-            );
+            })) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
           } catch (e: unknown) {
             caughtExecutionError = e;
             if (e instanceof Error) {
@@ -453,7 +445,7 @@ export async function handleFunctionCallList({
         if (
           functionResponseEvent ||
           caughtExecutionError ||
-          !(tool.isLongRunning && !functionResponseEvent)
+          !tool.isLongRunning
         ) {
           traceToolCall({
             tool,
