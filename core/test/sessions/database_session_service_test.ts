@@ -39,10 +39,12 @@ describe('DatabaseSessionService', () => {
 
   it('should create a session', async () => {
     const session = await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
+      scope: {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session-id',
+      },
       state: {'foo': 'bar'},
-      sessionId: 'test-session-id',
     });
 
     expect(session.id).toBe('test-session-id');
@@ -53,13 +55,15 @@ describe('DatabaseSessionService', () => {
 
   it('should filter out temporary state keys prefixed with temp: on creation', async () => {
     const session = await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
+      scope: {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session-id-2',
+      },
       state: {
         'foo': 'bar',
         [`${State.TEMP_PREFIX}temp`]: 'value',
       },
-      sessionId: 'test-session-id-2',
     });
 
     expect(session.id).toBe('test-session-id-2');
@@ -69,16 +73,20 @@ describe('DatabaseSessionService', () => {
 
   it('should get a session', async () => {
     await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 'test-session-id',
+      scope: {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session-id',
+      },
       state: {'key': 'value'},
     });
 
     const session = await service.getSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 'test-session-id',
+      scope: {
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session-id',
+      },
     });
 
     expect(session).toBeDefined();
@@ -88,19 +96,14 @@ describe('DatabaseSessionService', () => {
 
   it('should list sessions', async () => {
     await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
     });
     await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's2',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's2'},
     });
 
     const response = await service.listSessions({
-      appName: 'test-app',
-      userId: 'test-user',
+      scope: {appName: 'test-app', userId: 'test-user'},
     });
 
     expect(response.sessions.length).toBe(2);
@@ -110,21 +113,15 @@ describe('DatabaseSessionService', () => {
 
   it('should delete a session', async () => {
     await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
     });
 
     await service.deleteSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
     });
 
     const session = await service.getSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
     });
 
     expect(session).toBeUndefined();
@@ -132,9 +129,7 @@ describe('DatabaseSessionService', () => {
 
   it('should append event and update state', async () => {
     const session = await service.createSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
       state: {'count': 0},
     });
 
@@ -155,9 +150,7 @@ describe('DatabaseSessionService', () => {
 
     // Verify persistence
     const loadedSession = await service.getSession({
-      appName: 'test-app',
-      userId: 'test-user',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'test-user', sessionId: 's1'},
     });
 
     expect(loadedSession?.state['count']).toBe(1);
@@ -168,17 +161,13 @@ describe('DatabaseSessionService', () => {
   it('should persist app state across sessions', async () => {
     // Create first session and update app state
     await service.createSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
       state: {[State.APP_PREFIX + 'config']: 'dark-mode'},
     });
 
     // Create second session for same app but different user
     const s2 = await service.createSession({
-      appName: 'test-app',
-      userId: 'user2',
-      sessionId: 's2',
+      scope: {appName: 'test-app', userId: 'user2', sessionId: 's2'},
     });
 
     expect(s2.state[State.APP_PREFIX + 'config']).toBe('dark-mode');
@@ -194,9 +183,7 @@ describe('DatabaseSessionService', () => {
 
     // Verify s1 sees the update when re-fetched
     const s1Reloaded = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
     });
     expect(s1Reloaded?.state[State.APP_PREFIX + 'config']).toBe('light-mode');
   });
@@ -204,17 +191,13 @@ describe('DatabaseSessionService', () => {
   it('should persist user state across sessions', async () => {
     // Session 1 for user1
     await service.createSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
       state: {[State.USER_PREFIX + 'pref']: 'A'},
     });
 
     // Session 2 for same user
     const s2 = await service.createSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's2',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's2'},
     });
 
     expect(s2.state[State.USER_PREFIX + 'pref']).toBe('A');
@@ -230,26 +213,20 @@ describe('DatabaseSessionService', () => {
 
     // Verify s1 sees update
     const s1Reloaded = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
     });
     expect(s1Reloaded?.state[State.USER_PREFIX + 'pref']).toBe('B');
 
     // Verify another user doesn't see it
     const s3 = await service.createSession({
-      appName: 'test-app',
-      userId: 'user2',
-      sessionId: 's3',
+      scope: {appName: 'test-app', userId: 'user2', sessionId: 's3'},
     });
     expect(s3.state[State.USER_PREFIX + 'pref']).toBeUndefined();
   });
 
   it('should filter events in getSession', async () => {
     const session = await service.createSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
     });
 
     const now = Date.now();
@@ -263,9 +240,7 @@ describe('DatabaseSessionService', () => {
 
     // Test numRecentEvents
     const recent = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
       config: {numRecentEvents: 2},
     });
     expect(recent?.events.length).toBe(2);
@@ -274,9 +249,7 @@ describe('DatabaseSessionService', () => {
 
     // Test afterTimestamp
     const after = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
       config: {afterTimestamp: now - 100},
     });
     expect(after?.events.length).toBe(2);
@@ -285,9 +258,7 @@ describe('DatabaseSessionService', () => {
 
     // Test afterTimestamp
     const after2 = await service.getSession({
-      appName: 'test-app',
-      userId: 'user1',
-      sessionId: 's1',
+      scope: {appName: 'test-app', userId: 'user1', sessionId: 's1'},
       config: {afterTimestamp: now},
     });
     expect(after2?.events.length).toBe(1);
@@ -296,64 +267,48 @@ describe('DatabaseSessionService', () => {
 
   it('should filter sessions by userId in listSessions', async () => {
     await service.createSession({
-      appName: 'app1',
-      userId: 'u1',
-      sessionId: 's1',
+      scope: {appName: 'app1', userId: 'u1', sessionId: 's1'},
     });
     await service.createSession({
-      appName: 'app1',
-      userId: 'u2',
-      sessionId: 's2',
+      scope: {appName: 'app1', userId: 'u2', sessionId: 's2'},
     });
     await service.createSession({
-      appName: 'app2', // Diff app
-      userId: 'u1',
-      sessionId: 's3',
+      scope: {appName: 'app2', userId: 'u1', sessionId: 's3'},
     });
 
     const listU1 = await service.listSessions({
-      appName: 'app1',
-      userId: 'u1',
+      scope: {appName: 'app1', userId: 'u1'},
     });
     expect(listU1.sessions.length).toBe(1);
     expect(listU1.sessions[0].id).toBe('s1');
 
     const listAll = await service.listSessions({
-      appName: 'app1',
-      userId: 'u1',
+      scope: {appName: 'app1', userId: 'u1'},
     });
     expect(listAll.sessions.length).toBe(1);
   });
 
   it('should handle errors', async () => {
     await service.createSession({
-      appName: 'app1',
-      userId: 'u1',
-      sessionId: 's1',
+      scope: {appName: 'app1', userId: 'u1', sessionId: 's1'},
     });
 
     // Test duplicate creation
     await expect(
       service.createSession({
-        appName: 'app1',
-        userId: 'u1',
-        sessionId: 's1',
+        scope: {appName: 'app1', userId: 'u1', sessionId: 's1'},
       }),
     ).rejects.toThrow('Session with id s1 already exists');
 
     // Test requesting non-existent session
     const noSession = await service.getSession({
-      appName: 'app1',
-      userId: 'u1',
-      sessionId: 'ghost',
+      scope: {appName: 'app1', userId: 'u1', sessionId: 'ghost'},
     });
     expect(noSession).toBeUndefined();
 
     // Test append to non-existent session
     const ghostSession = await service.createSession({
-      appName: 'app1',
-      userId: 'u1',
-      sessionId: 'temp',
+      scope: {appName: 'app1', userId: 'u1', sessionId: 'temp'},
     });
     // Manually change ID to simulate object mismatch or stale ref
     ghostSession.id = 'missing';
@@ -397,10 +352,10 @@ describe('DatabaseSessionService', () => {
     const userId = 'test-user';
 
     it('no pagination params → returns all sessions with page=1', async () => {
-      await service.createSession({appName, userId, sessionId: 's1'});
-      await service.createSession({appName, userId, sessionId: 's2'});
+      await service.createSession({scope: {appName, userId, sessionId: 's1'}});
+      await service.createSession({scope: {appName, userId, sessionId: 's2'}});
 
-      const response = await service.listSessions({appName, userId});
+      const response = await service.listSessions({scope: {appName, userId}});
 
       expect(response.sessions).toHaveLength(2);
       expect(response.page).toBe(1);
@@ -411,19 +366,13 @@ describe('DatabaseSessionService', () => {
 
     it('order desc returns newest-first', async () => {
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       const s3 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's3',
+        scope: {appName, userId, sessionId: 's3'},
       });
       await service.appendEvent({
         session: s1,
@@ -439,8 +388,7 @@ describe('DatabaseSessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'desc',
       });
 
@@ -449,19 +397,13 @@ describe('DatabaseSessionService', () => {
 
     it('order asc returns oldest-first', async () => {
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       const s3 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's3',
+        scope: {appName, userId, sessionId: 's3'},
       });
       await service.appendEvent({
         session: s1,
@@ -477,8 +419,7 @@ describe('DatabaseSessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'asc',
       });
 
@@ -488,9 +429,7 @@ describe('DatabaseSessionService', () => {
     it('limit returns only N sessions with correct metadata', async () => {
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -499,8 +438,7 @@ describe('DatabaseSessionService', () => {
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 3,
         order: 'asc',
       });
@@ -514,9 +452,7 @@ describe('DatabaseSessionService', () => {
     it('page + limit returns correct slice', async () => {
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -525,8 +461,7 @@ describe('DatabaseSessionService', () => {
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         page: 2,
         limit: 2,
         order: 'asc',
@@ -542,9 +477,7 @@ describe('DatabaseSessionService', () => {
     it('offset skips N sessions', async () => {
       for (let i = 1; i <= 4; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -553,8 +486,7 @@ describe('DatabaseSessionService', () => {
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 2,
         offset: 2,
         order: 'asc',
@@ -564,11 +496,10 @@ describe('DatabaseSessionService', () => {
     });
 
     it('offset beyond total → empty sessions with correct metadata', async () => {
-      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({scope: {appName, userId, sessionId: 's1'}});
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 2,
         offset: 10,
       });
@@ -579,9 +510,12 @@ describe('DatabaseSessionService', () => {
     });
 
     it('limit=0 returns empty sessions and totalPages=0', async () => {
-      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({scope: {appName, userId, sessionId: 's1'}});
 
-      const response = await service.listSessions({appName, userId, limit: 0});
+      const response = await service.listSessions({
+        scope: {appName, userId},
+        limit: 0,
+      });
 
       expect(response.sessions).toEqual([]);
       expect(response.totalItems).toBe(1);
@@ -590,14 +524,10 @@ describe('DatabaseSessionService', () => {
 
     it('order without limit returns all sessions sorted with page=1', async () => {
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       await service.appendEvent({
         session: s1,
@@ -609,8 +539,7 @@ describe('DatabaseSessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'desc',
       });
 
@@ -624,9 +553,7 @@ describe('DatabaseSessionService', () => {
     it('page takes precedence over offset when both are provided', async () => {
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -635,8 +562,7 @@ describe('DatabaseSessionService', () => {
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         page: 2,
         limit: 2,
         offset: 0,
@@ -651,9 +577,7 @@ describe('DatabaseSessionService', () => {
   describe('Alignment Verification', () => {
     it('should trim temp state from event before persistence', async () => {
       const session = await service.createSession({
-        appName: 'test-app',
-        userId: 'test-user',
-        sessionId: 's-temp',
+        scope: {appName: 'test-app', userId: 'test-user', sessionId: 's-temp'},
       });
 
       const event = createEvent({
@@ -682,9 +606,7 @@ describe('DatabaseSessionService', () => {
 
     it('should align session updateTime with event timestamp', async () => {
       const session = await service.createSession({
-        appName: 'test-app',
-        userId: 'test-user',
-        sessionId: 's-time',
+        scope: {appName: 'test-app', userId: 'test-user', sessionId: 's-time'},
       });
 
       const timestamp = 1234567890000;

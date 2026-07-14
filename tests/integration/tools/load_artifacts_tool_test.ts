@@ -56,8 +56,7 @@ describe('LoadArtifactsTool Integration', () => {
     });
 
     const session = await runner.sessionService.createSession({
-      appName: 'test_artifact_app',
-      userId: 'test_user',
+      scope: {appName: 'test_artifact_app', userId: 'test_user'},
     });
 
     // We manually add an artifact to the session using the artifactService

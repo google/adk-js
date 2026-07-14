@@ -68,8 +68,7 @@ describe('E2e Context Compaction', () => {
         plugins: [plugin],
       });
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_test', userId: 'test_user'},
       });
 
       const turns = [
@@ -92,9 +91,11 @@ describe('E2e Context Compaction', () => {
 
       // Now retrieve the session and check its events
       const updatedSession = await runner.sessionService.getSession({
-        appName: 'e2e_test',
-        userId: 'test_user',
-        sessionId: session.id,
+        scope: {
+          appName: 'e2e_test',
+          userId: 'test_user',
+          sessionId: session.id,
+        },
       });
 
       // Find if there is a CompactedEvent

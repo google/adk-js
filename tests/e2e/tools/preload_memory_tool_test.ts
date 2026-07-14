@@ -46,8 +46,7 @@ describe('E2E PreloadMemoryTool', () => {
       });
 
       const session1 = await runner.sessionService.createSession({
-        appName: 'e2e_preload_memory_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_preload_memory_test', userId: 'test_user'},
       });
 
       // Save a piece of memory
@@ -62,8 +61,7 @@ describe('E2E PreloadMemoryTool', () => {
       await runner.memoryService!.addSessionToMemory(session1);
 
       const session2 = await runner.sessionService.createSession({
-        appName: 'e2e_preload_memory_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_preload_memory_test', userId: 'test_user'},
       });
 
       let finalResponse = '';

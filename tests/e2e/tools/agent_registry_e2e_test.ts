@@ -50,8 +50,7 @@ describe('E2E Live Agent Registry', () => {
         appName: 'e2e_registry_test',
       });
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_registry_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_registry_test', userId: 'test_user'},
       });
 
       let finalResponse = '';

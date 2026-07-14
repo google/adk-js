@@ -91,9 +91,7 @@ describe('AgentTool', () => {
     const memoryService = new InMemoryMemoryService();
 
     await sessionService.createSession({
-      appName: 'ADKTest',
-      userId: 'TestUser',
-      sessionId: '1',
+      scope: {appName: 'ADKTest', userId: 'TestUser', sessionId: '1'},
       state: {initialStateKey: 'contexto inicial'},
     });
 
@@ -118,9 +116,7 @@ describe('AgentTool', () => {
     }
 
     const session = await sessionService.getSession({
-      appName: 'ADKTest',
-      userId: 'TestUser',
-      sessionId: '1',
+      scope: {appName: 'ADKTest', userId: 'TestUser', sessionId: '1'},
     });
 
     expect(session).toBeDefined();

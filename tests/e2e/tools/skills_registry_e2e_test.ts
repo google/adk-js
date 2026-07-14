@@ -75,8 +75,7 @@ describe('E2E Live GCP Skills Registry', () => {
       });
 
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_skills_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_skills_test', userId: 'test_user'},
       });
 
       // Execute a prompt asking the agent to load the remote skill.

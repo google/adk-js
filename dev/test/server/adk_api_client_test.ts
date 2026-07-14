@@ -64,9 +64,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.getSession({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
       });
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -94,8 +92,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.createSession({
-        appName: 'app1',
-        userId: 'user1',
+        scope: {appName: 'app1', userId: 'user1'},
         state: {key: 'value'},
       });
 
@@ -123,9 +120,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.createSession({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
       });
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -148,9 +143,7 @@ describe('AdkApiClient', () => {
       });
 
       await client.deleteSession({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
       });
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -174,8 +167,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.listSessions({
-        appName: 'app1',
-        userId: 'user1',
+        scope: {appName: 'app1', userId: 'user1'},
       });
 
       expect(result).toEqual(mockSessions);
@@ -191,8 +183,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.listSessions({
-        appName: 'app1',
-        userId: 'user1',
+        scope: {appName: 'app1', userId: 'user1'},
       });
 
       expect(result).toEqual(mockSessions);
@@ -344,9 +335,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.listArtifacts({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
       });
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -369,9 +358,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.loadArtifact({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
         artifactName: 'file1.txt',
       });
 
@@ -393,9 +380,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.loadArtifact({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
         artifactName: 'file1.txt',
         version: 1,
       });
@@ -420,9 +405,7 @@ describe('AdkApiClient', () => {
       });
 
       const result = await client.listArtifactVersions({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
         artifactName: 'file1.txt',
       });
 
@@ -445,9 +428,7 @@ describe('AdkApiClient', () => {
       });
 
       await client.deleteArtifact({
-        appName: 'app1',
-        userId: 'user1',
-        sessionId: 'session1',
+        scope: {appName: 'app1', userId: 'user1', sessionId: 'session1'},
         artifactName: 'file1.txt',
       });
 

@@ -92,9 +92,11 @@ describe('AgentTool', () => {
     // Verify getOrCreateSession called with parent context
     expect(mockSessionService.getOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        appName: 'sub-agent',
-        userId: 'parent-user',
-        sessionId: 'parent-session',
+        scope: expect.objectContaining({
+          appName: 'sub-agent',
+          userId: 'parent-user',
+          sessionId: 'parent-session',
+        }),
       }),
     );
 
@@ -159,7 +161,9 @@ describe('AgentTool', () => {
     // session on the second call rather than throwing a duplicate-session error
     expect(mockSessionService.getOrCreateSession).toHaveBeenCalledTimes(2);
     expect(mockSessionService.getOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({sessionId: 'parent-session'}),
+      expect.objectContaining({
+        scope: expect.objectContaining({sessionId: 'parent-session'}),
+      }),
     );
   });
 
@@ -502,9 +506,11 @@ describe('AgentTool', () => {
 
     // Retrieve the created session from the service
     const subAgentSession = await mockSessionService.getSession({
-      appName: 'sub-agent',
-      userId: 'parent-user',
-      sessionId: 'parent-session',
+      scope: {
+        appName: 'sub-agent',
+        userId: 'parent-user',
+        sessionId: 'parent-session',
+      },
     });
 
     expect(subAgentSession).toBeDefined();

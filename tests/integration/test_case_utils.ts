@@ -139,8 +139,7 @@ export async function createRunner(
   const appName = agent.name;
   const runner = new InMemoryRunner({agent: agent, appName, plugins});
   const session = await runner.sessionService.createSession({
-    appName,
-    userId,
+    scope: {appName, userId},
   });
 
   return {

@@ -89,8 +89,7 @@ describe('InMemoryRunner', () => {
     const runner = new InMemoryRunner({agent});
 
     const session = await runner.sessionService.createSession({
-      appName: runner.appName,
-      userId: TEST_USER_ID,
+      scope: {appName: runner.appName, userId: TEST_USER_ID},
     });
 
     const events: Event[] = [];
@@ -113,12 +112,10 @@ describe('InMemoryRunner', () => {
     const runner = new InMemoryRunner({agent});
 
     const session1 = await runner.sessionService.createSession({
-      appName: runner.appName,
-      userId: 'user_1',
+      scope: {appName: runner.appName, userId: 'user_1'},
     });
     const session2 = await runner.sessionService.createSession({
-      appName: runner.appName,
-      userId: 'user_2',
+      scope: {appName: runner.appName, userId: 'user_2'},
     });
 
     expect(session1.id).not.toBe(session2.id);
@@ -169,8 +166,7 @@ describe('InMemoryRunner', () => {
     const runner = new InMemoryRunner({agent});
 
     const session = await runner.sessionService.createSession({
-      appName: runner.appName,
-      userId: TEST_USER_ID,
+      scope: {appName: runner.appName, userId: TEST_USER_ID},
     });
 
     try {

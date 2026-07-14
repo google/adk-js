@@ -39,12 +39,6 @@ export {
 export * from './common.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
-export * from './sessions/session_scope.js';
-export type {
-  CreateSessionScope,
-  SessionScope,
-  UserScope,
-} from './sessions/session_scope.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
 export type {VertexAiSessionServiceOptions} from './sessions/vertex_ai_session_service.js';
 export {

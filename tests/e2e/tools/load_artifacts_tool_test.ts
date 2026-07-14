@@ -38,8 +38,7 @@ describe('E2E LoadArtifactsTool', () => {
 
       const runner = new InMemoryRunner({agent, appName: 'e2e_tool_test'});
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_tool_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_tool_test', userId: 'test_user'},
       });
 
       // Provide an artifact

@@ -190,8 +190,7 @@ describe('Skills Registry Integration', () => {
     });
 
     const session = await runner.sessionService.createSession({
-      appName: 'test_skills_app',
-      userId: 'test_user',
+      scope: {appName: 'test_skills_app', userId: 'test_user'},
     });
 
     const events: Event[] = [];

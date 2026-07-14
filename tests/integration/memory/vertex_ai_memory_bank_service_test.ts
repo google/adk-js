@@ -104,8 +104,7 @@ describe('VertexAiMemoryBankService Integration', () => {
 
     // Define a mock memory session
     const memorySession = await runner.sessionService.createSession({
-      appName: 'test_memory_app',
-      userId: 'test_user',
+      scope: {appName: 'test_memory_app', userId: 'test_user'},
     });
     await runner.sessionService.appendEvent({
       session: memorySession,
@@ -122,8 +121,7 @@ describe('VertexAiMemoryBankService Integration', () => {
     expect(mockMemories.generateInternal).toHaveBeenCalled();
 
     const session = await runner.sessionService.createSession({
-      appName: 'test_memory_app',
-      userId: 'test_user',
+      scope: {appName: 'test_memory_app', userId: 'test_user'},
     });
 
     let finalResponse = '';

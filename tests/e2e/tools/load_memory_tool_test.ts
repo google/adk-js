@@ -42,8 +42,7 @@ describe('E2E LoadMemoryTool', () => {
       });
 
       const session1 = await runner.sessionService.createSession({
-        appName: 'e2e_memory_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_memory_test', userId: 'test_user'},
       });
 
       // Save a piece of memory by talking to a simple prompt, then saving the session
@@ -68,8 +67,7 @@ describe('E2E LoadMemoryTool', () => {
       await runner.memoryService!.addSessionToMemory(session1);
 
       const session2 = await runner.sessionService.createSession({
-        appName: 'e2e_memory_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_memory_test', userId: 'test_user'},
       });
 
       let finalResponse = '';

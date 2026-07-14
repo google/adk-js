@@ -79,8 +79,7 @@ describe('TrajectoryThoughtPruning Integration', () => {
     const userId = 'test_user';
     const runner = new InMemoryRunner({agent, appName});
     const session = await runner.sessionService.createSession({
-      appName,
-      userId,
+      scope: {appName, userId},
     });
 
     // --- Turn 1 ---
@@ -96,9 +95,7 @@ describe('TrajectoryThoughtPruning Integration', () => {
     }
 
     const sessionAfterTurn1 = await runner.sessionService.getSession({
-      appName,
-      userId,
-      sessionId: session.id,
+      scope: {appName, userId, sessionId: session.id},
     });
     expect(sessionAfterTurn1).toBeDefined();
     const events1 = sessionAfterTurn1!.events;
@@ -132,9 +129,7 @@ describe('TrajectoryThoughtPruning Integration', () => {
     }
 
     const sessionAfterTurn2 = await runner.sessionService.getSession({
-      appName,
-      userId,
-      sessionId: session.id,
+      scope: {appName, userId, sessionId: session.id},
     });
     const events2 = sessionAfterTurn2!.events;
     expect(events2.length).toBe(6);

@@ -42,8 +42,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
       appName: 'caller',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'caller',
-      userId: 'caller-user',
+      scope: {appName: 'caller', userId: 'caller-user'},
     });
 
     const events: AdkEvent[] = [];
@@ -108,8 +107,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
       appName: 'caller',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'caller',
-      userId: 'caller-user',
+      scope: {appName: 'caller', userId: 'caller-user'},
     });
 
     const events: AdkEvent[] = [];
@@ -167,8 +165,7 @@ describe('A2A: RemoteAgent InputRequired', () => {
       appName: 'caller',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'caller',
-      userId: 'caller-user',
+      scope: {appName: 'caller', userId: 'caller-user'},
     });
 
     const events: AdkEvent[] = [];

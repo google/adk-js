@@ -65,8 +65,7 @@ describe('E2E Live Model Streaming & Tool Call History', () => {
         });
 
         const session = await runner.sessionService.createSession({
-          appName: 'e2e_streaming_test',
-          userId: 'e2e_user',
+          scope: {appName: 'e2e_streaming_test', userId: 'e2e_user'},
         });
 
         const results: Event[] = [];
@@ -104,9 +103,11 @@ describe('E2E Live Model Streaming & Tool Call History', () => {
 
           // Verify that the DB session history contains the tool call properly saved
           const dbSession = await runner.sessionService.getSession({
-            appName: 'e2e_streaming_test',
-            userId: 'e2e_user',
-            sessionId: session.id,
+            scope: {
+              appName: 'e2e_streaming_test',
+              userId: 'e2e_user',
+              sessionId: session.id,
+            },
           });
 
           expect(dbSession).toBeDefined();

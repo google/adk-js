@@ -99,8 +99,7 @@ describe.skipIf(!hasAKey)('E2e Planning Mode with RoutedAgent', () => {
       appName: 'planning_mode_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'planning_mode_test',
-      userId: 'test_user',
+      scope: {appName: 'planning_mode_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({
@@ -125,8 +124,7 @@ describe.skipIf(!hasAKey)('E2e Planning Mode with RoutedAgent', () => {
       appName: 'planning_mode_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'planning_mode_test',
-      userId: 'test_user',
+      scope: {appName: 'planning_mode_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({

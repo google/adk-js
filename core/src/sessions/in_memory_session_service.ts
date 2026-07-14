@@ -53,10 +53,8 @@ export class InMemorySessionService extends BaseSessionService {
   private appState: Record<string, Record<string, unknown>> = {};
 
   async createSession({
-    appName,
-    userId,
+    scope: {appName, userId, sessionId},
     state,
-    sessionId,
   }: CreateSessionRequest): Promise<Session> {
     const filteredState = state ? trimTempState(state) : undefined;
     const session = createSession({
@@ -88,9 +86,7 @@ export class InMemorySessionService extends BaseSessionService {
   }
 
   async getSession({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     config,
   }: GetSessionRequest): Promise<Session | undefined> {
     if (
@@ -134,8 +130,7 @@ export class InMemorySessionService extends BaseSessionService {
   }
 
   listSessions({
-    appName,
-    userId,
+    scope: {appName, userId},
     limit,
     offset,
     page,
@@ -229,17 +224,9 @@ export class InMemorySessionService extends BaseSessionService {
   }
 
   async deleteSession({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
   }: DeleteSessionRequest): Promise<void> {
-    const session = await this.getSession({appName, userId, sessionId});
-
-    if (!session) {
-      return;
-    }
-
-    delete this.sessions[appName][userId][sessionId];
+    delete this.sessions[appName]?.[userId]?.[sessionId];
   }
 
   override async appendEvent({

@@ -218,7 +218,9 @@ describe('Runner Streaming and Ephemeral', () => {
       }
       expect(createSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: TEST_USER_ID,
+          scope: expect.objectContaining({
+            userId: TEST_USER_ID,
+          }),
         }),
       );
     });
@@ -237,9 +239,11 @@ describe('Runner Streaming and Ephemeral', () => {
       });
 
       const session = await sessionService.createSession({
-        appName: TEST_APP_ID,
-        userId: TEST_USER_ID,
-        sessionId: 'test_abort_session',
+        scope: {
+          appName: TEST_APP_ID,
+          userId: TEST_USER_ID,
+          sessionId: 'test_abort_session',
+        },
       });
 
       const abortController = new AbortController();
@@ -278,9 +282,11 @@ describe('Runner Streaming and Ephemeral', () => {
       });
 
       const session = await sessionService.createSession({
-        appName: TEST_APP_ID,
-        userId: TEST_USER_ID,
-        sessionId: 'test_abort_tool_session',
+        scope: {
+          appName: TEST_APP_ID,
+          userId: TEST_USER_ID,
+          sessionId: 'test_abort_tool_session',
+        },
       });
 
       const abortController = new AbortController();

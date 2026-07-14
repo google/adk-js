@@ -65,8 +65,7 @@ describe('Context Compaction with Tokens', () => {
       appName: 'compaction_agent',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'compaction_agent',
-      userId: 'test_user',
+      scope: {appName: 'compaction_agent', userId: 'test_user'},
     });
 
     // Turn 1
@@ -100,9 +99,11 @@ describe('Context Compaction with Tokens', () => {
 
     // Assert that compaction occurred
     const updatedSession = await runner.sessionService.getSession({
-      sessionId: session.id,
-      userId: 'test_user',
-      appName: 'compaction_agent',
+      scope: {
+        sessionId: session.id,
+        userId: 'test_user',
+        appName: 'compaction_agent',
+      },
     });
     const hasCompactedEvent = updatedSession!.events.some(isCompactedEvent);
     // Depending on ADK's core implementation completeness for ContextCompactorRequestProcessor,

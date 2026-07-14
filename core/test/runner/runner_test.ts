@@ -170,9 +170,11 @@ describe('Runner.determineAgentForResumption', () => {
     }
 
     const session = await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     for (const event of inputEvents) {
@@ -318,9 +320,11 @@ describe('Runner.determineAgentForResumption', () => {
 
     // Bypass the runTest method for finer control over events.
     const session = await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     await sessionService.appendEvent({session: session, event: callEvent});
@@ -526,9 +530,11 @@ describe('Runner with plugins', () => {
 
   async function runTest(originalUserInput = 'Hello'): Promise<Event[]> {
     await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
     const events: Event[] = [];
     for await (const event of runner.runAsync({
@@ -552,9 +558,11 @@ describe('Runner with plugins', () => {
 
     await runTest(originalUserInput);
     const session = await sessionService.getSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
     const generatedEvent = session!.events[0];
     const modifiedUserMessage = generatedEvent.content!.parts![0].text;
@@ -601,9 +609,11 @@ describe('Runner with plugins', () => {
     };
 
     await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     const events: Event[] = [];
@@ -619,9 +629,11 @@ describe('Runner with plugins', () => {
     expect(events.length).toBe(0);
 
     const session = await sessionService.getSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
     expect(session!.events.length).toBe(0);
   });
@@ -638,9 +650,11 @@ describe('Runner with plugins', () => {
     };
 
     await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     const events: Event[] = [];
@@ -656,9 +670,11 @@ describe('Runner with plugins', () => {
     expect(events.length).toBe(0);
 
     const session = await sessionService.getSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
     expect(session!.events.length).toBe(1);
     expect(session!.events[0].author).toBe('user');
@@ -676,9 +692,11 @@ describe('Runner with plugins', () => {
     };
 
     await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     const events: Event[] = [];
@@ -694,9 +712,11 @@ describe('Runner with plugins', () => {
     expect(events.length).toBe(0);
 
     const session = await sessionService.getSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
     expect(session!.events.length).toBe(2);
     expect(session!.events[1].author).toBe('test_agent');
@@ -741,9 +761,11 @@ describe('Runner error handling', () => {
     });
 
     const session = await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     const error = await runTestExpectingError(
@@ -803,9 +825,11 @@ describe('Runner customMetadata support', () => {
 
   it('should propagate customMetadata in runAsync and attach to user event', async () => {
     const session = await sessionService.createSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     const customMetadata = {testKey: 'testValue', anotherKey: 123};
@@ -821,9 +845,11 @@ describe('Runner customMetadata support', () => {
     }
 
     const updatedSession = await sessionService.getSession({
-      appName: TEST_APP_ID,
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
+      scope: {
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      },
     });
 
     expect(updatedSession).not.toBeNull();

@@ -163,8 +163,7 @@ describe('LlmAgent Auth Integration', () => {
     // 3. Run First Turn
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
-      appName: 'test_app',
-      userId: 'user_1',
+      scope: {appName: 'test_app', userId: 'user_1'},
     });
 
     const runner = new Runner({

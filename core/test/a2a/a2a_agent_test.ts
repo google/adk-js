@@ -81,7 +81,12 @@ describe('A2A Agent Executor', () => {
     mockSessionService = {
       getSession: vi.fn(),
       createSession: vi.fn(),
-      getOrCreateSession: vi.fn(),
+      getOrCreateSession: vi.fn().mockImplementation(async (req) => {
+        return (
+          (await mockSessionService.getSession(req)) ??
+          (await mockSessionService.createSession(req))
+        );
+      }),
       listSessions: vi.fn(),
       deleteSession: vi.fn(),
       appendEvent: vi.fn(),

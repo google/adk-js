@@ -40,7 +40,10 @@ describe('InMemorySessionService', () => {
       const userId = 'test-user';
       const state = {key: 'value'};
 
-      const session = await service.createSession({appName, userId, state});
+      const session = await service.createSession({
+        scope: {appName, userId},
+        state,
+      });
 
       expect(session).toBeDefined();
       expect(session.id).toBeDefined();
@@ -54,9 +57,7 @@ describe('InMemorySessionService', () => {
     it('creates a session with a provided sessionId', async () => {
       const sessionId = 'custom-session-id';
       const session = await service.createSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId,
+        scope: {appName: 'app', userId: 'user', sessionId},
       });
 
       expect(session.id).toBe(sessionId);
@@ -66,7 +67,7 @@ describe('InMemorySessionService', () => {
       // First, create a session and add some state
       const appName = 'shared-app';
       const userId = 'shared-user';
-      const session1 = await service.createSession({appName, userId});
+      const session1 = await service.createSession({scope: {appName, userId}});
       const event = createEvent({
         timestamp: Date.now(),
         actions: createEventActions({
@@ -79,7 +80,7 @@ describe('InMemorySessionService', () => {
       await service.appendEvent({session: session1, event});
 
       // Now create a new session for the same user and app
-      const session2 = await service.createSession({appName, userId});
+      const session2 = await service.createSession({scope: {appName, userId}});
 
       expect(session2.state).toEqual({
         [`${State.APP_PREFIX}appKey`]: 'appValue',
@@ -95,7 +96,10 @@ describe('InMemorySessionService', () => {
         [`${State.TEMP_PREFIX}tempKey`]: 'tempValue',
       };
 
-      const session = await service.createSession({appName, userId, state});
+      const session = await service.createSession({
+        scope: {appName, userId},
+        state,
+      });
 
       expect(session.state).toHaveProperty('normalKey', 'value');
       expect(session.state).not.toHaveProperty(`${State.TEMP_PREFIX}tempKey`);
@@ -105,22 +109,17 @@ describe('InMemorySessionService', () => {
   describe('getSession', () => {
     it('returns undefined if session does not exist', async () => {
       const session = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'non-existent',
+        scope: {appName: 'app', userId: 'user', sessionId: 'non-existent'},
       });
       expect(session).toBeUndefined();
     });
 
     it('returns the session if it exists', async () => {
       const createdSession = await service.createSession({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       const session = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: createdSession.id,
+        scope: {appName: 'app', userId: 'user', sessionId: createdSession.id},
       });
 
       expect(session).toBeDefined();
@@ -129,8 +128,7 @@ describe('InMemorySessionService', () => {
 
     it('respects numRecentEvents config', async () => {
       const session = await service.createSession({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       for (let i = 0; i < 5; i++) {
         await service.appendEvent({
@@ -140,9 +138,7 @@ describe('InMemorySessionService', () => {
       }
 
       const retrievedSession = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: session.id,
+        scope: {appName: 'app', userId: 'user', sessionId: session.id},
         config: {numRecentEvents: 2},
       });
 
@@ -153,8 +149,7 @@ describe('InMemorySessionService', () => {
 
     it('respects afterTimestamp config', async () => {
       const session = await service.createSession({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       for (let i = 0; i < 5; i++) {
         await service.appendEvent({
@@ -164,9 +159,7 @@ describe('InMemorySessionService', () => {
       }
 
       const retrievedSession = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: session.id,
+        scope: {appName: 'app', userId: 'user', sessionId: session.id},
         config: {afterTimestamp: 2500},
       });
 
@@ -178,7 +171,7 @@ describe('InMemorySessionService', () => {
     it('merges current state into retrieved session', async () => {
       const appName = 'app';
       const userId = 'user';
-      const session = await service.createSession({appName, userId});
+      const session = await service.createSession({scope: {appName, userId}});
 
       // Update state in another session (simulated by directly modifying internal state or another session)
       const event = createEvent({
@@ -192,9 +185,7 @@ describe('InMemorySessionService', () => {
       await service.appendEvent({session, event});
 
       const retrievedSession = await service.getSession({
-        appName,
-        userId,
-        sessionId: session.id,
+        scope: {appName, userId, sessionId: session.id},
       });
 
       expect(retrievedSession?.state).toEqual({
@@ -206,8 +197,7 @@ describe('InMemorySessionService', () => {
   describe('listSessions', () => {
     it('returns empty list if no sessions exist', async () => {
       const response = await service.listSessions({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       expect(response.sessions).toEqual([]);
       expect(response.page).toBe(1);
@@ -219,10 +209,10 @@ describe('InMemorySessionService', () => {
     it('returns list of sessions without events', async () => {
       const appName = 'app';
       const userId = 'user';
-      await service.createSession({appName, userId});
-      await service.createSession({appName, userId});
+      await service.createSession({scope: {appName, userId}});
+      await service.createSession({scope: {appName, userId}});
 
-      const response = await service.listSessions({appName, userId});
+      const response = await service.listSessions({scope: {appName, userId}});
 
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].events).toEqual([]);
@@ -231,8 +221,7 @@ describe('InMemorySessionService', () => {
 
     it('limit on empty result → returns pagination metadata with zeros', async () => {
       const response = await service.listSessions({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
         limit: 10,
       });
       expect(response.sessions).toEqual([]);
@@ -245,10 +234,10 @@ describe('InMemorySessionService', () => {
     it('no pagination params → returns all sessions with page=1', async () => {
       const appName = 'app';
       const userId = 'user';
-      await service.createSession({appName, userId});
-      await service.createSession({appName, userId});
+      await service.createSession({scope: {appName, userId}});
+      await service.createSession({scope: {appName, userId}});
 
-      const response = await service.listSessions({appName, userId});
+      const response = await service.listSessions({scope: {appName, userId}});
 
       expect(response.page).toBe(1);
       expect(response.limit).toBe(2);
@@ -260,19 +249,13 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       const s3 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's3',
+        scope: {appName, userId, sessionId: 's3'},
       });
       await service.appendEvent({
         session: s1,
@@ -288,8 +271,7 @@ describe('InMemorySessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'asc',
       });
 
@@ -300,19 +282,13 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       const s3 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's3',
+        scope: {appName, userId, sessionId: 's3'},
       });
       await service.appendEvent({
         session: s1,
@@ -328,8 +304,7 @@ describe('InMemorySessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'desc',
       });
 
@@ -340,14 +315,10 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       await service.appendEvent({
         session: s1,
@@ -358,10 +329,16 @@ describe('InMemorySessionService', () => {
         event: createEvent({timestamp: 1000}),
       });
 
-      const asc = await service.listSessions({appName, userId, order: 'asc'});
+      const asc = await service.listSessions({
+        scope: {appName, userId},
+        order: 'asc',
+      });
       expect(asc.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
 
-      const desc = await service.listSessions({appName, userId, order: 'desc'});
+      const desc = await service.listSessions({
+        scope: {appName, userId},
+        order: 'desc',
+      });
       expect(desc.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
     });
 
@@ -369,12 +346,13 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       for (let i = 1; i <= 5; i++) {
-        await service.createSession({appName, userId, sessionId: `s${i}`});
+        await service.createSession({
+          scope: {appName, userId, sessionId: `s${i}`},
+        });
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 3,
         order: 'asc',
       });
@@ -388,19 +366,13 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       const s3 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's3',
+        scope: {appName, userId, sessionId: 's3'},
       });
       await service.appendEvent({
         session: s1,
@@ -416,8 +388,7 @@ describe('InMemorySessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 2,
         offset: 1,
         order: 'asc',
@@ -431,9 +402,7 @@ describe('InMemorySessionService', () => {
       const userId = 'user';
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -442,8 +411,7 @@ describe('InMemorySessionService', () => {
       }
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         page: 2,
         limit: 2,
         order: 'asc',
@@ -459,11 +427,10 @@ describe('InMemorySessionService', () => {
     it('offset beyond total → empty sessions with correct metadata', async () => {
       const appName = 'app';
       const userId = 'user';
-      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({scope: {appName, userId, sessionId: 's1'}});
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         limit: 2,
         offset: 10,
       });
@@ -476,9 +443,12 @@ describe('InMemorySessionService', () => {
     it('limit=0 returns empty sessions and totalPages=0', async () => {
       const appName = 'app';
       const userId = 'user';
-      await service.createSession({appName, userId, sessionId: 's1'});
+      await service.createSession({scope: {appName, userId, sessionId: 's1'}});
 
-      const response = await service.listSessions({appName, userId, limit: 0});
+      const response = await service.listSessions({
+        scope: {appName, userId},
+        limit: 0,
+      });
 
       expect(response.sessions).toEqual([]);
       expect(response.totalItems).toBe(1);
@@ -489,14 +459,10 @@ describe('InMemorySessionService', () => {
       const appName = 'app';
       const userId = 'user';
       const s1 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's1',
+        scope: {appName, userId, sessionId: 's1'},
       });
       const s2 = await service.createSession({
-        appName,
-        userId,
-        sessionId: 's2',
+        scope: {appName, userId, sessionId: 's2'},
       });
       await service.appendEvent({
         session: s1,
@@ -508,8 +474,7 @@ describe('InMemorySessionService', () => {
       });
 
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         order: 'desc',
       });
 
@@ -525,9 +490,7 @@ describe('InMemorySessionService', () => {
       const userId = 'user';
       for (let i = 1; i <= 5; i++) {
         const s = await service.createSession({
-          appName,
-          userId,
-          sessionId: `s${i}`,
+          scope: {appName, userId, sessionId: `s${i}`},
         });
         await service.appendEvent({
           session: s,
@@ -537,8 +500,7 @@ describe('InMemorySessionService', () => {
 
       // page=2, limit=2 → sessions 3,4; offset=0 should be ignored
       const response = await service.listSessions({
-        appName,
-        userId,
+        scope: {appName, userId},
         page: 2,
         limit: 2,
         offset: 0,
@@ -553,19 +515,14 @@ describe('InMemorySessionService', () => {
   describe('deleteSession', () => {
     it('deletes an existing session', async () => {
       const session = await service.createSession({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       await service.deleteSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: session.id,
+        scope: {appName: 'app', userId: 'user', sessionId: session.id},
       });
 
       const retrievedSession = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: session.id,
+        scope: {appName: 'app', userId: 'user', sessionId: session.id},
       });
       expect(retrievedSession).toBeUndefined();
     });
@@ -573,9 +530,7 @@ describe('InMemorySessionService', () => {
     it('does nothing if session does not exist', async () => {
       await expect(
         service.deleteSession({
-          appName: 'app',
-          userId: 'user',
-          sessionId: 'non-existent',
+          scope: {appName: 'app', userId: 'user', sessionId: 'non-existent'},
         }),
       ).resolves.not.toThrow();
     });
@@ -584,8 +539,7 @@ describe('InMemorySessionService', () => {
   describe('appendEvent', () => {
     it('appends event to session and updates lastUpdateTime', async () => {
       const session = await service.createSession({
-        appName: 'app',
-        userId: 'user',
+        scope: {appName: 'app', userId: 'user'},
       });
       const timestamp = Date.now() + 1000;
       const event = createEvent({timestamp});
@@ -593,9 +547,7 @@ describe('InMemorySessionService', () => {
       await service.appendEvent({session, event});
 
       const retrievedSession = await service.getSession({
-        appName: 'app',
-        userId: 'user',
-        sessionId: session.id,
+        scope: {appName: 'app', userId: 'user', sessionId: session.id},
       });
       expect(retrievedSession?.events).toHaveLength(1);
       expect(retrievedSession?.events[0]).toEqual(event);
@@ -605,7 +557,7 @@ describe('InMemorySessionService', () => {
     it('updates app state', async () => {
       const appName = 'app';
       const userId = 'user';
-      const session = await service.createSession({appName, userId});
+      const session = await service.createSession({scope: {appName, userId}});
       const event = createEvent({
         timestamp: Date.now(),
         actions: createEventActions({
@@ -618,14 +570,14 @@ describe('InMemorySessionService', () => {
       await service.appendEvent({session, event});
 
       // Check via side channel (create another session to see if state persists)
-      const session2 = await service.createSession({appName, userId});
+      const session2 = await service.createSession({scope: {appName, userId}});
       expect(session2.state).toHaveProperty(`${State.APP_PREFIX}key`, 'value');
     });
 
     it('updates user state', async () => {
       const appName = 'app';
       const userId = 'user';
-      const session = await service.createSession({appName, userId});
+      const session = await service.createSession({scope: {appName, userId}});
       const event = createEvent({
         timestamp: Date.now(),
         actions: createEventActions({
@@ -637,7 +589,7 @@ describe('InMemorySessionService', () => {
 
       await service.appendEvent({session, event});
 
-      const session2 = await service.createSession({appName, userId});
+      const session2 = await service.createSession({scope: {appName, userId}});
       expect(session2.state).toHaveProperty(`${State.USER_PREFIX}key`, 'value');
     });
 

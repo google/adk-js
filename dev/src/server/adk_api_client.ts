@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Event} from '@google/adk';
+import type {
+  CreateSessionScope,
+  Event,
+  SessionScope,
+  UserScope,
+} from '@google/adk';
 import {Session} from '@google/adk';
 import {Content, createUserContent} from '@google/genai';
 
@@ -41,13 +46,13 @@ export class AdkApiClient {
     return this.fetch<string[]>(`${this.backendUrl}/list-apps`);
   }
 
-  async getSession(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async getSession({
+    scope: {appName, userId, sessionId},
+  }: {
+    scope: SessionScope;
   }): Promise<Session> {
     return this.fetch<Session>(
-      `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}`,
+      `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}`,
       {
         method: 'GET',
         headers: {
@@ -57,15 +62,16 @@ export class AdkApiClient {
     );
   }
 
-  async createSession(params: {
-    appName: string;
-    userId: string;
-    sessionId?: string;
+  async createSession({
+    scope: {appName, userId, sessionId},
+    state,
+  }: {
+    scope: CreateSessionScope;
     state?: Record<string, unknown>;
   }): Promise<Session> {
-    let url = `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions`;
-    if (params.sessionId) {
-      url += `/${params.sessionId}`;
+    let url = `${this.backendUrl}/apps/${appName}/users/${userId}/sessions`;
+    if (sessionId) {
+      url += `/${sessionId}`;
     }
     return this.fetch<Session>(url, {
       method: 'POST',
@@ -73,18 +79,18 @@ export class AdkApiClient {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        state: params.state,
+        state,
       }),
     });
   }
 
-  async deleteSession(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async deleteSession({
+    scope: {appName, userId, sessionId},
+  }: {
+    scope: SessionScope;
   }): Promise<void> {
     return this.fetch<void>(
-      `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}`,
+      `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}`,
       {
         method: 'DELETE',
         headers: {
@@ -99,17 +105,18 @@ export class AdkApiClient {
 
     return Promise.all(
       apps.map((appName) =>
-        this.listSessions({appName, userId: params.userId}),
+        this.listSessions({scope: {appName, userId: params.userId}}),
       ),
     ).then((sessions) => sessions.flat());
   }
 
-  async listSessions(params: {
-    appName: string;
-    userId: string;
+  async listSessions({
+    scope: {appName, userId},
+  }: {
+    scope: UserScope;
   }): Promise<Session[]> {
     const sessions = await this.fetch<Session[] | {sessions: Session[]}>(
-      `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions`,
+      `${this.backendUrl}/apps/${appName}/users/${userId}/sessions`,
       {
         method: 'GET',
         headers: {
@@ -185,13 +192,13 @@ export class AdkApiClient {
     }
   }
 
-  async listArtifacts(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async listArtifacts({
+    scope: {appName, userId, sessionId},
+  }: {
+    scope: SessionScope;
   }): Promise<Array<{filename: string}>> {
     return this.fetch<Array<{filename: string}>>(
-      `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}/artifacts`,
+      `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}/artifacts`,
       {
         method: 'GET',
         headers: {
@@ -201,16 +208,18 @@ export class AdkApiClient {
     );
   }
 
-  async loadArtifact(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async loadArtifact({
+    scope: {appName, userId, sessionId},
+    artifactName,
+    version,
+  }: {
+    scope: SessionScope;
     artifactName: string;
     version?: number;
   }): Promise<unknown> {
-    let url = `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}/artifacts/${params.artifactName}`;
-    if (params.version !== undefined) {
-      url += `/versions/${params.version}`;
+    let url = `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}/artifacts/${artifactName}`;
+    if (version !== undefined) {
+      url += `/versions/${version}`;
     }
     return this.fetch<unknown>(url, {
       method: 'GET',
@@ -220,13 +229,14 @@ export class AdkApiClient {
     });
   }
 
-  async listArtifactVersions(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async listArtifactVersions({
+    scope: {appName, userId, sessionId},
+    artifactName,
+  }: {
+    scope: SessionScope;
     artifactName: string;
   }): Promise<number[]> {
-    const url = `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}/artifacts/${params.artifactName}/versions`;
+    const url = `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}/artifacts/${artifactName}/versions`;
     return this.fetch<number[]>(url, {
       method: 'GET',
       headers: {
@@ -235,13 +245,14 @@ export class AdkApiClient {
     });
   }
 
-  async deleteArtifact(params: {
-    appName: string;
-    userId: string;
-    sessionId: string;
+  async deleteArtifact({
+    scope: {appName, userId, sessionId},
+    artifactName,
+  }: {
+    scope: SessionScope;
     artifactName: string;
   }): Promise<void> {
-    const url = `${this.backendUrl}/apps/${params.appName}/users/${params.userId}/sessions/${params.sessionId}/artifacts/${params.artifactName}`;
+    const url = `${this.backendUrl}/apps/${appName}/users/${userId}/sessions/${sessionId}/artifacts/${artifactName}`;
     return this.fetch<void>(url, {
       method: 'DELETE',
       headers: {

@@ -270,9 +270,7 @@ describe('AdkWebServer', () => {
 
     it('should return 400 if session with given id already exists', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       try {
@@ -287,9 +285,7 @@ describe('AdkWebServer', () => {
 
     it('should return a session by id', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.get<Session>(
@@ -310,9 +306,7 @@ describe('AdkWebServer', () => {
 
     it('should delete a session', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.delete(
@@ -322,9 +316,11 @@ describe('AdkWebServer', () => {
       expect(response.status).toBe(204);
       expect(
         await sessionService.getSession({
-          appName: 'testApp',
-          userId: 'testUser',
-          sessionId: 'sessionId',
+          scope: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+          },
         }),
       ).toBeUndefined();
     });
@@ -333,9 +329,7 @@ describe('AdkWebServer', () => {
   describe('Artifacts', () => {
     it('should return an empty list of artifacts', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.get(
@@ -348,9 +342,7 @@ describe('AdkWebServer', () => {
 
     it('should return an artifact by name', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       await artifactService.saveArtifact({
         scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
@@ -372,9 +364,7 @@ describe('AdkWebServer', () => {
 
     it('should return 404 if artifact not found', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       try {
@@ -388,9 +378,7 @@ describe('AdkWebServer', () => {
 
     it('should return an artifact by version', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       await artifactService.saveArtifact({
         scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
@@ -410,9 +398,7 @@ describe('AdkWebServer', () => {
 
     it('should return a list of artifact versions', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       await artifactService.saveArtifact({
         scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
@@ -439,9 +425,7 @@ describe('AdkWebServer', () => {
 
     it('should delete an artifact', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       await artifactService.saveArtifact({
         scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
@@ -472,9 +456,7 @@ describe('AdkWebServer', () => {
   describe('run', () => {
     it('should return a list of events', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.post<Event[]>('/run', {
@@ -501,9 +483,7 @@ describe('AdkWebServer', () => {
 
     it('should update session state if stateDelta is provided', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
         state: {foo: 'bar'},
       });
 
@@ -524,9 +504,7 @@ describe('AdkWebServer', () => {
 
       expect(response.status).toBe(200);
       const session = await sessionService.getSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       // The state should be merged or updated. Assuming deep merge or at least key addition.
       // If Runner does shallow merge of stateDelta:
@@ -554,9 +532,7 @@ describe('AdkWebServer', () => {
       agentLoader.getAgentFile = () => Promise.reject(new Error('Load failed'));
 
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       try {
@@ -575,9 +551,7 @@ describe('AdkWebServer', () => {
 
     it('should pass abortSignal to Runner.runAsync in /run', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const spy = vi.spyOn(Runner.prototype, 'runAsync');
@@ -605,9 +579,7 @@ describe('AdkWebServer', () => {
   describe('run_sse', () => {
     it('should return a stream of events', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.post('/run_sse', {
@@ -643,9 +615,7 @@ describe('AdkWebServer', () => {
 
     it('should update session state if stateDelta is provided', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
         state: {foo: 'bar'},
       });
 
@@ -666,9 +636,7 @@ describe('AdkWebServer', () => {
 
       expect(response.status).toBe(200);
       const session = await sessionService.getSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
       expect(session?.state).toEqual({foo: 'bar', baz: 'qux'});
     });
@@ -694,9 +662,7 @@ describe('AdkWebServer', () => {
       agentLoader.getAgentFile = () => Promise.reject(new Error('Load failed'));
 
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       try {
@@ -715,9 +681,7 @@ describe('AdkWebServer', () => {
 
     it('should pass abortSignal to Runner.runAsync in /run_sse', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const spy = vi.spyOn(Runner.prototype, 'runAsync');
@@ -836,9 +800,9 @@ describe('AdkWebServer', () => {
       const originalGetSession = sessionService.getSession;
       sessionService.getSession = async () =>
         createSession({
-          id: 'fullSession',
           appName: 'testApp',
           userId: 'testUser',
+          id: 'fullSession',
           events: [
             createEvent({
               id: 'event1',
@@ -877,9 +841,11 @@ describe('AdkWebServer', () => {
 
     it('should return 404 if event not found', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionNoEvents',
+        scope: {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionNoEvents',
+        },
       });
       try {
         await client.get(
@@ -934,9 +900,7 @@ describe('AdkWebServer', () => {
 
     it('should query the agent using reasoning_engine route with valid JSON', async () => {
       await sessionService.createSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'sessionId',
+        scope: {appName: 'testApp', userId: 'testUser', sessionId: 'sessionId'},
       });
 
       const response = await client.post<{output: Event[]}>(
@@ -982,9 +946,11 @@ describe('AdkWebServer', () => {
       expect(response.data?.output).toBeDefined();
 
       const session = await sessionService.getSession({
-        appName: 'testApp',
-        userId: 'testUser',
-        sessionId: 'newSessionId',
+        scope: {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'newSessionId',
+        },
       });
       expect(session).toBeDefined();
     });

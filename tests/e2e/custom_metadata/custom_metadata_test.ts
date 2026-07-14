@@ -57,8 +57,7 @@ describe.skipIf(!hasAKey)('E2e customMetadata Support', () => {
     };
 
     const session = await runner.sessionService.createSession({
-      appName: 'e2e_custom_metadata_test',
-      userId: 'e2e_user',
+      scope: {appName: 'e2e_custom_metadata_test', userId: 'e2e_user'},
     });
 
     const responseGen = runner.runAsync({
@@ -76,9 +75,11 @@ describe.skipIf(!hasAKey)('E2e customMetadata Support', () => {
 
     // Retrieve the session and check events
     const updatedSession = await runner.sessionService.getSession({
-      appName: 'e2e_custom_metadata_test',
-      userId: 'e2e_user',
-      sessionId: session.id,
+      scope: {
+        appName: 'e2e_custom_metadata_test',
+        userId: 'e2e_user',
+        sessionId: session.id,
+      },
     });
 
     expect(updatedSession).not.toBeNull();

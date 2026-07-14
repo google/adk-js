@@ -27,8 +27,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'hello world'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -47,8 +46,7 @@ describe('InMemoryMemoryService', () => {
     it('filters out events with no content parts', async () => {
       const emptyEvent = createEvent({author: 'user'});
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event: emptyEvent});
 
@@ -69,14 +67,12 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'hello world'}]},
       });
       const sessionAlice = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session: sessionAlice, event});
 
       const sessionBob = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'bob',
+        scope: {appName: 'myApp', userId: 'bob'},
       });
 
       await service.addSessionToMemory(sessionAlice);
@@ -115,8 +111,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'model', parts: [{text: 'the weather is sunny today'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -138,8 +133,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'hello world'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -160,8 +154,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'Hello World'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -182,8 +175,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'secret info'}]},
       });
       const sessionAlice = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session: sessionAlice, event});
 
@@ -204,8 +196,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'hello world'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'appA',
-        userId: 'alice',
+        scope: {appName: 'appA', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -228,8 +219,7 @@ describe('InMemoryMemoryService', () => {
         timestamp,
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 
@@ -251,8 +241,7 @@ describe('InMemoryMemoryService', () => {
         content: {role: 'user', parts: [{text: 'python programming language'}]},
       });
       const session = await sessionService.createSession({
-        appName: 'myApp',
-        userId: 'alice',
+        scope: {appName: 'myApp', userId: 'alice'},
       });
       await sessionService.appendEvent({session, event});
 

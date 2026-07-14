@@ -268,19 +268,8 @@ async function getAdkSession(
   sessionService: BaseSessionService,
   appName: string,
 ): Promise<Session> {
-  const session = await sessionService.getSession({
-    appName,
-    userId,
-    sessionId,
-  });
-  if (session) {
-    return session;
-  }
-
-  return sessionService.createSession({
-    appName,
-    userId,
-    sessionId,
+  return sessionService.getOrCreateSession({
+    scope: {appName, userId, sessionId},
   });
 }
 

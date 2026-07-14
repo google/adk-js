@@ -75,8 +75,10 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       });
 
       const session = await runner.sessionService.createSession({
-        appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
-        userId: 'test_user',
+        scope: {
+          appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
+          userId: 'test_user',
+        },
       });
 
       const turns = [
@@ -98,9 +100,11 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       }
 
       const updatedSession = await runner.sessionService.getSession({
-        appName: 'e2e_test',
-        userId: 'test_user',
-        sessionId: session.id,
+        scope: {
+          appName: 'e2e_test',
+          userId: 'test_user',
+          sessionId: session.id,
+        },
       });
 
       const compactedEvents = updatedSession!.events.filter(isCompactedEvent);

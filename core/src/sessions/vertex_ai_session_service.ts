@@ -129,10 +129,8 @@ export class VertexAiSessionService extends BaseSessionService {
   }
 
   async createSession({
-    appName,
-    userId,
+    scope: {appName, userId, sessionId},
     state,
-    sessionId,
   }: CreateSessionRequest): Promise<Session> {
     const reasoningEngineId = this.getReasoningEngineId(appName);
     const filteredState = state ? trimTempState(state) : undefined;
@@ -181,9 +179,7 @@ export class VertexAiSessionService extends BaseSessionService {
   }
 
   async getSession({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     config,
   }: GetSessionRequest): Promise<Session | undefined> {
     const reasoningEngineId = this.getReasoningEngineId(appName);
@@ -257,8 +253,7 @@ export class VertexAiSessionService extends BaseSessionService {
   }
 
   async listSessions({
-    appName,
-    userId,
+    scope: {appName, userId},
     limit,
     offset,
     page,
@@ -344,11 +339,9 @@ export class VertexAiSessionService extends BaseSessionService {
   }
 
   async deleteSession({
-    appName,
-    userId,
-    sessionId,
+    scope,
   }: DeleteSessionRequest): Promise<void> {
-    const reasoningEngineId = this.getReasoningEngineId(appName);
+    const reasoningEngineId = this.getReasoningEngineId(scope.appName);
 
     // A session may only be deleted by the user it belongs to. getSession
     // already enforces this and throws when the stored session's userId does
@@ -356,9 +349,7 @@ export class VertexAiSessionService extends BaseSessionService {
     // owned by this user. This keeps deleteSession consistent with getSession
     // and with InMemorySessionService.deleteSession.
     const session = await this.getSession({
-      appName,
-      userId,
-      sessionId,
+      scope,
       config: {numRecentEvents: 0},
     });
     if (!session) {
@@ -366,7 +357,7 @@ export class VertexAiSessionService extends BaseSessionService {
     }
 
     await this.sessions.delete({
-      name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
+      name: `reasoningEngines/${reasoningEngineId}/sessions/${scope.sessionId}`,
     });
   }
 

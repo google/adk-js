@@ -64,8 +64,7 @@ describe.skipIf(!hasAKey)('E2e A/B Testing with RoutedAgent', () => {
       appName: 'ab_testing_agent_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'ab_testing_agent_test',
-      userId: 'test_user',
+      scope: {appName: 'ab_testing_agent_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({
@@ -90,8 +89,7 @@ describe.skipIf(!hasAKey)('E2e A/B Testing with RoutedAgent', () => {
       appName: 'ab_testing_agent_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'ab_testing_agent_test',
-      userId: 'test_user',
+      scope: {appName: 'ab_testing_agent_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({

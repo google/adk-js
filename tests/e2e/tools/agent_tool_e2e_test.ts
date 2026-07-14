@@ -52,8 +52,7 @@ describe('E2E AgentTool State Filtering', () => {
       });
 
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_agent_tool_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_agent_tool_test', userId: 'test_user'},
         state: {
           normalKey: 'parent_value',
           [`${State.TEMP_PREFIX}tempKey`]: 'should_be_filtered',
@@ -71,9 +70,11 @@ describe('E2E AgentTool State Filtering', () => {
 
       // Retrieve the sub-agent's session
       const subAgentSession = await runner.sessionService.getSession({
-        appName: 'sub_agent',
-        userId: 'test_user',
-        sessionId: session.id,
+        scope: {
+          appName: 'sub_agent',
+          userId: 'test_user',
+          sessionId: session.id,
+        },
       });
 
       expect(subAgentSession).toBeDefined();

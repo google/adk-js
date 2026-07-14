@@ -103,8 +103,7 @@ describe('RestApiTool Auth E2E', () => {
       });
 
       const session = await runner.sessionService.createSession({
-        appName: 'auth_e2e_test',
-        userId: 'test_user',
+        scope: {appName: 'auth_e2e_test', userId: 'test_user'},
       });
 
       // Start turn 1: ask agent to get data

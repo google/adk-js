@@ -53,8 +53,7 @@ describe('PreloadMemoryTool Integration', () => {
 
     // We define a mock memory session
     const memorySession = await runner.sessionService.createSession({
-      appName: 'test_memory_app',
-      userId: 'test_user',
+      scope: {appName: 'test_memory_app', userId: 'test_user'},
     });
 
     // Create some events for memory
@@ -69,8 +68,7 @@ describe('PreloadMemoryTool Integration', () => {
     await runner.memoryService!.addSessionToMemory(memorySession);
 
     const session = await runner.sessionService.createSession({
-      appName: 'test_memory_app',
-      userId: 'test_user',
+      scope: {appName: 'test_memory_app', userId: 'test_user'},
     });
 
     let finalResponse = '';

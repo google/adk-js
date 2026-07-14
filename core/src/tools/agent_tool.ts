@@ -158,9 +158,11 @@ export class AgentTool extends BaseTool {
     });
 
     const session = await runner.sessionService.getOrCreateSession({
-      appName: this.agent.name,
-      userId: toolContext.invocationContext.userId,
-      sessionId: toolContext.invocationContext.session.id,
+      scope: {
+        appName: this.agent.name,
+        userId: toolContext.invocationContext.userId,
+        sessionId: toolContext.invocationContext.session.id,
+      },
       state: toolContext.state.toRecord(),
     });
 

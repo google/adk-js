@@ -94,8 +94,7 @@ Request: "${text}"`;
       appName: 'auto_routing_agent_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'auto_routing_agent_test',
-      userId: 'test_user',
+      scope: {appName: 'auto_routing_agent_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({
@@ -177,8 +176,7 @@ Request: "${text}"`;
       appName: 'auto_routing_agent_test',
     });
     const session = await runner.sessionService.createSession({
-      appName: 'auto_routing_agent_test',
-      userId: 'test_user',
+      scope: {appName: 'auto_routing_agent_test', userId: 'test_user'},
     });
 
     const responseGen = runner.runAsync({

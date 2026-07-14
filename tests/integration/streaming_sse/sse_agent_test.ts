@@ -81,8 +81,7 @@ describe('SSE Streaming Model Response Integration', () => {
     const appName = sseAgent.name;
     const runner = new InMemoryRunner({agent: sseAgent, appName});
     const session = await runner.sessionService.createSession({
-      appName,
-      userId,
+      scope: {appName, userId},
     });
 
     const results: Event[] = [];
@@ -155,9 +154,7 @@ describe('SSE Streaming Model Response Integration', () => {
 
     // Fetch session history from DB and verify that the tool call is correctly saved
     const dbSession = await runner.sessionService.getSession({
-      appName,
-      userId,
-      sessionId: session.id,
+      scope: {appName, userId, sessionId: session.id},
     });
     expect(dbSession).toBeDefined();
 

@@ -69,8 +69,7 @@ describe('E2E beforeToolSelection', () => {
         plugins: [filterPlugin],
       });
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_tool_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_tool_test', userId: 'test_user'},
       });
 
       // Provide an artifact
@@ -143,8 +142,7 @@ describe('E2E beforeToolSelection', () => {
         plugins: [new NoOpPlugin()],
       });
       const session = await runner.sessionService.createSession({
-        appName: 'e2e_tool_test',
-        userId: 'test_user',
+        scope: {appName: 'e2e_tool_test', userId: 'test_user'},
       });
 
       // Provide an artifact

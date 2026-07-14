@@ -101,10 +101,8 @@ export class DatabaseSessionService extends BaseSessionService {
   }
 
   async createSession({
-    appName,
-    userId,
+    scope: {appName, userId, sessionId},
     state,
-    sessionId,
   }: CreateSessionRequest): Promise<Session> {
     await this.init();
     const em = this.orm!.em.fork();
@@ -192,9 +190,7 @@ export class DatabaseSessionService extends BaseSessionService {
   }
 
   async getSession({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     config,
   }: GetSessionRequest): Promise<Session | undefined> {
     await this.init();
@@ -252,8 +248,7 @@ export class DatabaseSessionService extends BaseSessionService {
   }
 
   async listSessions({
-    appName,
-    userId,
+    scope: {appName, userId},
     limit,
     offset,
     page,
@@ -355,9 +350,7 @@ export class DatabaseSessionService extends BaseSessionService {
   }
 
   async deleteSession({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
   }: DeleteSessionRequest): Promise<void> {
     await this.init();
     const em = this.orm!.em.fork();

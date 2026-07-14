@@ -83,9 +83,7 @@ export class TestRunner {
 
     // Create the session explicitly
     await sessionService.createSession({
-      appName: 'test-runner',
-      userId,
-      sessionId,
+      scope: {appName: 'test-runner', userId, sessionId},
     });
 
     const userMessages = testInfo.spec.userMessages!;
@@ -108,9 +106,7 @@ export class TestRunner {
     }
 
     const session = await sessionService.getSession({
-      appName: 'test-runner',
-      userId,
-      sessionId,
+      scope: {appName: 'test-runner', userId, sessionId},
     });
 
     if (!session) {

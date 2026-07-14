@@ -165,9 +165,11 @@ describe('AgentTool (Vertex AI)', () => {
     });
 
     const createdSession = await sessionService.createSession({
-      appName:
-        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
-      userId: 'TestUser',
+      scope: {
+        appName:
+          'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+        userId: 'TestUser',
+      },
       state: {initialStateKey: 'contexto inicial'},
     });
 
@@ -193,10 +195,12 @@ describe('AgentTool (Vertex AI)', () => {
     }
 
     const session = await sessionService.getSession({
-      appName:
-        'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
-      userId: 'TestUser',
-      sessionId: createdSession.id,
+      scope: {
+        appName:
+          'projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608',
+        userId: 'TestUser',
+        sessionId: createdSession.id,
+      },
     });
 
     expect(session).toBeDefined();
