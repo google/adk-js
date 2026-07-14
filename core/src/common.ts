@@ -112,6 +112,7 @@ export {
 } from './code_executors/code_execution_utils.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
+export {NullContextCompactor} from './context/null_context_compactor.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
 export type {LlmSummarizerOptions} from './context/summarizers/llm_summarizer.js';
 export {TokenBasedContextCompactor} from './context/token_based_context_compactor.js';
