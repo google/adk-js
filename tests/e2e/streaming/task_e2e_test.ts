@@ -10,23 +10,19 @@ import {describe, expect, it} from 'vitest';
 describe('ActiveStreamingTool E2E Simulation', () => {
   it('should manage a simulated streaming tool task', async () => {
     const queue = new LiveRequestQueue();
-    let cancelled = false;
-
-    // Simulate a background task
-    const promise = new Promise<void>((resolve) => {
-      const interval = setInterval(() => {
-        if (cancelled) {
-          clearInterval(interval);
-          resolve();
-          return;
-        }
-        // Push some dummy data to the queue
-        queue.sendContent({parts: [{text: 'data'}]});
-      }, 10);
-    });
-
-    const task = new Task(promise, () => {
-      cancelled = true;
+    // Simulate a background task using AbortSignal
+    const task = new Task((signal) => {
+      return new Promise<void>((resolve) => {
+        const interval = setInterval(() => {
+          if (signal.aborted) {
+            clearInterval(interval);
+            resolve();
+            return;
+          }
+          // Push some dummy data to the queue
+          queue.sendContent({parts: [{text: 'data'}]});
+        }, 10);
+      });
     });
 
     const activeTool = new ActiveStreamingTool({task, stream: queue});
@@ -45,7 +41,7 @@ describe('ActiveStreamingTool E2E Simulation', () => {
 
     // Cancel it
     activeTool.task?.cancel();
-    await promise;
+    await task.promise;
 
     expect(activeTool.task?.done()).toBe(true);
   });

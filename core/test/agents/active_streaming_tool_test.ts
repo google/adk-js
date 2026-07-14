@@ -16,7 +16,7 @@ describe('ActiveStreamingTool', () => {
 
   it('should store task when constructed with one', () => {
     const promise = Promise.resolve();
-    const task = new Task(promise);
+    const task = new Task(() => promise);
     const tool = new ActiveStreamingTool({task});
     expect(tool.task).toBe(task);
   });

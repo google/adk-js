@@ -4,27 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export type TaskExecutable<T = void> = (abortSignal: AbortSignal) => Promise<T>;
+
 /**
  * Represents a runtime task wrapping a promise, allowing status check and cancellation.
  */
 export class Task<T = void> {
   private isDone = false;
+  private abortController = new AbortController();
+  public promise: Promise<T>;
 
-  constructor(
-    readonly promise: Promise<T>,
-    private readonly cancelFn?: () => void,
-  ) {
+  constructor(public executable: TaskExecutable<T>) {
     const markDone = () => {
       this.isDone = true;
     };
-    promise.then(markDone, markDone);
+
+    this.promise = executable(this.abortController.signal);
+    this.promise.then(markDone).catch(markDone);
   }
 
   /**
    * Cancels the task execution.
    */
   cancel(): void {
-    this.cancelFn?.();
+    this.abortController.abort();
   }
 
   /**

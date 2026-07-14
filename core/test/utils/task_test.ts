@@ -5,57 +5,61 @@
  */
 
 import {Task} from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {describe, expect, it} from 'vitest';
 
 describe('task utils', () => {
   describe('Task class', () => {
     it('should initialize with done() returning false', () => {
-      const promise = new Promise<void>(() => {});
-      const task = new Task(promise);
+      const task = new Task(() => new Promise<void>(() => {}));
       expect(task.done()).toBe(false);
     });
 
     it('should set done() to true when promise resolves', async () => {
-      const promise = Promise.resolve();
-      const task = new Task(promise);
+      let resolvePromise!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        resolvePromise = resolve;
+      });
+      const task = new Task(() => promise);
 
       expect(task.done()).toBe(false);
 
-      await promise;
+      resolvePromise();
+      await task.promise;
 
       expect(task.done()).toBe(true);
     });
 
     it('should set done() to true when promise rejects', async () => {
-      const promise = Promise.reject(new Error('test error'));
-      const task = new Task(promise);
+      let rejectPromise!: (err: Error) => void;
+      const promise = new Promise<void>((_, reject) => {
+        rejectPromise = reject;
+      });
+      const task = new Task(() => promise);
 
       expect(task.done()).toBe(false);
 
+      rejectPromise(new Error('test error'));
       try {
-        await promise;
+        await task.promise;
       } catch (_) {
         // expected
       }
+      // allow microtask queue to flush the .catch(markDone)
+      await new Promise((resolve) => process.nextTick(resolve));
 
       expect(task.done()).toBe(true);
     });
 
-    it('should call cancelFn when cancel is called', () => {
-      const cancelFn = vi.fn();
-      const promise = new Promise<void>(() => {});
-      const task = new Task(promise, cancelFn);
+    it('should trip abort signal when cancel is called', () => {
+      let signal: AbortSignal | undefined;
+      const task = new Task((s) => {
+        signal = s;
+        return new Promise<void>(() => {});
+      });
 
+      expect(signal?.aborted).toBe(false);
       task.cancel();
-
-      expect(cancelFn).toHaveBeenCalledTimes(1);
-    });
-
-    it('should not throw if cancel is called but no cancelFn is provided', () => {
-      const promise = new Promise<void>(() => {});
-      const task = new Task(promise);
-
-      expect(() => task.cancel()).not.toThrow();
+      expect(signal?.aborted).toBe(true);
     });
   });
 });
