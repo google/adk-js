@@ -5,12 +5,14 @@
  */
 
 import {Part} from '@google/genai';
-import {CompositeSessionKey} from '../sessions/session.js';
+import {SessionScope} from '../sessions/session_scope.js';
 
 /**
  * The parameters for `saveArtifact`.
  */
-export interface SaveArtifactRequest extends CompositeSessionKey {
+export interface SaveArtifactRequest {
+  /** The session scope. */
+  scope: SessionScope;
   /** The filename of the artifact. */
   filename: string;
   /** The artifact to save. */
@@ -24,7 +26,9 @@ export interface SaveArtifactRequest extends CompositeSessionKey {
 /**
  * The parameters for `loadArtifact`.
  */
-export interface LoadArtifactRequest extends CompositeSessionKey {
+export interface LoadArtifactRequest {
+  /** The session scope. */
+  scope: SessionScope;
   /** The filename of the artifact. */
   filename: string;
   /**
@@ -37,12 +41,17 @@ export interface LoadArtifactRequest extends CompositeSessionKey {
 /**
  * The parameters for `listArtifactKeys`.
  */
-export type ListArtifactKeysRequest = CompositeSessionKey;
+export interface ListArtifactKeysRequest {
+  /** The session scope. */
+  scope: SessionScope;
+}
 
 /**
  * The parameters for `deleteArtifact`.
  */
-export interface DeleteArtifactRequest extends CompositeSessionKey {
+export interface DeleteArtifactRequest {
+  /** The session scope. */
+  scope: SessionScope;
   /** The filename of the artifact. */
   filename: string;
 }
@@ -50,7 +59,9 @@ export interface DeleteArtifactRequest extends CompositeSessionKey {
 /**
  * The parameters for `listVersions`.
  */
-export interface ListVersionsRequest extends CompositeSessionKey {
+export interface ListVersionsRequest {
+  /** The session scope. */
+  scope: SessionScope;
   /** The filename of the artifact. */
   filename: string;
 }

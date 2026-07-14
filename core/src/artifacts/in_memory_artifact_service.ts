@@ -30,9 +30,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   > = {};
 
   saveArtifact({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
     artifact,
     customMetadata,
@@ -67,9 +65,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   loadArtifact({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
     version,
   }: LoadArtifactRequest): Promise<Part | undefined> {
@@ -88,9 +84,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   listArtifactKeys({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
   }: ListArtifactKeysRequest): Promise<string[]> {
     const sessionPrefix = `${appName}/${userId}/${sessionId}/`;
     const usernamespacePrefix = `${appName}/${userId}/user/`;
@@ -110,9 +104,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   deleteArtifact({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
   }: DeleteArtifactRequest): Promise<void> {
     const path = artifactPath(appName, userId, sessionId, filename);
@@ -125,9 +117,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   listVersions({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
   }: ListVersionsRequest): Promise<number[]> {
     const path = artifactPath(appName, userId, sessionId, filename);
@@ -146,9 +136,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   listArtifactVersions({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
   }: ListVersionsRequest): Promise<ArtifactVersion[]> {
     const path = artifactPath(appName, userId, sessionId, filename);
@@ -162,9 +150,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
   }
 
   getArtifactVersion({
-    appName,
-    userId,
-    sessionId,
+    scope: {appName, userId, sessionId},
     filename,
     version,
   }: LoadArtifactRequest): Promise<ArtifactVersion | undefined> {

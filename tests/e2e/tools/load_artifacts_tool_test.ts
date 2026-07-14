@@ -48,9 +48,11 @@ describe('E2E LoadArtifactsTool', () => {
         'utf8',
       ).toString('base64');
       await runner.artifactService!.saveArtifact({
-        appName: 'e2e_tool_test',
-        userId: 'test_user',
-        sessionId: session.id,
+        scope: {
+          appName: 'e2e_tool_test',
+          userId: 'test_user',
+          sessionId: session.id,
+        },
         filename: 'people.csv',
         artifact: {
           inlineData: {

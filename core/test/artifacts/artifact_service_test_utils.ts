@@ -23,6 +23,7 @@ export function runArtifactServiceTests(
   const appName = 'test-app';
   const userId = 'test-user';
   const sessionId = 'test-session';
+  const scope = {appName, userId, sessionId};
 
   beforeEach(async () => {
     service = await createService();
@@ -37,18 +38,14 @@ export function runArtifactServiceTests(
       const filename = 'test.txt';
       const text = 'hello world';
       const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text},
       });
 
       expect(version).toBe(0);
       const loaded = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 0,
       });
@@ -61,18 +58,14 @@ export function runArtifactServiceTests(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNiAAAABgDNjd8qAAAAAElFTkSuQmCC';
       const mimeType = 'image/png';
       const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {inlineData: {data, mimeType}},
       });
 
       expect(version).toBe(0);
       const loaded = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 0,
       });
@@ -84,17 +77,13 @@ export function runArtifactServiceTests(
       const filename = 'user:test.txt';
       const text = 'user scoped';
       const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text},
       });
 
       const loaded = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version,
       });
@@ -104,9 +93,7 @@ export function runArtifactServiceTests(
     it('throws error if artifact has no content', async () => {
       await expect(
         service.saveArtifact({
-          appName,
-          userId,
-          sessionId,
+          scope,
           filename: 'test.txt',
           artifact: {} as unknown as Part,
         }),
@@ -116,18 +103,14 @@ export function runArtifactServiceTests(
     it('increments version number', async () => {
       const filename = 'test.txt';
       const version1 = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: 'v1'},
       });
       expect(version1).toBe(0);
 
       const version2 = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: 'v2'},
       });
@@ -138,9 +121,7 @@ export function runArtifactServiceTests(
   describe('loadArtifact', () => {
     it('returns undefined for non-existent artifact', async () => {
       const result = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'nonexistent.txt',
       });
       expect(result).toBeUndefined();
@@ -149,42 +130,32 @@ export function runArtifactServiceTests(
     it('loads specific version', async () => {
       const filename = 'history.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: 'v0'},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: 'v1'},
       });
 
       const v0 = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 0,
       });
       expect(v0?.text).toBe('v0');
 
       const v1 = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 1,
       });
       expect(v1?.text).toBe('v1');
 
       const v = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
       });
       expect(v?.text).toBe('v1');
@@ -194,31 +165,23 @@ export function runArtifactServiceTests(
   describe('listArtifactKeys', () => {
     it('lists artifacts for session and user', async () => {
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'session.txt',
         artifact: {text: '.'},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'nested/dir/session.txt',
         artifact: {text: '.'},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'user:user.txt',
         artifact: {text: '.'},
       });
 
       const keys = await service.listArtifactKeys({
-        appName,
-        userId,
-        sessionId,
+        scope,
       });
       expect(keys).toContain('session.txt');
       expect(keys).toContain('nested/dir/session.txt');
@@ -230,18 +193,14 @@ export function runArtifactServiceTests(
     it('deletes an artifact', async () => {
       const filename = 'del.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '.'},
       });
-      await service.deleteArtifact({appName, userId, sessionId, filename});
+      await service.deleteArtifact({scope, filename});
 
       const loaded = await service.loadArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
       });
       expect(loaded).toBeUndefined();
@@ -249,9 +208,7 @@ export function runArtifactServiceTests(
 
     it('does not fail when deleting non-existent artifact', async () => {
       await service.deleteArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'non-existent',
       });
     });
@@ -261,24 +218,18 @@ export function runArtifactServiceTests(
     it('lists versions', async () => {
       const filename = 'vers.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '1'},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '2'},
       });
 
       const versions = await service.listVersions({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
       });
       expect(versions).toEqual([0, 1]);
@@ -286,9 +237,7 @@ export function runArtifactServiceTests(
 
     it('returns empty list for non-existent artifact', async () => {
       const versions = await service.listVersions({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'non-existent',
       });
       expect(versions).toEqual([]);
@@ -300,18 +249,14 @@ export function runArtifactServiceTests(
       const filename = 'meta.txt';
       const customMetadata = {foo: 'bar', baz: 123};
       const version = await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: 'meta'},
         customMetadata,
       });
 
       const versionMetadata = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version,
       });
@@ -325,26 +270,20 @@ export function runArtifactServiceTests(
     it('lists artifact versions with metadata', async () => {
       const filename = 'vers-meta.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '1'},
         customMetadata: {v: 1},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '2'},
         customMetadata: {v: 2},
       });
 
       const versions = await service.listArtifactVersions({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
       });
 
@@ -357,9 +296,7 @@ export function runArtifactServiceTests(
 
     it('returns empty list for non-existent artifact', async () => {
       const versions = await service.listArtifactVersions({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'non-existent',
       });
       expect(versions).toHaveLength(0);
@@ -370,44 +307,34 @@ export function runArtifactServiceTests(
     it('gets specific artifact version metadata', async () => {
       const filename = 'get-vers.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '1'},
         customMetadata: {v: 1},
       });
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '2'},
         customMetadata: {v: 2},
       });
 
       const v0 = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 0,
       });
       expect(v0?.customMetadata).toMatchObject({v: 1});
 
       const v1 = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 1,
       });
       expect(v1?.customMetadata).toMatchObject({v: 2});
 
       const latest = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
       });
       expect(latest?.customMetadata).toMatchObject({v: 2});
@@ -416,17 +343,13 @@ export function runArtifactServiceTests(
     it('returns undefined for non-existent version', async () => {
       const filename = 'missing-vers.txt';
       await service.saveArtifact({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         artifact: {text: '1'},
       });
 
       const missing = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename,
         version: 99,
       });
@@ -435,9 +358,7 @@ export function runArtifactServiceTests(
 
     it('returns undefined for non-existent artifact', async () => {
       const missing = await service.getArtifactVersion({
-        appName,
-        userId,
-        sessionId,
+        scope,
         filename: 'non-existent',
       });
       expect(missing).toBeUndefined();

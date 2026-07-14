@@ -49,9 +49,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: SaveArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
         artifact: {text: 'hello'},
       };
@@ -72,9 +70,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
         version: 2,
       };
@@ -90,9 +86,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -111,9 +105,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: ListArtifactKeysRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
       };
 
       const result = await service.listArtifactKeys(request);
@@ -130,9 +122,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: DeleteArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -145,9 +135,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: DeleteArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -165,9 +153,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -181,9 +167,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -202,9 +186,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -220,9 +202,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
       };
 
@@ -241,9 +221,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
         version: 1,
       };
@@ -261,9 +239,7 @@ describe('ForwardingArtifactService', () => {
       const service = new ForwardingArtifactService(toolContext);
 
       const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+        scope: {appName: 'app', userId: 'user', sessionId: 'session'},
         filename: 'file.txt',
         version: 0,
       };

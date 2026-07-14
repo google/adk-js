@@ -65,9 +65,11 @@ describe('LoadArtifactsTool Integration', () => {
       'base64',
     );
     await runner.artifactService!.saveArtifact({
-      appName: 'test_artifact_app',
-      userId: 'test_user',
-      sessionId: session.id,
+      scope: {
+        appName: 'test_artifact_app',
+        userId: 'test_user',
+        sessionId: session.id,
+      },
       filename: 'test.csv',
       artifact: {
         inlineData: {

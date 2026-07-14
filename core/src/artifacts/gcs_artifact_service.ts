@@ -163,8 +163,8 @@ export class GcsArtifactService implements BaseArtifactService {
   }
 
   async listArtifactKeys(request: ListArtifactKeysRequest): Promise<string[]> {
-    const sessionPrefix = `${request.appName}/${request.userId}/${request.sessionId}/`;
-    const usernamePrefix = `${request.appName}/${request.userId}/user/`;
+    const sessionPrefix = `${request.scope.appName}/${request.scope.userId}/${request.scope.sessionId}/`;
+    const usernamePrefix = `${request.scope.appName}/${request.scope.userId}/user/`;
     const [[sessionFiles], [userSessionFiles]] = await Promise.all([
       this.bucket.getFiles({prefix: sessionPrefix}),
       this.bucket.getFiles({prefix: usernamePrefix}),
@@ -262,7 +262,7 @@ export class GcsArtifactService implements BaseArtifactService {
       };
     } catch (e) {
       logger.warn(
-        `[GcsArtifactService] getArtifactVersion: Failed to get artifact version for userId: ${request.userId} sessionId: ${request.sessionId} filename: ${request.filename} version: ${request.version}`,
+        `[GcsArtifactService] getArtifactVersion: Failed to get artifact version for userId: ${request.scope.userId} sessionId: ${request.scope.sessionId} filename: ${request.filename} version: ${request.version}`,
         e,
       );
       return undefined;
@@ -271,9 +271,7 @@ export class GcsArtifactService implements BaseArtifactService {
 }
 
 function getFileName({
-  appName,
-  userId,
-  sessionId,
+  scope: {appName, userId, sessionId},
   filename,
   version,
 }: LoadArtifactRequest): string {
