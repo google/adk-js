@@ -19,7 +19,7 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {Content, FunctionCall} from '@google/genai';
+import {FunctionCall} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
@@ -27,7 +27,6 @@ import {
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
   populateClientFunctionCallId,
-  removeClientFunctionCallId,
 } from '../../src/agents/functions.js';
 
 // Get the test target function
@@ -648,37 +647,6 @@ describe('populateClientFunctionCallId', () => {
     });
     populateClientFunctionCallId(event);
     expect(event.content!.parts![0].text).toBe('hello');
-  });
-});
-
-describe('removeClientFunctionCallId', () => {
-  it('should remove client generated ID from functionCall', () => {
-    const content: Content = {
-      role: 'model',
-      parts: [{functionCall: {name: 'testTool', args: {}, id: 'adk-test-id'}}],
-    };
-    removeClientFunctionCallId(content);
-    expect(content.parts![0].functionCall!.id).toBeUndefined();
-  });
-
-  it('should remove client generated ID from functionResponse', () => {
-    const content: Content = {
-      role: 'user',
-      parts: [
-        {functionResponse: {name: 'testTool', response: {}, id: 'adk-test-id'}},
-      ],
-    };
-    removeClientFunctionCallId(content);
-    expect(content.parts![0].functionResponse!.id).toBeUndefined();
-  });
-
-  it('should not remove non-client generated ID', () => {
-    const content: Content = {
-      role: 'model',
-      parts: [{functionCall: {name: 'testTool', args: {}, id: 'server-id'}}],
-    };
-    removeClientFunctionCallId(content);
-    expect(content.parts![0].functionCall!.id).toBe('server-id');
   });
 });
 

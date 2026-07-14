@@ -11,6 +11,7 @@ import {
   getContents,
   getCurrentTurnContents,
   mergeFunctionResponseEvents,
+  removeClientFunctionCallId,
 } from '../../../src/agents/processors/content_processor_utils.js';
 
 describe('getContents', () => {
@@ -1088,5 +1089,49 @@ describe('getContents', () => {
     const contents = getContents([e0], 'my_agent', 'main.agentA.subAgent');
     expect(contents).toHaveLength(1);
     expect(contents[0].parts?.[0].text).toBe('hello');
+  });
+});
+
+describe('removeClientFunctionCallId', () => {
+  it('should remove client generated ID from functionCall', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'adk-test-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBeUndefined();
+  });
+
+  it('should remove client generated ID from functionResponse', () => {
+    const content: Content = {
+      role: 'user',
+      parts: [
+        {functionResponse: {name: 'testTool', response: {}, id: 'adk-test-id'}},
+      ],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionResponse!.id).toBeUndefined();
+  });
+
+  it('should not remove non-client generated ID', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'server-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBe('server-id');
+  });
+
+  it('should safely handle null, undefined, or empty content objects without throwing', () => {
+    expect(() =>
+      removeClientFunctionCallId(undefined as unknown as Content),
+    ).not.toThrow();
+    expect(() =>
+      removeClientFunctionCallId(null as unknown as Content),
+    ).not.toThrow();
+    const emptyContent: Content = {};
+    expect(() => removeClientFunctionCallId(emptyContent)).not.toThrow();
+    const noParts: Content = {role: 'user', parts: []};
+    expect(() => removeClientFunctionCallId(noParts)).not.toThrow();
   });
 });
