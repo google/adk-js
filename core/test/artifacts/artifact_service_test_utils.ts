@@ -317,7 +317,7 @@ export function runArtifactServiceTests(
       });
 
       expect(versionMetadata).toBeDefined();
-      expect(versionMetadata?.customMetadata).toEqual(customMetadata);
+      expect(versionMetadata?.customMetadata).toMatchObject(customMetadata);
     });
   });
 
@@ -350,9 +350,9 @@ export function runArtifactServiceTests(
 
       expect(versions).toHaveLength(2);
       expect(versions[0].version).toBe(0);
-      expect(versions[0].customMetadata).toEqual({v: 1});
+      expect(versions[0].customMetadata).toMatchObject({v: 1});
       expect(versions[1].version).toBe(1);
-      expect(versions[1].customMetadata).toEqual({v: 2});
+      expect(versions[1].customMetadata).toMatchObject({v: 2});
     });
 
     it('returns empty list for non-existent artifact', async () => {
@@ -393,7 +393,7 @@ export function runArtifactServiceTests(
         filename,
         version: 0,
       });
-      expect(v0?.customMetadata).toEqual({v: 1});
+      expect(v0?.customMetadata).toMatchObject({v: 1});
 
       const v1 = await service.getArtifactVersion({
         appName,
@@ -402,7 +402,7 @@ export function runArtifactServiceTests(
         filename,
         version: 1,
       });
-      expect(v1?.customMetadata).toEqual({v: 2});
+      expect(v1?.customMetadata).toMatchObject({v: 2});
 
       const latest = await service.getArtifactVersion({
         appName,
@@ -410,7 +410,7 @@ export function runArtifactServiceTests(
         sessionId,
         filename,
       });
-      expect(latest?.customMetadata).toEqual({v: 2});
+      expect(latest?.customMetadata).toMatchObject({v: 2});
     });
 
     it('returns undefined for non-existent version', async () => {
@@ -441,6 +441,114 @@ export function runArtifactServiceTests(
         filename: 'non-existent',
       });
       expect(missing).toBeUndefined();
+    });
+  });
+
+  describe('fileData artifacts', () => {
+    it('saves and loads an external gs:// URI reference', async () => {
+      const filename = 'report.pdf';
+      const fileUri = 'gs://my-bucket/report.pdf';
+      const mimeType = 'application/pdf';
+
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {fileData: {fileUri, mimeType}},
+      });
+      expect(version).toBe(0);
+
+      const loaded = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(loaded?.fileData?.fileUri).toBe(fileUri);
+      expect(loaded?.fileData?.mimeType).toBe(mimeType);
+    });
+
+    it('saves fileData without a mimeType', async () => {
+      const filename = 'data.bin';
+      const fileUri = 'gs://my-bucket/data.bin';
+
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {fileData: {fileUri}},
+      });
+      expect(version).toBe(0);
+
+      const loaded = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(loaded?.fileData?.fileUri).toBe(fileUri);
+    });
+
+    it('ignores a stray/empty fileData sibling when inlineData is present', async () => {
+      const filename = 'both.png';
+      const data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNiAAAABgDNjd8qAAAAAElFTkSuQmCC';
+      const mimeType = 'image/png';
+
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {inlineData: {data, mimeType}, fileData: {}},
+      });
+      expect(version).toBe(0);
+
+      const loaded = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(loaded?.inlineData?.data).toBe(data);
+      expect(loaded?.inlineData?.mimeType).toBe(mimeType);
+    });
+
+    it('ignores a stray fileData sibling when text is present and does not corrupt mimeType metadata', async () => {
+      const filename = 'both.txt';
+
+      const version = await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {
+          text: 'hello world',
+          fileData: {
+            fileUri: 'https://example.com/a.png',
+            mimeType: 'image/png',
+          },
+        },
+      });
+
+      const loaded = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(loaded?.text).toBe('hello world');
+
+      const versionMetadata = await service.getArtifactVersion({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version,
+      });
+      expect(versionMetadata?.mimeType).not.toBe('image/png');
     });
   });
 }

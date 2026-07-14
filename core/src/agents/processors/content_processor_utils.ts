@@ -18,10 +18,28 @@ import {
 } from '../../events/event.js';
 
 import {
-  removeClientFunctionCallId,
+  AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_EUC_FUNCTION_CALL_NAME,
 } from '../functions.js';
+
+/**
+ * Removes the client-generated function call IDs from a given content object.
+ *
+ * When sending content back to the server, these IDs are
+ * specific to the client-side and should not be included in requests to the
+ * model.
+ */
+export function removeClientFunctionCallId(content: Content): void {
+  for (const part of content?.parts ?? []) {
+    if (part.functionCall?.id?.startsWith(AF_FUNCTION_CALL_ID_PREFIX)) {
+      part.functionCall.id = undefined;
+    }
+    if (part.functionResponse?.id?.startsWith(AF_FUNCTION_CALL_ID_PREFIX)) {
+      part.functionResponse.id = undefined;
+    }
+  }
+}
 
 /**
  * Get the contents for the LLM request.

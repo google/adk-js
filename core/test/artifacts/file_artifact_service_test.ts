@@ -32,6 +32,52 @@ describe('FileArtifactService', () => {
     },
   );
 
+  describe('fileData storage', () => {
+    it('stores fileData as a metadata-only pointer with no content file', async () => {
+      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
+      const service = new FileArtifactService(rootDir);
+      const appName = 'test-app';
+      const userId = 'test-user';
+      const sessionId = 'test-session';
+
+      try {
+        await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename: 'report.pdf',
+          artifact: {
+            fileData: {
+              fileUri: 'gs://my-bucket/report.pdf',
+              mimeType: 'application/pdf',
+            },
+          },
+        });
+
+        const versionDir = path.join(
+          getSessionArtifactsDir(getUserRoot(rootDir, userId), sessionId),
+          'report.pdf',
+          'versions',
+          '0',
+        );
+        const entries = await fs.readdir(versionDir);
+
+        expect(entries).toEqual(['metadata.json']);
+
+        const loaded = await service.loadArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename: 'report.pdf',
+        });
+        expect(loaded?.fileData?.fileUri).toBe('gs://my-bucket/report.pdf');
+        expect(loaded?.fileData?.mimeType).toBe('application/pdf');
+      } finally {
+        await fs.rm(rootDir, {recursive: true, force: true});
+      }
+    });
+  });
+
   describe('path security', () => {
     it('rejects traversal attempts', async () => {
       rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));

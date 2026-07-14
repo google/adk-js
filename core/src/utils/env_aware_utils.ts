@@ -38,15 +38,24 @@ export function randomUUID(): string {
 }
 
 /**
- * Encodes the given string to base64.
+ * Encodes the given string or Uint8Array to base64.
  *
- * @param data The string to encode.
+ * @param data The data to encode.
  * @return The base64-encoded string.
  */
-export function base64Encode(data: string): string {
+export function base64Encode(data: string | Uint8Array): string {
   if (isBrowser()) {
+    let strData = '';
+    if (typeof data === 'string') {
+      strData = data;
+    } else {
+      const len = data.byteLength;
+      for (let i = 0; i < len; i++) {
+        strData += String.fromCharCode(data[i]);
+      }
+    }
     // eslint-disable-next-line no-undef
-    return window.btoa(data);
+    return window.btoa(strData);
   }
 
   return Buffer.from(data).toString('base64');

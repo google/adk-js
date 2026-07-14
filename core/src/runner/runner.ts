@@ -211,6 +211,9 @@ export class Runner {
     const {userId, sessionId, stateDelta} = params;
     const runConfig = createRunConfig(params.runConfig);
     let newMessage = params.newMessage;
+    if (newMessage && !newMessage.role) {
+      newMessage.role = 'user';
+    }
 
     // =========================================================================
     // Setup the session and invocation context

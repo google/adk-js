@@ -4,13 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import {exec} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {promisify} from 'node:util';
-import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  Mock,
+  vi,
+} from 'vitest';
 
 import {
   AgentFile,
@@ -18,8 +26,6 @@ import {
   replaceDirnamePlugin,
 } from '../../src/utils/agent_loader.js';
 import * as fileUtils from '../../src/utils/file_utils.js';
-
-const execAsync = promisify(exec);
 
 vi.mock('../../src/utils/file_utils.js', () => ({
   getTempDir: vi.fn(),
@@ -114,13 +120,22 @@ describe('AgentLoader', () => {
 
   const compiledPath = (fileName: string) => path.join(tempLoaderDir, fileName);
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     tempAgentsDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-loader-test'),
     );
     tempLoaderDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-loader-output-test'),
     );
+    await initNpmProject();
+  }, 60000);
+
+  afterAll(async () => {
+    await fs.rm(tempAgentsDir, {recursive: true, force: true});
+    await fs.rm(tempLoaderDir, {recursive: true, force: true});
+  });
+
+  beforeEach(async () => {
     (fileUtils.getTempDir as Mock).mockImplementation(() => tempLoaderDir);
     (fileUtils.isFileExists as Mock).mockImplementation(() => true);
     (fileUtils.isFolderExists as Mock).mockImplementation(
@@ -139,12 +154,35 @@ describe('AgentLoader', () => {
     (fileUtils.tryToFindFileRecursively as Mock).mockImplementation(
       async (_sourceFolder, fileName) => path.join(tempAgentsDir, fileName),
     );
-    await initNpmProject();
   });
 
   afterEach(async () => {
-    await fs.rm(tempAgentsDir, {recursive: true, force: true});
-    await fs.rm(tempLoaderDir, {recursive: true, force: true});
+    try {
+      const files = await fs.readdir(tempAgentsDir);
+      for (const file of files) {
+        if (file !== 'package.json' && file !== 'node_modules') {
+          await fs.rm(path.join(tempAgentsDir, file), {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const files = await fs.readdir(tempLoaderDir);
+      for (const file of files) {
+        await fs.rm(path.join(tempLoaderDir, file), {
+          recursive: true,
+          force: true,
+        });
+      }
+    } catch {
+      // ignore
+    }
+
     vi.clearAllMocks();
   });
 
@@ -154,13 +192,18 @@ describe('AgentLoader', () => {
       JSON.stringify({
         name: 'test-agents',
         version: '1.0.0',
-        dependencies: {
-          '@google/adk': `file:${path.dirname(require.resolve('@google/adk'))}`,
-        },
       }),
     );
 
-    await execAsync('npm install', {cwd: tempAgentsDir});
+    const adkPath = path.resolve(
+      path.dirname(require.resolve('@google/adk')),
+      '..',
+      '..',
+    );
+    const nodeModulesDir = path.join(tempAgentsDir, 'node_modules');
+    const googleDir = path.join(nodeModulesDir, '@google');
+    await fs.mkdir(googleDir, {recursive: true});
+    await fs.symlink(adkPath, path.join(googleDir, 'adk'), 'dir');
   }
 
   describe('AgentFile', () => {

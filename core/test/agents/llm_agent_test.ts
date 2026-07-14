@@ -786,6 +786,46 @@ describe('LlmAgent Abort Handling', () => {
   });
 });
 
+describe('LlmAgent postprocess empty parts filtering', () => {
+  it('should not yield an event when LLM response has empty parts array', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm({
+        content: {role: 'model', parts: []},
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 0,
+          totalTokenCount: 10,
+        },
+        finishReason: 'STOP' as never,
+        partial: false,
+      }),
+    });
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe('LlmAgent Default Request Processors', () => {
   it('includes AUTH_PREPROCESSOR in default requestProcessors before CONTENT_REQUEST_PROCESSOR', () => {
     const agent = new LlmAgent({

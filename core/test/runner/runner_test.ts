@@ -686,4 +686,34 @@ describe('Runner customMetadata support', () => {
 
     appendEventSpy.mockRestore();
   });
+
+  it('should default newMessage role to "user" when role is omitted (issue #475)', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'test_session_475',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {parts: [{text: 'Hello without role'}]},
+    })) {
+      events.push(event);
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'test_session_475',
+    });
+
+    expect(updatedSession).not.toBeNull();
+    expect(updatedSession!.events.length).toBeGreaterThan(0);
+
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.author).toBe('user');
+    expect(userEvent.content?.role).toBe('user');
+  });
 });

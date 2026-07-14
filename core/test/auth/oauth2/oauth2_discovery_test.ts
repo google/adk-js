@@ -393,6 +393,15 @@ describe('OAuth2DiscoveryManager', () => {
     it('blocks 0.0.0.0', async () => {
       expect(await isBlocked('https://0.0.0.0/')).toBe(true);
     });
+    it('blocks [::] IPv6 unspecified (routes to loopback)', async () => {
+      expect(await isBlocked('https://[::]/')).toBe(true);
+    });
+    it('blocks [::0] IPv6 unspecified shorthand', async () => {
+      expect(await isBlocked('https://[::0]/')).toBe(true);
+    });
+    it('blocks [0:0:0:0:0:0:0:0] IPv6 unspecified expanded', async () => {
+      expect(await isBlocked('https://[0:0:0:0:0:0:0:0]/')).toBe(true);
+    });
     it('blocks [::ffff:7f00:1] IPv4-mapped 127.0.0.1', async () => {
       expect(await isBlocked('https://[::ffff:7f00:1]/')).toBe(true);
     });
@@ -461,6 +470,43 @@ describe('OAuth2DiscoveryManager', () => {
     });
     it('blocks non-https scheme', async () => {
       expect(await isBlocked('http://example.com/')).toBe(true);
+    });
+  });
+
+  describe('discovery requests do not follow redirects', () => {
+    it('passes redirect: error to the auth-server discovery fetch', async () => {
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          issuer: 'https://accounts.example.com',
+          authorization_endpoint: 'https://accounts.example.com/auth',
+          token_endpoint: 'https://accounts.example.com/token',
+        }),
+      } as Response);
+
+      await manager.discoverAuthServerMetadata('https://accounts.example.com');
+
+      expect(fetch).toHaveBeenCalled();
+      for (const call of (fetch as ReturnType<typeof vi.fn>).mock.calls) {
+        expect(call[1]).toMatchObject({redirect: 'error'});
+      }
+    });
+
+    it('passes redirect: error to the resource discovery fetch', async () => {
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          resource: 'https://api.example.com',
+          authorization_servers: [],
+        }),
+      } as Response);
+
+      await manager.discoverResourceMetadata('https://api.example.com');
+
+      expect(fetch).toHaveBeenCalled();
+      for (const call of (fetch as ReturnType<typeof vi.fn>).mock.calls) {
+        expect(call[1]).toMatchObject({redirect: 'error'});
+      }
     });
   });
 });
