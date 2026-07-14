@@ -185,6 +185,8 @@ export type {LlmRouter} from './models/routed_llm.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export {SaveFilesAsArtifactsPlugin} from './plugins/save_files_as_artifacts_plugin.js';
+export type {SaveFilesAsArtifactsPluginOptions} from './plugins/save_files_as_artifacts_plugin.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
