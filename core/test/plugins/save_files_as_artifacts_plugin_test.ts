@@ -11,12 +11,14 @@ import {
   DeleteArtifactRequest,
   Event,
   InMemoryArtifactService,
+  InMemorySessionService,
   InvocationContext,
   ListArtifactKeysRequest,
   ListVersionsRequest,
   LlmAgent,
   LoadArtifactRequest,
   PluginManager,
+  Runner,
   SaveArtifactRequest,
   SaveFilesAsArtifactsPlugin,
   Session,
@@ -389,6 +391,42 @@ describe('SaveFilesAsArtifactsPlugin', () => {
 
     expect(callbackContext.actions.artifactDelta).toEqual({'report.pdf': 0});
     expect(mockSession.state[pendingKey]).toEqual({});
+  });
+
+  it('testRunnerDeprecationWarning', async () => {
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      sessionId: 'session-1',
+      appName: 'test-app',
+      userId: 'user-1',
+    });
+
+    const runner = new Runner({
+      agent: mockAgent,
+      appName: 'test-app',
+      sessionService,
+      artifactService: new InMemoryArtifactService(),
+    });
+
+    const userMessage: Content = {
+      role: 'user',
+      parts: [{text: 'test message'}],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: 'user-1',
+      sessionId: 'session-1',
+      newMessage: userMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume generator
+    }
+
+    expect(
+      warnCalls.some((c) =>
+        c.includes("The 'saveInputBlobsAsArtifacts' setting is deprecated."),
+      ),
+    ).toBe(true);
   });
 
   it('testEmptyOrMissingParts', async () => {

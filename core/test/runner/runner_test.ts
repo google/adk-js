@@ -18,6 +18,7 @@ import {
   isRoutableLlmAgent,
   LlmAgent,
   Runner,
+  SaveFilesAsArtifactsPlugin,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -885,5 +886,73 @@ describe('Runner customMetadata support', () => {
     const userEvent = updatedSession!.events[0];
     expect(userEvent.author).toBe('user');
     expect(userEvent.content?.role).toBe('user');
+  });
+
+  it('should execute a turn with SaveFilesAsArtifactsPlugin registered and make stored artifacts accessible', async () => {
+    const plugin = new SaveFilesAsArtifactsPlugin();
+    const runnerWithPlugin = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+      plugins: [plugin],
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const inlineDataPart = {
+      inlineData: {
+        mimeType: 'text/plain',
+        data: 'aGVsbG8gYXJ0aWZhY3Q=',
+        displayName: 'test_doc.txt',
+      },
+    };
+
+    const events: Event[] = [];
+    for await (const event of runnerWithPlugin.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {
+        role: 'user',
+        parts: [{text: 'Check this out'}, inlineDataPart],
+      },
+    })) {
+      events.push(event);
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    expect(updatedSession).toBeDefined();
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.content!.parts).toBeDefined();
+    expect(
+      userEvent.content!.parts!.some((p) =>
+        p.text?.includes('[Uploaded Artifact: "test_doc.txt"]'),
+      ),
+    ).toBe(true);
+
+    const keys = await artifactService.listArtifactKeys({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(keys).toContain('test_doc.txt');
+
+    const loadedPart = await artifactService.loadArtifact({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      filename: 'test_doc.txt',
+    });
+    expect(loadedPart).toBeDefined();
+    expect(loadedPart!.inlineData!.displayName).toBe('test_doc.txt');
   });
 });
