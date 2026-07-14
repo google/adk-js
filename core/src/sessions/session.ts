@@ -7,6 +7,18 @@
 import {Event} from '../events/event.js';
 
 /**
+ * Represents a unified composite session key grouping application, user, and session identifiers.
+ */
+export interface CompositeSessionKey {
+  /** The name of the application. */
+  appName: string;
+  /** The ID of the user. */
+  userId: string;
+  /** The ID of the session. */
+  sessionId: string;
+}
+
+/**
  * Represents a session in a conversation between agents and users.
  */
 export interface Session {

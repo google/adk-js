@@ -8,7 +8,7 @@ import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
 
-import {Session} from './session.js';
+import {CompositeSessionKey, Session} from './session.js';
 import {State} from './state.js';
 
 /**
@@ -38,13 +38,7 @@ export interface CreateSessionRequest {
 /**
  * The parameters for `getSession`.
  */
-export interface GetSessionRequest {
-  /** The name of the application. */
-  appName: string;
-  /** The ID of the user. */
-  userId: string;
-  /** The ID of the session. */
-  sessionId: string;
+export interface GetSessionRequest extends CompositeSessionKey {
   /** The configurations for getting the session. */
   config?: GetSessionConfig;
 }
@@ -70,14 +64,7 @@ export interface ListSessionsRequest {
 /**
  * The parameters for `deleteSession`.
  */
-export interface DeleteSessionRequest {
-  /** The name of the application. */
-  appName: string;
-  /** The ID of the user. */
-  userId: string;
-  /** The ID of the session. */
-  sessionId: string;
-}
+export type DeleteSessionRequest = CompositeSessionKey;
 
 /**
  * The parameters for `appendEvent`.
