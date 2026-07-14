@@ -6,10 +6,7 @@
 
 import {GcsArtifactService} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
-import {
-  runArtifactServiceTests,
-  runFileDataArtifactServiceTests,
-} from './artifact_service_test_utils.js';
+import {runArtifactServiceTests} from './artifact_service_test_utils.js';
 
 const {StorageMock, storageMock} = vi.hoisted(() => {
   class FakeGcsFile {
@@ -110,16 +107,6 @@ describe('GcsArtifactService', () => {
   const bucketName = 'test-bucket';
 
   runArtifactServiceTests(
-    async () => {
-      storageMock.buckets.clear();
-      return new GcsArtifactService(bucketName);
-    },
-    async () => {
-      storageMock.buckets.clear();
-    },
-  );
-
-  runFileDataArtifactServiceTests(
     async () => {
       storageMock.buckets.clear();
       return new GcsArtifactService(bucketName);

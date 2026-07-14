@@ -14,28 +14,12 @@ import {
   getSessionArtifactsDir,
   getUserRoot,
 } from '../../src/artifacts/file_artifact_service.js';
-import {
-  runArtifactServiceTests,
-  runFileDataArtifactServiceTests,
-} from './artifact_service_test_utils.js';
+import {runArtifactServiceTests} from './artifact_service_test_utils.js';
 
 describe('FileArtifactService', () => {
   let rootDir: string;
 
   runArtifactServiceTests(
-    async () => {
-      rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
-      await fs.mkdir(rootDir, {recursive: true});
-      return new FileArtifactService(rootDir);
-    },
-    async () => {
-      if (rootDir) {
-        await fs.rm(rootDir, {recursive: true, force: true});
-      }
-    },
-  );
-
-  runFileDataArtifactServiceTests(
     async () => {
       rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-artifacts-test-'));
       await fs.mkdir(rootDir, {recursive: true});

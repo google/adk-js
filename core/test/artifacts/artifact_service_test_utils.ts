@@ -443,33 +443,6 @@ export function runArtifactServiceTests(
       expect(missing).toBeUndefined();
     });
   });
-}
-
-/**
- * Runs the shared fileData tests.
- *
- * These tests exercise fileData Part support:
- * saving/loading external URI references (e.g. gs://) as-is.
- *
- * @param createService A function that returns a promise that resolves to the artifact service.
- * @param cleanup A function that returns a promise that cleans up the artifact service.
- */
-export function runFileDataArtifactServiceTests(
-  createService: () => Promise<BaseArtifactService>,
-  cleanup: () => Promise<void>,
-) {
-  let service: BaseArtifactService;
-  const appName = 'test-app';
-  const userId = 'test-user';
-  const sessionId = 'test-session';
-
-  beforeEach(async () => {
-    service = await createService();
-  });
-
-  afterEach(async () => {
-    await cleanup();
-  });
 
   describe('fileData artifacts', () => {
     it('saves and loads an external gs:// URI reference', async () => {
