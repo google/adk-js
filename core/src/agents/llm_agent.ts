@@ -181,7 +181,9 @@ function applyLiveRunConfig(
  * Input/output schema type for agent.
  */
 export type LlmAgentSchema =
-  z3.ZodObject<z3.ZodRawShape> | z4.ZodObject<z4.ZodRawShape> | Schema;
+  | z3.ZodObject<z3.ZodRawShape>
+  | z4.ZodObject<z4.ZodRawShape>
+  | Schema;
 
 /** An object that can provide an instruction string. */
 export type InstructionProvider = (
@@ -208,7 +210,8 @@ export type SingleBeforeModelCallback = (params: {
  * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeModelCallback =
-  SingleBeforeModelCallback | SingleBeforeModelCallback[];
+  | SingleBeforeModelCallback
+  | SingleBeforeModelCallback[];
 
 /**
  * A callback that runs after a response is received from the model.
@@ -231,7 +234,8 @@ export type SingleAfterModelCallback = (params: {
  * order they are listed until a callback does not return `undefined`.
  */
 export type AfterModelCallback =
-  SingleAfterModelCallback | SingleAfterModelCallback[];
+  | SingleAfterModelCallback
+  | SingleAfterModelCallback[];
 
 /**
  * A callback that runs before a tool is called.
@@ -258,7 +262,8 @@ export type SingleBeforeToolCallback = (params: {
  * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeToolCallback =
-  SingleBeforeToolCallback | SingleBeforeToolCallback[];
+  | SingleBeforeToolCallback
+  | SingleBeforeToolCallback[];
 
 /**
  * A callback that runs after a tool is called.
@@ -286,7 +291,8 @@ export type SingleAfterToolCallback = (params: {
  * order they are listed until a callback does not return `undefined`.
  */
 export type AfterToolCallback =
-  SingleAfterToolCallback | SingleAfterToolCallback[];
+  | SingleAfterToolCallback
+  | SingleAfterToolCallback[];
 
 /** A list of examples or an example provider. */
 export type ExamplesUnion = Example[] | BaseExampleProvider;
@@ -929,6 +935,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
       let stepTransferred = false;
+      let shouldPause = false;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -951,9 +958,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         }
         this.maybeSaveOutputToState(event);
         yield event;
+        if (context.shouldPauseInvocation(event)) {
+          shouldPause = true;
+        }
       }
 
-      if (!lastEvent) {
+      if (shouldPause || !lastEvent) {
         break;
       }
 
@@ -1625,7 +1635,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Global runtime interruption
     // =========================================================================
-    // TODO - b/425992518: global runtime interruption, hacky, fix.
     if (
       invocationContext.endInvocation ||
       invocationContext.abortSignal?.aborted
@@ -1777,6 +1786,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     }
     yield mergedEvent;
+    const shouldPause = invocationContext.shouldPauseInvocation(mergedEvent);
 
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
@@ -1855,6 +1865,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     yield functionResponseEvent;
+
+    if (shouldPause) {
+      return;
+    }
 
     // If model instruct to transfer to an agent, run the transferred agent.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
