@@ -16,6 +16,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
+import {BranchTrie} from '../../utils/branch_trie.js';
 
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
@@ -56,6 +57,14 @@ export function getContents(
   currentBranch?: string,
 ): Content[] {
   const filteredEvents: Event[] = [];
+  const branchTrie = new BranchTrie();
+  if (currentBranch) {
+    for (const event of events) {
+      if (event.branch) {
+        branchTrie.insert(event.branch);
+      }
+    }
+  }
 
   for (const event of events) {
     if (isCompactedEvent(event)) {
@@ -70,11 +79,10 @@ export function getContents(
     }
 
     // Skip events not in the current branch.
-    // TODO - b/425992518: inefficient, a tire search is better.
     if (
       currentBranch &&
       event.branch &&
-      !currentBranch.startsWith(event.branch)
+      !branchTrie.isPrefixOf(currentBranch, event.branch)
     ) {
       continue;
     }
