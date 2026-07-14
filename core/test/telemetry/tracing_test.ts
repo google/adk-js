@@ -11,6 +11,7 @@ import {
   BaseAgent,
   BaseTool,
   Event,
+  GCP_MCP_SERVER_DESTINATION_ID,
   InvocationContext,
   LlmRequest,
   LlmResponse,
@@ -185,6 +186,113 @@ describe('Telemetry Tracing Functions', () => {
           expect.stringContaining('not specified'),
       });
     });
+
+    it('should set error.type when an Error instance is passed', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+        error: new TypeError('Type error occurred'),
+      });
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'TypeError',
+      );
+    });
+
+    it('should set error.type when custom error object with errorType is passed', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+        error: {errorType: 'HTTP_ERROR', message: 'Not found'},
+      });
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'HTTP_ERROR',
+      );
+    });
+
+    it('should set error.type when only errorType parameter is provided', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+        errorType: 'TIMEOUT_ERROR',
+      });
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'TIMEOUT_ERROR',
+      );
+    });
+
+    it('should ensure error takes precedence over errorType parameter', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+        error: new RangeError('Out of range'),
+        errorType: 'OTHER_ERROR',
+      });
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'RangeError',
+      );
+    });
+
+    it('should set gcp.mcp.server.destination.id when present in tool customMetadata', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const toolWithMcp = {
+        ...mockTool,
+        customMetadata: {
+          [GCP_MCP_SERVER_DESTINATION_ID]: 'mcp-server-123',
+        },
+      } as BaseTool;
+
+      traceToolCall({
+        tool: toolWithMcp,
+        args: {},
+        functionResponseEvent: mockEvent,
+      });
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        GCP_MCP_SERVER_DESTINATION_ID,
+        'mcp-server-123',
+      );
+    });
+
+    it('should not set gcp.mcp.server.destination.id when not in customMetadata', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+      });
+      expect(mockSpan.setAttribute).not.toHaveBeenCalledWith(
+        GCP_MCP_SERVER_DESTINATION_ID,
+        expect.anything(),
+      );
+    });
+
+    it('should handle null or undefined functionResponseEvent gracefully without throwing', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      expect(() => {
+        traceToolCall({
+          tool: mockTool,
+          args: {},
+          functionResponseEvent: null,
+        });
+      }).not.toThrow();
+
+      expect(mockSpan.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'gen_ai.tool.call.id': '<not specified>',
+        }),
+      );
+    });
   });
 
   describe('traceMergedToolCalls', () => {
@@ -228,6 +336,29 @@ describe('Telemetry Tracing Functions', () => {
       expect(mockSpan.setAttribute).toHaveBeenCalledWith(
         'gcp.vertex.agent.tool_response',
         expect.any(String),
+      );
+    });
+
+    it('should respect optional invocationContext for legacy span content capture', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const ctxWithNoCapture = {
+        ...mockInvocationContext,
+        runConfig: {
+          telemetry: {
+            captureMessageContent: 'NO_CONTENT',
+          },
+        },
+      } as unknown as InvocationContext;
+
+      traceMergedToolCalls({
+        responseEventId: 'merged-event-id',
+        functionResponseEvent: mockEvent,
+        invocationContext: ctxWithNoCapture,
+      });
+
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'gcp.vertex.agent.tool_response',
+        '{}',
       );
     });
   });

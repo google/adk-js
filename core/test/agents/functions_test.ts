@@ -29,6 +29,7 @@ import {
   populateClientFunctionCallId,
   removeClientFunctionCallId,
 } from '../../src/agents/functions.js';
+import * as tracing from '../../src/telemetry/tracing.js';
 
 // Get the test target function
 const {
@@ -360,6 +361,61 @@ describe('handleFunctionCallList', () => {
         toolContext: expect.objectContaining({
           abortSignal: signal,
         }),
+      }),
+    );
+  });
+
+  it('should create execute_tool span and call traceToolCall enclosing the tool execution', async () => {
+    const startActiveSpanSpy = vi.spyOn(tracing.tracer, 'startActiveSpan');
+    const traceToolCallSpy = vi.spyOn(tracing, 'traceToolCall');
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'testTool', args: {}}],
+      toolsDict: {'testTool': testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(startActiveSpanSpy).toHaveBeenCalledWith(
+      'execute_tool testTool',
+      expect.any(Function),
+    );
+    expect(traceToolCallSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: testTool,
+        args: {},
+        invocationContext,
+      }),
+    );
+  });
+
+  it('should trace parallel tool calls and create execute_tool (merged) span when multiple responses are merged', async () => {
+    const startActiveSpanSpy = vi.spyOn(tracing.tracer, 'startActiveSpan');
+    const traceMergedToolCallsSpy = vi.spyOn(tracing, 'traceMergedToolCalls');
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'call-1', name: 'testTool', args: {}},
+        {id: 'call-2', name: 'testTool', args: {}},
+      ],
+      toolsDict: {'testTool': testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(startActiveSpanSpy).toHaveBeenCalledWith(
+      'execute_tool testTool',
+      expect.any(Function),
+    );
+    expect(startActiveSpanSpy).toHaveBeenCalledWith(
+      'execute_tool (merged)',
+      expect.any(Function),
+    );
+    expect(traceMergedToolCallsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invocationContext,
       }),
     );
   });

@@ -291,4 +291,7 @@ export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
+export * from './telemetry/google_cloud.js';
+export * from './telemetry/setup.js';
+export * from './telemetry/tracing.js';
 export * from './tools/base_tool.js';

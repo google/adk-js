@@ -16,11 +16,12 @@
  */
 
 import {Content} from '@google/genai';
-import {context, Context, trace} from '@opentelemetry/api';
+import {context, Context, Span, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
+import {GCP_MCP_SERVER_DESTINATION_ID} from '../integrations/agent_registry/types.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
@@ -93,7 +94,11 @@ export function traceAgentInvocation({
 export interface TraceToolCallParams {
   tool: BaseTool;
   args: Record<string, unknown>;
-  functionResponseEvent: Event;
+  functionResponseEvent?: Event | null;
+  error?: unknown;
+  errorType?: string;
+  span?: Span;
+  invocationContext?: InvocationContext;
 }
 
 /**
@@ -105,11 +110,15 @@ export function traceToolCall({
   tool,
   args,
   functionResponseEvent,
+  error,
+  errorType,
+  span,
+  invocationContext,
 }: TraceToolCallParams): void {
-  const span = trace.getActiveSpan();
-  if (!span) return;
+  const activeSpan = span || trace.getActiveSpan();
+  if (!activeSpan) return;
 
-  span.setAttributes({
+  activeSpan.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'execute_tool',
     [GEN_AI_TOOL_DESCRIPTION]: tool.description || '',
     [GEN_AI_TOOL_NAME]: tool.name,
@@ -119,41 +128,89 @@ export function traceToolCall({
     // applicable for tool_response.
     'gcp.vertex.agent.llm_request': '{}',
     'gcp.vertex.agent.llm_response': '{}',
-    'gcp.vertex.agent.tool_call_args': shouldAddRequestResponseToSpans()
+    'gcp.vertex.agent.tool_call_args': shouldAddRequestResponseToSpans(
+      invocationContext,
+    )
       ? safeJsonSerialize(args)
       : '{}',
   });
+
+  if (error !== undefined && error !== null) {
+    if (
+      typeof error === 'object' &&
+      'errorType' in error &&
+      error.errorType != null
+    ) {
+      activeSpan.setAttribute('error.type', String(error.errorType));
+    } else if (typeof error === 'object') {
+      activeSpan.setAttribute('error.type', error.constructor.name);
+    } else {
+      activeSpan.setAttribute('error.type', typeof error);
+    }
+  } else if (errorType != null) {
+    activeSpan.setAttribute('error.type', errorType);
+  }
+
+  try {
+    if (
+      tool.customMetadata &&
+      GCP_MCP_SERVER_DESTINATION_ID in tool.customMetadata
+    ) {
+      const destinationId = tool.customMetadata[GCP_MCP_SERVER_DESTINATION_ID];
+      if (destinationId !== undefined && destinationId !== null) {
+        activeSpan.setAttribute(
+          GCP_MCP_SERVER_DESTINATION_ID,
+          String(destinationId),
+        );
+      }
+    }
+  } catch (_e: unknown) {
+    // Never break tool execution on metadata inspection failures
+  }
 
   // Tracing tool response
   let toolCallId = '<not specified>';
   let toolResponse: unknown = '<not specified>';
 
-  if (functionResponseEvent.content?.parts) {
-    const responseParts = functionResponseEvent.content.parts;
-    const functionResponse = responseParts[0]?.functionResponse;
-    if (functionResponse?.id) {
-      toolCallId = functionResponse.id;
+  try {
+    if (functionResponseEvent?.content?.parts) {
+      const responseParts = functionResponseEvent.content.parts;
+      const functionResponse = responseParts[0]?.functionResponse;
+      if (functionResponse?.id) {
+        toolCallId = functionResponse.id;
+      }
+      if (functionResponse?.response) {
+        toolResponse = functionResponse.response;
+      }
     }
-    if (functionResponse?.response) {
-      toolResponse = functionResponse.response;
-    }
+  } catch (_e: unknown) {
+    // Ignore errors extracting tool response
   }
+
   if (typeof toolResponse !== 'object' || toolResponse === null) {
     toolResponse = {result: toolResponse};
   }
 
-  span.setAttributes({
+  const attributesToSet: Record<string, string> = {
     [GEN_AI_TOOL_CALL_ID]: toolCallId,
-    'gcp.vertex.agent.event_id': functionResponseEvent.id,
-    'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans()
+    'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans(
+      invocationContext,
+    )
       ? safeJsonSerialize(toolResponse)
       : '{}',
-  });
+  };
+
+  if (functionResponseEvent?.id) {
+    attributesToSet['gcp.vertex.agent.event_id'] = functionResponseEvent.id;
+  }
+
+  activeSpan.setAttributes(attributesToSet);
 }
 
 export interface TraceMergedToolCallsParams {
   responseEventId: string;
   functionResponseEvent: Event;
+  invocationContext?: InvocationContext;
 }
 
 /**
@@ -167,6 +224,7 @@ export interface TraceMergedToolCallsParams {
 export function traceMergedToolCalls({
   responseEventId,
   functionResponseEvent,
+  invocationContext,
 }: TraceMergedToolCallsParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
@@ -186,7 +244,7 @@ export function traceMergedToolCalls({
 
   span.setAttribute(
     'gcp.vertex.agent.tool_response',
-    shouldAddRequestResponseToSpans()
+    shouldAddRequestResponseToSpans(invocationContext)
       ? safeJsonSerialize(functionResponseEvent)
       : '{}',
   );
@@ -225,7 +283,9 @@ export function traceCallLlm({
     'gcp.vertex.agent.session_id': invocationContext.session.id,
     'gcp.vertex.agent.event_id': eventId,
     // Consider removing once GenAI SDK provides a way to record this info.
-    'gcp.vertex.agent.llm_request': shouldAddRequestResponseToSpans()
+    'gcp.vertex.agent.llm_request': shouldAddRequestResponseToSpans(
+      invocationContext,
+    )
       ? safeJsonSerialize(buildLlmRequestForTrace(llmRequest))
       : '{}',
   });
@@ -244,7 +304,9 @@ export function traceCallLlm({
 
   span.setAttribute(
     'gcp.vertex.agent.llm_response',
-    shouldAddRequestResponseToSpans() ? safeJsonSerialize(llmResponse) : '{}',
+    shouldAddRequestResponseToSpans(invocationContext)
+      ? safeJsonSerialize(llmResponse)
+      : '{}',
   );
 
   if (llmResponse.usageMetadata) {
@@ -306,7 +368,9 @@ export function traceSendData({
 
   span.setAttribute(
     'gcp.vertex.agent.data',
-    shouldAddRequestResponseToSpans() ? safeJsonSerialize(data) : '{}',
+    shouldAddRequestResponseToSpans(invocationContext)
+      ? safeJsonSerialize(data)
+      : '{}',
   );
 }
 
@@ -404,7 +468,34 @@ export function runAsyncGeneratorWithOtelContext<TThis, T>(
  *
  * @returns false only when ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS is explicitly set to 'false' or '0'
  */
-function shouldAddRequestResponseToSpans(): boolean {
+function shouldAddRequestResponseToSpans(
+  invocationContext?: InvocationContext,
+): boolean {
+  if (
+    invocationContext?.runConfig &&
+    'telemetry' in invocationContext.runConfig
+  ) {
+    const telemetry = (invocationContext.runConfig as Record<string, unknown>)
+      .telemetry;
+    if (typeof telemetry === 'object' && telemetry !== null) {
+      if ('shouldAddContentToLegacySpans' in telemetry) {
+        const val = (telemetry as Record<string, unknown>)
+          .shouldAddContentToLegacySpans;
+        return typeof val === 'function' ? val() : Boolean(val);
+      }
+      if ('captureMessageContent' in telemetry) {
+        const val = (telemetry as Record<string, unknown>)
+          .captureMessageContent;
+        if (typeof val === 'boolean') {
+          return val;
+        }
+        if (typeof val === 'string') {
+          const upper = val.toUpperCase();
+          return upper === 'SPAN_ONLY' || upper === 'SPAN_AND_EVENT';
+        }
+      }
+    }
+  }
   const envValue = process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS || 'true';
   return envValue === 'true' || envValue === '1';
 }
