@@ -642,10 +642,12 @@ export function determineAgentForResumption(
   const isResumable = Boolean(resumabilityConfig?.isResumable);
   if (event && event.author && isResumable) {
     const resumedAgent = rootAgent.findAgent(event.author);
-    if (resumedAgent) {
+    if (
+      resumedAgent &&
+      (resumedAgent === rootAgent || isRoutableLlmAgent(resumedAgent))
+    ) {
       return resumedAgent;
-    }
-    if (!isWorkflowNodeEvent(event)) {
+    } else if (!resumedAgent && !isWorkflowNodeEvent(event)) {
       logger.warn(
         `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
       );

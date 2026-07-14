@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event} from '../events/event.js';
+import {Event, getFunctionCalls, isFinalResponse} from '../events/event.js';
 
 import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent} from './base_agent.js';
@@ -57,9 +57,13 @@ export class ParallelAgent extends BaseAgent {
   protected async *runAsyncImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const agentRuns = this.subAgents.map((subAgent) =>
-      subAgent.runAsync(createBranchCtxForSubAgent(this, subAgent, context)),
-    );
+    const agentRuns: AsyncGenerator<Event, void, void>[] = [];
+    for (const subAgent of this.subAgents) {
+      const branchCtx = createBranchCtxForSubAgent(this, subAgent, context);
+      if (!hasSubAgentFinished(subAgent, context, branchCtx.branch)) {
+        agentRuns.push(subAgent.runAsync(branchCtx));
+      }
+    }
 
     for await (const event of mergeAgentRuns(agentRuns)) {
       if (context.abortSignal?.aborted) {
@@ -76,6 +80,26 @@ export class ParallelAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {
     throw new Error('This is not supported yet for ParallelAgent.');
   }
+}
+
+function hasSubAgentFinished(
+  subAgent: BaseAgent,
+  context: InvocationContext,
+  subBranch?: string,
+): boolean {
+  const subAgentEvents = (context.session?.events ?? []).filter(
+    (e) =>
+      (e.branch && subBranch && e.branch.startsWith(subBranch)) ||
+      e.author === subAgent.name,
+  );
+  if (
+    !subAgentEvents.length ||
+    subAgentEvents.some((e) => context.shouldPauseInvocation(e))
+  ) {
+    return false;
+  }
+  const lastEvent = subAgentEvents[subAgentEvents.length - 1];
+  return !getFunctionCalls(lastEvent).length && isFinalResponse(lastEvent);
 }
 
 /**

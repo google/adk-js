@@ -801,6 +801,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
+      let shouldPause = false;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -815,9 +816,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         }
         this.maybeSaveOutputToState(event);
         yield event;
+        if (context.shouldPauseInvocation(event)) {
+          shouldPause = true;
+        }
       }
 
-      if (!lastEvent) {
+      if (shouldPause || !lastEvent) {
         break;
       }
 
@@ -974,7 +978,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Global runtime interruption
     // =========================================================================
-    // TODO - b/425992518: global runtime interruption, hacky, fix.
     if (
       invocationContext.endInvocation ||
       invocationContext.abortSignal?.aborted
@@ -1109,6 +1112,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     }
     yield mergedEvent;
+    const shouldPause = invocationContext.shouldPauseInvocation(mergedEvent);
 
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
@@ -1187,6 +1191,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     yield functionResponseEvent;
+
+    if (shouldPause) {
+      return;
+    }
 
     // If model instruct to transfer to an agent, run the transferred agent.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
