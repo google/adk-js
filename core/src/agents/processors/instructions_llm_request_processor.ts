@@ -26,8 +26,8 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
     const rootAgent = agent.rootAgent;
-    // TODO - b/425992518: unexpected and buggy for performance.
-    // Global instruction should be explicitly scoped.
+    // DEPRECATED: use GlobalInstructionPlugin instead.
+    // TODO: Remove this code block when globalInstruction field is removed.
     // Step 1: Appends global instructions if set by RootAgent.
     if (isLlmAgent(rootAgent) && rootAgent.globalInstruction) {
       const {instruction, requireStateInjection} =
