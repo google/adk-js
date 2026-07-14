@@ -133,10 +133,14 @@ export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
   createEvent,
+  generateClientFunctionCallId,
   getFunctionCalls,
   getFunctionResponses,
+  hasThoughts,
   hasTrailingCodeExecutionResult,
   isFinalResponse,
+  populateClientFunctionCallId,
+  pruneThoughts,
   stringifyContent,
 } from './events/event.js';
 export type {Event} from './events/event.js';

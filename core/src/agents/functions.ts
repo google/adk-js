@@ -9,15 +9,16 @@ import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {
+  AF_FUNCTION_CALL_ID_PREFIX,
   createEvent,
   Event,
+  generateClientFunctionCallId,
   getFunctionCalls,
   getFunctionResponses,
 } from '../events/event.js';
 import {mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-import {randomUUID} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
 
@@ -31,7 +32,11 @@ import {
   SingleBeforeToolCallback,
 } from './llm_agent.js';
 
-export const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
+export {
+  AF_FUNCTION_CALL_ID_PREFIX,
+  generateClientFunctionCallId,
+  populateClientFunctionCallId,
+} from '../events/event.js';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
   'adk_request_confirmation';
@@ -42,30 +47,34 @@ export const functionsExportedForTestingOnly = {
   generateAuthEvent,
   generateRequestConfirmationEvent,
 };
-
-export function generateClientFunctionCallId(): string {
-  return `${AF_FUNCTION_CALL_ID_PREFIX}${randomUUID()}`;
-}
-
+// TODO - b/425992518: consider internalize in content_[processor].ts
 /**
- * Populates client-side function call IDs.
+ * Removes the client-generated function call IDs from a given content object.
  *
- * It iterates through all function calls in the event and assigns a
- * unique client-side ID to each one that doesn't already have an ID.
+ * When sending content back to the server, these IDs are
+ * specific to the client-side and should not be included in requests to the
+ * model.
  */
-// TODO - b/425992518: consider move into event.ts
-export function populateClientFunctionCallId(modelResponseEvent: Event): void {
-  const functionCalls = getFunctionCalls(modelResponseEvent);
-  if (!functionCalls) {
-    return;
-  }
-  for (const functionCall of functionCalls) {
-    if (!functionCall.id) {
-      functionCall.id = generateClientFunctionCallId();
+export function removeClientFunctionCallId(content: Content): void {
+  if (content && content.parts) {
+    for (const part of content.parts) {
+      if (
+        part.functionCall &&
+        part.functionCall.id &&
+        part.functionCall.id.startsWith(AF_FUNCTION_CALL_ID_PREFIX)
+      ) {
+        part.functionCall.id = undefined;
+      }
+      if (
+        part.functionResponse &&
+        part.functionResponse.id &&
+        part.functionResponse.id.startsWith(AF_FUNCTION_CALL_ID_PREFIX)
+      ) {
+        part.functionResponse.id = undefined;
+      }
     }
   }
 }
-
 // TODO - b/425992518: consider internalize as part of llm_agent's runtime.
 /**
  * Returns a set of function call ids of the long running tools.

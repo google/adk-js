@@ -20,6 +20,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
   isFinalResponse,
+  populateClientFunctionCallId,
 } from '../events/event.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
@@ -52,7 +53,6 @@ import {
   generateRequestConfirmationEvent,
   getLongRunningFunctionCalls,
   handleFunctionCallsAsync,
-  populateClientFunctionCallId,
 } from './functions.js';
 
 import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';

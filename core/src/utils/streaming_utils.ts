@@ -15,7 +15,7 @@ import {
   PartialArg,
 } from '@google/genai';
 import {JSONPath} from 'jsonpath-plus';
-import {generateClientFunctionCallId} from '../agents/functions.js';
+import {generateClientFunctionCallId} from '../events/event.js';
 import {FeatureName, isFeatureEnabled} from '../features/feature_registry.js';
 import {createLlmResponse, LlmResponse} from '../models/llm_response.js';
 
