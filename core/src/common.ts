@@ -266,12 +266,6 @@ export type {
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
-export {
-  BranchTrie,
-  createBranchTrieNode,
-  isSegmentPrefix,
-} from './utils/branch_trie.js';
-export type {BranchTrieNode} from './utils/branch_trie.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
