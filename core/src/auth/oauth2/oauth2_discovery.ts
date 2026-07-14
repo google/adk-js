@@ -82,6 +82,10 @@ export class OAuth2DiscoveryManager {
           headers: {
             Accept: 'application/json',
           },
+          // Never follow redirects: validateDiscoveryUrl only checks the
+          // initial URL, so following a 3xx would let a validated host
+          // redirect discovery to a private/cloud-metadata address (CWE-918).
+          redirect: 'error',
         });
 
         if (!response.ok) {
@@ -144,6 +148,10 @@ export class OAuth2DiscoveryManager {
         headers: {
           Accept: 'application/json',
         },
+        // Never follow redirects: validateDiscoveryUrl only checks the
+        // initial URL, so following a 3xx would let a validated host
+        // redirect discovery to a private/cloud-metadata address (CWE-918).
+        redirect: 'error',
       });
 
       if (!response.ok) {
@@ -208,6 +216,7 @@ export function validateDiscoveryUrl(urlStr: string): boolean {
       host === 'metadata.goog' ||
       host.startsWith('127.') ||
       host === '[::1]' ||
+      host === '[::]' ||
       host === '0.0.0.0' ||
       host.startsWith('10.') ||
       host.startsWith('192.168.') ||

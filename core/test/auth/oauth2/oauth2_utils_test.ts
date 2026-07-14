@@ -130,6 +130,47 @@ describe('oauth2_utils', () => {
         fetchOAuth2Tokens('https://example.com/token', body),
       ).rejects.toThrow('Token request failed with status 401');
     });
+
+    it('does not follow redirects (redirect: error) to prevent SSRF credential leaks', async () => {
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({access_token: 'acc-123'}),
+      } as Response);
+
+      await fetchOAuth2Tokens(
+        'https://example.com/token',
+        new URLSearchParams(),
+      );
+
+      // The blocklist only validates the initial endpoint, so redirects must
+      // not be followed or the credential-bearing POST could be redirected to
+      // a private/cloud-metadata address.
+      expect(fetch).toHaveBeenCalledWith(
+        'https://example.com/token',
+        expect.objectContaining({redirect: 'error'}),
+      );
+    });
+
+    it('propagates the error when the endpoint attempts a redirect', async () => {
+      // With redirect: 'error', the runtime's fetch rejects on any 3xx.
+      vi.mocked(fetch).mockRejectedValue(
+        new TypeError('fetch failed: unexpected redirect'),
+      );
+
+      await expect(
+        fetchOAuth2Tokens('https://example.com/token', new URLSearchParams()),
+      ).rejects.toThrow();
+    });
+
+    it('rejects a token endpoint that targets a blocked host before any fetch', async () => {
+      await expect(
+        fetchOAuth2Tokens(
+          'https://169.254.169.254/token',
+          new URLSearchParams(),
+        ),
+      ).rejects.toThrow('SSRF protection');
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 
   describe('parseAuthorizationCode', () => {

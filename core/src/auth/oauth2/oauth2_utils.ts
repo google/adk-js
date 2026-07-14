@@ -65,6 +65,11 @@ export async function fetchOAuth2Tokens(
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: body.toString(),
+      // Never follow redirects: the SSRF blocklist only validates `endpoint`,
+      // so a validated host that responds with a 3xx could otherwise redirect
+      // this credential-bearing POST (client_secret/refresh_token) to a
+      // private/cloud-metadata address (CWE-918).
+      redirect: 'error',
     });
 
     if (!response.ok) {
