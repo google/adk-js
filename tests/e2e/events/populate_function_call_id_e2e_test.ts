@@ -6,9 +6,9 @@
 
 import {
   createEvent,
-  populateClientFunctionCallId,
-  generateClientFunctionCallId,
   Event,
+  generateClientFunctionCallId,
+  populateClientFunctionCallId,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -20,7 +20,12 @@ describe('populateClientFunctionCallId End-to-End Manual Test', () => {
         role: 'model',
         parts: [
           {functionCall: {name: 'get_weather', args: {location: 'Seattle'}}},
-          {functionCall: {name: 'get_time', args: {timezone: 'America/Los_Angeles'}}},
+          {
+            functionCall: {
+              name: 'get_time',
+              args: {timezone: 'America/Los_Angeles'},
+            },
+          },
         ],
       },
     });

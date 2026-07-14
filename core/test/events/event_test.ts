@@ -297,10 +297,7 @@ describe('Event Utils', () => {
         },
       });
       const pruned = pruneThoughts(event);
-      expect(pruned.content!.parts).toEqual([
-        {text: 'hello'},
-        {text: 'world'},
-      ]);
+      expect(pruned.content!.parts).toEqual([{text: 'hello'}, {text: 'world'}]);
     });
   });
 
