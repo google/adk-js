@@ -28,7 +28,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {Session} from '../sessions/session.js';
+import {CompositeSessionKey, Session} from '../sessions/session.js';
 import {
   runAsyncGeneratorWithOtelContext,
   tracer,
@@ -441,17 +441,20 @@ export class Runner {
       return;
     }
 
+    const sessionKey: CompositeSessionKey = {
+      appName: this.appName,
+      userId,
+      sessionId,
+    };
+
     for (let i = 0; i < message.parts.length; i++) {
       const part = message.parts[i];
       if (!part.inlineData) {
         continue;
       }
       const fileName = `artifact_${invocationId}_${i}`;
-      // TODO - b/425992518: group appname, userId, sessionId as a key.
       await this.artifactService.saveArtifact({
-        appName: this.appName,
-        userId,
-        sessionId,
+        ...sessionKey,
         filename: fileName,
         artifact: part,
       });
