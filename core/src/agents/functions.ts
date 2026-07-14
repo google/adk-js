@@ -8,7 +8,12 @@ import {Content, createUserContent, FunctionCall, Part} from '@google/genai';
 import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {createEvent, Event, getFunctionCalls} from '../events/event.js';
+import {
+  createEvent,
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../events/event.js';
 import {mergeEventActions} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
@@ -564,3 +569,44 @@ export function mergeParallelFunctionResponseEvents(
 }
 
 // TODO - b/425992518: support function call in live connection.
+
+/**
+ * Finds the function call event that matches the function call ID.
+ * Mirrors Python ADK's `find_event_by_function_call_id`.
+ */
+export function findEventByFunctionCallId(
+  events: Event[],
+  functionCallId: string,
+  endIndex: number = events.length,
+): Event | undefined {
+  for (let i = endIndex - 1; i >= 0; i--) {
+    const event = events[i];
+    const functionCalls = getFunctionCalls(event);
+    for (const functionCall of functionCalls) {
+      if (functionCall.id === functionCallId) {
+        return event;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Finds the function call event that matches the function response ID of the last event.
+ * Mirrors Python ADK's `find_matching_function_call`.
+ */
+export function findMatchingFunctionCall(events: Event[]): Event | undefined {
+  if (!events.length) {
+    return undefined;
+  }
+  const lastEvent = events[events.length - 1];
+  const functionResponses = getFunctionResponses(lastEvent);
+  if (!functionResponses.length || !functionResponses[0].id) {
+    return undefined;
+  }
+  return findEventByFunctionCallId(
+    events,
+    functionResponses[0].id,
+    events.length - 1,
+  );
+}

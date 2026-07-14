@@ -23,6 +23,8 @@ import {FunctionCall} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
+  findEventByFunctionCallId,
+  findMatchingFunctionCall,
   generateClientFunctionCallId,
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
@@ -715,5 +717,90 @@ describe('mergeParallelFunctionResponseEvents', () => {
     const event = createEvent();
     const merged = mergeParallelFunctionResponseEvents([event]);
     expect(merged).toBe(event);
+  });
+});
+
+describe('findEventByFunctionCallId', () => {
+  it('should find event with matching functionCall id', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent-1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'call-1', name: 'tool1', args: {}}}],
+      },
+    });
+    const event2 = createEvent({
+      invocationId: 'inv-2',
+      author: 'agent-2',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'call-2', name: 'tool2', args: {}}}],
+      },
+    });
+    expect(findEventByFunctionCallId([event1, event2], 'call-1')).toBe(event1);
+    expect(findEventByFunctionCallId([event1, event2], 'call-2')).toBe(event2);
+  });
+
+  it('should return undefined if no matching functionCall id found or events empty', () => {
+    const event1 = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent-1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'call-1', name: 'tool1', args: {}}}],
+      },
+    });
+    expect(findEventByFunctionCallId([event1], 'non-existent')).toBeUndefined();
+    expect(findEventByFunctionCallId([], 'call-1')).toBeUndefined();
+  });
+});
+
+describe('findMatchingFunctionCall', () => {
+  it('should find matching function call for last event function response', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'sub-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'lro-id-123', name: 'longRunningOp', args: {}}},
+        ],
+      },
+    });
+    const responseEvent = createEvent({
+      invocationId: 'inv-2',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'lro-id-123',
+              name: 'longRunningOp',
+              response: {status: 'DONE'},
+            },
+          },
+        ],
+      },
+    });
+    expect(findMatchingFunctionCall([callEvent, responseEvent])).toBe(
+      callEvent,
+    );
+  });
+
+  it('should return undefined if last event is not function response or events empty', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'sub-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'lro-id-123', name: 'longRunningOp', args: {}}},
+        ],
+      },
+    });
+    expect(findMatchingFunctionCall([callEvent])).toBeUndefined();
+    expect(findMatchingFunctionCall([])).toBeUndefined();
   });
 });

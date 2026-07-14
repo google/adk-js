@@ -14,7 +14,11 @@ export type {
   SingleAgentCallback,
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
-export {functionsExportedForTestingOnly} from './agents/functions.js';
+export {
+  findEventByFunctionCallId,
+  findMatchingFunctionCall,
+  functionsExportedForTestingOnly,
+} from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export type {InvocationContextParams} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
@@ -58,6 +62,8 @@ export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
+export {createResumabilityConfig} from './apps/resumability_config.js';
+export type {ResumabilityConfig} from './apps/resumability_config.js';
 export type {
   BaseArtifactService,
   DeleteArtifactRequest,
@@ -190,7 +196,13 @@ export type {
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
-export {Runner, isRunner} from './runner/runner.js';
+export {
+  Runner,
+  determineAgentForResumption,
+  findEventByLastFunctionResponseId,
+  isRoutableLlmAgent,
+  isRunner,
+} from './runner/runner.js';
 export type {RunnerConfig} from './runner/runner.js';
 export {BaseSessionService} from './sessions/base_session_service.js';
 export type {

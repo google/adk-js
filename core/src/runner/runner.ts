@@ -8,6 +8,7 @@ import {Content, createPartFromText} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
+import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
@@ -15,6 +16,7 @@ import {
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {App} from '../apps/app.js';
+import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
 
@@ -23,7 +25,7 @@ import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
-import {createEvent, Event, getFunctionCalls} from '../events/event.js';
+import {createEvent, Event} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -81,6 +83,11 @@ export interface RunnerConfig {
    * An optional service for managing authentication credentials.
    */
   credentialService?: BaseCredentialService;
+
+  /**
+   * An optional resumability configuration applied to the runner.
+   */
+  resumabilityConfig?: ResumabilityConfig;
 }
 
 /**
@@ -137,6 +144,7 @@ export class Runner {
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
+  readonly resumabilityConfig?: ResumabilityConfig;
 
   /**
    * Creates a new Runner instance.
@@ -160,6 +168,7 @@ export class Runner {
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
     this.credentialService = input.credentialService;
+    this.resumabilityConfig = input.resumabilityConfig;
   }
 
   /**
@@ -484,80 +493,114 @@ export class Runner {
    * Determines the next agent to run to continue the session. This is primarily
    * used for session resumption.
    */
-  // TODO - b/425992518: This is where LRO integration should happen.
-  // Needs clean up before we can generalize it.
+  /**
+   * Determines the next agent to run to continue the session. This is primarily
+   * used for session resumption across tool and LRO boundaries.
+   */
   private determineAgentForResumption(
     session: Session,
     rootAgent: BaseAgent,
   ): BaseAgent {
-    // =========================================================================
-    // Case 1: If the last event is a function response, this returns the
-    // agent that made the original function call.
-    // =========================================================================
-    const event = findEventByLastFunctionResponseId(session.events);
-    if (event && event.author) {
-      return rootAgent.findAgent(event.author) || rootAgent;
-    }
-
-    // =========================================================================
-    // Case 2: Otherwise, find the last agent that emitted a message and is
-    // transferable across the agent tree.
-    // =========================================================================
-    // TODO - b/425992518: Optimize this, not going to work for long sessions.
-    // TODO - b/425992518: The behavior is dynamic, needs better documentation.
-    for (let i = session.events.length - 1; i >= 0; i--) {
-      logger.info('event:', JSON.stringify(session.events[i]));
-      const event = session.events[i];
-      if (event.author === 'user' || !event.author) {
-        continue;
-      }
-
-      if (event.author === rootAgent.name) {
-        return rootAgent;
-      }
-
-      const agent = rootAgent.findSubAgent(event.author!);
-      if (!agent) {
-        logger.warn(
-          `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
-        );
-        continue;
-      }
-      if (this.isRoutableLlmAgent(agent)) {
-        return agent;
-      }
-    }
-    // =========================================================================
-    // Case 3: default to root agent.
-    // =========================================================================
-    return rootAgent;
+    return determineAgentForResumption(
+      session,
+      rootAgent,
+      this.resumabilityConfig,
+    );
   }
 
   /**
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
-   * An agent is transferable if:
-   *  - It is an instance of `LlmAgent`.
-   *  - All its ancestors are also transferable (i.e., they have
-   *    `disallowTransferToParent` set to false).
-   *
    * @param agentToRun The agent to check for transferability.
    * @returns True if the agent can transfer, False otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
-    let agent: BaseAgent | undefined = agentToRun;
-    while (agent) {
-      if (!isLlmAgent(agent)) {
-        return false;
-      }
-      if (agent.disallowTransferToParent) {
-        return false;
-      }
-      agent = agent.parentAgent;
-    }
-    return true;
+    return isRoutableLlmAgent(agentToRun);
   }
   // TODO - b/425992518: Implement runLive and related methods.
+}
+
+/**
+ * Determines the next agent to run to continue the session. This is primarily
+ * used for session resumption across tool and LRO boundaries.
+ */
+export function determineAgentForResumption(
+  session: Session,
+  rootAgent: BaseAgent,
+  resumabilityConfig?: ResumabilityConfig,
+): BaseAgent {
+  // =========================================================================
+  // Case 1: If the last event is a function response and resumability is enabled,
+  // this returns the agent that made the original function call.
+  // =========================================================================
+  const event = findEventByLastFunctionResponseId(session.events);
+  const isResumable = Boolean(resumabilityConfig?.isResumable);
+  if (event && event.author && isResumable) {
+    const resumedAgent = rootAgent.findAgent(event.author);
+    if (resumedAgent) {
+      return resumedAgent;
+    }
+    logger.warn(
+      `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+    );
+  }
+
+  // =========================================================================
+  // Case 2: Otherwise, find the last agent that emitted a message and is
+  // transferable across the agent tree.
+  // =========================================================================
+  // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
+  for (let i = session.events.length - 1; i >= 0; i--) {
+    logger.debug('event:', JSON.stringify(session.events[i]));
+    const event = session.events[i];
+    if (event.author === 'user' || !event.author) {
+      continue;
+    }
+
+    if (event.author === rootAgent.name) {
+      return rootAgent;
+    }
+
+    const agent = rootAgent.findSubAgent(event.author);
+    if (!agent) {
+      logger.warn(
+        `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
+      );
+      continue;
+    }
+    if (isRoutableLlmAgent(agent)) {
+      return agent;
+    }
+  }
+  // =========================================================================
+  // Case 3: default to root agent.
+  // =========================================================================
+  return rootAgent;
+}
+
+/**
+ * Whether the agent to run can transfer to any other agent in the agent tree.
+ *
+ * An agent is transferable if:
+ *  - It is an instance of `LlmAgent`.
+ *  - All its ancestors are also transferable (i.e., they have
+ *    `disallowTransferToParent` set to false).
+ *
+ * @param agentToRun The agent to check for transferability.
+ * @returns True if the agent can transfer, False otherwise.
+ */
+export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
+  let agent: BaseAgent | undefined = agentToRun;
+  while (agent) {
+    if (!isLlmAgent(agent)) {
+      return false;
+    }
+    if (agent.disallowTransferToParent) {
+      return false;
+    }
+    agent = agent.parentAgent;
+  }
+  return true;
 }
 
 /**
@@ -565,36 +608,10 @@ export class Runner {
  * containing a function call with a functionCall.id matching the
  * functionResponse.id from the last event in the session.
  */
-// TODO - b/425992518: a hack that used event log as transaction log. Fix.
-function findEventByLastFunctionResponseId(events: Event[]): Event | null {
-  if (!events.length) {
-    return null;
-  }
-
-  const lastEvent = events[events.length - 1];
-  const functionCallId = lastEvent.content?.parts?.find(
-    (part) => part.functionResponse,
-  )?.functionResponse?.id;
-  if (!functionCallId) {
-    return null;
-  }
-
-  // TODO - b/425992518: inefficient search, fix.
-  for (let i = events.length - 2; i >= 0; i--) {
-    const event = events[i];
-    // Looking for the system long running request euc function call.
-    const functionCalls = getFunctionCalls(event);
-    if (!functionCalls) {
-      continue;
-    }
-
-    for (const functionCall of functionCalls) {
-      if (functionCall.id === functionCallId) {
-        return event;
-      }
-    }
-  }
-  return null;
+export function findEventByLastFunctionResponseId(
+  events: Event[],
+): Event | null {
+  return findMatchingFunctionCall(events) ?? null;
 }
 
 function getAllToolsets(agent: BaseAgent): BaseToolset[] {

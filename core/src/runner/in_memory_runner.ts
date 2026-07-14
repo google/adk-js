@@ -6,6 +6,7 @@
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {App} from '../apps/app.js';
+import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -37,18 +38,27 @@ export class InMemoryRunner extends Runner {
    * Creates a new InMemoryRunner instance.
    *
    * @param params The configuration for the runner.
+   * @param params.app An optional application instance to run.
    * @param params.agent The root agent to run.
    * @param params.appName The application name. Defaults to `'InMemoryRunner'`.
    * @param params.plugins An optional list of plugins.
-   * @param params.app An optional application instance to run.
+   * @param params.resumabilityConfig An optional resumability configuration.
    */
   constructor(params: {
     app?: App;
     agent?: BaseAgent;
     appName?: string;
     plugins?: BasePlugin[];
+    resumabilityConfig?: ResumabilityConfig;
   }) {
-    const {agent, appName = 'InMemoryRunner', plugins = [], app} = params;
+    const {
+      agent,
+      appName = 'InMemoryRunner',
+      plugins = [],
+      app,
+      resumabilityConfig,
+    } = params;
+
     super({
       app,
       appName,
@@ -57,6 +67,7 @@ export class InMemoryRunner extends Runner {
       artifactService: new InMemoryArtifactService(),
       sessionService: new InMemorySessionService(),
       memoryService: new InMemoryMemoryService(),
+      resumabilityConfig,
     });
   }
 }

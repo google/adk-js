@@ -8,10 +8,13 @@ import {
   BaseAgent,
   BasePlugin,
   createEvent,
+  createResumabilityConfig,
+  determineAgentForResumption,
   Event,
   InMemoryArtifactService,
   InMemorySessionService,
   InvocationContext,
+  isRoutableLlmAgent,
   LlmAgent,
   Runner,
 } from '@google/adk';
@@ -149,6 +152,7 @@ describe('Runner.determineAgentForResumption', () => {
       agent: rootAgent,
       sessionService,
       artifactService,
+      resumabilityConfig: createResumabilityConfig({isResumable: true}),
     });
   });
 
@@ -332,6 +336,156 @@ describe('Runner.determineAgentForResumption', () => {
     }
 
     expect(events[0].author).toBe('sub_agent2');
+  });
+
+  it('should skip function response resumption routing when resumabilityConfig.isResumable is false or undefined', async () => {
+    const nonResumableRunner = new Runner({
+      appName: TEST_APP_ID,
+      agent: rootAgent,
+      sessionService,
+      artifactService,
+      resumabilityConfig: createResumabilityConfig({isResumable: false}),
+    });
+
+    const functionCall: FunctionCall = {
+      id: 'func_789',
+      name: 'test_func',
+      args: {},
+    };
+    const functionResponse: FunctionResponse = {
+      id: 'func_789',
+      name: 'test_func',
+      response: {},
+    };
+
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent2',
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const rootEvent = createEvent({
+      invocationId: 'inv2',
+      author: 'root_agent',
+      content: {role: 'model', parts: [{text: 'Root response'}]},
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_non_resumable',
+    });
+
+    await sessionService.appendEvent({session, event: callEvent});
+    await sessionService.appendEvent({session, event: rootEvent});
+
+    const events: Event[] = [];
+    for await (const event of nonResumableRunner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{functionResponse}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0].author).toBe('root_agent');
+  });
+
+  it('should route to sub-agent when resuming from an LRO function response across session boundaries', async () => {
+    const lroCall: FunctionCall = {
+      id: 'lro_vertex_ai_123',
+      name: 'vertex_ai_pipeline_run',
+      args: {model: 'gemini-pro'},
+    };
+    const lroResponse: FunctionResponse = {
+      id: 'lro_vertex_ai_123',
+      name: 'vertex_ai_pipeline_run',
+      response: {status: 'COMPLETED'},
+    };
+
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{functionCall: lroCall}]},
+    });
+
+    const responseEvent = createEvent({
+      invocationId: 'inv2',
+      author: 'user',
+      content: {role: 'user', parts: [{functionResponse: lroResponse}]},
+    });
+
+    const events = await runTest([callEvent, responseEvent]);
+    expect(events[0].author).toBe('sub_agent1');
+  });
+
+  it('should fall through to Case 2 when matching function response author is no longer in rootAgent hierarchy', async () => {
+    const functionCall: FunctionCall = {
+      id: 'func_stale_111',
+      name: 'stale_tool',
+      args: {},
+    };
+    const functionResponse: FunctionResponse = {
+      id: 'func_stale_111',
+      name: 'stale_tool',
+      response: {data: 'ok'},
+    };
+
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'removed_sub_agent',
+      content: {role: 'model', parts: [{functionCall}]},
+    });
+
+    const subAgent1Event = createEvent({
+      invocationId: 'inv2',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{text: 'SubAgent 1 message'}]},
+    });
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_stale',
+    });
+
+    await sessionService.appendEvent({session, event: callEvent});
+    await sessionService.appendEvent({session, event: subAgent1Event});
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{functionResponse}]},
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0].author).toBe('sub_agent1');
+  });
+
+  it('should verify standalone determineAgentForResumption and isRoutableLlmAgent behavior directly', async () => {
+    expect(isRoutableLlmAgent(subAgent1)).toBe(true);
+    expect(isRoutableLlmAgent(nonTransferableAgent)).toBe(false);
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_standalone',
+    });
+    const subAgent1Event = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{text: 'Hello'}]},
+    });
+    await sessionService.appendEvent({session, event: subAgent1Event});
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+    expect(result.name).toBe('sub_agent1');
   });
 });
 
