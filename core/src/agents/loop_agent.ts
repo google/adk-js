@@ -94,11 +94,8 @@ export class LoopAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    let iteration = 0;
-
-    while (iteration < this.maxIterations) {
+    for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       for (const subAgent of this.subAgents) {
-        let shouldExit = false;
         for await (const event of subAgent.runLive(context)) {
           if (context.abortSignal?.aborted) {
             return;
@@ -107,19 +104,10 @@ export class LoopAgent extends BaseAgent {
           yield event;
 
           if (event.actions?.escalate) {
-            shouldExit = true;
-            break;
+            return;
           }
         }
-
-        if (shouldExit) {
-          return;
-        }
       }
-
-      iteration++;
     }
-
-    return;
   }
 }

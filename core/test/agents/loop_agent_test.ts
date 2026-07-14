@@ -44,16 +44,7 @@ class MockSubAgent extends BaseAgent {
   protected async *runLiveImpl(
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    for (const event of this.eventsToYield) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      // Ensure the event has the correct invocationId and branch from context
-      yield {
-        ...event,
-        invocationId: context.invocationId,
-        branch: context.branch,
-      };
-    }
+    yield* this.runAsyncImpl(context);
   }
 }
 

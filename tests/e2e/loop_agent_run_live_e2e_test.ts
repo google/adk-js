@@ -22,10 +22,6 @@ import {describe, expect, it} from 'vitest';
 class GeneratorLiveAgent extends BaseAgent {
   private iterationCount = 0;
 
-  constructor(config: BaseAgentConfig) {
-    super(config);
-  }
-
   protected async *runAsyncImpl(
     _context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
