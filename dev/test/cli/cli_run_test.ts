@@ -48,6 +48,7 @@ vi.mock('@google/adk', () => {
       }),
     })),
     InMemoryMemoryService: vi.fn(),
+    isApp: vi.fn().mockReturnValue(false),
   };
 });
 

@@ -352,6 +352,14 @@ describe('CLI Entrypoint', () => {
         a2a: true,
       });
     });
+
+    it('should pass agent_engine_id to deployToAgentEngine when --agent_engine_id is set', async () => {
+      await parse(['deploy', 'agent_engine', '--agent_engine_id', '12345']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentEngineId: '12345',
+      });
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -365,6 +373,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should pass agent_engine_id to deployToAgentEngine when --agent_engine_id is set', async () => {
+      await parse(['deploy', 'reasoning_engine', '--agent_engine_id', '12345']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentEngineId: '12345',
+      });
     });
   });
 });

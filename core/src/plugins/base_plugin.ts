@@ -21,6 +21,7 @@ import {experimental} from '../utils/experimental.js';
 export enum ContextCompactionTrigger {
   Manual = 'Manual',
   Auto = 'Auto',
+  AgentControlled = 'AgentControlled',
 }
 
 /**

@@ -5,6 +5,7 @@
  */
 
 import {
+  App,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
@@ -15,6 +16,7 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  isApp,
   Logger,
   LogLevel,
   RunConfig,
@@ -146,7 +148,10 @@ export class AdkApiServer {
 
     for (const appName of appNames) {
       const agentFile = await this.agentLoader.getAgentFile(appName);
-      const agent = await agentFile.load();
+      const loaded = await agentFile.load();
+      const agent = isApp(loaded) ? loaded.rootAgent : loaded;
+      const adkApp = isApp(loaded) ? loaded : undefined;
+      const runner = await this.getRunner(adkApp ?? agent, appName);
 
       await toA2a(agent, {
         protocol: 'http',
@@ -156,6 +161,7 @@ export class AdkApiServer {
         sessionService: this.sessionService,
         memoryService: this.memoryService,
         artifactService: this.artifactService,
+        runner,
         app: this.app,
       });
     }
@@ -303,7 +309,8 @@ export class AdkApiServer {
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
           await using agentFile = await this.agentLoader.getAgentFile(appName);
-          const rootAgent = await agentFile.load();
+          const loaded = await agentFile.load();
+          const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];
@@ -972,9 +979,15 @@ export class AdkApiServer {
     });
   }
 
-  private async getRunner(agent: BaseAgent, appName: string): Promise<Runner> {
+  private async getRunner(
+    agentOrApp: BaseAgent | App,
+    appName: string,
+  ): Promise<Runner> {
     if (!(appName in this.runnerCache)) {
+      const isAppInstance = isApp(agentOrApp);
+      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
       this.runnerCache[appName] = new Runner({
+        app: isAppInstance ? agentOrApp : undefined,
         appName,
         agent,
         memoryService: this.memoryService,
@@ -998,8 +1011,8 @@ export class AdkApiServer {
     await using agentFile = await this.agentLoader.getAgentFile(
       options.appName,
     );
-    const agent = await agentFile.load();
-    const runner = await this.getRunner(agent, options.appName);
+    const loaded = await agentFile.load();
+    const runner = await this.getRunner(loaded, options.appName);
 
     yield* runner.runAsync({
       userId: options.userId,

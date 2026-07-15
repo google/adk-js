@@ -46,9 +46,10 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
         compactor.shouldCompact(invocationContext),
       );
       if (shouldCompact) {
+        const trigger = compactor.trigger ?? ContextCompactionTrigger.Auto;
         await invocationContext.pluginManager.runBeforeContextCompaction({
           invocationContext,
-          trigger: ContextCompactionTrigger.Auto,
+          trigger,
         });
 
         const oldEvents = new Set(invocationContext.session.events);
@@ -56,7 +57,7 @@ export class ContextCompactorRequestProcessor implements BaseLlmRequestProcessor
 
         await invocationContext.pluginManager.runAfterContextCompaction({
           invocationContext,
-          trigger: ContextCompactionTrigger.Auto,
+          trigger,
         });
 
         const newEvents = invocationContext.session.events.filter(

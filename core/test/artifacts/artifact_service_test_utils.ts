@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseArtifactService} from '@google/adk';
+import {BaseArtifactService, CompositeSessionKey} from '@google/adk';
 import {Part} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
@@ -549,6 +549,48 @@ export function runArtifactServiceTests(
         version,
       });
       expect(versionMetadata?.mimeType).not.toBe('image/png');
+    });
+  });
+
+  describe('CompositeSessionKey compatibility', () => {
+    it('supports pre-constructed CompositeSessionKey for artifact operations', async () => {
+      const sessionKey: CompositeSessionKey = {
+        appName,
+        userId,
+        sessionId,
+      };
+      const filename = 'composite-key-test.txt';
+      const text = 'testing composite key';
+
+      const version = await service.saveArtifact({
+        ...sessionKey,
+        filename,
+        artifact: {text},
+      });
+      expect(version).toBe(0);
+
+      const loaded = await service.loadArtifact({
+        ...sessionKey,
+        filename,
+        version: 0,
+      });
+      expect(loaded?.text).toBe(text);
+
+      const keys = await service.listArtifactKeys(sessionKey);
+      expect(keys).toContain(filename);
+
+      const versions = await service.listVersions({
+        ...sessionKey,
+        filename,
+      });
+      expect(versions).toEqual([0]);
+
+      await service.deleteArtifact({
+        ...sessionKey,
+        filename,
+      });
+      const keysAfterDelete = await service.listArtifactKeys(sessionKey);
+      expect(keysAfterDelete).not.toContain(filename);
     });
   });
 }

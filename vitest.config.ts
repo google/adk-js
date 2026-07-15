@@ -9,6 +9,14 @@ import {defineConfig} from 'vitest/config';
 
 export default defineConfig({
   test: {
+    poolOptions: {
+      forks: {
+        execArgv: ['--max-old-space-size=8192'],
+      },
+      threads: {
+        execArgv: ['--max-old-space-size=8192'],
+      },
+    },
     projects: [
       {
         test: {

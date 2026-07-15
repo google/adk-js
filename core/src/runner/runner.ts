@@ -14,6 +14,7 @@ import {
 } from '../agents/invocation_context.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
+import {App} from '../apps/app.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
 
@@ -28,7 +29,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {Session} from '../sessions/session.js';
+import {CompositeSessionKey, Session} from '../sessions/session.js';
 import {
   runAsyncGeneratorWithOtelContext,
   tracer,
@@ -42,14 +43,19 @@ import {isGemini2OrAbove} from '../utils/model_name.js';
  */
 export interface RunnerConfig {
   /**
-   * The application name.
+   * The application object. If provided, `appName`, `agent`, and `plugins` will default from this app.
    */
-  appName: string;
+  app?: App;
 
   /**
-   * The agent to run.
+   * The application name. Required if `app` is not provided.
    */
-  agent: BaseAgent;
+  appName?: string;
+
+  /**
+   * The agent to run. Required if `app` is not provided.
+   */
+  agent?: BaseAgent;
 
   /**
    * An optional list of plugins to apply globally across all agents.
@@ -138,9 +144,18 @@ export class Runner {
    * @param input The configuration for the runner.
    */
   constructor(input: RunnerConfig) {
-    this.appName = input.appName;
-    this.agent = input.agent;
-    this.pluginManager = new PluginManager(input.plugins ?? []);
+    const appName = input.app?.name ?? input.appName;
+    const agent = input.app?.rootAgent ?? input.agent;
+    if (!agent) {
+      throw new Error(
+        'agent must be provided in runner constructor (or via app.rootAgent)',
+      );
+    }
+    this.appName = appName!;
+    this.agent = agent;
+    const appPlugins = input.app?.plugins ?? [];
+    const configPlugins = input.plugins ?? [];
+    this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
     this.artifactService = input.artifactService;
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
@@ -238,7 +253,7 @@ export class Runner {
           if (!session) {
             if (!this.appName) {
               throw new Error(
-                `Session lookup failed: appName must be provided in runner constructor`,
+                `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
               );
             }
             throw new Error(`Session not found: ${sessionId}`);
@@ -441,17 +456,20 @@ export class Runner {
       return;
     }
 
+    const sessionKey: CompositeSessionKey = {
+      appName: this.appName,
+      userId,
+      sessionId,
+    };
+
     for (let i = 0; i < message.parts.length; i++) {
       const part = message.parts[i];
       if (!part.inlineData) {
         continue;
       }
       const fileName = `artifact_${invocationId}_${i}`;
-      // TODO - b/425992518: group appname, userId, sessionId as a key.
       await this.artifactService.saveArtifact({
-        appName: this.appName,
-        userId,
-        sessionId,
+        ...sessionKey,
         filename: fileName,
         artifact: part,
       });

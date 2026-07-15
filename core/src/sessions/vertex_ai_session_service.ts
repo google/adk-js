@@ -333,10 +333,26 @@ export class VertexAiSessionService extends BaseSessionService {
 
   async deleteSession({
     appName,
-    userId: _userId,
+    userId,
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
     const reasoningEngineId = this.getReasoningEngineId(appName);
+
+    // A session may only be deleted by the user it belongs to. getSession
+    // already enforces this and throws when the stored session's userId does
+    // not match, so load the session first and stop if it is missing or not
+    // owned by this user. This keeps deleteSession consistent with getSession
+    // and with InMemorySessionService.deleteSession.
+    const session = await this.getSession({
+      appName,
+      userId,
+      sessionId,
+      config: {numRecentEvents: 0},
+    });
+    if (!session) {
+      return;
+    }
+
     await this.sessions.delete({
       name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
     });

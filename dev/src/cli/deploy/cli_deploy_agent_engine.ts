@@ -27,6 +27,7 @@ export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   description?: string;
   stagingBucket?: string;
   repository?: string;
+  agentEngineId?: string;
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
@@ -133,32 +134,46 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       {stdio: 'inherit'},
     );
 
-    console.info('Creating Reasoning Engine resource in Vertex AI...');
     const client = new Client({
       project: options.project,
       location: options.region,
     });
 
-    let apiResponse = await client.agentEnginesInternal.createInternal({
-      config: {
-        displayName,
-        description: options.description,
-        spec: {
-          containerSpec: {
-            imageUri: imageTag,
-          },
-          deploymentSpec: {
-            containerConcurrency: 9,
-            minInstances: 1,
-            maxInstances: 10,
-            resourceLimits: {
-              cpu: '1',
-              memory: '2Gi',
-            },
+    const config = {
+      displayName,
+      description: options.description,
+      spec: {
+        containerSpec: {
+          imageUri: imageTag,
+        },
+        deploymentSpec: {
+          containerConcurrency: 9,
+          minInstances: 1,
+          maxInstances: 10,
+          resourceLimits: {
+            cpu: '1',
+            memory: '2Gi',
           },
         },
       },
-    });
+    };
+
+    let apiResponse;
+    if (options.agentEngineId) {
+      console.info('Updating Reasoning Engine resource in Vertex AI...');
+      const name = options.agentEngineId.startsWith('projects/')
+        ? options.agentEngineId
+        : `projects/${options.project}/locations/${options.region}/reasoningEngines/${options.agentEngineId}`;
+      apiResponse = await client.agentEnginesInternal.updateInternal({
+        name,
+        config,
+      });
+    } else {
+      console.info('Creating Reasoning Engine resource in Vertex AI...');
+      apiResponse = await client.agentEnginesInternal.createInternal({
+        config,
+      });
+    }
 
     const operationName = apiResponse.name!;
     console.info(`Waiting for operation ${operationName} to complete...`);
@@ -177,19 +192,19 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
 
     if (!apiResponse.done) {
       throw new Error(
-        `Reasoning Engine creation operation ${operationName} did not complete in time.`,
+        `Reasoning Engine ${options.agentEngineId ? 'update' : 'creation'} operation ${operationName} did not complete in time.`,
       );
     }
 
     if (apiResponse.error) {
       throw new Error(
-        `Reasoning Engine creation failed: [Code ${apiResponse.error.code}] ${apiResponse.error.message}`,
+        `Reasoning Engine ${options.agentEngineId ? 'update' : 'creation'} failed: [Code ${apiResponse.error.code}] ${apiResponse.error.message}`,
       );
     }
 
     const response = apiResponse.response as VertexReasoningEngine;
     console.info(
-      `\x1b[32mSuccessfully deployed Reasoning Engine: ${response.name}\x1b[0m`,
+      `\x1b[32mSuccessfully ${options.agentEngineId ? 'updated' : 'deployed'} Reasoning Engine: ${response.name}\x1b[0m`,
     );
   } catch (e: unknown) {
     console.error(

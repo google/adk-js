@@ -5,17 +5,12 @@
  */
 
 import {Part} from '@google/genai';
+import {CompositeSessionKey} from '../sessions/session.js';
 
 /**
  * The parameters for `saveArtifact`.
  */
-export interface SaveArtifactRequest {
-  /** The app name. */
-  appName: string;
-  /** The user ID. */
-  userId: string;
-  /** The session ID. */
-  sessionId: string;
+export interface SaveArtifactRequest extends CompositeSessionKey {
   /** The filename of the artifact. */
   filename: string;
   /** The artifact to save. */
@@ -29,13 +24,7 @@ export interface SaveArtifactRequest {
 /**
  * The parameters for `loadArtifact`.
  */
-export interface LoadArtifactRequest {
-  /** The app name. */
-  appName: string;
-  /** The user ID. */
-  userId: string;
-  /** The session ID. */
-  sessionId: string;
+export interface LoadArtifactRequest extends CompositeSessionKey {
   /** The filename of the artifact. */
   filename: string;
   /**
@@ -48,25 +37,12 @@ export interface LoadArtifactRequest {
 /**
  * The parameters for `listArtifactKeys`.
  */
-export interface ListArtifactKeysRequest {
-  /** The app name. */
-  appName: string;
-  /** The user ID. */
-  userId: string;
-  /** The session ID. */
-  sessionId: string;
-}
+export type ListArtifactKeysRequest = CompositeSessionKey;
 
 /**
  * The parameters for `deleteArtifact`.
  */
-export interface DeleteArtifactRequest {
-  /** The app name. */
-  appName: string;
-  /** The user ID. */
-  userId: string;
-  /** The session ID. */
-  sessionId: string;
+export interface DeleteArtifactRequest extends CompositeSessionKey {
   /** The filename of the artifact. */
   filename: string;
 }
@@ -74,13 +50,7 @@ export interface DeleteArtifactRequest {
 /**
  * The parameters for `listVersions`.
  */
-export interface ListVersionsRequest {
-  /** The app name. */
-  appName: string;
-  /** The user ID. */
-  userId: string;
-  /** The session ID. */
-  sessionId: string;
+export interface ListVersionsRequest extends CompositeSessionKey {
   /** The filename of the artifact. */
   filename: string;
 }

@@ -450,10 +450,16 @@ export class StreamingResponseAggregator {
     const finishReason = this.finishReason ?? candidate?.finishReason;
 
     return {
-      content: {
-        role: 'model',
-        parts: finalParts ?? [],
-      },
+      // Only attach a model `content` when there are actual parts to emit. When
+      // the turn accumulated no parts (e.g. a function call that was already
+      // flushed, followed by a trailing STOP chunk that carries only usage
+      // metadata) we still surface that trailing metadata, but MUST NOT emit
+      // `content: { parts: [] }`. An empty-parts model turn corrupts the session
+      // history: on the next request the Vertex AI backend rejects the whole
+      // call with HTTP 400 "Unable to submit request because it must include at
+      // least one parts field", which breaks multi-turn tool-using sessions
+      // right after the first tool call (google/adk-js#21, #22).
+      content: finalParts ? {role: 'model', parts: finalParts} : undefined,
       groundingMetadata: this.groundingMetadata,
       citationMetadata: this.citationMetadata,
       errorCode: finishReason === FinishReason.STOP ? undefined : finishReason,

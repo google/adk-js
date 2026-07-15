@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, isBaseAgent} from '@google/adk';
+import {App, BaseAgent, isApp, isBaseAgent} from '@google/adk';
 import esbuild from 'esbuild';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
+import {createRequire} from 'node:module';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
@@ -127,8 +128,8 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
 }
 
 /**
- * Wrapper class which loads file that contains base agent (support both .js and
- * .ts) and has a dispose function to cleanup the comliped artifact after file
+ * Wrapper class which loads file that contains base agent or app (support both .js and
+ * .ts) and has a dispose function to cleanup the compiled artifact after file
  * usage.
  */
 export class AgentFile {
@@ -136,13 +137,17 @@ export class AgentFile {
   private cleanupDirPath: string | undefined;
   private disposed = false;
   private agent?: BaseAgent;
+  private app?: App;
 
   constructor(
     private readonly filePath: string,
     private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {}
 
-  async load(): Promise<BaseAgent> {
+  async load(): Promise<BaseAgent | App> {
+    if (this.app) {
+      return this.app;
+    }
     if (this.agent) {
       return this.agent;
     }
@@ -211,26 +216,70 @@ export class AgentFile {
       filePath = compiledFilePath;
     }
 
-    const jsModule = await import(pathToFileURL(filePath).href);
+    const require = createRequire(import.meta.url);
+    try {
+      delete require.cache[require.resolve(filePath)];
+    } catch {
+      logger.warn(`Failed to delete require cache for ${filePath}`);
+    }
+
+    const importUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const jsModule = await import(importUrl);
 
     if (jsModule) {
+      if (isApp(jsModule.app)) {
+        this.app = jsModule.app;
+        this.agent = jsModule.app.rootAgent;
+        return this.app!;
+      }
+
+      if (isApp(jsModule.rootApp)) {
+        this.app = jsModule.rootApp;
+        this.agent = jsModule.rootApp.rootAgent;
+        return this.app!;
+      }
+
+      const defaultApp = [jsModule.default, jsModule.default?.default].find(
+        isApp,
+      );
+      if (defaultApp) {
+        this.app = defaultApp;
+        this.agent = defaultApp.rootAgent;
+        return this.app!;
+      }
+
+      const rootApps = Object.values(jsModule).filter(isApp) as App[];
+
+      if (rootApps.length > 1) {
+        console.warn(
+          `Multiple apps found in ${filePath}. Using the ${rootApps[0].name} as a root app.`,
+        );
+      }
+
+      if (rootApps.length > 0) {
+        this.app = rootApps[0];
+        this.agent = rootApps[0].rootAgent;
+        return this.app!;
+      }
+
       if (isBaseAgent(jsModule.rootAgent)) {
         return (this.agent = jsModule.rootAgent);
       }
 
-      if (isBaseAgent(jsModule.default)) {
-        return (this.agent = jsModule.default);
+      const defaultAgent = [jsModule.default, jsModule.default?.default].find(
+        isBaseAgent,
+      );
+      if (defaultAgent) {
+        return (this.agent = defaultAgent);
       }
 
-      const rootAgents = Object.values(jsModule).filter((exportValue) =>
-        isBaseAgent(exportValue),
+      const rootAgents = Object.values(jsModule).filter(
+        isBaseAgent,
       ) as BaseAgent[];
 
       if (rootAgents.length > 1) {
         console.warn(
-          `Multiple agents found in ${filePath}. Using the ${
-            rootAgents[0].name
-          } as a root agent.`,
+          `Multiple agents found in ${filePath}. Using the ${rootAgents[0].name} as a root agent.`,
         );
       }
 
@@ -247,8 +296,27 @@ export class AgentFile {
     );
   }
 
+  async loadAgent(): Promise<BaseAgent> {
+    await this.load();
+    return this.agent!;
+  }
+
+  async loadApp(): Promise<App> {
+    const loaded = await this.load();
+    if (isApp(loaded)) {
+      return loaded;
+    }
+    if (!this.app && this.agent) {
+      this.app = new App({
+        name: this.agent.name,
+        rootAgent: this.agent,
+      });
+    }
+    return this.app!;
+  }
+
   getFilePath(): string {
-    if (!this.agent) {
+    if (!this.agent && !this.app) {
       throw new Error('Agent is not loaded yet');
     }
 
@@ -279,14 +347,15 @@ export class AgentFile {
 }
 
 /**
- * Loads all agents from a given directory.
+ * Loads all agents/apps from a given directory.
  *
  * The directory structure should be:
- * - agents_dir/{agentName}.[js | ts | mjs | cjs]
- * - agents_dir/{agentName}/agent.[js | ts | mjs | cjs]
+ * - agents_dir/{agentOrAppName}.[js | ts | mjs | cjs]
+ * - agents_dir/{agentOrAppName}/agent.[js | ts | mjs | cjs]
+ * - agents_dir/{agentOrAppName}/app.[js | ts | mjs | cjs]
  *
- * Agent file should has export of the rootAgent as instance of BaseAgent (e.g
- * LlmAgent).
+ * Agent/App file should have export of the rootAgent as instance of BaseAgent or
+ * app/rootApp as instance of App.
  */
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
@@ -373,10 +442,32 @@ export class AgentLoader {
     return Object.keys(this.preloadedAgents).sort();
   }
 
+  async listApps(): Promise<string[]> {
+    await this.preloadAgents();
+
+    const appNames: string[] = [];
+    for (const [name, agentFile] of Object.entries(this.preloadedAgents)) {
+      try {
+        const loaded = await agentFile.load();
+        if (isApp(loaded)) {
+          appNames.push(name);
+        }
+      } catch {
+        // Ignore loading errors when listing apps
+      }
+    }
+
+    return appNames.sort();
+  }
+
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
     return this.preloadedAgents[agentName];
+  }
+
+  async getAppFile(appName: string): Promise<AgentFile> {
+    return this.getAgentFile(appName);
   }
 
   async disposeAll(): Promise<void> {
@@ -432,16 +523,16 @@ export class AgentLoader {
 
   private async loadAgentFromDirectory(dir: FileMetadata): Promise<void> {
     const subFiles = await getDirFiles(dir.path);
-    const possibleAgentJsFile = subFiles.find(
-      (f) => f.isFile && f.name === 'agent' && isJsFile(f.ext),
-    );
+    const possibleEntryFile =
+      subFiles.find((f) => f.isFile && f.name === 'app' && isJsFile(f.ext)) ??
+      subFiles.find((f) => f.isFile && f.name === 'agent' && isJsFile(f.ext));
 
-    if (!possibleAgentJsFile) {
+    if (!possibleEntryFile) {
       return;
     }
 
     try {
-      const agentFile = new AgentFile(possibleAgentJsFile.path, this.options);
+      const agentFile = new AgentFile(possibleEntryFile.path, this.options);
       await agentFile.load();
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {

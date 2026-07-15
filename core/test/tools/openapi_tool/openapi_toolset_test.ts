@@ -125,6 +125,37 @@ describe('OpenAPIToolset', () => {
     ).toEqual({api_key: 'my-key'});
   });
 
+  it('should return all tools when no toolFilter is set and a context is provided', async () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+    const tools = await toolset.getTools({} as unknown as ReadonlyContext);
+
+    expect(tools.length).toBe(2);
+    expect(tools[0].name).toBe('get_users');
+    expect(tools[1].name).toBe('create_user');
+  });
+
+  it('should apply a string[] toolFilter when a context is provided', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: ['create_user'],
+    });
+    const tools = await toolset.getTools({} as unknown as ReadonlyContext);
+
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('create_user');
+  });
+
+  it('should apply a predicate toolFilter when a context is provided', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: (tool) => tool.name === 'get_users',
+    });
+    const tools = await toolset.getTools({} as unknown as ReadonlyContext);
+
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('get_users');
+  });
+
   it('should handle context in getTools', async () => {
     const toolset = new OpenAPIToolset({specDict: mockSpec});
     const mockContext = {};

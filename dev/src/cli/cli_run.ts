@@ -5,6 +5,7 @@
  */
 
 import {
+  App,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
@@ -12,6 +13,7 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  isApp,
   Runner,
   Session,
 } from '@google/adk';
@@ -97,7 +99,8 @@ async function runFromInputFile(
 }
 
 interface RunInteractivelyOptions {
-  rootAgent: BaseAgent;
+  rootAgent?: BaseAgent;
+  app?: App;
   session: Session;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
@@ -107,10 +110,11 @@ interface RunInteractivelyOptions {
 async function runInteractively(
   options: RunInteractivelyOptions,
 ): Promise<void> {
-  let currentAgent = options.rootAgent;
+  let currentAgent = options.rootAgent || options.app?.rootAgent;
   let runner = new Runner({
-    appName: currentAgent.name,
-    agent: currentAgent,
+    app: options.app,
+    appName: options.app?.name ?? currentAgent.name,
+    agent: options.app?.rootAgent ?? currentAgent,
     artifactService: options.artifactService,
     sessionService: options.sessionService,
     memoryService: options.memoryService,
@@ -184,10 +188,12 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       path.join(dirname, options.agentPath),
       options.agentFileLoadOptions,
     );
-    const rootAgent = await agentFile.load();
+    const loaded = await agentFile.load();
+    const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+    const app = isApp(loaded) ? loaded : undefined;
 
     let session = await sessionService.createSession({
-      appName: rootAgent.name,
+      appName: app?.name ?? rootAgent.name,
       userId,
     });
 
@@ -202,7 +208,8 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
             agentFilePath,
             options.agentFileLoadOptions,
           );
-          const newAgent = await reloadedFile.load();
+          const reloaded = await reloadedFile.load();
+          const newAgent = isApp(reloaded) ? reloaded.rootAgent : reloaded;
           for (const subscriber of reloadSubscribers) {
             subscriber(newAgent);
           }
@@ -220,7 +227,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       if (options.inputFile) {
         session =
           (await runFromInputFile({
-            appName: rootAgent.name,
+            appName: app?.name ?? rootAgent.name,
             userId,
             agent: rootAgent,
             artifactService,
@@ -249,6 +256,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
 
         await runInteractively({
           rootAgent,
+          app,
           artifactService,
           sessionService,
           memoryService,
@@ -258,9 +266,12 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
             : undefined,
         });
       } else {
-        console.log(`Running agent ${rootAgent.name}, type exit to exit.`);
+        console.log(
+          `Running ${app ? `app ${app.name}` : `agent ${rootAgent.name}`}, type exit to exit.`,
+        );
         await runInteractively({
           rootAgent,
+          app,
           artifactService,
           sessionService,
           memoryService,

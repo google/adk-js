@@ -112,6 +112,7 @@ export {
 } from './code_executors/code_execution_utils.js';
 export {AnchoredContextCompactor} from './context/anchored_context_compactor.js';
 export type {AnchoredContextCompactorOptions} from './context/anchored_context_compactor.js';
+export {AgentControlledContextCompactor} from './context/agent_controlled_context_compactor.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
@@ -205,7 +206,7 @@ export type {
 } from './sessions/base_session_service.js';
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
-export type {Session} from './sessions/session.js';
+export type {CompositeSessionKey, Session} from './sessions/session.js';
 export {State} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
@@ -217,6 +218,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
@@ -256,6 +258,8 @@ export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
+export {Task} from './utils/task.js';
+export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
@@ -275,6 +279,11 @@ export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
 export {SearchSkillsTool} from './tools/skill/search_skills_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
 
+export * from './artifacts/base_artifact_service.js';
+export * from './features/feature_registry.js';
+export * from './memory/base_memory_service.js';
+export * from './sessions/base_session_service.js';
+export * from './tools/base_tool.js';
 export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 export type {
   OperationEndpoint,
@@ -290,6 +299,7 @@ export {
   createRestApiTool,
 } from './tools/openapi_tool/rest_api_tool.js';
 
+export * from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';

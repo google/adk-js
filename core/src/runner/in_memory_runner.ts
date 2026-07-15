@@ -5,6 +5,7 @@
  */
 
 import {BaseAgent} from '../agents/base_agent.js';
+import {App} from '../apps/app.js';
 import {InMemoryArtifactService} from '../artifacts/in_memory_artifact_service.js';
 import {InMemoryMemoryService} from '../memory/in_memory_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
@@ -39,14 +40,17 @@ export class InMemoryRunner extends Runner {
    * @param params.agent The root agent to run.
    * @param params.appName The application name. Defaults to `'InMemoryRunner'`.
    * @param params.plugins An optional list of plugins.
+   * @param params.app An optional application instance to run.
    */
   constructor(params: {
-    agent: BaseAgent;
+    app?: App;
+    agent?: BaseAgent;
     appName?: string;
     plugins?: BasePlugin[];
   }) {
-    const {agent, appName = 'InMemoryRunner', plugins = []} = params;
+    const {agent, appName = 'InMemoryRunner', plugins = [], app} = params;
     super({
+      app,
       appName,
       agent,
       plugins,

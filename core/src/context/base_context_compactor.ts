@@ -5,11 +5,15 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
+import {ContextCompactionTrigger} from '../plugins/base_plugin.js';
 
 /**
  * Interface for compacting the context history in an agent session.
  */
 export interface BaseContextCompactor {
+  /** The trigger associated with this compactor. */
+  readonly trigger?: ContextCompactionTrigger;
+
   /**
    * Determines whether the context should be compacted.
    *

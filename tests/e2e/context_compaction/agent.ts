@@ -5,6 +5,8 @@
  */
 
 import {
+  AgentControlledContextCompactor,
+  ConsolidateContextTool,
   Gemini,
   LlmAgent,
   LlmSummarizer,
@@ -28,6 +30,27 @@ export function createCompactionAgent(): LlmAgent {
     instruction:
       'You are a helpful conversational AI. Please provide short, single-sentence answers.',
     model: 'gemini-2.5-flash',
+    contextCompactors: [compactor],
+  });
+}
+
+export function createAgentControlledCompactionAgent(): LlmAgent {
+  const compactor = new AgentControlledContextCompactor({
+    summarizer: new LlmSummarizer({
+      llm: new Gemini({model: 'gemini-2.5-flash'}),
+    }),
+  });
+
+  return new LlmAgent({
+    name: 'agent_controlled_compaction_agent',
+    description:
+      'An agent configured to test live agent-controlled context compaction.',
+    instruction:
+      'You are a helpful conversational AI. If the user asks you to consolidate context or wrap up ' +
+      'what you have done so far, you MUST call the consolidate_context tool. ' +
+      'Always respond concisely.',
+    model: 'gemini-2.5-flash',
+    tools: [new ConsolidateContextTool()],
     contextCompactors: [compactor],
   });
 }
