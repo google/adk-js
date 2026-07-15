@@ -28,23 +28,18 @@ class ToolContextCredentialStore {
     authScheme?: OpenAPIV3.SecuritySchemeObject,
   ): AuthCredential | undefined {
     const key = this.getCredentialKey(authScheme);
-    const state = (this.context as unknown as {state: Record<string, unknown>})
-      .state;
-    if (state) {
-      const serialized = state[key];
-      if (serialized) {
-        return serialized as AuthCredential;
-      }
-    }
-    return undefined;
+    // Read through the State API so we see values persisted from previous
+    // tool calls. `context.state` is a `State` instance, not a plain object;
+    // bracket access would bypass its value/delta store and always miss.
+    return this.context.state.get<AuthCredential>(key);
   }
 
   storeCredential(key: string, credential: AuthCredential) {
-    const state = (this.context as unknown as {state: Record<string, unknown>})
-      .state;
-    if (state) {
-      state[key] = credential;
-    }
+    // Use State.set so the credential is recorded in the state delta and
+    // persisted to the session. A plain assignment (`state[key] = ...`) sets
+    // an own property on the State instance that is never committed, so the
+    // exchanged credential would be re-created on every tool invocation.
+    this.context.state.set(key, credential);
   }
 }
 

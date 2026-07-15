@@ -6,6 +6,7 @@
 
 import {AuthCredentialTypes, Context, ToolAuthHandler} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
+import {State} from '../../../src/sessions/state.js';
 
 // Mock AutoAuthCredentialExchanger
 vi.mock(
@@ -38,6 +39,7 @@ describe('ToolAuthHandler', () => {
 
   it('should return done after exchange if credential in context', async () => {
     const mockContext = {
+      state: new State(),
       getAuthResponse: vi.fn().mockReturnValue({
         authType: AuthCredentialTypes.API_KEY,
         apiKey: 'key',
@@ -56,6 +58,7 @@ describe('ToolAuthHandler', () => {
 
   it('should return pending and request credential if not in context', async () => {
     const mockContext = {
+      state: new State(),
       getAuthResponse: vi.fn().mockReturnValue(undefined),
       requestCredential: vi.fn(),
     } as unknown as Context;
@@ -70,12 +73,12 @@ describe('ToolAuthHandler', () => {
 
   it('should return cached credential if available', async () => {
     const mockContext = {
-      state: {
+      state: new State({
         'apiKey_existing_exchanged_credential': {
           authType: AuthCredentialTypes.HTTP,
           http: {scheme: 'bearer', credentials: {token: 'cached-token'}},
         },
-      },
+      }),
     } as unknown as Context;
 
     const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
@@ -86,9 +89,10 @@ describe('ToolAuthHandler', () => {
     expect(result.authCredential?.http?.credentials.token).toBe('cached-token');
   });
 
-  it('should store exchanged credential in state', async () => {
+  it('should store exchanged credential in state and record it in the delta', async () => {
+    const state = new State();
     const mockContext = {
-      state: {},
+      state,
       getAuthResponse: vi.fn().mockReturnValue({
         authType: AuthCredentialTypes.API_KEY,
         apiKey: 'key',
@@ -100,10 +104,47 @@ describe('ToolAuthHandler', () => {
     const result = await handler.prepareAuthCredentials();
 
     expect(result.state).toBe('done');
-    expect(
-      (mockContext as unknown as {state: Record<string, unknown>}).state[
-        'apiKey_existing_exchanged_credential'
-      ],
-    ).toBeTruthy();
+    // Stored via the State API so it is readable back through State.get...
+    const stored = state.get<{http?: {credentials: {token: string}}}>(
+      'apiKey_existing_exchanged_credential',
+    );
+    expect(stored?.http?.credentials.token).toBe('exchanged-token');
+    // ...and recorded in the delta so it is persisted to the session (rather
+    // than being re-exchanged on every subsequent tool call).
+    expect(state.hasDelta()).toBe(true);
+  });
+
+  it('re-uses a credential persisted by a previous tool call instead of re-exchanging', async () => {
+    // First invocation: exchange and store the credential.
+    const firstState = new State();
+    const firstContext = {
+      state: firstState,
+      getAuthResponse: vi.fn().mockReturnValue({
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'key',
+      }),
+    } as unknown as Context;
+    await new ToolAuthHandler(firstContext, {
+      type: 'apiKey',
+    }).prepareAuthCredentials();
+
+    // Each tool call gets a fresh Context whose State is rebuilt from the
+    // values persisted to the session. Only what was recorded in the state
+    // delta/value survives this round-trip (a stray own-property would not).
+    const secondState = new State(firstState.toRecord());
+    const secondContext = {
+      state: secondState,
+      getAuthResponse: vi.fn(),
+    } as unknown as Context;
+    const result = await new ToolAuthHandler(secondContext, {
+      type: 'apiKey',
+    }).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential?.http?.credentials.token).toBe(
+      'exchanged-token',
+    );
+    // The cached credential was reused; no second exchange was triggered.
+    expect(secondContext.getAuthResponse).not.toHaveBeenCalled();
   });
 });
