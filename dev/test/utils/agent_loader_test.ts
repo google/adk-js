@@ -645,7 +645,10 @@ describe('AgentLoader', () => {
     beforeEach(async () => {
       let loaderOutputDirIndex = 0;
       (fileUtils.getTempDir as Mock).mockImplementation(() =>
-        path.join(tempLoaderDir, `agent-${loaderOutputDirIndex++}`),
+        path.join(
+          tempLoaderDir,
+          `agent-${Date.now()}-${Math.random().toString(36).slice(2)}-${loaderOutputDirIndex++}`,
+        ),
       );
 
       await fs.writeFile(

@@ -11,6 +11,7 @@ import esbuild from 'esbuild';
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
+import {createRequire} from 'node:module';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
@@ -215,7 +216,15 @@ export class AgentFile {
       filePath = compiledFilePath;
     }
 
-    const jsModule = await import(pathToFileURL(filePath).href);
+    const require = createRequire(import.meta.url);
+    try {
+      delete require.cache[require.resolve(filePath)];
+    } catch {
+      logger.warn(`Failed to delete require cache for ${filePath}`);
+    }
+
+    const importUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const jsModule = await import(importUrl);
 
     if (jsModule) {
       if (isApp(jsModule.app)) {
