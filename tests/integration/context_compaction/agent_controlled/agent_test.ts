@@ -6,11 +6,22 @@
 
 import {InMemoryRunner, isCompactedEvent} from '@google/adk';
 import {createUserContent} from '@google/genai';
-import {describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {GeminiWithMockResponses} from '../../test_case_utils.js';
 import {rootAgent} from './agent.js';
 
 describe('Context Compaction Agent-Controlled', () => {
+  let currentTime = 1000;
+
+  beforeEach(() => {
+    currentTime = 1000;
+    vi.spyOn(Date, 'now').mockImplementation(() => ++currentTime);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should compact session events when agent calls consolidate_context', async () => {
     rootAgent.model = new GeminiWithMockResponses([
       // Turn 1
