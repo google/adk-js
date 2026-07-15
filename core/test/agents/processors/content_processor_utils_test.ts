@@ -275,10 +275,11 @@ describe('getContents', () => {
         ],
       },
     });
-
-    expect(() => getContents([e0, e1, e2], 'my_agent')).toThrowError(
-      'No function call event found for function responses ids: id2',
-    );
+    const result = getContents([e0, e1, e2], 'my_agent');
+    expect(result).toHaveLength(2);
+    // Should drop the last orphaned response event
+    expect(result[0].role).toBe('user');
+    expect(result[1].role).toBe('model');
   });
 
   it('should throw subset error when response is for an id from a call event, but contains other unexpected ids', () => {
