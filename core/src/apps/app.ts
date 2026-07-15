@@ -48,7 +48,7 @@ export function isApp(obj: unknown): obj is App {
  */
 export interface AppOptions {
   name: string;
-  rootAgent?: BaseAgent;
+  rootAgent: BaseAgent;
   plugins?: BasePlugin[];
 }
 
@@ -81,10 +81,8 @@ export class App {
     if (!isBaseAgent(options.rootAgent)) {
       throw new TypeError(
         `rootAgent must be a BaseAgent instance, got ${
-          typeof options.rootAgent === 'object' && options.rootAgent !== null
-            ? (options.rootAgent as {constructor?: {name?: string}}).constructor
-                ?.name || 'Object'
-            : typeof options.rootAgent
+          (options.rootAgent as {constructor?: {name?: string}})?.constructor
+            ?.name ?? typeof options.rootAgent
         }`,
       );
     }

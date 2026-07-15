@@ -51,8 +51,8 @@ export class InMemoryRunner extends Runner {
     const {agent, appName = 'InMemoryRunner', plugins = [], app} = params;
     super({
       app,
-      appName: app ? app.name : appName,
-      agent: app ? app.rootAgent : agent!,
+      appName,
+      agent,
       plugins,
       artifactService: new InMemoryArtifactService(),
       sessionService: new InMemorySessionService(),

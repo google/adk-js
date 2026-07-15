@@ -239,20 +239,16 @@ export class AgentFile {
         return this.app!;
       }
 
-      const defaultApp = isApp(jsModule.default)
-        ? jsModule.default
-        : isApp(jsModule.default?.default)
-          ? jsModule.default.default
-          : undefined;
+      const defaultApp = [jsModule.default, jsModule.default?.default].find(
+        isApp,
+      );
       if (defaultApp) {
         this.app = defaultApp;
         this.agent = defaultApp.rootAgent;
         return this.app!;
       }
 
-      const rootApps = Object.values(jsModule).filter((exportValue) =>
-        isApp(exportValue),
-      ) as App[];
+      const rootApps = Object.values(jsModule).filter(isApp) as App[];
 
       if (rootApps.length > 1) {
         console.warn(
@@ -270,17 +266,15 @@ export class AgentFile {
         return (this.agent = jsModule.rootAgent);
       }
 
-      const defaultAgent = isBaseAgent(jsModule.default)
-        ? jsModule.default
-        : isBaseAgent(jsModule.default?.default)
-          ? jsModule.default.default
-          : undefined;
+      const defaultAgent = [jsModule.default, jsModule.default?.default].find(
+        isBaseAgent,
+      );
       if (defaultAgent) {
         return (this.agent = defaultAgent);
       }
 
-      const rootAgents = Object.values(jsModule).filter((exportValue) =>
-        isBaseAgent(exportValue),
+      const rootAgents = Object.values(jsModule).filter(
+        isBaseAgent,
       ) as BaseAgent[];
 
       if (rootAgents.length > 1) {
