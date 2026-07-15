@@ -254,4 +254,54 @@ describe('injectSessionState', () => {
       await injectSessionState('Hello {invalid key?} and {invalid key}!', ctx),
     ).toBe('Hello {invalid key?} and {invalid key}!');
   });
+
+  it('serializes object state values to JSON string', async () => {
+    const ctx = makeContext({fruits: {apple: 'red', banana: 'yellow'}});
+    expect(
+      await injectSessionState(
+        'Please tell me all of the keys in `{fruits}`.',
+        ctx,
+      ),
+    ).toBe(
+      'Please tell me all of the keys in `{"apple":"red","banana":"yellow"}`.',
+    );
+  });
+
+  it('serializes array state values to JSON string', async () => {
+    const ctx = makeContext({list: ['apple', 'banana']});
+    expect(await injectSessionState('Fruits: {list}', ctx)).toBe(
+      'Fruits: ["apple","banana"]',
+    );
+  });
+
+  it('throws an error if object state value cannot be serialized', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const ctx = makeContext({circular});
+    await expect(injectSessionState('Data: {circular}', ctx)).rejects.toThrow(
+      /Failed to serialize value for instruction template: Converting circular structure to JSON/,
+    );
+  });
+
+  it('extracts text property when artifact resolves to a Part object', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({text: 'report text content'}),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Data: {artifact.report.txt}', ctx)).toBe(
+      'Data: report text content',
+    );
+  });
+
+  it('serializes non-text Part artifact object to JSON string', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({
+        inlineData: {mimeType: 'text/plain', data: 'abc'},
+      }),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Data: {artifact.data.bin}', ctx)).toBe(
+      'Data: {"inlineData":{"mimeType":"text/plain","data":"abc"}}',
+    );
+  });
 });

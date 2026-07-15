@@ -35,7 +35,7 @@ async function resolveKey(
       }
       throw new Error(`Artifact ${fileName} not found.`);
     }
-    return String(artifact);
+    return formatValue(artifact, true);
   }
 
   // Step 3: Handle state variable injection.
@@ -44,7 +44,7 @@ async function resolveKey(
   }
 
   if (key in invocationContext.session.state) {
-    return String(invocationContext.session.state[key]);
+    return formatValue(invocationContext.session.state[key], false);
   }
 
   if (isOptional) {
@@ -52,6 +52,38 @@ async function resolveKey(
   }
 
   throw new Error(`Context variable not found: \`${key}\`.`);
+}
+
+/**
+ * Formats a value for injection into an instruction template.
+ * If the value is an object or array, it converts it to a JSON string.
+ */
+function formatValue(value: unknown, isArtifact = false): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'object' && value !== null) {
+    if (
+      isArtifact &&
+      'text' in value &&
+      typeof (value as {text?: unknown}).text === 'string'
+    ) {
+      return (value as {text: string}).text;
+    }
+    try {
+      const json = JSON.stringify(value);
+      if (json !== undefined) {
+        return json;
+      }
+    } catch (e) {
+      throw new Error(
+        `Failed to serialize value for instruction template: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+  return String(value);
 }
 
 /**
