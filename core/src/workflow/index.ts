@@ -24,7 +24,7 @@ export {ToolNode} from './nodes/tool_node.js';
 export {runInParallel, type ParallelRunOptions} from './parallel_worker.js';
 export {normalizeRetryConfig, type RetryConfig} from './retry_config.js';
 export {runNode, type RunNodeOptions} from './run_node.js';
-export {Trigger, type TriggerPredicate} from './trigger.js';
+export {DEFAULT_ROUTE, Trigger, type TriggerPredicate} from './trigger.js';
 export {
   ParsedGraph,
   parseGraph,

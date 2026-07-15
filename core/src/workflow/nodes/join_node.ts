@@ -40,27 +40,25 @@ export class JoinNode<
   readonly upstreamCount: number;
   readonly predecessors?: string[];
 
-  constructor(name: string, options: JoinNodeOptions) {
-    if (
-      !options ||
-      typeof options.upstreamCount !== 'number' ||
-      options.upstreamCount < 1
-    ) {
+  constructor(name: string, options?: Partial<JoinNodeOptions>) {
+    const count = options?.upstreamCount ?? 0;
+    if (count < 0) {
       throw new Error(
-        `JoinNode "${name}" requires a valid upstreamCount >= 1.`,
+        `JoinNode "${name}" requires a valid upstreamCount >= 0.`,
       );
     }
     if (
-      options.predecessors &&
-      options.predecessors.length !== options.upstreamCount
+      options?.predecessors &&
+      options.predecessors.length !== count &&
+      count > 0
     ) {
       throw new Error(
-        `JoinNode "${name}" upstreamCount (${options.upstreamCount}) does not match predecessors.length (${options.predecessors.length}).`,
+        `JoinNode "${name}" upstreamCount (${count}) does not match predecessors.length (${options.predecessors.length}).`,
       );
     }
     super(name, options);
-    this.upstreamCount = options.upstreamCount;
-    this.predecessors = options.predecessors;
+    this.upstreamCount = count;
+    this.predecessors = options?.predecessors;
   }
 
   /**

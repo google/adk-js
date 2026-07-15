@@ -207,19 +207,43 @@ export class NodeRunner {
 
       // 3. Evaluate outgoing edges and enqueue successors whose triggers are satisfied
       const outgoingEdges = this.graph.adjacencyList.get(item.node.name) || [];
+      let hasRoutingEdges = false;
+      let matchedSpecificRoute = false;
+      let defaultRouteEdge: (typeof outgoingEdges)[0] | undefined;
+
       for (const edge of outgoingEdges) {
-        let triggerSatisfied = true;
-        if (edge.trigger) {
-          triggerSatisfied = await edge.trigger.evaluate(ctx, nodeOutput);
+        if (!edge.trigger) {
+          queue.push({
+            node: edge.target,
+            inputPayload: nodeOutput,
+            sourceNodeName: item.node.name,
+          });
+          continue;
         }
 
+        hasRoutingEdges = true;
+        if (edge.trigger.isDefaultRoute()) {
+          defaultRouteEdge = edge;
+          continue;
+        }
+
+        const triggerSatisfied = await edge.trigger.evaluate(ctx, nodeOutput);
         if (triggerSatisfied) {
+          matchedSpecificRoute = true;
           queue.push({
             node: edge.target,
             inputPayload: nodeOutput,
             sourceNodeName: item.node.name,
           });
         }
+      }
+
+      if (hasRoutingEdges && !matchedSpecificRoute && defaultRouteEdge) {
+        queue.push({
+          node: defaultRouteEdge.target,
+          inputPayload: nodeOutput,
+          sourceNodeName: item.node.name,
+        });
       }
     }
 

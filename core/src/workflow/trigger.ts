@@ -8,6 +8,11 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 
 /**
+ * The default route key used as fallback when no conditional routes match.
+ */
+export const DEFAULT_ROUTE = '__DEFAULT__';
+
+/**
  * A predicate function evaluated against the event or output yielded by an upstream node.
  * @param ctx The current invocation context.
  * @param eventOrOutput The event or output payload produced by the source node.
@@ -35,17 +40,30 @@ export class Trigger {
   }
 
   /**
+   * Whether this trigger represents the fallback default route (`DEFAULT_ROUTE`).
+   */
+  isDefaultRoute(): boolean {
+    return this.routeKey === DEFAULT_ROUTE;
+  }
+
+  /**
    * Creates a route matching trigger.
    * The trigger evaluates to true if the emitted `Event.actions.route` (or event payload route) matches `routeKey`.
    * @param routeKey The exact string route key to match.
    */
-  static fromRoute(routeKey: string): Trigger {
-    if (!routeKey || typeof routeKey !== 'string') {
+  static fromRoute(routeKey: string | symbol): Trigger {
+    if (!routeKey && typeof routeKey !== 'symbol') {
       throw new Error(
-        'Trigger.fromRoute requires a non-empty string routeKey.',
+        'Trigger.fromRoute requires a non-empty string or symbol routeKey.',
       );
     }
-    return new Trigger({routeKey});
+    const keyStr =
+      typeof routeKey === 'symbol'
+        ? routeKey === Symbol.for('DEFAULT_ROUTE')
+          ? DEFAULT_ROUTE
+          : routeKey.description || String(routeKey)
+        : routeKey;
+    return new Trigger({routeKey: keyStr});
   }
 
   /**
