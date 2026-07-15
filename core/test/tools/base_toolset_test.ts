@@ -10,6 +10,8 @@ import {
   Context,
   InvocationContext,
   LlmRequest,
+  ReadonlyContext,
+  ToolPredicate,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -42,6 +44,44 @@ class DummyToolset extends BaseToolset {
 
   async close(): Promise<void> {}
 }
+
+class FilteringToolset extends BaseToolset {
+  constructor(toolFilter: ToolPredicate | string[]) {
+    super(toolFilter);
+  }
+
+  async getTools(context?: ReadonlyContext): Promise<BaseTool[]> {
+    const rawTools = [new DummyTool('tool1'), new DummyTool('tool2')];
+    if (!context) {
+      return rawTools;
+    }
+    return rawTools.filter((tool) => this.isToolSelected(tool, context));
+  }
+
+  async close(): Promise<void> {}
+}
+
+describe('BaseToolset.isToolSelected', () => {
+  const context = {} as unknown as ReadonlyContext;
+
+  it('selects all tools when the toolFilter is an empty array', async () => {
+    const toolset = new FilteringToolset([]);
+    const tools = await toolset.getTools(context);
+    expect(tools.map((tool) => tool.name)).toEqual(['tool1', 'tool2']);
+  });
+
+  it('selects only the named tools for a non-empty string[] filter', async () => {
+    const toolset = new FilteringToolset(['tool2']);
+    const tools = await toolset.getTools(context);
+    expect(tools.map((tool) => tool.name)).toEqual(['tool2']);
+  });
+
+  it('applies a ToolPredicate filter', async () => {
+    const toolset = new FilteringToolset((tool) => tool.name === 'tool1');
+    const tools = await toolset.getTools(context);
+    expect(tools.map((tool) => tool.name)).toEqual(['tool1']);
+  });
+});
 
 describe('BaseToolset integration with LLM Request', () => {
   it('No prefix means the tool names match original names', async () => {
