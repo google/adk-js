@@ -400,11 +400,11 @@ function rearrangeEventsForLatestFunctionResponse(events: Event[]): Event[] {
   }
 
   if (!match) {
-    // If the function call event cannot be found (e.g. due to context compaction
-    // rewriting the history before we parse it), we cannot safely include the
-    // function response event since the LLM inherently requires the call before
-    // the response. Drop the response event from the current request payload.
-    return events.slice(0, events.length - 1);
+    throw new Error(
+      `No function call event found for function responses ids: ${Array.from(
+        functionResponsesIds,
+      ).join(', ')}`,
+    );
   }
 
   // Collect all function response events between the function call event
