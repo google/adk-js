@@ -38,6 +38,8 @@ export interface InvocationContextParams {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
+  agentStates?: Record<string, unknown>;
+  endOfAgents?: Record<string, boolean>;
 }
 
 /**
@@ -186,6 +188,17 @@ export class InvocationContext {
   readonly abortSignal?: AbortSignal;
 
   /**
+   * Checkpointed states for workflow nodes under this invocation.
+   */
+  agentStates: Record<string, unknown>;
+
+  /**
+   * Tracks whether specific agents or workflows have reached the end of their execution.
+   */
+
+  endOfAgents: Record<string, boolean>;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -203,7 +216,10 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
+    this.agentStates = params.agentStates ?? {};
+    this.endOfAgents = params.endOfAgents ?? {};
     // Inherit the parent invocation's cost manager when one is available.
+
     // Child contexts created for sub-agents, agent transfers and loop
     // iterations (via createInvocationContext / createBranchCtxForSubAgent)
     // carry the parent context's fields over, so reusing its cost manager

@@ -209,6 +209,23 @@ const ASCII_LETTERS_AND_NUMBERS =
   'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 /**
+ * Type guard to check if an object is an instance of Event.
+ *
+ * @param obj The object to check.
+ * @returns True if the object matches the Event structure.
+ */
+export function isEvent(obj: unknown): obj is Event {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'invocationId' in obj &&
+    typeof (obj as Event).invocationId === 'string' &&
+    'actions' in obj &&
+    typeof (obj as Event).actions === 'object'
+  );
+}
+
+/**
  * Generates a new unique ID for the event.
  */
 export function createNewEventId(): string {
