@@ -8,6 +8,7 @@ export {BaseNode, type BaseNodeOptions} from './base_node.js';
 export {
   DynamicNodeScheduler,
   type DynamicEntry,
+  type DynamicEntryFunction,
   type DynamicNodeSchedulerOptions,
 } from './dynamic_node_scheduler.js';
 export {

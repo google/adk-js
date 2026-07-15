@@ -59,9 +59,9 @@ export async function consumeGenerator<TOutput = unknown>(
         output === undefined &&
         lastEvent?.actions &&
         typeof lastEvent.actions === 'object' &&
-        'output' in (lastEvent.actions as Record<string, unknown>)
+        'output' in (lastEvent.actions as unknown as Record<string, unknown>)
       ) {
-        output = (lastEvent.actions as Record<string, unknown>)
+        output = (lastEvent.actions as unknown as Record<string, unknown>)
           .output as TOutput;
       }
       return {output, isPausedHitl, lastEvent};

@@ -18,9 +18,14 @@ import {FunctionNode, FunctionNodeHandler} from './nodes/function_node.js';
 /**
  * Type for the dynamic workflow entry point.
  */
+export type DynamicEntryFunction<
+  TInput = unknown,
+  TOutput = unknown,
+> = FunctionNodeHandler<TInput, TOutput>;
+
 export type DynamicEntry<TInput = unknown, TOutput = unknown> =
   | BaseNode<TInput, TOutput>
-  | FunctionNodeHandler<TInput, TOutput>;
+  | DynamicEntryFunction<TInput, TOutput>;
 
 /**
  * Options for the DynamicNodeScheduler.

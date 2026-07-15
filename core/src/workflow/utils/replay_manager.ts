@@ -5,10 +5,10 @@
  */
 
 import {InvocationContext} from '../../agents/invocation_context.js';
-import {Event} from '../../events/event.js';
+import {createEvent, Event} from '../../events/event.js';
 import {BaseNode} from '../base_node.js';
 import {generateExecutionId, getOrInitAgentStates} from '../node_runner.js';
-import {NodeState, NodeStatus, isNodeState} from '../node_state.js';
+import {isNodeState, NodeState, NodeStatus} from '../node_state.js';
 
 /**
  * Manages event replay when a workflow node is bypassed due to a completed historical checkpoint (`rerunOnResume == false`).
@@ -46,7 +46,7 @@ export class ReplayManager {
           yield event;
         }
       } else if (existingState.outputPayload !== undefined) {
-        yield {
+        yield createEvent({
           invocationId: ctx.invocationId,
           author: node.name,
           branch: ctx.branch,
@@ -58,7 +58,7 @@ export class ReplayManager {
               timestamp: existingState.timestamp,
             },
           },
-        } as Event;
+        });
       }
       return true;
     }

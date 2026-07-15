@@ -74,8 +74,8 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
         res.content ??
         (typeof res.actions === 'object' &&
         res.actions !== null &&
-        'output' in (res.actions as Record<string, unknown>)
-          ? (res.actions as Record<string, unknown>).output
+        'output' in (res.actions as unknown as Record<string, unknown>)
+          ? (res.actions as unknown as Record<string, unknown>).output
           : res);
       this.lastOutputPayload = extracted;
       return extracted as TOutput;

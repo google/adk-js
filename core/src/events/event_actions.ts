@@ -56,6 +56,14 @@ export interface EventActions {
    * call id.
    */
   requestedToolConfirmations: {[key: string]: ToolConfirmation};
+
+  /** Workflow / custom event actions */
+  output?: unknown;
+  joinCompleted?: unknown;
+  toolExecution?: unknown;
+  requestInput?: unknown;
+  nodeExecutionReplay?: unknown;
+  [key: string]: unknown;
 }
 
 /**

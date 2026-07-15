@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Context} from '../../agents/context.js';
 import {InvocationContext} from '../../agents/invocation_context.js';
 import {createEvent, Event} from '../../events/event.js';
 import {BaseTool} from '../../tools/base_tool.js';
@@ -41,10 +42,10 @@ export class ToolNode<
     input?: TInput,
   ): AsyncGenerator<Event, TOutput, unknown> {
     const params = typeof input === 'object' && input !== null ? input : {};
-    const result = await this.tool.runAsync(
-      {invocationContext: ctx},
-      params as Record<string, unknown>,
-    );
+    const result = await this.tool.runAsync({
+      toolContext: ctx as unknown as Context,
+      args: params as Record<string, unknown>,
+    });
 
     const event = createEvent({
       invocationId: ctx.invocationId,

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Content} from '@google/genai';
 import {BaseAgent} from '../../agents/base_agent.js';
 import {
   InvocationContext,
@@ -60,7 +61,7 @@ export class LLMAgentWrapper<
         'role' in input &&
         'parts' in input
       ) {
-        childCtxParams.userContent = input as {role: string; parts: unknown[]};
+        childCtxParams.userContent = input as unknown as Content;
       }
     }
 
@@ -77,9 +78,10 @@ export class LLMAgentWrapper<
       if (
         event.actions &&
         typeof event.actions === 'object' &&
-        'output' in (event.actions as Record<string, unknown>)
+        'output' in (event.actions as unknown as Record<string, unknown>)
       ) {
-        lastOutput = (event.actions as Record<string, unknown>).output;
+        lastOutput = (event.actions as unknown as Record<string, unknown>)
+          .output;
       }
     }
 

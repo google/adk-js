@@ -65,18 +65,25 @@ export interface Event extends LlmResponse {
 }
 
 /**
+ * Parameters for creating an event with partial fields.
+ */
+export interface CreateEventParams extends Omit<Partial<Event>, 'actions'> {
+  actions?: Partial<EventActions>;
+}
+
+/**
  * Creates an event from a partial event.
  *
  * @param params The partial event to create the event from.
  * @returns The event.
  */
-export function createEvent(params: Partial<Event> = {}): Event {
+export function createEvent(params: CreateEventParams = {}): Event {
   return {
     ...params,
     id: params.id || createNewEventId(),
     invocationId: params.invocationId || '',
     author: params.author,
-    actions: params.actions || createEventActions(),
+    actions: createEventActions(params.actions),
     longRunningToolIds: params.longRunningToolIds || [],
     branch: params.branch,
     timestamp: params.timestamp || Date.now(),

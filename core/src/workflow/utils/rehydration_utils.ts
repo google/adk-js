@@ -56,7 +56,7 @@ export function rehydrateAgentStates(
     for (const event of session.events) {
       if (!event || typeof event !== 'object') continue;
 
-      const eventRecord = event as Record<string, unknown>;
+      const eventRecord = event as unknown as Record<string, unknown>;
       const actions = eventRecord.actions as
         | Record<string, unknown>
         | undefined;
