@@ -67,7 +67,7 @@ export class InMemoryRunner extends Runner {
       artifactService: new InMemoryArtifactService(),
       sessionService: new InMemorySessionService(),
       memoryService: new InMemoryMemoryService(),
-      resumabilityConfig,
+      resumabilityConfig: app?.resumabilityConfig ?? resumabilityConfig,
     });
   }
 }

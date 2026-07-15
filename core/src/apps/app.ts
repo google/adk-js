@@ -6,6 +6,7 @@
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
+import {ResumabilityConfig} from './resumability_config.js';
 
 const VALID_APP_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
@@ -50,6 +51,7 @@ export interface AppOptions {
   name: string;
   rootAgent: BaseAgent;
   plugins?: BasePlugin[];
+  resumabilityConfig?: ResumabilityConfig;
 }
 
 /**
@@ -70,6 +72,7 @@ export class App {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly rootAgent: BaseAgent | any;
   readonly plugins: BasePlugin[];
+  readonly resumabilityConfig?: ResumabilityConfig;
 
   constructor(options: AppOptions) {
     validateAppName(options.name);
@@ -90,5 +93,6 @@ export class App {
     this.name = options.name;
     this.rootAgent = options.rootAgent;
     this.plugins = options.plugins ?? [];
+    this.resumabilityConfig = options.resumabilityConfig;
   }
 }

@@ -7,6 +7,7 @@
 import {describe, expect, it} from 'vitest';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {App, isApp, validateAppName} from '../../src/apps/app.js';
+import {createResumabilityConfig} from '../../src/apps/resumability_config.js';
 import {BasePlugin} from '../../src/plugins/base_plugin.js';
 
 class DummyAgent extends BaseAgent {
@@ -83,5 +84,18 @@ describe('App', () => {
     expect(
       () => new App({name: 'test_app', rootAgent: {name: 'fake'}}),
     ).toThrow(/rootAgent must be a BaseAgent instance/);
+  });
+
+  it('creates an App with resumabilityConfig', () => {
+    const rootAgent = new DummyAgent('root');
+    const resumabilityConfig = createResumabilityConfig({isResumable: true});
+    const app = new App({
+      name: 'resumable_app',
+      rootAgent,
+      resumabilityConfig,
+    });
+
+    expect(app.resumabilityConfig).toBe(resumabilityConfig);
+    expect(app.resumabilityConfig?.isResumable).toBe(true);
   });
 });

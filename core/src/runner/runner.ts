@@ -168,7 +168,8 @@ export class Runner {
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
     this.credentialService = input.credentialService;
-    this.resumabilityConfig = input.resumabilityConfig;
+    this.resumabilityConfig =
+      input.app?.resumabilityConfig ?? input.resumabilityConfig;
   }
 
   /**

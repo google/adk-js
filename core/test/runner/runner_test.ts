@@ -5,6 +5,7 @@
  */
 
 import {
+  App,
   BaseAgent,
   BasePlugin,
   createEvent,
@@ -336,6 +337,21 @@ describe('Runner.determineAgentForResumption', () => {
     }
 
     expect(events[0].author).toBe('sub_agent2');
+  });
+
+  it('should inherit resumabilityConfig from app when constructed with an App', async () => {
+    const app = new App({
+      name: TEST_APP_ID,
+      rootAgent,
+      resumabilityConfig: createResumabilityConfig({isResumable: true}),
+    });
+    const appRunner = new Runner({
+      app,
+      sessionService,
+      artifactService,
+    });
+
+    expect(appRunner.resumabilityConfig?.isResumable).toBe(true);
   });
 
   it('should skip function response resumption routing when resumabilityConfig.isResumable is false or undefined', async () => {
