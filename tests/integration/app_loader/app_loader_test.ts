@@ -72,30 +72,27 @@ describe('AgentLoader discovery and loading integration', () => {
     dirname,
     'tests/integration/app_loader/discovery',
   );
+  let loader: AgentLoader;
 
   beforeAll(async () => {
     await execAsync('npm install', {cwd: projectPath});
+    loader = new AgentLoader(projectPath);
   }, TEST_EXECUTION_TIMEOUT);
 
   it(
     'should discover apps vs agents across directories and standalone files',
     async () => {
-      const loader = new AgentLoader(projectPath);
-      try {
-        const apps = await loader.listApps();
-        expect(apps).toHaveLength(2);
-        expect(apps).toContain('service_alpha');
-        expect(apps).toContain('standalone_app');
+      const apps = await loader.listApps();
+      expect(apps).toHaveLength(2);
+      expect(apps).toContain('service_alpha');
+      expect(apps).toContain('standalone_app');
 
-        const agentsAndApps = await loader.listAgents();
-        expect(agentsAndApps).toHaveLength(4);
-        expect(agentsAndApps).toContain('service_alpha');
-        expect(agentsAndApps).toContain('service_beta');
-        expect(agentsAndApps).toContain('standalone_agent');
-        expect(agentsAndApps).toContain('standalone_app');
-      } finally {
-        await loader.disposeAll();
-      }
+      const agentsAndApps = await loader.listAgents();
+      expect(agentsAndApps).toHaveLength(4);
+      expect(agentsAndApps).toContain('service_alpha');
+      expect(agentsAndApps).toContain('service_beta');
+      expect(agentsAndApps).toContain('standalone_agent');
+      expect(agentsAndApps).toContain('standalone_app');
     },
     TEST_EXECUTION_TIMEOUT,
   );
@@ -103,19 +100,14 @@ describe('AgentLoader discovery and loading integration', () => {
   it(
     'should load App from directory entrypoint and expose App and rootAgent',
     async () => {
-      const loader = new AgentLoader(projectPath);
-      try {
-        const appFile = await loader.getAppFile('service_alpha');
-        const loaded = await appFile.load();
-        expect(isApp(loaded)).toBe(true);
-        expect((loaded as App).name).toBe('alpha_app');
+      const appFile = await loader.getAppFile('service_alpha');
+      const loaded = await appFile.load();
+      expect(isApp(loaded)).toBe(true);
+      expect((loaded as App).name).toBe('alpha_app');
 
-        const rootAgent = await appFile.loadAgent();
-        expect(isBaseAgent(rootAgent)).toBe(true);
-        expect(rootAgent.name).toBe('alpha_agent');
-      } finally {
-        await loader.disposeAll();
-      }
+      const rootAgent = await appFile.loadAgent();
+      expect(isBaseAgent(rootAgent)).toBe(true);
+      expect(rootAgent.name).toBe('alpha_agent');
     },
     TEST_EXECUTION_TIMEOUT,
   );
@@ -123,24 +115,20 @@ describe('AgentLoader discovery and loading integration', () => {
   it(
     'should synthesize App when loadApp() is called on BaseAgent file',
     async () => {
-      const loader = new AgentLoader(projectPath);
-      try {
-        const agentFile = await loader.getAppFile('service_beta');
-        const loaded = await agentFile.load();
-        expect(isBaseAgent(loaded)).toBe(true);
-        expect(isApp(loaded)).toBe(false);
+      const agentFile = await loader.getAppFile('service_beta');
+      const loaded = await agentFile.load();
+      expect(isBaseAgent(loaded)).toBe(true);
+      expect(isApp(loaded)).toBe(false);
 
-        const synthApp = await agentFile.loadApp();
-        expect(isApp(synthApp)).toBe(true);
-        expect(synthApp.rootAgent.name).toBe('beta_agent');
-      } finally {
-        await loader.disposeAll();
-      }
+      const synthApp = await agentFile.loadApp();
+      expect(isApp(synthApp)).toBe(true);
+      expect(synthApp.rootAgent.name).toBe('beta_agent');
     },
     TEST_EXECUTION_TIMEOUT,
   );
 
   afterAll(async () => {
+    await loader.disposeAll();
     await fs
       .rm(path.join(projectPath, 'node_modules'), {
         recursive: true,

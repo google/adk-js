@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 
