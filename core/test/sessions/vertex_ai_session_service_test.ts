@@ -820,6 +820,62 @@ describe('VertexAiSessionService', () => {
         name: `reasoningEngines/12345/sessions/delete-session`,
       });
     });
+
+    it('does not delete a session that belongs to another user', async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/victim-session',
+        userId: 'victimUser',
+        sessionState: {},
+        updateTime: new Date().toISOString(),
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'attackerUser',
+          sessionId: 'victim-session',
+        }),
+      ).rejects.toThrow(
+        'Session victim-session does not belong to user attackerUser',
+      );
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it("does not delete another user's session when userId is omitted", async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/victim-session',
+        userId: 'victimUser',
+        sessionState: {},
+        updateTime: new Date().toISOString(),
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: undefined as unknown as string,
+          sessionId: 'victim-session',
+        }),
+      ).rejects.toThrow('does not belong to user');
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it('does not call delete when the session does not exist', async () => {
+      mockClient.get.mockRejectedValue({code: 5});
+
+      await service.deleteSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'missing-session',
+      });
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
+    });
   });
 
   describe('appendEvent', () => {
