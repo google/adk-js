@@ -6,13 +6,9 @@
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {CompactedEvent, isScratchpadEvent} from '../events/compacted_event.js';
-import {
-  Event,
-  getEventTokens,
-  getFunctionCalls,
-  getFunctionResponses,
-} from '../events/event.js';
+import {Event, getEventTokens} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
+import {calculateRetainStartIndex} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 export interface AnchoredContextCompactorOptions {
@@ -80,6 +76,14 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
       return false;
     }
 
+    const retainStartIndex = calculateRetainStartIndex(
+      rawEvents,
+      this.eventRetentionSize,
+    );
+    if (retainStartIndex === 0) {
+      return false;
+    }
+
     const totalTokens = activeEvents.reduce(
       (sum, event) => sum + getEventTokens(event),
       0,
@@ -99,27 +103,10 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Determine the baseline index to retain from the active raw events.
-    let retainStartIndex = Math.max(
-      0,
-      rawEvents.length - this.eventRetentionSize,
+    const retainStartIndex = calculateRetainStartIndex(
+      rawEvents,
+      this.eventRetentionSize,
     );
-
-    // Prevent splitting between a tool call and its response.
-    while (retainStartIndex > 0) {
-      const eventToRetain = rawEvents[retainStartIndex];
-      const previousEvent = rawEvents[retainStartIndex - 1];
-
-      if (
-        getFunctionResponses(eventToRetain).length > 0 &&
-        getFunctionCalls(previousEvent).length > 0
-      ) {
-        retainStartIndex--;
-      } else {
-        // No conflict, safe to split here.
-        break;
-      }
-    }
 
     if (retainStartIndex === 0) {
       // Cannot compact if we have to retain everything

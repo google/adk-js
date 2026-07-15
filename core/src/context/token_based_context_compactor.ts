@@ -9,6 +9,7 @@ import {getContents} from '../agents/processors/content_processor_utils.js';
 import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
+import {calculateRetainStartIndex} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 /** Rough estimate used when no usage metadata is available. */
@@ -82,6 +83,14 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return false;
     }
 
+    const retainStartIndex = calculateRetainStartIndex(
+      rawEvents,
+      this.eventRetentionSize,
+    );
+    if (retainStartIndex === 0) {
+      return false;
+    }
+
     const promptTokenCount = latestPromptTokenCount(
       activeEvents,
       invocationContext,
@@ -102,27 +111,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Determine the baseline index to retain from the active raw events.
-    let retainStartIndex = Math.max(
-      0,
-      rawEvents.length - this.eventRetentionSize,
+    const retainStartIndex = calculateRetainStartIndex(
+      rawEvents,
+      this.eventRetentionSize,
     );
-
-    // Prevent splitting between a tool call and its response.
-    while (retainStartIndex > 0) {
-      const eventToRetain = rawEvents[retainStartIndex];
-      const previousEvent = rawEvents[retainStartIndex - 1];
-
-      if (
-        hasFunctionResponse(eventToRetain) &&
-        hasFunctionCall(previousEvent)
-      ) {
-        retainStartIndex--;
-      } else {
-        // No conflict, safe to split here.
-        break;
-      }
-    }
 
     if (retainStartIndex === 0) {
       // Cannot compact if we have to retain everything
@@ -214,16 +206,4 @@ function estimatePromptTokenCount(
     return undefined;
   }
   return Math.ceil(totalChars / CHARS_PER_TOKEN);
-}
-
-function hasFunctionCall(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionCall !== undefined,
-  );
-}
-
-function hasFunctionResponse(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionResponse !== undefined,
-  );
 }
