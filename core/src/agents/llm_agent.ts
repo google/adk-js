@@ -88,6 +88,22 @@ const MAX_LIVE_RECONNECT_ATTEMPTS = 5;
 const TRANSFER_AGENT_DELAY_MS = 1000;
 
 /**
+ * Delay before tearing down the connection when a sub-agent signals
+ * `task_completed`. Same rationale as {@link TRANSFER_AGENT_DELAY_MS}: lets the
+ * model flush pending audio for the final turn. Mirrors
+ * `DEFAULT_TASK_COMPLETION_DELAY` (1.0s) in the Python ADK live flow.
+ */
+const TASK_COMPLETION_DELAY_MS = 1000;
+
+/**
+ * Name of the function a sub-agent of a `SequentialAgent` calls to signal it has
+ * finished, so the next agent can take over. Declared here rather than in
+ * `sequential_agent.ts` because that module already imports this one; the live
+ * receive loop watches for this response to end the agent's live turn.
+ */
+export const TASK_COMPLETED_TOOL_NAME = 'task_completed';
+
+/**
  * Sentinel thrown from `runReceiveLoop` to break out of the receive iterator
  * and signal `runLiveFlow` to reconnect using the stored resumption handle.
  * Used when the server sends `goAway` or any other recoverable terminal.
@@ -939,6 +955,10 @@ export class LlmAgent extends BaseAgent {
         throw err;
       }
 
+      // Connected: reset the retry count so a later drop gets the full budget
+      // of reconnect attempts rather than inheriting this connect's tally.
+      attempt = 1;
+
       // Skip history replay when resuming -- server already has the state.
       if (
         llmRequest.contents.length > 0 &&
@@ -975,21 +995,21 @@ export class LlmAgent extends BaseAgent {
         const canReconnect =
           !!invocationContext.liveSessionResumptionHandle &&
           (err instanceof LiveReconnectSignal || isRecoverableLiveError(err));
-        if (canReconnect) {
-          reconnect = true;
-          logger.info(
-            'Live connection closed; will reconnect with session handle.',
-            err,
-          );
-        } else {
-          // Tear down before rethrowing.
-          await this.teardownLiveConnection(sendAbort, connection, sendTask);
+        if (!canReconnect) {
           throw err;
         }
+        reconnect = true;
+        logger.info(
+          'Live connection closed; will reconnect with session handle.',
+          err,
+        );
+      } finally {
+        // Stop the send loop and close this attempt's connection. In `finally`
+        // so it also runs when the consumer abandons this generator (e.g. the
+        // runner returning on abort), which unwinds the `yield*` without
+        // reaching either the catch or the code below.
+        await this.teardownLiveConnection(sendAbort, connection, sendTask);
       }
-
-      // Cancel send loop for this attempt; receive loop has exited.
-      await this.teardownLiveConnection(sendAbort, connection, sendTask);
 
       if (!reconnect) {
         return;
@@ -1165,6 +1185,21 @@ export class LlmAgent extends BaseAgent {
         // porting that semantics is out of scope here.
         if (event.content && getFunctionResponses(event).length > 0) {
           await connection.sendContent(event.content);
+        }
+
+        // A sub-agent of a SequentialAgent signals it is done by calling
+        // task_completed. End this agent's live turn so the parent can move on
+        // to the next sub-agent.
+        if (
+          getFunctionResponses(event).some(
+            (response) => response.name === TASK_COMPLETED_TOOL_NAME,
+          )
+        ) {
+          // Brief delay lets the model flush pending audio before teardown.
+          // Returning hands control back to runLiveFlow, which stops the send
+          // loop and closes the connection.
+          await sleep(TASK_COMPLETION_DELAY_MS);
+          return;
         }
 
         // Handle agent transfer triggered by a transfer_to_agent function

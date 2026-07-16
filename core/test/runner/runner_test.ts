@@ -572,6 +572,25 @@ describe('Runner with plugins', () => {
     expect(modifiedEventMessage).toEqual(MockPlugin.ON_EVENT_CALLBACK_MSG);
   });
 
+  it('should persist the plugin-modified event, not the original', async () => {
+    plugin.enableEventCallback = true;
+
+    await runTest();
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    // The callback runs before the append, so the session must hold what the
+    // plugin produced and what the caller was handed -- not the original.
+    expect(
+      session!.events.some(
+        (e) => e.content?.parts?.[0].text === MockPlugin.ON_EVENT_CALLBACK_MSG,
+      ),
+    ).toBe(true);
+  });
+
   it('should call beforeRunCallback and stop execution', async () => {
     plugin.enableBeforeRunCallback = true;
 

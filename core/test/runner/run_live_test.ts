@@ -7,6 +7,7 @@
 import {
   BaseLlm,
   BaseLlmConnection,
+  BasePlugin,
   BaseTool,
   Event,
   InMemoryArtifactService,
@@ -17,6 +18,7 @@ import {
   LlmResponse,
   RunAsyncToolRequest,
   Runner,
+  SequentialAgent,
 } from '@google/adk';
 import {Blob, Content, FunctionDeclaration, Modality} from '@google/genai';
 import {beforeEach, describe, expect, it} from 'vitest';
@@ -682,6 +684,188 @@ describe('Runner.runLive', () => {
     }
 
     expect(events).toEqual([]);
+  });
+
+  it('stops and tears down the connection when aborted mid-execution', async () => {
+    const first: Content = {role: 'model', parts: [{text: 'first'}]};
+    const second: Content = {role: 'model', parts: [{text: 'second'}]};
+    const llm = new FakeLiveLlm([
+      {content: first},
+      {content: second},
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+      abortSignal: controller.signal,
+    })) {
+      events.push(event);
+      // Abort once the first event is out, while the model still has more
+      // queued and the send loop is parked on the (still open) queue.
+      controller.abort();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].content).toBe(first);
+    // Aborting must not strand the connection or the send loop.
+    expect(llm.connection!.closed).toBe(true);
+    queue.close();
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(
+      session!.events.some((e) => e.content?.parts?.[0]?.text === 'second'),
+    ).toBe(false);
+  });
+
+  it('closes the connection when the caller stops consuming early', async () => {
+    const llm = new FakeLiveLlm([
+      {content: {role: 'model', parts: [{text: 'first'}]}},
+      {content: {role: 'model', parts: [{text: 'second'}]}},
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // Abandoning the generator unwinds runLiveFlow through a return
+      // completion rather than the normal or error path; teardown must still
+      // run so the connection and send loop are not stranded.
+      break;
+    }
+
+    expect(llm.connection!.closed).toBe(true);
+    queue.close();
+  });
+
+  it('ends the live turn when a sub-agent signals task_completed', async () => {
+    const taskCompletedCall: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'task_completed', args: {}}}],
+    };
+    const afterCompletion: Content = {
+      role: 'model',
+      parts: [{text: 'should not be yielded'}],
+    };
+    const llm = new FakeLiveLlm([
+      {content: taskCompletedCall},
+      {content: afterCompletion},
+      {turnComplete: true},
+    ]);
+    const child = new LlmAgent({name: 'child', model: llm});
+    const sequential = new SequentialAgent({
+      name: 'sequential',
+      subAgents: [child],
+    });
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: sequential,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    // The task_completed response ends the turn: nothing the model sent after
+    // it is surfaced, and the connection is torn down.
+    expect(
+      events.some(
+        (e) => e.content?.parts?.[0]?.text === 'should not be yielded',
+      ),
+    ).toBe(false);
+    expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('persists the plugin-modified event, not the original', async () => {
+    const original: Content = {role: 'model', parts: [{text: 'original'}]};
+    const llm = new FakeLiveLlm([{content: original}, {turnComplete: true}]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+
+    class RewritingPlugin extends BasePlugin {
+      constructor() {
+        super('rewriting-plugin');
+      }
+      // Returns a distinct event rather than mutating in place, so persisting
+      // before the callback would store the original object and be caught.
+      override async onEventCallback(request: {event: Event}) {
+        if (request.event.content?.parts?.[0]?.text !== 'original') {
+          return undefined;
+        }
+        return {
+          ...request.event,
+          content: {role: 'model', parts: [{text: 'rewritten'}]},
+        } as Event;
+      }
+    }
+
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      plugins: [new RewritingPlugin()],
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      events.push(event);
+    }
+
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'rewritten'),
+    ).toBe(true);
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    // The session must hold what the plugin produced and what the caller saw.
+    expect(
+      session!.events.some((e) => e.content?.parts?.[0]?.text === 'rewritten'),
+    ).toBe(true);
+    expect(
+      session!.events.some((e) => e.content?.parts?.[0]?.text === 'original'),
+    ).toBe(false);
   });
 
   it('transfers to a sub-agent on transfer_to_agent and yields its events', async () => {

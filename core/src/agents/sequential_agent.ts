@@ -8,10 +8,8 @@ import {FunctionTool} from '../tools/function_tool.js';
 
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
-import {isLlmAgent} from './llm_agent.js';
+import {isLlmAgent, TASK_COMPLETED_TOOL_NAME} from './llm_agent.js';
 import {ReadonlyContext} from './readonly_context.js';
-
-const TASK_COMPLETED_TOOL_NAME = 'task_completed';
 
 /**
  * A unique symbol to identify ADK agent classes.

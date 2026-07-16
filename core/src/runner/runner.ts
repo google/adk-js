@@ -413,24 +413,28 @@ export class Runner {
                   return;
                 }
 
-                if (!event.partial) {
-                  await this.sessionService.appendEvent({session, event});
-                }
-                // Step 3: Run the on_event callbacks to optionally modify the event.
+                // Step 3: Run the on_event callbacks before persisting, so
+                // plugin edits are what gets stored and what the caller sees.
                 const modifiedEvent =
                   await this.pluginManager.runOnEventCallback({
                     invocationContext,
                     event,
                   });
+                const outputEvent = modifiedEvent ?? event;
+
+                // Persisted ahead of the abort check: the event already
+                // happened, so aborting stops delivery, not the session log.
+                if (!outputEvent.partial) {
+                  await this.sessionService.appendEvent({
+                    session,
+                    event: outputEvent,
+                  });
+                }
                 if (params.abortSignal?.aborted) {
                   return;
                 }
 
-                if (modifiedEvent) {
-                  yield modifiedEvent;
-                } else {
-                  yield event;
-                }
+                yield outputEvent;
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
               await this.pluginManager.runAfterRunCallback({invocationContext});
@@ -689,19 +693,30 @@ export class Runner {
               return;
             }
 
-            if (!event.partial && !isLiveModelMediaEventWithInlineData(event)) {
-              await this.sessionService.appendEvent({session, event});
-            }
-
+            // Run the on-event callbacks before persisting, so plugin edits
+            // are what gets stored and what the caller sees.
             const modifiedEvent = await this.pluginManager.runOnEventCallback({
               invocationContext,
               event,
             });
+            const outputEvent = modifiedEvent ?? event;
+
+            // Persisted ahead of the abort check: the event already happened,
+            // so aborting stops delivery, not the session log.
+            if (
+              !outputEvent.partial &&
+              !isLiveModelMediaEventWithInlineData(outputEvent)
+            ) {
+              await this.sessionService.appendEvent({
+                session,
+                event: outputEvent,
+              });
+            }
             if (params.abortSignal?.aborted) {
               return;
             }
 
-            yield modifiedEvent ?? event;
+            yield outputEvent;
           }
 
           // Step 3: after-run plugin hook for cleanup/metrics.
