@@ -516,6 +516,23 @@ describe('VertexAiSessionService', () => {
       expect(response.sessions[1].id).toBe('malformed_name');
     });
 
+    it('escapes double quotes in userId to prevent AIP-160 filter injection', async () => {
+      // A double quote in userId must not break out of the quoted filter
+      // literal and append an `OR user_id!=""` predicate that would return
+      // every user's sessions (cross-user session enumeration).
+      mockClient.listInternal.mockResolvedValue({sessions: []});
+
+      await service.listSessions({
+        appName: '12345',
+        userId: 'attacker" OR user_id!="',
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id="attacker\\" OR user_id!=\\""'},
+      });
+    });
+
     it('lists sessions without filter if userId is missing', async () => {
       await service.listSessions({
         appName: '12345',

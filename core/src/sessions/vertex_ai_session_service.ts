@@ -48,6 +48,18 @@ export function isVertexAiConnectionString(uri?: string): boolean {
   return uri?.startsWith('vertexai://') || false;
 }
 
+/**
+ * Quotes a value for safe use as a Google AIP-160 filter string literal.
+ *
+ * Backslashes are escaped first, then double quotes, so that caller-controlled
+ * input stays inside the quoted value and cannot break out to inject additional
+ * filter predicates. See https://google.aip.dev/160.
+ */
+export function quoteFilterLiteral(value: string): string {
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 export interface VertexAiSessionServiceOptions {
   projectId?: string;
   location?: string;
@@ -260,7 +272,7 @@ export class VertexAiSessionService extends BaseSessionService {
       const response = await this.sessions.listInternal({
         name: `reasoningEngines/${reasoningEngineId}`,
         config: {
-          ...(userId ? {filter: `user_id="${userId}"`} : {}),
+          ...(userId ? {filter: `user_id=${quoteFilterLiteral(userId)}`} : {}),
           ...(pageToken ? {pageToken} : {}),
         },
       });
