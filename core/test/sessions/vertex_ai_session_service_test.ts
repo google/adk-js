@@ -20,7 +20,10 @@ vi.mock('nodejs-vertexai', () => ({
   },
 }));
 
-import {isVertexAiConnectionString} from '@google/adk/sessions/vertex_ai_session_service.js';
+import {
+  isVertexAiConnectionString,
+  quoteFilterLiteral,
+} from '@google/adk/sessions/vertex_ai_session_service.js';
 import {logger} from '@google/adk/utils/logger.js';
 
 describe('isVertexAiConnectionString', () => {
@@ -33,6 +36,28 @@ describe('isVertexAiConnectionString', () => {
     expect(isVertexAiConnectionString('memory:/')).toBe(false);
     expect(isVertexAiConnectionString('')).toBe(false);
     expect(isVertexAiConnectionString(undefined)).toBe(false);
+  });
+});
+
+describe('quoteFilterLiteral', () => {
+  it('quotes a plain value', () => {
+    expect(quoteFilterLiteral('alice')).toBe('"alice"');
+  });
+
+  it('neutralizes quote injection', () => {
+    // Must not break out of the literal and append an OR predicate that would
+    // return every user's sessions.
+    expect(quoteFilterLiteral('attacker" OR user_id!="')).toBe(
+      '"attacker\\" OR user_id!=\\""',
+    );
+  });
+
+  it('escapes a lone backslash', () => {
+    expect(quoteFilterLiteral('\\')).toBe('"\\\\"');
+  });
+
+  it('quotes an empty string', () => {
+    expect(quoteFilterLiteral('')).toBe('""');
   });
 });
 
