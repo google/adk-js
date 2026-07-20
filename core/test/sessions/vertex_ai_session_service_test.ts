@@ -20,7 +20,10 @@ vi.mock('nodejs-vertexai', () => ({
   },
 }));
 
-import {isVertexAiConnectionString} from '@google/adk/sessions/vertex_ai_session_service.js';
+import {
+  isVertexAiConnectionString,
+  quoteFilterLiteral,
+} from '@google/adk/sessions/vertex_ai_session_service.js';
 import {logger} from '@google/adk/utils/logger.js';
 
 describe('isVertexAiConnectionString', () => {
@@ -33,6 +36,28 @@ describe('isVertexAiConnectionString', () => {
     expect(isVertexAiConnectionString('memory:/')).toBe(false);
     expect(isVertexAiConnectionString('')).toBe(false);
     expect(isVertexAiConnectionString(undefined)).toBe(false);
+  });
+});
+
+describe('quoteFilterLiteral', () => {
+  it('quotes a plain value', () => {
+    expect(quoteFilterLiteral('alice')).toBe('"alice"');
+  });
+
+  it('neutralizes quote injection', () => {
+    // Must not break out of the literal and append an OR predicate that would
+    // return every user's sessions.
+    expect(quoteFilterLiteral('attacker" OR user_id!="')).toBe(
+      '"attacker\\" OR user_id!=\\""',
+    );
+  });
+
+  it('escapes a lone backslash', () => {
+    expect(quoteFilterLiteral('\\')).toBe('"\\\\"');
+  });
+
+  it('quotes an empty string', () => {
+    expect(quoteFilterLiteral('')).toBe('""');
   });
 });
 
@@ -514,6 +539,23 @@ describe('VertexAiSessionService', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].id).toBe('test-list-1');
       expect(response.sessions[1].id).toBe('malformed_name');
+    });
+
+    it('escapes double quotes in userId to prevent AIP-160 filter injection', async () => {
+      // A double quote in userId must not break out of the quoted filter
+      // literal and append an `OR user_id!=""` predicate that would return
+      // every user's sessions (cross-user session enumeration).
+      mockClient.listInternal.mockResolvedValue({sessions: []});
+
+      await service.listSessions({
+        appName: '12345',
+        userId: 'attacker" OR user_id!="',
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id="attacker\\" OR user_id!=\\""'},
+      });
     });
 
     it('lists sessions without filter if userId is missing', async () => {
