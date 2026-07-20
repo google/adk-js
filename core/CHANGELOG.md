@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.4.0](https://github.com/google/adk-js/compare/adk-v1.3.0...adk-v1.4.0) (2026-07-20)
+
+
+### Features
+
+* add fileData support to GcsArtifactService ([#476](https://github.com/google/adk-js/issues/476)) ([4bc7086](https://github.com/google/adk-js/commit/4bc7086a372cdd7c27db426a8b8d0f96ce646b96))
+* Cleanup and Generalize determineAgentForResumption for LRO Session Resumption Routing ([#490](https://github.com/google/adk-js/issues/490)) ([f72dcbc](https://github.com/google/adk-js/commit/f72dcbc38e0869911f698886330d42ffa8bc932a))
+* Configurable Client Labels in adk-js ([#454](https://github.com/google/adk-js/issues/454)) ([87e15ec](https://github.com/google/adk-js/commit/87e15ec9495c3fd7136e4f82ec5c8b8d6b24089e))
+* Group appName, userId, and sessionId into a unified composite session key ([#486](https://github.com/google/adk-js/issues/486)) ([f22e959](https://github.com/google/adk-js/commit/f22e9597a60f2ccc4e933ab0b445e77f3f4d44b9))
+* Implement Agent-Controlled Compaction ([#477](https://github.com/google/adk-js/issues/477)) ([0aa4d82](https://github.com/google/adk-js/commit/0aa4d82ac4f8bec9520c6f55614609be444f5a60))
+* Implement Gemini Interaction API in adk-js ([#364](https://github.com/google/adk-js/issues/364)) ([82ed4e1](https://github.com/google/adk-js/commit/82ed4e123ef8900f26e9a31e8d1880342c7b57fc))
+* Implement Trajectory Thought Pruning in adk-js ([#451](https://github.com/google/adk-js/issues/451)) ([584ce87](https://github.com/google/adk-js/commit/584ce877318794eacbf1cee3d1b90d02edd5dc43))
+* Internalize removeClientFunctionCallId into content processor in adk-js ([#481](https://github.com/google/adk-js/issues/481)) ([89012ad](https://github.com/google/adk-js/commit/89012ad9ed45ddd5ed0700616a9061560cfdf5f1))
+* Refactor ForwardingArtifactService and introduce SessionArtifactService ([#455](https://github.com/google/adk-js/issues/455)) ([64b18e4](https://github.com/google/adk-js/commit/64b18e43a93cc93ba1a18b5a511751b24e4ffc66))
+* Replace Promise&lt;void&gt; with proper Task type in ActiveStreamingTool Staging ([#468](https://github.com/google/adk-js/issues/468)) ([932d121](https://github.com/google/adk-js/commit/932d1214a199e0bce876198a004def6e5ed9d8b4))
+* Support apps  ([#489](https://github.com/google/adk-js/issues/489)) ([fd69b69](https://github.com/google/adk-js/commit/fd69b69d7df5a2a422ce269d0f3db249288771ad))
+
+
+### Bug Fixes
+
+* **agents:** share the invocation cost manager so maxLlmCalls spans the whole run ([#484](https://github.com/google/adk-js/issues/484)) ([c46d71b](https://github.com/google/adk-js/commit/c46d71bcd14cb90a0b7befb810c45f60da8cc309))
+* **auth:** apply SSRF blocklist to OAuth2 token endpoint in fetchOAuth2Tokens ([#465](https://github.com/google/adk-js/issues/465)) ([4953bc4](https://github.com/google/adk-js/commit/4953bc4db116ab904f245e21903177d4496f180c))
+* **auth:** prevent SSRF credential leak via OAuth2 redirects and block IPv6 [::] ([#482](https://github.com/google/adk-js/issues/482)) ([1c405a4](https://github.com/google/adk-js/commit/1c405a4e3a1a728710f08db33286d3ff8c8bbd98))
+* **core:** default newMessage role to 'user' when omitted ([#475](https://github.com/google/adk-js/issues/475)) ([#478](https://github.com/google/adk-js/issues/478)) ([e30c891](https://github.com/google/adk-js/commit/e30c891789867610618fc799348834d704579c77))
+* **core:** don't emit empty-parts model content from the stream aggregator ([#485](https://github.com/google/adk-js/issues/485)) ([d1f8e98](https://github.com/google/adk-js/commit/d1f8e985484463c0badd0210c1c56f7e46dc1dfb))
+* **core:** format object state and Part artifact values as JSON or text in instruction templates ([#494](https://github.com/google/adk-js/issues/494)) ([#495](https://github.com/google/adk-js/issues/495)) ([ff34add](https://github.com/google/adk-js/commit/ff34add5e4908efd1e9f7b895e7e92a493720bb2))
+* gate token-based compaction on latest prompt size, not event sum ([#474](https://github.com/google/adk-js/issues/474)) ([ad84b98](https://github.com/google/adk-js/commit/ad84b98e2f9d71e669766fdd8eb05331a95b4de0)), closes [#473](https://github.com/google/adk-js/issues/473)
+* gracefully handle missing function calls during context compaction ([#496](https://github.com/google/adk-js/issues/496)) ([da24221](https://github.com/google/adk-js/commit/da24221474eddb84bc09e2a202dbdc13bc79adc1))
+* load SKILL.md files with tables ([#500](https://github.com/google/adk-js/issues/500)) ([3ed86d5](https://github.com/google/adk-js/commit/3ed86d5f285be9e1ba47615c4948968b1b9e1a3d))
+* **sessions/vertexai:** quote userId in AIP-160 list filter ([#499](https://github.com/google/adk-js/issues/499)) ([8f9e8f2](https://github.com/google/adk-js/commit/8f9e8f20f1708effc4e6965d6141655f92c2f65b))
+* **streaming:** supress empty part arrays ([#450](https://github.com/google/adk-js/issues/450)) ([2ff0643](https://github.com/google/adk-js/commit/2ff0643133455ed748f3b4085ece32cb0027c12c))
+* **tools:** persist exchanged OpenAPI credentials via the State API ([#491](https://github.com/google/adk-js/issues/491)) ([bcf1e27](https://github.com/google/adk-js/commit/bcf1e27f4c43d4c81f21eb1e95dbf25374f0d711))
+* **tools:** treat an empty toolFilter array as no filter in BaseToolset ([#493](https://github.com/google/adk-js/issues/493)) ([e5fe7a1](https://github.com/google/adk-js/commit/e5fe7a1c41c789a9d7f54de9b00696539d4aee76))
+
 ## [1.3.0](https://github.com/google/adk-js/compare/adk-v1.2.0...adk-v1.3.0) (2026-06-22)
 
 
