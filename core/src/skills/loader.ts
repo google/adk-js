@@ -118,14 +118,17 @@ export function parseSkillMdContent(content: string): {
     throw new Error('SKILL.md must start with YAML frontmatter (---)');
   }
 
-  // Split into max 3 parts: empty before ---, frontmatter, body
-  const parts = content.split('---', 3);
+  // Split into at least 3 parts: empty before ---, frontmatter, body
+  const parts = content.split('---');
   if (parts.length < 3) {
     throw new Error('SKILL.md frontmatter not properly closed with ---');
   }
 
   const frontmatterStr = parts[1];
-  const body = parts[2].trim();
+  const body = parts
+    .filter((_, i) => i >= 2)
+    .join('---')
+    .trim();
 
   try {
     const parsed = yaml.load(frontmatterStr);

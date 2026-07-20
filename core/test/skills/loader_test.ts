@@ -101,6 +101,22 @@ Body with newlines
       const result = parseSkillMdContent(content);
       expect(result.body).toBe('Body with newlines');
     });
+
+    it('handles tables in body', () => {
+      const body = `Body with table
+
+| Column 1 | Column 2 |
+|---|---|
+| Cell 1 | Cell 2 |`;
+      const content = `---
+name: test-skill
+description: A test skill
+---
+${body}
+`;
+      const result = parseSkillMdContent(content);
+      expect(result.body).toBe(body);
+    });
   });
 
   describe('loadSkillFromDir', () => {
