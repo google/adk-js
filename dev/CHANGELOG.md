@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.4.0](https://github.com/google/adk-js/compare/devtools-v1.3.0...devtools-v1.4.0) (2026-07-20)
+
+
+### Features
+
+* **cli:** support --agent_engine_id in deploy agent_engine ([#487](https://github.com/google/adk-js/issues/487)) ([ddbe34b](https://github.com/google/adk-js/commit/ddbe34b1205266506358793a1d16707fd3c3c96b))
+* Implement Gemini Interaction API in adk-js ([#364](https://github.com/google/adk-js/issues/364)) ([82ed4e1](https://github.com/google/adk-js/commit/82ed4e123ef8900f26e9a31e8d1880342c7b57fc))
+* Support apps  ([#489](https://github.com/google/adk-js/issues/489)) ([fd69b69](https://github.com/google/adk-js/commit/fd69b69d7df5a2a422ce269d0f3db249288771ad))
+
+
+### Bug Fixes
+
+* **streaming:** supress empty part arrays ([#450](https://github.com/google/adk-js/issues/450)) ([2ff0643](https://github.com/google/adk-js/commit/2ff0643133455ed748f3b4085ece32cb0027c12c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.3.0 to ^1.4.0
+
 ## [1.3.0](https://github.com/google/adk-js/compare/devtools-v1.2.0...devtools-v1.3.0) (2026-06-22)
 
 
