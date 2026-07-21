@@ -117,6 +117,8 @@ export {
   type File,
 } from './code_executors/code_execution_utils.js';
 export {AgentControlledContextCompactor} from './context/agent_controlled_context_compactor.js';
+export {AnchoredContextCompactor} from './context/anchored_context_compactor.js';
+export type {AnchoredContextCompactorOptions} from './context/anchored_context_compactor.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
@@ -127,7 +129,7 @@ export {TrajectoryThoughtPruningCompactor} from './context/trajectory_thought_pr
 export type {TrajectoryThoughtPruningCompactorOptions} from './context/trajectory_thought_pruning_compactor.js';
 export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
-export {isCompactedEvent} from './events/compacted_event.js';
+export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
   createEvent,

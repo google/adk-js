@@ -167,6 +167,18 @@ export function stringifyContent(event: Event): string {
 }
 
 /**
+ * Estimates the number of tokens in the event based on usage metadata or characters.
+ */
+export function getEventTokens(event: Event): number {
+  if (event.usageMetadata?.promptTokenCount !== undefined) {
+    return event.usageMetadata.promptTokenCount;
+  }
+  // Estimate: 4 chars per token.
+  const contentStr = stringifyContent(event);
+  return Math.ceil(contentStr.length / 4);
+}
+
+/**
  * Returns whether the event contains any thought parts.
  */
 export function hasThoughts(event: Event): boolean {
