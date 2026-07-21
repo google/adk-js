@@ -110,9 +110,9 @@ export {
   type CodeExecutionResult,
   type File,
 } from './code_executors/code_execution_utils.js';
+export {AgentControlledContextCompactor} from './context/agent_controlled_context_compactor.js';
 export {AnchoredContextCompactor} from './context/anchored_context_compactor.js';
 export type {AnchoredContextCompactorOptions} from './context/anchored_context_compactor.js';
-export {AgentControlledContextCompactor} from './context/agent_controlled_context_compactor.js';
 export type {BaseContextCompactor} from './context/base_context_compactor.js';
 export type {BaseSummarizer} from './context/summarizers/base_summarizer.js';
 export {LlmSummarizer} from './context/summarizers/llm_summarizer.js';
