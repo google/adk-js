@@ -215,6 +215,8 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    *
    * For example: use globalInstruction to make all agents have a stable
    * identity or personality.
+   *
+   * @deprecated Use GlobalInstructionPlugin instead.
    */
   globalInstruction?: string | InstructionProvider;
 
@@ -352,6 +354,7 @@ export class LlmAgent extends BaseAgent {
 
   model?: string | BaseLlm;
   instruction: string | InstructionProvider;
+  /** @deprecated Use GlobalInstructionPlugin instead. */
   globalInstruction: string | InstructionProvider;
   tools: ToolUnion[];
   generateContentConfig?: GenerateContentConfig;
@@ -522,6 +525,7 @@ export class LlmAgent extends BaseAgent {
    * This method is only for use by Agent Development Kit.
    * @param context The context to retrieve the session state.
    * @returns The resolved globalInstruction field.
+   * @deprecated Use GlobalInstructionPlugin instead.
    */
   async canonicalGlobalInstruction(
     context: ReadonlyContext,
