@@ -12,6 +12,26 @@ import {toCamelCase, toSnakeCase} from '../utils/object_notation_utils.js';
 import {createEventActions, EventActions} from './event_actions.js';
 
 /**
+ * Workflow-node provenance attached to an event.
+ *
+ * Mirrors `google/adk-python` `Event.node_info`. Present only on events emitted
+ * from within a workflow node.
+ */
+export interface NodeInfo {
+  /** The workflow node path that produced this event (e.g. `wf.child.0`). */
+  path?: string;
+
+  /** The node run id this event's output should be attributed to. */
+  outputFor?: string;
+
+  /**
+   * Whether the event's textual content should be promoted to the node's
+   * structured output.
+   */
+  messageAsOutput?: boolean;
+}
+
+/**
  * Represents an event in a conversation between agents and users.
 
   It is used to store the content of the conversation, as well as the actions
@@ -62,6 +82,32 @@ export interface Event extends LlmResponse {
    * The timestamp of the event.
    */
   timestamp: number;
+
+  /**
+   * Workflow: the structured output produced by the emitting node, if any.
+   *
+   * First-class field mirroring `google/adk-python` `Event.output`. Used by the
+   * workflow engine to carry a node's return value alongside its content.
+   */
+  output?: unknown;
+
+  /**
+   * Workflow: the route key emitted by a routing node, used by the graph to
+   * select the matching outgoing edge. Mirrors Python `Event.route`.
+   */
+  route?: string | number | boolean;
+
+  /**
+   * Workflow: provenance of the emitting node. Mirrors Python `Event.node_info`.
+   */
+  nodeInfo?: NodeInfo;
+
+  /**
+   * Workflow: scope tag used to isolate multi-agent conversations so peer
+   * scopes don't see each other's events. Mirrors Python
+   * `Event.isolation_scope`.
+   */
+  isolationScope?: string;
 }
 
 /**

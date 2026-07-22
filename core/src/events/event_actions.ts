@@ -63,6 +63,25 @@ export interface EventActions {
   toolExecution?: unknown;
   requestInput?: unknown;
   nodeExecutionReplay?: unknown;
+
+  /**
+   * Workflow: a serialized node/agent state snapshot used for resumable
+   * checkpointing. Mirrors Python `EventActions.agent_state`.
+   */
+  agentState?: Record<string, unknown>;
+
+  /**
+   * Workflow: marks that the emitting agent/workflow has reached the end of its
+   * execution for this invocation. Mirrors Python `EventActions.end_of_agent`.
+   */
+  endOfAgent?: boolean;
+
+  /**
+   * Workflow: route key selected by a routing node (alternative carrier to the
+   * top-level `Event.route`, used by callbacks/tools).
+   */
+  route?: string | number | boolean;
+
   [key: string]: unknown;
 }
 
