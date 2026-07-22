@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc && echo Build complete",
-    "start": "npx @google/adk-devtools run agent.ts"
+    "start": "npx adk run agent.ts"
   },
   "keywords": [],
   "author": "",
