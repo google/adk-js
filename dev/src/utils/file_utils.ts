@@ -116,18 +116,33 @@ export async function saveToFile<T>(filePath: string, data: T): Promise<void> {
 /**
  * Atomically creates a private temporary directory and returns its path.
  *
- * The directory is created by a single `mkdtemp` call directly under the system
- * temp root, with a random name and, on POSIX, mode 0700. Composing the path
- * from a fixed prefix and materialising it later with a recursive `mkdir` would
- * leave a predictable intermediate directory that another local user can
- * pre-create or replace with a symlink, placing everything written afterwards
- * under their control.
+ * The directory is created by a single `mkdtemp` call with a random name and,
+ * on POSIX, mode 0700. Composing the path from a fixed prefix and materialising
+ * it later with a recursive `mkdir` would leave a predictable intermediate
+ * directory that another local user can pre-create or replace with a symlink,
+ * placing everything written afterwards under their control.
+ *
+ * By default the directory is created directly under the system temp root. Pass
+ * `baseDir` to create it under a different parent instead -- for example inside
+ * an agent project so that dependencies hoisted above the agent directory still
+ * resolve from the compiled output. `baseDir` is created first (recursively) if
+ * it does not exist; the random leaf is still created atomically with `mkdtemp`.
  *
  * @param prefix Name prefix for the directory. Must be a single path segment.
+ * @param baseDir Optional parent directory. Defaults to the OS temp directory.
  * @returns The absolute path of the newly created directory.
  */
-export async function createTempDir(prefix: string): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
+export async function createTempDir(
+  prefix: string,
+  baseDir?: string,
+): Promise<string> {
+  const parent = baseDir ?? os.tmpdir();
+
+  if (baseDir) {
+    await fs.mkdir(baseDir, {recursive: true});
+  }
+
+  return fs.mkdtemp(path.join(parent, `${prefix}-`));
 }
 
 /**
