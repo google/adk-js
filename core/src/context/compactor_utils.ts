@@ -28,20 +28,4 @@ export function getActiveEvents(events: Event[]): Event[] {
     : events;
 }
 
-/**
- * Checks if the event contains a function call.
- */
-export function hasFunctionCall(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionCall !== undefined,
-  );
-}
 
-/**
- * Checks if the event contains a function response.
- */
-export function hasFunctionResponse(event: Event): boolean {
-  return !!event.content?.parts?.some(
-    (part) => part.functionResponse !== undefined,
-  );
-}
