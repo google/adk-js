@@ -15,6 +15,11 @@ import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
 import {DynamicNodeState} from './schedule_dynamic_node.js';
 import {Trigger} from './trigger.js';
+import {
+  isFastForwardable,
+  reconstructNodeStates,
+  RehydratedNode,
+} from './utils/rehydration_utils.js';
 
 /**
  * An imperative workflow entry point. Receives the workflow's node context and
@@ -56,6 +61,8 @@ class LoopState {
   readonly triggerBuffer = new Map<string, Trigger[]>();
   readonly pending = new Map<string, Promise<CompletedTask>>();
   readonly interruptIds = new Set<string>();
+  /** Per-node state reconstructed from prior session events (resume). */
+  rehydrated: Map<string, RehydratedNode> = new Map();
   errorShutDown = false;
 }
 
@@ -110,12 +117,19 @@ export class Workflow extends BaseNode {
     const dynamicState = new DynamicNodeState();
     ctx.scheduler = new DynamicNodeScheduler(dynamicState);
 
+    // --- REHYDRATE (resume) ---
+    // Reconstruct node state from prior session events and surface resolved
+    // interrupt responses so waiting nodes can resume.
+    const rehydrated = reconstructNodeStates(ctx.session?.events ?? []);
+    this.applyResumeInputs(ctx, rehydrated);
+
     if (this.dynamicEntry) {
       await this.runDynamicEntry(ctx, nodeInput, dynamicState);
       return;
     }
 
     const loop = new LoopState();
+    loop.rehydrated = rehydrated;
 
     // --- SETUP ---
     this.seedStartTriggers(loop, nodeInput);
@@ -153,6 +167,22 @@ export class Workflow extends BaseNode {
     }
     if (output !== undefined) {
       ctx.output = output;
+    }
+  }
+
+  /**
+   * Merges resolved interrupt responses from prior session events into
+   * `ctx.resumeInputs`, so waiting nodes (which read `ctx.resumeInputs[id]`)
+   * resume with the user's response. Shared by child contexts via propagation.
+   */
+  private applyResumeInputs(
+    ctx: NodeContext,
+    rehydrated: Map<string, RehydratedNode>,
+  ): void {
+    for (const node of rehydrated.values()) {
+      for (const [interruptId, response] of node.resolvedResponses) {
+        ctx.resumeInputs[interruptId] = response;
+      }
     }
   }
 
@@ -257,6 +287,20 @@ export class Workflow extends BaseNode {
   ): void {
     const node = this.getStaticNode(nodeName);
     const nodeState = loop.nodes.get(nodeName)!;
+
+    // Resume: fast-forward a node that already completed in a prior run
+    // (cached output, all interrupts resolved), unless it must rerun on resume.
+    const prior = loop.rehydrated.get(nodeName);
+    if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+      loop.pending.set(
+        nodeName,
+        Promise.resolve({
+          name: nodeName,
+          childCtx: makeFastForwardContext(ctx, prior),
+        }),
+      );
+      return;
+    }
 
     let runId = nodeState.runId;
     if (!runId) {
@@ -447,4 +491,21 @@ export class Workflow extends BaseNode {
     loop.pending.clear();
     await Promise.allSettled(outstanding);
   }
+}
+
+/**
+ * Builds a minimal completion result for a fast-forwarded (cached) node on
+ * resume. Only the fields read by `handleCompletion` are populated; the node's
+ * events are NOT re-emitted (they already exist in the session).
+ */
+function makeFastForwardContext(
+  parent: NodeContext,
+  prior: RehydratedNode,
+): NodeContext {
+  return {
+    output: prior.output,
+    route: prior.route,
+    branch: prior.branch ?? parent.branch,
+    interruptIds: [],
+  } as unknown as NodeContext;
 }
