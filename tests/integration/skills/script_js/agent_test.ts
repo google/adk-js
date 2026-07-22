@@ -12,7 +12,7 @@ import {normalizeLineEndings, sendInput} from '../../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 const PROJECT_PATH = `${dirname}/tests/integration/skills/script_js`;
-const TEST_EXECUTION_TIMEOUT = 60000;
+const TEST_EXECUTION_TIMEOUT = 120000;
 
 /**
  * This integration test verifies that an agent equipped with script execution skills

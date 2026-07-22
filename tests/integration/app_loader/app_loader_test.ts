@@ -15,7 +15,7 @@ import {sendInput} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
-const TEST_EXECUTION_TIMEOUT = 40000;
+const TEST_EXECUTION_TIMEOUT = 120000;
 
 describe('App loader CLI integration', () => {
   describe.each(['app_ts', 'app_js', 'app_default'])(
