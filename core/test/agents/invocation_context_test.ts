@@ -7,14 +7,14 @@
 import {
   BaseAgent,
   BaseAgentConfig,
+  createEvent,
+  createSession,
   Event,
   InvocationContext,
+  LlmAgent,
   LoopAgent,
   PluginManager,
   Session,
-  createEvent,
-  createSession,
-  LlmAgent,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -338,6 +338,5 @@ describe('InvocationContext.shouldPauseInvocation', () => {
       userResumeWithEmptyBranch,
     ]);
     expect(context2.shouldPauseInvocation(toolCallEvent)).toBe(true);
->>>>>>> 82e63a0 (Feat: Add InvocationContext.shouldPauseInvocation for global runtime interruption (Part 1/2))
   });
 });
