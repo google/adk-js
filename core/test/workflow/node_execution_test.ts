@@ -10,10 +10,10 @@ import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {createEvent, Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
-import {BaseNode} from '../../src/workflow-next/base_node.js';
-import {NodeTimeoutError} from '../../src/workflow-next/errors.js';
-import {NodeContext} from '../../src/workflow-next/node_context.js';
-import {EventChannel} from '../../src/workflow-next/utils/event_channel.js';
+import {BaseNode} from '../../src/workflow/base_node.js';
+import {NodeTimeoutError} from '../../src/workflow/errors.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
+import {EventChannel} from '../../src/workflow/utils/event_channel.js';
 
 // --- Test harness ---------------------------------------------------------
 
@@ -79,10 +79,7 @@ class FnNode extends BaseNode {
       input: unknown,
     ) => unknown | Promise<unknown>,
     config?: Partial<
-      Omit<
-        import('../../src/workflow-next/base_node.js').BaseNodeConfig,
-        'name'
-      >
+      Omit<import('../../src/workflow/base_node.js').BaseNodeConfig, 'name'>
     >,
   ) {
     super({name, ...config});

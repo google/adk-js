@@ -4,152 +4,103 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../agents/invocation_context.js';
-import {Event, isEvent} from '../events/event.js';
 import {BaseNode} from './base_node.js';
+import {NodeContext} from './node_context.js';
+import {executeChildNode} from './node_runner.js';
+import {createNodeState} from './node_state.js';
+import {NodeStatus} from './node_status.js';
 import {
-  consumeGenerator,
-  generateExecutionId,
-  getOrInitAgentStates,
-} from './node_runner.js';
-import {NodeState, NodeStatus, isNodeState} from './node_state.js';
-import {FunctionNode, FunctionNodeHandler} from './nodes/function_node.js';
+  DynamicNodeRun,
+  DynamicNodeState,
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+} from './schedule_dynamic_node.js';
 
 /**
- * Type for the dynamic workflow entry point.
+ * Handles `ctx.runNode()` calls for a {@link Workflow} subtree.
+ *
+ * Ported (Phase 4 subset) from `google/adk-python`
+ * `workflow/_dynamic_node_scheduler.py`. Implemented now: fresh execution and
+ * deduplication of concurrent calls to the same node path. Resumption from
+ * session events (rehydration + replay interception) is added in Phase 5 at the
+ * marked hook point.
  */
-export type DynamicEntryFunction<
-  TInput = unknown,
-  TOutput = unknown,
-> = FunctionNodeHandler<TInput, TOutput>;
+export class DynamicNodeScheduler implements ScheduleDynamicNode {
+  constructor(private readonly state: DynamicNodeState) {}
 
-export type DynamicEntry<TInput = unknown, TOutput = unknown> =
-  | BaseNode<TInput, TOutput>
-  | DynamicEntryFunction<TInput, TOutput>;
+  async schedule(
+    ctx: NodeContext,
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext> {
+    const name = options.nodeName ?? node.name;
+    const runId = options.runId;
+    const nodePath = `${ctx.nodePath}/${name}@${runId}`;
 
-/**
- * Options for the DynamicNodeScheduler.
- */
-export interface DynamicNodeSchedulerOptions {
-  /**
-   * Key inside `InvocationContext.agentStates` where the final output of the
-   * dynamic entry point should be saved upon completion.
-   */
-  outputKey?: string;
-}
-
-/**
- * Coordinates and executes a dynamic workflow where control flow (`async/await`, loops, conditionals)
- * is driven programmatically by Python/TS code calling `ctx.runNode(...)`.
- * Manages deterministic ID counters (`exec_node_<workflow>_<counter>`) and checkpoint skip-on-resume.
- */
-export class DynamicNodeScheduler {
-  readonly entryNode: BaseNode;
-  readonly options: DynamicNodeSchedulerOptions;
-
-  /**
-   * @param entry A BaseNode instance or a function handler to serve as the root of the dynamic workflow.
-   * @param options Optional configuration (outputKey).
-   */
-  constructor(entry: DynamicEntry, options?: DynamicNodeSchedulerOptions) {
-    if (typeof entry === 'function') {
-      this.entryNode = new FunctionNode('dynamic_entry_node', entry);
-    } else if (isBaseNode(entry)) {
-      this.entryNode = entry;
-    } else {
-      throw new Error(
-        'DynamicNodeScheduler requires a valid BaseNode instance or function handler.',
-      );
+    const existing = this.state.runs.get(nodePath);
+    if (existing?.task) {
+      // Deduplicate concurrent calls: await the in-flight task.
+      return existing.task;
     }
-    this.options = options || {};
+
+    // TODO(phase-5): lazy rehydration from session events + replay
+    // interception (dedup completed / resume waiting runs) goes here.
+
+    return this.runFresh(ctx, node, input, name, runId, nodePath, options);
   }
 
-  /**
-   * Runs the dynamic workflow entry node, intercepting events and handling checkpointing.
-   */
-  async *runAsync(
-    ctx: InvocationContext,
-    initialInput?: unknown,
-  ): AsyncGenerator<Event, void, void> {
-    const agentStates = getOrInitAgentStates(ctx);
-    const execId = generateExecutionId(ctx, this.entryNode.name);
-
-    const existingState = agentStates[execId] as NodeState | undefined;
-    if (
-      existingState &&
-      isNodeState(existingState) &&
-      existingState.status === NodeStatus.COMPLETED &&
-      !this.entryNode.rerunOnResume
-    ) {
-      if (this.options.outputKey) {
-        agentStates[this.options.outputKey] = existingState.outputPayload;
-      }
-      return;
-    }
-
-    const stateRecord: NodeState = {
-      executionId: execId,
-      nodeName: this.entryNode.name,
-      status: NodeStatus.RUNNING,
-      inputPayload: initialInput,
-      timestamp: Date.now(),
+  private async runFresh(
+    ctx: NodeContext,
+    node: BaseNode,
+    input: unknown,
+    name: string,
+    runId: string,
+    nodePath: string,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext> {
+    const run: DynamicNodeRun = {
+      state: createNodeState({
+        status: NodeStatus.RUNNING,
+        input,
+        runId,
+        parentRunId: ctx.runId,
+      }),
     };
-    agentStates[execId] = stateRecord;
+    this.state.runs.set(nodePath, run);
 
-    try {
-      const generator = this.entryNode.run(ctx, initialInput);
-      const yieldedEvents: Event[] = [];
+    run.task = executeChildNode(ctx, node, input, {
+      nodeName: name,
+      runId,
+      useAsOutput: options.useAsOutput,
+      useSubBranch: options.useSubBranch,
+      overrideBranch: options.overrideBranch,
+      overrideIsolationScope: options.overrideIsolationScope,
+    });
 
-      const {output, isPausedHitl} = await consumeGenerator(
-        generator,
-        async (ev) => {
-          if (isEvent(ev)) {
-            yieldedEvents.push(ev);
-          }
-        },
-      );
+    const childCtx = await run.task;
+    this.recordResult(run, childCtx, node);
+    return childCtx;
+  }
 
-      for (const ev of yieldedEvents) {
-        yield ev;
-      }
-
-      if (isPausedHitl || ctx.endInvocation || ctx.abortSignal?.aborted) {
-        stateRecord.status = NodeStatus.PAUSED_HITL;
-        stateRecord.timestamp = Date.now();
-        ctx.endInvocation = true;
-        return;
-      }
-
-      const finalResult =
-        output !== undefined
-          ? output
-          : (this.entryNode.lastOutputPayload ??
-            stateRecord.lastOutputPayload ??
-            initialInput);
-      stateRecord.status = NodeStatus.COMPLETED;
-      stateRecord.outputPayload = finalResult;
-      stateRecord.timestamp = Date.now();
-
-      if (this.options.outputKey) {
-        agentStates[this.options.outputKey] = finalResult;
-      }
-    } catch (error: unknown) {
-      stateRecord.status = NodeStatus.FAILED;
-      stateRecord.errorMessage =
-        error instanceof Error ? error.message : String(error);
-      stateRecord.timestamp = Date.now();
-      throw error;
+  private recordResult(
+    run: DynamicNodeRun,
+    childCtx: NodeContext,
+    node: BaseNode,
+  ): void {
+    if (childCtx.interruptIds.length > 0) {
+      run.state.status = NodeStatus.WAITING;
+      run.state.interrupts = [...childCtx.interruptIds];
+      childCtx.interruptIds.forEach((id) => this.state.interruptIds.add(id));
+    } else if (
+      node.waitForOutput &&
+      childCtx.output === undefined &&
+      childCtx.route === undefined
+    ) {
+      run.state.status = NodeStatus.WAITING;
+    } else {
+      run.state.status = NodeStatus.COMPLETED;
+      run.output = childCtx.output;
     }
   }
-}
-
-function isBaseNode(obj: unknown): obj is BaseNode {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'name' in obj &&
-    typeof (obj as BaseNode).name === 'string' &&
-    'run' in obj &&
-    typeof (obj as BaseNode).run === 'function'
-  );
 }

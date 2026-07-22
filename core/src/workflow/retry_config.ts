@@ -5,63 +5,81 @@
  */
 
 /**
- * Configuration options for node execution retries upon transient failures.
+ * An error constructor usable in {@link RetryConfig.exceptions}.
+ */
+export type ErrorClass = new (...args: never[]) => Error;
+
+/**
+ * Configuration for retrying a node.
+ *
+ * Ported from `google/adk-python` `workflow/_retry_config.py`. Delays are
+ * expressed in **seconds** (fractions allowed) to match the Python semantics
+ * and keep configuration portable across runtimes. Unset fields fall back to
+ * the documented defaults inside the retry utilities.
  */
 export interface RetryConfig {
   /**
-   * Maximum number of execution attempts (including the initial attempt).
-   * Must be >= 1.
+   * Maximum number of attempts, including the original request. If 0 or 1, it
+   * means no retries. If not specified, defaults to 5.
    */
-  maxAttempts: number;
+  maxAttempts?: number;
 
   /**
-   * Initial delay in milliseconds before the first retry.
-   * Default is 1000ms (1 second).
+   * Initial delay before the first retry, in seconds. If not specified,
+   * defaults to 1.0 second.
    */
-  initialDelayMs?: number;
+  initialDelay?: number;
 
   /**
-   * Maximum delay in milliseconds between retries.
-   * Default is 30000ms (30 seconds).
+   * Maximum delay between retries, in seconds. If not specified, defaults to
+   * 60.0 seconds.
    */
-  maxDelayMs?: number;
+  maxDelay?: number;
 
   /**
-   * Multiplier applied to the delay after each retry attempt (exponential backoff).
-   * Default is 2.0.
+   * Multiplier by which the delay increases after each attempt. If not
+   * specified, defaults to 2.0.
    */
   backoffFactor?: number;
 
   /**
-   * Optional array of Error constructors or error message patterns that should trigger a retry.
-   * If not specified, all errors are considered retryable up to `maxAttempts`.
+   * Randomness factor for the delay. If not specified, defaults to 1.0. Use 0.0
+   * to remove randomness.
    */
-  retryableErrors?: Array<new (...args: unknown[]) => Error | string | RegExp>;
+  jitter?: number;
+
+  /**
+   * Exceptions to retry on. Accepts error class names as strings (e.g.
+   * `['TypeError']`) or error classes directly (e.g. `[TypeError]`).
+   * `undefined`/`null` means retry on all errors.
+   */
+  exceptions?: Array<string | ErrorClass> | null;
 }
 
 /**
- * Validates and normalizes a RetryConfig into canonical defaults.
- * @param config Optional user-provided RetryConfig.
- * @returns Normalized RetryConfig or undefined if not provided.
+ * Normalizes the `exceptions` field of a {@link RetryConfig} to a list of error
+ * class name strings, mirroring Python's `field_validator`.
+ *
+ * @returns The list of class-name strings, or `undefined` to mean "retry on all
+ *   errors".
  */
-export function normalizeRetryConfig(
-  config?: RetryConfig,
-): Required<RetryConfig> | undefined {
-  if (!config) {
+export function normalizeRetryExceptions(
+  exceptions?: Array<string | ErrorClass> | null,
+): string[] | undefined {
+  if (exceptions === undefined || exceptions === null) {
     return undefined;
   }
-
-  if (config.maxAttempts < 1) {
+  return exceptions.map((item) => {
+    if (typeof item === 'string') {
+      return item;
+    }
+    if (typeof item === 'function' && item.name) {
+      return item.name;
+    }
     throw new Error(
-      `RetryConfig.maxAttempts must be at least 1, received: ${config.maxAttempts}`,
+      `exceptions must contain error class names (string) or error classes, got: ${String(
+        item,
+      )}`,
     );
-  }
-
-  return {
-    maxAttempts: config.maxAttempts,
-    initialDelayMs: config.initialDelayMs ?? 1000,
-    maxDelayMs: config.maxDelayMs ?? 30000,
-    backoffFactor: config.backoffFactor ?? 2.0,
-    retryableErrors: config.retryableErrors ?? [],
-  };
+  });
 }

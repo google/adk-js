@@ -4,104 +4,152 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it, vi} from 'vitest';
+import {describe, expect, it} from 'vitest';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
-import {
-  DynamicNodeScheduler,
-  FunctionNode,
-  NodeStatus,
-  runNode,
-} from '../../src/workflow/index.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
+import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
+import {EventChannel} from '../../src/workflow/utils/event_channel.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
-describe('Workflow DynamicNodeScheduler & runNode', () => {
-  function createTestContext(
-    params?: Partial<InvocationContext>,
-  ): InvocationContext {
-    const session: Session = {
-      id: 'session-dyn',
-      appName: 'test-app',
-      userId: 'test-user',
-      events: [],
-      state: {},
-    };
+function createIc(): InvocationContext {
+  const session = {
+    id: 's1',
+    appName: 'app',
+    userId: 'u',
+    events: [],
+    state: {},
+    lastUpdateTime: Date.now(),
+  } as unknown as Session;
+  return new InvocationContext({
+    invocationId: 'inv-1',
+    session,
+    agent: {
+      name: 'wf',
+      runAsync: async function* () {},
+    } as unknown as BaseAgent,
+    pluginManager: new PluginManager(),
+  });
+}
 
-    return new InvocationContext({
-      invocationId: 'inv-dyn',
-      session,
-      agent: {
-        name: 'mock_agent',
-        runAsync: async function* () {},
-      } as unknown as BaseAgent,
-      pluginManager: new PluginManager(),
-      ...params,
-    });
+async function driveWorkflow(
+  wf: Workflow,
+  input?: unknown,
+): Promise<{events: Event[]; output: unknown}> {
+  const channel = new EventChannel<Event>();
+  const root = new NodeContext({
+    invocationContext: createIc(),
+    channel,
+    nodePath: '',
+    runId: 'root',
+  });
+  const events: Event[] = [];
+  const run = root.runNode(wf, input, {useAsOutput: true}).then(
+    () => channel.close(),
+    (err) => channel.fail(err),
+  );
+  for await (const ev of channel) {
+    events.push(ev);
   }
+  await run;
+  return {events, output: root.output};
+}
 
-  it('should run dynamic workflows and track individual node checkpoints via runNode', async () => {
-    const ctx = createTestContext();
-    const nodeA = new FunctionNode('calc_a', (_ctx, num: number) => num * 2);
-    const nodeB = new FunctionNode('calc_b', (_ctx, num: number) => num + 10);
-
-    const dynamicEntry = async (context: InvocationContext, input?: number) => {
-      const resA = await runNode(context, nodeA, input || 5);
-      if (resA > 5) {
-        const resB = await runNode(context, nodeB, resA);
-        return resB;
-      }
-      return resA;
-    };
-
-    const scheduler = new DynamicNodeScheduler(dynamicEntry, {
-      outputKey: 'dynResult',
+describe('Phase 4 — dynamic (imperative) workflows', () => {
+  it('runs an imperative dynamicEntry driving ctx.runNode()', async () => {
+    const step = new FunctionNode('step', (_c, input) => `step(${input})`);
+    const wf = new Workflow({
+      name: 'dyn',
+      dynamicEntry: async (ctx, input) => {
+        const child = await ctx.runNode(step, input);
+        return `wrapped[${child.output}]`;
+      },
     });
-    for await (const _ of scheduler.runAsync(ctx, 4)) {
-      /* consume events */
-    }
-
-    expect(ctx.agentStates['exec_node_calc_a'].status).toBe(
-      NodeStatus.COMPLETED,
-    );
-    expect(ctx.agentStates['exec_node_calc_a'].outputPayload).toBe(8);
-    expect(ctx.agentStates['exec_node_calc_b'].status).toBe(
-      NodeStatus.COMPLETED,
-    );
-    expect(ctx.agentStates['exec_node_calc_b'].outputPayload).toBe(18);
-    expect(ctx.agentStates['dynResult']).toBe(18);
+    expect((await driveWorkflow(wf, 'x')).output).toBe('wrapped[step(x)]');
   });
 
-  it('should skip completed nodes inside dynamic execution on resume', async () => {
-    const ctx = createTestContext();
-    const spyA = vi.fn((_ctx, num: number) => num * 100);
-    const spyB = vi.fn((_ctx, num: number) => num + 50);
-    const nodeA = new FunctionNode('node_dyn_a', spyA, {rerunOnResume: false});
-    const nodeB = new FunctionNode('node_dyn_b', spyB, {rerunOnResume: true});
+  it('supports a bounded loop (the cycle case that used to hang)', async () => {
+    // Increment until >= 3; a natural JS loop, terminated by user code.
+    const inc = new FunctionNode('inc', (_c, n: number) => (n as number) + 1);
+    const wf = new Workflow({
+      name: 'loop',
+      dynamicEntry: async (ctx, input) => {
+        let value = input as number;
+        let iterations = 0;
+        while (value < 3) {
+          const child = await ctx.runNode(inc, value);
+          value = child.output as number;
+          iterations++;
+        }
+        return {value, iterations};
+      },
+    });
+    expect((await driveWorkflow(wf, 0)).output).toEqual({
+      value: 3,
+      iterations: 3,
+    });
+  });
 
-    ctx.agentStates['exec_node_node_dyn_a'] = {
-      executionId: 'exec_node_node_dyn_a',
-      nodeName: 'node_dyn_a',
-      status: NodeStatus.COMPLETED,
-      outputPayload: 999,
-      timestamp: Date.now(),
-    };
+  it('assigns distinct run ids to repeated dynamic calls (streams each event)', async () => {
+    const emit = new FunctionNode('emit', (_c, n) => `emit(${n})`);
+    const wf = new Workflow({
+      name: 'repeat',
+      dynamicEntry: async (ctx) => {
+        const outs: unknown[] = [];
+        for (let i = 0; i < 3; i++) {
+          outs.push((await ctx.runNode(emit, i)).output);
+        }
+        return outs;
+      },
+    });
+    const {events, output} = await driveWorkflow(wf);
+    expect(output).toEqual(['emit(0)', 'emit(1)', 'emit(2)']);
+    // Each iteration streamed its own event.
+    expect(events.filter((e) => e.author === 'emit')).toHaveLength(3);
+  });
 
-    const dynamicEntry = async (context: InvocationContext, input?: number) => {
-      const resA = await runNode(context, nodeA, input || 1);
-      const resB = await runNode(context, nodeB, resA);
-      return resB;
-    };
+  it('deduplicates concurrent ctx.runNode() calls to the same run', async () => {
+    let executions = 0;
+    const slow = new FunctionNode('slow', async () => {
+      executions++;
+      await new Promise((r) => setTimeout(r, 10));
+      return 'done';
+    });
+    const wf = new Workflow({
+      name: 'dedup',
+      dynamicEntry: async (ctx) => {
+        // Same explicit runId => same run path => deduped.
+        const [a, b] = await Promise.all([
+          ctx.runNode(slow, undefined, {runId: 'shared'}),
+          ctx.runNode(slow, undefined, {runId: 'shared'}),
+        ]);
+        return {a: a.output, b: b.output, executions};
+      },
+    });
+    expect((await driveWorkflow(wf)).output).toEqual({
+      a: 'done',
+      b: 'done',
+      executions: 1,
+    });
+  });
 
-    const scheduler = new DynamicNodeScheduler(dynamicEntry);
-    for await (const _ of scheduler.runAsync(ctx, 2)) {
-      /* consume events */
-    }
-
-    // spyA skipped, reused 999
-    expect(spyA).not.toHaveBeenCalled();
-    // spyB executed with 999
-    expect(spyB).toHaveBeenCalledTimes(1);
-    expect(spyB).toHaveBeenCalledWith(ctx, 999);
+  it('supports the node-as-tool pattern (a node calls a sub-node)', async () => {
+    const adder = new FunctionNode(
+      'adder',
+      (_c, args: {a: number; b: number}) => args.a + args.b,
+    );
+    const orchestrator = new FunctionNode('orchestrator', async (ctx) => {
+      const r1 = await ctx.runNode(adder, {a: 2, b: 3});
+      const r2 = await ctx.runNode(adder, {a: 10, b: r1.output as number});
+      return r2.output;
+    });
+    const wf = new Workflow({
+      name: 'node_as_tool',
+      edges: [['START', orchestrator]],
+    });
+    expect((await driveWorkflow(wf)).output).toBe(15);
   });
 });

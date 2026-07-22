@@ -4,89 +4,197 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ParsedGraph} from './graph_parser.js';
-
 /**
- * Performs structural validation on a ParsedGraph before execution begins.
- * Verifies reachability, checks for unintended cycles in DAG mode, and validates JoinNode upstream counts.
+ * Validates workflow graphs and computes terminal nodes.
  *
- * @param graph The ParsedGraph to validate.
- * @param options Optional validation settings (e.g. `allowCycles`).
- * @throws Error if the graph structure is invalid or malformed.
+ * Ported from `google/adk-python` `workflow/utils/_graph_validation.py`.
+ * The Phase 3 static-schema check and the Phase 7 chat-agent wiring check are
+ * intentionally deferred to their respective phases.
  */
-export function validateGraph(
-  graph: ParsedGraph,
-  options?: {allowCycles?: boolean},
-): void {
-  // 1. Reachability check from "START"
-  const visited = new Set<string>(['START']);
-  const queue: string[] = ['START'];
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const edges = graph.adjacencyList.get(current) || [];
-    for (const edge of edges) {
-      if (!visited.has(edge.target.name)) {
-        visited.add(edge.target.name);
-        queue.push(edge.target.name);
-      }
-    }
+import {BaseNode, START} from '../base_node.js';
+import {DEFAULT_ROUTE, Edge} from '../graph.js';
+
+function validateDuplicateNodeNames(nodes: BaseNode[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    counts.set(node.name, (counts.get(node.name) ?? 0) + 1);
   }
+  const duplicates = [...counts.entries()]
+    .filter(([, c]) => c > 1)
+    .map(([name]) => name)
+    .sort();
+  if (duplicates.length > 0) {
+    throw new Error(
+      `Graph validation failed. Duplicate node names found: ${JSON.stringify(
+        duplicates,
+      )}. Pass the exact same object instance to reuse a node, or give distinct nodes unique names.`,
+    );
+  }
+  return new Set(counts.keys());
+}
 
-  for (const [nodeName] of graph.nodes) {
-    if (!visited.has(nodeName)) {
+function validateStartNode(nodeNames: Set<string>): void {
+  if (!nodeNames.has(START.name)) {
+    throw new Error(
+      `Graph validation failed. START node (name: '${START.name}') not found in graph nodes.`,
+    );
+  }
+}
+
+function validateStartEdges(edges: Edge[]): void {
+  for (const edge of edges) {
+    if (edge.fromNode.name === START.name && edge.route !== null) {
       throw new Error(
-        `Graph validation failed: Node "${nodeName}" is unreachable from "START". Check your edge definitions.`,
+        `Graph validation failed. Edges from START must not have routes (edge to ${edge.toNode.name} has route ${String(
+          edge.route,
+        )}).`,
       );
     }
   }
+}
 
-  // 2. Cycle detection (DFS via recursion stack) if !allowCycles
-  if (!options?.allowCycles) {
-    const recursionStack = new Set<string>();
-    const dfsVisited = new Set<string>();
-
-    const checkCycles = (nodeName: string): void => {
-      dfsVisited.add(nodeName);
-      recursionStack.add(nodeName);
-
-      const edges = graph.adjacencyList.get(nodeName) || [];
-      for (const edge of edges) {
-        const targetName = edge.target.name;
-        if (!dfsVisited.has(targetName)) {
-          checkCycles(targetName);
-        } else if (recursionStack.has(targetName)) {
-          throw new Error(
-            `Graph validation failed: Cycle detected involving node "${targetName}". If your workflow intentionally contains loops, enable cycle support or use dynamic routing.`,
-          );
-        }
-      }
-
-      recursionStack.delete(nodeName);
-    };
-
-    checkCycles('START');
+function validateConnectivity(edges: Edge[], nodeNames: Set<string>): void {
+  const adj = new Map<string, Set<string>>();
+  for (const name of nodeNames) {
+    adj.set(name, new Set());
+  }
+  const toNodes = new Set<string>();
+  for (const edge of edges) {
+    adj.get(edge.fromNode.name)!.add(edge.toNode.name);
+    toNodes.add(edge.toNode.name);
   }
 
-  // 3. JoinNode upstream predecessor validation
-  for (const [nodeName, node] of graph.nodes) {
-    const nodeObj = node as unknown as Record<string, unknown>;
-    if (
-      'upstreamCount' in nodeObj &&
-      typeof nodeObj.upstreamCount === 'number'
-    ) {
-      const upstreamCount = nodeObj.upstreamCount as number;
-      const actualInbound = graph.inboundCounts.get(nodeName) || 0;
-      if (upstreamCount < 1) {
-        throw new Error(
-          `JoinNode "${nodeName}" has invalid upstreamCount: ${upstreamCount}. Must be >= 1.`,
-        );
-      }
-      if (upstreamCount > actualInbound) {
-        throw new Error(
-          `JoinNode "${nodeName}" expects ${upstreamCount} upstream predecessors, but only has ${actualInbound} inbound edges defined in the graph.`,
-        );
+  const reachable = new Set<string>();
+  const stack = [START.name];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (reachable.has(node)) {
+      continue;
+    }
+    reachable.add(node);
+    for (const next of adj.get(node) ?? []) {
+      if (!reachable.has(next)) {
+        stack.push(next);
       }
     }
   }
+
+  const unreachable = [...nodeNames].filter((n) => !reachable.has(n)).sort();
+  if (unreachable.length > 0) {
+    throw new Error(
+      `Graph validation failed. The following nodes are unreachable from START: ${JSON.stringify(
+        unreachable,
+      )}`,
+    );
+  }
+  if (toNodes.has(START.name)) {
+    throw new Error(
+      'Graph validation failed. START node must not have incoming edges.',
+    );
+  }
+}
+
+function validateDuplicateEdges(edges: Edge[]): void {
+  const seen = new Set<string>();
+  for (const edge of edges) {
+    const key = `${edge.fromNode.name}\u0000${edge.toNode.name}`;
+    if (seen.has(key)) {
+      throw new Error(
+        `Graph validation failed. Duplicate edge found: from=${edge.fromNode.name}, to=${edge.toNode.name}`,
+      );
+    }
+    seen.add(key);
+  }
+}
+
+function validateDefaultRoutes(edges: Edge[]): void {
+  const defaultRouteEdges = new Map<string, string>();
+  for (const edge of edges) {
+    if (Array.isArray(edge.route) && edge.route.includes(DEFAULT_ROUTE)) {
+      throw new Error(
+        `Graph validation failed. DEFAULT_ROUTE cannot be combined with other routes in a list (edge from=${edge.fromNode.name}, to=${edge.toNode.name}). Use a separate edge for DEFAULT_ROUTE.`,
+      );
+    }
+    if (edge.route === DEFAULT_ROUTE) {
+      const from = edge.fromNode.name;
+      if (defaultRouteEdges.has(from)) {
+        throw new Error(
+          `Graph validation failed. Multiple DEFAULT_ROUTE edges found from node ${from} to ${defaultRouteEdges.get(
+            from,
+          )} and ${edge.toNode.name}`,
+        );
+      }
+      defaultRouteEdges.set(from, edge.toNode.name);
+    }
+  }
+}
+
+function detectUnconditionalCycles(
+  edges: Edge[],
+  nodeNames: Set<string>,
+): void {
+  const adj = new Map<string, string[]>();
+  for (const name of nodeNames) {
+    adj.set(name, []);
+  }
+  for (const edge of edges) {
+    if (edge.route === null) {
+      adj.get(edge.fromNode.name)!.push(edge.toNode.name);
+    }
+  }
+
+  const inStack = new Set<string>();
+  const done = new Set<string>();
+
+  const dfs = (node: string, path: string[]): void => {
+    inStack.add(node);
+    path.push(node);
+    for (const neighbor of adj.get(node) ?? []) {
+      if (inStack.has(neighbor)) {
+        const cycleStart = path.indexOf(neighbor);
+        const cycle = [...path.slice(cycleStart), neighbor];
+        throw new Error(
+          `Graph validation failed. Unconditional cycle detected: ${cycle.join(
+            ' -> ',
+          )}. Cycles must include at least one conditional (routed) edge to avoid infinite loops.`,
+        );
+      }
+      if (!done.has(neighbor)) {
+        dfs(neighbor, path);
+      }
+    }
+    path.pop();
+    inStack.delete(node);
+    done.add(node);
+  };
+
+  for (const name of nodeNames) {
+    if (!done.has(name)) {
+      dfs(name, []);
+    }
+  }
+}
+
+function computeTerminalNodes(nodes: BaseNode[], edges: Edge[]): Set<string> {
+  const fromNames = new Set(edges.map((e) => e.fromNode.name));
+  return new Set(
+    nodes
+      .filter((n) => n.name !== START.name && !fromNames.has(n.name))
+      .map((n) => n.name),
+  );
+}
+
+/**
+ * Validates the workflow graph and returns the set of terminal node names.
+ */
+export function validateGraph(nodes: BaseNode[], edges: Edge[]): Set<string> {
+  const nodeNames = validateDuplicateNodeNames(nodes);
+  validateStartNode(nodeNames);
+  validateStartEdges(edges);
+  validateConnectivity(edges, nodeNames);
+  validateDuplicateEdges(edges);
+  validateDefaultRoutes(edges);
+  detectUnconditionalCycles(edges, nodeNames);
+  return computeTerminalNodes(nodes, edges);
 }

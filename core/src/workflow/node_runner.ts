@@ -4,303 +4,241 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../agents/invocation_context.js';
+import {
+  InvocationContext,
+  InvocationContextParams,
+} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {BaseNode} from './base_node.js';
-import {NodeState, NodeStatus, isNodeState} from './node_state.js';
-import {GraphEdge, ParsedGraph, parseGraph} from './utils/graph_parser.js';
-import {validateGraph} from './utils/graph_validation.js';
-import {runWithRetry} from './utils/retry_utils.js';
+import {BranchPath} from './branch_path.js';
+import {NodeTimeoutError} from './errors.js';
+import {NodeContext} from './node_context.js';
+import {createNodeState} from './node_state.js';
+import {NodeStatus} from './node_status.js';
+import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
 
 /**
- * Options for configuring the NodeRunner.
+ * Options controlling a single `ctx.runNode(...)` execution.
  */
-export interface NodeRunnerOptions {
-  /**
-   * Whether to allow cycles in the graph during validation.
-   * Default is false.
-   */
-  allowCycles?: boolean;
-
-  /**
-   * Key inside `InvocationContext.agentStates` where the final leaf node outputs
-   * should also be written or aggregated, if requested by the workflow.
-   */
-  outputKey?: string;
-}
-
-interface QueueItem {
-  readonly node: BaseNode;
-  readonly inputPayload?: unknown;
-  readonly sourceNodeName: string;
+export interface RunNodeOptions {
+  /** Deterministic tracking name; defaults to `node.name`. */
+  nodeName?: string;
+  /** Unique id for this specific run; defaults to `nodeName`. */
+  runId?: string;
+  /** If true, the child's output replaces the caller's output. */
+  useAsOutput?: boolean;
+  /** If true, run the child in an isolated sub-branch. */
+  useSubBranch?: boolean;
+  /** Explicit branch, overriding the default/sub-branch computation. */
+  overrideBranch?: string;
+  /** Explicit isolation scope, overriding inheritance from the parent. */
+  overrideIsolationScope?: string;
 }
 
 /**
- * Consumes an AsyncGenerator to completion, capturing all yielded Events via onEvent
- * and extracting the final return value when `done: true`.
- * Also detects if any yielded Event signals a Human-in-the-Loop (`RequestInput`) pause condition.
+ * Executes a child node on behalf of `parent.runNode(...)`.
+ *
+ * Responsibilities (Phase 1 scope): create the child {@link NodeContext},
+ * drive `node.run()`, enrich each emitted event (author, node path, branch,
+ * isolation scope), track the child's `output`/`route`, apply the per-node
+ * `timeout`, and retry on failure per `retryConfig`. Returns the child context.
  */
-export async function consumeGenerator<TOutput = unknown>(
-  generator: AsyncGenerator<Event, TOutput, unknown>,
-  onEvent?: (event: Event) => void | Promise<void>,
-): Promise<{
-  output: TOutput | undefined;
-  isPausedHitl: boolean;
-  lastEvent?: Event;
-}> {
-  let isPausedHitl = false;
-  let lastEvent: Event | undefined;
+export async function executeChildNode(
+  parent: NodeContext,
+  node: BaseNode,
+  input: unknown,
+  options: RunNodeOptions = {},
+): Promise<NodeContext> {
+  const nodeName = options.nodeName ?? node.name;
+  const runId = options.runId ?? nodeName;
+  const nodePath = parent.nodePath
+    ? `${parent.nodePath}.${nodeName}`
+    : nodeName;
 
-  while (true) {
-    const {value, done} = await generator.next();
-    if (done) {
-      let output = value as TOutput | undefined;
-      if (
-        output === undefined &&
-        lastEvent?.actions &&
-        typeof lastEvent.actions === 'object' &&
-        'output' in (lastEvent.actions as unknown as Record<string, unknown>)
-      ) {
-        output = (lastEvent.actions as unknown as Record<string, unknown>)
-          .output as TOutput;
-      }
-      return {output, isPausedHitl, lastEvent};
-    }
-
-    const event = value as Event;
-    lastEvent = event;
-    if (onEvent) {
-      await onEvent(event);
-    }
-    if (isHitlPauseEvent(event)) {
-      isPausedHitl = true;
-      return {output: undefined, isPausedHitl, lastEvent: event};
-    }
-  }
-}
-
-/**
- * Executes a static graph workflow (`edges`) using topological queue-based scheduling,
- * evaluating edge triggers upon node completion, checkpointing state in `InvocationContext.agentStates`,
- * and handling Human-in-the-Loop (`RequestInput` / `PAUSED_HITL`) interruptions cleanly.
- */
-export class NodeRunner {
-  readonly graph: ParsedGraph;
-  readonly options: NodeRunnerOptions;
-
-  /**
-   * @param edgesOrGraph Array of GraphEdge sequences or a pre-parsed ParsedGraph.
-   * @param options Optional configuration for the runner.
-   */
-  constructor(
-    edgesOrGraph: GraphEdge[] | ParsedGraph,
-    options?: NodeRunnerOptions,
-  ) {
-    if (edgesOrGraph instanceof ParsedGraph) {
-      this.graph = edgesOrGraph;
-    } else {
-      this.graph = parseGraph(edgesOrGraph);
-    }
-    this.options = options || {};
-    validateGraph(this.graph, {allowCycles: this.options.allowCycles});
+  let branch = parent.branch;
+  if (options.overrideBranch !== undefined) {
+    branch = options.overrideBranch;
+  } else if (options.useSubBranch) {
+    branch = BranchPath.createSubBranch(parent.branch, {
+      name: nodeName,
+      runId: options.runId,
+    });
   }
 
-  /**
-   * Executes the workflow graph from "START" (or from paused/rehydrated checkpoints).
-   * @param ctx The invocation context for the workflow run.
-   * @param initialInput Optional initial input payload passed to START nodes.
-   * @yields All events generated during node execution.
-   */
-  async *runAsync(
-    ctx: InvocationContext,
-    initialInput?: unknown,
-  ): AsyncGenerator<Event, void, void> {
-    const agentStates = getOrInitAgentStates(ctx);
-    const queue: QueueItem[] = [];
+  const isolationScope =
+    options.overrideIsolationScope ?? parent.isolationScope;
 
-    // 1. Initialize queue with edges originating from "START"
-    const startEdges = this.graph.adjacencyList.get('START') || [];
-    for (const edge of startEdges) {
-      queue.push({
-        node: edge.target,
-        inputPayload: initialInput,
-        sourceNodeName: 'START',
-      });
-    }
+  const childIc =
+    branch === parent.invocationContext.branch
+      ? parent.invocationContext
+      : withBranch(parent.invocationContext, branch);
 
-    // 2. Queue processing loop
-    while (queue.length > 0) {
-      if (ctx.endInvocation || ctx.abortSignal?.aborted) {
-        break;
+  const child = new NodeContext({
+    invocationContext: childIc,
+    channel: parent.channel,
+    nodePath,
+    runId,
+    resumeInputs: parent.resumeInputs,
+    isolationScope,
+  });
+  // Propagate the dynamic scheduler down; a nested Workflow overrides it.
+  child.scheduler = parent.scheduler;
+
+  const nodeState = createNodeState({
+    status: NodeStatus.RUNNING,
+    input,
+    runId,
+  });
+
+  for (;;) {
+    // Reset per-attempt output so a retry starts clean.
+    child.output = undefined;
+    child.route = undefined;
+    child.interruptIds = [];
+    try {
+      await runOnce(node, child, input, nodeName, branch, isolationScope);
+      break;
+    } catch (err) {
+      // Check retry eligibility with the attempt that just failed, compute its
+      // backoff delay, THEN advance the counter (matches Python semantics).
+      if (shouldRetryNode(err, node.retryConfig, nodeState)) {
+        const delaySeconds = getRetryDelaySeconds(node.retryConfig, nodeState);
+        nodeState.attemptCount += 1;
+        await delay(delaySeconds * 1000, parent.invocationContext.abortSignal);
+        continue;
       }
-
-      const item = queue.shift()!;
-      const execId = generateExecutionId(ctx, item.node.name);
-
-      const existingState = agentStates[execId] as NodeState | undefined;
-      let nodeOutput: unknown = undefined;
-
-      if (
-        existingState &&
-        isNodeState(existingState) &&
-        existingState.status === NodeStatus.COMPLETED &&
-        !item.node.rerunOnResume
-      ) {
-        nodeOutput = existingState.outputPayload;
-      } else {
-        const effectiveInput =
-          existingState?.inputPayload !== undefined
-            ? existingState.inputPayload
-            : item.inputPayload;
-        const stateRecord: NodeState = {
-          executionId: execId,
-          nodeName: item.node.name,
-          status: NodeStatus.RUNNING,
-          inputPayload: effectiveInput,
-          timestamp: Date.now(),
-        };
-        agentStates[execId] = stateRecord;
-
-        try {
-          const generator = runWithRetry(
-            () => item.node.run(ctx, effectiveInput),
-            item.node.retryConfig,
-            ctx.abortSignal,
-          );
-
-          const yieldedEvents: Event[] = [];
-          const {output, isPausedHitl} = await consumeGenerator(
-            generator,
-            async (event) => {
-              yieldedEvents.push(event);
-            },
-          );
-
-          for (const ev of yieldedEvents) {
-            yield ev;
-          }
-
-          if (isPausedHitl || ctx.endInvocation || ctx.abortSignal?.aborted) {
-            stateRecord.status = NodeStatus.PAUSED_HITL;
-            stateRecord.timestamp = Date.now();
-            ctx.endInvocation = true;
-            break;
-          }
-
-          nodeOutput =
-            output !== undefined
-              ? output
-              : (item.node.lastOutputPayload ??
-                stateRecord.lastOutputPayload ??
-                item.inputPayload);
-          stateRecord.status = NodeStatus.COMPLETED;
-          stateRecord.outputPayload = nodeOutput;
-          stateRecord.timestamp = Date.now();
-        } catch (error: unknown) {
-          stateRecord.status = NodeStatus.FAILED;
-          stateRecord.errorMessage =
-            error instanceof Error ? error.message : String(error);
-          stateRecord.timestamp = Date.now();
-          throw error;
-        }
-      }
-
-      // 3. Evaluate outgoing edges and enqueue successors whose triggers are satisfied
-      const outgoingEdges = this.graph.adjacencyList.get(item.node.name) || [];
-      let hasRoutingEdges = false;
-      let matchedSpecificRoute = false;
-      let defaultRouteEdge: (typeof outgoingEdges)[0] | undefined;
-
-      for (const edge of outgoingEdges) {
-        if (!edge.trigger) {
-          queue.push({
-            node: edge.target,
-            inputPayload: nodeOutput,
-            sourceNodeName: item.node.name,
-          });
-          continue;
-        }
-
-        hasRoutingEdges = true;
-        if (edge.trigger.isDefaultRoute()) {
-          defaultRouteEdge = edge;
-          continue;
-        }
-
-        const triggerSatisfied = await edge.trigger.evaluate(ctx, nodeOutput);
-        if (triggerSatisfied) {
-          matchedSpecificRoute = true;
-          queue.push({
-            node: edge.target,
-            inputPayload: nodeOutput,
-            sourceNodeName: item.node.name,
-          });
-        }
-      }
-
-      if (hasRoutingEdges && !matchedSpecificRoute && defaultRouteEdge) {
-        queue.push({
-          node: defaultRouteEdge.target,
-          inputPayload: nodeOutput,
-          sourceNodeName: item.node.name,
-        });
-      }
-    }
-
-    if (this.options.outputKey) {
-      const finalStates: Record<string, unknown> = {};
-      for (const state of Object.values(agentStates)) {
-        if (isNodeState(state) && state.status === NodeStatus.COMPLETED) {
-          finalStates[state.nodeName] = state.outputPayload;
-        }
-      }
-      agentStates[this.options.outputKey] = finalStates;
+      throw err;
     }
   }
+
+  if (options.useAsOutput) {
+    parent.output = child.output;
+    parent.route = child.route;
+  }
+
+  return child;
 }
 
 /**
- * Gets or initializes the `agentStates` record on the invocation context.
+ * Drives one attempt of `node.run()`, enriching and pushing each event and
+ * tracking the child's output/route. Wrapped in a timeout when configured.
  */
-export function getOrInitAgentStates(
-  ctx: InvocationContext,
-): Record<string, unknown> {
-  const unknownCtx = ctx as unknown as Record<string, unknown>;
-  if (!unknownCtx.agentStates || typeof unknownCtx.agentStates !== 'object') {
-    unknownCtx.agentStates = {};
-  }
-  return unknownCtx.agentStates as Record<string, unknown>;
-}
-
-/**
- * Generates a deterministic execution ID for a node based on the context branch and node name.
- */
-export function generateExecutionId(
-  ctx: InvocationContext,
+async function runOnce(
+  node: BaseNode,
+  child: NodeContext,
+  input: unknown,
   nodeName: string,
-): string {
-  const branchPrefix = ctx.branch ? `${ctx.branch}.` : '';
-  return `exec_node_${branchPrefix}${nodeName}`;
+  branch: string | undefined,
+  isolationScope: string | undefined,
+): Promise<void> {
+  const body = (async () => {
+    for await (const event of node.run(child, input)) {
+      enrichEvent(event, child, nodeName, branch, isolationScope);
+      if (event.output !== undefined) {
+        child.output = event.output;
+      }
+      if (event.route !== undefined) {
+        child.route = event.route;
+      }
+      // HITL: an interrupt event marks its ids as long-running tool ids.
+      if (event.longRunningToolIds && event.longRunningToolIds.length > 0) {
+        for (const id of event.longRunningToolIds) {
+          if (!child.interruptIds.includes(id)) {
+            child.interruptIds.push(id);
+          }
+        }
+      }
+      child.channel.push(event);
+    }
+  })();
+
+  if (node.timeout && node.timeout > 0) {
+    await withTimeout(body, node.timeout, nodeName);
+  } else {
+    await body;
+  }
 }
 
 /**
- * Checks whether an event signals a Human-in-the-Loop pause (`RequestInput`).
+ * Stamps engine-owned provenance onto an event without clobbering values the
+ * node explicitly set.
  */
-export function isHitlPauseEvent(event: Event): boolean {
-  if (!event) return false;
-  if (event.actions && typeof event.actions === 'object') {
-    if (
-      'requestInput' in event.actions &&
-      Boolean((event.actions as Record<string, unknown>).requestInput)
-    ) {
-      return true;
+function enrichEvent(
+  event: Event,
+  child: NodeContext,
+  nodeName: string,
+  branch: string | undefined,
+  isolationScope: string | undefined,
+): void {
+  if (!event.author) {
+    event.author = nodeName;
+  }
+  event.nodeInfo = {...(event.nodeInfo ?? {}), path: child.nodePath};
+  if (branch !== undefined && event.branch === undefined) {
+    event.branch = branch;
+  }
+  if (isolationScope !== undefined && event.isolationScope === undefined) {
+    event.isolationScope = isolationScope;
+  }
+}
+
+/**
+ * Creates a shallow child InvocationContext with a different branch, preserving
+ * the shared invocation cost manager and all services/session.
+ */
+function withBranch(
+  ic: InvocationContext,
+  branch: string | undefined,
+): InvocationContext {
+  return new InvocationContext({
+    ...(ic as unknown as InvocationContextParams),
+    branch,
+  });
+}
+
+/**
+ * Rejects with {@link NodeTimeoutError} if `promise` does not settle within
+ * `timeoutSeconds`.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutSeconds: number,
+  nodeName: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds}));
+    }, timeoutSeconds * 1000);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Promise-based delay that rejects early if the abort signal fires.
+ */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Aborted'));
+      return;
     }
-  }
-  if (
-    'requestInput' in event &&
-    Boolean((event as Record<string, unknown>).requestInput)
-  ) {
-    return true;
-  }
-  return false;
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('Aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, {once: true});
+  });
 }

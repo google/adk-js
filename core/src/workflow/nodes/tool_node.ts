@@ -5,63 +5,102 @@
  */
 
 import {Context} from '../../agents/context.js';
-import {InvocationContext} from '../../agents/invocation_context.js';
 import {createEvent, Event} from '../../events/event.js';
 import {BaseTool} from '../../tools/base_tool.js';
-import {BaseNode, BaseNodeOptions} from '../base_node.js';
+import {randomUUID} from '../../utils/env_aware_utils.js';
+import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
+import {NodeContext} from '../node_context.js';
+/** Options for a {@link ToolNode}. */
+export interface ToolNodeConfig extends Partial<Omit<BaseNodeConfig, 'name'>> {
+  /** Optional name override; defaults to the tool's name. */
+  name?: string;
+}
 
 /**
- * A concrete node that wraps an ADK BaseTool (or FunctionTool) so it can be executed
- * directly as a step in a workflow graph without requiring an LLM wrapper.
+ * A node that wraps an ADK {@link BaseTool} and invokes it with the node input
+ * as its arguments.
+ *
+ * Ported from `google/adk-python` `workflow/_tool_node.py`. The node input is
+ * coerced to a tool-args object: genai `Content` → its text; a JSON string →
+ * parsed object; `null`/empty → `{}`.
  */
-export class ToolNode<
-  TInput = Record<string, unknown>,
-  TOutput = unknown,
-> extends BaseNode<TInput, TOutput> {
+export class ToolNode extends BaseNode {
   readonly tool: BaseTool;
 
-  /**
-   * @param tool The BaseTool instance to execute when this node runs.
-   * @param options Optional BaseNode configuration (name override, rerunOnResume, retryConfig).
-   */
-  constructor(tool: BaseTool, options?: BaseNodeOptions & {name?: string}) {
-    if (!tool || typeof tool.runAsync !== 'function') {
-      throw new Error(
-        'ToolNode requires a valid BaseTool instance with runAsync().',
-      );
-    }
-    super(options?.name || tool.name || 'tool_node', options);
+  constructor(tool: BaseTool, config: ToolNodeConfig = {}) {
+    super({name: config.name ?? tool.name, ...config});
     this.tool = tool;
   }
 
-  /**
-   * Executes the wrapped tool using parameters from the input payload.
-   */
-  async *run(
-    ctx: InvocationContext,
-    input?: TInput,
-  ): AsyncGenerator<Event, TOutput, unknown> {
-    const params = typeof input === 'object' && input !== null ? input : {};
-    const result = await this.tool.runAsync({
-      toolContext: ctx as unknown as Context,
-      args: params as Record<string, unknown>,
+  protected async *runImpl(
+    ctx: NodeContext,
+    input: unknown,
+  ): AsyncGenerator<Event, void, void> {
+    const toolContext = new Context({
+      invocationContext: ctx.invocationContext,
+      functionCallId: randomUUID(),
     });
 
-    const event = createEvent({
-      invocationId: ctx.invocationId,
-      author: this.name,
-      branch: ctx.branch,
-      actions: {
-        toolExecution: {
-          name: this.tool.name,
-          input: params,
-          output: result,
-        },
-      },
-    });
+    const args = coerceToolArgs(input);
+    const response = await this.tool.runAsync({args, toolContext});
 
-    yield event;
-    this.lastOutputPayload = result;
-    return result as TOutput;
+    const stateDelta =
+      Object.keys(toolContext.actions.stateDelta).length > 0
+        ? {...toolContext.actions.stateDelta}
+        : undefined;
+
+    if (response !== undefined && response !== null) {
+      yield createEvent({
+        author: this.name,
+        invocationId: ctx.invocationId,
+        branch: ctx.branch,
+        output: response,
+        actions: stateDelta ? {stateDelta} : undefined,
+      });
+    } else if (stateDelta) {
+      yield createEvent({
+        author: this.name,
+        invocationId: ctx.invocationId,
+        branch: ctx.branch,
+        actions: {stateDelta},
+      });
+    }
   }
+}
+
+/** Coerces arbitrary node input into a tool-arguments record. */
+function coerceToolArgs(input: unknown): Record<string, unknown> {
+  let args: unknown = input;
+
+  if (isContent(args)) {
+    args = extractText(args);
+  }
+
+  if (typeof args === 'string') {
+    const trimmed = args.trim();
+    if (!trimmed) {
+      args = null;
+    } else {
+      try {
+        args = JSON.parse(trimmed);
+      } catch {
+        // Leave as the raw string; validated below.
+      }
+    }
+  }
+
+  if (args === null || args === undefined) {
+    return {};
+  }
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    throw new TypeError(
+      'The input to ToolNode must be a dictionary of tool arguments or null, ' +
+        `but got ${typeof args}.`,
+    );
+  }
+  return args as Record<string, unknown>;
+}
+
+function extractText(content: {parts?: Array<{text?: string}>}): string {
+  return (content.parts ?? []).map((p) => p.text ?? '').join('');
 }

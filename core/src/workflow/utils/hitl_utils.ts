@@ -4,86 +4,96 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../../agents/invocation_context.js';
-import {createEvent, Event} from '../../events/event.js';
-import {isNodeState, NodeStatus} from '../node_state.js';
-
-import {getOrInitAgentStates} from '../node_runner.js';
-
 /**
- * Options when creating a HITL input request.
- */
-export interface RequestInputOptions {
-  /**
-   * Optional custom prompt or question to display to the user.
-   */
-  prompt?: string;
-
-  /**
-   * Optional structured schema or options describing what input is required.
-   */
-  schema?: Record<string, unknown>;
-}
-
-/**
- * Creates an Event that signals a Human-in-the-Loop (`RequestInput`) pause condition to the workflow engine.
+ * Utilities for Human-in-the-Loop (HITL) workflows.
  *
- * @param ctx The current invocation context.
- * @param nodeName Name of the node requesting input.
- * @param options Optional prompt and schema describing the required input.
+ * Ported (subset) from `google/adk-python`
+ * `workflow/utils/_workflow_hitl_utils.py`. The auth-credential helpers are
+ * added in the Phase 5 auth-gate follow-up.
  */
-export function createRequestInputEvent(
-  ctx: InvocationContext,
-  nodeName: string,
-  options?: RequestInputOptions,
-): Event {
+
+import {Part} from '@google/genai';
+import {z} from 'zod';
+import {createEvent, Event} from '../../events/event.js';
+import {RequestInput} from '../request_input.js';
+
+/** Function-call name marking a request-for-input interrupt. */
+export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
+
+/** Function-call name marking a request-for-credential interrupt. */
+export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
+
+/**
+ * Creates an interrupt {@link Event} from a {@link RequestInput}. The event
+ * carries an `adk_request_input` function call and marks the interrupt id as a
+ * long-running tool id.
+ */
+export function createRequestInputEvent(requestInput: RequestInput): Event {
+  const args: Record<string, unknown> = {
+    interruptId: requestInput.interruptId,
+    payload: requestInput.payload ?? null,
+    message: requestInput.message ?? null,
+    responseSchema: requestInput.responseSchema
+      ? z.toJSONSchema(requestInput.responseSchema)
+      : null,
+  };
+
   return createEvent({
-    invocationId: ctx.invocationId,
-    author: nodeName,
-    branch: ctx.branch,
-    content: options?.prompt
-      ? {role: 'model', parts: [{text: options.prompt}]}
-      : undefined,
-    actions: {
-      requestInput: {
-        nodeName,
-        prompt: options?.prompt,
-        schema: options?.schema,
-      },
+    content: {
+      role: 'model',
+      parts: [
+        {
+          functionCall: {
+            name: REQUEST_INPUT_FUNCTION_CALL_NAME,
+            args,
+            id: requestInput.interruptId,
+          },
+        },
+      ],
     },
+    longRunningToolIds: [requestInput.interruptId],
   });
 }
 
-/**
- * Locates any node inside `InvocationContext.agentStates` whose status is `PAUSED_HITL`,
- * and injects the resumption input payload so that subsequent workflow execution can proceed from that node.
- *
- * @param ctx The invocation context being resumed.
- * @param resumptionInput The user's input payload provided upon resumption.
- * @returns The name and execution ID of the resumed node, or undefined if no paused node was found.
- */
-export function injectHitlResumptionInput(
-  ctx: InvocationContext,
-  resumptionInput: unknown,
-): {nodeName: string; executionId: string} | undefined {
-  const agentStates = getOrInitAgentStates(ctx);
+/** Returns whether an event contains a `request_input` function call. */
+export function hasRequestInputFunctionCall(event: Event): boolean {
+  return (event.content?.parts ?? []).some(
+    (p) => p.functionCall?.name === REQUEST_INPUT_FUNCTION_CALL_NAME,
+  );
+}
 
-  for (const [execId, state] of Object.entries(agentStates)) {
-    if (
-      isNodeState(state) &&
-      state.status === NodeStatus.COMPLETED &&
-      state.wasPausedHitl
-    ) {
-      continue;
-    }
-    if (isNodeState(state) && state.status === NodeStatus.PAUSED_HITL) {
-      state.status = NodeStatus.RUNNING;
-      state.inputPayload = resumptionInput;
-      state.wasPausedHitl = true;
-      state.timestamp = Date.now();
-      return {nodeName: state.nodeName, executionId: execId};
+/** Returns whether an event contains an `adk_request_credential` function call. */
+export function hasAuthRequestFunctionCall(event: Event): boolean {
+  return (event.content?.parts ?? []).some(
+    (p) => p.functionCall?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  );
+}
+
+/** Extracts interrupt ids from `request_input` function calls in an event. */
+export function getRequestInputInterruptIds(event: Event): string[] {
+  const ids: string[] = [];
+  for (const part of event.content?.parts ?? []) {
+    const fc = part.functionCall;
+    if (fc && fc.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fc.id) {
+      ids.push(fc.id);
     }
   }
+  return ids;
+}
 
-  return undefined;
+/**
+ * Creates a `FunctionResponse` part answering a `request_input` interrupt,
+ * suitable for appending to a session as the user's resume response.
+ */
+export function createRequestInputResponse(
+  interruptId: string,
+  response: Record<string, unknown>,
+): Part {
+  return {
+    functionResponse: {
+      id: interruptId,
+      name: REQUEST_INPUT_FUNCTION_CALL_NAME,
+      response,
+    },
+  };
 }

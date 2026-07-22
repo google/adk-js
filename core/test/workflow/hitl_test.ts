@@ -10,15 +10,15 @@ import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
-import {NodeContext} from '../../src/workflow-next/node_context.js';
-import {FunctionNode} from '../../src/workflow-next/nodes/function_node.js';
-import {RequestInput} from '../../src/workflow-next/request_input.js';
-import {EventChannel} from '../../src/workflow-next/utils/event_channel.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
+import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
+import {RequestInput} from '../../src/workflow/request_input.js';
+import {EventChannel} from '../../src/workflow/utils/event_channel.js';
 import {
   hasRequestInputFunctionCall,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
-} from '../../src/workflow-next/utils/hitl_utils.js';
-import {Workflow} from '../../src/workflow-next/workflow.js';
+} from '../../src/workflow/utils/hitl_utils.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 function createIc(): InvocationContext {
   const session = {

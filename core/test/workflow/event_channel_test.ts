@@ -5,7 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {EventChannel} from '../../src/workflow-next/utils/event_channel.js';
+import {EventChannel} from '../../src/workflow/utils/event_channel.js';
 
 async function drain<T>(ch: EventChannel<T>): Promise<T[]> {
   const out: T[] = [];

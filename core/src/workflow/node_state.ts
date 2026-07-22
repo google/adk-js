@@ -4,89 +4,74 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event} from '../events/event.js';
+import {NodeStatus} from './node_status.js';
 
 /**
- * Represents the execution status of a node in a workflow graph or dynamic chain.
+ * State of a node in the workflow.
+ *
+ * Ported from `google/adk-python` `workflow/_node_state.py`. Note that the
+ * node's *output* is intentionally NOT stored here — it is carried on emitted
+ * events / the node Context, not on the persisted node state.
  */
-export enum NodeStatus {
-  PENDING = 'PENDING',
-  RUNNING = 'RUNNING',
-  COMPLETED = 'COMPLETED',
-  PAUSED_HITL = 'PAUSED_HITL',
-  FAILED = 'FAILED',
-}
-
-/**
- * Checkpointed state for a specific node execution.
- * Stored inside `InvocationContext.agentStates[executionId]`.
- */
-export interface NodeState<TInput = unknown, TOutput = unknown> {
-  /**
-   * The deterministic execution ID assigned to this node execution.
-   */
-  executionId: string;
-
-  /**
-   * The canonical name of the node.
-   */
-  nodeName: string;
-
-  /**
-   * The current status of the node execution.
-   */
+export interface NodeState {
+  /** The run status of the node. */
   status: NodeStatus;
 
-  /**
-   * The input payload passed into the node during execution.
-   */
-  inputPayload?: TInput;
+  /** The input provided to the node. */
+  input?: unknown;
+
+  /** The attempt count for this node run (1-based). */
+  attemptCount: number;
+
+  /** The interrupt ids that are pending to be resolved. */
+  interrupts: string[];
+
+  /** The responses for resuming the node, keyed by interrupt id. */
+  resumeInputs: Record<string, unknown>;
 
   /**
-   * The final output payload yielded or returned by the node upon completion.
+   * Sequential counter incremented each time the node gets a fresh run.
+   *
+   * Preserving this count independently of `runId` prevents path collisions if
+   * a node switches between custom string IDs and auto-generated numeric IDs.
    */
-  outputPayload?: TOutput;
+  runCounter: number;
+
+  /** The run ID of this node run. */
+  runId?: string;
 
   /**
-   * Error message if the node execution failed (`status === FAILED`).
+   * The run ID of the parent node which dynamically scheduled this node run.
    */
-  errorMessage?: string;
-
-  /**
-   * Timestamp in milliseconds when this state record was last updated.
-   */
-  timestamp: number;
-
-  /**
-   * Events emitted by the node during live execution, cached for replaying on resumption.
-   */
-  cachedEvents?: Event[];
-
-  /**
-   * Indicates if this node previously paused for Human-in-the-Loop (`RequestInput`).
-   */
-  wasPausedHitl?: boolean;
-
-  /**
-   * Stores intermediate or final payload before completion status transition.
-   */
-  lastOutputPayload?: unknown;
+  parentRunId?: string;
 }
 
 /**
- * Type guard to check if an object is a valid NodeState instance.
- * @param obj The object to check.
- * @returns True if the object matches the NodeState structure.
+ * Creates a {@link NodeState} with Python-aligned defaults, overlaying any
+ * provided partial values.
+ */
+export function createNodeState(partial?: Partial<NodeState>): NodeState {
+  return {
+    status: NodeStatus.INACTIVE,
+    attemptCount: 1,
+    interrupts: [],
+    resumeInputs: {},
+    runCounter: 0,
+    ...partial,
+  };
+}
+
+/**
+ * Type guard for a {@link NodeState}-shaped object.
  */
 export function isNodeState(obj: unknown): obj is NodeState {
   return (
     typeof obj === 'object' &&
     obj !== null &&
-    'executionId' in obj &&
-    typeof (obj as NodeState).executionId === 'string' &&
-    'nodeName' in obj &&
-    typeof (obj as NodeState).nodeName === 'string' &&
     'status' in obj &&
-    Object.values(NodeStatus).includes((obj as NodeState).status)
+    typeof (obj as NodeState).status === 'number' &&
+    'attemptCount' in obj &&
+    'interrupts' in obj &&
+    Array.isArray((obj as NodeState).interrupts)
   );
 }

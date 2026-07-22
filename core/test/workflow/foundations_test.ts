@@ -9,18 +9,18 @@ import {
   DynamicNodeFailError,
   NodeInterruptedError,
   NodeTimeoutError,
-} from '../../src/workflow-next/errors.js';
+} from '../../src/workflow/errors.js';
 import {
   createNodeState,
   isNodeState,
   NodeState,
-} from '../../src/workflow-next/node_state.js';
-import {NodeStatus} from '../../src/workflow-next/node_status.js';
-import {normalizeRetryExceptions} from '../../src/workflow-next/retry_config.js';
+} from '../../src/workflow/node_state.js';
+import {NodeStatus} from '../../src/workflow/node_status.js';
+import {normalizeRetryExceptions} from '../../src/workflow/retry_config.js';
 import {
   getRetryDelaySeconds,
   shouldRetryNode,
-} from '../../src/workflow-next/utils/retry_utils.js';
+} from '../../src/workflow/utils/retry_utils.js';
 
 describe('Phase 0 — errors', () => {
   it('NodeTimeoutError carries nodeName/timeout and is instanceof Error', () => {

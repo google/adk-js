@@ -10,11 +10,11 @@ import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {createEvent, Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
-import {BaseNode} from '../../src/workflow-next/base_node.js';
-import {DEFAULT_ROUTE} from '../../src/workflow-next/graph.js';
-import {NodeContext} from '../../src/workflow-next/node_context.js';
-import {EventChannel} from '../../src/workflow-next/utils/event_channel.js';
-import {Workflow} from '../../src/workflow-next/workflow.js';
+import {BaseNode} from '../../src/workflow/base_node.js';
+import {DEFAULT_ROUTE} from '../../src/workflow/graph.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
+import {EventChannel} from '../../src/workflow/utils/event_channel.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 function createIc(): InvocationContext {
   const session = {

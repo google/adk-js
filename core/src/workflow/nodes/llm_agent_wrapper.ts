@@ -6,87 +6,99 @@
 
 import {Content} from '@google/genai';
 import {BaseAgent} from '../../agents/base_agent.js';
-import {
-  InvocationContext,
-  InvocationContextParams,
-} from '../../agents/invocation_context.js';
-import {Event} from '../../events/event.js';
-import {BaseNode, BaseNodeOptions} from '../base_node.js';
+import {createEvent, Event} from '../../events/event.js';
+import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
+import {NodeContext} from '../node_context.js';
+
+/** Options for an {@link LLMAgentWrapper}. */
+export interface LLMAgentWrapperConfig extends Partial<
+  Omit<BaseNodeConfig, 'name'>
+> {
+  name?: string;
+}
 
 /**
- * A concrete node that wraps any ADK BaseAgent (e.g., LlmAgent, SequentialAgent)
- * so it can participate as a node inside a workflow graph.
- * Enforces single-turn task execution mode and relays generated events.
+ * Runs a {@link BaseAgent} (typically an `LlmAgent`) as a workflow node in
+ * `single_turn` mode: the node input is appended as a user turn, the agent runs
+ * once, and its final model text becomes the node output.
+ *
+ * Ported (single_turn subset) from `google/adk-python`
+ * `workflow/_llm_agent_wrapper.py`. The `task` and `chat` modes (FinishTaskTool,
+ * task delegation, transfer, isolation scopes) are a Phase 7b continuation.
  */
-export class LLMAgentWrapper<
-  TInput = unknown,
-  TOutput = unknown,
-> extends BaseNode<TInput, TOutput> {
+export class LLMAgentWrapper extends BaseNode {
   readonly agent: BaseAgent;
 
-  /**
-   * @param agent The BaseAgent instance to wrap.
-   * @param options Optional BaseNode configuration (name override, rerunOnResume, retryConfig).
-   */
-  constructor(agent: BaseAgent, options?: BaseNodeOptions & {name?: string}) {
-    if (!agent || typeof agent.runAsync !== 'function') {
-      throw new Error('LLMAgentWrapper requires a valid BaseAgent instance.');
-    }
-    super(options?.name || agent.name || 'llm_agent_wrapper', options);
+  constructor(agent: BaseAgent, config: LLMAgentWrapperConfig = {}) {
+    super({
+      name: config.name ?? agent.name,
+      description: agent.description,
+      ...config,
+    });
     this.agent = agent;
   }
 
-  /**
-   * Invokes the wrapped agent via runAsync and relays all produced events.
-   */
-  async *run(
-    ctx: InvocationContext,
-    input?: TInput,
-  ): AsyncGenerator<Event, TOutput, unknown> {
-    let lastOutput: unknown = undefined;
-
-    const childCtxParams: InvocationContextParams & Record<string, unknown> = {
-      ...ctx,
-      agent: this.agent,
-    };
-
+  protected async *runImpl(
+    ctx: NodeContext,
+    input: unknown,
+  ): AsyncGenerator<Event, void, void> {
+    // Append the node input as a user turn so the agent responds to it.
     if (input !== undefined && input !== null) {
-      if (typeof input === 'string') {
-        childCtxParams.userContent = {
-          role: 'user',
-          parts: [{text: input}],
-        };
-      } else if (
-        typeof input === 'object' &&
-        'role' in input &&
-        'parts' in input
-      ) {
-        childCtxParams.userContent = input as unknown as Content;
+      const userEvent = createEvent({
+        author: 'user',
+        invocationId: ctx.invocationId,
+        branch: ctx.branch,
+        content: toUserContent(input),
+      });
+      if (ctx.isolationScope) {
+        userEvent.isolationScope = ctx.isolationScope;
       }
+      ctx.session.events.push(userEvent);
     }
 
-    const childCtx = new InvocationContext(childCtxParams);
-
-    for await (const event of this.agent.runAsync(childCtx)) {
+    // Run the agent under the node's invocation context (it sets agent=itself).
+    for await (const event of this.agent.runAsync(ctx.invocationContext)) {
+      this.maybeSetOutput(event);
       yield event;
-      if (event.content?.parts?.length) {
-        const texts = event.content.parts.map((p) => p.text).filter(Boolean);
-        if (texts.length > 0) {
-          lastOutput = texts.join('\n');
-        }
-      }
-      if (
-        event.actions &&
-        typeof event.actions === 'object' &&
-        'output' in (event.actions as unknown as Record<string, unknown>)
-      ) {
-        lastOutput = (event.actions as unknown as Record<string, unknown>)
-          .output;
-      }
     }
-
-    const finalVal = lastOutput ?? input;
-    this.lastOutputPayload = finalVal;
-    return finalVal as TOutput;
   }
+
+  /**
+   * Promotes the final model text of an event to the node output (mirroring
+   * Python `process_llm_agent_output`).
+   */
+  private maybeSetOutput(event: Event): void {
+    if (event.partial) {
+      return;
+    }
+    if (hasFunctionCalls(event)) {
+      return;
+    }
+    const content = event.content;
+    if (!content || content.role !== 'model' || !content.parts) {
+      return;
+    }
+    const text = content.parts
+      .filter((p) => p.text && !p.thought)
+      .map((p) => p.text)
+      .join('');
+
+    event.output = text;
+    event.nodeInfo = {...(event.nodeInfo ?? {}), messageAsOutput: true};
+  }
+}
+
+function hasFunctionCalls(event: Event): boolean {
+  return (event.content?.parts ?? []).some((p) => p.functionCall);
+}
+
+/** Converts an arbitrary node input into a user-role `Content`. */
+function toUserContent(input: unknown): Content {
+  if (isContent(input)) {
+    return {...input, role: 'user'};
+  }
+  if (typeof input === 'string') {
+    return {role: 'user', parts: [{text: input}]};
+  }
+  return {role: 'user', parts: [{text: JSON.stringify(input)}]};
 }

@@ -4,116 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
-
 /**
- * The default route key used as fallback when no conditional routes match.
+ * A buffered trigger for a downstream node.
+ *
+ * Ported from `google/adk-python` `workflow/_trigger.py`. Unlike the previous
+ * TypeScript `Trigger` (a route-matching predicate), this is a plain data record
+ * describing *how* a target node should be invoked when its turn comes.
  */
-export const DEFAULT_ROUTE = '__DEFAULT__';
+export interface Trigger {
+  /** The input to pass to the triggered node. */
+  input?: unknown;
 
-/**
- * A predicate function evaluated against the event or output yielded by an upstream node.
- * @param ctx The current invocation context.
- * @param eventOrOutput The event or output payload produced by the source node.
- * @returns True if the transition condition is satisfied, false otherwise.
- */
-export type TriggerPredicate = (
-  ctx: InvocationContext,
-  eventOrOutput: Event | unknown,
-) => boolean | Promise<boolean>;
+  /** Whether this trigger should run the node in an isolated sub-branch. */
+  useSubBranch?: boolean;
 
-/**
- * Represents a conditional trigger attached to a workflow graph edge.
- * Determines whether a specific transition route should be taken upon upstream node completion.
- */
-export class Trigger {
-  private readonly routeKey?: string;
-  private readonly predicate?: TriggerPredicate;
+  /** The branch inherited from the predecessor node. */
+  branch?: string;
 
-  private constructor(options: {
-    routeKey?: string;
-    predicate?: TriggerPredicate;
-  }) {
-    this.routeKey = options.routeKey;
-    this.predicate = options.predicate;
-  }
-
-  /**
-   * Whether this trigger represents the fallback default route (`DEFAULT_ROUTE`).
-   */
-  isDefaultRoute(): boolean {
-    return this.routeKey === DEFAULT_ROUTE;
-  }
-
-  /**
-   * Creates a route matching trigger.
-   * The trigger evaluates to true if the emitted `Event.actions.route` (or event payload route) matches `routeKey`.
-   * @param routeKey The exact string route key to match.
-   */
-  static fromRoute(routeKey: string | symbol): Trigger {
-    if (!routeKey && typeof routeKey !== 'symbol') {
-      throw new Error(
-        'Trigger.fromRoute requires a non-empty string or symbol routeKey.',
-      );
-    }
-    const keyStr =
-      typeof routeKey === 'symbol'
-        ? routeKey === Symbol.for('DEFAULT_ROUTE')
-          ? DEFAULT_ROUTE
-          : routeKey.description || String(routeKey)
-        : routeKey;
-    return new Trigger({routeKey: keyStr});
-  }
-
-  /**
-   * Creates a predicate-based trigger.
-   * The trigger evaluates to true if the provided predicate function returns true.
-   * @param predicate A boolean function evaluated against the context and node output/event.
-   */
-  static fromPredicate(predicate: TriggerPredicate): Trigger {
-    if (typeof predicate !== 'function') {
-      throw new Error('Trigger.fromPredicate requires a function predicate.');
-    }
-    return new Trigger({predicate});
-  }
-
-  /**
-   * Evaluates whether this trigger is satisfied by the given event or output payload.
-   * @param ctx The current invocation context.
-   * @param eventOrOutput The event or output payload produced by the source node.
-   * @returns Promise resolving to true if the transition should occur, false otherwise.
-   */
-  async evaluate(
-    ctx: InvocationContext,
-    eventOrOutput: Event | unknown,
-  ): Promise<boolean> {
-    if (this.routeKey) {
-      if (eventOrOutput && typeof eventOrOutput === 'object') {
-        const obj = eventOrOutput as Record<string, unknown>;
-        if (
-          'actions' in obj &&
-          obj.actions &&
-          typeof obj.actions === 'object' &&
-          'route' in (obj.actions as Record<string, unknown>) &&
-          (obj.actions as Record<string, unknown>).route === this.routeKey
-        ) {
-          return true;
-        }
-        if ('route' in obj && obj.route === this.routeKey) {
-          return true;
-        }
-      }
-      if (eventOrOutput === this.routeKey) {
-        return true;
-      }
-      return false;
-    }
-
-    if (this.predicate) {
-      return await this.predicate(ctx, eventOrOutput);
-    }
-
-    return true;
-  }
+  /** Scope tag explicitly propagated to this trigger. */
+  isolationScope?: string;
 }

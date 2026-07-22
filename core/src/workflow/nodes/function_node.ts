@@ -4,131 +4,167 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
-import {InvocationContext} from '../../agents/invocation_context.js';
+import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event, isEvent} from '../../events/event.js';
-import {BaseNode, BaseNodeOptions} from '../base_node.js';
+import {BaseNode, BaseNodeConfig, isContent, toContent} from '../base_node.js';
+import {NodeContext} from '../node_context.js';
 
 /**
- * Type for the function wrapped by a FunctionNode.
- * Can return a direct value, a Promise of a value, an Event, or an AsyncGenerator of Events.
+ * A value a {@link FunctionNodeHandler} may return or yield.
+ */
+export type FunctionNodeResult<TOutput> =
+  | TOutput
+  | Event
+  | null
+  | undefined
+  | void;
+
+/**
+ * The handler wrapped by a {@link FunctionNode}.
+ *
+ * Unlike Python's `FunctionNode` (which binds named parameters from `ctx.state`
+ * or `node_input` via runtime signature introspection), the TypeScript form
+ * uses the idiomatic explicit `(ctx, input)` signature. Read `ctx.state`
+ * directly for state-bound values. It may return a value/`Event`, a Promise, or
+ * a (sync/async) generator of those.
  */
 export type FunctionNodeHandler<TInput = unknown, TOutput = unknown> = (
-  ctx: InvocationContext,
-  input?: TInput,
+  ctx: NodeContext,
+  input: TInput,
 ) =>
-  | AsyncGenerator<Event, TOutput, unknown>
-  | Promise<TOutput | Event>
-  | TOutput
-  | Event;
+  | FunctionNodeResult<TOutput>
+  | Promise<FunctionNodeResult<TOutput>>
+  | Generator<FunctionNodeResult<TOutput>, void, unknown>
+  | AsyncGenerator<FunctionNodeResult<TOutput>, void, unknown>;
 
 /**
- * A concrete node that wraps a deterministic JavaScript/TypeScript function.
- * Automatically handles generator streams, Event returns, or boxes plain return values into Event outputs.
+ * Options for a {@link FunctionNode}.
+ */
+export interface FunctionNodeConfig extends Partial<
+  Omit<BaseNodeConfig, 'name'>
+> {
+  /**
+   * If set, the framework requests user authentication before running (Phase 5
+   * enables the auth gate; stored here now for API parity).
+   */
+  authConfig?: AuthConfig;
+}
+
+/**
+ * A node that wraps a plain function, async function, or (sync/async) generator.
+ *
+ * Ported (TS-idiomatic subset) from `google/adk-python` `_function_node.py`.
+ * Return-value handling:
+ *  - `Event` → emitted as-is (output validated against `outputSchema`)
+ *  - genai `Content` → emitted as the event content
+ *  - `null`/`undefined` → skipped (unless there are pending state deltas)
+ *  - anything else → emitted as `Event(output=value)`
+ * State written via `ctx.state` during execution is attached to emitted events.
  */
 export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
   TInput,
   TOutput
 > {
+  readonly authConfig?: AuthConfig;
   private readonly handler: FunctionNodeHandler<TInput, TOutput>;
 
-  /**
-   * @param name Unique name for this function node.
-   * @param handler The execution logic function.
-   * @param options Optional BaseNode configuration (rerunOnResume, retryConfig).
-   */
   constructor(
     name: string,
     handler: FunctionNodeHandler<TInput, TOutput>,
-    options?: BaseNodeOptions,
+    config: FunctionNodeConfig = {},
   ) {
-    super(name, options);
     if (typeof handler !== 'function') {
-      throw new Error(
-        `FunctionNode "${name}" requires a valid function handler.`,
-      );
+      throw new TypeError('FunctionNode handler must be a function.');
     }
+    super({name, ...config});
     this.handler = handler;
+    this.authConfig = config.authConfig;
   }
 
-  /**
-   * Executes the wrapped handler function inside the workflow context.
-   */
-  async *run(
-    ctx: InvocationContext,
-    input?: TInput,
-  ): AsyncGenerator<Event, TOutput, unknown> {
-    const resultOrGen = this.handler(ctx, input);
+  protected async *runImpl(
+    ctx: NodeContext,
+    input: TInput,
+  ): AsyncGenerator<Event | TOutput | unknown, void, void> {
+    // TODO(phase-5): auth gate (authConfig -> adk_request_credential interrupt).
+    const result = this.handler(ctx, input);
 
-    if (isAsyncGenerator(resultOrGen)) {
-      const finalVal = yield* resultOrGen;
-      this.lastOutputPayload = finalVal;
-      return finalVal;
+    if (isAsyncIterable(result)) {
+      for await (const item of result) {
+        yield item;
+      }
+    } else if (isSyncGenerator(result)) {
+      for (const item of result) {
+        yield item;
+      }
+    } else {
+      // Plain value or Promise of a value.
+      yield await (result as Promise<FunctionNodeResult<TOutput>>);
+    }
+  }
+
+  protected override toEvent(ctx: NodeContext, data: unknown): Event | null {
+    const stateDelta =
+      Object.keys(ctx.actions.stateDelta).length > 0
+        ? {...ctx.actions.stateDelta}
+        : undefined;
+
+    if (data === null || data === undefined) {
+      return stateDelta
+        ? createEvent({
+            author: this.name,
+            invocationId: ctx.invocationId,
+            branch: ctx.branch,
+            actions: {stateDelta},
+          })
+        : null;
     }
 
-    const res = await Promise.resolve(resultOrGen);
-
-    if (isEvent(res)) {
-      yield res;
-      const extracted =
-        res.content ??
-        (typeof res.actions === 'object' &&
-        res.actions !== null &&
-        'output' in (res.actions as unknown as Record<string, unknown>)
-          ? (res.actions as unknown as Record<string, unknown>).output
-          : res);
-      this.lastOutputPayload = extracted;
-      return extracted as TOutput;
+    if (isEvent(data)) {
+      const event = data as Event;
+      if (event.output !== undefined) {
+        event.output = this.validateOutput(event.output);
+      }
+      if (stateDelta) {
+        Object.assign(event.actions.stateDelta, stateDelta);
+      }
+      return event;
     }
 
-    if (res !== undefined && res !== null) {
-      const boxedEvent = createEvent({
-        invocationId: ctx.invocationId,
+    if (isContent(data)) {
+      return createEvent({
         author: this.name,
+        invocationId: ctx.invocationId,
         branch: ctx.branch,
-        content: toContent(res),
-        actions: {output: res},
+        content: data,
+        actions: stateDelta ? {stateDelta} : undefined,
       });
-      yield boxedEvent;
     }
 
-    this.lastOutputPayload = res;
-    return res as TOutput;
+    const output = this.validateOutput(data);
+    return createEvent({
+      author: this.name,
+      invocationId: ctx.invocationId,
+      branch: ctx.branch,
+      content: toContent(output),
+      output,
+      actions: stateDelta ? {stateDelta} : undefined,
+    });
   }
 }
 
-function isAsyncGenerator(
-  obj: unknown,
-): obj is AsyncGenerator<Event, unknown, unknown> {
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    Symbol.asyncIterator in obj &&
-    'next' in obj &&
-    typeof (obj as Record<string, unknown>).next === 'function'
+    value != null &&
+    typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
+      'function'
   );
 }
 
-function toContent(val: unknown): Content | undefined {
-  if (!val) return undefined;
-  if (typeof val === 'object' && 'role' in val && 'parts' in val) {
-    return val as Content;
-  }
-  if (typeof val === 'string') {
-    return {
-      role: 'model',
-      parts: [{text: val}],
-    };
-  }
-  try {
-    return {
-      role: 'model',
-      parts: [{text: JSON.stringify(val)}],
-    };
-  } catch {
-    return {
-      role: 'model',
-      parts: [{text: String(val)}],
-    };
-  }
+function isSyncGenerator(value: unknown): value is Generator<unknown> {
+  return (
+    value != null &&
+    typeof value !== 'string' &&
+    typeof (value as Iterable<unknown>)[Symbol.iterator] === 'function' &&
+    typeof (value as Generator<unknown>).next === 'function'
+  );
 }

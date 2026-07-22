@@ -4,226 +4,209 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Parses workflow edge items and chains into a flat list of {@link Edge}s.
+ *
+ * Ported from `google/adk-python` `workflow/utils/_graph_parser.py`.
+ */
+
 import {BaseNode} from '../base_node.js';
-import {Trigger} from '../trigger.js';
+import {
+  ChainElement,
+  Edge,
+  EdgeItem,
+  NodeLike,
+  RouteValue,
+  RoutingMap,
+} from '../graph.js';
+import {buildNode, isNodeLike, isPlainObject} from './workflow_graph_utils.js';
 
-/**
- * A single element inside a GraphEdge array.
- */
-export type EdgeElement =
-  | string // e.g., "START"
-  | BaseNode // concrete node instance
-  | Record<string | symbol, BaseNode> // route map: { ROUTE_A: nodeA, ROUTE_B: nodeB }
-  | [Trigger, BaseNode] // conditional tuple: [trigger, targetNode]
-  | BaseNode[] // fan-out node array: [nodeA, nodeB]
-  | readonly BaseNode[]; // fan-out node array
-
-/**
- * A workflow graph edge definition.
- * Examples:
- *   ["START", nodeA, nodeB, nodeC]
- *   ["START", [nodeA, nodeB], joinNode]
- *   [routerNode, { ROUTE_X: nodeC, ROUTE_Y: nodeD }]
- *   [nodeA, [Trigger.fromPredicate(...), nodeB]]
- */
-export type GraphEdge = EdgeElement[];
-
-/**
- * Internal representation of a directed edge between two nodes.
- */
-export interface AdjacencyEdge {
-  readonly source: string; // source node name or "START"
-  readonly target: BaseNode;
-  readonly trigger?: Trigger;
+function isRouteValue(value: unknown): value is RouteValue {
+  const t = typeof value;
+  return t === 'string' || t === 'number' || t === 'boolean';
 }
 
-/**
- * A parsed and structured workflow graph ready for execution or validation.
- */
-export class ParsedGraph {
-  readonly nodes = new Map<string, BaseNode>();
-  readonly adjacencyList = new Map<string, AdjacencyEdge[]>();
-  readonly inboundCounts = new Map<string, number>();
-
-  constructor() {
-    this.adjacencyList.set('START', []);
-    this.inboundCounts.set('START', 0);
-  }
-
-  /**
-   * Registers a node in the graph and initializes its adjacency and inbound counters if new.
-   * @param node The node to add.
-   */
-  addNode(node: BaseNode): void {
-    if (!this.nodes.has(node.name)) {
-      this.nodes.set(node.name, node);
-      this.adjacencyList.set(node.name, []);
-      this.inboundCounts.set(node.name, 0);
-    }
-  }
-
-  /**
-   * Adds a directed edge from `source` to `target` with an optional `trigger`.
-   * @param source Source node name (or "START").
-   * @param target Target node instance.
-   * @param trigger Optional trigger condition.
-   */
-  addEdge(source: string, target: BaseNode, trigger?: Trigger): void {
-    this.addNode(target);
-    if (source !== 'START' && !this.nodes.has(source)) {
-      throw new Error(
-        `Source node "${source}" must be added to the graph or referenced before defining an edge from it.`,
-      );
-    }
-
-    const edges = this.adjacencyList.get(source) || [];
-    edges.push({source, target, trigger});
-    this.adjacencyList.set(source, edges);
-
-    const currentInbound = this.inboundCounts.get(target.name) || 0;
-    this.inboundCounts.set(target.name, currentInbound + 1);
-  }
-}
-
-/**
- * Parses an array of user-defined GraphEdge structures into an internal ParsedGraph.
- * @param edges Array of GraphEdge sequences or branch definitions.
- * @returns A structured ParsedGraph.
- */
-export function parseGraph(edges: GraphEdge[]): ParsedGraph {
-  if (!Array.isArray(edges) || edges.length === 0) {
+/** Expands a routing map into individual (from, to, route) triples. */
+function expandRoutingMap(
+  fromElement: ChainElement,
+  routingMap: RoutingMap,
+): Array<[ChainElement, NodeLike | readonly NodeLike[], RouteValue]> {
+  const keys = Object.keys(routingMap);
+  if (keys.length === 0) {
     throw new Error(
-      'parseGraph requires a non-empty array of GraphEdge definitions.',
+      'Routing map must not be empty. Provide at least one route -> node mapping.',
     );
   }
 
-  const graph = new ParsedGraph();
-
-  for (const edgeSeq of edges) {
-    if (!Array.isArray(edgeSeq) || edgeSeq.length < 2) {
-      throw new Error(
-        'Each GraphEdge definition must be an array with at least 2 elements (e.g., ["START", nodeA]).',
-      );
-    }
-
-    for (let i = 0; i < edgeSeq.length - 1; i++) {
-      const current = edgeSeq[i];
-      const next = edgeSeq[i + 1];
-
-      const sources = flattenSource(current, graph, i);
-      for (const sourceName of sources) {
-        if (isBaseNode(next)) {
-          graph.addEdge(sourceName, next);
-        } else if (Array.isArray(next) && !isTriggerTuple(next)) {
-          for (const targetNode of next) {
-            if (!isBaseNode(targetNode)) {
-              throw new Error(
-                `All elements in target fan-out array from source "${sourceName}" must be BaseNode instances.`,
-              );
-            }
-            graph.addEdge(sourceName, targetNode);
-          }
-        } else if (isRouteMap(next)) {
-          const entries: [string | symbol, BaseNode][] = [
-            ...Object.entries(next),
-            ...Object.getOwnPropertySymbols(next).map(
-              (sym) =>
-                [sym, (next as Record<symbol, BaseNode>)[sym]] as [
-                  string | symbol,
-                  BaseNode,
-                ],
-            ),
-          ];
-          for (const [routeKey, targetNode] of entries) {
-            if (!isBaseNode(targetNode)) {
-              throw new Error(
-                `Target for route "${String(routeKey)}" from source "${sourceName}" must be a BaseNode instance.`,
-              );
-            }
-            graph.addEdge(sourceName, targetNode, Trigger.fromRoute(routeKey));
-          }
-        } else if (isTriggerTuple(next)) {
-          const [trigger, targetNode] = next;
-          graph.addEdge(sourceName, targetNode, trigger);
-        } else {
+  const expanded: Array<
+    [ChainElement, NodeLike | readonly NodeLike[], RouteValue]
+  > = [];
+  for (const routeKey of keys) {
+    // Object keys are strings; numeric route keys arrive as numeric strings.
+    const normalizedKey: RouteValue = /^-?\d+$/.test(routeKey)
+      ? Number(routeKey)
+      : routeKey;
+    const target = routingMap[routeKey];
+    if (Array.isArray(target)) {
+      for (const node of target) {
+        if (!isNodeLike(node)) {
           throw new Error(
-            `Invalid target element at index ${i + 1} from source "${sourceName}". Must be a BaseNode, BaseNode array, route dictionary, or [Trigger, BaseNode] tuple.`,
+            `Invalid node in fan-out tuple for route ${String(routeKey)}.`,
           );
         }
       }
+    } else if (!isNodeLike(target)) {
+      throw new Error(
+        `Invalid routing map value for route ${String(routeKey)}.`,
+      );
     }
-  }
-
-  for (const [nodeName, node] of graph.nodes.entries()) {
-    if (
-      node &&
-      node.constructor &&
-      node.constructor.name === 'JoinNode' &&
-      (node as unknown as {upstreamCount: number}).upstreamCount === 0
-    ) {
-      const count = graph.inboundCounts.get(nodeName) || 0;
-      if (count >= 1) {
-        (node as unknown as {upstreamCount: number}).upstreamCount = count;
-      }
+    if (!isRouteValue(normalizedKey)) {
+      throw new Error(`Invalid routing map key: ${String(routeKey)}.`);
     }
+    expanded.push([
+      fromElement,
+      target as NodeLike | readonly NodeLike[],
+      normalizedKey,
+    ]);
   }
-
-  return graph;
+  return expanded;
 }
 
-function flattenSource(
-  element: EdgeElement,
-  graph: ParsedGraph,
-  index: number,
-): string[] {
-  if (typeof element === 'string' && element === 'START') {
-    return ['START'];
+/** Extracts all target nodes from a routing map, flattening fan-out arrays. */
+function nodesFromRoutingMap(routingMap: RoutingMap): NodeLike[] {
+  const nodes: NodeLike[] = [];
+  for (const target of Object.values(routingMap)) {
+    if (Array.isArray(target)) {
+      nodes.push(...(target as NodeLike[]));
+    } else {
+      nodes.push(target as NodeLike);
+    }
   }
-  if (isBaseNode(element)) {
-    graph.addNode(element);
-    return [element.name];
+  return nodes;
+}
+
+/** Flattens a chain element into a list of individual nodes. */
+function flattenElement(element: ChainElement): NodeLike[] {
+  if (isPlainObject(element)) {
+    return nodesFromRoutingMap(element as RoutingMap);
   }
-  if (Array.isArray(element) && !isTriggerTuple(element)) {
-    return element.map((node, idx) => {
-      if (!isBaseNode(node)) {
-        throw new Error(
-          `Invalid source element inside array at index ${index}[${idx}]. Must be a BaseNode instance.`,
+  if (Array.isArray(element)) {
+    return [...(element as readonly NodeLike[])];
+  }
+  return [element as NodeLike];
+}
+
+/** Gets a node from the identity map or builds (and caches) it. */
+function getOrBuildNode(
+  nodeLike: NodeLike,
+  nodeMap: Map<object, BaseNode>,
+): BaseNode {
+  if (nodeLike === 'START') {
+    return buildNode('START');
+  }
+  if (typeof nodeLike === 'object' || typeof nodeLike === 'function') {
+    const cached = nodeMap.get(nodeLike as object);
+    if (cached) {
+      return cached;
+    }
+    const built = buildNode(nodeLike);
+    // Only cache when a distinct wrapper was produced (or always, to preserve
+    // identity across repeated references within the same parse).
+    nodeMap.set(nodeLike as object, built);
+    return built;
+  }
+  return buildNode(nodeLike);
+}
+
+function processExplicitEdge(
+  edge: Edge,
+  nodeMap: Map<object, BaseNode>,
+  out: Edge[],
+): void {
+  out.push(
+    new Edge(
+      getOrBuildNode(edge.fromNode, nodeMap),
+      getOrBuildNode(edge.toNode, nodeMap),
+      edge.route,
+    ),
+  );
+}
+
+function processRoutingMapEdge(
+  fromEl: ChainElement,
+  toEl: RoutingMap,
+  nodeMap: Map<object, BaseNode>,
+  out: Edge[],
+): void {
+  if (isPlainObject(fromEl)) {
+    throw new Error(
+      'Consecutive routing maps are not allowed in a chain. Split them into separate edge items.',
+    );
+  }
+  for (const [expFrom, expTo, route] of expandRoutingMap(fromEl, toEl)) {
+    for (const fromNode of flattenElement(expFrom)) {
+      for (const toNode of flattenElement(expTo as ChainElement)) {
+        out.push(
+          new Edge(
+            getOrBuildNode(fromNode, nodeMap),
+            getOrBuildNode(toNode, nodeMap),
+            route,
+          ),
         );
       }
-      graph.addNode(node);
-      return node.name;
-    });
+    }
   }
-  throw new Error(
-    `Invalid source element at index ${index} in edge sequence. Must be "START", a BaseNode, or an array of BaseNode instances.`,
-  );
 }
 
-function isBaseNode(obj: unknown): obj is BaseNode {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'name' in obj &&
-    typeof (obj as BaseNode).name === 'string' &&
-    'run' in obj &&
-    typeof (obj as BaseNode).run === 'function'
-  );
+function processUnconditionalEdge(
+  fromEl: ChainElement,
+  toEl: ChainElement,
+  nodeMap: Map<object, BaseNode>,
+  out: Edge[],
+): void {
+  for (const fromNode of flattenElement(fromEl)) {
+    for (const toNode of flattenElement(toEl)) {
+      out.push(
+        new Edge(
+          getOrBuildNode(fromNode, nodeMap),
+          getOrBuildNode(toNode, nodeMap),
+          null,
+        ),
+      );
+    }
+  }
 }
 
-function isRouteMap(obj: unknown): obj is Record<string, BaseNode> {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    !isBaseNode(obj) &&
-    !Array.isArray(obj)
-  );
+function processChain(
+  chain: ChainElement[],
+  nodeMap: Map<object, BaseNode>,
+  out: Edge[],
+): void {
+  for (let i = 0; i < chain.length - 1; i++) {
+    const fromEl = chain[i];
+    const toEl = chain[i + 1];
+    if (isPlainObject(toEl)) {
+      processRoutingMapEdge(fromEl, toEl as RoutingMap, nodeMap, out);
+    } else {
+      processUnconditionalEdge(fromEl, toEl, nodeMap, out);
+    }
+  }
 }
 
-function isTriggerTuple(obj: unknown): obj is [Trigger, BaseNode] {
-  return (
-    Array.isArray(obj) &&
-    obj.length === 2 &&
-    obj[0] instanceof Trigger &&
-    isBaseNode(obj[1])
-  );
+/** Parses a list of edge items into a flat list of {@link Edge} objects. */
+export function parseEdgeItems(edgeItems: EdgeItem[]): Edge[] {
+  const nodeMap = new Map<object, BaseNode>();
+  const out: Edge[] = [];
+
+  for (const item of edgeItems) {
+    if (item instanceof Edge) {
+      processExplicitEdge(item, nodeMap, out);
+    } else if (Array.isArray(item)) {
+      processChain(item, nodeMap, out);
+    } else {
+      throw new Error(`Invalid edge item type: ${typeof item}`);
+    }
+  }
+
+  return out;
 }

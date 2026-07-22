@@ -4,111 +4,109 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Event} from '../../events/event.js';
-import {RetryConfig, normalizeRetryConfig} from '../retry_config.js';
-
 /**
- * Sleeps for a specified number of milliseconds unless the abort signal fires.
- * @param ms Delay in milliseconds.
- * @param abortSignal Optional AbortSignal to cancel sleeping early.
- */
-async function sleepWithSignal(
-  ms: number,
-  abortSignal?: AbortSignal,
-): Promise<void> {
-  if (abortSignal?.aborted) {
-    throw new Error('Aborted before retry delay.');
-  }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      abortSignal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new Error('Aborted during retry delay.'));
-    };
-    abortSignal?.addEventListener('abort', onAbort);
-  });
-}
-
-/**
- * Checks whether an error is retryable according to the RetryConfig.
- * @param error The error thrown during execution.
- * @param retryableErrors Array of Error constructors, strings, or RegExps.
- */
-function isErrorRetryable(
-  error: unknown,
-  retryableErrors: Required<RetryConfig>['retryableErrors'],
-): boolean {
-  if (!retryableErrors || retryableErrors.length === 0) {
-    return true;
-  }
-
-  const errObj =
-    typeof error === 'object' && error !== null
-      ? (error as Record<string, unknown>)
-      : undefined;
-  const errMsg =
-    errObj && typeof errObj.message === 'string' ? errObj.message : undefined;
-
-  return retryableErrors.some((matcher) => {
-    if (typeof matcher === 'string') {
-      return errMsg && errMsg.includes(matcher);
-    }
-    if (matcher instanceof RegExp) {
-      return errMsg && matcher.test(errMsg);
-    }
-    if (typeof matcher === 'function' && error instanceof matcher) {
-      return true;
-    }
-    return false;
-  });
-}
-
-/**
- * Wraps an async generator with retry logic according to the provided RetryConfig.
- * If the generator throws a retryable error mid-stream or during start, it will back off and retry from the beginning.
+ * Utility functions for retrying nodes in a workflow.
  *
- * @param generatorFactory A factory function that creates a fresh AsyncGenerator for each attempt.
- * @param retryConfig Optional RetryConfig or undefined (if undefined, runs once without retrying).
- * @param abortSignal Optional AbortSignal to halt retries upon cancellation.
+ * Ported from `google/adk-python` `workflow/utils/_retry_utils.py`.
  */
-export async function* runWithRetry<TOutput = unknown>(
-  generatorFactory: () => AsyncGenerator<Event, TOutput, unknown>,
-  retryConfig?: RetryConfig,
-  abortSignal?: AbortSignal,
-): AsyncGenerator<Event, TOutput, unknown> {
-  const config = normalizeRetryConfig(retryConfig);
-  if (!config || config.maxAttempts <= 1) {
-    return yield* generatorFactory();
+
+import {NodeState} from '../node_state.js';
+import {RetryConfig, normalizeRetryExceptions} from '../retry_config.js';
+
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_INITIAL_DELAY_SECONDS = 1.0;
+const DEFAULT_MAX_DELAY_SECONDS = 60.0;
+const DEFAULT_BACKOFF_FACTOR = 2.0;
+const DEFAULT_JITTER = 1.0;
+
+/**
+ * Resolves the runtime name of a thrown value for exception-name matching.
+ * Mirrors Python's `type(exception).__name__`.
+ */
+function errorName(error: unknown): string {
+  if (error instanceof Error) {
+    // `name` is set by well-behaved Error subclasses; fall back to the
+    // constructor name for plain `throw new Error()` cases.
+    return error.name || error.constructor.name;
+  }
+  if (typeof error === 'object' && error !== null) {
+    return error.constructor.name;
+  }
+  return typeof error;
+}
+
+/**
+ * Checks if a failed node should be retried based on its retry config.
+ *
+ * @param error The error thrown by the node.
+ * @param retryConfig The node's retry configuration, if any.
+ * @param nodeState The current node state (its `attemptCount` is 1-based).
+ */
+export function shouldRetryNode(
+  error: unknown,
+  retryConfig: RetryConfig | undefined,
+  nodeState: NodeState,
+): boolean {
+  if (!retryConfig) {
+    return false;
   }
 
-  let attempt = 1;
-  while (true) {
-    if (abortSignal?.aborted) {
-      throw new Error('Execution aborted before attempt.');
-    }
+  const attemptCount = nodeState.attemptCount;
+  const maxAttempts = retryConfig.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
-    const generator = generatorFactory();
-    try {
-      const result = yield* generator;
-      return result;
-    } catch (error: unknown) {
-      if (
-        attempt >= config.maxAttempts ||
-        !isErrorRetryable(error, config.retryableErrors) ||
-        abortSignal?.aborted
-      ) {
-        throw error;
-      }
+  // attemptCount starts at 1 for the original request; once it reaches
+  // maxAttempts, the limit is exhausted.
+  if (attemptCount >= maxAttempts) {
+    return false;
+  }
 
-      const delayMs = Math.min(
-        config.initialDelayMs * Math.pow(config.backoffFactor, attempt - 1),
-        config.maxDelayMs,
-      );
-      await sleepWithSignal(delayMs, abortSignal);
-      attempt++;
+  const exceptions = normalizeRetryExceptions(retryConfig.exceptions);
+  if (exceptions !== undefined) {
+    if (!exceptions.includes(errorName(error))) {
+      return false;
     }
   }
+
+  return true;
+}
+
+/**
+ * Calculates the delay, in seconds, before retrying a node.
+ *
+ * @param retryConfig The node's retry configuration, if any.
+ * @param nodeState The current node state (its `attemptCount` is the 1-based
+ *   attempt number that just failed).
+ * @param randomFn Injectable uniform RNG in [0, 1) for deterministic testing.
+ */
+export function getRetryDelaySeconds(
+  retryConfig: RetryConfig | undefined,
+  nodeState: NodeState,
+  randomFn: () => number = Math.random,
+): number {
+  if (!retryConfig) {
+    return DEFAULT_INITIAL_DELAY_SECONDS;
+  }
+
+  const initialDelay =
+    retryConfig.initialDelay ?? DEFAULT_INITIAL_DELAY_SECONDS;
+  const maxDelay = retryConfig.maxDelay ?? DEFAULT_MAX_DELAY_SECONDS;
+  const backoffFactor = retryConfig.backoffFactor ?? DEFAULT_BACKOFF_FACTOR;
+  const jitter = retryConfig.jitter ?? DEFAULT_JITTER;
+
+  const attemptCount = nodeState.attemptCount || 1;
+  // attemptCount is the attempt number that just failed (1-based); the first
+  // failure (attempt 1) uses exponent 0.
+  const attemptForCalc = Math.max(0, attemptCount - 1);
+
+  let delay = initialDelay * Math.pow(backoffFactor, attemptForCalc);
+  delay = Math.min(delay, maxDelay);
+
+  if (jitter > 0.0) {
+    // random.uniform(-jitter*delay, jitter*delay)
+    const span = jitter * delay;
+    const randomOffset = -span + randomFn() * (2 * span);
+    delay = Math.max(0.0, delay + randomOffset);
+  }
+
+  return delay;
 }
