@@ -6,15 +6,11 @@
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
-import {Event, stringifyContent} from '../events/event.js';
+import {isCompactedEvent} from '../events/compacted_event.js';
+import {Event} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {calculateRetainStartIndex} from './compaction_utils.js';
-import {
-  getActiveEvents,
-  hasFunctionCall,
-  hasFunctionResponse,
-} from './compactor_utils.js';
+import {getActiveEvents} from './compactor_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 /** Rough estimate used when no usage metadata is available. */
