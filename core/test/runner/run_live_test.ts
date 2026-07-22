@@ -684,6 +684,40 @@ describe('Runner.runLive', () => {
     expect(events).toEqual([]);
   });
 
+  it('stops during execution when the abort signal is aborted', async () => {
+    const textContent: Content = {role: 'model', parts: [{text: 'first event'}]};
+    const llm = new FakeLiveLlm([
+      {content: textContent},
+      {content: {role: 'model', parts: [{text: 'second event'}]}},
+      {turnComplete: true},
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const events: Event[] = [];
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+      abortSignal: controller.signal,
+    })) {
+      events.push(event);
+      controller.abort();
+    }
+
+    expect(events.length).toBeLessThan(3);
+    expect(events.some((e) => e.content?.parts?.[0]?.text === 'first event')).toBe(true);
+    expect(events.some((e) => e.content?.parts?.[0]?.text === 'second event')).toBe(false);
+    expect(llm.connection!.closed).toBe(true);
+  });
+
   it('transfers to a sub-agent on transfer_to_agent and yields its events', async () => {
     const transferCall: Content = {
       role: 'model',
