@@ -108,7 +108,7 @@ describe('AgentTool (Vertex AI)', () => {
           done: true,
           response: {
             name: `projects/1055446556895/locations/us-west1/reasoningEngines/9208858483368132608/sessions/${id}`,
-            sessionState: sessionStateStore[id],
+            sessionState: sessionStateStore[id!],
             updateTime: new Date().toISOString(),
           },
         };
@@ -118,7 +118,7 @@ describe('AgentTool (Vertex AI)', () => {
         return {
           userId: 'TestUser',
           sessionState: {
-            ...sessionStateStore[id],
+            ...sessionStateStore[id!],
             subAgentOutput: 'Today is Tuesday',
           },
           updateTime: new Date().toISOString(),
@@ -132,8 +132,8 @@ describe('AgentTool (Vertex AI)', () => {
           const id = req.name.split('/').pop();
           eventsStore.push(req);
           if (req.config?.actions?.stateDelta) {
-            sessionStateStore[id] = {
-              ...sessionStateStore[id],
+            sessionStateStore[id!] = {
+              ...sessionStateStore[id!],
               ...req.config.actions.stateDelta,
             };
           }

@@ -121,7 +121,8 @@ export class GeminiWithMockResponses extends Gemini {
     );
   }
 
-  override get apiClient(): GoogleGenAI {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override get apiClient(): any {
     return this._mockClient as unknown as GoogleGenAI;
   }
 }

@@ -57,7 +57,8 @@ export function registerConformanceIntegrations(registry: IntegrationRegistry) {
   }
 
   // Tools
-  const tools: {name: string; tool: FunctionTool}[] = [
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tools: {name: string; tool: FunctionTool<any>}[] = [
     {name: 'tools_agent_009.tools.reimburse', tool: reimburse},
     {name: 'tools_agent_009.tools.ask_for_approval', tool: askForApproval},
     {name: 'tools_agent_004.tools.search_flights', tool: searchFlights},
