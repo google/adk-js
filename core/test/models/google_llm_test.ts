@@ -710,5 +710,51 @@ describe('GoogleLlm', () => {
         }),
       );
     });
+
+    it('strips sessionResumption.transparent on the Gemini API backend', async () => {
+      const llm = new TestGemini({
+        apiKey: 'test-key',
+        model: 'gemini-2.5-flash',
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        liveConnectConfig: {
+          sessionResumption: {handle: 'h-1', transparent: true},
+        },
+        config: {},
+        toolsDict: {},
+      };
+
+      await llm.connect(request);
+
+      expect(llm.liveApiClient.live.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            sessionResumption: {handle: 'h-1'},
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('liveApiVersion', () => {
+    it('uses v1beta1 on the Vertex AI backend', () => {
+      const llm = new TestGemini({
+        model: 'gemini-2.5-flash',
+        vertexai: true,
+        project: 'p',
+        location: 'us-central1',
+      });
+      expect(llm.liveApiVersion).toBe('v1beta1');
+    });
+
+    it('uses v1alpha on the Gemini API backend', () => {
+      const llm = new TestGemini({
+        apiKey: 'test-key',
+        model: 'gemini-3.1-flash-live-preview',
+      });
+      expect(llm.liveApiVersion).toBe('v1alpha');
+    });
   });
 });
