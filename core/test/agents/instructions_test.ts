@@ -147,8 +147,6 @@ describe('injectSessionState', () => {
     );
   });
 
-
-
   describe('artifact injection', () => {
     it('loads artifact when {artifact.filename} pattern used', async () => {
       const fakeArtifact = 'artifact content here';
