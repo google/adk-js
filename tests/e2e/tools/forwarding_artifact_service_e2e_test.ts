@@ -207,16 +207,16 @@ describe('E2E ForwardingArtifactService & AgentTool Artifact Flow', () => {
       };
 
       // 1. Sub-agent tool executes and saves via ForwardingArtifactService
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await subAgentSaveTool.execute(
         {filename: 'e2e_report.txt', text: 'E2E status OK'},
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockToolContext as any,
       );
 
       // 2. Parent agent tool executes and loads via toolContext.loadArtifact
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await parentAgentVerifyTool.execute(
         {filename: 'e2e_report.txt'},
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mockToolContext as any,
       );
 
