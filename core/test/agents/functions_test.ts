@@ -28,7 +28,6 @@ import {
   generateClientFunctionCallId,
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
-  populateClientFunctionCallId,
 } from '../../src/agents/functions.js';
 
 // Get the test target function
@@ -403,7 +402,9 @@ describe('generateAuthEvent', () => {
     const functionResponseEvent = createEvent({
       actions: createEventActions({
         requestedAuthConfigs: {
+          // @ts-expect-error - testing string assignments
           'call_1': 'auth_config_1',
+          // @ts-expect-error - testing string assignments
           'call_2': 'auth_config_2',
         },
       }),
@@ -611,44 +612,6 @@ describe('generateClientFunctionCallId', () => {
   it('should generate a valid ID with prefix', () => {
     const id = generateClientFunctionCallId();
     expect(id).toMatch(/^adk-/);
-  });
-});
-
-describe('populateClientFunctionCallId', () => {
-  it('should populate ID if missing', () => {
-    const event = createEvent({
-      content: {
-        role: 'model',
-        parts: [{functionCall: {name: 'testTool', args: {}}}],
-      },
-    });
-    populateClientFunctionCallId(event);
-    expect(event.content!.parts![0].functionCall!.id).toBeDefined();
-    expect(event.content!.parts![0].functionCall!.id).toMatch(/^adk-/);
-  });
-
-  it('should not overwrite existing ID', () => {
-    const event = createEvent({
-      content: {
-        role: 'model',
-        parts: [
-          {functionCall: {name: 'testTool', args: {}, id: 'existing-id'}},
-        ],
-      },
-    });
-    populateClientFunctionCallId(event);
-    expect(event.content!.parts![0].functionCall!.id).toBe('existing-id');
-  });
-
-  it('should handle event with no function calls', () => {
-    const event = createEvent({
-      content: {
-        role: 'model',
-        parts: [{text: 'hello'}],
-      },
-    });
-    populateClientFunctionCallId(event);
-    expect(event.content!.parts![0].text).toBe('hello');
   });
 });
 

@@ -9,7 +9,6 @@ import {isEmpty} from 'lodash-es';
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {
-  AF_FUNCTION_CALL_ID_PREFIX,
   createEvent,
   Event,
   generateClientFunctionCallId,
@@ -47,34 +46,6 @@ export const functionsExportedForTestingOnly = {
   generateAuthEvent,
   generateRequestConfirmationEvent,
 };
-// TODO - b/425992518: consider internalize in content_[processor].ts
-/**
- * Removes the client-generated function call IDs from a given content object.
- *
- * When sending content back to the server, these IDs are
- * specific to the client-side and should not be included in requests to the
- * model.
- */
-export function removeClientFunctionCallId(content: Content): void {
-  if (content && content.parts) {
-    for (const part of content.parts) {
-      if (
-        part.functionCall &&
-        part.functionCall.id &&
-        part.functionCall.id.startsWith(AF_FUNCTION_CALL_ID_PREFIX)
-      ) {
-        part.functionCall.id = undefined;
-      }
-      if (
-        part.functionResponse &&
-        part.functionResponse.id &&
-        part.functionResponse.id.startsWith(AF_FUNCTION_CALL_ID_PREFIX)
-      ) {
-        part.functionResponse.id = undefined;
-      }
-    }
-  }
-}
 // TODO - b/425992518: consider internalize as part of llm_agent's runtime.
 /**
  * Returns a set of function call ids of the long running tools.
