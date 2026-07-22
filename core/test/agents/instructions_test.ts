@@ -279,7 +279,7 @@ describe('injectSessionState', () => {
     circular.self = circular;
     const ctx = makeContext({circular});
     await expect(injectSessionState('Data: {circular}', ctx)).rejects.toThrow(
-      /Failed to serialize value for instruction template: Converting circular structure to JSON/,
+      /Failed to serialize context variable `circular`:/,
     );
   });
 
