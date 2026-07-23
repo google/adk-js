@@ -10,6 +10,9 @@ import {createEvent, Event} from '../../events/event.js';
 import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 
+/** Safety cap on chained `transfer_to_agent` hand-offs. */
+const MAX_TRANSFER_DEPTH = 10;
+
 /** Options for an {@link LLMAgentWrapper}. */
 export interface LLMAgentWrapperConfig extends Partial<
   Omit<BaseNodeConfig, 'name'>
@@ -56,10 +59,46 @@ export class LLMAgentWrapper extends BaseNode {
       ctx.session.events.push(userEvent);
     }
 
-    // Run the agent under the node's invocation context (it sets agent=itself).
-    for await (const event of this.agent.runAsync(ctx.invocationContext)) {
+    // Run the agent, following any transfer_to_agent hand-offs to peers.
+    yield* this.runWithTransfers(ctx, this.agent, 0);
+  }
+
+  /**
+   * Runs `agent`; if it emits a `transfer_to_agent` action, resolves the target
+   * in the agent tree and continues with it (multi-agent hand-off). This is the
+   * portable slice of Python's chat mode; autonomous task delegation
+   * (FinishTaskTool / task tools / isolation scopes) is not yet supported.
+   */
+  private async *runWithTransfers(
+    ctx: NodeContext,
+    agent: BaseAgent,
+    depth: number,
+  ): AsyncGenerator<Event, void, void> {
+    if (depth > MAX_TRANSFER_DEPTH) {
+      throw new Error(
+        `LLMAgentWrapper: transfer_to_agent depth exceeded ${MAX_TRANSFER_DEPTH} ` +
+          `(possible transfer loop starting at '${this.agent.name}').`,
+      );
+    }
+
+    let transferTarget: string | undefined;
+    for await (const event of agent.runAsync(ctx.invocationContext)) {
       this.maybeSetOutput(event);
       yield event;
+      if (event.actions?.transferToAgent) {
+        transferTarget = event.actions.transferToAgent;
+        break;
+      }
+    }
+
+    if (transferTarget) {
+      const target = agent.rootAgent.findAgent(transferTarget);
+      if (!target) {
+        throw new Error(
+          `LLMAgentWrapper: transfer target agent '${transferTarget}' not found.`,
+        );
+      }
+      yield* this.runWithTransfers(ctx, target, depth + 1);
     }
   }
 
