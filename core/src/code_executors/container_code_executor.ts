@@ -8,6 +8,7 @@ import Docker from 'dockerode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {PassThrough} from 'node:stream';
+import {text} from 'node:stream/consumers';
 import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
@@ -96,24 +97,22 @@ function registerExitHooks(): void {
   process.once('SIGTERM', cleanupContainers);
 }
 
+const PROTOCOL_BY_SCHEME: Record<string, 'https' | 'http' | 'ssh'> = {
+  'https:': 'https',
+  'ssh:': 'ssh',
+};
+
 /** Maps a Docker daemon base url string to dockerode client options. */
 function parseBaseUrl(baseUrl: string): Docker.DockerOptions {
   const url = new URL(baseUrl);
   if (url.protocol === 'unix:') {
     return {socketPath: url.pathname};
   }
-  let protocol: 'https' | 'http' | 'ssh';
-  switch (url.protocol) {
-    case 'https:':
-      protocol = 'https';
-      break;
-    case 'ssh:':
-      protocol = 'ssh';
-      break;
-    default:
-      protocol = 'http';
-  }
-  return {host: url.hostname, port: url.port || undefined, protocol};
+  return {
+    host: url.hostname,
+    port: url.port || undefined,
+    protocol: PROTOCOL_BY_SCHEME[url.protocol] ?? 'http',
+  };
 }
 
 /** Builds a Docker image from a directory containing a Dockerfile. */
@@ -155,13 +154,10 @@ async function runInContainer(
   });
   const stream = await exec.start({hijack: true, stdin: false});
 
-  const stdoutChunks: Buffer[] = [];
-  const stderrChunks: Buffer[] = [];
   const stdout = new PassThrough();
   const stderr = new PassThrough();
-  stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-  stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
   client.modem.demuxStream(stream, stdout, stderr);
+  const collected = Promise.all([text(stdout), text(stderr)]);
 
   await new Promise<void>((resolve, reject) => {
     stream.on('end', resolve);
@@ -170,12 +166,9 @@ async function runInContainer(
   stdout.end();
   stderr.end();
 
+  const [stdoutText, stderrText] = await collected;
   const info = await exec.inspect();
-  return {
-    stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-    stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-    exitCode: info.ExitCode,
-  };
+  return {stdout: stdoutText, stderr: stderrText, exitCode: info.ExitCode};
 }
 
 /**
