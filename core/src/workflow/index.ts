@@ -26,6 +26,7 @@ export {FunctionNode} from './nodes/function_node.js';
 export type {
   FunctionNodeConfig,
   FunctionNodeHandler,
+  FunctionNodeResult,
 } from './nodes/function_node.js';
 export {JoinNode} from './nodes/join_node.js';
 export {LLMAgentWrapper} from './nodes/llm_agent_wrapper.js';
@@ -34,6 +35,7 @@ export {ParallelWorker} from './nodes/parallel_worker.js';
 export type {ParallelWorkerConfig} from './nodes/parallel_worker.js';
 export {ToolNode} from './nodes/tool_node.js';
 export type {ToolNodeConfig} from './nodes/tool_node.js';
+export type {BuildNodeOptions} from './utils/workflow_graph_utils.js';
 
 // --- Graph model ---
 export {DEFAULT_ROUTE, Edge, Graph} from './graph.js';
@@ -48,6 +50,7 @@ export type {
 // --- Execution context & state ---
 export {BranchPath} from './branch_path.js';
 export {NodeContext} from './node_context.js';
+export type {RunNodeOptions} from './node_runner.js';
 export {createNodeState, isNodeState} from './node_state.js';
 export type {NodeState} from './node_state.js';
 export {NodeStatus} from './node_status.js';
