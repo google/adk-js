@@ -1,0 +1,28 @@
+{
+  "classifier": [
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "processed"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "processed"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "processed"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}
