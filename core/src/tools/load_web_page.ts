@@ -23,9 +23,6 @@ const ALLOWED_SCHEMES = new Set(['http:', 'https:']);
 /** Default request timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Parity failure string returned for every expected failure condition. */
-const FAILURE_PREFIX = 'Failed to fetch url: ';
-
 /**
  * IPv4 ranges that are not globally routable and therefore blocked to defeat
  * SSRF. Mirrors the non-global ranges rejected by Python's
@@ -67,7 +64,7 @@ const BLOCKED_IPV6_CIDRS = [
 
 /** Builds the parity failure message for a URL. */
 function failedToFetchMessage(url: string): string {
-  return `${FAILURE_PREFIX}${url}`;
+  return `Failed to fetch url: ${url}`;
 }
 
 /**
