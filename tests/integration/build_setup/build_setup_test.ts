@@ -14,6 +14,14 @@ const dirname = process.cwd();
 
 const TEST_EXECUTION_TIMEOUT = 20000;
 
+// npm install (+ npm run build for ts_* setups) in the beforeAll hook, and the
+// recursive node_modules teardown in afterAll, can exceed vitest's default 10s
+// hookTimeout on slow CI runners (e.g. ubuntu-latest), causing flaky
+// "Hook timed out in 10000ms" failures. Give the setup/teardown hooks a
+// generous, explicit budget — matching the pattern used by other install-heavy
+// integration tests (app_loader, agent_loader, skills/script_js).
+const HOOK_TIMEOUT = 120000;
+
 describe('Build setup', () => {
   describe.each([
     'js_commonjs',
@@ -43,7 +51,7 @@ describe('Build setup', () => {
         expect(buildResult.stderr).toBe('');
         expect(buildResult.stdout).toContain('\nBuild complete');
       }
-    });
+    }, HOOK_TIMEOUT);
 
     it(
       'should build and run agent successfully',
@@ -119,6 +127,6 @@ describe('Build setup', () => {
           .rm(`${projectPath}/dist`, {recursive: true, force: true})
           .catch(() => {});
       }
-    });
+    }, HOOK_TIMEOUT);
   });
 });
