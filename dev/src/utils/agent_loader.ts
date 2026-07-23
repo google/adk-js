@@ -16,7 +16,6 @@ import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
 import {
-  createTempDir,
   isFile,
   isFileExists,
   isFolderExists,
@@ -183,12 +182,18 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
-      const outputDir = await createTempDir('adk_agent_loader');
+      const outputDir = path.join(
+        parsedPath.dir,
+        '.adk_build_cache',
+        'adk_agent_loader',
+        Math.random().toString(36).slice(2),
+      );
       const compiledFilePath = path.join(
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
       const originalDir = path.dirname(filePath);
+      await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       await esbuild.build({
@@ -226,6 +231,12 @@ export class AgentFile {
                 'lightningcss',
                 'jiti',
                 'jiti/package.json',
+                // @google-cloud/aiplatform contains gRPC native bindings
+                '@google-cloud/aiplatform',
+                '@google-cloud/vertexai',
+                'google-gax',
+                '@grpc/grpc-js',
+                '@grpc/proto-loader',
               ],
             }
           : {}),
