@@ -27,5 +27,3 @@ export function getActiveEvents(events: Event[]): Event[] {
       ]
     : events;
 }
-
-
