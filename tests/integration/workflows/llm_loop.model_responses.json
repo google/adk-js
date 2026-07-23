@@ -1,0 +1,28 @@
+{
+  "decider": [
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "continue"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "continue"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "done"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}
