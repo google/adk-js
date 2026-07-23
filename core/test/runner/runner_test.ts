@@ -887,3 +887,357 @@ describe('Runner customMetadata support', () => {
     expect(userEvent.content?.role).toBe('user');
   });
 });
+
+describe('Runner artifact saving (`saveInputBlobsAsArtifacts`)', () => {
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let agent: MockLlmAgent;
+  let runner: Runner;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    agent = new MockLlmAgent('test_agent');
+    runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+  });
+
+  it('testSaveArtifacts_modelAccessibleUri_attachesFileData', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    vi.spyOn(artifactService, 'getArtifactVersion').mockResolvedValue({
+      version: 0,
+      canonicalUri: 'gs://test-bucket/file.pdf/versions/0',
+      mimeType: 'application/pdf',
+    });
+
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'JVBERi0xLjQ...',
+            displayName: 'file.pdf',
+          },
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    expect(updatedSession!.events).toHaveLength(2);
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.content!.parts).toEqual([
+      {text: '[Uploaded Artifact: "file.pdf"]'},
+      {
+        fileData: {
+          fileUri: 'gs://test-bucket/file.pdf/versions/0',
+          mimeType: 'application/pdf',
+          displayName: 'file.pdf',
+        },
+      },
+    ]);
+  });
+
+  it('testSaveArtifacts_nonAccessibleUri_onlyAttachesPlaceholder', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    vi.spyOn(artifactService, 'getArtifactVersion').mockResolvedValue({
+      version: 0,
+      canonicalUri: 'file:///tmp/file.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'JVBERi0xLjQ...',
+            displayName: 'file.pdf',
+          },
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.content!.parts).toEqual([
+      {text: '[Uploaded Artifact: "file.pdf"]'},
+    ]);
+  });
+
+  it('testSaveArtifacts_immutability_doesNotMutateInput', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const inlineDataObj = {
+      mimeType: 'application/pdf',
+      data: 'JVBERi0xLjQ...',
+      displayName: 'file.pdf',
+    };
+
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: inlineDataObj,
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    expect(newMessage.parts![0].inlineData).toBeDefined();
+    expect(newMessage.parts![0].inlineData).toEqual(inlineDataObj);
+    expect(newMessage.parts![0].text).toBeUndefined();
+  });
+
+  it('testSaveArtifacts_displayNameResolution', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    vi.spyOn(artifactService, 'getArtifactVersion').mockResolvedValue({
+      version: 0,
+      canonicalUri: 'gs://test-bucket/doc/versions/0',
+    });
+
+    // Test with displayName and without displayName
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'JVBERi0xLjQ...',
+            displayName: 'named_doc.pdf',
+          },
+        } as unknown as Content['parts']![0],
+        {
+          inlineData: {
+            mimeType: 'image/png',
+            data: 'iVBOR...',
+          },
+        },
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const parts = updatedSession!.events[0].content!.parts!;
+    expect(parts[0]).toEqual({text: '[Uploaded Artifact: "named_doc.pdf"]'});
+    expect(parts[1].fileData?.displayName).toBe('named_doc.pdf');
+
+    expect(parts[2].text).toMatch(/\[Uploaded Artifact: "artifact_.+_1"\]/);
+    expect(parts[3].fileData?.displayName).toMatch(/artifact_.+_1/);
+  });
+
+  it('testSaveArtifacts_errorResiliency_retainsOriginalPart', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    vi.spyOn(artifactService, 'saveArtifact').mockImplementation(
+      async (req) => {
+        if (req.filename === 'good.pdf') {
+          return 0;
+        }
+        throw new Error('simulated save error for bad.png');
+      },
+    );
+
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'JVBERi0xLjQ...',
+            displayName: 'good.pdf',
+          },
+        } as unknown as Content['parts']![0],
+        {
+          inlineData: {
+            mimeType: 'image/png',
+            data: 'bad_data',
+            displayName: 'bad.png',
+          },
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const parts = updatedSession!.events[0].content!.parts!;
+    expect(parts[0]).toEqual({text: '[Uploaded Artifact: "good.pdf"]'});
+    expect(parts[1].inlineData).toEqual({
+      mimeType: 'image/png',
+      data: 'bad_data',
+      displayName: 'bad.png',
+    });
+  });
+
+  it('should handle getArtifactVersion errors and missing version metadata gracefully during saveArtifacts', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    // Case 1: getArtifactVersion throws an error
+    vi.spyOn(artifactService, 'getArtifactVersion').mockRejectedValueOnce(
+      new Error('version lookup failure'),
+    );
+
+    const newMessage: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'data',
+            displayName: 'file1.pdf',
+          },
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    let updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    let userEvents = updatedSession!.events.filter((e) => e.author === 'user');
+    expect(userEvents[0].content!.parts).toEqual([
+      {text: '[Uploaded Artifact: "file1.pdf"]'},
+    ]);
+
+    // Case 2: getArtifactVersion returns undefined or no canonicalUri
+    vi.spyOn(artifactService, 'getArtifactVersion').mockResolvedValueOnce(
+      undefined,
+    );
+
+    const newMessage2: Content = {
+      role: 'user',
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: 'data',
+            displayName: 'file2.pdf',
+          },
+        } as unknown as Content['parts']![0],
+      ],
+    };
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: newMessage2,
+      runConfig: {saveInputBlobsAsArtifacts: true},
+    })) {
+      // Consume stream
+    }
+
+    updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    userEvents = updatedSession!.events.filter((e) => e.author === 'user');
+    expect(userEvents[1].content!.parts).toEqual([
+      {text: '[Uploaded Artifact: "file2.pdf"]'},
+    ]);
+  });
+});

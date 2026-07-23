@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createPartFromText} from '@google/genai';
+import {Content, createPartFromText, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
@@ -334,7 +334,7 @@ export class Runner {
             // replaces the artifact data with a file name placeholder.
             // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
-              await this.saveArtifacts(
+              newMessage = await this.saveArtifacts(
                 invocationContext.invocationId,
                 session.userId,
                 session.id,
@@ -449,7 +449,7 @@ export class Runner {
 
   /**
    * Saves artifacts from the message parts and replaces the inline data with
-   * a file name placeholder.
+   * a file name placeholder and optional file reference.
    *
    * @param invocationId The current invocation ID.
    * @param userId The user ID of the session.
@@ -461,9 +461,9 @@ export class Runner {
     userId: string,
     sessionId: string,
     message: Content,
-  ): Promise<void> {
+  ): Promise<Content> {
     if (!this.artifactService || !message.parts?.length) {
-      return;
+      return message;
     }
 
     const sessionKey: CompositeSessionKey = {
@@ -471,23 +471,72 @@ export class Runner {
       userId,
       sessionId,
     };
+    const newParts: Part[] = [];
+    let modified = false;
 
     for (let i = 0; i < message.parts.length; i++) {
       const part = message.parts[i];
       if (!part.inlineData) {
+        newParts.push(part);
         continue;
       }
-      const fileName = `artifact_${invocationId}_${i}`;
-      await this.artifactService.saveArtifact({
-        ...sessionKey,
-        filename: fileName,
-        artifact: part,
-      });
-      // TODO - b/425992518: potentially buggy if accidentally exposed to LLM.
-      message.parts[i] = createPartFromText(
-        `Uploaded file: ${fileName}. It is saved into artifacts`,
-      );
+
+      try {
+        const inlineData = part.inlineData;
+        const fileName =
+          (inlineData as {displayName?: string}).displayName ||
+          `artifact_${invocationId}_${i}`;
+
+        const version = await this.artifactService.saveArtifact({
+          ...sessionKey,
+          filename: fileName,
+          artifact: part,
+        });
+
+        newParts.push(createPartFromText(`[Uploaded Artifact: "${fileName}"]`));
+
+        try {
+          const artifactVersion = await this.artifactService.getArtifactVersion(
+            {
+              ...sessionKey,
+              filename: fileName,
+              version,
+            },
+          );
+          if (
+            artifactVersion?.canonicalUri &&
+            /^(gs|https?):/i.test(artifactVersion.canonicalUri)
+          ) {
+            newParts.push({
+              fileData: {
+                fileUri: artifactVersion.canonicalUri,
+                mimeType: artifactVersion.mimeType || inlineData.mimeType || '',
+                displayName: fileName,
+              },
+            });
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to resolve artifact version for ${fileName}:`,
+            error,
+          );
+        }
+        modified = true;
+        logger.info(`Successfully saved artifact: ${fileName}`);
+      } catch (error) {
+        logger.error(`Failed to save artifact for part ${i}:`, error);
+        newParts.push(part);
+      }
     }
+
+    if (!modified) {
+      return message;
+    }
+
+    return {
+      ...message,
+      parts: newParts,
+    };
   }
 
   /**
