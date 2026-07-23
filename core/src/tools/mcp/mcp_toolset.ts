@@ -4,7 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
+import {
+  BlobResourceContents,
+  ListResourcesResult,
+  ListToolsResult,
+  ReadResourceResult,
+  Resource,
+  TextResourceContents,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {logger} from '../../utils/logger.js';
@@ -102,6 +109,76 @@ export class MCPToolset extends BaseToolset {
         'was called without a ReadonlyContext. The filter will not be applied.',
     );
     return tools;
+  }
+
+  /**
+   * Lists the names of the resources advertised by the MCP server.
+   *
+   * @return The resource names available on the server.
+   */
+  async listResources(): Promise<string[]> {
+    const session = await this.mcpSessionManager.createSession();
+    try {
+      const result = (await session.listResources()) as ListResourcesResult;
+      return result.resources.map((resource) => resource.name);
+    } finally {
+      await this.mcpSessionManager.closeSession(session);
+    }
+  }
+
+  /**
+   * Returns metadata for the resource whose name matches `name`.
+   *
+   * @param name The advertised name of the resource.
+   * @return The matching MCP `Resource`.
+   * @throws If no resource with the given name is advertised by the server.
+   */
+  async getResourceInfo(name: string): Promise<Resource> {
+    const session = await this.mcpSessionManager.createSession();
+    let result: ListResourcesResult;
+    try {
+      result = (await session.listResources()) as ListResourcesResult;
+    } finally {
+      await this.mcpSessionManager.closeSession(session);
+    }
+
+    const resource = result.resources.find(
+      (candidate) => candidate.name === name,
+    );
+    if (!resource) {
+      throw new Error(`Resource with name '${name}' not found.`);
+    }
+    return resource;
+  }
+
+  /**
+   * Reads the contents of the named resource from the MCP server.
+   *
+   * The resource name is resolved to a URI via {@link getResourceInfo} before
+   * reading. Binary contents are returned base64-encoded, exactly as provided
+   * by the server (never decoded and re-encoded).
+   *
+   * @param name The advertised name of the resource to read.
+   * @return The resource contents (text and/or base64-encoded binary).
+   * @throws If the resource is unknown or has no URI.
+   */
+  async readResource(
+    name: string,
+  ): Promise<Array<TextResourceContents | BlobResourceContents>> {
+    const resourceInfo = await this.getResourceInfo(name);
+    if (!resourceInfo.uri) {
+      throw new Error(`Resource '${name}' has no URI.`);
+    }
+
+    const session = await this.mcpSessionManager.createSession();
+    try {
+      const result = (await session.readResource({
+        uri: resourceInfo.uri,
+      })) as ReadResourceResult;
+      return result.contents;
+    } finally {
+      await this.mcpSessionManager.closeSession(session);
+    }
   }
 
   async close(): Promise<void> {
