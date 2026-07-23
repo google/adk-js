@@ -16,6 +16,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
+import {isSegmentPrefix} from '../../utils/branch_trie.js';
 
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
@@ -70,11 +71,11 @@ export function getContents(
     }
 
     // Skip events not in the current branch.
-    // TODO - b/425992518: inefficient, a tire search is better.
+    // simplicity: direct segment prefix check avoids per-invocation Trie allocations; upgrade to Trie index if unique branches > 100
     if (
       currentBranch &&
       event.branch &&
-      !currentBranch.startsWith(event.branch)
+      !isSegmentPrefix(currentBranch, event.branch)
     ) {
       continue;
     }
