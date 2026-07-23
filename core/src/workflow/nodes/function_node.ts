@@ -8,6 +8,11 @@ import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event, isEvent} from '../../events/event.js';
 import {BaseNode, BaseNodeConfig, isContent, toContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
+import {
+  createAuthRequestEvent,
+  hasAuthCredential,
+  processAuthResume,
+} from '../utils/hitl_utils.js';
 
 /**
  * A value a {@link FunctionNodeHandler} may return or yield.
@@ -85,7 +90,15 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     ctx: NodeContext,
     input: TInput,
   ): AsyncGenerator<Event | TOutput | unknown, void, void> {
-    // TODO(phase-5): auth gate (authConfig -> adk_request_credential interrupt).
+    // Auth gate: request credentials (and interrupt) if not yet available.
+    if (this.authConfig) {
+      const authRequest = await this.runAuthGate(ctx);
+      if (authRequest) {
+        yield authRequest;
+        return;
+      }
+    }
+
     const result = this.handler(ctx, input);
 
     if (isAsyncIterable(result)) {
@@ -100,6 +113,31 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
       // Plain value or Promise of a value.
       yield await (result as Promise<FunctionNodeResult<TOutput>>);
     }
+  }
+
+  /**
+   * Ensures a credential for `authConfig` is available. Returns an
+   * `adk_request_credential` interrupt event if the credential must be
+   * requested from the user, or `undefined` if the node may proceed.
+   *
+   * On resume, a credential provided via `ctx.resumeInputs[credentialKey]` is
+   * stored into state before re-checking.
+   */
+  private async runAuthGate(ctx: NodeContext): Promise<Event | undefined> {
+    const authConfig = this.authConfig!;
+    if (hasAuthCredential(authConfig, ctx.state)) {
+      return undefined;
+    }
+    const resumeResponse = ctx.resumeInputs[authConfig.credentialKey];
+    if (resumeResponse !== undefined) {
+      await processAuthResume(resumeResponse, authConfig, ctx.state);
+      if (hasAuthCredential(authConfig, ctx.state)) {
+        return undefined;
+      }
+    }
+    // The credential key doubles as a deterministic interrupt id so the resume
+    // response matches across turns.
+    return createAuthRequestEvent(authConfig, authConfig.credentialKey);
   }
 
   protected override toEvent(ctx: NodeContext, data: unknown): Event | null {
