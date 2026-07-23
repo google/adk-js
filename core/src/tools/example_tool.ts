@@ -23,16 +23,13 @@ import {
  * from the latest user query.
  */
 export class ExampleTool extends BaseTool {
-  readonly examples: Example[] | BaseExampleProvider;
-
-  constructor(examples: Example[] | BaseExampleProvider) {
+  constructor(readonly examples: Example[] | BaseExampleProvider) {
     super({
       // Name and description are not used because this tool only changes
       // llmRequest.
       name: 'example_tool',
       description: 'example tool',
     });
-    this.examples = examples;
   }
 
   override async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {

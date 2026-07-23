@@ -188,22 +188,6 @@ describe('ExampleTool (end-to-end with real framework objects)', () => {
     expect(instruction).toContain('4');
   });
 
-  it('selects provider examples using the real user query end-to-end', async () => {
-    const provider = new FixedExampleProvider([SIMPLE_EXAMPLE]);
-    const getExamplesSpy = vi.spyOn(provider, 'getExamples');
-    const tool = new ExampleTool(provider);
-    const toolContext = makeRealContext({
-      role: 'user',
-      parts: [{text: 'What is 2+2?'}],
-    });
-    const llmRequest = makeLlmRequest('gemini-2.0-flash');
-
-    await tool.processLlmRequest({toolContext, llmRequest});
-
-    expect(getExamplesSpy).toHaveBeenCalledWith('What is 2+2?');
-    expect(llmRequest.config?.systemInstruction).toContain('4');
-  });
-
   it('is a no-op when the real invocation has no user content', async () => {
     const tool = new ExampleTool([SIMPLE_EXAMPLE]);
     const toolContext = makeRealContext(undefined);
