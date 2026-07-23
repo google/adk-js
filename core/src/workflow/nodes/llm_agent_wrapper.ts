@@ -122,7 +122,20 @@ export class LLMAgentWrapper extends BaseNode {
       .map((p) => p.text)
       .join('');
 
-    event.output = text;
+    // If the agent declares an output schema, its text is structured JSON;
+    // surface the parsed object as the node output (matching Python).
+    let output: unknown = text;
+    const hasOutputSchema = !!(this.agent as {outputSchema?: unknown})
+      .outputSchema;
+    if (hasOutputSchema && text.trim()) {
+      try {
+        output = JSON.parse(text);
+      } catch {
+        output = text;
+      }
+    }
+
+    event.output = output;
     event.nodeInfo = {...(event.nodeInfo ?? {}), messageAsOutput: true};
   }
 }
