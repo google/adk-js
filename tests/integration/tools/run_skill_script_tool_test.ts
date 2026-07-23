@@ -21,6 +21,11 @@ import {describe, expect, it} from 'vitest';
 const IS_WINDOWS = os.platform() === 'win32';
 const IS_UNIX = os.platform() === 'linux' || os.platform() === 'darwin';
 
+// Each test spawns a real child process; cold-start on slow CI runners can
+// exceed vitest's 5000ms default. 40s also clears the executor's own 30s
+// internal timeout so its cleaner error surfaces on a genuine hang.
+const TEST_EXECUTION_TIMEOUT = 40000;
+
 describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
   function createMockContext(agentName = 'test-agent') {
     return new Context({
@@ -76,23 +81,27 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     },
   };
 
-  it('successfully executes a real JavaScript skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'successfully executes a real JavaScript skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/hello.js',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/hello.js',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stdout).toContain('hello from skill js');
-    expect(result.stderr).toBe('');
-  });
+      expect(result).toBeDefined();
+      expect(result.stdout).toContain('hello from skill js');
+      expect(result.stderr).toBe('');
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 
   it.skipIf(!IS_UNIX)(
     'successfully executes a real Shell skill script',
@@ -113,24 +122,29 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stdout).toContain('hello from skill sh');
       expect(result.stderr).toBe('');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
-  it('captures stderr from a failing JavaScript skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'captures stderr from a failing JavaScript skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/fail.js',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/fail.js',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stderr).toContain('skill js error');
-  });
+      expect(result).toBeDefined();
+      expect(result.stderr).toContain('skill js error');
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 
   it.skipIf(!IS_UNIX)(
     'captures stderr and exit code from a failing Shell skill script',
@@ -150,42 +164,51 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result).toBeDefined();
       expect(result.stderr).toContain('skill sh error');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
-  it('successfully executes a real Python skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'successfully executes a real Python skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/hello.py',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/hello.py',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stdout).toContain('hello from skill python');
-    expect(result.stderr).toBe('');
-  });
+      expect(result).toBeDefined();
+      expect(result.stdout).toContain('hello from skill python');
+      expect(result.stderr).toBe('');
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 
-  it('captures stderr from a failing Python skill script', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'captures stderr from a failing Python skill script',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/fail.py',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/fail.py',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.stderr).toContain('skill python error');
-  });
+      expect(result).toBeDefined();
+      expect(result.stderr).toContain('skill python error');
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 
   it.skipIf(!IS_WINDOWS)(
     'successfully executes a real PowerShell skill script',
@@ -206,6 +229,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stdout).toContain('hello from skill powershell');
       expect(result.stderr).toBe('');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -227,6 +251,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stderr).toContain('skill');
       expect(result.stderr).toContain('powershell error');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -248,6 +273,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stdout).toContain('hello from skill cmd');
       expect(result.stderr).toBe('');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -268,83 +294,92 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result).toBeDefined();
       expect(result.stderr).toContain('skill cmd error');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
-  it('creates files in process.cwd returned from execution', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'creates files in process.cwd returned from execution',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/create_file.js',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/create_file.js',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.outputFiles).toBeDefined();
-    expect(result.outputFiles?.length).toBeGreaterThan(0);
+      expect(result).toBeDefined();
+      expect(result.outputFiles).toBeDefined();
+      expect(result.outputFiles?.length).toBeGreaterThan(0);
 
-    const outputFile = result.outputFiles?.find(
-      (f) => f.name === 'output_from_script.txt',
-    );
-    expect(outputFile).toBeDefined();
+      const outputFile = result.outputFiles?.find(
+        (f) => f.name === 'output_from_script.txt',
+      );
+      expect(outputFile).toBeDefined();
 
-    // Verify file was created in process.cwd()
-    const fullPath = path.join(process.cwd(), 'output_from_script.txt');
-    const exists = await fs
-      .access(fullPath)
-      .then(() => true)
-      .catch(() => false);
-    expect(exists).toBe(true);
+      // Verify file was created in process.cwd()
+      const fullPath = path.join(process.cwd(), 'output_from_script.txt');
+      const exists = await fs
+        .access(fullPath)
+        .then(() => true)
+        .catch(() => false);
+      expect(exists).toBe(true);
 
-    const content = await fs.readFile(fullPath, 'utf-8');
-    expect(content).toBe('hello from script file');
+      const content = await fs.readFile(fullPath, 'utf-8');
+      expect(content).toBe('hello from script file');
 
-    // Clean up
-    await fs.unlink(fullPath);
-  });
+      // Clean up
+      await fs.unlink(fullPath);
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 
-  it('handles file collisions by appending a numeric suffix', async () => {
-    const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
-    const tool = new RunSkillScriptTool(toolset);
+  it(
+    'handles file collisions by appending a numeric suffix',
+    async () => {
+      const executor = new UnsafeLocalCodeExecutor();
+      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const tool = new RunSkillScriptTool(toolset);
 
-    // Pre-create the target file to force a collision
-    const targetFile = path.join(process.cwd(), 'output_from_script.txt');
-    await fs.writeFile(targetFile, 'existing content');
+      // Pre-create the target file to force a collision
+      const targetFile = path.join(process.cwd(), 'output_from_script.txt');
+      await fs.writeFile(targetFile, 'existing content');
 
-    const result = (await tool.runAsync({
-      args: {
-        skill_name: 'test-skill',
-        script_path: 'scripts/create_file.js',
-      },
-      toolContext: createMockContext(),
-    })) as CodeExecutionResult;
+      const result = (await tool.runAsync({
+        args: {
+          skill_name: 'test-skill',
+          script_path: 'scripts/create_file.js',
+        },
+        toolContext: createMockContext(),
+      })) as CodeExecutionResult;
 
-    expect(result).toBeDefined();
-    expect(result.outputFiles).toBeDefined();
+      expect(result).toBeDefined();
+      expect(result.outputFiles).toBeDefined();
 
-    const outputFile = result.outputFiles?.find(
-      (f) => f.name === 'output_from_script_2.txt',
-    );
-    expect(outputFile).toBeDefined();
+      const outputFile = result.outputFiles?.find(
+        (f) => f.name === 'output_from_script_2.txt',
+      );
+      expect(outputFile).toBeDefined();
 
-    // Verify collision file was created in process.cwd()
-    const fullPath = path.join(process.cwd(), 'output_from_script_2.txt');
-    const exists = await fs
-      .access(fullPath)
-      .then(() => true)
-      .catch(() => false);
-    expect(exists).toBe(true);
+      // Verify collision file was created in process.cwd()
+      const fullPath = path.join(process.cwd(), 'output_from_script_2.txt');
+      const exists = await fs
+        .access(fullPath)
+        .then(() => true)
+        .catch(() => false);
+      expect(exists).toBe(true);
 
-    const content = await fs.readFile(fullPath, 'utf-8');
-    expect(content).toBe('hello from script file');
+      const content = await fs.readFile(fullPath, 'utf-8');
+      expect(content).toBe('hello from script file');
 
-    // Clean up both files
-    await fs.unlink(targetFile);
-    await fs.unlink(fullPath);
-  });
+      // Clean up both files
+      await fs.unlink(targetFile);
+      await fs.unlink(fullPath);
+    },
+    TEST_EXECUTION_TIMEOUT,
+  );
 });
