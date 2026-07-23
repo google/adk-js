@@ -182,6 +182,7 @@ export type {JsonObject} from './utils/json_utils.js';
 export * from './integrations/agent_registry/agent_registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';
+export * from './tools/environment/index.js';
 export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
