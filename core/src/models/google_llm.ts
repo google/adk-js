@@ -317,18 +317,12 @@ export class Gemini extends BaseLlm {
     // Gemini API (AI Studio) rejects `sessionResumption.transparent`; it is a
     // Vertex-only flag. Strip it so callers can set a uniform resumption config
     // regardless of backend.
-    if (
-      this.apiBackend === GoogleLLMVariant.GEMINI_API &&
-      llmRequest.liveConnectConfig.sessionResumption
-    ) {
-      const resumption = llmRequest.liveConnectConfig.sessionResumption as {
-        handle?: string;
-        transparent?: boolean;
-      };
-      if (resumption.transparent !== undefined) {
-        llmRequest.liveConnectConfig.sessionResumption = {
-          handle: resumption.handle,
-        };
+    if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
+      const resumption = llmRequest.liveConnectConfig.sessionResumption as
+        | {transparent?: boolean}
+        | undefined;
+      if (resumption) {
+        delete resumption.transparent;
       }
     }
 

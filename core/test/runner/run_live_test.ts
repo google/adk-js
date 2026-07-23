@@ -32,13 +32,17 @@ class RecordingConnection implements BaseLlmConnection {
   activityStartCalls = 0;
   activityEndCalls = 0;
   closed = false;
+  sendContentError?: Error;
 
-  constructor(private readonly responses: LlmResponse[]) {}
+  constructor(private readonly responses: Array<LlmResponse | Error>) {}
 
   async sendHistory(history: Content[]): Promise<void> {
     this.historyCalls.push(history);
   }
   async sendContent(content: Content): Promise<void> {
+    if (this.sendContentError) {
+      throw this.sendContentError;
+    }
     this.contentCalls.push(content);
   }
   async sendRealtime(blob: Blob): Promise<void> {
@@ -52,6 +56,9 @@ class RecordingConnection implements BaseLlmConnection {
   }
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
     for (const response of this.responses) {
+      if (response instanceof Error) {
+        throw response;
+      }
       yield response;
     }
   }
@@ -61,13 +68,21 @@ class RecordingConnection implements BaseLlmConnection {
 }
 
 class FakeLiveLlm extends BaseLlm {
-  connection?: RecordingConnection;
-  llmRequestSeen?: LlmRequest;
+  sendContentError?: Error;
+
+  get connection(): RecordingConnection | undefined {
+    return this.connections.at(-1);
+  }
+  get llmRequestSeen(): LlmRequest | undefined {
+    return this.llmRequestsSeen.at(-1);
+  }
   readonly connections: RecordingConnection[] = [];
   readonly llmRequestsSeen: LlmRequest[] = [];
 
   constructor(
-    private readonly responses: LlmResponse[] | LlmResponse[][],
+    private readonly responses:
+      | Array<LlmResponse | Error>
+      | Array<Array<LlmResponse | Error>>,
     model = 'fake-live-llm',
   ) {
     super({model});
@@ -85,18 +100,20 @@ class FakeLiveLlm extends BaseLlm {
   override async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
     // Snapshot the request as the caller may mutate `liveConnectConfig`
     // across reconnect attempts (e.g. setting `sessionResumption.handle`).
-    this.llmRequestSeen = llmRequest;
     this.llmRequestsSeen.push(
       JSON.parse(JSON.stringify(llmRequest)) as LlmRequest,
     );
     const isSequence =
       Array.isArray(this.responses) && Array.isArray(this.responses[0]);
     const responses = isSequence
-      ? ((this.responses as LlmResponse[][])[this.connections.length] ?? [])
-      : (this.responses as LlmResponse[]);
-    this.connection = new RecordingConnection(responses);
-    this.connections.push(this.connection);
-    return this.connection;
+      ? ((this.responses as Array<Array<LlmResponse | Error>>)[
+          this.connections.length
+        ] ?? [])
+      : (this.responses as Array<LlmResponse | Error>);
+    const connection = new RecordingConnection(responses);
+    connection.sendContentError = this.sendContentError;
+    this.connections.push(connection);
+    return connection;
   }
 }
 
@@ -803,5 +820,72 @@ describe('Runner.runLive', () => {
     expect(liveConfig?.contextWindowCompression).toEqual({slidingWindow: {}});
     expect(liveConfig?.proactivity).toEqual({proactiveAudio: true});
     expect(liveConfig?.enableAffectiveDialog).toBe(true);
+  });
+
+  it('reconnects with session handle on websocket close code 1006', async () => {
+    const error1006 = new Error('Connection closed abnormally');
+    (error1006 as {code?: number}).code = 1006;
+
+    const llm = new FakeLiveLlm([
+      [
+        {liveSessionResumptionUpdate: {newHandle: 'handle-1006'}},
+        error1006,
+      ],
+      [{turnComplete: true}],
+    ]);
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.close();
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    expect(llm.connections.length).toBe(2);
+    expect(
+      llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
+    ).toBe('handle-1006');
+  });
+
+  it('propagates the send-loop error and stops execution when the send loop fails', async () => {
+    const llm = new FakeLiveLlm([
+      {content: {role: 'model', parts: [{text: 'model response'}]}},
+      {turnComplete: true},
+    ]);
+    llm.sendContentError = new Error('Simulated outbound connection error');
+
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    // Send some content to force connection.sendContent to run and fail
+    queue.sendContent({role: 'user', parts: [{text: 'hello'}]});
+
+    await expect(async () => {
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+    }).rejects.toThrow('Simulated outbound connection error');
+
+    expect(llm.connection!.closed).toBe(true);
   });
 });

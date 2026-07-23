@@ -117,21 +117,13 @@ function isRecoverableLiveError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as {code?: unknown}).code;
   // Standard WebSocket close codes treated as transient by the Python flow.
-  if (code === 1000 || code === 1006 || code === 1011 || code === 1012) {
+  if (code === 1006 || code === 1011 || code === 1012) {
     return true;
   }
   const message = err.message ?? '';
   return /ConnectionClosed|connection closed|ECONNRESET|socket hang up/i.test(
     message,
   );
-}
-
-async function closeQuietly(connection: BaseLlmConnection): Promise<void> {
-  try {
-    await connection.close();
-  } catch (error) {
-    logger.warn('Error closing live connection:', error);
-  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -143,35 +135,27 @@ function sleep(ms: number): Promise<void> {
  * config so the model connection is opened with the caller's modalities,
  * speech, transcription, and proactivity settings.
  */
+const LIVE_KEYS = [
+  'responseModalities',
+  'speechConfig',
+  'outputAudioTranscription',
+  'inputAudioTranscription',
+  'realtimeInputConfig',
+  'contextWindowCompression',
+  'proactivity',
+  'enableAffectiveDialog',
+] as const;
+
 function applyLiveRunConfig(
   runConfig: InvocationContext['runConfig'],
   llmRequest: LlmRequest,
 ): void {
   if (!runConfig) return;
   const liveConfig = (llmRequest.liveConnectConfig ??= {});
-  if (runConfig.responseModalities) {
-    liveConfig.responseModalities = runConfig.responseModalities;
-  }
-  if (runConfig.speechConfig) {
-    liveConfig.speechConfig = runConfig.speechConfig;
-  }
-  if (runConfig.outputAudioTranscription) {
-    liveConfig.outputAudioTranscription = runConfig.outputAudioTranscription;
-  }
-  if (runConfig.inputAudioTranscription) {
-    liveConfig.inputAudioTranscription = runConfig.inputAudioTranscription;
-  }
-  if (runConfig.realtimeInputConfig) {
-    liveConfig.realtimeInputConfig = runConfig.realtimeInputConfig;
-  }
-  if (runConfig.contextWindowCompression) {
-    liveConfig.contextWindowCompression = runConfig.contextWindowCompression;
-  }
-  if (runConfig.proactivity) {
-    liveConfig.proactivity = runConfig.proactivity;
-  }
-  if (runConfig.enableAffectiveDialog) {
-    liveConfig.enableAffectiveDialog = runConfig.enableAffectiveDialog;
+  for (const k of LIVE_KEYS) {
+    if (runConfig[k] !== undefined) {
+      (liveConfig as Record<string, unknown>)[k] = runConfig[k];
+    }
   }
 }
 
@@ -180,12 +164,7 @@ function applyLiveRunConfig(
  * transcript. Input transcriptions are the user speaking; echoed user-role
  * content (e.g. function responses) likewise belongs to the user side.
  */
-function isUserAuthoredResponse(llmResponse: LlmResponse): boolean {
-  if (llmResponse.inputTranscription) {
-    return true;
-  }
-  return llmResponse.content?.role === 'user';
-}
+
 
 /**
  * Input/output schema type for agent.
@@ -1086,6 +1065,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       );
       sendTask.catch((error) => {
         logger.error('Error in live send loop:', error);
+        sendAbort.abort(error);
+        connection.close().catch((err) => {
+          logger.warn('Error closing connection after send loop failure:', err);
+        });
       });
 
       let reconnect = false;
@@ -1235,7 +1218,11 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     sendTask: Promise<void>,
   ): Promise<void> {
     sendAbort.abort();
-    await closeQuietly(connection);
+    try {
+      await connection.close();
+    } catch (error) {
+      logger.warn('Error closing live connection:', error);
+    }
     await sendTask.catch(() => undefined);
   }
 
@@ -1247,6 +1234,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   ): AsyncGenerator<Event, void, void> {
     for await (const llmResponse of connection.receive()) {
       if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
+      if (sendAbort.signal.aborted) {
+        if (sendAbort.signal.reason) {
+          throw sendAbort.signal.reason;
+        }
         return;
       }
 
@@ -1266,7 +1259,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         throw new LiveReconnectSignal('goAway');
       }
 
-      const author = isUserAuthoredResponse(llmResponse) ? 'user' : this.name;
+      const author =
+        llmResponse.inputTranscription || llmResponse.content?.role === 'user'
+          ? 'user'
+          : this.name;
 
       const modelResponseEvent = createEvent({
         invocationId: invocationContext.invocationId,
