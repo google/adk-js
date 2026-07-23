@@ -131,11 +131,10 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
   }
   const http = extractHttpDetails(err);
   const base = baseMessage(err);
+  // Cycles (including a direct `err.cause === err`) are handled by `seen`.
   const cause = asRecord(err)?.['cause'];
   const causeMessage =
-    cause !== undefined && cause !== err
-      ? formatErrorRecursive(cause, seen)
-      : undefined;
+    cause !== undefined ? formatErrorRecursive(cause, seen) : undefined;
   let message = base.length > 0 ? base : UNKNOWN_ERROR;
   if (http !== undefined) {
     message = `${message} (${http})`;
