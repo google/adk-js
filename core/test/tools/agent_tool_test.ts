@@ -513,4 +513,137 @@ describe('AgentTool', () => {
       `${State.TEMP_PREFIX}tempKey`,
     );
   });
+
+  it('propagates grounding metadata when propagateGroundingMetadata is true', async () => {
+    const mockAgent = {name: 'sub-agent'} as unknown as LlmAgent;
+    const tool = new AgentTool({
+      agent: mockAgent,
+      propagateGroundingMetadata: true,
+    });
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+
+    const toolContext = new Context({invocationContext});
+
+    const groundingMetadata = {webSearchQueries: ['query']};
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'grounded answer'}]},
+        groundingMetadata,
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    await tool.runAsync({args: {request: 'hello'}, toolContext});
+
+    expect(
+      toolContext.state.get(`${State.TEMP_PREFIX}_adk_grounding_metadata`),
+    ).toBe(groundingMetadata);
+  });
+
+  it('does not write grounding metadata when the run yields none', async () => {
+    const mockAgent = {name: 'sub-agent'} as unknown as LlmAgent;
+    const tool = new AgentTool({
+      agent: mockAgent,
+      propagateGroundingMetadata: true,
+    });
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+
+    const toolContext = new Context({invocationContext});
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'no grounding here'}]},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    await tool.runAsync({args: {request: 'hello'}, toolContext});
+
+    expect(
+      toolContext.state.has(`${State.TEMP_PREFIX}_adk_grounding_metadata`),
+    ).toBe(false);
+  });
+
+  it('does not propagate grounding metadata by default', async () => {
+    const mockAgent = {name: 'sub-agent'} as unknown as LlmAgent;
+    const tool = new AgentTool({agent: mockAgent});
+
+    const session = createSession({
+      id: 'parent-session',
+      appName: 'sub-agent',
+      userId: 'parent-user',
+    });
+
+    const invocationContext = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: mockAgent,
+      session,
+      pluginManager: new PluginManager([]),
+    });
+
+    const toolContext = new Context({invocationContext});
+
+    const mockRunAsync = async function* () {
+      yield createEvent({
+        author: 'sub-agent',
+        content: {role: 'model', parts: [{text: 'answer'}]},
+        groundingMetadata: {webSearchQueries: ['query']},
+      });
+    };
+
+    vi.mocked(Runner).mockImplementation((config) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
+
+    await tool.runAsync({args: {request: 'hello'}, toolContext});
+
+    expect(
+      toolContext.state.has(`${State.TEMP_PREFIX}_adk_grounding_metadata`),
+    ).toBe(false);
+  });
 });

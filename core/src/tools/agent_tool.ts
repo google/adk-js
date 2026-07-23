@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, FunctionDeclaration, Type} from '@google/genai';
+import {
+  Content,
+  FunctionDeclaration,
+  GroundingMetadata,
+  Type,
+} from '@google/genai';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
@@ -32,6 +37,12 @@ export interface AgentToolConfig {
    * Whether to skip summarization of the agent output.
    */
   skipSummarization?: boolean;
+
+  /**
+   * Whether to propagate the sub-agent's grounding metadata to the parent
+   * tool context state under `temp:_adk_grounding_metadata`.
+   */
+  propagateGroundingMetadata?: boolean;
 }
 
 /**
@@ -71,6 +82,8 @@ export class AgentTool extends BaseTool {
 
   private readonly skipSummarization: boolean;
 
+  private readonly propagateGroundingMetadata: boolean;
+
   constructor(config: AgentToolConfig) {
     super({
       name: config.agent.name,
@@ -78,6 +91,8 @@ export class AgentTool extends BaseTool {
     });
     this.agent = config.agent;
     this.skipSummarization = config.skipSummarization || false;
+    this.propagateGroundingMetadata =
+      config.propagateGroundingMetadata ?? false;
   }
 
   override _getDeclaration(): FunctionDeclaration {
@@ -169,6 +184,7 @@ export class AgentTool extends BaseTool {
     }
 
     let lastEvent: Event | undefined;
+    let lastGroundingMetadata: GroundingMetadata | undefined;
     for await (const event of runner.runAsync({
       userId: session.userId,
       sessionId: session.id,
@@ -190,7 +206,20 @@ export class AgentTool extends BaseTool {
         }
       }
 
+      if (event.groundingMetadata) {
+        lastGroundingMetadata = event.groundingMetadata;
+      }
+
       lastEvent = event;
+    }
+
+    // Reached only on normal (non-aborted) completion; aborted paths return
+    // inside/before the loop above.
+    if (this.propagateGroundingMetadata && lastGroundingMetadata) {
+      toolContext.state.set(
+        `${State.TEMP_PREFIX}_adk_grounding_metadata`,
+        lastGroundingMetadata,
+      );
     }
 
     if (!lastEvent?.content?.parts?.length) {
