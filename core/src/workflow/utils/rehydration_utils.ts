@@ -15,6 +15,7 @@
 
 import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
+import type {NodeContext} from '../node_context.js';
 
 const RESULT_KEY = 'result';
 
@@ -38,6 +39,28 @@ export interface RehydratedNode {
  */
 export function reconstructNodeStates(
   events: Event[],
+): Map<string, RehydratedNode> {
+  // Key static-graph nodes by their name (path leaf), robust to author rewrite.
+  return reconstruct(events, (event) =>
+    event.nodeInfo?.path ? nodeNameFromPath(event.nodeInfo.path) : event.author,
+  );
+}
+
+/**
+ * Like {@link reconstructNodeStates} but keyed by the full node path
+ * (`wf.node@runId`), so distinct dynamic (`ctx.runNode`) iterations are tracked
+ * separately for per-run resume/dedup.
+ */
+export function reconstructNodeStatesByPath(
+  events: Event[],
+): Map<string, RehydratedNode> {
+  return reconstruct(events, (event) => event.nodeInfo?.path ?? event.author);
+}
+
+/** Shared scan that groups node events by the key returned by `keyFor`. */
+function reconstruct(
+  events: Event[],
+  keyFor: (event: Event) => string | undefined,
 ): Map<string, RehydratedNode> {
   const nodes = new Map<string, RehydratedNode>();
   const interruptOwner = new Map<string, string>();
@@ -67,15 +90,12 @@ export function reconstructNodeStates(
       continue;
     }
 
-    // 2. Node events. Key by the node path leaf (robust if the runtime
-    // rewrites the author), falling back to the author.
-    const nodeName = event.nodeInfo?.path
-      ? nodeNameFromPath(event.nodeInfo.path)
-      : event.author;
-    if (!nodeName) {
+    // 2. Node events.
+    const key = keyFor(event);
+    if (!key) {
       continue;
     }
-    const node = getNode(nodeName);
+    const node = getNode(key);
     if (event.output !== undefined) {
       node.output = event.output;
       node.branch = event.branch;
@@ -85,7 +105,7 @@ export function reconstructNodeStates(
     }
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);
-      interruptOwner.set(id, nodeName);
+      interruptOwner.set(id, key);
     }
   }
 
@@ -106,6 +126,23 @@ export function isFastForwardable(node: RehydratedNode): boolean {
     }
   }
   return true;
+}
+
+/**
+ * Builds a minimal completion result for a fast-forwarded (cached) node on
+ * resume. Only the fields read by completion handling are populated; the node's
+ * events are NOT re-emitted (they already exist in the session).
+ */
+export function makeFastForwardContext(
+  parent: NodeContext,
+  prior: RehydratedNode,
+): NodeContext {
+  return {
+    output: prior.output,
+    route: prior.route,
+    branch: prior.branch ?? parent.branch,
+    interruptIds: [],
+  } as unknown as NodeContext;
 }
 
 /** Extracts the node name (leaf, without run id) from a dotted node path. */

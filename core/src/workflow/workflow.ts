@@ -17,6 +17,7 @@ import {DynamicNodeState} from './schedule_dynamic_node.js';
 import {Trigger} from './trigger.js';
 import {
   isFastForwardable,
+  makeFastForwardContext,
   reconstructNodeStates,
   RehydratedNode,
 } from './utils/rehydration_utils.js';
@@ -491,21 +492,4 @@ export class Workflow extends BaseNode {
     loop.pending.clear();
     await Promise.allSettled(outstanding);
   }
-}
-
-/**
- * Builds a minimal completion result for a fast-forwarded (cached) node on
- * resume. Only the fields read by `handleCompletion` are populated; the node's
- * events are NOT re-emitted (they already exist in the session).
- */
-function makeFastForwardContext(
-  parent: NodeContext,
-  prior: RehydratedNode,
-): NodeContext {
-  return {
-    output: prior.output,
-    route: prior.route,
-    branch: prior.branch ?? parent.branch,
-    interruptIds: [],
-  } as unknown as NodeContext;
 }

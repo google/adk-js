@@ -33,6 +33,12 @@ export interface RunNodeOptions {
   overrideBranch?: string;
   /** Explicit isolation scope, overriding inheritance from the parent. */
   overrideIsolationScope?: string;
+  /**
+   * Explicit node path for the child (used by the dynamic scheduler to embed
+   * the run id, e.g. `wf.node@1`, so distinct runs are distinguishable on
+   * resume). Defaults to `${parent.nodePath}.${nodeName}`.
+   */
+  overrideNodePath?: string;
 }
 
 /**
@@ -51,9 +57,9 @@ export async function executeChildNode(
 ): Promise<NodeContext> {
   const nodeName = options.nodeName ?? node.name;
   const runId = options.runId ?? nodeName;
-  const nodePath = parent.nodePath
-    ? `${parent.nodePath}.${nodeName}`
-    : nodeName;
+  const nodePath =
+    options.overrideNodePath ??
+    (parent.nodePath ? `${parent.nodePath}.${nodeName}` : nodeName);
 
   let branch = parent.branch;
   if (options.overrideBranch !== undefined) {

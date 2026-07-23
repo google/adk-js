@@ -15,6 +15,11 @@ import {
   ScheduleDynamicNode,
   ScheduleDynamicNodeOptions,
 } from './schedule_dynamic_node.js';
+import {
+  isFastForwardable,
+  makeFastForwardContext,
+  reconstructNodeStatesByPath,
+} from './utils/rehydration_utils.js';
 
 /**
  * Handles `ctx.runNode()` calls for a {@link Workflow} subtree.
@@ -36,7 +41,9 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
   ): Promise<NodeContext> {
     const name = options.nodeName ?? node.name;
     const runId = options.runId;
-    const nodePath = `${ctx.nodePath}/${name}@${runId}`;
+    const nodePath = ctx.nodePath
+      ? `${ctx.nodePath}.${name}@${runId}`
+      : `${name}@${runId}`;
 
     const existing = this.state.runs.get(nodePath);
     if (existing?.task) {
@@ -44,8 +51,30 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       return existing.task;
     }
 
-    // TODO(phase-5): lazy rehydration from session events + replay
-    // interception (dedup completed / resume waiting runs) goes here.
+    // Cross-turn resume: rehydrate this dynamic run from prior session events.
+    if (!this.state.runs.has(nodePath)) {
+      const prior = reconstructNodeStatesByPath(ctx.session?.events ?? []).get(
+        nodePath,
+      );
+      if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+        // Completed in a prior turn -> return cached output, do not re-execute.
+        this.state.runs.set(nodePath, {
+          state: createNodeState({
+            status: NodeStatus.COMPLETED,
+            runId,
+            parentRunId: ctx.runId,
+          }),
+          output: prior.output,
+        });
+        if (options.useAsOutput) {
+          ctx.output = prior.output;
+          ctx.route = prior.route;
+        }
+        return makeFastForwardContext(ctx, prior);
+      }
+      // Otherwise (waiting/unresolved): resume inputs were already merged into
+      // ctx.resumeInputs by the Workflow; fall through to a fresh run.
+    }
 
     return this.runFresh(ctx, node, input, name, runId, nodePath, options);
   }
@@ -72,6 +101,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
     run.task = executeChildNode(ctx, node, input, {
       nodeName: name,
       runId,
+      overrideNodePath: nodePath,
       useAsOutput: options.useAsOutput,
       useSubBranch: options.useSubBranch,
       overrideBranch: options.overrideBranch,
