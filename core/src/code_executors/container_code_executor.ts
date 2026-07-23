@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import Docker from 'dockerode';
+import type Docker from 'dockerode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {PassThrough} from 'node:stream';
@@ -15,6 +15,22 @@ import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {CodeExecutionResult} from './code_execution_utils.js';
 
 const DEFAULT_IMAGE_TAG = 'adk-code-executor:latest';
+
+type DockerConstructor = new (options?: Docker.DockerOptions) => Docker;
+
+/**
+ * Lazily loads the `dockerode` constructor. It is imported dynamically (rather
+ * than at the top of the module) so that importing `@google/adk` does not
+ * eagerly pull in dockerode and its native transitive dependencies (`ssh2`);
+ * the client is only loaded when an executor is actually used. This mirrors
+ * adk-python's lazy `import docker` and the sibling DB-driver loading in
+ * `sessions/db`.
+ */
+let dockerodeCtor: Promise<DockerConstructor> | undefined;
+function loadDockerodeCtor(): Promise<DockerConstructor> {
+  dockerodeCtor ??= import('dockerode').then((mod) => mod.default);
+  return dockerodeCtor;
+}
 
 /**
  * Options for {@link ContainerCodeExecutor}.
@@ -188,7 +204,9 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   private readonly image: string;
   private readonly dockerPath?: string;
   private readonly networkEnabled: boolean;
-  private readonly client: Docker;
+  private readonly baseUrl?: string;
+  private readonly injectedClient?: Docker;
+  private client?: Docker;
   private container?: Docker.Container;
   private initPromise?: Promise<void>;
 
@@ -204,13 +222,12 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
       ? path.resolve(options.dockerPath)
       : undefined;
     this.networkEnabled = options.networkEnabled ?? false;
+    this.baseUrl = options.baseUrl;
+    this.injectedClient = options.docker;
     // These invariants mirror Python's frozen fields: this executor is never
     // stateful and never optimizes data files.
     this.stateful = false;
     this.optimizeDataFile = false;
-    this.client =
-      options.docker ??
-      new Docker(options.baseUrl ? parseBaseUrl(options.baseUrl) : undefined);
     registerExitHooks();
   }
 
@@ -223,7 +240,7 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     // declared input language.
     const {stdout, stderr} = await runInContainer(
       this.container!,
-      this.client,
+      this.client!,
       ['python3', '-c', code],
     );
     logger.debug(`Executed code:\n\`\`\`\n${code}\n\`\`\``);
@@ -253,11 +270,13 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   }
 
   private async initContainer(): Promise<void> {
+    const client = await this.resolveClient();
+    this.client = client;
     if (this.dockerPath) {
-      await buildDockerImage(this.client, this.dockerPath, this.image);
+      await buildDockerImage(client, this.dockerPath, this.image);
     }
     logger.debug('Starting container for ContainerCodeExecutor...');
-    this.container = await this.client.createContainer({
+    this.container = await client.createContainer({
       Image: this.image,
       Tty: true,
       NetworkDisabled: !this.networkEnabled,
@@ -267,12 +286,23 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     activeContainers.add(this.container);
     logger.debug(`Container ${this.container.id} started.`);
 
-    const {exitCode} = await runInContainer(this.container, this.client, [
+    const {exitCode} = await runInContainer(this.container, client, [
       'which',
       'python3',
     ]);
     if (exitCode !== 0) {
       throw new Error('python3 is not installed in the container.');
     }
+  }
+
+  /** Resolves the Docker client, lazily loading dockerode when not injected. */
+  private async resolveClient(): Promise<Docker> {
+    if (this.injectedClient) {
+      return this.injectedClient;
+    }
+    const DockerClient = await loadDockerodeCtor();
+    return new DockerClient(
+      this.baseUrl ? parseBaseUrl(this.baseUrl) : undefined,
+    );
   }
 }
