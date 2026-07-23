@@ -10,13 +10,17 @@ import {
   ExecuteCodeParams,
   InvocationContext,
 } from '@google/adk';
-import type Docker from 'dockerode';
+import Dockerode from 'dockerode';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {PassThrough} from 'node:stream';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {logger} from '../../src/utils/logger.js';
+
+// Mock the dynamically-imported dockerode module so the lazy client
+// construction path can be exercised without a real Docker daemon.
+vi.mock('dockerode', () => ({default: vi.fn()}));
 
 /** Configuration for the fake Docker client used by these tests. */
 interface MockConfig {
@@ -98,8 +102,8 @@ function createMockDocker(config: MockConfig = {}): {
   return {docker, container};
 }
 
-function asDocker(docker: MockDocker): Docker {
-  return docker as unknown as Docker;
+function asDocker(docker: MockDocker): Dockerode {
+  return docker as unknown as Dockerode;
 }
 
 function makeParams(code: string): ExecuteCodeParams {
@@ -341,22 +345,48 @@ describe('ContainerCodeExecutor', () => {
     await executor.close();
   });
 
-  describe('client construction', () => {
-    it('builds a default client when no docker or baseUrl is provided', () => {
-      expect(
-        () => new ContainerCodeExecutor({image: 'test-image'}),
-      ).not.toThrow();
+  describe('lazy client construction', () => {
+    beforeEach(() => {
+      vi.mocked(Dockerode).mockReset();
+    });
+
+    it('lazily loads dockerode and builds a default client when none is injected', async () => {
+      const {docker} = createMockDocker();
+      vi.mocked(Dockerode).mockReturnValue(asDocker(docker));
+
+      const executor = new ContainerCodeExecutor({image: 'test-image'});
+      await executor.executeCode(makeParams('print(1)'));
+
+      expect(Dockerode).toHaveBeenCalledWith(undefined);
+      await executor.close();
     });
 
     it.each([
-      ['unix:///var/run/docker.sock'],
-      ['tcp://127.0.0.1:2375'],
-      ['https://127.0.0.1:2376'],
-      ['ssh://user@127.0.0.1'],
-    ])('builds a client for %s without throwing', (baseUrl) => {
-      expect(
-        () => new ContainerCodeExecutor({image: 'test-image', baseUrl}),
-      ).not.toThrow();
+      ['unix:///var/run/docker.sock', {socketPath: '/var/run/docker.sock'}],
+      [
+        'tcp://127.0.0.1:2375',
+        {host: '127.0.0.1', port: '2375', protocol: 'http'},
+      ],
+      [
+        'https://127.0.0.1:2376',
+        {host: '127.0.0.1', port: '2376', protocol: 'https'},
+      ],
+      [
+        'ssh://user@127.0.0.1',
+        {host: '127.0.0.1', port: undefined, protocol: 'ssh'},
+      ],
+    ])('maps base url %s to dockerode options', async (baseUrl, expected) => {
+      const {docker} = createMockDocker();
+      vi.mocked(Dockerode).mockReturnValue(asDocker(docker));
+
+      const executor = new ContainerCodeExecutor({
+        image: 'test-image',
+        baseUrl,
+      });
+      await executor.executeCode(makeParams('print(1)'));
+
+      expect(Dockerode).toHaveBeenCalledWith(expected);
+      await executor.close();
     });
   });
 
