@@ -7,7 +7,8 @@
 import {Content} from '@google/genai';
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
+import {createEvent, Event} from '../events/event.js';
+import {toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 import {EventChannel} from './utils/event_channel.js';
 import {Workflow} from './workflow.js';
@@ -54,10 +55,30 @@ export class WorkflowAgent extends BaseAgent {
 
     const input = extractWorkflowInput(ic.userContent);
 
-    const settle = root.runNode(this.workflow, input, {useAsOutput: true}).then(
-      () => channel.close(),
-      (err) => channel.fail(err),
-    );
+    const settle = (async () => {
+      try {
+        const wfCtx = await root.runNode(this.workflow, input, {
+          useAsOutput: true,
+        });
+        // Surface the workflow's final output as an event so consumers (and
+        // the Runner) can observe it — important for dynamicEntry workflows
+        // whose return value differs from the last node's event.
+        if (wfCtx.interruptIds.length === 0 && root.output !== undefined) {
+          channel.push(
+            createEvent({
+              author: this.name,
+              invocationId: ic.invocationId,
+              branch: ic.branch,
+              content: toContent(root.output),
+              output: root.output,
+            }),
+          );
+        }
+        channel.close();
+      } catch (err) {
+        channel.fail(err);
+      }
+    })();
 
     for await (const event of channel) {
       yield event;
