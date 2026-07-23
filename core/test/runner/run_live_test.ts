@@ -702,7 +702,10 @@ describe('Runner.runLive', () => {
   });
 
   it('stops during execution when the abort signal is aborted', async () => {
-    const textContent: Content = {role: 'model', parts: [{text: 'first event'}]};
+    const textContent: Content = {
+      role: 'model',
+      parts: [{text: 'first event'}],
+    };
     const llm = new FakeLiveLlm([
       {content: textContent},
       {content: {role: 'model', parts: [{text: 'second event'}]}},
@@ -730,8 +733,12 @@ describe('Runner.runLive', () => {
     }
 
     expect(events.length).toBeLessThan(3);
-    expect(events.some((e) => e.content?.parts?.[0]?.text === 'first event')).toBe(true);
-    expect(events.some((e) => e.content?.parts?.[0]?.text === 'second event')).toBe(false);
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'first event'),
+    ).toBe(true);
+    expect(
+      events.some((e) => e.content?.parts?.[0]?.text === 'second event'),
+    ).toBe(false);
     expect(llm.connection!.closed).toBe(true);
   });
 
@@ -827,10 +834,7 @@ describe('Runner.runLive', () => {
     (error1006 as {code?: number}).code = 1006;
 
     const llm = new FakeLiveLlm([
-      [
-        {liveSessionResumptionUpdate: {newHandle: 'handle-1006'}},
-        error1006,
-      ],
+      [{liveSessionResumptionUpdate: {newHandle: 'handle-1006'}}, error1006],
       [{turnComplete: true}],
     ]);
     const agent = new LlmAgent({name: 'agent', model: llm});

@@ -754,8 +754,14 @@ export class Runner {
 
             const eventToProcess = modifiedEvent ?? event;
 
-            if (!eventToProcess.partial && !isLiveModelMediaEventWithInlineData(eventToProcess)) {
-              await this.sessionService.appendEvent({session, event: eventToProcess});
+            if (
+              !eventToProcess.partial &&
+              !isLiveModelMediaEventWithInlineData(eventToProcess)
+            ) {
+              await this.sessionService.appendEvent({
+                session,
+                event: eventToProcess,
+              });
             }
 
             yield eventToProcess;
