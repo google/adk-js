@@ -153,6 +153,13 @@ async function runOnce(
             child.interruptIds.push(id);
           }
         }
+        // Persist the node's input on the interrupt event so a resumed
+        // (waiting) node re-runs with its ORIGINAL input, not the resume
+        // message. Rehydrated by reconstructNodeStates on the next turn.
+        event.actions.agentState = {
+          ...(event.actions.agentState ?? {}),
+          input,
+        };
       }
       child.channel.push(event);
     }

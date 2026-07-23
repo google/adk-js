@@ -209,12 +209,14 @@ describe('workflow integration — retry', () => {
 describe('workflow integration — request_input (HITL)', () => {
   it('pauses for input and resumes on a function response', async () => {
     const gate = node(
-      (ctx: NodeContext) => {
+      (ctx: NodeContext, input: string) => {
         const answer = ctx.resumeInputs['confirm'];
         if (answer === undefined) {
           return new RequestInput({interruptId: 'confirm', message: 'ok?'});
         }
-        return `decided:${answer}`;
+        // On resume, `input` must still be the original 'start', not the
+        // function-response message.
+        return `${input}:${answer}`;
       },
       {name: 'gate'},
     );
@@ -244,6 +246,6 @@ describe('workflow integration — request_input (HITL)', () => {
         ],
       }),
     );
-    expect(finalOutput(turn2)).toBe('decided:yes');
+    expect(finalOutput(turn2)).toBe('start:yes');
   });
 });

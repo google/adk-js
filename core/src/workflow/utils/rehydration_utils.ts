@@ -27,6 +27,8 @@ export interface RehydratedNode {
   route?: RouteValue;
   /** The branch the node ran on. */
   branch?: string;
+  /** The input the node was invoked with (captured when it interrupted). */
+  input?: unknown;
   /** Interrupt ids the node raised. */
   interruptIds: Set<string>;
   /** Resolved interrupt responses, keyed by interrupt id. */
@@ -106,6 +108,14 @@ function reconstruct(
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);
       interruptOwner.set(id, key);
+    }
+    // Capture the node's original input, stashed on the interrupt event, so a
+    // resumed waiting node re-runs with it (not the resume message).
+    const agentState = event.actions?.agentState as
+      | {input?: unknown}
+      | undefined;
+    if (agentState && 'input' in agentState) {
+      node.input = agentState.input;
     }
   }
 

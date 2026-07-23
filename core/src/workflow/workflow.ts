@@ -310,12 +310,20 @@ export class Workflow extends BaseNode {
       nodeState.runId = runId;
     }
 
+    // On resume, a waiting node (it interrupted last turn) re-runs with its
+    // ORIGINAL input, not the trigger's (which carries the resume message).
+    const resuming =
+      prior !== undefined &&
+      prior.interruptIds.size > 0 &&
+      prior.input !== undefined;
+    const nodeInput = resuming ? prior.input : trigger.input;
+
     // Static graph nodes are managed by this loop directly, bypassing the
     // dynamic scheduler (which serves user-initiated ctx.runNode() calls).
     const task: Promise<CompletedTask> = executeChildNode(
       ctx,
       node,
-      trigger.input,
+      nodeInput,
       {
         runId,
         useSubBranch: trigger.useSubBranch,
