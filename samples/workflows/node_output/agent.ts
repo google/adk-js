@@ -5,57 +5,70 @@
  */
 
 /**
- * Node output styles: a raw value, an explicit `Event({output})`, and a
- * structured object consumed downstream. Mirrors Python `workflows/node_output`.
+ * Node output styles: a raw string, an explicit `Event({output})`, a
+ * schema-typed LlmAgent output, and a downstream node consuming it. Faithful
+ * port of Python `contributing/samples/workflows/node_output`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/node_output/agent.ts
+ * Requires an API key. Set GEMINI_API_KEY, then:
+ *   npm run sample -- samples/workflows/node_output/agent.ts
  */
 
 import {
   createEvent,
+  LlmAgent,
   node,
   NodeContext,
   Workflow,
   WorkflowAgent,
 } from '@google/adk';
+import {z} from 'zod';
 
-interface TopicDetails {
-  title: string;
-  description: string;
-  category: string;
-}
+const topicDetails = z.object({
+  title: z.string().describe('The title of the generated topic.'),
+  description: z.string().describe('A short description of the topic.'),
+  category: z.string().describe('The broad category of the topic.'),
+});
 
-const stringOutput = node(
-  (_c: NodeContext, input: string) => `Processed input: ${input}`,
+const generateStringOutput = node(
+  // Returns a simple string; the framework wraps it in an Event.
+  (_c: NodeContext, nodeInput: string) => `Processed input: ${nodeInput}`,
   {name: 'generate_string_output'},
 );
 
-const eventOutput = node(
-  (_c: NodeContext, input: string) =>
-    createEvent({output: `Event-wrapped output: ${input}`}),
+const generateEventOutput = node(
+  // Explicitly returns an Event for more control.
+  (_c: NodeContext, nodeInput: string) =>
+    createEvent({output: `Event wrapped output: ${nodeInput}`}),
   {name: 'generate_event_output'},
 );
 
-const structuredOutput = node(
-  (_c: NodeContext, input: string): TopicDetails => ({
-    title: 'Generated Topic',
-    description: `A creative topic based on: ${input}`,
-    category: 'general',
-  }),
-  {name: 'generate_structured_output'},
-);
+const generatePydanticOutput = new LlmAgent({
+  name: 'generate_pydantic_output',
+  model: 'gemini-2.5-flash',
+  instruction: 'Generate a creative topic based on the following input.',
+  outputSchema: topicDetails,
+});
 
-const consumeStructured = node(
-  (_c: NodeContext, details: TopicDetails) =>
-    `Received structured output!\nTitle: ${details.title}\nDescription: ${details.description}\nCategory: ${details.category}`,
-  {name: 'consume_structured_output'},
+const consumePydanticOutput = node(
+  (_c: NodeContext, nodeInput: z.infer<typeof topicDetails>) =>
+    'Received Pydantic Model!\n' +
+    `Title: ${nodeInput.title}\n` +
+    `Description: ${nodeInput.description}\n` +
+    `Category: ${nodeInput.category}`,
+  {name: 'consume_pydantic_output'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'node_output',
+    name: 'root_agent',
     edges: [
-      ['START', stringOutput, eventOutput, structuredOutput, consumeStructured],
+      [
+        'START',
+        generateStringOutput,
+        generateEventOutput,
+        generatePydanticOutput,
+        consumePydanticOutput,
+      ],
     ],
   }),
 );

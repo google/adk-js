@@ -5,39 +5,50 @@
  */
 
 /**
- * Retry: a flaky node is retried per its RetryConfig until it succeeds. Mirrors
- * Python `workflows/retry`.
+ * Retry: a mock task fails randomly (~70%) and is retried per its RetryConfig,
+ * using `ctx.attemptCount`. Faithful port of Python
+ * `contributing/samples/workflows/retry`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/retry/agent.ts
+ * Run (offline):  npm run sample -- samples/workflows/retry/agent.ts
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
-
-let attempts = 0;
+import {
+  createEvent,
+  node,
+  NodeContext,
+  Workflow,
+  WorkflowAgent,
+} from '@google/adk';
 
 const getWeather = node(
-  () => {
-    attempts++;
-    if (attempts < 3) {
-      throw new Error(`Transient upstream error (attempt ${attempts}).`);
+  async function* (ctx: NodeContext) {
+    yield createEvent({
+      content: {
+        role: 'model',
+        parts: [{text: `Getting weather... attempt ${ctx.attemptCount}`}],
+      },
+    });
+    if (Math.random() < 0.7) {
+      // 70% chance of failure
+      throw new Error('HTTP 500: Internal Server Error');
     }
-    return 'sunny';
+    yield 'sunny';
   },
-  {
-    name: 'get_weather',
-    retryConfig: {maxAttempts: 5, initialDelay: 0.2, jitter: 0},
-  },
+  {name: 'get_weather', retryConfig: {maxAttempts: 5, initialDelay: 1}},
 );
 
 const reportWeather = node(
-  (_c: NodeContext, weather: string) =>
-    `The weather is ${weather} (after ${attempts} attempts).`,
+  async function* (_c: NodeContext, weather: string) {
+    yield createEvent({
+      content: {role: 'model', parts: [{text: `The weather is ${weather}`}]},
+    });
+  },
   {name: 'report_weather'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'retry_sample',
+    name: 'root_agent',
     edges: [['START', getWeather, reportWeather]],
   }),
 );

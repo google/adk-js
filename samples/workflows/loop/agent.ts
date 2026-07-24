@@ -5,64 +5,82 @@
  */
 
 /**
- * Loop: generate → evaluate → route back until the result passes. Mirrors
- * Python `workflows/loop` (generate/evaluate kept function-based to run
- * offline; swap for LlmAgents to use a model).
+ * Loop: generate a headline, grade it, and route back until it is tech-related.
+ * Faithful port of Python `contributing/samples/workflows/loop`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/loop/agent.ts
+ * Requires an API key. Set GEMINI_API_KEY, then:
+ *   npm run sample -- samples/workflows/loop/agent.ts
+ * Enter a topic, e.g. "the ocean" (loops until the headline is tech-related).
  */
 
 import {
   createEvent,
+  LlmAgent,
   node,
   NodeContext,
   Workflow,
   WorkflowAgent,
 } from '@google/adk';
+import {z} from 'zod';
+
+const feedbackSchema = z.object({
+  grade: z
+    .enum(['tech-related', 'unrelated'])
+    .describe(
+      'Decide if the headline is related to technology or software engineering.',
+    ),
+  feedback: z
+    .string()
+    .describe(
+      'If the headline is unrelated to technology, provide feedback on how to make it more tech-focused.',
+    ),
+});
 
 const processInput = node(
-  (ctx: NodeContext, topic: string) => {
-    ctx.state.set('topic', topic);
-    ctx.state.set('attempt', 0);
-    return topic;
+  (ctx: NodeContext, nodeInput: string) => {
+    ctx.state.set('topic', nodeInput);
   },
   {name: 'process_input'},
 );
 
-const generateHeadline = node(
-  (ctx: NodeContext) => {
-    const attempt = (ctx.state.get<number>('attempt') ?? 0) + 1;
-    ctx.state.set('attempt', attempt);
-    const topic = ctx.state.get('topic');
-    return `Headline draft #${attempt} about "${topic}"`;
-  },
-  {name: 'generate_headline'},
-);
+const generateHeadline = new LlmAgent({
+  name: 'generate_headline',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Write a headline about the topic "{topic}".
+    If feedback is provided, take it into account.
+    The feedback: {feedback?}
+    `,
+});
 
-const evaluateHeadline = node(
-  (ctx: NodeContext, headline: string) => {
-    // Accept on the 3rd attempt (simulates a grader improving over iterations).
-    const attempt = ctx.state.get<number>('attempt') ?? 0;
-    const grade = attempt >= 3 ? 'tech-related' : 'unrelated';
-    return createEvent({route: grade, output: headline});
-  },
-  {name: 'evaluate_headline'},
-);
+const evaluateHeadline = new LlmAgent({
+  name: 'evaluate_headline',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Grade whether the headline is related to technology or software engineering.
+    `,
+  outputSchema: feedbackSchema,
+  outputKey: 'feedback',
+});
 
-const finalize = node(
-  (_c: NodeContext, headline: string) => `Final headline: ${headline}`,
-  {name: 'finalize'},
+const routeHeadline = node(
+  (_c: NodeContext, feedback: {grade: string}) =>
+    createEvent({route: feedback.grade}),
+  {name: 'route_headline'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'loop_sample',
+    name: 'root_agent',
     edges: [
-      ['START', processInput, generateHeadline, evaluateHeadline],
       [
+        'START',
+        processInput,
+        generateHeadline,
         evaluateHeadline,
-        {unrelated: generateHeadline, 'tech-related': finalize},
+        routeHeadline,
       ],
+      [routeHeadline, {unrelated: generateHeadline}],
     ],
   }),
 );

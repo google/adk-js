@@ -5,14 +5,19 @@
  */
 
 /**
- * Nested workflow: a Workflow used as a node inside another workflow, alongside
- * a parallel branch and a JoinNode. Mirrors Python `workflows/nested_workflow`.
+ * Nested workflow: a sub-Workflow used as a node, running in parallel with an
+ * agent, joined and aggregated. Faithful port of Python
+ * `contributing/samples/workflows/nested_workflow`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/nested_workflow/agent.ts
+ * Requires an API key. Set GEMINI_API_KEY, then:
+ *   npm run sample -- samples/workflows/nested_workflow/agent.ts
+ * Enter a 4-digit year, e.g. "1955".
  */
 
 import {
+  createEvent,
   JoinNode,
+  LlmAgent,
   node,
   NodeContext,
   Workflow,
@@ -20,48 +25,80 @@ import {
 } from '@google/adk';
 
 const processInput = node(
-  (ctx: NodeContext, year: string) => {
-    ctx.state.set('year', year.trim());
-    return year.trim();
+  function* (ctx: NodeContext, nodeInput: string) {
+    const match = String(nodeInput).match(/\b\d{4}\b/);
+    if (!match) {
+      yield createEvent({
+        content: {
+          role: 'model',
+          parts: [{text: 'Please provide a valid 4-digit year (e.g., 1955).'}],
+        },
+      });
+      throw new Error('Invalid year format.');
+    }
+    ctx.state.set('year', match[0]);
   },
   {name: 'process_input'},
 );
 
-// A nested workflow: find a name, then a bio.
-const findName = node(
-  (_c: NodeContext, year: string) => `A famous person born in ${year}`,
-  {name: 'find_name'},
-);
-const generateBio = node(
-  (_c: NodeContext, name: string) => `${name} — a short 3-sentence biography.`,
-  {name: 'generate_bio'},
-);
+const findName = new LlmAgent({
+  name: 'find_name',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Find the name of one famous person who was born in this year: {year}.
+    Return ONLY their name, nothing else.
+    `,
+});
+
+const generateBio = new LlmAgent({
+  name: 'generate_bio',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Write a short, engaging 3-sentence biography for the specified person.
+    `,
+});
+
+// Sub-workflow that acts as a single node in the parent workflow.
 const findFamousPerson = new Workflow({
   name: 'find_famous_person',
   edges: [['START', findName, generateBio]],
 });
 
-const findHistoricalEvent = node(
-  (ctx: NodeContext) => `A significant event in ${ctx.state.get('year')}.`,
-  {name: 'find_historical_event'},
-);
+const findHistoricalEvent = new LlmAgent({
+  name: 'find_historical_event',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Describe one highly significant historical event that occurred in this year: {year}.
+    Keep the description to 2 sentences.
+    `,
+});
 
-const aggregate = node(
-  (_c: NodeContext, results: Record<string, unknown>) =>
-    `Person: ${results['find_famous_person']}\n\nEvent: ${results['find_historical_event']}`,
+const joinForAggregation = new JoinNode({name: 'join_for_aggregation'});
+
+const aggregateResults = node(
+  function* (ctx: NodeContext, nodeInput: Record<string, string>) {
+    const year = ctx.state.get('year');
+    const combined =
+      `# Year: ${year}\n\n` +
+      '## Famous Person Bio:\n\n' +
+      `${nodeInput['find_famous_person']}\n\n` +
+      '## Historical Event:\n\n' +
+      `${nodeInput['find_historical_event']}`;
+    yield createEvent({content: {role: 'model', parts: [{text: combined}]}});
+  },
   {name: 'aggregate_results'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'nested_workflow',
+    name: 'root_agent',
     edges: [
       [
         'START',
         processInput,
         [findFamousPerson, findHistoricalEvent],
-        new JoinNode({name: 'join'}),
-        aggregate,
+        joinForAggregation,
+        aggregateResults,
       ],
     ],
   }),

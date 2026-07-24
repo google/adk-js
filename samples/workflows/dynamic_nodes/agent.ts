@@ -5,30 +5,71 @@
  */
 
 /**
- * Dynamic nodes: an imperative entry drives execution with plain control flow
- * and `ctx.runNode()`. Mirrors Python `workflows/dynamic_nodes`.
+ * Dynamic nodes: an imperative orchestrator drives LlmAgents with `ctx.runNode`
+ * in a loop until the generated headline is tech-related. Faithful port of
+ * Python `contributing/samples/workflows/dynamic_nodes`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/dynamic_nodes/agent.ts
+ * Requires an API key. Set GEMINI_API_KEY, then:
+ *   npm run sample -- samples/workflows/dynamic_nodes/agent.ts
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
+import {
+  LlmAgent,
+  node,
+  NodeContext,
+  Workflow,
+  WorkflowAgent,
+} from '@google/adk';
+import {z} from 'zod';
 
-const step = node((_c: NodeContext, n: number) => (n as number) + 1, {
-  name: 'step',
+const feedbackSchema = z.object({
+  grade: z.enum(['tech-related', 'unrelated']),
+  feedback: z.string(),
 });
+
+const generateHeadline = node(
+  new LlmAgent({
+    name: 'generate_headline',
+    model: 'gemini-2.5-flash',
+    instruction: `
+    Write a headline about the topic "{topic}".
+    If feedback is provided, take it into account.
+    The feedback: {feedback?}
+    `,
+  }),
+);
+
+const evaluateHeadline = node(
+  new LlmAgent({
+    name: 'evaluate_headline',
+    model: 'gemini-2.5-flash',
+    instruction:
+      'Grade whether the headline is related to technology or software engineering.',
+    outputSchema: feedbackSchema,
+    outputKey: 'feedback',
+  }),
+);
+
+const orchestrate = node(
+  async function* (ctx: NodeContext, nodeInput: string) {
+    ctx.state.set('topic', nodeInput);
+
+    for (;;) {
+      const headline = (await ctx.runNode(generateHeadline)).output as string;
+      const feedback = (await ctx.runNode(evaluateHeadline, headline))
+        .output as {grade: string};
+      if (feedback.grade === 'tech-related') {
+        yield headline;
+        break;
+      }
+    }
+  },
+  {name: 'orchestrate', rerunOnResume: true},
+);
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'dynamic_nodes',
-    dynamicEntry: async (ctx) => {
-      let value = 0;
-      const trace: number[] = [];
-      for (let i = 0; i < 3; i++) {
-        const result = await ctx.runNode(step, value, {runId: `step-${i}`});
-        value = result.output as number;
-        trace.push(value);
-      }
-      return `Ran ${trace.length} dynamic steps: ${trace.join(' -> ')}`;
-    },
+    name: 'root_agent',
+    edges: [['START', orchestrate]],
   }),
 );

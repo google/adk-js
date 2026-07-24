@@ -5,34 +5,50 @@
  */
 
 /**
- * Multi-triggers: a non-join node with several predecessors runs once per
- * incoming trigger. Mirrors Python `workflows/multi_triggers`.
+ * Multi-triggers: a node with several predecessors runs once per incoming
+ * trigger. Faithful port of Python `contributing/samples/workflows/multi_triggers`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/multi_triggers/agent.ts
+ * Run (offline):  npm run sample -- samples/workflows/multi_triggers/agent.ts
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
+import {
+  createEvent,
+  node,
+  NodeContext,
+  Workflow,
+  WorkflowAgent,
+} from '@google/adk';
+import {z} from 'zod';
 
-const producerA = node((_c: NodeContext, i: string) => `A(${i})`, {
-  name: 'producer_a',
+const makeUppercase = node((_c: NodeContext, s: string) => s.toUpperCase(), {
+  name: 'make_uppercase',
 });
-const producerB = node((_c: NodeContext, i: string) => `B(${i})`, {
-  name: 'producer_b',
+const countCharacters = node((_c: NodeContext, s: string) => s.length, {
+  name: 'count_characters',
 });
+const reverseString = node(
+  (_c: NodeContext, s: string) => s.split('').reverse().join(''),
+  {name: 'reverse_string'},
+);
 
-// `collector` is NOT a JoinNode, so it runs once for each predecessor trigger.
-const collector = node(
-  (_c: NodeContext, input: string) => `collected: ${input}`,
-  {name: 'collector'},
+const sendMessage = node(
+  async function* (_c: NodeContext, nodeInput: unknown) {
+    yield createEvent({
+      content: {
+        role: 'model',
+        parts: [{text: `Triggered for input: ${nodeInput}`}],
+      },
+    });
+  },
+  {name: 'send_message'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'multi_triggers',
+    name: 'root_agent',
+    inputSchema: z.string(),
     edges: [
-      ['START', [producerA, producerB]],
-      [producerA, collector],
-      [producerB, collector],
+      ['START', [makeUppercase, countCharacters, reverseString], sendMessage],
     ],
   }),
 );

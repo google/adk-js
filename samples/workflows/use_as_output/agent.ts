@@ -5,38 +5,49 @@
  */
 
 /**
- * use_as_output: a node runs a sub-node via `ctx.runNode(..., {useAsOutput})`
- * so the sub-node's result becomes the caller's output. Mirrors Python
- * `workflows/use_as_output`.
+ * use_as_output: an orchestrator runs a sub-agent with `useAsOutput`, so the
+ * sub-agent's result becomes the node's output. Faithful port of Python
+ * `contributing/samples/workflows/use_as_output`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/use_as_output/agent.ts
+ * Requires an API key. Set GEMINI_API_KEY, then:
+ *   npm run sample -- samples/workflows/use_as_output/agent.ts
+ * Paste some text to summarize.
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
+import {
+  LlmAgent,
+  node,
+  NodeContext,
+  Workflow,
+  WorkflowAgent,
+} from '@google/adk';
 
-// Stands in for an LlmAgent summarizer (kept function-based to run offline).
 const summarizer = node(
-  (_c: NodeContext, text: string) =>
-    `Summary: ${String(text).split(/\s+/).slice(0, 6).join(' ')}...`,
-  {name: 'summarizer'},
+  new LlmAgent({
+    name: 'summarizer',
+    model: 'gemini-2.5-flash',
+    instruction: 'Summarize the following text in one sentence.',
+  }),
 );
 
 const orchestrate = node(
-  async (ctx: NodeContext, input: string) => {
-    const child = await ctx.runNode(summarizer, input, {useAsOutput: true});
+  async (ctx: NodeContext, nodeInput: string) => {
+    const child = await ctx.runNode(summarizer, nodeInput, {useAsOutput: true});
     return child.output;
   },
-  {name: 'orchestrate'},
+  {name: 'orchestrate', rerunOnResume: true},
 );
 
 const finalize = node(
-  (_c: NodeContext, summary: string) => `final: ${summary}`,
-  {name: 'finalize'},
+  (_c: NodeContext, nodeInput: string) => `final: ${nodeInput}`,
+  {
+    name: 'finalize',
+  },
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'use_as_output',
+    name: 'root_agent',
     edges: [['START', orchestrate, finalize]],
   }),
 );

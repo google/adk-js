@@ -5,14 +5,15 @@
  */
 
 /**
- * Fan-out / fan-in: run three nodes in parallel on the same input, then join
- * their outputs and aggregate. Mirrors Python `workflows/fan_out_fan_in`.
+ * Fan-out / fan-in: run three functions in parallel on the same input, join
+ * their outputs, and aggregate. Faithful port of Python
+ * `contributing/samples/workflows/fan_out_fan_in`.
  *
- * Run (offline, no API key):
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/fan_out_fan_in/agent.ts
+ * Run (offline):  npm run sample -- samples/workflows/fan_out_fan_in/agent.ts
  */
 
 import {
+  createEvent,
   JoinNode,
   node,
   NodeContext,
@@ -31,22 +32,35 @@ const reverseString = node(
   {name: 'reverse_string'},
 );
 
+const joinNode = new JoinNode({name: 'join_for_results'});
+
 const aggregate = node(
-  (_c: NodeContext, results: Record<string, unknown>) =>
-    `Uppercase: ${results['make_uppercase']}\n` +
-    `Character Count: ${results['count_characters']}\n` +
-    `Reversed: ${results['reverse_string']}`,
+  async function* (_c: NodeContext, results: Record<string, unknown>) {
+    yield createEvent({
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text:
+              `Uppercase: ${results['make_uppercase']}\n\n` +
+              `Character Count: ${results['count_characters']}\n\n` +
+              `Reversed: ${results['reverse_string']}\n\n`,
+          },
+        ],
+      },
+    });
+  },
   {name: 'aggregate'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'fan_out_fan_in',
+    name: 'root_agent',
     edges: [
       [
         'START',
         [makeUppercase, countCharacters, reverseString],
-        new JoinNode({name: 'join_for_results'}),
+        joinNode,
         aggregate,
       ],
     ],
