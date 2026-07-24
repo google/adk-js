@@ -11,6 +11,7 @@ import {createEvent, Event} from '../events/event.js';
 import {toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 import {EventChannel} from './utils/event_channel.js';
+import {reconstructNodeStates} from './utils/rehydration_utils.js';
 import {Workflow} from './workflow.js';
 
 /** Options for a {@link WorkflowAgent}. */
@@ -48,9 +49,11 @@ export class WorkflowAgent extends BaseAgent {
       channel,
       nodePath: '',
       runId: this.name,
-      // TODO(phase-5b): reconstruct resumeInputs from session function
-      // responses so an interrupted workflow can resume via the Runner.
-      resumeInputs: {},
+      // Interactive resume: if the workflow is paused on an interrupt and the
+      // user replies with plain text (not a structured function response), feed
+      // that text to the pending interrupt(s). Structured function responses are
+      // still resolved by the workflow's own rehydration.
+      resumeInputs: resumeInputsFromPlainText(ic),
     });
 
     const input = extractWorkflowInput(ic.userContent);
@@ -90,6 +93,39 @@ export class WorkflowAgent extends BaseAgent {
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     throw new Error('WorkflowAgent does not support live mode.');
   }
+}
+
+/**
+ * When the workflow is paused on unresolved interrupt(s) and the incoming
+ * message is plain text (not a structured function response), maps that text to
+ * every pending interrupt id so an interactive client (e.g. `adk run`) can
+ * resume a HITL/auth pause by simply typing a reply.
+ */
+function resumeInputsFromPlainText(
+  ic: InvocationContext,
+): Record<string, unknown> {
+  const parts = ic.userContent?.parts ?? [];
+  const isPlainText =
+    parts.length > 0 && parts.every((p) => typeof p.text === 'string');
+  if (!isPlainText) {
+    return {};
+  }
+  const text = parts.map((p) => p.text).join('');
+
+  const pending = new Set<string>();
+  for (const node of reconstructNodeStates(ic.session?.events ?? []).values()) {
+    for (const id of node.interruptIds) {
+      if (!node.resolvedResponses.has(id)) {
+        pending.add(id);
+      }
+    }
+  }
+
+  const resumeInputs: Record<string, unknown> = {};
+  for (const id of pending) {
+    resumeInputs[id] = text;
+  }
+  return resumeInputs;
 }
 
 /**

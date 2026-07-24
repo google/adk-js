@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "npm run build --workspaces",
+    "sample": "node dev/dist/esm/cli_entrypoint.js run",
     "clean": "npm run clean --workspaces",
     "clean:all": "rm package-lock.json && rm -rf ./node_modules && npm run clean:all --workspaces",
     "rebuild": "npm run clean:all && npm install && npm run build",
