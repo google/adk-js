@@ -190,7 +190,7 @@ describe('toA2a', () => {
     expect(getA2AAgentCard).not.toHaveBeenCalled();
   });
 
-  describe('authentication (b/508330032)', () => {
+  describe('authentication', () => {
     it('fails closed when no authentication is provided and access is not explicitly opened', async () => {
       await expect(toA2a(agent)).rejects.toThrow(/authenticat/i);
 

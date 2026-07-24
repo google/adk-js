@@ -83,7 +83,7 @@ export interface ToA2aOptions {
    * `true` (and no {@link ToA2aOptions.authentication} is provided), a loud
    * warning is logged and the handlers are mounted with no authentication.
    *
-   * Defaults to `false`, which makes `toA2a` fail closed. See b/508330032.
+   * Defaults to `false`, which makes `toA2a` fail closed.
    */
   allowUnauthenticated?: boolean;
 }
@@ -98,7 +98,7 @@ export interface ToA2aOptions {
  *   `true`, a loud warning is logged and the surface is mounted with no
  *   authentication.
  * - Otherwise, an error is thrown: the A2A surface must not be exposed without
- *   authentication (b/508330032).
+ *   authentication.
  */
 function resolveA2aUserBuilder(options: ToA2aOptions): UserBuilder {
   if (options.authentication) {
@@ -111,7 +111,7 @@ function resolveA2aUserBuilder(options: ToA2aOptions): UserBuilder {
         'because `allowUnauthenticated: true` was set. The agent and all of ' +
         'its tools are exposed to any network-reachable caller, which can ' +
         'invoke them with arbitrary input and read the output. Do NOT use ' +
-        'this outside of local, trusted development (see b/508330032).',
+        'this outside of local, trusted development.',
     );
     return UserBuilder.noAuthentication;
   }
@@ -123,7 +123,7 @@ function resolveA2aUserBuilder(options: ToA2aOptions): UserBuilder {
       'authenticated. Provide `authentication` (a UserBuilder that validates ' +
       'the request, e.g. a bearer token or OIDC credential) or, only for ' +
       'local/trusted development, explicitly set `allowUnauthenticated: ' +
-      'true`. See b/508330032.',
+      'true`.',
   );
 }
 
@@ -139,7 +139,7 @@ export async function toA2a(
   options: ToA2aOptions = {},
 ): Promise<express.Application> {
   // Fail closed before doing any work: the A2A surface must be authenticated
-  // unless the caller explicitly opts out (see b/508330032).
+  // unless the caller explicitly opts out.
   const userBuilder = resolveA2aUserBuilder(options);
 
   const host = options.host ?? 'localhost';

@@ -164,7 +164,7 @@ export class AdkApiServer {
         runner,
         app: this.app,
         // This is the local development API server. `toA2a` fails closed by
-        // default (see b/508330032), so explicitly opt out of authentication
+        // default, so explicitly opt out of authentication
         // here; a loud warning is logged at startup. Production A2A deployments
         // should instead pass an `authentication` UserBuilder.
         allowUnauthenticated: true,
