@@ -14,6 +14,19 @@ import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {SkillToolset} from './skill_toolset.js';
 
 /**
+ * Error codes returned by {@link RunSkillInlineScriptTool} when a call cannot
+ * be completed. The string values are part of the tool's response contract and
+ * must remain stable.
+ */
+export enum RunSkillInlineScriptErrorCode {
+  MISSING_SCRIPT_CONTENT = 'MISSING_SCRIPT_CONTENT',
+  MISSING_LANGUAGE = 'MISSING_LANGUAGE',
+  NO_CODE_EXECUTOR = 'NO_CODE_EXECUTOR',
+  EXECUTION_ERROR = 'EXECUTION_ERROR',
+  CONFIRMATION_REJECTED = 'CONFIRMATION_REJECTED',
+}
+
+/**
  * Message returned while the tool call is paused waiting for the client to
  * confirm (or reject) execution of the model-provided inline script. Mirrors
  * the intermediate message used by the tool-confirmation flow elsewhere in the
@@ -78,13 +91,13 @@ export class RunSkillInlineScriptTool extends BaseTool {
     if (!inlineScriptContent) {
       return {
         error: 'Script content is required.',
-        errorCode: 'MISSING_SCRIPT_CONTENT',
+        errorCode: RunSkillInlineScriptErrorCode.MISSING_SCRIPT_CONTENT,
       };
     }
     if (!language) {
       return {
         error: 'Language is required.',
-        errorCode: 'MISSING_LANGUAGE',
+        errorCode: RunSkillInlineScriptErrorCode.MISSING_LANGUAGE,
       };
     }
 
@@ -99,7 +112,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     if (!codeExecutor) {
       return {
         error: 'No code executor configured.',
-        errorCode: 'NO_CODE_EXECUTOR',
+        errorCode: RunSkillInlineScriptErrorCode.NO_CODE_EXECUTOR,
       };
     }
 
@@ -134,7 +147,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     } catch (e: unknown) {
       return {
         error: `Failed to execute inline script: ${(e as Error).message}`,
-        errorCode: 'EXECUTION_ERROR',
+        errorCode: RunSkillInlineScriptErrorCode.EXECUTION_ERROR,
       };
     }
   }
@@ -155,7 +168,10 @@ export class RunSkillInlineScriptTool extends BaseTool {
     toolContext: Context,
     scriptContent: string,
     language: string,
-  ): {partial: string} | {error: string; errorCode: string} | undefined {
+  ):
+    | {partial: string}
+    | {error: string; errorCode: RunSkillInlineScriptErrorCode}
+    | undefined {
     const confirmation = toolContext.toolConfirmation;
 
     if (!confirmation) {
@@ -173,7 +189,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     if (!confirmation.confirmed) {
       return {
         error: 'Inline script execution was not confirmed and was rejected.',
-        errorCode: 'CONFIRMATION_REJECTED',
+        errorCode: RunSkillInlineScriptErrorCode.CONFIRMATION_REJECTED,
       };
     }
 

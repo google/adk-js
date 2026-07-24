@@ -14,6 +14,7 @@ import {
   FileContentEncoding,
   InvocationContext,
   LlmAgent,
+  RunSkillInlineScriptErrorCode,
   RunSkillInlineScriptTool,
   SkillToolset,
 } from '@google/adk';
@@ -47,7 +48,7 @@ class MockCodeExecutor extends BaseCodeExecutor {
 
 interface ToolErrorResponse {
   error: string;
-  errorCode: string;
+  errorCode: RunSkillInlineScriptErrorCode;
 }
 
 describe('RunSkillInlineScriptTool', () => {
@@ -92,7 +93,7 @@ describe('RunSkillInlineScriptTool', () => {
 
     expect(result).toEqual({
       error: 'Script content is required.',
-      errorCode: 'MISSING_SCRIPT_CONTENT',
+      errorCode: RunSkillInlineScriptErrorCode.MISSING_SCRIPT_CONTENT,
     });
   });
 
@@ -106,7 +107,7 @@ describe('RunSkillInlineScriptTool', () => {
 
     expect(result).toEqual({
       error: 'Language is required.',
-      errorCode: 'MISSING_LANGUAGE',
+      errorCode: RunSkillInlineScriptErrorCode.MISSING_LANGUAGE,
     });
   });
 
@@ -123,7 +124,7 @@ describe('RunSkillInlineScriptTool', () => {
 
     expect(result).toEqual({
       error: 'No code executor configured.',
-      errorCode: 'NO_CODE_EXECUTOR',
+      errorCode: RunSkillInlineScriptErrorCode.NO_CODE_EXECUTOR,
     });
   });
 
@@ -173,7 +174,7 @@ describe('RunSkillInlineScriptTool', () => {
 
     expect(result).toEqual({
       error: 'Failed to execute inline script: Mock execution failure',
-      errorCode: 'EXECUTION_ERROR',
+      errorCode: RunSkillInlineScriptErrorCode.EXECUTION_ERROR,
     });
   });
 
@@ -343,7 +344,7 @@ describe('RunSkillInlineScriptTool', () => {
       expect(mockExecutor.executeCodeParams).toBeUndefined();
       expect(result).toEqual({
         error: 'Inline script execution was not confirmed and was rejected.',
-        errorCode: 'CONFIRMATION_REJECTED',
+        errorCode: RunSkillInlineScriptErrorCode.CONFIRMATION_REJECTED,
       });
     });
 
@@ -378,6 +379,28 @@ describe('RunSkillInlineScriptTool', () => {
       expect(
         mockToolContext.actions.requestedToolConfirmations['fc-3'],
       ).toBeUndefined();
+    });
+  });
+
+  describe('error codes', () => {
+    it('exposes stable string values for the error-code enum', () => {
+      // The error-code string values are part of the tool's response contract
+      // and must remain stable across releases.
+      expect(RunSkillInlineScriptErrorCode.MISSING_SCRIPT_CONTENT).toBe(
+        'MISSING_SCRIPT_CONTENT',
+      );
+      expect(RunSkillInlineScriptErrorCode.MISSING_LANGUAGE).toBe(
+        'MISSING_LANGUAGE',
+      );
+      expect(RunSkillInlineScriptErrorCode.NO_CODE_EXECUTOR).toBe(
+        'NO_CODE_EXECUTOR',
+      );
+      expect(RunSkillInlineScriptErrorCode.EXECUTION_ERROR).toBe(
+        'EXECUTION_ERROR',
+      );
+      expect(RunSkillInlineScriptErrorCode.CONFIRMATION_REJECTED).toBe(
+        'CONFIRMATION_REJECTED',
+      );
     });
   });
 });
