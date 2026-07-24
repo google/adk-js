@@ -35,6 +35,8 @@ export const rootAgent = new LlmAgent({
   tools: [
     new SkillToolset([skill], {
       codeExecutor: new UnsafeLocalCodeExecutor(),
+      // Inline-script execution is opt-in; enable it for this end-to-end test.
+      allowInlineScripts: true,
     }),
   ],
   // Executing model-provided inline scripts is gated behind a confirmation

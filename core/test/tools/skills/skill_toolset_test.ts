@@ -57,13 +57,12 @@ describe('skill_toolset', () => {
     it('returns default tools only when no context provided', async () => {
       const toolset = new SkillToolset([mockSkill]);
       const tools = await toolset.getTools();
-      expect(tools.length).toBe(5);
+      expect(tools.length).toBe(4);
       expect(tools.map((t) => t.name)).toEqual([
         'list_skills',
         'load_skill',
         'load_skill_resource',
         'run_skill_script',
-        'run_skill_inline_script',
       ]);
     });
 
@@ -71,6 +70,29 @@ describe('skill_toolset', () => {
       const toolset = new SkillToolset([mockSkill]);
       const context = createMockContext();
       const tools = await toolset.getTools(context);
+      expect(tools.length).toBe(4);
+    });
+
+    it('does not expose the inline-script tool by default', async () => {
+      const toolset = new SkillToolset([mockSkill]);
+      const tools = await toolset.getTools();
+      expect(tools.map((t) => t.name)).not.toContain('run_skill_inline_script');
+    });
+
+    it('does not expose the inline-script tool when the flag is false', async () => {
+      const toolset = new SkillToolset([mockSkill], {
+        allowInlineScripts: false,
+      });
+      const tools = await toolset.getTools();
+      expect(tools.map((t) => t.name)).not.toContain('run_skill_inline_script');
+    });
+
+    it('exposes the inline-script tool when allowInlineScripts is true', async () => {
+      const toolset = new SkillToolset([mockSkill], {
+        allowInlineScripts: true,
+      });
+      const tools = await toolset.getTools();
+      expect(tools.map((t) => t.name)).toContain('run_skill_inline_script');
       expect(tools.length).toBe(5);
     });
 
