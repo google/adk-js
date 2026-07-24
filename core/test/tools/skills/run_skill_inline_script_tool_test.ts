@@ -18,6 +18,7 @@ import {
   SkillToolset,
 } from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
+import {ToolConfirmation} from '../../../src/tools/tool_confirmation.js';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
 vi.mock('../../../src/utils/file_utils.js', () => ({
@@ -53,6 +54,10 @@ describe('RunSkillInlineScriptTool', () => {
   function createMockContext(
     agentName = 'test-agent',
     agentExecutor?: BaseCodeExecutor,
+    options: {
+      functionCallId?: string;
+      toolConfirmation?: ToolConfirmation;
+    } = {},
   ): Context {
     const agentObj: Record<string | symbol, unknown> = {name: agentName};
     if (agentExecutor) {
@@ -65,7 +70,16 @@ describe('RunSkillInlineScriptTool', () => {
         session: {state: {}},
         agent: agentObj as unknown as LlmAgent,
       } as unknown as InvocationContext,
+      functionCallId: options.functionCallId,
+      toolConfirmation: options.toolConfirmation,
     });
+  }
+
+  /**
+   * A confirmed confirmation lets execution proceed past the security gate.
+   */
+  function confirmed(): ToolConfirmation {
+    return new ToolConfirmation({confirmed: true});
   }
 
   it('returns error if script content is missing', async () => {
@@ -129,7 +143,9 @@ describe('RunSkillInlineScriptTool', () => {
         script_content: 'console.log("agent");',
         language: CodeExecutionLanguage.JAVASCRIPT,
       },
-      toolContext: createMockContext('agent-with-exec', agentExecutor),
+      toolContext: createMockContext('agent-with-exec', agentExecutor, {
+        toolConfirmation: confirmed(),
+      }),
     })) as CodeExecutionResult;
 
     expect(result.stdout).toBe('agent fallback stdout');
@@ -150,7 +166,9 @@ describe('RunSkillInlineScriptTool', () => {
         script_content: 'console.log("error");',
         language: CodeExecutionLanguage.PYTHON,
       },
-      toolContext: createMockContext(),
+      toolContext: createMockContext('test-agent', undefined, {
+        toolConfirmation: confirmed(),
+      }),
     })) as ToolErrorResponse;
 
     expect(result).toEqual({
@@ -170,7 +188,9 @@ describe('RunSkillInlineScriptTool', () => {
     const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
     const tool = new RunSkillInlineScriptTool(toolset);
 
-    const mockToolContext = createMockContext();
+    const mockToolContext = createMockContext('test-agent', undefined, {
+      toolConfirmation: confirmed(),
+    });
 
     const result = (await tool.runAsync({
       args: {
@@ -221,7 +241,9 @@ describe('RunSkillInlineScriptTool', () => {
         script_content: 'console.log("test");',
         language: CodeExecutionLanguage.JAVASCRIPT,
       },
-      toolContext: createMockContext(),
+      toolContext: createMockContext('test-agent', undefined, {
+        toolConfirmation: confirmed(),
+      }),
     });
 
     expect(materializeFiles).toHaveBeenCalledWith([testFile]);
@@ -238,7 +260,9 @@ describe('RunSkillInlineScriptTool', () => {
     const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
     const tool = new RunSkillInlineScriptTool(toolset);
 
-    const mockToolContext = createMockContext();
+    const mockToolContext = createMockContext('test-agent', undefined, {
+      toolConfirmation: confirmed(),
+    });
 
     await tool.runAsync({
       args: {
@@ -253,5 +277,107 @@ describe('RunSkillInlineScriptTool', () => {
       'arg1',
       'arg2',
     ]);
+  });
+
+  describe('confirmation gate', () => {
+    it('blocks execution and requests confirmation on the first call', async () => {
+      const mockExecutor = new MockCodeExecutor();
+      const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+      const tool = new RunSkillInlineScriptTool(toolset);
+
+      // No toolConfirmation provided -> the tool must pause and request one.
+      const mockToolContext = createMockContext('test-agent', undefined, {
+        functionCallId: 'fc-1',
+      });
+
+      const result = (await tool.runAsync({
+        args: {
+          script_content: 'rm -rf /',
+          language: CodeExecutionLanguage.SHELL,
+        },
+        toolContext: mockToolContext,
+      })) as {partial: string};
+
+      // Execution must NOT have happened.
+      expect(mockExecutor.executeCodeParams).toBeUndefined();
+
+      // An intermediate "needs confirmation" result is returned.
+      expect(result).toEqual({
+        partial:
+          'This tool call needs external confirmation before completion.',
+      });
+
+      // A confirmation request was recorded against the function call id and
+      // it surfaces the script + language to the client.
+      const requested =
+        mockToolContext.actions.requestedToolConfirmations['fc-1'];
+      expect(requested).toBeDefined();
+      expect(requested.confirmed).toBe(false);
+      expect(requested.hint).toContain('rm -rf /');
+      expect(requested.hint).toContain(CodeExecutionLanguage.SHELL);
+      expect(requested.payload).toEqual({
+        language: CodeExecutionLanguage.SHELL,
+        scriptContent: 'rm -rf /',
+      });
+    });
+
+    it('rejects execution when confirmation is not confirmed', async () => {
+      const mockExecutor = new MockCodeExecutor();
+      const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+      const tool = new RunSkillInlineScriptTool(toolset);
+
+      const mockToolContext = createMockContext('test-agent', undefined, {
+        functionCallId: 'fc-2',
+        toolConfirmation: new ToolConfirmation({confirmed: false}),
+      });
+
+      const result = (await tool.runAsync({
+        args: {
+          script_content: 'console.log("nope");',
+          language: CodeExecutionLanguage.JAVASCRIPT,
+        },
+        toolContext: mockToolContext,
+      })) as ToolErrorResponse;
+
+      // Execution must NOT have happened.
+      expect(mockExecutor.executeCodeParams).toBeUndefined();
+      expect(result).toEqual({
+        error: 'Inline script execution was not confirmed and was rejected.',
+        errorCode: 'CONFIRMATION_REJECTED',
+      });
+    });
+
+    it('proceeds with execution once confirmed', async () => {
+      const mockExecutor = new MockCodeExecutor();
+      mockExecutor.mockResult = {
+        stdout: 'confirmed output',
+        stderr: '',
+        outputFiles: [],
+      };
+      const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+      const tool = new RunSkillInlineScriptTool(toolset);
+
+      const mockToolContext = createMockContext('test-agent', undefined, {
+        functionCallId: 'fc-3',
+        toolConfirmation: new ToolConfirmation({confirmed: true}),
+      });
+
+      const result = (await tool.runAsync({
+        args: {
+          script_content: 'console.log("go");',
+          language: CodeExecutionLanguage.JAVASCRIPT,
+        },
+        toolContext: mockToolContext,
+      })) as CodeExecutionResult;
+
+      expect(result.stdout).toBe('confirmed output');
+      expect(mockExecutor.executeCodeParams?.codeExecutionInput.code).toBe(
+        'console.log("go");',
+      );
+      // No new confirmation was requested when already confirmed.
+      expect(
+        mockToolContext.actions.requestedToolConfirmations['fc-3'],
+      ).toBeUndefined();
+    });
   });
 });
