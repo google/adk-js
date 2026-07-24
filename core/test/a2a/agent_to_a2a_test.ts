@@ -204,7 +204,9 @@ describe('toA2a', () => {
         toA2a(agent, {
           allowUnauthenticated: false,
         }),
-      ).rejects.toThrow(/b\/508330032/);
+      ).rejects.toThrow(
+        /refusing to mount the A2A server without authentication/i,
+      );
     });
 
     it('warns and mounts with noAuthentication when allowUnauthenticated is true', async () => {
