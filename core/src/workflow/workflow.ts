@@ -303,6 +303,36 @@ export class Workflow extends BaseNode {
       return;
     }
 
+    // Resume with rerun_on_resume=false: a node that interrupted last turn
+    // (raised interrupts, produced no output) does NOT re-run its body. Instead
+    // it completes with the resolved resume value(s) as its output, feeding the
+    // next node. This is Python's two-node request-input pattern, where one node
+    // yields RequestInput and its successor receives the human's reply as input.
+    if (
+      prior &&
+      !node.rerunOnResume &&
+      prior.output === undefined &&
+      prior.interruptIds.size > 0
+    ) {
+      const values = [...prior.interruptIds].map((id) => ctx.resumeInputs[id]);
+      if (values.every((v) => v !== undefined)) {
+        const output = values.length === 1 ? values[0] : values;
+        loop.pending.set(
+          nodeName,
+          Promise.resolve({
+            name: nodeName,
+            childCtx: {
+              output,
+              route: undefined,
+              branch: prior.branch ?? ctx.branch,
+              interruptIds: [],
+            } as unknown as NodeContext,
+          }),
+        );
+        return;
+      }
+    }
+
     let runId = nodeState.runId;
     if (!runId) {
       nodeState.runCounter += 1;
