@@ -73,7 +73,8 @@ describe('workflow integration — nested workflow HITL resume', () => {
         }
         return `approved:${answer}`;
       },
-      {name: 'gate'},
+      // Single-node HITL gate: re-runs on resume to read its answer.
+      {name: 'gate', rerunOnResume: true},
     );
     const inner = new Workflow({name: 'inner', edges: [['START', gate]]});
     const outer = new Workflow({

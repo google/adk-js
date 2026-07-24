@@ -46,7 +46,9 @@ describe('workflow integration — auth gate (API key)', () => {
         const cred = ctx.state.get<AuthCredential>('temp:' + CREDENTIAL_KEY);
         return `weather(key=${cred?.apiKey})`;
       },
-      {authConfig: apiKeyAuthConfig()},
+      // Auth-gated nodes re-run on resume to store the credential and run their
+      // body (Python's auth samples set rerun_on_resume=True).
+      {authConfig: apiKeyAuthConfig(), rerunOnResume: true},
     );
     const wf = new Workflow({
       name: 'auth_api_key',

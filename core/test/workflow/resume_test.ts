@@ -82,6 +82,10 @@ describe('Phase 5b — HITL resume via the Runner', () => {
       },
       {name: 'a'},
     );
+    // A single-node HITL gate that RE-RUNS on resume to read its answer from
+    // ctx.resumeInputs. In the faithful (Python) model this is rerun_on_resume=
+    // true; the default (false) is the two-node pattern where the node does not
+    // re-run and its output becomes the resume value.
     const gate = node(
       (ctx: NodeContext, input: unknown) => {
         const answer = ctx.resumeInputs['gate-1'];
@@ -90,7 +94,7 @@ describe('Phase 5b — HITL resume via the Runner', () => {
         }
         return `${input}|${answer}`;
       },
-      {name: 'gate'},
+      {name: 'gate', rerunOnResume: true},
     );
     const c = node((_c: NodeContext, input: unknown) => `C(${input})`, {
       name: 'c',

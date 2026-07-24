@@ -218,7 +218,10 @@ describe('workflow integration — request_input (HITL)', () => {
         // function-response message.
         return `${input}:${answer}`;
       },
-      {name: 'gate'},
+      // Single-node HITL gate: re-runs on resume to read its answer (Python's
+      // rerun_on_resume=True). The default (two-node) semantics are covered by
+      // the request_input two-node test below.
+      {name: 'gate', rerunOnResume: true},
     );
     const wf = new Workflow({name: 'request_input', edges: [['START', gate]]});
     const {run} = await createWorkflowRunner(wf);
@@ -247,5 +250,57 @@ describe('workflow integration — request_input (HITL)', () => {
       }),
     );
     expect(finalOutput(turn2)).toBe('start:yes');
+  });
+
+  it('two-node pattern: a rerun_on_resume=false node feeds its reply to the next node', async () => {
+    // Faithful port of Python's `request_input` two-node pattern: one node
+    // raises the interrupt and, on resume (with the default rerun_on_resume=
+    // false), does NOT re-run — its output becomes the resume value, which is
+    // passed as input to its successor.
+    let askRuns = 0;
+    const ask = node(
+      (_c: NodeContext) => {
+        askRuns++;
+        return new RequestInput({interruptId: 'review', message: 'reply?'});
+      },
+      {name: 'ask'},
+    );
+    const handle = node(
+      (_c: NodeContext, reply: string) => `handled(${reply})`,
+      {name: 'handle'},
+    );
+    const wf = new Workflow({
+      name: 'request_input_two_node',
+      edges: [['START', ask, handle]],
+    });
+    const {run} = await createWorkflowRunner(wf);
+
+    const turn1 = await collect(run('start'));
+    expect(
+      turn1.some((e) =>
+        (e.content?.parts ?? []).some(
+          (p) => p.functionCall?.name === 'adk_request_input',
+        ),
+      ),
+    ).toBe(true);
+    expect(askRuns).toBe(1);
+
+    const turn2 = await collect(
+      run({
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'review',
+              name: 'adk_request_input',
+              response: {result: 'approve'},
+            },
+          },
+        ],
+      }),
+    );
+    // `ask` did NOT re-run; its reply flowed to `handle` as input.
+    expect(askRuns).toBe(1);
+    expect(finalOutput(turn2)).toBe('handled(approve)');
   });
 });

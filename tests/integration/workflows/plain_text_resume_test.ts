@@ -34,7 +34,8 @@ describe('workflow integration — plain-text interactive resume', () => {
         }
         return createEvent({output: `input=${input} reply=${reply}`});
       },
-      {name: 'gate'},
+      // Single-node HITL gate: re-runs on resume to read its reply.
+      {name: 'gate', rerunOnResume: true},
     );
     const wf = new Workflow({
       name: 'plain_text_resume',

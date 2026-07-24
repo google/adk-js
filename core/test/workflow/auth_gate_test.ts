@@ -48,6 +48,10 @@ describe('Phase 5b-cont — FunctionNode auth gate', () => {
     let runs = 0;
     let sawApiKey: string | undefined;
 
+    // An auth-gated node must RE-RUN on resume so it can store the supplied
+    // credential and then run its body (this is why Python's auth samples set
+    // rerun_on_resume=True). Without it, the default two-node resume semantics
+    // would complete the node with the raw credential response as its output.
     const secured = new FunctionNode(
       'secured',
       (ctx: NodeContext) => {
@@ -56,7 +60,7 @@ describe('Phase 5b-cont — FunctionNode auth gate', () => {
         sawApiKey = cred?.apiKey;
         return `data(${cred?.apiKey})`;
       },
-      {authConfig: apiKeyAuthConfig()},
+      {authConfig: apiKeyAuthConfig(), rerunOnResume: true},
     );
 
     const wf = new Workflow({name: 'auth_wf', edges: [['START', secured]]});

@@ -86,7 +86,8 @@ describe('workflow integration — mid-graph HITL resume', () => {
         }
         return `${input}|${answer}`;
       },
-      {name: 'gate'},
+      // Single-node HITL gate: re-runs on resume to read its answer.
+      {name: 'gate', rerunOnResume: true},
     );
     const c = node(
       (_c: NodeContext, i: string) => {
