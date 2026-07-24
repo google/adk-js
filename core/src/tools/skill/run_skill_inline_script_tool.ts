@@ -106,7 +106,7 @@ export class RunSkillInlineScriptTool extends BaseTool {
     // Security gate: executing model-provided script content is equivalent to
     // arbitrary code execution in the code executor's context. Require an
     // explicit, server-enforced confirmation before dispatching so that a
-    // prompt-injection cannot silently run code. See b/508330164.
+    // prompt-injection cannot silently run code.
     const confirmationResult = this.enforceConfirmation(
       toolContext,
       inlineScriptContent,
