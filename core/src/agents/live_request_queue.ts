@@ -10,8 +10,19 @@ import {ActivityEnd, ActivityStart, Blob, Content} from '@google/genai';
  * Request sent to live agents.
  */
 export interface LiveRequest {
-  /** If set, send the content to the model in turn-by-turn mode. */
+  /**
+   * If set, send the content to the model in turn-by-turn mode.
+   *
+   * When multiple fields are set, they are processed by priority (highest
+   * first): activityStart > activityEnd > blob > content.
+   */
   content?: Content;
+  /**
+   * If set, the content is a partial turn update that does not complete the
+   * current model turn, so the model folds it into the conversation without
+   * responding yet.
+   */
+  partial?: boolean;
   /** If set, send the blob to the model in realtime mode. */
   blob?: Blob;
   /** If set, signal the start of user activity to the model. */
@@ -118,10 +129,15 @@ export class LiveRequestQueue {
 
   /**
    * Sends a content object to the queue.
+   *
    * @param content The content to send.
+   * @param partial Whether the content is a partial turn update that does not
+   *     complete the model turn. Use it to add content to the conversation
+   *     without prompting a response, e.g. a line already spoken on the model's
+   *     behalf (`role: 'model'`) so it neither repeats nor answers it.
    */
-  sendContent(content: Content) {
-    this.send({content});
+  sendContent(content: Content, partial = false) {
+    this.send({content, partial});
   }
 
   /**
