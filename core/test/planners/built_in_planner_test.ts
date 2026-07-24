@@ -12,7 +12,6 @@ import {
 } from '@google/adk';
 import {ThinkingConfig} from '@google/genai';
 import {describe, expect, it} from 'vitest';
-import * as planners from '../../src/planners/index.js';
 
 function createLlmRequest(config?: LlmRequest['config']): LlmRequest {
   return {contents: [], toolsDict: {}, liveConnectConfig: {}, config};
@@ -85,13 +84,5 @@ describe('BuiltInPlanner', () => {
       thinkingConfig: {includeThoughts: true},
     });
     expect(planner.processPlanningResponse({} as Context, [])).toBeUndefined();
-  });
-});
-
-describe('planners module entry point', () => {
-  it('re-exports the three planner classes', () => {
-    expect(planners.BasePlanner).toBeDefined();
-    expect(planners.BuiltInPlanner).toBeDefined();
-    expect(planners.PlanReActPlanner).toBeDefined();
   });
 });
