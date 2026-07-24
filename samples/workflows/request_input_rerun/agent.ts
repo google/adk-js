@@ -5,16 +5,20 @@
  */
 
 /**
- * Request-input with rerun-on-resume: a single node both requests input and,
- * when resumed, re-runs to consume the reply and route. Mirrors Python
- * `workflows/request_input_rerun`.
+ * Human-in-the-loop (single-node, rerun-on-resume). An LlmAgent drafts a reply;
+ * one `human_review` node both raises the RequestInput and, because it is marked
+ * `rerunOnResume: true`, RE-RUNS on resume to consume the reply (via
+ * `ctx.resumeInputs`) and route. Faithful port of Python
+ * `contributing/samples/workflows/request_input_rerun`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/request_input_rerun/agent.ts
- * Turn 1: describe a task. Turn 2: type "approve" or "reject".
+ * REQUIRES an API key (draft_email calls a live model). Set GEMINI_API_KEY, then:
+ *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/request_input_rerun/agent.ts
+ * Turn 1: type a complaint. Turn 2: type "approve", "reject", or feedback text.
  */
 
 import {
   createEvent,
+  LlmAgent,
   node,
   NodeContext,
   RequestInput,
@@ -22,40 +26,73 @@ import {
   WorkflowAgent,
 } from '@google/adk';
 
-const plan = node((_c: NodeContext, task: string) => `Plan for: ${task}`, {
-  name: 'plan',
+/** Emits a plain display message (Python `Event(message=...)`). */
+const message = (text: string) =>
+  createEvent({content: {role: 'model', parts: [{text}]}});
+
+// Takes the initial customer complaint and seeds it into workflow state.
+const processInput = node(
+  (ctx: NodeContext, complaint: string) => {
+    ctx.state.set('complaint', complaint);
+    ctx.state.set('feedback', '');
+  },
+  {name: 'process_input'},
+);
+
+const draftEmail = new LlmAgent({
+  name: 'draft_email',
+  model: 'gemini-2.5-flash',
+  instruction: `
+    Please write a polite, helpful response email to the following customer complaint: "{complaint}"
+
+    If there is any feedback from the manager to revise the draft, please incorporate it: "{feedback?}"
+    `,
+  outputKey: 'draft',
 });
 
+// A single node that both requests input and, on resume (it re-runs because
+// rerunOnResume is true), consumes the reply from ctx.resumeInputs and routes.
 const humanReview = node(
-  (ctx: NodeContext, planText: string) => {
-    const reply = ctx.resumeInputs['human_review'];
-    if (reply === undefined) {
+  (ctx: NodeContext, draft: string) => {
+    const resumeInput = ctx.resumeInputs['human_review'];
+    if (!resumeInput) {
       return new RequestInput({
         interruptId: 'human_review',
-        message: `Approve this plan? Reply "approve" or "reject":\n\n${planText}`,
+        message:
+          "Please review the following draft email and provide 'approve', " +
+          `'reject', or feedback to revise.\n\n---\n${draft}\n---`,
       });
     }
-    return String(reply).toLowerCase().startsWith('a')
-      ? createEvent({route: 'approved', output: planText})
-      : createEvent({route: 'rejected'});
+
+    if (resumeInput === 'reject') {
+      return createEvent({route: 'rejected'});
+    }
+    if (resumeInput === 'approve') {
+      return createEvent({route: 'approved'});
+    }
+    ctx.state.set('feedback', resumeInput);
+    return createEvent({route: 'revise'});
   },
   {name: 'human_review', rerunOnResume: true},
 );
 
-const execute = node(
-  (_c: NodeContext, planText: string) => `Executed: ${planText}`,
-  {
-    name: 'execute',
-  },
-);
-const cancel = node(() => 'Plan rejected; nothing executed.', {name: 'cancel'});
+const rejectEmail = node(() => message('Draft rejected.'), {
+  name: 'reject_email',
+});
+
+const sendEmail = node(() => message('Draft approved and sent successfully.'), {
+  name: 'send_email',
+});
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
     name: 'request_input_rerun',
     edges: [
-      ['START', plan, humanReview],
-      [humanReview, {approved: execute, rejected: cancel}],
+      ['START', processInput, draftEmail, humanReview],
+      [
+        humanReview,
+        {revise: draftEmail, approved: sendEmail, rejected: rejectEmail},
+      ],
     ],
   }),
 );

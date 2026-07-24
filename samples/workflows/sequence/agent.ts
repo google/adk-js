@@ -5,26 +5,33 @@
  */
 
 /**
- * Sequence workflow: a linear chain of nodes where each node's output feeds the
- * next. Mirrors the Python `workflows/sequence` sample (using function nodes so
- * it runs offline without an API key).
+ * Simple sequential workflow with LLM agents: the first agent names a random
+ * fruit, and its output feeds the second agent, which describes a health benefit
+ * of that fruit. Faithful port of Python
+ * `contributing/samples/workflows/sequence`.
  *
- * Run:  npm run sample -- samples/workflows/sequence/agent.ts
+ * REQUIRES an API key (both nodes call a live model). Set GEMINI_API_KEY, then:
+ *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/sequence/agent.ts
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
+import {LlmAgent, Workflow, WorkflowAgent} from '@google/adk';
 
-const generateFruit = node(() => 'apple', {name: 'generate_fruit'});
+const generateFruitAgent = new LlmAgent({
+  name: 'generate_fruit_agent',
+  model: 'gemini-2.5-flash',
+  instruction: `Return the name of a random fruit.
+      Return only the name, nothing else.`,
+});
 
-const describeFruit = node(
-  (_ctx: NodeContext, fruit: string) =>
-    `A ${fruit} a day keeps the doctor away.`,
-  {name: 'describe_fruit'},
-);
+const generateBenefitAgent = new LlmAgent({
+  name: 'generate_benefit_agent',
+  model: 'gemini-2.5-flash',
+  instruction: 'Tell me a health benefit about the specified fruit.',
+});
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'sequence_workflow',
-    edges: [['START', generateFruit, describeFruit]],
+    name: 'root_agent',
+    edges: [['START', generateFruitAgent, generateBenefitAgent]],
   }),
 );

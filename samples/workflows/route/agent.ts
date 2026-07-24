@@ -5,55 +5,91 @@
  */
 
 /**
- * Route: classify the input, then route to the matching branch. Mirrors Python
- * `workflows/route` (classifier kept function-based to run offline; swap for an
- * LlmAgent to classify with a model).
+ * Route: an LlmAgent classifies the input into a category, a routing node emits
+ * that category as the route, and the matching branch (an LlmAgent, or a
+ * function for the fallback) handles it. Faithful port of Python
+ * `contributing/samples/workflows/route`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/route/agent.ts
- * Try inputs like "What is ADK?" (question) or "ADK is great." (statement).
+ * REQUIRES an API key (classification and answers call a live model). Set
+ * GEMINI_API_KEY, then:
+ *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/route/agent.ts
+ * Try "What is ADK?" (question) or "ADK is great." (statement).
  */
 
 import {
   createEvent,
-  DEFAULT_ROUTE,
+  LlmAgent,
   node,
   NodeContext,
   Workflow,
   WorkflowAgent,
 } from '@google/adk';
+import {z} from 'zod';
 
-const classify = node(
-  (_c: NodeContext, input: string) => {
-    const category = input.trim().endsWith('?') ? 'question' : 'statement';
-    return createEvent({route: category, output: input});
+const inputCategorySchema = z.object({
+  category: z.enum(['question', 'statement', 'other']),
+});
+type InputCategory = z.infer<typeof inputCategorySchema>;
+
+const processInput = node(
+  (ctx: NodeContext, nodeInput: string) => {
+    ctx.state.set('input', nodeInput);
   },
-  {name: 'classify_input'},
+  {name: 'process_input'},
 );
 
-const answerQuestion = node(
-  (_c: NodeContext, q: string) => `Answer to "${q}": 42.`,
-  {name: 'answer_question'},
+const classifyInput = new LlmAgent({
+  name: 'classify_input',
+  model: 'gemini-2.5-flash',
+  instruction:
+    'Based on this input, decide which category it belongs to: {input}',
+  outputSchema: inputCategorySchema,
+  outputKey: 'category',
+});
+
+// Yields an Event with a specific route based on the classification.
+const routeOnCategory = node(
+  (_ctx: NodeContext, category: InputCategory) =>
+    createEvent({route: category.category}),
+  {name: 'route_on_category'},
 );
-const commentOnStatement = node(
-  (_c: NodeContext, s: string) => `Nice statement: "${s}".`,
-  {name: 'comment_on_statement'},
-);
+
+const answerQuestion = new LlmAgent({
+  name: 'answer_question',
+  model: 'gemini-2.5-flash',
+  instruction: 'Answer the question: {input}',
+});
+
+const commentOnStatement = new LlmAgent({
+  name: 'comment_on_statement',
+  model: 'gemini-2.5-flash',
+  instruction: 'Comment on the statement: {input}',
+});
+
 const handleOther = node(
-  () => 'I can only answer questions or comment on statements.',
+  () =>
+    createEvent({
+      content: {
+        role: 'model',
+        parts: [
+          {text: 'Sorry I can only answer questions or comment on statements.'},
+        ],
+      },
+    }),
   {name: 'handle_other'},
 );
 
 export const rootAgent = new WorkflowAgent(
   new Workflow({
-    name: 'route_sample',
+    name: 'root_agent',
     edges: [
-      ['START', classify],
+      ['START', processInput, classifyInput, routeOnCategory],
       [
-        classify,
+        routeOnCategory,
         {
           question: answerQuestion,
           statement: commentOnStatement,
-          [DEFAULT_ROUTE]: handleOther,
+          other: handleOther,
         },
       ],
     ],
