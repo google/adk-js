@@ -101,6 +101,7 @@ export async function executeChildNode(
     child.output = undefined;
     child.route = undefined;
     child.interruptIds = [];
+    child.attemptCount = nodeState.attemptCount;
     try {
       await runOnce(node, child, input, nodeName, branch, isolationScope);
       break;

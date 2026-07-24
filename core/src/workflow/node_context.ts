@@ -65,6 +65,9 @@ export class NodeContext {
    */
   scheduler?: ScheduleDynamicNode;
 
+  /** The current attempt number (1-based) for the running node (see retry). */
+  attemptCount = 1;
+
   private readonly _state: State;
   private readonly dynamicRunCounters = new Map<string, number>();
 
