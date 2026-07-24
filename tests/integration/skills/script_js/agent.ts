@@ -8,6 +8,7 @@ import {
   LlmAgent,
   loadSkillFromDir,
   SkillToolset,
+  ToolConfirmation,
   UnsafeLocalCodeExecutor,
 } from '@google/adk';
 import * as path from 'node:path';
@@ -36,4 +37,13 @@ export const rootAgent = new LlmAgent({
       codeExecutor: new UnsafeLocalCodeExecutor(),
     }),
   ],
+  // Executing model-provided inline scripts is gated behind a confirmation
+  // (see run_skill_inline_script_tool.ts). This trusted, non-interactive
+  // integration agent auto-approves that gate so the end-to-end flow can run.
+  beforeToolCallback: ({tool, context}) => {
+    if (tool.name === 'run_skill_inline_script') {
+      context.toolConfirmation = new ToolConfirmation({confirmed: true});
+    }
+    return undefined;
+  },
 });
