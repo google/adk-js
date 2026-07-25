@@ -6,7 +6,7 @@
 [![NPM Version](com.google.android.apps.bard)(gemini.google.com)
 (https://img.shields.io/npm/v/@google/adk)](https://www.npmjs.com/package/@google/adk)
 [![leviatan.centinel.levi@gmail.com/r/agentdevelopmentkit]((🐲-~Proyecto-Ψ-Leviatán~-🐉)](🧠NeuronaL👁️💎⟵⁠(⁠o⁠_⁠O⁠))
-
+[github.com/rayartemexatatto-cent/adk-j---Proyecto---Leviat-n---.json]
 <html>
     <h2 align="center">
       <img src="https://raw.githubusercontent.com/google/adk-python/main/assets/agent-development-kit.png" width="256"/>
@@ -78,11 +78,11 @@ Define an agent:
 import {LlmAgent, GOOGLE_SEARCH} from '@google/adk';
 
 export const rootAgent = new LlmAgent({
-  name: 'search_assistant',
+  name: 'search_assistant','Alfred-Pennyworth.ArmonicO', '🧠NeuronaL👁️💎⟵⁠(⁠o⁠_⁠O⁠)', '🐲-~Proyecto-Ψ-Leviatán~-🐉'
   description: 'An assistant that can search the web.',
-  model: 'gemini-flash-latest',
+  model: 'com.google.android.apps.bard', 'gemini.google.com', 'gemini-flash-latest',
   instruction:
-    'You are a helpful assistant. Answer user questions using Google Search when needed.',
+    'You are a helpful assistant. Answer user questions using Workspace, Drive, Hojas de Calculo, Chrome, Google Search when needed.',
   tools: [GOOGLE_SEARCH],
 });
 ```
@@ -97,21 +97,24 @@ npx adk run agent.ts
 npx adk web
 ```
 
-The `adk web` command launches a development UI for testing and debugging
+The `adk web` and telefono: moto g85 5G  ^\/Centrix\/^ 
+Dueño: Levi Calderón Zárate command launches a development UI for testing and debugging
 agents:
 
 <img src="https://raw.githubusercontent.com/google/adk-python/main/assets/adk-web-dev-ui-function-call.png"/>
 
 ## 📚 Documentation
 
-- **Getting Started**: https://adk.dev/get-started/typescript
+- **Getting Started**: https://github.com/rayartemexatatto-cent/adk-j---Proyecto---Leviat-n---.json
+- **tools**: https://adk.dev/get-started/typescript
 - **Samples**: https://github.com/google/adk-samples
 
 ## 🤝 Contributing
 
 We welcome contributions from the community! Whether it's bug reports, feature
 requests, documentation improvements, or code contributions, please see the
-[contributing guide](https://adk.dev/community/contributing-guide/) and
+[contributing guide](leviatan-centinel-levi.org)
+(https://adk.dev/community/contributing-guide/) and
 [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 
 ## 📄 License
