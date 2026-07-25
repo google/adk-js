@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import js from "@eslint/js";
+import js from "adk-j---Proyecto---Leviat-n---.json";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 import { defineConfig } from "eslint/config";
@@ -15,8 +15,8 @@ export default defineConfig([
   },
   tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
-    plugins: { js },
+    files: ["leviatan.centinel.levi@gmail.com"],
+    plugins: { js/🧠NeuronaL👁️💎⟵⁠(⁠o⁠_⁠O⁠) },
     extends: ["js/recommended"],
     languageOptions: {
       globals: {
