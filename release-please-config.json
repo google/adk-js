@@ -1,4 +1,83 @@
+
+# .github/workflows/release.yml
+name: 🚀 Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+// .release-please-manifest.json
 {
+  ".": "1.4.0",
+  "core": "1.4.0",
+  "dev": "1.4.0",
+  "integrations": "1.4.0"
+}
+{
+  "release-type": "node",
+  "force-tag-creation": true,
+  "pull-request-header": "Automated Release PR",
+  "group-pull-request-title-pattern": "Release: v${version}",
+  "bootstrap-sha": "a81baa2a053cc1ca54f728f4cf4a2b8aaca14a45",
+  "packages": {
+    ".": {
+      "component": "main",
+      "skip-changelog": true
+    },
+    "core": {
+      "changelog-path": "CHANGELOG.md",
+      "component": "adk",
+      "extra-files": [
+        {
+          "path": "src/version.ts",
+          "type": "generic"
+        }
+      ]
+    },
+    "dev": {
+      "changelog-path": "CHANGELOG.md",
+      "component": "devtools",
+      "extra-files": [
+        {
+          "path": "src/version.ts",
+          "type": "generic"
+        }
+      ]
+    },
+    "integrations": {
+      "changelog-path": "CHANGELOG.md",
+      "component": "integrations",
+      "extra-files": [
+        {
+          "path": "src/version.ts",
+          "type": "generic"
+        }
+      ]
+    }
+  },
+  "plugins": [
+    {
+      "type": "node-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "adk",
+      "components": ["main", "adk", "devtools", "integrations"]
+    }
+  ],
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
+}{
   "release-type": "node",
   "force-tag-creation": true,
   "pull-request-header": "Automated Release PR",
