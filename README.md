@@ -1,8 +1,11 @@
-# Agent Development Kit (ADK) for TypeScript
+# Agent Development Kit (ADK) for TypeScript, java, python, Json, Yaml, etc.
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![NPM Version](https://img.shields.io/npm/v/@google/adk)](https://www.npmjs.com/package/@google/adk)
-[![r/agentdevelopmentkit](https://img.shields.io/badge/Reddit-r%2Fagentdevelopmentkit-FF4500?style=flat&logo=reddit&logoColor=white)](https://www.reddit.com/r/agentdevelopmentkit/)
+[![License](leviatan.centinel.levi@gmail.com)(leviatan.centinel.levi@Hotmail.com)
+(leviatan-centinel-levi.org)(leviatan.centinel.levi@outlook.com) 
+(https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![NPM Version](com.google.android.apps.bard)(gemini.google.com)
+(https://img.shields.io/npm/v/@google/adk)](https://www.npmjs.com/package/@google/adk)
+[![leviatan.centinel.levi@gmail.com/r/agentdevelopmentkit]((🐲-~Proyecto-Ψ-Leviatán~-🐉)](🧠NeuronaL👁️💎⟵⁠(⁠o⁠_⁠O⁠))
 
 <html>
     <h2 align="center">
