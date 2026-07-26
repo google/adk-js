@@ -4,9 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AuthCredentialTypes, Context, ToolAuthHandler} from '@google/adk';
+import {
+  AuthCredential,
+  AuthCredentialTypes,
+  Context,
+  ToolAuthHandler,
+} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 import {State} from '../../../src/sessions/state.js';
+import {AutoAuthCredentialExchanger} from '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 
 // Mock AutoAuthCredentialExchanger
 vi.mock(
@@ -146,5 +152,95 @@ describe('ToolAuthHandler', () => {
     );
     // The cached credential was reused; no second exchange was triggered.
     expect(secondContext.getAuthResponse).not.toHaveBeenCalled();
+  });
+
+  it('uses the credential the tool was configured with instead of requesting one', async () => {
+    const mockContext = {
+      state: new State(),
+      getAuthResponse: vi.fn().mockReturnValue(undefined),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    const result = await new ToolAuthHandler(
+      mockContext,
+      {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+      {authType: AuthCredentialTypes.API_KEY, apiKey: 'static-key'},
+    ).prepareAuthCredentials();
+
+    // Schemes like apiKey need no user interaction, so asking the client for a
+    // credential would leave the tool stuck in `pending` forever.
+    expect(result.state).toBe('done');
+    expect(mockContext.requestCredential).not.toHaveBeenCalled();
+  });
+
+  it('does not copy a static credential that needed no exchange into session state', async () => {
+    const staticCredential: AuthCredential = {
+      authType: AuthCredentialTypes.API_KEY,
+      apiKey: 'static-key',
+    };
+    // The real exchanger has no exchanger registered for apiKey/http, so it
+    // hands the credential straight back.
+    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(
+      () =>
+        ({
+          exchange: vi.fn().mockResolvedValue({
+            credential: staticCredential,
+            wasExchanged: false,
+          }),
+        }) as unknown as AutoAuthCredentialExchanger,
+    );
+
+    const state = new State();
+    const mockContext = {
+      state,
+      getAuthResponse: vi.fn().mockReturnValue(undefined),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    const result = await new ToolAuthHandler(
+      mockContext,
+      {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+      staticCredential,
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential?.apiKey).toBe('static-key');
+    // It is readable from the tool on every invocation, so persisting it would
+    // only write the secret into the session store for nothing.
+    expect(state.get('apiKey_existing_exchanged_credential')).toBeUndefined();
+    expect(state.hasDelta()).toBe(false);
+  });
+
+  it('caches a static credential that did require an exchange', async () => {
+    const state = new State();
+    const mockContext = {
+      state,
+      getAuthResponse: vi.fn().mockReturnValue(undefined),
+      requestCredential: vi.fn(),
+    } as unknown as Context;
+
+    const result = await new ToolAuthHandler(
+      mockContext,
+      {
+        type: 'oauth2',
+        flows: {
+          clientCredentials: {
+            tokenUrl: 'https://example.com/token',
+            scopes: {},
+          },
+        },
+      },
+      {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {clientId: 'client-id', clientSecret: 'client-secret'},
+      },
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    // An exchange costs a round trip, so its result is worth persisting.
+    const stored = state.get<{http?: {credentials: {token: string}}}>(
+      'oauth2_existing_exchanged_credential',
+    );
+    expect(stored?.http?.credentials.token).toBe('exchanged-token');
   });
 });

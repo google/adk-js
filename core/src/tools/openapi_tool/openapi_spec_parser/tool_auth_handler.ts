@@ -86,23 +86,37 @@ export class ToolAuthHandler {
       credentialKey: this.credentialKey || 'default_openapi_key',
     };
 
-    const credential = this.context.getAuthResponse(authConfig);
-    if (credential) {
-      const exchanger = new AutoAuthCredentialExchanger();
-      const result = await exchanger.exchange({
-        authScheme: this.authScheme,
-        authCredential: credential,
-      });
+    // A credential returned by an auth response was supplied interactively by
+    // the client. Otherwise fall back to the credential the tool was
+    // configured with: schemes such as `apiKey`, `http` and `serviceAccount`
+    // need no user interaction, so requesting one would strand the tool in
+    // `pending` forever.
+    const authResponseCredential = this.context.getAuthResponse(authConfig);
+    const credential = authResponseCredential ?? this.authCredential;
 
-      const key = store.getCredentialKey(this.authScheme);
-      store.storeCredential(key, result.credential);
+    if (!credential) {
+      // No credential to work with, so ask the client for one.
+      this.context.requestCredential(authConfig);
 
-      return {state: 'done', authCredential: result.credential};
+      return {state: 'pending'};
     }
 
-    // If credential is not available, request it
-    this.context.requestCredential(authConfig);
+    const exchanger = new AutoAuthCredentialExchanger();
+    const result = await exchanger.exchange({
+      authScheme: this.authScheme,
+      authCredential: credential,
+    });
 
-    return {state: 'pending'};
+    // Only cache what cannot cheaply be obtained again: an auth response is
+    // readable once, and an exchange costs a round trip. A statically
+    // configured credential that needed no exchange is already available on
+    // every invocation, so persisting it to session state would only copy a
+    // secret into the session store for nothing.
+    if (authResponseCredential || result.wasExchanged) {
+      const key = store.getCredentialKey(this.authScheme);
+      store.storeCredential(key, result.credential);
+    }
+
+    return {state: 'done', authCredential: result.credential};
   }
 }
