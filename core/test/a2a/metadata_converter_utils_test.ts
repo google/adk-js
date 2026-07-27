@@ -53,7 +53,8 @@ describe('metadata_converter_utils', () => {
         invocationId: 'inv-1',
         author: 'user1',
         branch: 'branch-1',
-        errorMessage: 'Something went wrong',
+        errorCode: 'RESOURCE_EXHAUSTED',
+        errorMessage: 'Quota exceeded',
         citationMetadata: {
           citations: [
             {
@@ -100,8 +101,8 @@ describe('metadata_converter_utils', () => {
         [A2AMetadataKeys.INVOCATION_ID]: 'inv-1',
         [A2AMetadataKeys.AUTHOR]: 'user1',
         [A2AMetadataKeys.BRANCH]: 'branch-1',
-        [A2AMetadataKeys.ERROR_CODE]: 'Something went wrong',
-        [A2AMetadataKeys.ERROR_MESSAGE]: 'Something went wrong',
+        [A2AMetadataKeys.ERROR_CODE]: 'RESOURCE_EXHAUSTED',
+        [A2AMetadataKeys.ERROR_MESSAGE]: 'Quota exceeded',
         [A2AMetadataKeys.CITATION_METADATA]: {
           citations: [
             {

@@ -86,7 +86,7 @@ export function getA2AEventMetadata(
     [A2AMetadataKeys.INVOCATION_ID]: adkEvent.invocationId,
     [A2AMetadataKeys.AUTHOR]: adkEvent.author,
     [A2AMetadataKeys.BRANCH]: adkEvent.branch,
-    [A2AMetadataKeys.ERROR_CODE]: adkEvent.errorMessage,
+    [A2AMetadataKeys.ERROR_CODE]: adkEvent.errorCode,
     [A2AMetadataKeys.ERROR_MESSAGE]: adkEvent.errorMessage,
     [A2AMetadataKeys.CITATION_METADATA]: adkEvent.citationMetadata,
     [A2AMetadataKeys.GROUNDING_METADATA]: adkEvent.groundingMetadata,
