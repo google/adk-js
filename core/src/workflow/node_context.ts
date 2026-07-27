@@ -9,6 +9,7 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import type {BaseNode} from './base_node.js';
+import type {RouteValue} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
 import {EventChannel} from './utils/event_channel.js';
@@ -51,8 +52,8 @@ export class NodeContext {
   /** The structured output produced by the node during its run. */
   output: unknown = undefined;
 
-  /** The route key emitted by the node, if any. */
-  route?: string | number | boolean;
+  /** The route key(s) emitted by the node, if any (array = multi-route). */
+  route?: RouteValue | RouteValue[];
 
   /** Interrupt ids the node is currently blocked on (HITL). */
   interruptIds: string[] = [];

@@ -77,10 +77,11 @@ export interface EventActions {
   endOfAgent?: boolean;
 
   /**
-   * Workflow: route key selected by a routing node (alternative carrier to the
-   * top-level `Event.route`, used by callbacks/tools).
+   * Workflow: route key(s) selected by a routing node (alternative carrier to
+   * the top-level `Event.route`, used by callbacks/tools). A single value or an
+   * array for multi-route dispatch.
    */
-  route?: string | number | boolean;
+  route?: string | number | boolean | Array<string | number | boolean>;
 
   [key: string]: unknown;
 }

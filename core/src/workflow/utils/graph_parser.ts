@@ -26,6 +26,23 @@ function isRouteValue(value: unknown): value is RouteValue {
   return t === 'string' || t === 'number' || t === 'boolean';
 }
 
+/**
+ * Normalizes a routing-map key back to its typed {@link RouteValue}. JS object
+ * keys are always strings, so integer route keys arrive as numeric strings and
+ * boolean route keys as `'true'`/`'false'`. Reconstructing the typed value lets
+ * a node emitting `2` or `true` match `{2: ...}` / `{true: ...}` (mirroring
+ * Python dict keys `2` / `True`).
+ */
+function normalizeRouteKey(routeKey: string): RouteValue {
+  if (/^-?\d+$/.test(routeKey)) {
+    return Number(routeKey);
+  }
+  if (routeKey === 'true' || routeKey === 'false') {
+    return routeKey === 'true';
+  }
+  return routeKey;
+}
+
 /** Expands a routing map into individual (from, to, route) triples. */
 function expandRoutingMap(
   fromElement: ChainElement,
@@ -42,10 +59,7 @@ function expandRoutingMap(
     [ChainElement, NodeLike | readonly NodeLike[], RouteValue]
   > = [];
   for (const routeKey of keys) {
-    // Object keys are strings; numeric route keys arrive as numeric strings.
-    const normalizedKey: RouteValue = /^-?\d+$/.test(routeKey)
-      ? Number(routeKey)
-      : routeKey;
+    const normalizedKey: RouteValue = normalizeRouteKey(routeKey);
     const target = routingMap[routeKey];
     if (Array.isArray(target)) {
       for (const node of target) {

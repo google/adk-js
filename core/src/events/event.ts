@@ -92,10 +92,12 @@ export interface Event extends LlmResponse {
   output?: unknown;
 
   /**
-   * Workflow: the route key emitted by a routing node, used by the graph to
-   * select the matching outgoing edge. Mirrors Python `Event.route`.
+   * Workflow: the route key(s) emitted by a routing node, used by the graph to
+   * select the matching outgoing edge(s). A single value fires one branch; an
+   * array fires every branch whose route matches any listed value (multi-route
+   * dispatch). Mirrors Python `Event.route`.
    */
-  route?: string | number | boolean;
+  route?: string | number | boolean | Array<string | number | boolean>;
 
   /**
    * Workflow: provenance of the emitting node. Mirrors Python `Event.node_info`.
@@ -311,6 +313,11 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'customMetadata',
   'content.parts.functionCall.args',
   'content.parts.functionResponse.response',
+  // Workflow: arbitrary node output and checkpointed node state carry
+  // user-defined keys that must survive round-trips verbatim (a node's original
+  // input is stashed under `actions.agentState` for HITL resume).
+  'output',
+  'actions.agentState',
 ];
 
 /**
@@ -330,6 +337,10 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'custom_metadata',
   'content.parts.function_call.args',
   'content.parts.function_response.response',
+  // Workflow: arbitrary node output and checkpointed node state (see the
+  // camelCase list above).
+  'output',
+  'actions.agent_state',
 ];
 
 /**

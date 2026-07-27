@@ -412,7 +412,7 @@ export class Workflow extends BaseNode {
     loop: LoopState,
     nodeName: string,
     output: unknown,
-    route: RouteValue | undefined,
+    route: RouteValue | RouteValue[] | undefined,
     branch: string | undefined,
   ): void {
     const nextNodes = this.graph!.getNextPendingNodes(nodeName, route ?? null);

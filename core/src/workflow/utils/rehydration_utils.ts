@@ -23,8 +23,8 @@ const RESULT_KEY = 'result';
 export interface RehydratedNode {
   /** The node's cached output from a prior run, if it produced one. */
   output?: unknown;
-  /** The route the node emitted, if any. */
-  route?: RouteValue;
+  /** The route(s) the node emitted, if any (array = multi-route). */
+  route?: RouteValue | RouteValue[];
   /** The branch the node ran on. */
   branch?: string;
   /** The input the node was invoked with (captured when it interrupted). */
@@ -103,7 +103,7 @@ function reconstruct(
       node.branch = event.branch;
     }
     if (event.route !== undefined) {
-      node.route = event.route as RouteValue;
+      node.route = event.route as RouteValue | RouteValue[];
     }
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);

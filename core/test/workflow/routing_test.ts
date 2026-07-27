@@ -90,4 +90,38 @@ describe('workflow routing values', () => {
     });
     expect((await driveNode(wfFallback, 'x')).output).toBe('fb2(unknown)');
   });
+
+  it('matches a boolean route key in a routing map', async () => {
+    const router = emit('router', true);
+    const wf = new Workflow({
+      name: 'bool_route',
+      edges: [
+        ['START', router],
+        [router, {true: echo('yes'), false: echo('no')}],
+      ],
+    });
+    expect((await driveNode(wf, 'x')).output).toBe('yes(true)');
+  });
+
+  it('fires multiple branches when a node emits an array of routes', async () => {
+    const router = new FnNode('router', () =>
+      createEvent({route: ['a', 'b'], output: 'msg'}),
+    );
+    const a = echo('a');
+    const b = echo('b');
+    const c = echo('c'); // present in the map but not emitted -> must not run
+    const join = new JoinNode({name: 'join'});
+    const wf = new Workflow({
+      name: 'multi_route',
+      edges: [
+        ['START', router],
+        [router, {a, b, c}],
+        [[a, b], join],
+      ],
+    });
+    expect((await driveNode(wf, 'x')).output).toEqual({
+      a: 'a(msg)',
+      b: 'b(msg)',
+    });
+  });
 });
