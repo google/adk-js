@@ -75,8 +75,13 @@ export class ParallelWorker extends BaseNode {
           return;
         }
         try {
+          // Key each child run by its item index (not call order) so the
+          // run id -> item mapping is deterministic. On resume this lets each
+          // item fast-forward from its own cached run rather than being matched
+          // to a differently-ordered run id.
           const child = await ctx.runNode(this.inner, items[i], {
             useSubBranch: true,
+            runId: String(i),
           });
           results[i] = child.output;
         } catch (err) {

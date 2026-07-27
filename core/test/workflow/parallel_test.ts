@@ -152,4 +152,23 @@ describe('Phase 6 — ParallelWorker', () => {
       }),
     ).toThrow(/maxParallelWorkers/);
   });
+
+  it('assigns run ids by item index for deterministic resume', async () => {
+    // Each child stamps its own run id into the output. With bounded
+    // concurrency the run id must still equal the item index (not the
+    // call/completion order), so resume can fast-forward each item correctly.
+    const worker = new ParallelWorker(
+      node((ctx: NodeContext, item: string) => `${item}#${ctx.runId}`, {
+        name: 'w',
+      }),
+      {maxParallelWorkers: 2},
+    );
+    const wf = new Workflow({name: 'pw_ids', edges: [['START', worker]]});
+    expect(await driveWorkflow(wf, ['a', 'b', 'c', 'd'])).toEqual([
+      'a#0',
+      'b#1',
+      'c#2',
+      'd#3',
+    ]);
+  });
 });
