@@ -84,7 +84,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
       version = versions.length - 1;
     }
 
-    return Promise.resolve(versions[version].part);
+    return Promise.resolve(versions[version]?.part);
   }
 
   listArtifactKeys({

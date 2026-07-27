@@ -146,6 +146,26 @@ export function runArtifactServiceTests(
       expect(result).toBeUndefined();
     });
 
+    it('returns undefined for non-existent version', async () => {
+      const filename = 'missing-version.txt';
+      await service.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact: {text: 'v0'},
+      });
+
+      const result = await service.loadArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version: 999,
+      });
+      expect(result).toBeUndefined();
+    });
+
     it('loads specific version', async () => {
       const filename = 'history.txt';
       await service.saveArtifact({
