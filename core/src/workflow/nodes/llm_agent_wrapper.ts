@@ -71,7 +71,20 @@ export class LLMAgentWrapper extends BaseNode {
       if (ctx.isolationScope) {
         userEvent.isolationScope = ctx.isolationScope;
       }
-      ctx.session.events.push(userEvent);
+      // Persist the injected user turn (not just push it in-memory) so it
+      // survives on DB/Vertex session backends and is present on resume.
+      // appendEvent also adds it to `session.events` (deduped by id), which the
+      // agent reads synchronously to build its request. Falls back to a direct
+      // push when no session service is wired (e.g. in unit tests).
+      const sessionService = ctx.invocationContext.sessionService;
+      if (sessionService) {
+        await sessionService.appendEvent({
+          session: ctx.session,
+          event: userEvent,
+        });
+      } else {
+        ctx.session.events.push(userEvent);
+      }
     }
 
     // Expose the node input and predecessor outputs to `{Class.field}` and

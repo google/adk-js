@@ -195,6 +195,47 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
     expect(root.output).toBe('It is 9:00 AM in Rome.');
   });
 
+  it('persists the injected user turn through the session service', async () => {
+    const ic = createIc();
+    const appended: Event[] = [];
+    (ic as unknown as {sessionService: unknown}).sessionService = {
+      appendEvent: async ({
+        session,
+        event,
+      }: {
+        session: {events: Event[]};
+        event: Event;
+      }) => {
+        appended.push(event);
+        session.events.push(event); // mimic the base service adding to the list
+        return event;
+      },
+    };
+    const channel = new EventChannel<Event>();
+    const root = new NodeContext({
+      invocationContext: ic,
+      channel,
+      nodePath: '',
+      runId: 'root',
+    });
+    const run = root
+      .runNode(node(new EchoAgent()), 'hi', {useAsOutput: true})
+      .then(
+        () => channel.close(),
+        (err) => channel.fail(err),
+      );
+    for await (const _ev of channel) {
+      // drain
+    }
+    await run;
+
+    // The user turn went through the persistence path (appendEvent), not just a
+    // silent in-memory push, and the agent still saw it.
+    const userTurn = appended.find((e) => e.author === 'user');
+    expect(userTurn?.content?.parts?.[0]?.text).toBe('hi');
+    expect(root.output).toBe('echo:hi');
+  });
+
   it('node(agent) produces an LLMAgentWrapper carrying the agent name', () => {
     const wrapped = node(new EchoAgent('assistant'));
     expect(wrapped).toBeInstanceOf(LLMAgentWrapper);
