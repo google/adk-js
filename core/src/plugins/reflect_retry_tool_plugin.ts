@@ -131,16 +131,6 @@ function ensureError(error: unknown): Error {
   return error instanceof Error ? error : new Error(stringifyError(error));
 }
 
-/** The error's class name, or `'ToolError'` for non-`Error` values. */
-function errorTypeOf(error: unknown): string {
-  return error instanceof Error ? error.constructor.name : 'ToolError';
-}
-
-/** The raw error message, or a stringified form for non-`Error` values. */
-function errorDetailsOf(error: unknown): string {
-  return error instanceof Error ? error.message : stringifyError(error);
-}
-
 /** Formats the error for the human-readable body of a reflection message. */
 function formatErrorDetails(error: unknown): string {
   return error instanceof Error
@@ -156,8 +146,9 @@ function buildFailureResponse(
 ): ToolFailureResponse {
   return {
     response_type: REFLECT_AND_RETRY_RESPONSE_TYPE,
-    error_type: errorTypeOf(error),
-    error_details: errorDetailsOf(error),
+    error_type: error instanceof Error ? error.constructor.name : 'ToolError',
+    error_details:
+      error instanceof Error ? error.message : stringifyError(error),
     retry_count: retryCount,
     reflection_guidance: reflectionGuidance,
   };
