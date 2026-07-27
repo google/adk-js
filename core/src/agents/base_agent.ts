@@ -70,12 +70,28 @@ export function isBaseAgent(obj: unknown): obj is BaseAgent {
 
 /**
  * Base class for all agents in Agent Development Kit.
+ *
+ * The class is generic over its config type so that {@link clone} can be typed
+ * per subclass (e.g. `LlmAgent.clone({instruction})`). The default keeps bare
+ * `BaseAgent` references valid as `BaseAgent<BaseAgentConfig>`.
  */
-export abstract class BaseAgent {
+export abstract class BaseAgent<
+  TConfig extends BaseAgentConfig = BaseAgentConfig,
+> {
   /**
    * A unique symbol to identify ADK agent classes.
    */
   readonly [BASE_AGENT_SIGNATURE_SYMBOL] = true;
+
+  /**
+   * The config this agent was constructed from.
+   *
+   * Stored so {@link clone} can rebuild the agent by re-running the concrete
+   * constructor with overrides applied, which re-derives all state correctly
+   * instead of copying an already-mutated instance. Shallow-copied so later
+   * external mutation of the caller's object does not leak into clones.
+   */
+  protected readonly config: TConfig;
 
   /**
    * The agent's name.
@@ -147,6 +163,9 @@ export abstract class BaseAgent {
   readonly afterAgentCallback: SingleAgentCallback[];
 
   constructor(config: BaseAgentConfig) {
+    // Captures every field the concrete subclass passed to super(...), even
+    // though the parameter is typed BaseAgentConfig, so clone() can rebuild it.
+    this.config = {...config} as TConfig;
     this.name = validateAgentName(config.name);
     this.description = config.description;
     this.parentAgent = config.parentAgent;
@@ -157,6 +176,59 @@ export abstract class BaseAgent {
     this.afterAgentCallback = getCannonicalCallback(config.afterAgentCallback);
 
     this.setParentAgentForSubAgents();
+  }
+
+  /**
+   * Creates a copy of this agent with the given config fields overridden.
+   *
+   * Mirrors adk-python's `BaseAgent.clone(update=...)`. The clone is a detached
+   * root: its `parentAgent` is always `undefined`. Sub-agents are recursively
+   * cloned (and re-parented to the clone) unless `subAgents` is overridden.
+   * Rebuilding via the concrete constructor re-derives all state, so a cloned
+   * `LlmAgent` gets a fresh `requestProcessors` array rather than sharing the
+   * original's. See google/adk-js#534.
+   *
+   * @param overrides Config fields to override on the clone. Overriding
+   *     `parentAgent` is rejected, matching adk-python.
+   * @returns A new detached agent instance of the same concrete class.
+   */
+  clone(overrides?: Partial<TConfig>): this {
+    if (overrides && 'parentAgent' in overrides) {
+      throw new Error(
+        'Cannot update `parentAgent` field in clone. Parent agent is set ' +
+          'only when the parent agent is instantiated with the sub-agents.',
+      );
+    }
+
+    const merged: TConfig = {...this.config, ...overrides};
+
+    // A clone is always a detached root (matches adk-python setting parent to
+    // None); the rebuilt parent constructor re-parents any cloned children.
+    merged.parentAgent = undefined;
+
+    // Shallow-copy any list-typed field not provided in overrides so the clone
+    // never shares a mutable array (e.g. `tools`) with the original, mirroring
+    // adk-python's per-field list copy.
+    const mergedRecord = merged as Record<string, unknown>;
+    for (const key of Object.keys(mergedRecord)) {
+      if (key === 'subAgents' || (overrides && key in overrides)) {
+        continue;
+      }
+      const value = mergedRecord[key];
+      if (Array.isArray(value)) {
+        mergedRecord[key] = value.slice();
+      }
+    }
+
+    // Recursively clone sub-agents unless explicitly overridden, so the rebuilt
+    // constructor re-parents fresh, unparented children instead of throwing
+    // "already has a parent agent".
+    if (!overrides || !('subAgents' in overrides)) {
+      merged.subAgents = this.subAgents.map((subAgent) => subAgent.clone());
+    }
+
+    const ctor = this.constructor as new (config: TConfig) => this;
+    return new ctor(merged);
   }
 
   /**
