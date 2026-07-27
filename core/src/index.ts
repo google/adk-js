@@ -46,7 +46,10 @@ export {
   loadSkillFromDir,
   validateSkillDir,
 } from './skills/loader.js';
-export {RunSkillInlineScriptTool} from './tools/skill/run_skill_inline_script_tool.js';
+export {
+  RunSkillInlineScriptErrorCode,
+  RunSkillInlineScriptTool,
+} from './tools/skill/run_skill_inline_script_tool.js';
 export {RunSkillScriptTool} from './tools/skill/run_skill_script_tool.js';
 
 export * from './integrations/agent_registry/agent_registry.js';

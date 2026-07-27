@@ -11,6 +11,7 @@ import {
   InvocationContext,
   RunSkillInlineScriptTool,
   SkillToolset,
+  ToolConfirmation,
   UnsafeLocalCodeExecutor,
 } from '@google/adk';
 import * as fs from 'node:fs/promises';
@@ -18,12 +19,16 @@ import * as path from 'node:path';
 import {describe, expect, it} from 'vitest';
 
 describe('RunSkillInlineScriptTool Integration with UnsafeLocalCodeExecutor', () => {
+  // These integration tests exercise real code execution, which is gated behind
+  // a human-in-the-loop confirmation. Supply an already-confirmed confirmation
+  // so the tool proceeds to execute (see run_skill_inline_script_tool.ts).
   function createMockContext(agentName = 'test-agent') {
     return new Context({
       invocationContext: {
         session: {state: {}},
         agent: {name: agentName},
       } as unknown as InvocationContext,
+      toolConfirmation: new ToolConfirmation({confirmed: true}),
     });
   }
 
