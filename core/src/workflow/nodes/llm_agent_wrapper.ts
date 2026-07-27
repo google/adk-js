@@ -6,6 +6,11 @@
 
 import {Content} from '@google/genai';
 import {BaseAgent} from '../../agents/base_agent.js';
+import {
+  InvocationContext,
+  InvocationContextParams,
+  WorkflowInstructionScope,
+} from '../../agents/invocation_context.js';
 import {isLlmAgent, LlmAgent} from '../../agents/llm_agent.js';
 import {
   createEvent,
@@ -69,15 +74,24 @@ export class LLMAgentWrapper extends BaseNode {
       ctx.session.events.push(userEvent);
     }
 
+    // Expose the node input and predecessor outputs to `{Class.field}` and
+    // `<Class.field from source_node>` instruction placeholders (Python's
+    // data-selection syntax). Carried on a child context so it never leaks to
+    // sibling/ordinary agent runs.
+    const agentIc = withWorkflowInstructionScope(ctx.invocationContext, {
+      input,
+      outputsByNode: collectPredecessorOutputs(ctx),
+    });
+
     // Task mode: run a multi-round loop until the agent calls `finish_task`,
     // whose arguments become the node output.
     if (isLlmAgent(this.agent) && this.agent.mode === 'task') {
-      yield* this.runTaskMode(ctx, this.agent);
+      yield* this.runTaskMode(ctx, agentIc, this.agent);
       return;
     }
 
     // Run the agent, following any transfer_to_agent hand-offs to peers.
-    yield* this.runWithTransfers(ctx, this.agent, 0);
+    yield* this.runWithTransfers(ctx, agentIc, this.agent, 0);
   }
 
   /**
@@ -89,12 +103,13 @@ export class LLMAgentWrapper extends BaseNode {
    */
   private async *runTaskMode(
     ctx: NodeContext,
+    agentIc: InvocationContext,
     agent: LlmAgent,
   ): AsyncGenerator<Event, void, void> {
     const finishTool = agent.finishTaskTool;
     let pendingArgs: Record<string, unknown> | undefined;
 
-    for await (const event of agent.runAsync(ctx.invocationContext)) {
+    for await (const event of agent.runAsync(agentIc)) {
       const finishCall = getFunctionCalls(event).find(
         (fc) => fc.name === FINISH_TASK_TOOL_NAME,
       );
@@ -129,6 +144,7 @@ export class LLMAgentWrapper extends BaseNode {
    */
   private async *runWithTransfers(
     ctx: NodeContext,
+    agentIc: InvocationContext,
     agent: BaseAgent,
     depth: number,
   ): AsyncGenerator<Event, void, void> {
@@ -140,7 +156,7 @@ export class LLMAgentWrapper extends BaseNode {
     }
 
     let transferTarget: string | undefined;
-    for await (const event of agent.runAsync(ctx.invocationContext)) {
+    for await (const event of agent.runAsync(agentIc)) {
       this.maybeSetOutput(event);
       yield event;
       if (event.actions?.transferToAgent) {
@@ -156,7 +172,7 @@ export class LLMAgentWrapper extends BaseNode {
           `LLMAgentWrapper: transfer target agent '${transferTarget}' not found.`,
         );
       }
-      yield* this.runWithTransfers(ctx, target, depth + 1);
+      yield* this.runWithTransfers(ctx, agentIc, target, depth + 1);
     }
   }
 
@@ -196,6 +212,43 @@ export class LLMAgentWrapper extends BaseNode {
     event.output = output;
     event.nodeInfo = {...(event.nodeInfo ?? {}), messageAsOutput: true};
   }
+}
+
+/**
+ * Creates a child InvocationContext carrying a workflow instruction scope,
+ * preserving the shared session/services/cost manager (like `withBranch`).
+ */
+function withWorkflowInstructionScope(
+  ic: InvocationContext,
+  scope: WorkflowInstructionScope,
+): InvocationContext {
+  return new InvocationContext({
+    ...(ic as unknown as InvocationContextParams),
+    workflowInstructionScope: scope,
+  });
+}
+
+/**
+ * Collects predecessor node outputs (keyed by node name) for the current
+ * invocation from the session events, for `<Class.field from source_node>`
+ * resolution. Node names are the leaf of each event's `nodeInfo.path` (with any
+ * `@runId` suffix stripped).
+ */
+function collectPredecessorOutputs(ctx: NodeContext): Record<string, unknown> {
+  const outputs: Record<string, unknown> = {};
+  for (const event of ctx.session.events) {
+    if (event.invocationId !== ctx.invocationId || event.output === undefined) {
+      continue;
+    }
+    const path = event.nodeInfo?.path;
+    if (!path) {
+      continue;
+    }
+    const leaf = path.slice(path.lastIndexOf('.') + 1);
+    const name = leaf.includes('@') ? leaf.slice(0, leaf.indexOf('@')) : leaf;
+    outputs[name] = event.output;
+  }
+  return outputs;
 }
 
 function hasFunctionCalls(event: Event): boolean {

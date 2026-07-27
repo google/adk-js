@@ -6,7 +6,9 @@
 
 import {describe, expect, it} from 'vitest';
 import {BaseAgent} from '../../src/agents/base_agent.js';
+import {injectSessionState} from '../../src/agents/instructions.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {ReadonlyContext} from '../../src/agents/readonly_context.js';
 import {createEvent, Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
@@ -89,6 +91,39 @@ class EchoAgent extends BaseAgent {
   }
 }
 
+/**
+ * A fake agent that resolves a given instruction template against its context
+ * (the way the real instruction request-processor does) and yields the result —
+ * so we can assert workflow `{Class.field}` / `<field from node>` placeholders
+ * resolve from the scope the wrapper attaches to the invocation context.
+ */
+class TemplateProbeAgent extends BaseAgent {
+  constructor(
+    private readonly template: string,
+    name = 'probe',
+  ) {
+    super({name});
+  }
+  protected async *runAsyncImpl(
+    ctx: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    const resolved = await injectSessionState(
+      this.template,
+      new ReadonlyContext(ctx),
+    );
+    yield createEvent({
+      author: this.name,
+      invocationId: ctx.invocationId,
+      branch: ctx.branch,
+      content: {role: 'model', parts: [{text: resolved}]},
+    });
+  }
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
+    return;
+  }
+}
+
 describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
   it('runs an agent as a node and extracts its text output', async () => {
     const wf = new Workflow({
@@ -113,6 +148,51 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
       edges: [['START', new EchoAgent(), upper]],
     });
     expect((await driveWorkflow(wf, 'hi')).output).toBe('ECHO:HI');
+  });
+
+  it('resolves {Class.field} instruction placeholders from the node input', async () => {
+    const probe = new TemplateProbeAgent(
+      'It is {CityTime.time_info} in {CityTime.city} right now.',
+    );
+    const wf = new Workflow({name: 'tmpl_input', edges: [['START', probe]]});
+    const {output} = await driveWorkflow(wf, {
+      time_info: '10:10 AM',
+      city: 'Paris',
+    });
+    expect(output).toBe('It is 10:10 AM in Paris right now.');
+  });
+
+  it('resolves <field from source_node> from a predecessor output event', async () => {
+    const ic = createIc();
+    // Seed a predecessor output the way the Runner persists node events.
+    ic.session.events.push(
+      createEvent({
+        author: 'lookup_time_function',
+        invocationId: ic.invocationId,
+        nodeInfo: {path: 'wf.lookup_time_function'},
+        output: {time_info: '9:00 AM', city: 'Rome'},
+      }),
+    );
+    const probe = new TemplateProbeAgent(
+      'It is <CityTime.time_info from lookup_time_function> in ' +
+        '<CityTime.city from lookup_time_function>.',
+    );
+    const channel = new EventChannel<Event>();
+    const root = new NodeContext({
+      invocationContext: ic,
+      channel,
+      nodePath: '',
+      runId: 'root',
+    });
+    const run = root.runNode(node(probe), undefined, {useAsOutput: true}).then(
+      () => channel.close(),
+      (err) => channel.fail(err),
+    );
+    for await (const _ev of channel) {
+      // drain
+    }
+    await run;
+    expect(root.output).toBe('It is 9:00 AM in Rome.');
   });
 
   it('node(agent) produces an LLMAgentWrapper carrying the agent name', () => {

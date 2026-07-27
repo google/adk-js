@@ -22,6 +22,19 @@ import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
 
 /**
+ * Workflow: data exposed to `{Class.field}` and `<Class.field from source_node>`
+ * instruction placeholders when an LlmAgent runs as a workflow node. Populated by
+ * `LLMAgentWrapper`; absent for ordinary (non-workflow) agent runs, in which case
+ * those placeholders are left untouched.
+ */
+export interface WorkflowInstructionScope {
+  /** The current node's input, exposing fields for `{Class.field}`. */
+  input?: unknown;
+  /** Predecessor node outputs keyed by node name, for `<Class.field from node>`. */
+  outputsByNode?: Record<string, unknown>;
+}
+
+/**
  * The parameters for creating an invocation context.
  */
 export interface InvocationContextParams {
@@ -42,6 +55,7 @@ export interface InvocationContextParams {
   abortSignal?: AbortSignal;
   agentStates?: Record<string, unknown>;
   endOfAgents?: Record<string, boolean>;
+  workflowInstructionScope?: WorkflowInstructionScope;
 }
 
 /**
@@ -209,6 +223,13 @@ export class InvocationContext {
   endOfAgents: Record<string, boolean>;
 
   /**
+   * Workflow: field-resolution scope for `{Class.field}` /
+   * `<Class.field from node>` instruction placeholders (set by
+   * `LLMAgentWrapper`).
+   */
+  workflowInstructionScope?: WorkflowInstructionScope;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -228,6 +249,7 @@ export class InvocationContext {
     this.abortSignal = params.abortSignal;
     this.agentStates = params.agentStates ?? {};
     this.endOfAgents = params.endOfAgents ?? {};
+    this.workflowInstructionScope = params.workflowInstructionScope;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop
