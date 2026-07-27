@@ -21,6 +21,7 @@ import {RetryConfig} from '../retry_config.js';
  */
 export interface BuildNodeOptions {
   name?: string;
+  description?: string;
   rerunOnResume?: boolean;
   retryConfig?: RetryConfig;
   timeout?: number;

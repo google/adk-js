@@ -8,11 +8,13 @@ import {Content} from '@google/genai';
 
 import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {Event} from '../events/event.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {EventChannel} from '../workflow/utils/event_channel.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
@@ -186,6 +188,14 @@ export class InvocationContext {
   pluginManager: PluginManager;
 
   readonly abortSignal?: AbortSignal;
+
+  /**
+   * An optional channel into which a running tool can push events to be
+   * interleaved into the agent's output stream. Set by the LLM flow around tool
+   * execution so a {@link NodeTool} (running a node/workflow) can surface the
+   * node's intermediate and interrupt events. Cleared once tools finish.
+   */
+  eventQueue?: EventChannel<Event>;
 
   /**
    * Checkpointed states for workflow nodes under this invocation.

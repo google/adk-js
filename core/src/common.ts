@@ -233,6 +233,11 @@ export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
+export {
+  FINISH_TASK_SUCCESS_RESULT,
+  FINISH_TASK_TOOL_NAME,
+  FinishTaskTool,
+} from './tools/finish_task_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   ToolExecuteArgument,

@@ -33,6 +33,24 @@ export function textResponse(text: string): RawGenerateContentResponse {
 }
 
 /**
+ * Builds a raw generate-content response that returns a single function call.
+ */
+export function functionCallResponse(
+  name: string,
+  args: Record<string, unknown>,
+  id?: string,
+): RawGenerateContentResponse {
+  return {
+    candidates: [
+      {
+        content: {role: 'model', parts: [{functionCall: {name, args, id}}]},
+        finishReason: FinishReason.STOP,
+      },
+    ],
+  };
+}
+
+/**
  * Constructs an {@link LlmAgent} whose model returns the given canned responses
  * (loaded from a JSON fixture), so workflow integration tests are deterministic
  * without a live model.

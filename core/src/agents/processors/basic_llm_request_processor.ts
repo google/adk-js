@@ -37,7 +37,14 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest.model = agent.canonicalModel.model;
 
     llmRequest.config = {...(agent.generateContentConfig ?? {})};
-    if (agent.outputSchema && (!agent.tools || agent.tools.length === 0)) {
+    // Task-mode agents complete via the `finish_task` tool, so the JSON response
+    // mode must not be set (function calling is incompatible with a JSON
+    // response mime type).
+    if (
+      agent.outputSchema &&
+      agent.mode !== 'task' &&
+      (!agent.tools || agent.tools.length === 0)
+    ) {
       setOutputSchema(llmRequest, agent.outputSchema);
     }
 

@@ -6,7 +6,17 @@
 
 import {Content} from '@google/genai';
 import {BaseAgent} from '../../agents/base_agent.js';
-import {createEvent, Event} from '../../events/event.js';
+import {isLlmAgent, LlmAgent} from '../../agents/llm_agent.js';
+import {
+  createEvent,
+  Event,
+  getFunctionCalls,
+  getFunctionResponses,
+} from '../../events/event.js';
+import {
+  FINISH_TASK_SUCCESS_RESULT,
+  FINISH_TASK_TOOL_NAME,
+} from '../../tools/finish_task_tool.js';
 import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 
@@ -59,8 +69,56 @@ export class LLMAgentWrapper extends BaseNode {
       ctx.session.events.push(userEvent);
     }
 
+    // Task mode: run a multi-round loop until the agent calls `finish_task`,
+    // whose arguments become the node output.
+    if (isLlmAgent(this.agent) && this.agent.mode === 'task') {
+      yield* this.runTaskMode(ctx, this.agent);
+      return;
+    }
+
     // Run the agent, following any transfer_to_agent hand-offs to peers.
     yield* this.runWithTransfers(ctx, this.agent, 0);
+  }
+
+  /**
+   * Runs a `task`-mode agent: the agent loops (LLM ↔ tools) until it calls the
+   * `finish_task` tool. The wrapper sniffs the `finish_task` function call and,
+   * on its successful function response, promotes the call's arguments to the
+   * node output (and to `outputKey` state, if set). Mirrors Python's
+   * `run_llm_agent_as_node` task branch.
+   */
+  private async *runTaskMode(
+    ctx: NodeContext,
+    agent: LlmAgent,
+  ): AsyncGenerator<Event, void, void> {
+    const finishTool = agent.finishTaskTool;
+    let pendingArgs: Record<string, unknown> | undefined;
+
+    for await (const event of agent.runAsync(ctx.invocationContext)) {
+      const finishCall = getFunctionCalls(event).find(
+        (fc) => fc.name === FINISH_TASK_TOOL_NAME,
+      );
+      if (finishCall) {
+        // Remember the latest finish_task args; wait for the success function
+        // response before terminating (a validation error lets the LLM retry).
+        pendingArgs = {...(finishCall.args ?? {})};
+        yield event;
+        continue;
+      }
+
+      if (pendingArgs !== undefined && isFinishTaskSuccessResponse(event)) {
+        const output = finishTool.extractOutput(pendingArgs);
+        event.output = output;
+        event.nodeInfo = {...(event.nodeInfo ?? {}), messageAsOutput: true};
+        if (agent.outputKey && output !== undefined) {
+          ctx.actions.stateDelta[agent.outputKey] = output;
+        }
+        yield event;
+        return;
+      }
+
+      yield event;
+    }
   }
 
   /**
@@ -142,6 +200,21 @@ export class LLMAgentWrapper extends BaseNode {
 
 function hasFunctionCalls(event: Event): boolean {
   return (event.content?.parts ?? []).some((p) => p.functionCall);
+}
+
+/**
+ * Whether an event carries the success function response from `finish_task`.
+ * A non-success response (e.g. a validation error) returns false so the caller
+ * keeps iterating and the LLM gets a chance to retry.
+ */
+function isFinishTaskSuccessResponse(event: Event): boolean {
+  return getFunctionResponses(event).some((fr) => {
+    if (fr.name !== FINISH_TASK_TOOL_NAME) {
+      return false;
+    }
+    const response = (fr.response ?? {}) as {result?: unknown};
+    return response.result === FINISH_TASK_SUCCESS_RESULT;
+  });
 }
 
 /** Converts an arbitrary node input into a user-role `Content`. */
