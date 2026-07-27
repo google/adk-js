@@ -120,8 +120,13 @@ export class Workflow extends BaseNode {
 
     // --- REHYDRATE (resume) ---
     // Reconstruct node state from prior session events and surface resolved
-    // interrupt responses so waiting nodes can resume.
-    const rehydrated = reconstructNodeStates(ctx.session?.events ?? []);
+    // interrupt responses so waiting nodes can resume. Scope to this workflow's
+    // own direct children (by path) so nested workflows with same-named nodes
+    // don't collide.
+    const rehydrated = reconstructNodeStates(
+      ctx.session?.events ?? [],
+      ctx.nodePath || undefined,
+    );
     this.applyResumeInputs(ctx, rehydrated);
 
     if (this.dynamicEntry) {

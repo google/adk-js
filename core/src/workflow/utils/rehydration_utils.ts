@@ -38,11 +38,23 @@ export interface RehydratedNode {
 /**
  * Scans session events and reconstructs per-node state (outputs, routes, raised
  * interrupts, and resolved interrupt responses).
+ *
+ * When `parentPath` is given, reconstruction is scoped to that path's DIRECT
+ * children (keyed by child name), so nested workflows whose nodes share a name
+ * do not collide on resume. When omitted, nodes are keyed by their path leaf
+ * (utility mode, robust to author rewrite).
  */
 export function reconstructNodeStates(
   events: Event[],
+  parentPath?: string,
 ): Map<string, RehydratedNode> {
-  // Key static-graph nodes by their name (path leaf), robust to author rewrite.
+  if (parentPath) {
+    return reconstruct(events, (event) =>
+      event.nodeInfo?.path
+        ? directChildName(event.nodeInfo.path, parentPath)
+        : undefined,
+    );
+  }
   return reconstruct(events, (event) =>
     event.nodeInfo?.path ? nodeNameFromPath(event.nodeInfo.path) : event.author,
   );
@@ -159,6 +171,24 @@ export function makeFastForwardContext(
 export function nodeNameFromPath(path: string): string {
   const leaf = path.split(/[./]/).pop() ?? path;
   return leaf.split('@')[0];
+}
+
+/**
+ * Returns the child node name if `path` is a DIRECT child of `parentPath`
+ * (e.g. `parent.child` -> `child`, `parent.child@2` -> `child`), or `undefined`
+ * for a non-descendant or a deeper descendant (e.g. `parent.sub.child`). Used to
+ * scope rehydration to a single workflow's own nodes.
+ */
+function directChildName(path: string, parentPath: string): string | undefined {
+  const prefix = `${parentPath}.`;
+  if (!path.startsWith(prefix)) {
+    return undefined;
+  }
+  const rest = path.slice(prefix.length);
+  if (rest.includes('.')) {
+    return undefined; // a deeper descendant, not a direct child
+  }
+  return rest.split('@')[0];
 }
 
 /** Unwraps a `{result: value}` FunctionResponse envelope to the bare value. */

@@ -113,6 +113,26 @@ describe('Phase 5b — rehydration utility', () => {
       requestedItems: ['a', 'b'],
     });
   });
+
+  it('scopes reconstruction to direct children so nested same-named nodes do not collide', () => {
+    const events: Event[] = [
+      createEvent({nodeInfo: {path: 'root.process'}, output: 'OUTER'}),
+      createEvent({nodeInfo: {path: 'root.inner.process'}, output: 'INNER'}),
+    ];
+    const outer = reconstructNodeStates(events, 'root');
+    const inner = reconstructNodeStates(events, 'root.inner');
+    expect(outer.get('process')?.output).toBe('OUTER');
+    expect(inner.get('process')?.output).toBe('INNER');
+    // The outer scope must not absorb the nested (grandchild) node.
+    expect(outer.size).toBe(1);
+  });
+
+  it('keys by leaf name when no parent path is given (utility mode)', () => {
+    const events: Event[] = [
+      createEvent({nodeInfo: {path: 'wf.a'}, output: 'A'}),
+    ];
+    expect(reconstructNodeStates(events).get('a')?.output).toBe('A');
+  });
 });
 
 describe('Phase 5b — HITL resume via the Runner', () => {
