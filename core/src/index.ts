@@ -36,6 +36,14 @@ export {
   UnsafeLocalCodeExecutor,
   type UnsafeLocalCodeExecutorOptions,
 } from './code_executors/unsafe_local_code_executor.js';
+export {
+  VertexAiCodeExecutor,
+  type CodeInterpreterExtensionClient,
+  type ExtensionExecuteParams,
+  type ExtensionExecuteResponse,
+  type ExtensionFile,
+  type VertexAiCodeExecutorOptions,
+} from './code_executors/vertex_ai_code_executor.js';
 export * from './common.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
