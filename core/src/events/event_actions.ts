@@ -82,8 +82,6 @@ export interface EventActions {
    * array for multi-route dispatch.
    */
   route?: string | number | boolean | Array<string | number | boolean>;
-
-  [key: string]: unknown;
 }
 
 /**
