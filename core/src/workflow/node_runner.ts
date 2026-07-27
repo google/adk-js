@@ -128,7 +128,15 @@ export async function executeChildNode(
 
 /**
  * Drives one attempt of `node.run()`, enriching and pushing each event and
- * tracking the child's output/route. Wrapped in a timeout when configured.
+ * tracking the child's output/route.
+ *
+ * When the node declares a `timeout`, execution is driven step-by-step and
+ * raced against a deadline: on timeout the engine stops consuming events (so
+ * nothing is pushed past the deadline — which would otherwise leak into a retry
+ * or the next node), closes the generator so its `finally` blocks run, and
+ * aborts `child.abortSignal` so a cooperative node body can cancel its own
+ * in-flight work. Mirrors the cancellation semantics of Python's
+ * `asyncio.wait_for`.
  */
 async function runOnce(
   node: BaseNode,
@@ -138,38 +146,79 @@ async function runOnce(
   branch: string | undefined,
   isolationScope: string | undefined,
 ): Promise<void> {
-  const body = (async () => {
-    for await (const event of node.run(child, input)) {
-      enrichEvent(event, child, nodeName, branch, isolationScope);
-      if (event.output !== undefined) {
-        child.output = event.output;
-      }
-      if (event.route !== undefined) {
-        child.route = event.route;
-      }
-      // HITL: an interrupt event marks its ids as long-running tool ids.
-      if (event.longRunningToolIds && event.longRunningToolIds.length > 0) {
-        for (const id of event.longRunningToolIds) {
-          if (!child.interruptIds.includes(id)) {
-            child.interruptIds.push(id);
-          }
-        }
-        // Persist the node's input on the interrupt event so a resumed
-        // (waiting) node re-runs with its ORIGINAL input, not the resume
-        // message. Rehydrated by reconstructNodeStates on the next turn.
-        event.actions.agentState = {
-          ...(event.actions.agentState ?? {}),
-          input,
-        };
-      }
-      child.channel.push(event);
+  const consume = (event: Event): void => {
+    enrichEvent(event, child, nodeName, branch, isolationScope);
+    if (event.output !== undefined) {
+      child.output = event.output;
     }
-  })();
+    if (event.route !== undefined) {
+      child.route = event.route;
+    }
+    // HITL: an interrupt event marks its ids as long-running tool ids.
+    if (event.longRunningToolIds && event.longRunningToolIds.length > 0) {
+      for (const id of event.longRunningToolIds) {
+        if (!child.interruptIds.includes(id)) {
+          child.interruptIds.push(id);
+        }
+      }
+      // Persist the node's input on the interrupt event so a resumed
+      // (waiting) node re-runs with its ORIGINAL input, not the resume
+      // message. Rehydrated by reconstructNodeStates on the next turn.
+      event.actions.agentState = {
+        ...(event.actions.agentState ?? {}),
+        input,
+      };
+    }
+    child.channel.push(event);
+  };
 
-  if (node.timeout && node.timeout > 0) {
-    await withTimeout(body, node.timeout, nodeName);
+  if (!(typeof node.timeout === 'number' && node.timeout > 0)) {
+    for await (const event of node.run(child, input)) {
+      consume(event);
+    }
+    return;
+  }
+
+  const timeoutSeconds = node.timeout;
+  const controller = new AbortController();
+  const parentSignal = child.invocationContext.abortSignal;
+  const onParentAbort = () => controller.abort();
+  if (parentSignal?.aborted) {
+    controller.abort();
   } else {
-    await body;
+    parentSignal?.addEventListener('abort', onParentAbort, {once: true});
+  }
+  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  child.abortSignal = controller.signal;
+
+  // A single promise that rejects once the deadline (or external abort) fires;
+  // reused across iterations so we don't leak a listener per step.
+  const aborted = new Promise<never>((_, reject) => {
+    const fail = () =>
+      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds}));
+    if (controller.signal.aborted) {
+      fail();
+    } else {
+      controller.signal.addEventListener('abort', fail, {once: true});
+    }
+  });
+
+  const iterator = node.run(child, input)[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      const result = await Promise.race([iterator.next(), aborted]);
+      if (result.done) {
+        break;
+      }
+      consume(result.value);
+    }
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', onParentAbort);
+    child.abortSignal = undefined;
+    // Best-effort: close the generator so its `finally`/cleanup runs. This is
+    // queued behind any in-flight `next()`; its result is discarded.
+    void Promise.resolve(iterator.return?.(undefined)).catch(() => {});
   }
 }
 
@@ -207,32 +256,6 @@ function withBranch(
   return new InvocationContext({
     ...(ic as unknown as InvocationContextParams),
     branch,
-  });
-}
-
-/**
- * Rejects with {@link NodeTimeoutError} if `promise` does not settle within
- * `timeoutSeconds`.
- */
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutSeconds: number,
-  nodeName: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds}));
-    }, timeoutSeconds * 1000);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
   });
 }
 

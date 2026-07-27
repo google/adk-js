@@ -226,4 +226,63 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       NodeTimeoutError,
     );
   });
+
+  it('cancels a timed-out node: aborts the signal and drops post-deadline events', async () => {
+    let captured: AbortSignal | undefined;
+    class SlowStream extends BaseNode {
+      protected async *runImpl(ctx: NodeContext) {
+        captured = ctx.abortSignal;
+        yield createEvent({
+          author: 'slow',
+          content: {role: 'model', parts: [{text: 'early'}]},
+        });
+        // Cooperative wait that ends on abort; well past the 20ms timeout.
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 500);
+          ctx.abortSignal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(t);
+              resolve();
+            },
+            {once: true},
+          );
+        });
+        yield createEvent({
+          author: 'slow',
+          content: {role: 'model', parts: [{text: 'late'}]},
+          output: 'late',
+        });
+      }
+    }
+    const slow = new SlowStream({name: 'slow', timeout: 0.02});
+
+    // Custom harness: capture events even though the run rejects.
+    const channel = new EventChannel<Event>();
+    const root = new NodeContext({
+      invocationContext: createIc(),
+      channel,
+      nodePath: '',
+      runId: 'root',
+    });
+    const seen: string[] = [];
+    const orchestration = root.runNode(slow, 'x').then(
+      () => channel.close(),
+      (err) => channel.fail(err),
+    );
+    let thrown: unknown;
+    try {
+      for await (const ev of channel) {
+        seen.push(ev.content?.parts?.[0]?.text ?? '');
+      }
+    } catch (err) {
+      thrown = err;
+    }
+    await orchestration.catch(() => {});
+
+    expect(thrown).toBeInstanceOf(NodeTimeoutError);
+    expect(seen).toContain('early');
+    expect(seen).not.toContain('late'); // produced after the deadline -> dropped
+    expect(captured?.aborted).toBe(true); // signal fired for cooperative cancel
+  });
 });

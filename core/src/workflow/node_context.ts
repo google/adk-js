@@ -59,6 +59,16 @@ export class NodeContext {
   interruptIds: string[] = [];
 
   /**
+   * Abort signal for the current node run, set by the engine while a node that
+   * declares a `timeout` is executing. It fires when the timeout elapses (or the
+   * invocation itself is aborted). Cooperative node bodies can observe
+   * `ctx.abortSignal` to cancel their own in-flight work (e.g. pass it to a
+   * model/tool call); the engine also stops consuming the node's events once it
+   * fires, so nothing is pushed past the deadline.
+   */
+  abortSignal?: AbortSignal;
+
+  /**
    * The dynamic-node scheduler for this subtree. When set, `ctx.runNode()`
    * routes through it (dedup/resume/fresh); otherwise it runs the child
    * directly. Propagated to child contexts by the node runner; a nested
