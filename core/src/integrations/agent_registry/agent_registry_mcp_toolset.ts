@@ -106,8 +106,15 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     const sessionManager = new MCPSessionManager(connectionParamsCopy);
     const session = await sessionManager.createSession();
 
-    // Retrieve tools from the remote server and map them to MCPTools
-    const listResult = (await session.listTools()) as ListToolsResult;
+    // Retrieve tools from the remote server and close the discovery session
+    let listResult: ListToolsResult;
+    try {
+      listResult = (await session.listTools()) as ListToolsResult;
+    } finally {
+      await sessionManager.closeSession(session);
+    }
+
+    // Map tool definitions to MCPTools
     const tools = listResult.tools.map((tool) => {
       const prefixedName = this.prefix
         ? `${this.prefix}_${tool.name}`
