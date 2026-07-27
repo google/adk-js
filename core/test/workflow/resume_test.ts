@@ -5,7 +5,13 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {createEvent, Event} from '../../src/events/event.js';
+import {
+  createEvent,
+  Event,
+  transformToCamelCaseEvent,
+  transformToSnakeCaseEvent,
+} from '../../src/events/event.js';
+import {createEventActions} from '../../src/events/event_actions.js';
 import {Runner} from '../../src/runner/runner.js';
 import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {node} from '../../src/workflow/node.js';
@@ -69,6 +75,43 @@ describe('Phase 5b — rehydration utility', () => {
     expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(
       'approved',
     );
+  });
+
+  it('recovers structured output and interrupt input after a DB serialization round-trip', () => {
+    const events: Event[] = [
+      createEvent({
+        author: 'lookup',
+        nodeInfo: {path: 'wf.lookup'},
+        output: {cityName: 'Paris', timeInfo: '10:10 AM'},
+      }),
+      createEvent({
+        author: 'gate',
+        nodeInfo: {path: 'wf.gate'},
+        longRunningToolIds: ['gate-1'],
+        // The engine stashes the waiting node's original input here so it
+        // re-runs with it on resume (see node_runner runOnce).
+        actions: createEventActions({
+          agentState: {input: {userId: 42, requestedItems: ['a', 'b']}},
+        }),
+      }),
+    ];
+
+    // Simulate what a persistent (DB/Vertex) session store does on write+read:
+    // snake_case on save, camelCase on load. Without the preserve-list fix this
+    // mangles the arbitrary output/agentState keys.
+    const persisted = events.map(
+      (e) => transformToCamelCaseEvent(transformToSnakeCaseEvent(e)) as Event,
+    );
+
+    const states = reconstructNodeStates(persisted);
+    expect(states.get('lookup')?.output).toEqual({
+      cityName: 'Paris',
+      timeInfo: '10:10 AM',
+    });
+    expect(states.get('gate')?.input).toEqual({
+      userId: 42,
+      requestedItems: ['a', 'b'],
+    });
   });
 });
 
