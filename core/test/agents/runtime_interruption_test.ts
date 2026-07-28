@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,11 +15,11 @@ import {
   Runner,
 } from '@google/adk';
 import {Content} from '@google/genai';
-import {describe, it} from 'vitest';
+import {describe, expect, it} from 'vitest';
 
 /**
- * A direct model connection without mocks for e2e verification of the runtime
- * interruption mechanism across turns.
+ * A direct model connection used to verify the runtime interruption mechanism
+ * across turns without framework mocks.
  */
 class DirectSimulationConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
@@ -38,7 +38,8 @@ class DirectSimulationConnection implements BaseLlmConnection {
 }
 
 /**
- * Direct model simulation used for e2e verification without framework mocks.
+ * Direct model simulation used to drive the runtime interruption flow without
+ * framework mocks.
  */
 class DirectSimulationModel extends BaseLlm {
   private turnCount = 0;
@@ -86,13 +87,11 @@ class DirectSimulationModel extends BaseLlm {
   }
 }
 
-async function runE2eVerification() {
-  console.log('--- Starting E2E Runtime Interruption Verification ---');
-
+async function runInterruptionVerification() {
   // 1. Setup Session Service & Tool
   const sessionService = new InMemorySessionService();
   await sessionService.createSession({
-    appName: 'e2e_verification',
+    appName: 'interruption_verification',
     userId: 'user_123',
     sessionId: 'session_abc',
   });
@@ -111,13 +110,12 @@ async function runE2eVerification() {
   });
 
   const runner = new Runner({
-    appName: 'e2e_verification',
+    appName: 'interruption_verification',
     agent,
     sessionService,
   });
 
   // 3. Turn 1: Run agent until it hits the LRO/HITL tool interruption
-  console.log('Running Turn 1: Initial deployment request...');
   const turn1Events = [];
   for await (const event of runner.runAsync({
     userId: 'user_123',
@@ -134,27 +132,24 @@ async function runE2eVerification() {
     (e) => e.longRunningToolIds && e.longRunningToolIds.length > 0,
   );
   if (!interruptEvent) {
-    throw new Error(
-      'E2E Verification Failed: No longRunningToolIds emitted in Turn 1.',
-    );
+    expect.fail('expected Turn 1 to emit longRunningToolIds and pause');
   }
 
   const functionCallPart = interruptEvent.content?.parts?.find(
     (p) => p.functionCall,
   );
   const functionCallId = functionCallPart?.functionCall?.id;
-  console.log(`Turn 1 paused cleanly on LRO tool ID: ${functionCallId}`);
+  expect(functionCallId).toBeDefined();
 
-  // Verify session is paused, NOT ended
+  // Verify the session is paused, NOT ended.
   const session = await sessionService.getSession({
-    appName: 'e2e_verification',
+    appName: 'interruption_verification',
     userId: 'user_123',
     sessionId: 'session_abc',
   });
-  console.log(`Session events recorded so far: ${session?.events.length}`);
+  expect(session?.events.length).toBeGreaterThan(0);
 
   // 4. Turn 2: Inject user's function response to resume the paused invocation
-  console.log('Running Turn 2: Injecting user approval function response...');
   const turn2Events = [];
   for await (const event of runner.runAsync({
     userId: 'user_123',
@@ -182,20 +177,12 @@ async function runE2eVerification() {
   );
 
   if (!finalAnswerEvent) {
-    throw new Error(
-      'E2E Verification Failed: Final answer not received upon resumption.',
-    );
+    expect.fail('expected the final answer to be received upon resumption');
   }
-
-  console.log('Turn 2 completed successfully with final answer:');
-  console.log(finalAnswerEvent.content?.parts?.[0].text);
-  console.log(
-    '--- E2E Runtime Interruption Verification Passed Successfully! ---',
-  );
 }
 
-describe('E2E Runtime Interruption Verification', () => {
-  it('verifies interruption and resumption end-to-end without mocks', async () => {
-    await runE2eVerification();
+describe('Runtime Interruption Verification', () => {
+  it('verifies interruption and resumption across turns without mocks', async () => {
+    await runInterruptionVerification();
   });
 });
