@@ -6,6 +6,8 @@
 
 import {Part} from '@google/genai';
 
+import {logger} from '../utils/logger.js';
+
 import {
   ArtifactVersion,
   BaseArtifactService,
@@ -84,7 +86,14 @@ export class InMemoryArtifactService implements BaseArtifactService {
       version = versions.length - 1;
     }
 
-    return Promise.resolve(versions[version]?.part);
+    if (!versions[version]) {
+      logger.warn(
+        `[InMemoryArtifactService] loadArtifact: Artifact ${filename} version ${version} not found`,
+      );
+      return Promise.resolve(undefined);
+    }
+
+    return Promise.resolve(versions[version].part);
   }
 
   listArtifactKeys({
