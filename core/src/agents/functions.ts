@@ -365,9 +365,7 @@ export async function handleFunctionCallList({
       }
     }
 
-    if (functionResponse != null) {
-      functionResponse = normalizeCallbackResponse(functionResponse);
-    }
+    functionResponse = normalizeCallbackResponse(functionResponse);
 
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse == null) {

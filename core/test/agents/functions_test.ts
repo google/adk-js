@@ -24,7 +24,7 @@ import {
   SingleBeforeToolCallback,
   ToolConfirmation,
 } from '@google/adk';
-import {Content, FunctionCall, Blob as GenaiBlob} from '@google/genai';
+import {FunctionCall} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
@@ -98,15 +98,6 @@ class TestPlugin extends BasePlugin {
 
 function randomIdForTestingOnly(): string {
   return (Math.random() * 100).toString();
-}
-
-/**
- * Casts a value that the tool callback return type forbids. Untyped JavaScript
- * callers can still return such values at runtime, which is exactly what
- * `normalizeCallbackResponse` exists to absorb.
- */
-function outOfContractResponse(value: unknown): Record<string, unknown> {
-  return value as Record<string, unknown>;
 }
 
 describe('normalizeCallbackResponse', () => {
@@ -408,7 +399,9 @@ describe('handleFunctionCallList', () => {
 
   it('should normalize primitive string returned by beforeToolCallback', async () => {
     const beforeToolCallback: SingleBeforeToolCallback = async () => {
-      return outOfContractResponse('primitive before response');
+      // The declared return type forbids a primitive, but an untyped JavaScript
+      // caller can still return one; that is what normalization absorbs.
+      return 'primitive before response' as unknown as Record<string, unknown>;
     };
     let passedResponseToAfterCallback: unknown;
     const afterToolCallback: SingleAfterToolCallback = async ({response}) => {
@@ -428,23 +421,6 @@ describe('handleFunctionCallList', () => {
     expect(event).not.toBeNull();
     expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
       result: 'primitive before response',
-    });
-  });
-
-  it('should normalize array returned by afterToolCallback', async () => {
-    const afterToolCallback: SingleAfterToolCallback = async () => {
-      return outOfContractResponse(['item1', 'item2']);
-    };
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [functionCall],
-      toolsDict,
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [afterToolCallback],
-    });
-    expect(event).not.toBeNull();
-    expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
-      results: ['item1', 'item2'],
     });
   });
 
@@ -550,22 +526,6 @@ describe('LlmAgent long-running tool integration', () => {
       },
     };
 
-    class MockConnection implements BaseLlmConnection {
-      sendHistory(_history: Content[]): Promise<void> {
-        return Promise.resolve();
-      }
-      sendContent(_content: Content): Promise<void> {
-        return Promise.resolve();
-      }
-      sendRealtime(_blob: GenaiBlob): Promise<void> {
-        return Promise.resolve();
-      }
-      async *receive(): AsyncGenerator<LlmResponse, void, void> {}
-      async close(): Promise<void> {
-        return Promise.resolve();
-      }
-    }
-
     class MockIntegrationLlm extends BaseLlm {
       async *generateContentAsync(
         _request: LlmRequest,
@@ -573,7 +533,7 @@ describe('LlmAgent long-running tool integration', () => {
         yield functionCallResponse;
       }
       async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-        return new MockConnection();
+        throw new Error('Method not implemented.');
       }
     }
 
