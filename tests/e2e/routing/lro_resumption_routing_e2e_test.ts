@@ -30,7 +30,7 @@ class DataProcessingAgent extends BaseAgent {
 
   override async *runLiveImpl(
     _ctx: InvocationContext,
-  ): AsyncGenerator<unknown, void, void> {
+  ): AsyncGenerator<Event, void, void> {
     yield* [];
   }
 
@@ -96,7 +96,7 @@ class RootOrchestratorAgent extends BaseAgent {
 
   override async *runLiveImpl(
     _ctx: InvocationContext,
-  ): AsyncGenerator<unknown, void, void> {
+  ): AsyncGenerator<Event, void, void> {
     yield* [];
   }
 

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {Event} from '@google/adk';
 import {
   InMemoryRunner,
   LlmAgent,
@@ -196,8 +197,7 @@ describe('Skills Registry Integration', () => {
       userId: 'test_user',
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const events: any[] = [];
+    const events: Event[] = [];
     for await (const event of runner.runAsync({
       userId: 'test_user',
       sessionId: session.id,
@@ -217,7 +217,7 @@ describe('Skills Registry Integration', () => {
     );
     expect(searchResponseEvent).toBeDefined();
     expect(
-      searchResponseEvent!.content.parts[0].functionResponse.response,
+      searchResponseEvent?.content?.parts?.[0]?.functionResponse?.response,
     ).toEqual({
       results: [
         {
@@ -238,8 +238,8 @@ describe('Skills Registry Integration', () => {
     );
     expect(loadResponseEvent).toBeDefined();
     expect(
-      loadResponseEvent!.content.parts[0].functionResponse.response
-        .instructions,
+      loadResponseEvent?.content?.parts?.[0]?.functionResponse?.response
+        ?.instructions,
     ).toBe('When asked to solve math, double the number.');
 
     // Verify load_skill_resource tool execution
@@ -255,7 +255,8 @@ describe('Skills Registry Integration', () => {
     );
     expect(resourceResponseEvent).toBeDefined();
     expect(
-      resourceResponseEvent!.content.parts[0].functionResponse.response.content,
+      resourceResponseEvent?.content?.parts?.[0]?.functionResponse?.response
+        ?.content,
     ).toBe('Double of X is 2*X');
 
     // Verify run_skill_script tool execution
@@ -270,7 +271,7 @@ describe('Skills Registry Integration', () => {
     );
     expect(runResponseEvent).toBeDefined();
     expect(
-      runResponseEvent!.content.parts[0].functionResponse.response.stdout,
+      runResponseEvent?.content?.parts?.[0]?.functionResponse?.response?.stdout,
     ).toContain('42');
   });
 });

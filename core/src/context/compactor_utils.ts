@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
+import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
 
 /**
@@ -15,9 +15,7 @@ import {Event} from '../events/event.js';
  * @returns The active events, starting with the latest CompactedEvent if present.
  */
 export function getActiveEvents(events: Event[]): Event[] {
-  const latest = events.filter(isCompactedEvent).pop() as
-    | CompactedEvent
-    | undefined;
+  const latest = events.filter(isCompactedEvent).pop();
   return latest
     ? [
         latest,

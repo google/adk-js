@@ -52,8 +52,7 @@ class SpyGemini extends Gemini {
     this.spyClient = new SpyMockGenAIClient(response);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override get apiClient(): any {
+  override get apiClient(): GoogleGenAI {
     return this.spyClient as unknown as GoogleGenAI;
   }
 }
