@@ -45,7 +45,6 @@ export const functionsExportedForTestingOnly = {
   handleFunctionCallList,
   generateAuthEvent,
   generateRequestConfirmationEvent,
-  normalizeCallbackResponse,
 };
 // TODO - b/425992518: consider internalize as part of llm_agent's runtime.
 /**

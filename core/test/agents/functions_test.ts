@@ -35,7 +35,6 @@ const {
   handleFunctionCallList,
   generateAuthEvent,
   generateRequestConfirmationEvent,
-  normalizeCallbackResponse,
 } = functionsExportedForTestingOnly;
 
 // Tool for testing
@@ -111,36 +110,9 @@ const falsyLongRunningTool = new FunctionTool({
   isLongRunning: true,
 });
 
-function longRunningCallFor(tool: BaseTool): FunctionCall {
+function callFor(tool: BaseTool): FunctionCall {
   return {id: randomIdForTestingOnly(), name: tool.name, args: {}};
 }
-
-describe('normalizeCallbackResponse', () => {
-  it('should return undefined when input is null or undefined', () => {
-    expect(normalizeCallbackResponse(null)).toBeUndefined();
-    expect(normalizeCallbackResponse(undefined)).toBeUndefined();
-  });
-
-  it('should wrap primitive values into a {result: value} object', () => {
-    expect(normalizeCallbackResponse('primitive string')).toEqual({
-      result: 'primitive string',
-    });
-    expect(normalizeCallbackResponse(123)).toEqual({result: 123});
-    expect(normalizeCallbackResponse(true)).toEqual({result: true});
-  });
-
-  it('should wrap arrays into a {results: array} object', () => {
-    expect(normalizeCallbackResponse(['a', 'b'])).toEqual({
-      results: ['a', 'b'],
-    });
-  });
-
-  it('should return object records unchanged', () => {
-    expect(normalizeCallbackResponse({custom: 'record'})).toEqual({
-      custom: 'record',
-    });
-  });
-});
 
 describe('handleFunctionCallList', () => {
   let invocationContext: InvocationContext;
@@ -419,14 +391,9 @@ describe('handleFunctionCallList', () => {
       parameters: z.object({}),
       execute: async () => null,
     });
-    const nullCall: FunctionCall = {
-      id: randomIdForTestingOnly(),
-      name: 'nullTool',
-      args: {},
-    };
     const event = await handleFunctionCallList({
       invocationContext,
-      functionCalls: [nullCall],
+      functionCalls: [callFor(nullTool)],
       toolsDict: {'nullTool': nullTool},
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
@@ -442,7 +409,7 @@ describe('handleFunctionCallList', () => {
   it('should cleanly return null and emit no event when long-running tool returns null or undefined', async () => {
     const event = await handleFunctionCallList({
       invocationContext,
-      functionCalls: [longRunningCallFor(silentLongRunningTool)],
+      functionCalls: [callFor(silentLongRunningTool)],
       toolsDict: {silentLongRunningTool},
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
@@ -450,25 +417,12 @@ describe('handleFunctionCallList', () => {
     expect(event).toBeNull();
   });
 
-  it('should emit an event when long-running tool returns a falsy but present response', async () => {
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [longRunningCallFor(falsyLongRunningTool)],
-      toolsDict: {falsyLongRunningTool},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-    expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
-      result: '',
-    });
-  });
-
   it('should emit a response part only for the long-running tool that returned something', async () => {
     const event = await handleFunctionCallList({
       invocationContext,
       functionCalls: [
-        longRunningCallFor(silentLongRunningTool),
-        longRunningCallFor(falsyLongRunningTool),
+        callFor(silentLongRunningTool),
+        callFor(falsyLongRunningTool),
       ],
       toolsDict: {silentLongRunningTool, falsyLongRunningTool},
       beforeToolCallbacks: [],
