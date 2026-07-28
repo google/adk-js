@@ -140,7 +140,14 @@ describe('AgentTool', () => {
         text: z.string(),
       }),
       execute: async ({filename, text}, toolContext) => {
-        await toolContext.saveArtifact(filename, {text});
+        // `FunctionTool` types the tool context as optional, but the runner
+        // always supplies it. Narrow explicitly so a missing context fails the
+        // test loudly rather than being papered over by a bare `!`.
+        expect(
+          toolContext,
+          'saveArtifactTool did not receive a tool context',
+        ).toBeDefined();
+        await toolContext!.saveArtifact(filename, {text});
         return `Saved ${filename}`;
       },
     });
