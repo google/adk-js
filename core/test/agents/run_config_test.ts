@@ -60,7 +60,8 @@ describe('createRunConfig', () => {
 
   it('logs a warning when maxLlmCalls is negative', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    createRunConfig({maxLlmCalls: -1});
+    const config = createRunConfig({maxLlmCalls: -1});
+    expect(config.maxLlmCalls).toBe(-1);
     expect(warnSpy).toHaveBeenCalledOnce();
     warnSpy.mockRestore();
   });
