@@ -18,10 +18,10 @@ import {
 } from '../../src/utils/streaming_utils.js';
 
 // Mock generateClientFunctionCallId to return a fixed ID for testing
-vi.mock('../../src/agents/functions.js', async () => {
+vi.mock('../../src/events/event.js', async () => {
   const actual = (await vi.importActual(
-    '../../src/agents/functions.js',
-  )) as typeof import('../../src/agents/functions.js');
+    '../../src/events/event.js',
+  )) as typeof import('../../src/events/event.js');
   return {
     ...actual,
     generateClientFunctionCallId: () => 'mocked-fc-id',
