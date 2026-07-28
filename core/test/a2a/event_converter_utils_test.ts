@@ -126,6 +126,24 @@ describe('event_converter_utils', () => {
     });
 
     describe('Message', () => {
+      it('returns undefined for messages without parts', () => {
+        const userMessage: Message = {
+          kind: 'message',
+          messageId: 'msg-empty-user',
+          role: 'user',
+          parts: [],
+        };
+        const agentMessage: Message = {
+          kind: 'message',
+          messageId: 'msg-empty-agent',
+          role: 'agent',
+          parts: [],
+        };
+
+        expect(toAdkEvent(userMessage, 'inv1', 'agent1')).toBeUndefined();
+        expect(toAdkEvent(agentMessage, 'inv1', 'agent1')).toBeUndefined();
+      });
+
       it('converts user message to AdkEvent', () => {
         const message: Message = {
           kind: 'message',

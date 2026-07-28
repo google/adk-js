@@ -109,8 +109,11 @@ function messageToAdkEvent(
   invocationId: string,
   agentName: string,
   parentEvent?: TaskStatusUpdateEvent,
-): AdkEvent {
+): AdkEvent | undefined {
   const parts = toGenAIParts(msg.parts);
+  if (parts.length === 0) {
+    return undefined;
+  }
 
   return {
     ...createAdkEventFromMetadata(parentEvent || msg),
