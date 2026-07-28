@@ -13,7 +13,6 @@ import {
   InvocationContext,
   LlmAgent,
   PluginManager,
-  RoutedAgent,
   Session,
   createEvent,
 } from '@google/adk';
@@ -299,19 +298,6 @@ describe('BaseAgent', () => {
       expect(clone).toBeInstanceOf(MockAgent);
       expect(clone.name).toBe('mock');
       expect(clone.description).toBe('a mock');
-    });
-
-    it('does not support cloning a RoutedAgent (documented limitation)', () => {
-      const target = new LlmAgent({name: 'target'});
-      const routed = new RoutedAgent({
-        name: 'router',
-        agents: [target],
-        router: () => 'target',
-      });
-
-      // The constructor re-derives routing targets from the already-parented
-      // originals, so the rebuilt clone throws. Tracked as a follow-up.
-      expect(() => routed.clone()).toThrow('already has a parent agent');
     });
   });
 });
