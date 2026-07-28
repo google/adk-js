@@ -6,6 +6,7 @@
 
 import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
+import {logger} from '../../utils/logger.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
 import {BaseTool} from '../../tools/base_tool.js';
@@ -111,7 +112,9 @@ export class AgentRegistrySingleMCPToolset extends BaseToolset {
     try {
       listResult = (await session.listTools()) as ListToolsResult;
     } finally {
-      await sessionManager.closeSession(session);
+      await sessionManager.closeSession(session).catch((e) => {
+        logger.warn('Failed to close MCP discovery session', e);
+      });
     }
 
     // Map tool definitions to MCPTools
