@@ -348,7 +348,7 @@ export function isLlmAgent(obj: unknown): obj is LlmAgent {
 /**
  * An agent that uses a large language model to generate responses.
  */
-export class LlmAgent extends BaseAgent {
+export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   /** A unique symbol to identify ADK LLM agent class. */
   readonly [LLM_AGENT_SIGNATURE_SYMBOL] = true;
 

@@ -109,8 +109,12 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
 
 /**
  * RemoteA2AAgent delegates execution to a remote agent using the A2A protocol.
+ *
+ * @remarks
+ * A cloned `RemoteA2AAgent` (via {@link BaseAgent.clone}) is a fresh,
+ * uninitialized instance that re-resolves its client and card on first use.
  */
-export class RemoteA2AAgent extends BaseAgent {
+export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
   private client?: Client;
   private card?: AgentCard;
   private isInitialized = false;

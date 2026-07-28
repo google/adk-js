@@ -47,7 +47,7 @@ export function isLoopAgent(obj: unknown): obj is LoopAgent {
  * When sub-agent generates an event with escalate or max_iterations are
  * reached, the loop agent will stop.
  */
-export class LoopAgent extends BaseAgent {
+export class LoopAgent extends BaseAgent<LoopAgentConfig> {
   /**
    * A unique symbol to identify ADK loop agent class.
    */

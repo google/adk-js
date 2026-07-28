@@ -5,12 +5,15 @@
  */
 
 import {
+  AgentTransferLlmRequestProcessor,
   BaseAgent,
   BaseAgentConfig,
   Event,
+  FunctionTool,
   InvocationContext,
   LlmAgent,
   PluginManager,
+  RoutedAgent,
   Session,
   createEvent,
 } from '@google/adk';
@@ -159,6 +162,156 @@ describe('BaseAgent', () => {
       }
 
       expect(callback2Called).toBe(false);
+    });
+  });
+
+  describe('clone', () => {
+    const makeTool = (name: string) =>
+      new FunctionTool({
+        name,
+        description: `tool ${name}`,
+        execute: async () => 'ok',
+      });
+
+    it('returns a new, equivalent instance when given no overrides', () => {
+      const tool = makeTool('search');
+      const agent = new LlmAgent({
+        name: 'original',
+        description: 'the original agent',
+        instruction: 'be helpful',
+        model: 'gemini-2.5-flash',
+        tools: [tool],
+      });
+
+      const clone = agent.clone();
+
+      expect(clone).not.toBe(agent);
+      expect(clone).toBeInstanceOf(LlmAgent);
+      expect(clone.name).toBe('original');
+      expect(clone.description).toBe('the original agent');
+      expect(clone.instruction).toBe('be helpful');
+      expect(clone.model).toBe('gemini-2.5-flash');
+      expect(clone.tools).toEqual([tool]);
+    });
+
+    it('shallow-copies list fields so clones never share arrays', () => {
+      const tool = makeTool('search');
+      const agent = new LlmAgent({name: 'original', tools: [tool]});
+
+      const clone = agent.clone();
+
+      // Different array object, same tool instances (shallow copy).
+      expect(clone.tools).not.toBe(agent.tools);
+      expect(clone.tools[0]).toBe(tool);
+    });
+
+    it('rebuilds a single agent-transfer processor (no duplication)', () => {
+      const agent = new LlmAgent({name: 'original', instruction: 'hi'});
+
+      const clone = agent.clone();
+
+      const countTransfer = (a: LlmAgent) =>
+        a.requestProcessors.filter(
+          (p) => p instanceof AgentTransferLlmRequestProcessor,
+        ).length;
+      expect(countTransfer(agent)).toBe(1);
+      expect(countTransfer(clone)).toBe(1);
+    });
+
+    it('applies an instruction override without mutating the original', () => {
+      const agent = new LlmAgent({name: 'original', instruction: 'old'});
+
+      const clone = agent.clone({instruction: 'new'});
+
+      expect(clone.instruction).toBe('new');
+      expect(agent.instruction).toBe('old');
+    });
+
+    it('applies a name override only to the clone', () => {
+      const agent = new LlmAgent({name: 'original'});
+
+      const clone = agent.clone({name: 'renamed'});
+
+      expect(clone.name).toBe('renamed');
+      expect(agent.name).toBe('original');
+    });
+
+    it('uses the provided tools when tools is overridden', () => {
+      const original = makeTool('search');
+      const replacement = makeTool('lookup');
+      const agent = new LlmAgent({name: 'original', tools: [original]});
+
+      const clone = agent.clone({tools: [replacement]});
+
+      expect(clone.tools).toEqual([replacement]);
+      expect(agent.tools).toEqual([original]);
+    });
+
+    it('throws when overriding parentAgent', () => {
+      const agent = new LlmAgent({name: 'original'});
+      const wouldBeParent = new LlmAgent({name: 'parent'});
+
+      expect(() => agent.clone({parentAgent: wouldBeParent})).toThrow(
+        'Cannot update `parentAgent` field in clone.',
+      );
+    });
+
+    it('detaches the clone of a sub-agent from its parent', () => {
+      const subAgent = new LlmAgent({name: 'sub'});
+      const root = new LlmAgent({name: 'root', subAgents: [subAgent]});
+      expect(subAgent.parentAgent).toBe(root);
+
+      const clone = subAgent.clone();
+
+      expect(clone.parentAgent).toBeUndefined();
+    });
+
+    it('recursively clones sub-agents and re-parents them', () => {
+      const subAgent = new LlmAgent({name: 'sub'});
+      const root = new LlmAgent({name: 'root', subAgents: [subAgent]});
+
+      const clonedRoot = root.clone();
+
+      expect(clonedRoot.subAgents).not.toBe(root.subAgents);
+      expect(clonedRoot.subAgents[0]).not.toBe(subAgent);
+      expect(clonedRoot.subAgents[0].parentAgent).toBe(clonedRoot);
+      // The original tree is untouched.
+      expect(subAgent.parentAgent).toBe(root);
+    });
+
+    it('uses the provided sub-agents when subAgents is overridden', () => {
+      const subAgent = new LlmAgent({name: 'sub'});
+      const root = new LlmAgent({name: 'root', subAgents: [subAgent]});
+      const replacement = new LlmAgent({name: 'replacement'});
+
+      const clonedRoot = root.clone({subAgents: [replacement]});
+
+      expect(clonedRoot.subAgents[0]).toBe(replacement);
+      expect(clonedRoot.subAgents[0].parentAgent).toBe(clonedRoot);
+    });
+
+    it('clones a plain BaseAgent subclass', () => {
+      const agent = new MockAgent({name: 'mock', description: 'a mock'});
+
+      const clone = agent.clone();
+
+      expect(clone).not.toBe(agent);
+      expect(clone).toBeInstanceOf(MockAgent);
+      expect(clone.name).toBe('mock');
+      expect(clone.description).toBe('a mock');
+    });
+
+    it('does not support cloning a RoutedAgent (documented limitation)', () => {
+      const target = new LlmAgent({name: 'target'});
+      const routed = new RoutedAgent({
+        name: 'router',
+        agents: [target],
+        router: () => 'target',
+      });
+
+      // The constructor re-derives routing targets from the already-parented
+      // originals, so the rebuilt clone throws. Tracked as a follow-up.
+      expect(() => routed.clone()).toThrow('already has a parent agent');
     });
   });
 });

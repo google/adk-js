@@ -59,9 +59,16 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
 /**
  * A BaseAgent implementation that delegates to one of multiple agents based on a router function.
  * Routing is strictly limited to the agents passed in the config.
+ *
+ * @remarks
+ * The inherited {@link BaseAgent.clone} does not support `RoutedAgent`: the
+ * constructor derives its routing targets from `config.agents` (not
+ * `subAgents`), so a rebuilt clone re-reads the already-parented originals and
+ * throws. Cloning a `RoutedAgent` is tracked as a follow-up to
+ * google/adk-js#534.
  */
 @experimental
-export class RoutedAgent extends BaseAgent {
+export class RoutedAgent extends BaseAgent<RoutedAgentConfig> {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 
   private readonly agents: Readonly<Record<string, BaseAgent>>;
