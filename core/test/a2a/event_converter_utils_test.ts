@@ -126,7 +126,7 @@ describe('event_converter_utils', () => {
     });
 
     describe('Message', () => {
-      it('returns undefined for messages without parts', () => {
+      it('preserves messages without parts as contentless events', () => {
         const userMessage: Message = {
           kind: 'message',
           messageId: 'msg-empty-user',
@@ -138,10 +138,23 @@ describe('event_converter_utils', () => {
           messageId: 'msg-empty-agent',
           role: 'agent',
           parts: [],
+          metadata: {'adk_error_code': 'EMPTY_RESPONSE'},
         };
 
-        expect(toAdkEvent(userMessage, 'inv1', 'agent1')).toBeUndefined();
-        expect(toAdkEvent(agentMessage, 'inv1', 'agent1')).toBeUndefined();
+        const userEvent = toAdkEvent(userMessage, 'inv1', 'agent1');
+        const agentEvent = toAdkEvent(agentMessage, 'inv1', 'agent1');
+
+        expect(userEvent).toMatchObject({
+          author: 'user',
+          content: undefined,
+          turnComplete: true,
+        });
+        expect(agentEvent).toMatchObject({
+          author: 'agent1',
+          content: undefined,
+          errorCode: 'EMPTY_RESPONSE',
+          turnComplete: true,
+        });
       });
 
       it('converts user message to AdkEvent', () => {

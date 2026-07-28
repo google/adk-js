@@ -108,20 +108,20 @@ function messageToAdkEvent(
   msg: Message,
   invocationId: string,
   agentName: string,
-): AdkEvent | undefined {
+): AdkEvent {
   const parts = toGenAIParts(msg.parts);
-  if (parts.length === 0) {
-    return undefined;
-  }
+  const content =
+    parts.length === 0
+      ? undefined
+      : msg.role === MessageRole.USER
+        ? createUserContent(parts)
+        : createModelContent(parts);
 
   return {
     ...createAdkEventFromMetadata(msg),
     invocationId,
     author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
-    content:
-      msg.role === MessageRole.USER
-        ? createUserContent(parts)
-        : createModelContent(parts),
+    content,
     turnComplete: true,
     partial: false,
   };
