@@ -4,20 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {
-  BaseLlm,
-  BaseLlmConnection,
   BasePlugin,
   BaseTool,
   createEvent,
   createEventActions,
-  createSession,
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
   InvocationContext,
   LlmAgent,
-  LlmRequest,
-  LlmResponse,
   PluginManager,
   Session,
   SingleAfterToolCallback,
@@ -98,6 +93,26 @@ class TestPlugin extends BasePlugin {
 
 function randomIdForTestingOnly(): string {
   return (Math.random() * 100).toString();
+}
+
+const silentLongRunningTool = new FunctionTool({
+  name: 'silentLongRunningTool',
+  description: 'long running tool returning nullish',
+  parameters: z.object({}),
+  execute: async () => null,
+  isLongRunning: true,
+});
+
+const falsyLongRunningTool = new FunctionTool({
+  name: 'falsyLongRunningTool',
+  description: 'long running tool returning an empty string',
+  parameters: z.object({}),
+  execute: async () => '',
+  isLongRunning: true,
+});
+
+function longRunningCallFor(tool: BaseTool): FunctionCall {
+  return {id: randomIdForTestingOnly(), name: tool.name, args: {}};
 }
 
 describe('normalizeCallbackResponse', () => {
@@ -425,22 +440,10 @@ describe('handleFunctionCallList', () => {
   });
 
   it('should cleanly return null and emit no event when long-running tool returns null or undefined', async () => {
-    const longRunningTool = new FunctionTool({
-      name: 'longRunningTool',
-      description: 'long running tool returning nullish',
-      parameters: z.object({}),
-      execute: async () => null,
-      isLongRunning: true,
-    });
-    const longRunningCall: FunctionCall = {
-      id: randomIdForTestingOnly(),
-      name: 'longRunningTool',
-      args: {},
-    };
     const event = await handleFunctionCallList({
       invocationContext,
-      functionCalls: [longRunningCall],
-      toolsDict: {'longRunningTool': longRunningTool},
+      functionCalls: [longRunningCallFor(silentLongRunningTool)],
+      toolsDict: {silentLongRunningTool},
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
     });
@@ -448,100 +451,36 @@ describe('handleFunctionCallList', () => {
   });
 
   it('should emit an event when long-running tool returns a falsy but present response', async () => {
-    const longRunningToolWithResponse = new FunctionTool({
-      name: 'longRunningToolWithResponse',
-      description: 'long running tool returning an empty string',
-      parameters: z.object({}),
-      execute: async () => '',
-      isLongRunning: true,
-    });
-    const longRunningCall: FunctionCall = {
-      id: randomIdForTestingOnly(),
-      name: 'longRunningToolWithResponse',
-      args: {},
-    };
     const event = await handleFunctionCallList({
       invocationContext,
-      functionCalls: [longRunningCall],
-      toolsDict: {'longRunningToolWithResponse': longRunningToolWithResponse},
+      functionCalls: [longRunningCallFor(falsyLongRunningTool)],
+      toolsDict: {falsyLongRunningTool},
       beforeToolCallbacks: [],
       afterToolCallbacks: [],
     });
-    expect(event).not.toBeNull();
     expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
       result: '',
     });
   });
-});
 
-describe('LlmAgent turn with long-running tools', () => {
   it('should emit a response part only for the long-running tool that returned something', async () => {
-    const silentTool = new FunctionTool({
-      name: 'silentTool',
-      description: 'long running tool returning nullish',
-      parameters: z.object({}),
-      execute: async () => null,
-      isLongRunning: true,
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        longRunningCallFor(silentLongRunningTool),
+        longRunningCallFor(falsyLongRunningTool),
+      ],
+      toolsDict: {silentLongRunningTool, falsyLongRunningTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
     });
-    const falsyTool = new FunctionTool({
-      name: 'falsyTool',
-      description: 'long running tool returning an empty string',
-      parameters: z.object({}),
-      execute: async () => '',
-      isLongRunning: true,
-    });
-
-    class MockLlm extends BaseLlm {
-      private toolsRequested = false;
-
-      async *generateContentAsync(
-        _request: LlmRequest,
-      ): AsyncGenerator<LlmResponse, void, void> {
-        if (this.toolsRequested) {
-          yield {content: {role: 'model', parts: [{text: 'done'}]}};
-          return;
-        }
-        this.toolsRequested = true;
-        yield {
-          content: {
-            role: 'model',
-            parts: [
-              {functionCall: {name: 'silentTool', args: {}}},
-              {functionCall: {name: 'falsyTool', args: {}}},
-            ],
-          },
-        };
-      }
-      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-        throw new Error('Method not implemented.');
-      }
-    }
-
-    const agent = new LlmAgent({
-      name: 'test_agent_long_running',
-      tools: [silentTool, falsyTool],
-      model: new MockLlm({model: 'mock-model'}),
-    });
-
-    const events: Event[] = [];
-    for await (const event of agent.runAsync(
-      new InvocationContext({
-        invocationId: 'inv_long_running_123',
-        session: createSession({id: 'sess_123', appName: 'test_app'}),
-        agent,
-        pluginManager: new PluginManager(),
+    expect(event?.content?.parts).toEqual([
+      expect.objectContaining({
+        functionResponse: expect.objectContaining({
+          name: 'falsyLongRunningTool',
+          response: {result: ''},
+        }),
       }),
-    )) {
-      events.push(event);
-    }
-
-    const responses = events.flatMap(
-      (event) =>
-        event.content?.parts?.flatMap((part) => part.functionResponse ?? []) ??
-        [],
-    );
-    expect(responses).toEqual([
-      expect.objectContaining({name: 'falsyTool', response: {result: ''}}),
     ]);
   });
 });
