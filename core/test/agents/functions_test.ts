@@ -448,6 +448,33 @@ describe('handleFunctionCallList', () => {
     });
   });
 
+  it('should still emit an event when a regular tool returns nothing', async () => {
+    const nullTool = new FunctionTool({
+      name: 'nullTool',
+      description: 'tool returning nullish',
+      parameters: z.object({}),
+      execute: async () => null,
+    });
+    const nullCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'nullTool',
+      args: {},
+    };
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [nullCall],
+      toolsDict: {'nullTool': nullTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    expect(event?.content?.parts?.[0].functionResponse?.response).toStrictEqual(
+      {
+        result: null,
+      },
+    );
+  });
+
   it('should cleanly return null and emit no event when long-running tool returns null or undefined', async () => {
     const longRunningTool = new FunctionTool({
       name: 'longRunningTool',
