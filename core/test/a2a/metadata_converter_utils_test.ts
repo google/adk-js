@@ -145,7 +145,7 @@ describe('metadata_converter_utils', () => {
         kind: 'message',
         messageId: 'msg-1',
         role: 'agent',
-        parts: [],
+        parts: [{kind: 'text', text: 'error'}],
         metadata,
       };
 
