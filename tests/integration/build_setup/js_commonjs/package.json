@@ -5,7 +5,7 @@
   "main": "agent.js",
   "type": "commonjs",
   "scripts": {
-    "start": "npx adk run agent.js",
+    "start": "npx @google/adk-devtools run agent.js",
     "test:db": "node ./db_init_check.js",
     "test:devtools": "node ./devtools_check.js"
   },

@@ -52,7 +52,6 @@ class SpyGemini extends Gemini {
     this.spyClient = new SpyMockGenAIClient(response);
   }
 
-  // @ts-expect-error GenAI type property mismatch due to version bump
   override get apiClient(): GoogleGenAI {
     return this.spyClient as unknown as GoogleGenAI;
   }
