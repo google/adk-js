@@ -12,7 +12,10 @@ import {text} from 'node:stream/consumers';
 import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
-import {CodeExecutionResult} from './code_execution_utils.js';
+import {
+  CodeExecutionLanguage,
+  CodeExecutionResult,
+} from './code_execution_utils.js';
 
 const DEFAULT_IMAGE_TAG = 'adk-code-executor:latest';
 
@@ -131,60 +134,126 @@ function parseBaseUrl(baseUrl: string): Docker.DockerOptions {
   };
 }
 
-/** Builds a Docker image from a directory containing a Dockerfile. */
-async function buildDockerImage(
-  client: Docker,
-  dockerPath: string,
-  image: string,
-): Promise<void> {
-  if (!fs.existsSync(dockerPath)) {
-    throw new Error(`Invalid Docker path: ${dockerPath}`);
-  }
-  logger.debug('Building Docker image...');
-  const stream = await client.buildImage(
-    {context: dockerPath, src: fs.readdirSync(dockerPath)},
-    {t: image},
-  );
-  await new Promise<void>((resolve, reject) => {
-    client.modem.followProgress(stream, (error) =>
-      error ? reject(error) : resolve(),
-    );
-  });
-  logger.debug(`Docker image ${image} built.`);
-}
+/**
+ * How each supported language is executed inside the container: the interpreter
+ * to probe for on startup, and the argv used to run a code string.
+ *
+ * TypeScript is run through `npx tsx`, which type-strips and executes in one
+ * step, so no separate compile step or `tsconfig` is needed in the image.
+ */
+const RUNTIME_BY_LANGUAGE: Partial<
+  Record<
+    CodeExecutionLanguage,
+    {probe: string; command: (code: string) => string[]}
+  >
+> = {
+  [CodeExecutionLanguage.PYTHON]: {
+    probe: 'python3',
+    command: (code) => ['python3', '-c', code],
+  },
+  [CodeExecutionLanguage.JAVASCRIPT]: {
+    probe: 'node',
+    command: (code) => ['node', '-e', code],
+  },
+  [CodeExecutionLanguage.TYPESCRIPT]: {
+    probe: 'npx',
+    command: (code) => ['npx', '--yes', 'tsx', '--eval', code],
+  },
+  [CodeExecutionLanguage.SHELL]: {
+    probe: 'sh',
+    command: (code) => ['sh', '-c', code],
+  },
+};
 
 /**
- * Runs a command inside the container and returns its decoded output. The exec
- * is created without a TTY so the stream stays multiplexed and can be split
- * into stdout and stderr via `modem.demuxStream`.
+ * The Docker container backing a {@link ContainerCodeExecutor}, wrapping the
+ * whole lifecycle (`build` -> `start` -> `execute` -> `stop`) behind one small
+ * API so the executor itself only decides *what* to run, not *how* to drive
+ * Docker.
  */
-async function runInContainer(
-  container: Docker.Container,
-  client: Docker,
-  cmd: string[],
-): Promise<ExecOutput> {
-  const exec = await container.exec({
-    Cmd: cmd,
-    AttachStdout: true,
-    AttachStderr: true,
-  });
-  const stream = await exec.start({hijack: true, stdin: false});
+class DockerContainer {
+  private container?: Docker.Container;
 
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  client.modem.demuxStream(stream, stdout, stderr);
-  const collected = Promise.all([text(stdout), text(stderr)]);
+  constructor(
+    private readonly client: Docker,
+    private readonly image: string,
+    private readonly networkEnabled: boolean,
+  ) {}
 
-  await new Promise<void>((resolve, reject) => {
-    stream.on('end', resolve);
-    stream.on('error', reject);
-  });
-  stdout.end();
-  stderr.end();
+  /** Builds the image from a directory containing a Dockerfile. */
+  async build(dockerPath: string): Promise<void> {
+    if (!fs.existsSync(dockerPath)) {
+      throw new Error(`Invalid Docker path: ${dockerPath}`);
+    }
+    logger.debug('Building Docker image...');
+    const stream = await this.client.buildImage(
+      {context: dockerPath, src: fs.readdirSync(dockerPath)},
+      {t: this.image},
+    );
+    await new Promise<void>((resolve, reject) => {
+      this.client.modem.followProgress(stream, (error) =>
+        error ? reject(error) : resolve(),
+      );
+    });
+    logger.debug(`Docker image ${this.image} built.`);
+  }
 
-  const [stdoutText, stderrText] = await collected;
-  const info = await exec.inspect();
-  return {stdout: stdoutText, stderr: stderrText, exitCode: info.ExitCode};
+  /** Creates and starts the container, registering it for exit cleanup. */
+  async start(): Promise<void> {
+    logger.debug('Starting container for ContainerCodeExecutor...');
+    this.container = await this.client.createContainer({
+      Image: this.image,
+      Tty: true,
+      NetworkDisabled: !this.networkEnabled,
+      HostConfig: {CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges']},
+    });
+    await this.container.start();
+    activeContainers.add(this.container);
+    logger.debug(`Container ${this.container.id} started.`);
+  }
+
+  /**
+   * Runs a command inside the container and returns its decoded output. The
+   * exec is created without a TTY so the stream stays multiplexed and can be
+   * split into stdout and stderr via `modem.demuxStream`.
+   */
+  async execute(cmd: string[]): Promise<ExecOutput> {
+    if (!this.container) {
+      throw new Error('Container is not started.');
+    }
+    const exec = await this.container.exec({
+      Cmd: cmd,
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await exec.start({hijack: true, stdin: false});
+
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    this.client.modem.demuxStream(stream, stdout, stderr);
+    const collected = Promise.all([text(stdout), text(stderr)]);
+
+    await new Promise<void>((resolve, reject) => {
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    stdout.end();
+    stderr.end();
+
+    const [stdoutText, stderrText] = await collected;
+    const info = await exec.inspect();
+    return {stdout: stdoutText, stderr: stderrText, exitCode: info.ExitCode};
+  }
+
+  /** Stops and removes the container. Safe to call when never started. */
+  async stop(): Promise<void> {
+    const container = this.container;
+    this.container = undefined;
+    if (container) {
+      activeContainers.delete(container);
+    }
+    await stopAndRemove(container);
+  }
 }
 
 /**
@@ -206,8 +275,7 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   private readonly networkEnabled: boolean;
   private readonly baseUrl?: string;
   private readonly injectedClient?: Docker;
-  private client?: Docker;
-  private container?: Docker.Container;
+  private container?: DockerContainer;
   private initPromise?: Promise<void>;
 
   constructor(options: ContainerCodeExecutorOptions = {}) {
@@ -234,16 +302,22 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   override async executeCode(
     params: ExecuteCodeParams,
   ): Promise<CodeExecutionResult> {
+    const {code, language} = params.codeExecutionInput;
+    // Unlike adk-python (which always shells out to python3), dispatch on the
+    // declared language so JS/TS and shell snippets run under the right
+    // interpreter instead of being fed to Python and failing at parse time.
+    const runtime = RUNTIME_BY_LANGUAGE[language];
+    if (!runtime) {
+      throw new Error(
+        `Unsupported language for ContainerCodeExecutor: ${language}. ` +
+          `Supported: ${Object.keys(RUNTIME_BY_LANGUAGE).join(', ')}.`,
+      );
+    }
     await this.ensureContainer();
-    const {code} = params.codeExecutionInput;
-    // Parity with Python: always run the code with python3 regardless of the
-    // declared input language.
-    const {stdout, stderr} = await runInContainer(
-      this.container!,
-      this.client!,
-      ['python3', '-c', code],
+    const {stdout, stderr} = await this.container!.execute(
+      runtime.command(code),
     );
-    logger.debug(`Executed code:\n\`\`\`\n${code}\n\`\`\``);
+    logger.debug(`Executed ${language} code:\n\`\`\`\n${code}\n\`\`\``);
     return {stdout, stderr, outputFiles: []};
   }
 
@@ -255,10 +329,7 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     const container = this.container;
     this.container = undefined;
     this.initPromise = undefined;
-    if (container) {
-      activeContainers.delete(container);
-    }
-    await stopAndRemove(container);
+    await container?.stop();
   }
 
   /** Lazily builds/starts the container exactly once. */
@@ -271,25 +342,21 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
 
   private async initContainer(): Promise<void> {
     const client = await this.resolveClient();
-    this.client = client;
+    const container = new DockerContainer(
+      client,
+      this.image,
+      this.networkEnabled,
+    );
     if (this.dockerPath) {
-      await buildDockerImage(client, this.dockerPath, this.image);
+      await container.build(this.dockerPath);
     }
-    logger.debug('Starting container for ContainerCodeExecutor...');
-    this.container = await client.createContainer({
-      Image: this.image,
-      Tty: true,
-      NetworkDisabled: !this.networkEnabled,
-      HostConfig: {CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges']},
-    });
-    await this.container.start();
-    activeContainers.add(this.container);
-    logger.debug(`Container ${this.container.id} started.`);
+    await container.start();
+    this.container = container;
 
-    const {exitCode} = await runInContainer(this.container, client, [
-      'which',
-      'python3',
-    ]);
+    // Probe only python3: it is the baseline the default image guarantees, and
+    // failing here would otherwise leave a started container behind. Other
+    // languages are validated lazily by their own `which` probe on first use.
+    const {exitCode} = await container.execute(['which', 'python3']);
     if (exitCode !== 0) {
       throw new Error('python3 is not installed in the container.');
     }

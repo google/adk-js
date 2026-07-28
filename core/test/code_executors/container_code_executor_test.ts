@@ -106,12 +106,15 @@ function asDocker(docker: MockDocker): Dockerode {
   return docker as unknown as Dockerode;
 }
 
-function makeParams(code: string): ExecuteCodeParams {
+function makeParams(
+  code: string,
+  language: CodeExecutionLanguage = CodeExecutionLanguage.PYTHON,
+): ExecuteCodeParams {
   return {
     invocationContext: {} as unknown as InvocationContext,
     codeExecutionInput: {
       code,
-      language: CodeExecutionLanguage.PYTHON,
+      language,
       inputFiles: [],
     },
   };
@@ -214,6 +217,53 @@ describe('ContainerCodeExecutor', () => {
       'print("hello from the sandbox")',
     ]);
     expect(container.exec.mock.calls[1][0].Tty).toBeUndefined();
+
+    await executor.close();
+  });
+
+  it.each([
+    [
+      CodeExecutionLanguage.JAVASCRIPT,
+      'console.log(1)',
+      ['node', '-e', 'console.log(1)'],
+    ],
+    [
+      CodeExecutionLanguage.TYPESCRIPT,
+      'const x: number = 1;',
+      ['npx', '--yes', 'tsx', '--eval', 'const x: number = 1;'],
+    ],
+    [CodeExecutionLanguage.SHELL, 'echo hi', ['sh', '-c', 'echo hi']],
+  ])(
+    'runs %s code with the matching interpreter',
+    async (language, code, cmd) => {
+      const {docker, container} = createMockDocker({stdout: 'ok\n'});
+      const executor = new ContainerCodeExecutor({
+        image: 'test-image',
+        docker: asDocker(docker),
+      });
+
+      const result = await executor.executeCode(makeParams(code, language));
+
+      expect(result.stdout).toBe('ok\n');
+      // First exec verifies python3; second runs the user code.
+      expect(container.exec.mock.calls[1][0].Cmd).toEqual(cmd);
+
+      await executor.close();
+    },
+  );
+
+  it('throws for a language with no configured interpreter', async () => {
+    const {docker} = createMockDocker();
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      docker: asDocker(docker),
+    });
+
+    await expect(
+      executor.executeCode(
+        makeParams('Write-Host 1', CodeExecutionLanguage.POWERSHELL),
+      ),
+    ).rejects.toThrow(/Unsupported language for ContainerCodeExecutor/);
 
     await executor.close();
   });
