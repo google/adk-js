@@ -122,9 +122,9 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     supportCfc: false,
     enableAffectiveDialog: false,
     streamingMode: StreamingMode.NONE,
-    maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
     pauseOnToolCalls: false,
     ...params,
+    maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls ?? 500),
   };
 }
 
