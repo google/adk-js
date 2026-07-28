@@ -49,6 +49,7 @@ vi.mock('google-auth-library', () => {
 
 const mockMcpClient = {
   connect: vi.fn().mockResolvedValue(undefined),
+  close: vi.fn().mockResolvedValue(undefined),
   listTools: vi.fn().mockResolvedValue({
     tools: [
       {name: 'tool1', description: 'desc1', inputSchema: {}},
