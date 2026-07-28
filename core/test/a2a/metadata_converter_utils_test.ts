@@ -7,6 +7,7 @@
 import {Message, Task} from '@a2a-js/sdk';
 import {Event as AdkEvent, createEventActions} from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import {
   A2AMetadataKeys,
   AdkMetadataKeys,
@@ -53,7 +54,8 @@ describe('metadata_converter_utils', () => {
         invocationId: 'inv-1',
         author: 'user1',
         branch: 'branch-1',
-        errorMessage: 'Something went wrong',
+        errorCode: 'RESOURCE_EXHAUSTED',
+        errorMessage: 'Quota exceeded',
         citationMetadata: {
           citations: [
             {
@@ -100,8 +102,8 @@ describe('metadata_converter_utils', () => {
         [A2AMetadataKeys.INVOCATION_ID]: 'inv-1',
         [A2AMetadataKeys.AUTHOR]: 'user1',
         [A2AMetadataKeys.BRANCH]: 'branch-1',
-        [A2AMetadataKeys.ERROR_CODE]: 'Something went wrong',
-        [A2AMetadataKeys.ERROR_MESSAGE]: 'Something went wrong',
+        [A2AMetadataKeys.ERROR_CODE]: 'RESOURCE_EXHAUSTED',
+        [A2AMetadataKeys.ERROR_MESSAGE]: 'Quota exceeded',
         [A2AMetadataKeys.CITATION_METADATA]: {
           citations: [
             {
@@ -126,6 +128,31 @@ describe('metadata_converter_utils', () => {
         [A2AMetadataKeys.TRANSFER_TO_AGENT]: 'agent-2',
         [A2AMetadataKeys.IS_LONG_RUNNING]: true,
       });
+    });
+
+    it('preserves error details through a round-trip', () => {
+      const adkEvent = {
+        errorCode: 'RESOURCE_EXHAUSTED',
+        errorMessage: 'Quota exceeded',
+        actions: createEventActions(),
+      } as AdkEvent;
+      const metadata = getA2AEventMetadata(adkEvent, {
+        appName: 'my-app',
+        userId: 'user-id',
+        sessionId: 'session-id',
+      });
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-1',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'error'}],
+        metadata,
+      };
+
+      const roundTrippedEvent = toAdkEvent(message, 'inv-1', 'agent-1');
+
+      expect(roundTrippedEvent?.errorCode).toBe('RESOURCE_EXHAUSTED');
+      expect(roundTrippedEvent?.errorMessage).toBe('Quota exceeded');
     });
 
     it('creates metadata with missing optional fields', () => {
