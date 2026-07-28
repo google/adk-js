@@ -364,8 +364,8 @@ export async function handleFunctionCallList({
       }
     }
 
-    // An override from step 1 or 2 skips the tool, so normalize it here rather
-    // than only at event construction: the after-tool callbacks observe it too.
+    // An override from step 1 or 2 bypasses the tool call and is handed to the
+    // after-tool callbacks as-is, so normalize it before they see it.
     functionResponse = normalizeCallbackResponse(functionResponse);
 
     // Step 3: Otherwise, proceed calling the tool normally.
