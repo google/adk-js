@@ -447,12 +447,12 @@ describe('handleFunctionCallList', () => {
     expect(event).toBeNull();
   });
 
-  it('should create and return FunctionResponseEvent when long-running tool explicitly returns a response record', async () => {
+  it('should emit an event when long-running tool returns a falsy but present response', async () => {
     const longRunningToolWithResponse = new FunctionTool({
       name: 'longRunningToolWithResponse',
-      description: 'long running tool with response',
+      description: 'long running tool returning an empty string',
       parameters: z.object({}),
-      execute: async () => ({status: 'initiated', jobId: '123'}),
+      execute: async () => '',
       isLongRunning: true,
     });
     const longRunningCall: FunctionCall = {
@@ -469,41 +469,48 @@ describe('handleFunctionCallList', () => {
     });
     expect(event).not.toBeNull();
     expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
-      status: 'initiated',
-      jobId: '123',
+      result: '',
     });
   });
 });
 
-describe('LlmAgent turn with a long-running tool', () => {
-  it('should complete turn cleanly without emitting empty function response parts when long-running tool returns nullish', async () => {
-    const longRunningTool = new FunctionTool({
-      name: 'longRunningTurnTool',
+describe('LlmAgent turn with long-running tools', () => {
+  it('should emit a response part only for the long-running tool that returned something', async () => {
+    const silentTool = new FunctionTool({
+      name: 'silentTool',
       description: 'long running tool returning nullish',
       parameters: z.object({}),
       execute: async () => null,
       isLongRunning: true,
     });
-
-    const functionCallResponse: LlmResponse = {
-      content: {
-        role: 'model',
-        parts: [
-          {
-            functionCall: {
-              name: 'longRunningTurnTool',
-              args: {},
-            },
-          },
-        ],
-      },
-    };
+    const falsyTool = new FunctionTool({
+      name: 'falsyTool',
+      description: 'long running tool returning an empty string',
+      parameters: z.object({}),
+      execute: async () => '',
+      isLongRunning: true,
+    });
 
     class MockLlm extends BaseLlm {
+      private toolsRequested = false;
+
       async *generateContentAsync(
         _request: LlmRequest,
       ): AsyncGenerator<LlmResponse, void, void> {
-        yield functionCallResponse;
+        if (this.toolsRequested) {
+          yield {content: {role: 'model', parts: [{text: 'done'}]}};
+          return;
+        }
+        this.toolsRequested = true;
+        yield {
+          content: {
+            role: 'model',
+            parts: [
+              {functionCall: {name: 'silentTool', args: {}}},
+              {functionCall: {name: 'falsyTool', args: {}}},
+            ],
+          },
+        };
       }
       async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
         throw new Error('Method not implemented.');
@@ -512,29 +519,30 @@ describe('LlmAgent turn with a long-running tool', () => {
 
     const agent = new LlmAgent({
       name: 'test_agent_long_running',
-      tools: [longRunningTool],
+      tools: [silentTool, falsyTool],
       model: new MockLlm({model: 'mock-model'}),
     });
 
-    const invocationContext = new InvocationContext({
-      invocationId: 'inv_long_running_123',
-      session: createSession({id: 'sess_123', appName: 'test_app'}),
-      agent,
-      pluginManager: new PluginManager(),
-    });
-
     const events: Event[] = [];
-    for await (const event of agent.runAsync(invocationContext)) {
+    for await (const event of agent.runAsync(
+      new InvocationContext({
+        invocationId: 'inv_long_running_123',
+        session: createSession({id: 'sess_123', appName: 'test_app'}),
+        agent,
+        pluginManager: new PluginManager(),
+      }),
+    )) {
       events.push(event);
     }
 
-    expect(events.length).toBe(1);
-    expect(events[0].content?.parts?.[0].functionCall?.name).toBe(
-      'longRunningTurnTool',
+    const responses = events.flatMap(
+      (event) =>
+        event.content?.parts?.flatMap((part) => part.functionResponse ?? []) ??
+        [],
     );
-    expect(
-      events.some((e) => e.content?.parts?.some((p) => p.functionResponse)),
-    ).toBe(false);
+    expect(responses).toEqual([
+      expect.objectContaining({name: 'falsyTool', response: {result: ''}}),
+    ]);
   });
 });
 
