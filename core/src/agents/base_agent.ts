@@ -59,7 +59,7 @@ export interface BaseAgentConfig extends BaseNodeConfig {
  * A unique symbol to identify ADK agent classes.
  * Defined once and shared by all BaseAgent instances.
  */
-export const BASE_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseAgent');
+const BASE_AGENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseAgent');
 
 /**
  * Type guard to check if an object is an instance of BaseAgent.

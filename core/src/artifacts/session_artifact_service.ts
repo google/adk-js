@@ -31,7 +31,23 @@ export interface SessionArtifactService {
 }
 
 /**
+ * A unique symbol to identify session-scoped artifact services.
+ *
+ * Implementations of {@link SessionArtifactService} brand themselves with this
+ * symbol so they can be told apart from a `BaseArtifactService` at runtime.
+ * The symbol is intentionally not exported: implementations living in other
+ * modules declare their own module-private constant with the same key, which
+ * the global symbol registry (`Symbol.for`) guarantees to be the same symbol.
+ */
+const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.sessionArtifactService',
+);
+
+/**
  * Type guard to check if an object implements SessionArtifactService.
+ *
+ * @param service The artifact service to check.
+ * @returns True if the service is a session-scoped artifact service.
  */
 export function isSessionArtifactService(
   service: BaseArtifactService | SessionArtifactService,
@@ -39,8 +55,7 @@ export function isSessionArtifactService(
   return (
     typeof service === 'object' &&
     service !== null &&
-    'listArtifactKeys' in service &&
-    typeof service.listArtifactKeys === 'function' &&
-    service.listArtifactKeys.length === 0
+    SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL in service &&
+    service[SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL] === true
   );
 }

@@ -1519,6 +1519,10 @@ describe('Runner reserved function call rejection', () => {
 });
 
 describe('Runner artifactService handling', () => {
+  const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+    'google.adk.sessionArtifactService',
+  );
+
   it('should wrap BaseArtifactService in ScopedArtifactService when constructing InvocationContext', async () => {
     const baseArtifactService = new InMemoryArtifactService();
     const agent = new MockLlmAgent('agent_base_artifact');
@@ -1561,7 +1565,11 @@ describe('Runner artifactService handling', () => {
   });
 
   it('should pass SessionArtifactService directly to InvocationContext without wrapping in ScopedArtifactService', async () => {
-    const sessionArtifactService: SessionArtifactService = {
+    const sessionArtifactService: SessionArtifactService &
+      Record<symbol, unknown> = {
+      // Brands the stub the same way ScopedArtifactService and
+      // ForwardingArtifactService brand themselves.
+      [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL]: true,
       saveArtifact: vi.fn().mockResolvedValue(1),
       loadArtifact: vi.fn().mockResolvedValue(undefined),
       listArtifactKeys: vi.fn().mockResolvedValue([]),

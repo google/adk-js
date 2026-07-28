@@ -16,9 +16,25 @@ import {
 import {Context} from '../agents/context.js';
 
 /**
+ * A unique symbol to identify session-scoped artifact services.
+ *
+ * Resolves to the same symbol as the one used by `isSessionArtifactService` in
+ * `session_artifact_service.ts` because `Symbol.for` looks up the global
+ * symbol registry.
+ */
+const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.sessionArtifactService',
+);
+
+/**
  * Artifact service that forwards to the parent tool context.
  */
 export class ForwardingArtifactService implements SessionArtifactService {
+  /**
+   * Brands this class as a session-scoped artifact service.
+   */
+  readonly [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL] = true;
+
   constructor(private readonly toolContext: Context) {}
 
   async saveArtifact(request: SessionSaveArtifactRequest): Promise<number> {
