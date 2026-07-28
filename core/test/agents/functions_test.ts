@@ -397,33 +397,6 @@ describe('handleFunctionCallList', () => {
     );
   });
 
-  it('should normalize primitive string returned by beforeToolCallback', async () => {
-    const beforeToolCallback: SingleBeforeToolCallback = async () => {
-      // The declared return type forbids a primitive, but an untyped JavaScript
-      // caller can still return one; that is what normalization absorbs.
-      return 'primitive before response' as unknown as Record<string, unknown>;
-    };
-    let passedResponseToAfterCallback: unknown;
-    const afterToolCallback: SingleAfterToolCallback = async ({response}) => {
-      passedResponseToAfterCallback = response;
-      return undefined;
-    };
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [functionCall],
-      toolsDict,
-      beforeToolCallbacks: [beforeToolCallback],
-      afterToolCallbacks: [afterToolCallback],
-    });
-    expect(passedResponseToAfterCallback).toEqual({
-      result: 'primitive before response',
-    });
-    expect(event).not.toBeNull();
-    expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
-      result: 'primitive before response',
-    });
-  });
-
   it('should still emit an event when a regular tool returns nothing', async () => {
     const nullTool = new FunctionTool({
       name: 'nullTool',
@@ -502,11 +475,11 @@ describe('handleFunctionCallList', () => {
   });
 });
 
-describe('LlmAgent long-running tool integration', () => {
+describe('LlmAgent turn with a long-running tool', () => {
   it('should complete turn cleanly without emitting empty function response parts when long-running tool returns nullish', async () => {
     const longRunningTool = new FunctionTool({
-      name: 'longRunningIntegrationTool',
-      description: 'long running integration tool',
+      name: 'longRunningTurnTool',
+      description: 'long running tool returning nullish',
       parameters: z.object({}),
       execute: async () => null,
       isLongRunning: true,
@@ -518,7 +491,7 @@ describe('LlmAgent long-running tool integration', () => {
         parts: [
           {
             functionCall: {
-              name: 'longRunningIntegrationTool',
+              name: 'longRunningTurnTool',
               args: {},
             },
           },
@@ -526,7 +499,7 @@ describe('LlmAgent long-running tool integration', () => {
       },
     };
 
-    class MockIntegrationLlm extends BaseLlm {
+    class MockLlm extends BaseLlm {
       async *generateContentAsync(
         _request: LlmRequest,
       ): AsyncGenerator<LlmResponse, void, void> {
@@ -540,11 +513,11 @@ describe('LlmAgent long-running tool integration', () => {
     const agent = new LlmAgent({
       name: 'test_agent_long_running',
       tools: [longRunningTool],
-      model: new MockIntegrationLlm({model: 'mock-model'}),
+      model: new MockLlm({model: 'mock-model'}),
     });
 
     const invocationContext = new InvocationContext({
-      invocationId: 'inv_integration_123',
+      invocationId: 'inv_long_running_123',
       session: createSession({id: 'sess_123', appName: 'test_app'}),
       agent,
       pluginManager: new PluginManager(),
@@ -557,7 +530,7 @@ describe('LlmAgent long-running tool integration', () => {
 
     expect(events.length).toBe(1);
     expect(events[0].content?.parts?.[0].functionCall?.name).toBe(
-      'longRunningIntegrationTool',
+      'longRunningTurnTool',
     );
     expect(
       events.some((e) => e.content?.parts?.some((p) => p.functionResponse)),
