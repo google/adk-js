@@ -9,8 +9,10 @@ import {getContents} from '../agents/processors/content_processor_utils.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
-import {calculateRetainStartIndex} from './compaction_utils.js';
-import {getActiveEvents} from './compactor_utils.js';
+import {
+  calculateRetainStartIndex,
+  getActiveEvents,
+} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 /** Rough estimate used when no usage metadata is available. */

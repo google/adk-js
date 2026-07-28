@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getActiveEvents} from '../../context/compactor_utils.js';
+import {getActiveEvents} from '../../context/compaction_utils.js';
 import {Event} from '../../events/event.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {InvocationContext} from '../invocation_context.js';

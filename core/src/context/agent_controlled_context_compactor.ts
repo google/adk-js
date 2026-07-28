@@ -5,10 +5,10 @@
  */
 
 import {InvocationContext} from '../agents/invocation_context.js';
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
-import {createEvent, Event} from '../events/event.js';
+import {createEvent} from '../events/event.js';
 import {ContextCompactionTrigger} from '../plugins/base_plugin.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
+import {getActiveEvents} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 /**
@@ -29,7 +29,7 @@ export class AgentControlledContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = getActiveEvents(events);
 
     // Find the consolidate_context tool call.
     const consolidateToolCallIndex = activeEvents.reduce(
@@ -88,19 +88,5 @@ export class AgentControlledContextCompactor implements BaseContextCompactor {
   private clearFlags(invocationContext: InvocationContext) {
     delete invocationContext.session.state['temp:consolidate_context'];
     delete invocationContext.session.state['temp:consolidate_context_detail'];
-  }
-
-  private getActiveEvents(events: Event[]): Event[] {
-    const latest = events.filter(isCompactedEvent).pop() as
-      | CompactedEvent
-      | undefined;
-    return latest
-      ? [
-          latest,
-          ...events.filter(
-            (e) => !isCompactedEvent(e) && e.timestamp > latest.endTime,
-          ),
-        ]
-      : events;
   }
 }
