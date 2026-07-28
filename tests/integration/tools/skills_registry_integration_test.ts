@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Event} from '@google/adk';
 import {
+  Event,
   InMemoryRunner,
   LlmAgent,
   Skill,
