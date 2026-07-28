@@ -286,6 +286,26 @@ describe('event_converter_utils', () => {
         ]);
       });
 
+      it('returns undefined for non-final status update with no parts', () => {
+        const nonFinalUpdate: TaskStatusUpdateEvent = {
+          kind: 'status-update',
+          taskId: 'task1',
+          contextId: 'context1',
+          status: {
+            state: 'working',
+            message: {
+              kind: 'message',
+              messageId: 'msg-empty',
+              role: 'agent',
+              parts: [],
+            },
+          },
+          final: false,
+        };
+
+        expect(toAdkEvent(nonFinalUpdate, 'inv1', 'agent1')).toBeUndefined();
+      });
+
       it('returns undefined if non-final status update has no message', () => {
         const nonFinalUpdate: TaskStatusUpdateEvent = {
           kind: 'status-update',
@@ -418,6 +438,28 @@ describe('event_converter_utils', () => {
           contextId: 'context1',
           status: {state: 'working'},
         };
+        expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
+      });
+
+      it('returns undefined for completed task with no parts', () => {
+        const task: Task = {
+          kind: 'task',
+          id: 'task1',
+          contextId: 'context1',
+          status: {state: 'completed'},
+        };
+
+        expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
+      });
+
+      it('returns undefined for input-required task with no parts', () => {
+        const task: Task = {
+          kind: 'task',
+          id: 'task1',
+          contextId: 'context1',
+          status: {state: 'input-required'},
+        };
+
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 

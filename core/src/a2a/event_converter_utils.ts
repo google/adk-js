@@ -108,7 +108,6 @@ function messageToAdkEvent(
   msg: Message,
   invocationId: string,
   agentName: string,
-  parentEvent?: TaskStatusUpdateEvent,
 ): AdkEvent | undefined {
   const parts = toGenAIParts(msg.parts);
   if (parts.length === 0) {
@@ -116,7 +115,7 @@ function messageToAdkEvent(
   }
 
   return {
-    ...createAdkEventFromMetadata(parentEvent || msg),
+    ...createAdkEventFromMetadata(msg),
     invocationId,
     author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
     content:
@@ -191,6 +190,9 @@ function taskStatusUpdateToAdkEvent(
   }
 
   const parts = toGenAIParts(msg.parts);
+  if (parts.length === 0) {
+    return undefined;
+  }
 
   return {
     ...createAdkEventFromMetadata(a2aEvent),
@@ -233,7 +235,7 @@ function taskToAdkEvent(
     isInputRequiredTaskStatusUpdateEvent(a2aTask);
   const isFailed = isFailedTaskStatusUpdateEvent(a2aTask);
 
-  if (parts.length === 0 && !isTerminal) {
+  if (parts.length === 0 && !isFailed) {
     return undefined;
   }
 
