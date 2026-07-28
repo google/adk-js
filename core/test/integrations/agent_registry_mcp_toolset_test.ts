@@ -10,6 +10,7 @@ import {
   GCP_MCP_SERVER_DESTINATION_ID,
 } from '../../src/index.js';
 import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
+import {logger} from '../../src/utils/logger.js';
 
 const mockListTools = vi.fn().mockResolvedValue({
   tools: [
@@ -213,6 +214,23 @@ describe('AgentRegistrySingleMCPToolset', () => {
 
       await expect(toolset.getTools()).rejects.toThrow('discovery failed');
       expect(mockClose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves the discovery error when closing also fails', async () => {
+      mockListTools.mockRejectedValueOnce(new Error('discovery failed'));
+      mockClose.mockRejectedValueOnce(new Error('close failed'));
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+
+      await expect(toolset.getTools()).rejects.toThrow('discovery failed');
+      expect(mockClose).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to close MCP discovery session',
+        expect.objectContaining({message: 'close failed'}),
+      );
+      warnSpy.mockRestore();
     });
   });
 
