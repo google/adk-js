@@ -6,7 +6,6 @@
 
 import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
-import {logger} from '../../utils/logger.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';
 import {BaseTool} from '../../tools/base_tool.js';
@@ -16,6 +15,7 @@ import {
   StreamableHTTPConnectionParams,
 } from '../../tools/mcp/mcp_session_manager.js';
 import {MCPTool} from '../../tools/mcp/mcp_tool.js';
+import {logger} from '../../utils/logger.js';
 import {GCP_MCP_SERVER_DESTINATION_ID} from './types.js';
 
 /**
