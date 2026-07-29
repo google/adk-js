@@ -22,7 +22,10 @@ import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
-import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
+import {
+  EXPRESS_MODE_UNSUPPORTED_MESSAGE,
+  getExpressModeApiKey,
+} from '../utils/vertex_ai_utils.js';
 
 import {partialCopy} from '../utils/partial_copy.js';
 import {
@@ -90,18 +93,17 @@ export class VertexAiSessionService extends BaseSessionService {
       options.expressModeApiKey,
     );
 
-    if (!options.sessions) {
-      if (!this.expressModeApiKey && (!this.projectId || !this.location)) {
-        throw new Error(
-          'Either (Project ID and Location) or an expressModeApiKey is required.',
-        );
-      }
-    }
-
     // sessions is primarily for testing to inject a mock client.
     if (options.sessions) {
       this.sessions = options.sessions;
     } else {
+      if (!this.projectId || !this.location) {
+        throw new Error(
+          this.expressModeApiKey
+            ? EXPRESS_MODE_UNSUPPORTED_MESSAGE
+            : 'Either (Project ID and Location) or an expressModeApiKey is required.',
+        );
+      }
       const client = new Client({
         project: this.projectId,
         location: this.location,

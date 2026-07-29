@@ -16,7 +16,10 @@ import {Content, createUserContent} from '@google/genai';
 import {Event} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
-import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
+import {
+  EXPRESS_MODE_UNSUPPORTED_MESSAGE,
+  getExpressModeApiKey,
+} from '../utils/vertex_ai_utils.js';
 import {
   BaseMemoryService,
   SearchMemoryRequest,
@@ -143,6 +146,9 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     if (options.client) {
       this.memories = options.client.agentEnginesInternal.memories;
     } else {
+      if (this.expressModeApiKey && (!this.projectId || !this.location)) {
+        throw new Error(EXPRESS_MODE_UNSUPPORTED_MESSAGE);
+      }
       const client = new Client({
         project: this.projectId,
         location: this.location,
