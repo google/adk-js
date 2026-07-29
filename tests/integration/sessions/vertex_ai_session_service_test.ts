@@ -31,8 +31,12 @@ const unauthenticated: Auth = {
 /**
  * Exercises createSession against a loopback HTTP server through the real
  * Agent Engine Sessions client, so the assertions are on the bytes actually
- * sent. The unit tests can only assert the config object handed to the SDK,
- * which would still pass if ADK named a field the SDK does not forward.
+ * sent.
+ *
+ * createSession builds its config with conditional spreads, and TypeScript
+ * does not excess-property-check spread members, so a field name that the SDK
+ * does not forward compiles and passes the mocked unit tests. These cases pin
+ * the request body itself, and fail if an SDK upgrade stops serializing it.
  */
 describe('VertexAiSessionService session expiration over the wire', () => {
   let server: Server;
@@ -41,20 +45,24 @@ describe('VertexAiSessionService session expiration over the wire', () => {
 
   beforeAll(async () => {
     server = createServer((request, response) => {
-      void json(request).then((body) => {
-        bodies.push(body);
-        response.writeHead(200, {'content-type': 'application/json'});
-        response.end(
-          JSON.stringify({
-            name: 'operations/1',
-            done: true,
-            response: {
-              name: `reasoningEngines/${REASONING_ENGINE_ID}/sessions/session-1`,
-              updateTime: '2026-01-01T00:00:00Z',
-            },
-          }),
-        );
-      });
+      // An unparseable body is recorded as such and still answered, so a
+      // surprise request fails an assertion instead of hanging the suite.
+      void json(request)
+        .catch(() => 'unparseable request body')
+        .then((body) => {
+          bodies.push(body);
+          response.writeHead(200, {'content-type': 'application/json'});
+          response.end(
+            JSON.stringify({
+              name: 'operations/1',
+              done: true,
+              response: {
+                name: `reasoningEngines/${REASONING_ENGINE_ID}/sessions/session-1`,
+                updateTime: '2026-01-01T00:00:00Z',
+              },
+            }),
+          );
+        });
     });
     await new Promise<void>((resolve) =>
       server.listen(0, '127.0.0.1', resolve),

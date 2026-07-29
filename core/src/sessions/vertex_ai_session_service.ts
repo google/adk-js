@@ -71,24 +71,14 @@ export interface VertexAiSessionServiceOptions {
 /**
  * The parameters for `VertexAiSessionService.createSession`.
  *
- * Extends the common {@link CreateSessionRequest} with the session-expiration
- * options supported by Vertex AI Agent Engine Sessions. `ttl` and `expireTime`
- * are mutually exclusive.
- *
- * See
+ * Extends the common {@link CreateSessionRequest} with the mutually exclusive
+ * session-expiration options supported by Vertex AI Agent Engine Sessions. See
  * https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/projects.locations.reasoningEngines.sessions
  */
 export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
-  /**
-   * Input-only time-to-live for the session, as a duration in seconds with an
-   * `s` suffix, e.g. `'7200s'`. The expiration time is computed as
-   * `now + ttl`. Cannot be combined with `expireTime`.
-   */
+  /** Lifetime relative to creation, in seconds, e.g. `'7200s'`. */
   ttl?: string;
-  /**
-   * Absolute RFC 3339 UTC timestamp at which the session expires, e.g.
-   * `'2025-10-01T00:00:00Z'`. Cannot be combined with `ttl`.
-   */
+  /** Absolute RFC 3339 UTC expiration, e.g. `'2025-10-01T00:00:00Z'`. */
   expireTime?: string;
 }
 
