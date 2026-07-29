@@ -6,6 +6,7 @@
 
 import {
   AgentTool,
+  EXIT_LOOP,
   FunctionTool,
   LlmAgent,
   MCPToolset,
@@ -257,7 +258,7 @@ describe('AgentRegistry', () => {
     expect(retrieved.tools[0]).toBe(tool);
   });
 
-  it('should skip built-in tools', () => {
+  it('should resolve exit_loop to the EXIT_LOOP built-in tool', () => {
     const config = {
       name: 'builtin_agent',
       model: 'model',
@@ -270,7 +271,26 @@ describe('AgentRegistry', () => {
     agentRegistry.registerAgentConfig('builtin_agent', config);
     const retrieved = agentRegistry.getAgent('builtin_agent') as LlmAgent;
 
-    expect(retrieved).toBeDefined();
+    expect(retrieved.tools).toEqual([EXIT_LOOP]);
+  });
+
+  it('should skip server-side built-in tools', () => {
+    const config = {
+      name: 'builtin_agent',
+      model: 'model',
+      description: 'desc',
+      instruction: 'inst',
+      agentClass: 'LlmAgent',
+      tools: [
+        {name: 'google_search'},
+        {name: 'url_context'},
+        {name: 'google_maps_grounding'},
+      ],
+    } as unknown as YamlAgentConfig;
+
+    agentRegistry.registerAgentConfig('builtin_agent', config);
+    const retrieved = agentRegistry.getAgent('builtin_agent') as LlmAgent;
+
     expect(retrieved.tools.length).toBe(0);
   });
 });
