@@ -94,7 +94,6 @@ describe('toA2a', () => {
     // would make these endpoints reachable by a cross-origin form POST that
     // never triggers a preflight.
     expect(expressMock.urlencoded).not.toHaveBeenCalled();
-    expect(app.use).not.toHaveBeenCalledWith('urlencoded_middleware');
 
     expect(expressMock.json).toHaveBeenCalledWith({limit: '50mb'});
     expect(app.use).toHaveBeenCalledWith('json_middleware');

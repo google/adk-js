@@ -5,7 +5,8 @@
  */
 
 import express from 'express';
-import * as http from 'http';
+import type {Server} from 'http';
+import type {AddressInfo} from 'net';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {toA2a} from '../../src/a2a/agent_to_a2a.js';
 import {BaseAgent} from '../../src/agents/base_agent.js';
@@ -13,11 +14,7 @@ import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
 import {logger} from '../../src/utils/logger.js';
 
-/**
- * Bodies observed by the A2A handlers, newest last. Populated by the
- * `@a2a-js/sdk/server/express` mock below, which stands in for the real A2A
- * handlers with middleware that only records what Express handed it.
- */
+// Bodies the A2A handlers saw, newest last; filled by the mock below.
 const {receivedBodies} = vi.hoisted(() => ({receivedBodies: [] as unknown[]}));
 
 // Express itself is deliberately NOT mocked: this file exercises the real
@@ -61,40 +58,16 @@ class TestAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {}
 }
 
-/** A nested `qs` payload: parsed, it would become `{a: {b: [{c: 'd'}]}}`. */
-const NESTED_FORM_BODY = 'a[b][0][c]=d';
-
-function post(
-  port: number,
-  path: string,
-  contentType: string,
-  body: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = http.request(
-      {
-        host: '127.0.0.1',
-        port,
-        path,
-        method: 'POST',
-        headers: {
-          'content-type': contentType,
-          'content-length': Buffer.byteLength(body),
-        },
-      },
-      (response) => {
-        response.resume();
-        response.on('end', resolve);
-        response.on('error', reject);
-      },
-    );
-    request.on('error', reject);
-    request.end(body);
+function post(port: number, path: string, contentType: string, body: string) {
+  return fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: {'content-type': contentType},
+    body,
   });
 }
 
 describe('toA2a body parsing', () => {
-  let server: http.Server;
+  let server: Server;
   let port: number;
 
   beforeEach(async () => {
@@ -104,21 +77,21 @@ describe('toA2a body parsing', () => {
     const app = await toA2a(new TestAgent(), {allowUnauthenticated: true});
     server = app.listen(0);
     await new Promise<void>((resolve) => server.once('listening', resolve));
-
-    const address = server.address();
-    if (address === null || typeof address === 'string') {
-      expect.fail('server did not bind to a TCP port');
-    }
-    port = address.port;
+    port = (server.address() as AddressInfo).port;
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    // `fetch` keeps the socket alive, which would stall `close()`.
+    server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   });
 
+  // `a[b][0][c]=d` is the crux of the bug: `qs` rebuilds it as
+  // `{a: {b: [{c: 'd'}]}}`, so a form body — a CORS-safelisted content type
+  // that needs no preflight — could carry a fully structured JSON-RPC request.
   it.each(['/rest', '/jsonrpc'])(
     'does not parse a form-encoded body posted to %s',
     async (path) => {
@@ -126,15 +99,10 @@ describe('toA2a body parsing', () => {
         port,
         path,
         'application/x-www-form-urlencoded',
-        NESTED_FORM_BODY,
+        'a[b][0][c]=d',
       );
 
-      // body-parser leaves `req.body` as `{}` (express 4) or `undefined`
-      // (express 5) for a request it declines to parse; either is fine as long
-      // as nothing from the form was reconstructed.
-      const body = receivedBodies[0];
-      expect(body ?? {}).toEqual({});
-      expect(body).not.toHaveProperty('a');
+      expect(receivedBodies[0]).toEqual({});
     },
   );
 
