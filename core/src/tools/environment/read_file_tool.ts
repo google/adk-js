@@ -7,18 +7,47 @@
 import {FunctionDeclaration, Type} from '@google/genai';
 import * as fs from 'fs/promises';
 
+import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {MAX_OUTPUT_CHARS} from './constants.js';
-import {resolveAndValidatePath, truncate} from './utils.js';
+import {
+  isFileNotFoundError,
+  resolveAndValidatePath,
+  toError,
+  truncate,
+} from './utils.js';
 
 export interface ReadFileToolParams {
   workingDir: string;
   maxOutputChars?: number;
 }
 
+/** The result of a {@link ReadFileTool} call. */
+export interface ReadFileResult {
+  /** `'ok'` when the file was read, `'error'` otherwise. */
+  status: 'ok' | 'error';
+  /** The selected lines, each prefixed with its 1-based line number. */
+  content?: string;
+  /** Total number of lines in the file, when only part of it was returned. */
+  total_lines?: number;
+  /** Why the call failed. Always set when `status` is `'error'`. */
+  error?: string;
+}
+
+/**
+ * Whether a raw tool argument is usable as a 1-based line number.
+ *
+ * `Number.isInteger` already rejects `NaN` and every non-number, so that is the
+ * only check needed.
+ */
+function isValidLineNumber(val: unknown): val is number {
+  return Number.isInteger(val);
+}
+
 /**
  * ReadFileTool for reading file contents in the environment.
  */
+@experimental
 export class ReadFileTool extends BaseTool {
   private readonly workingDir: string;
   private readonly maxOutputChars: number;
@@ -60,7 +89,9 @@ export class ReadFileTool extends BaseTool {
     };
   }
 
-  override async runAsync({args}: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync({
+    args,
+  }: RunAsyncToolRequest): Promise<ReadFileResult> {
     const pathArg = args['path'];
     if (typeof pathArg !== 'string' || !pathArg) {
       return {status: 'error', error: '`path` is required.'};
@@ -68,9 +99,6 @@ export class ReadFileTool extends BaseTool {
 
     const startLineRaw = args['start_line'];
     const endLineRaw = args['end_line'];
-
-    const isValidLineNumber = (val: unknown) =>
-      typeof val === 'number' && Number.isInteger(val) && !isNaN(val);
 
     for (const [name, val] of Object.entries({
       start_line: startLineRaw,
@@ -84,15 +112,16 @@ export class ReadFileTool extends BaseTool {
       }
     }
 
-    const startLine = (startLineRaw as number) || undefined;
-    const endLine = (endLineRaw as number) || undefined;
+    const startLine = isValidLineNumber(startLineRaw)
+      ? startLineRaw
+      : undefined;
+    const endLine = isValidLineNumber(endLineRaw) ? endLineRaw : undefined;
 
     let fullPath: string;
     try {
       fullPath = resolveAndValidatePath(this.workingDir, pathArg);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      return {status: 'error', error: String(e.message)};
+    } catch (e) {
+      return {status: 'error', error: toError(e).message};
     }
 
     try {
@@ -123,21 +152,20 @@ export class ReadFileTool extends BaseTool {
         .map((line, i) => `${String(start + i).padStart(6, ' ')}\t${line}`)
         .join('');
 
-      const result: Record<string, unknown> = {
+      const result: ReadFileResult = {
         status: 'ok',
         content: truncate(numbered, this.maxOutputChars),
       };
 
       if (start > 1 || end < total) {
-        result['total_lines'] = total;
+        result.total_lines = total;
       }
       return result;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e) {
+      if (isFileNotFoundError(e)) {
         return {status: 'error', error: `File not found: ${pathArg}`};
       }
-      return {status: 'error', error: String(e.message)};
+      return {status: 'error', error: toError(e).message};
     }
   }
 }
