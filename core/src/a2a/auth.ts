@@ -12,13 +12,11 @@ const AUTHENTICATED_USER_NAME = 'a2a-bearer-token';
 
 const BEARER_SCHEME_PREFIX = 'bearer ';
 
-/**
- * Reads the credential out of an `Authorization: Bearer <token>` header value,
- * matching the scheme case-insensitively as RFC 6750 requires.
- */
+/** Reads the credential out of an `Authorization: Bearer <token>` header. */
 function extractBearerCredential(
   header: string | undefined,
 ): string | undefined {
+  // RFC 6750 makes the scheme case-insensitive.
   if (!header?.toLowerCase().startsWith(BEARER_SCHEME_PREFIX)) {
     return undefined;
   }
@@ -39,23 +37,21 @@ function timingSafeEqualStrings(a: string, b: string): boolean {
  * shared bearer token.
  *
  * Callers must send `Authorization: Bearer <token>`; the credential is
- * compared against `token` in constant time. A request with a missing,
- * malformed or incorrect credential is rejected before the agent or any of
- * its tools is invoked.
+ * compared against `token` in constant time, and a request with a missing,
+ * malformed or incorrect one is rejected before the agent or any of its tools
+ * is invoked. Serve the surface over HTTPS, or the secret travels in clear
+ * text on every call.
  *
  * ```ts
  * toA2a(agent, {authentication: bearerTokenUserBuilder(process.env.MY_TOKEN)});
  * ```
  *
- * A shared secret is only as good as the transport carrying it: serve the A2A
- * surface over HTTPS so the token is not exposed on the wire.
- *
  * A rejected request surfaces as whatever the `@a2a-js/sdk` handler produces
  * for a failing `UserBuilder`, which is an HTTP 500 rather than a 401. The
- * guarantee this helper provides is that the agent is never reached, not that
- * the caller gets a particular status code.
+ * guarantee here is that the agent is never reached, not that the caller gets
+ * a particular status code.
  *
- * @param token The shared secret callers must present. Surrounding whitespace
+ * @param token The shared secret callers must present; surrounding whitespace
  *   is trimmed, because HTTP strips it from header values anyway.
  * @throws If `token` is empty or contains only whitespace.
  */
