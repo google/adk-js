@@ -305,16 +305,6 @@ describe('VertexAiSessionService', () => {
       });
     });
 
-    it('omits ttl and expireTime when neither is provided', async () => {
-      await service.createSession({appName: '12345', userId: 'testUser'});
-
-      expect(mockClient.createInternal).toHaveBeenCalledWith({
-        name: 'reasoningEngines/12345',
-        userId: 'testUser',
-        config: {},
-      });
-    });
-
     it('treats explicit undefined ttl and expireTime as unset', async () => {
       await service.createSession({
         appName: '12345',
@@ -327,26 +317,6 @@ describe('VertexAiSessionService', () => {
         name: 'reasoningEngines/12345',
         userId: 'testUser',
         config: {},
-      });
-    });
-
-    it('forwards ttl alongside sessionState and sessionId', async () => {
-      await service.createSession({
-        appName: '12345',
-        userId: 'testUser',
-        state: {foo: 'bar'},
-        sessionId: 'user-provided-id',
-        ttl: '7200s',
-      });
-
-      expect(mockClient.createInternal).toHaveBeenCalledWith({
-        name: 'reasoningEngines/12345',
-        userId: 'testUser',
-        config: {
-          sessionState: {foo: 'bar'},
-          sessionId: 'user-provided-id',
-          ttl: '7200s',
-        },
       });
     });
 

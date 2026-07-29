@@ -155,12 +155,7 @@ export class VertexAiSessionService extends BaseSessionService {
   /**
    * Creates a session on Vertex AI Agent Engine.
    *
-   * The session lifetime can optionally be bounded with either `ttl` (relative,
-   * e.g. `'7200s'`) or `expireTime` (absolute, e.g. `'2025-10-01T00:00:00Z'`).
-   * The two are mutually exclusive; specifying both throws.
-   *
-   * See
-   * https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/projects.locations.reasoningEngines.sessions
+   * @throws if both `ttl` and `expireTime` are specified.
    */
   async createSession({
     appName,
@@ -170,8 +165,7 @@ export class VertexAiSessionService extends BaseSessionService {
     ttl,
     expireTime,
   }: VertexAiCreateSessionRequest): Promise<Session> {
-    // Both express the same thing and the API rejects them together, so fail
-    // before the RPC.
+    // The API rejects both together; fail before the RPC.
     if (ttl != null && expireTime != null) {
       throw new Error(
         "Cannot specify both 'ttl' and 'expireTime' simultaneously.",

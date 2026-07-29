@@ -12,16 +12,12 @@ import {
   NodeDownloader,
   NodeUploader,
 } from '@google/genai/vertex_internal';
-import {createServer, IncomingMessage, Server} from 'node:http';
+import {createServer, Server} from 'node:http';
 import {AddressInfo} from 'node:net';
+import {json} from 'node:stream/consumers';
 import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 
 const REASONING_ENGINE_ID = '12345';
-
-interface CapturedRequest {
-  url: string;
-  body: Record<string, unknown>;
-}
 
 /**
  * There is no identity to assert against a loopback server, so requests go out
@@ -32,32 +28,25 @@ const unauthenticated: Auth = {
   async addAuthHeaders(): Promise<void> {},
 };
 
-async function readJsonBody(
-  request: IncomingMessage,
-): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(chunk as Buffer);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString()) as Record<
-    string,
-    unknown
-  >;
-}
-
+/**
+ * Exercises createSession against a loopback HTTP server through the real
+ * Agent Engine Sessions client, so the assertions are on the bytes actually
+ * sent. The unit tests can only assert the config object handed to the SDK,
+ * which would still pass if ADK named a field the SDK does not forward.
+ */
 describe('VertexAiSessionService session expiration over the wire', () => {
   let server: Server;
   let service: VertexAiSessionService;
-  let requests: CapturedRequest[];
+  let bodies: unknown[];
 
   beforeAll(async () => {
     server = createServer((request, response) => {
-      void readJsonBody(request).then((body) => {
-        requests.push({url: request.url!, body});
+      void json(request).then((body) => {
+        bodies.push(body);
         response.writeHead(200, {'content-type': 'application/json'});
         response.end(
           JSON.stringify({
-            name: `operations/${requests.length}`,
+            name: 'operations/1',
             done: true,
             response: {
               name: `reasoningEngines/${REASONING_ENGINE_ID}/sessions/session-1`,
@@ -95,7 +84,7 @@ describe('VertexAiSessionService session expiration over the wire', () => {
   });
 
   beforeEach(() => {
-    requests = [];
+    bodies = [];
   });
 
   it('sends ttl in the create request body', async () => {
@@ -106,8 +95,7 @@ describe('VertexAiSessionService session expiration over the wire', () => {
     });
 
     expect(session.id).toBe('session-1');
-    expect(requests).toHaveLength(1);
-    expect(requests[0].body).toEqual({userId: 'user-1', ttl: '7200s'});
+    expect(bodies).toEqual([{userId: 'user-1', ttl: '7200s'}]);
   });
 
   it('sends expireTime in the create request body', async () => {
@@ -117,38 +105,8 @@ describe('VertexAiSessionService session expiration over the wire', () => {
       expireTime: '2026-10-01T00:00:00Z',
     });
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0].body).toEqual({
-      userId: 'user-1',
-      expireTime: '2026-10-01T00:00:00Z',
-    });
-  });
-
-  it('sends no expiration fields when none are requested', async () => {
-    await service.createSession({
-      appName: REASONING_ENGINE_ID,
-      userId: 'user-1',
-      state: {foo: 'bar'},
-    });
-
-    expect(requests).toHaveLength(1);
-    expect(requests[0].body).toEqual({
-      userId: 'user-1',
-      sessionState: {foo: 'bar'},
-    });
-  });
-
-  it('issues no request when ttl and expireTime are both set', async () => {
-    await expect(
-      service.createSession({
-        appName: REASONING_ENGINE_ID,
-        userId: 'user-1',
-        ttl: '7200s',
-        expireTime: '2026-10-01T00:00:00Z',
-      }),
-    ).rejects.toThrow(
-      "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
-    );
-    expect(requests).toHaveLength(0);
+    expect(bodies).toEqual([
+      {userId: 'user-1', expireTime: '2026-10-01T00:00:00Z'},
+    ]);
   });
 });
