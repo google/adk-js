@@ -145,7 +145,6 @@ describe('VertexAiSessionService', () => {
 
   it('throws an error if no client and no project/location provided', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
-    vi.stubEnv('GOOGLE_API_KEY', undefined);
 
     expect(() => new VertexAiSessionService({})).toThrow(
       'Project ID and Location are required.',
@@ -154,7 +153,6 @@ describe('VertexAiSessionService', () => {
 
   it('throws an error if location is missing', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
-    vi.stubEnv('GOOGLE_API_KEY', undefined);
 
     expect(
       () => new VertexAiSessionService({projectId: 'test-project'}),

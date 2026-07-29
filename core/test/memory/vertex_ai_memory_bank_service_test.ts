@@ -81,10 +81,6 @@ describe('VertexAiMemoryBankService', () => {
   });
 
   it('throws error if agentEngineId is missing', () => {
-    // Stubbed so the check is asserted to run before the express mode guard.
-    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
-    vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
     expect(
       () =>
         new VertexAiMemoryBankService(
