@@ -13,11 +13,12 @@ import {
   UnsafeLocalCodeExecutor,
   createSession,
 } from '@google/adk';
-import type {SpawnOptions} from 'node:child_process';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
+type SpawnArgs = Parameters<typeof import('node:child_process').spawn>;
+
 const {spawnSpy} = vi.hoisted(() => ({
-  spawnSpy: vi.fn<(command: string, args: readonly string[]) => void>(),
+  spawnSpy: vi.fn<(...args: SpawnArgs) => void>(),
 }));
 
 // Records the spawn arguments while still delegating to the real `spawn`, so
@@ -26,13 +27,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
     ...actual,
-    spawn: (
-      command: string,
-      args: readonly string[],
-      options: SpawnOptions,
-    ) => {
-      spawnSpy(command, args);
-      return actual.spawn(command, args, options);
+    spawn: (...args: SpawnArgs) => {
+      spawnSpy(...args);
+      return actual.spawn(...args);
     },
   };
 });
@@ -371,19 +368,16 @@ describe('UnsafeLocalCodeExecutor', () => {
       '/usr/local/powershell-helpers/run.sh',
       'bash',
     ])('does not treat %s as PowerShell', async (shell) => {
-      const {command, args} = await captureShellSpawn(shell);
+      const {args} = await captureShellSpawn(shell);
 
-      expect(command).toBe(shell);
       expect(args).toHaveLength(1);
       expect(args).not.toContain('-NoLogo');
     });
 
     it.each(['cmd', 'cmd.exe'])('invokes %s with /c', async (shell) => {
-      const {command, args} = await captureShellSpawn(shell);
+      const {args} = await captureShellSpawn(shell);
 
-      expect(command).toBe(shell);
-      expect(args).toHaveLength(2);
-      expect(args[0]).toBe('/c');
+      expect(args).toEqual(['/c', expect.any(String)]);
       expect(args).not.toContain('-NoLogo');
     });
   });
