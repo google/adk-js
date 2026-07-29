@@ -19,24 +19,16 @@ import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 
 const REASONING_ENGINE_ID = '12345';
 
-/**
- * There is no identity to assert against a loopback server, so requests go out
- * unauthenticated. Everything else - the SDK converters, the request body
- * serialization and the HTTP round trip - is the real implementation.
- */
+/** A loopback server has no identity to assert, so requests go out unsigned. */
 const unauthenticated: Auth = {
   async addAuthHeaders(): Promise<void> {},
 };
 
 /**
- * Exercises createSession against a loopback HTTP server through the real
- * Agent Engine Sessions client, so the assertions are on the bytes actually
- * sent.
- *
- * createSession builds its config with conditional spreads, and TypeScript
- * does not excess-property-check spread members, so a field name that the SDK
- * does not forward compiles and passes the mocked unit tests. These cases pin
- * the request body itself, and fail if an SDK upgrade stops serializing it.
+ * Drives createSession through the real Agent Engine Sessions client against a
+ * loopback server. The unit tests can only assert the config object handed to
+ * the SDK; these assert the request body the SDK actually produces from it, so
+ * they fail if an SDK upgrade stops serializing either field.
  */
 describe('VertexAiSessionService session expiration over the wire', () => {
   let server: Server;

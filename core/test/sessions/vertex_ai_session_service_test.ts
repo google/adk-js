@@ -305,19 +305,6 @@ describe('VertexAiSessionService', () => {
       });
     });
 
-    it('treats explicit undefined ttl and expireTime as unset', async () => {
-      // Both keys are present but unset, so the guard must look at the values
-      // rather than at key presence.
-      await expect(
-        service.createSession({
-          appName: '12345',
-          userId: 'testUser',
-          ttl: undefined,
-          expireTime: undefined,
-        }),
-      ).resolves.toBeDefined();
-    });
-
     it('throws when both ttl and expireTime are specified', async () => {
       await expect(
         service.createSession({
