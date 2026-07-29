@@ -1,0 +1,85 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import {timingSafeEqual} from 'node:crypto';
+import {A2aUserBuilder} from './agent_to_a2a.js';
+
+/**
+ * The `userName` reported for a caller that presented the shared bearer token.
+ *
+ * A shared secret authenticates the deployment as a whole rather than an
+ * individual principal, so every accepted caller resolves to this same
+ * synthetic identity.
+ */
+const AUTHENTICATED_USER_NAME = 'a2a-bearer-token';
+
+const BEARER_SCHEME_PREFIX = 'bearer ';
+
+/**
+ * Extracts the credential from an `Authorization: Bearer <token>` header
+ * value, or returns `undefined` when the header is absent or uses a different
+ * scheme. The scheme is matched case-insensitively, as RFC 6750 requires.
+ */
+function extractBearerCredential(
+  header: string | undefined,
+): string | undefined {
+  if (!header?.toLowerCase().startsWith(BEARER_SCHEME_PREFIX)) {
+    return undefined;
+  }
+  return header.slice(BEARER_SCHEME_PREFIX.length);
+}
+
+/** Compares two secrets without leaking their contents through timing. */
+function timingSafeEqualStrings(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  // `timingSafeEqual` throws on a length mismatch, so the lengths must be
+  // compared first. The length of a rejected credential is not a secret.
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * Builds an {@link A2aUserBuilder} that authenticates A2A requests against a
+ * shared bearer token.
+ *
+ * Callers must send `Authorization: Bearer <token>`; the credential is
+ * compared against `token` in constant time. A request with a missing,
+ * malformed or incorrect credential is rejected before the agent or any of
+ * its tools is invoked.
+ *
+ * ```ts
+ * toA2a(agent, {authentication: bearerTokenUserBuilder(process.env.MY_TOKEN)});
+ * ```
+ *
+ * A shared secret is only as good as the transport carrying it: serve the A2A
+ * surface over HTTPS so the token is not exposed on the wire.
+ *
+ * @param token The shared secret callers must present. Must be non-empty.
+ * @throws If `token` is empty or contains only whitespace.
+ */
+export function bearerTokenUserBuilder(token: string): A2aUserBuilder {
+  if (!token.trim()) {
+    throw new Error(
+      'bearerTokenUserBuilder: an empty A2A bearer token is not a valid ' +
+        'authenticator. Supply a real shared secret, or configure no token ' +
+        'at all to run the A2A surface unauthenticated.',
+    );
+  }
+
+  return async (req) => {
+    const credential = extractBearerCredential(req.headers.authorization);
+    if (
+      credential === undefined ||
+      !timingSafeEqualStrings(credential, token)
+    ) {
+      throw new Error(
+        'A2A request rejected: missing or invalid `Authorization: Bearer` ' +
+          'credential.',
+      );
+    }
+    return {isAuthenticated: true, userName: AUTHENTICATED_USER_NAME};
+  };
+}
