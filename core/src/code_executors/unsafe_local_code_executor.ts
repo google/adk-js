@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {spawn} from 'child_process';
+import {spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -19,6 +19,23 @@ import {
 } from './code_execution_utils.js';
 
 const IS_WINDOWS = os.platform() === 'win32';
+
+/** Executable names of PowerShell hosts, without any `.exe` suffix. */
+const POWERSHELL_COMMAND_NAMES = new Set(['powershell', 'pwsh']);
+
+/**
+ * Whether `commandPath` refers to a PowerShell host.
+ *
+ * Matches Windows PowerShell (`powershell`) and PowerShell 7+ (`pwsh`) on the
+ * executable name only, so that unrelated commands whose path merely contains
+ * the word (for example `/opt/pwsh-tools/bin/bash`) are not misdetected.
+ */
+function isPowerShellCommand(commandPath: string): boolean {
+  const commandName = commandPath.split(/[\\/]/).pop() ?? '';
+  return POWERSHELL_COMMAND_NAMES.has(
+    commandName.toLowerCase().replace(/\.exe$/, ''),
+  );
+}
 
 /**
  * Options for UnsafeLocalCodeExecutor.
@@ -38,6 +55,11 @@ export interface UnsafeLocalCodeExecutorOptions {
   pythonCommandPath?: string;
   /**
    * The command to run Shell code. Default is `bash`.
+   *
+   * When the command names a PowerShell host (`powershell` or `pwsh`, with or
+   * without an `.exe` suffix) the script is written as a `.ps1` file and
+   * invoked with `-NoLogo -ExecutionPolicy Bypass -File`. When it names `cmd`
+   * the script is invoked with `/c`.
    */
   shellCommandPath?: string;
 }
@@ -45,7 +67,7 @@ export interface UnsafeLocalCodeExecutorOptions {
 async function createTempScriptFile(
   code: string,
   language: CodeExecutionLanguage,
-  shellCommandPath?: string,
+  shellCommandPath: string,
 ): Promise<{filePath: string; tempDir: string}> {
   const tempDir = path.join(
     os.tmpdir(),
@@ -63,7 +85,7 @@ async function createTempScriptFile(
 
 function getExtensionForLanguage(
   language: CodeExecutionLanguage,
-  shellCommandPath?: string,
+  shellCommandPath: string,
 ): string | undefined {
   if (language === CodeExecutionLanguage.JAVASCRIPT) {
     return '.js';
@@ -82,8 +104,11 @@ function getExtensionForLanguage(
   }
 
   if (language === CodeExecutionLanguage.SHELL) {
+    if (isPowerShellCommand(shellCommandPath)) {
+      return '.ps1';
+    }
     if (IS_WINDOWS) {
-      if (shellCommandPath && shellCommandPath.toLowerCase().includes('cmd')) {
+      if (shellCommandPath.toLowerCase().includes('cmd')) {
         return '.bat';
       }
       return '.ps1';
@@ -101,7 +126,7 @@ function getExtensionForLanguage(
  * **Execution Details**:
  * - **JavaScript**: Executed via `node` (defaults to `process.execPath`).
  * - **Python**: Executed via `python3` on Unix, and `python` on Windows.
- * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` (injecting ExecutionPolicy Bypass) or `cmd.exe` on Windows.
+ * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` or `cmd.exe` on Windows. A `shellCommandPath` naming a PowerShell host (`powershell` or `pwsh`) runs a `.ps1` script with ExecutionPolicy Bypass injected.
  *
  * WARNING: This executor runs code in the local environment without sandboxing or security restrictions.
  * Use with caution and only for trusted code.
@@ -171,7 +196,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         command = this.pythonCommandPath;
       } else if (language === CodeExecutionLanguage.SHELL) {
         command = this.shellCommandPath;
-        if (this.shellCommandPath.toLowerCase().includes('powershell')) {
+        if (isPowerShellCommand(this.shellCommandPath)) {
           args = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', filePath];
         } else if (this.shellCommandPath.toLowerCase().includes('cmd')) {
           args = ['/c', filePath];

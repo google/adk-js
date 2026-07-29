@@ -13,7 +13,29 @@ import {
   UnsafeLocalCodeExecutor,
   createSession,
 } from '@google/adk';
-import {beforeEach, describe, expect, it} from 'vitest';
+import type {SpawnOptions} from 'node:child_process';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
+
+const {spawnSpy} = vi.hoisted(() => ({
+  spawnSpy: vi.fn<(command: string, args: readonly string[]) => void>(),
+}));
+
+// Records the spawn arguments while still delegating to the real `spawn`, so
+// the surrounding tests keep executing actual child processes.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawn: (
+      command: string,
+      args: readonly string[],
+      options: SpawnOptions,
+    ) => {
+      spawnSpy(command, args);
+      return actual.spawn(command, args, options);
+    },
+  };
+});
 
 function createMockInvocationContext(): InvocationContext {
   const agent = new LlmAgent({
@@ -307,5 +329,62 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.outputFiles![0].content).toBe('{"hello":"world"}');
     expect(result.outputFiles![0].contentEncoding).toBe('utf-8');
     expect(result.outputFiles![0].mimeType).toBe('application/json');
+  });
+
+  describe('shell command detection', () => {
+    const POWERSHELL_FLAGS = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File'];
+
+    async function captureShellSpawn(shellCommandPath: string) {
+      spawnSpy.mockClear();
+      const customExecutor = new UnsafeLocalCodeExecutor({shellCommandPath});
+      await customExecutor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'echo "test"',
+          language: CodeExecutionLanguage.SHELL,
+          inputFiles: [],
+        },
+      });
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      const [command, args] = spawnSpy.mock.calls[0];
+      return {command, args};
+    }
+
+    it.each([
+      'pwsh',
+      'pwsh.exe',
+      '/usr/bin/pwsh',
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      'PWSH',
+      'powershell',
+      'powershell.exe',
+    ])('runs a .ps1 script with PowerShell flags for %s', async (shell) => {
+      const {command, args} = await captureShellSpawn(shell);
+
+      expect(command).toBe(shell);
+      expect(args).toEqual(expect.arrayContaining(POWERSHELL_FLAGS));
+      expect(args.at(-1)).toMatch(/script\.ps1$/);
+    });
+
+    it.each([
+      '/opt/pwsh-tools/bin/bash',
+      '/usr/local/powershell-helpers/run.sh',
+      'bash',
+    ])('does not treat %s as PowerShell', async (shell) => {
+      const {command, args} = await captureShellSpawn(shell);
+
+      expect(command).toBe(shell);
+      expect(args).toHaveLength(1);
+      expect(args).not.toContain('-NoLogo');
+    });
+
+    it.each(['cmd', 'cmd.exe'])('invokes %s with /c', async (shell) => {
+      const {command, args} = await captureShellSpawn(shell);
+
+      expect(command).toBe(shell);
+      expect(args).toHaveLength(2);
+      expect(args[0]).toBe('/c');
+      expect(args).not.toContain('-NoLogo');
+    });
   });
 });
