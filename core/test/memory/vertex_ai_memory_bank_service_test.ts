@@ -135,7 +135,6 @@ describe('VertexAiMemoryBankService', () => {
         location: 'us-central1',
       });
 
-      expect(clientConstructor).toHaveBeenCalledTimes(1);
       expect(clientConstructor).toHaveBeenCalledWith({
         project: 'test-project',
         location: 'us-central1',

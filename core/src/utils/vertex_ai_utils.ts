@@ -6,7 +6,6 @@
 
 import {getBooleanEnvVar} from './env_aware_utils.js';
 
-/** Thrown when an Express Mode API key is resolved but cannot be passed on. */
 export const EXPRESS_MODE_UNSUPPORTED_MESSAGE =
   'Vertex AI Express Mode (expressModeApiKey / GOOGLE_API_KEY) is not ' +
   'supported: the @google-cloud/vertexai Agent Engine client cannot send an ' +

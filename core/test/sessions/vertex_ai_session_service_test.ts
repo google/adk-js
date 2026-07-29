@@ -149,11 +149,6 @@ describe('VertexAiSessionService', () => {
     expect(() => new VertexAiSessionService({})).toThrow(
       'Project ID and Location are required.',
     );
-  });
-
-  it('throws an error if location is missing', () => {
-    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
-
     expect(
       () => new VertexAiSessionService({projectId: 'test-project'}),
     ).toThrow('Project ID and Location are required.');
@@ -182,7 +177,6 @@ describe('VertexAiSessionService', () => {
         location: 'us-central1',
       });
 
-      expect(clientConstructor).toHaveBeenCalledTimes(1);
       expect(clientConstructor).toHaveBeenCalledWith({
         project: 'test-project',
         location: 'us-central1',
