@@ -434,6 +434,10 @@ export async function handleFunctionCallList({
     }
 
     // Allow long running function to return None as response.
+    // Only a nullish response defers the event. A falsy-but-present response
+    // ('', 0, false) is a real result and still emits one, so long-running
+    // tools that return such a value now produce a response event where they
+    // previously produced none.
     if (tool.isLongRunning && functionResponse == null) {
       continue;
     }
