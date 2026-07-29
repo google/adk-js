@@ -7,16 +7,28 @@
 import {FunctionDeclaration, Type} from '@google/genai';
 import * as fs from 'fs/promises';
 
+import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
-import {resolveAndValidatePath} from './utils.js';
+import {resolveAndValidatePath, toError} from './utils.js';
 
 export interface WriteFileToolParams {
   workingDir: string;
 }
 
+/** The result of a {@link WriteFileTool} call. */
+export interface WriteFileResult {
+  /** `'ok'` when the file was written, `'error'` otherwise. */
+  status: 'ok' | 'error';
+  /** Confirmation of what was written. Set when `status` is `'ok'`. */
+  message?: string;
+  /** Why the call failed. Always set when `status` is `'error'`. */
+  error?: string;
+}
+
 /**
  * WriteFileTool for creating or overwriting files in the environment.
  */
+@experimental
 export class WriteFileTool extends BaseTool {
   private readonly workingDir: string;
 
@@ -50,7 +62,9 @@ export class WriteFileTool extends BaseTool {
     };
   }
 
-  override async runAsync({args}: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync({
+    args,
+  }: RunAsyncToolRequest): Promise<WriteFileResult> {
     const pathArg = args['path'];
     const content = args['content'];
 
@@ -64,17 +78,15 @@ export class WriteFileTool extends BaseTool {
     let fullPath: string;
     try {
       fullPath = resolveAndValidatePath(this.workingDir, pathArg);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      return {status: 'error', error: String(e.message)};
+    } catch (e) {
+      return {status: 'error', error: toError(e).message};
     }
 
     try {
       await fs.writeFile(fullPath, content, 'utf8');
       return {status: 'ok', message: `Wrote ${pathArg}`};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      return {status: 'error', error: String(e.message)};
+    } catch (e) {
+      return {status: 'error', error: toError(e).message};
     }
   }
 }

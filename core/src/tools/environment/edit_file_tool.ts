@@ -7,20 +7,37 @@
 import {FunctionDeclaration, Type} from '@google/genai';
 import * as fs from 'fs/promises';
 
+import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
-import {resolveAndValidatePath} from './utils.js';
+import {isFileNotFoundError, resolveAndValidatePath, toError} from './utils.js';
 
-function escapeRegExp(string: string) {
-  return string.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+/**
+ * Escapes every regular-expression metacharacter in `str` so that the result
+ * matches the input as literal text. The JavaScript equivalent of Python's
+ * `re.escape`.
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export interface EditFileToolParams {
   workingDir: string;
 }
 
+/** The result of an {@link EditFileTool} call. */
+export interface EditFileResult {
+  /** `'ok'` when the edit was applied, `'error'` otherwise. */
+  status: 'ok' | 'error';
+  /** Confirmation of what was edited. Set when `status` is `'ok'`. */
+  message?: string;
+  /** Why the call failed. Always set when `status` is `'error'`. */
+  error?: string;
+}
+
 /**
  * EditFileTool for performing surgical text replacements in existing files.
  */
+@experimental
 export class EditFileTool extends BaseTool {
   private readonly workingDir: string;
 
@@ -59,7 +76,9 @@ export class EditFileTool extends BaseTool {
     };
   }
 
-  override async runAsync({args}: RunAsyncToolRequest): Promise<unknown> {
+  override async runAsync({
+    args,
+  }: RunAsyncToolRequest): Promise<EditFileResult> {
     const pathArg = args['path'];
     const oldString = args['old_string'];
     const newString = args['new_string'];
@@ -81,22 +100,22 @@ export class EditFileTool extends BaseTool {
     let fullPath: string;
     try {
       fullPath = resolveAndValidatePath(this.workingDir, pathArg);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      return {status: 'error', error: String(e.message)};
+    } catch (e) {
+      return {status: 'error', error: toError(e).message};
     }
 
     let content: string;
     try {
       content = await fs.readFile(fullPath, 'utf8');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e) {
+      if (isFileNotFoundError(e)) {
         return {status: 'error', error: `File not found: ${pathArg}`};
       }
-      return {status: 'error', error: String(e.message)};
+      return {status: 'error', error: toError(e).message};
     }
 
+    // Newlines are not regex metacharacters, so they survive `escapeRegExp`
+    // unchanged and can be relaxed here to match either line ending.
     const normalizedOld = oldString.replace(/\r\n/g, '\n');
     const patternStr = escapeRegExp(normalizedOld).replace(/\n/g, '\\r?\\n');
     const pattern = new RegExp(patternStr, 'g');
@@ -118,13 +137,15 @@ export class EditFileTool extends BaseTool {
       };
     }
 
-    const newContent = content.replace(pattern, newString);
+    // A function replacement is used so that `$&`, `` $` `` and `$1` occurring
+    // in `new_string` are inserted literally instead of being expanded as
+    // replacement patterns.
+    const newContent = content.replace(pattern, () => newString);
     try {
       await fs.writeFile(fullPath, newContent, 'utf8');
       return {status: 'ok', message: `Edited ${pathArg}`};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      return {status: 'error', error: String(e.message)};
+    } catch (e) {
+      return {status: 'error', error: toError(e).message};
     }
   }
 }
