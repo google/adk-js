@@ -22,6 +22,9 @@ const ALLOWED_FRONTMATTER_KEYS = new Set([
   'description',
   'license',
   'allowed-tools',
+  // Alias of 'allowed-tools' derived by FrontmatterSchema's preprocessor and
+  // preserved on the parsed frontmatter because the schema is `.loose()`.
+  'allowedTools',
   'metadata',
   'compatibility',
 ]);
