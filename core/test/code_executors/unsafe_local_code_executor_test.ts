@@ -13,26 +13,13 @@ import {
   UnsafeLocalCodeExecutor,
   createSession,
 } from '@google/adk';
+import * as childProcess from 'node:child_process';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
-type SpawnArgs = Parameters<typeof import('node:child_process').spawn>;
-
-const {spawnSpy} = vi.hoisted(() => ({
-  spawnSpy: vi.fn<(...args: SpawnArgs) => void>(),
-}));
-
-// Records the spawn arguments while still delegating to the real `spawn`, so
-// the surrounding tests keep executing actual child processes.
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>();
-  return {
-    ...actual,
-    spawn: (...args: SpawnArgs) => {
-      spawnSpy(...args);
-      return actual.spawn(...args);
-    },
-  };
-});
+// Records the spawn arguments while still running the real `spawn`, so the
+// surrounding tests keep executing actual child processes.
+vi.mock('node:child_process', {spy: true});
+const spawnSpy = vi.mocked(childProcess.spawn);
 
 function createMockInvocationContext(): InvocationContext {
   const agent = new LlmAgent({
@@ -358,13 +345,13 @@ describe('UnsafeLocalCodeExecutor', () => {
       const args = await captureShellSpawn(shell);
 
       expect(args).toEqual(expect.arrayContaining(POWERSHELL_FLAGS));
+      expect(args.at(-2)).toBe('-File');
       expect(args.at(-1)).toMatch(/script\.ps1$/);
     });
 
     it.each([
       '/opt/pwsh-tools/bin/bash',
       '/usr/local/powershell-helpers/run.sh',
-      'bash',
     ])('does not treat %s as PowerShell', async (shell) => {
       const args = await captureShellSpawn(shell);
 

@@ -22,9 +22,7 @@ const IS_WINDOWS = os.platform() === 'win32';
 
 /**
  * Whether `commandPath` names Windows PowerShell (`powershell`) or PowerShell
- * 7+ (`pwsh`), with or without an `.exe` suffix. Only the executable name is
- * matched, so `/opt/pwsh-tools/bin/bash` is not misdetected. `path.win32`
- * splits on both separators on every platform.
+ * 7+ (`pwsh`). `path.win32` splits on both separators on every platform.
  */
 function isPowerShellCommand(commandPath: string): boolean {
   return /^(powershell|pwsh)(\.exe)?$/i.test(path.win32.basename(commandPath));
@@ -49,9 +47,8 @@ export interface UnsafeLocalCodeExecutorOptions {
   /**
    * The command to run Shell code. Default is `bash`.
    *
-   * When it names `powershell` or `pwsh` (with or without an `.exe` suffix)
-   * the script is written as `.ps1` and invoked with
-   * `-NoLogo -ExecutionPolicy Bypass -File`.
+   * When it names `powershell` or `pwsh` (with or without `.exe`) the script
+   * is written as `.ps1` and run with `-NoLogo -ExecutionPolicy Bypass -File`.
    */
   shellCommandPath?: string;
 }
