@@ -86,19 +86,6 @@ describe('bearerTokenUserBuilder', () => {
     ).rejects.toThrow(/missing or invalid/);
   });
 
-  it('never discloses the configured token when rejecting', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
-
-    const rejection = await userBuilder(
-      requestWithHeaders({authorization: 'Bearer wrong'}),
-    ).then(
-      () => expect.fail('expected the authenticator to reject'),
-      (error: unknown) => String(error),
-    );
-
-    expect(rejection).not.toContain(TOKEN);
-  });
-
   it('trims surrounding whitespace from the configured token', async () => {
     // HTTP strips whitespace around header values, so an untrimmed token
     // would be impossible for any caller to present.

@@ -12,17 +12,6 @@ const AUTHENTICATED_USER_NAME = 'a2a-bearer-token';
 
 const BEARER_SCHEME_PREFIX = 'bearer ';
 
-/** Reads the credential out of an `Authorization: Bearer <token>` header. */
-function extractBearerCredential(
-  header: string | undefined,
-): string | undefined {
-  // RFC 6750 makes the scheme case-insensitive.
-  if (!header?.toLowerCase().startsWith(BEARER_SCHEME_PREFIX)) {
-    return undefined;
-  }
-  return header.slice(BEARER_SCHEME_PREFIX.length);
-}
-
 /** Compares two secrets without leaking their contents through timing. */
 function timingSafeEqualStrings(a: string, b: string): boolean {
   const left = Buffer.from(a, 'utf8');
@@ -66,11 +55,12 @@ export function bearerTokenUserBuilder(token: string): A2aUserBuilder {
   }
 
   return async (req) => {
-    const credential = extractBearerCredential(req.headers.authorization);
-    if (
-      credential === undefined ||
-      !timingSafeEqualStrings(credential, expected)
-    ) {
+    const header = req.headers.authorization ?? '';
+    // RFC 6750 makes the bearer scheme case-insensitive.
+    const credential = header.toLowerCase().startsWith(BEARER_SCHEME_PREFIX)
+      ? header.slice(BEARER_SCHEME_PREFIX.length)
+      : '';
+    if (!timingSafeEqualStrings(credential, expected)) {
       throw new Error(
         'A2A request rejected: missing or invalid `Authorization: Bearer` ' +
           'credential.',
