@@ -21,13 +21,8 @@ import {
 const IS_WINDOWS = os.platform() === 'win32';
 
 /**
- * Arguments prepended to every PowerShell invocation.
- *
- * `-NoLogo` suppresses the startup banner, `-NoProfile` skips the machine and
- * user profile scripts so startup stays fast and the executed script is not
- * affected by ambient profile state (PATH, aliases, preference variables) or
- * polluted by profile output, and `-ExecutionPolicy Bypass` lets the generated
- * script file run. The script path is appended after `-File`.
+ * Prepended to every PowerShell invocation; `-NoProfile` keeps ambient profile
+ * state (PATH, aliases, preference variables, stray output) out of the script.
  */
 const POWERSHELL_BASE_ARGS = [
   '-NoLogo',
@@ -38,11 +33,8 @@ const POWERSHELL_BASE_ARGS = [
 ] as const;
 
 /**
- * Arguments prepended to every cmd.exe invocation.
- *
- * `/D` skips the AutoRun commands configured in the registry — the cmd.exe
- * analogue of PowerShell's `-NoProfile` — and `/c` runs the script and exits.
- * The script path is appended after `/c`.
+ * Prepended to every cmd.exe invocation; `/D` skips the registry AutoRun
+ * commands, the `-NoProfile` analogue.
  */
 const CMD_BASE_ARGS = ['/D', '/c'] as const;
 
