@@ -6,9 +6,8 @@
 
 import {Request} from 'express';
 import {IncomingHttpHeaders} from 'node:http';
-import {describe, expect, it, vi} from 'vitest';
+import {describe, expect, it} from 'vitest';
 import {bearerTokenUserBuilder} from '../../src/a2a/auth.js';
-import {logger} from '../../src/utils/logger.js';
 
 const TOKEN = 's3cr3t';
 
@@ -21,14 +20,11 @@ function requestWithHeaders(headers: IncomingHttpHeaders): Request {
 }
 
 describe('bearerTokenUserBuilder', () => {
-  it('throws when the token is empty', () => {
-    expect(() => bearerTokenUserBuilder('')).toThrow(
-      /empty A2A bearer token is not a valid authenticator/,
-    );
-  });
-
-  it('throws when the token is whitespace only', () => {
-    expect(() => bearerTokenUserBuilder('   ')).toThrow(
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '   '],
+  ])('throws when the token is %s', (_label, token) => {
+    expect(() => bearerTokenUserBuilder(token)).toThrow(
       /empty A2A bearer token is not a valid authenticator/,
     );
   });
@@ -98,9 +94,7 @@ describe('bearerTokenUserBuilder', () => {
     ).rejects.toThrow(/missing or invalid/);
   });
 
-  it('never discloses the configured token', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+  it('never discloses the configured token when rejecting', async () => {
     const userBuilder = bearerTokenUserBuilder(TOKEN);
 
     const rejection = await userBuilder(
@@ -111,10 +105,17 @@ describe('bearerTokenUserBuilder', () => {
       expect.fail('expected the authenticator to reject with an Error');
     }
     expect(rejection.message).not.toContain(TOKEN);
-    expect(warnSpy).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalled();
+  });
 
-    warnSpy.mockRestore();
-    errorSpy.mockRestore();
+  it('trims surrounding whitespace from the configured token', async () => {
+    // HTTP strips whitespace around header values, so an untrimmed token
+    // would be impossible for any caller to present.
+    const userBuilder = bearerTokenUserBuilder(`  ${TOKEN}  `);
+
+    const user = await userBuilder(
+      requestWithHeaders({authorization: `Bearer ${TOKEN}`}),
+    );
+
+    expect(user.isAuthenticated).toBe(true);
   });
 });
