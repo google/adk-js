@@ -5,9 +5,9 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {AuthConfig} from '../../src/auth/auth_tool.js';
 import {
   createEventActions,
+  EventActions,
   isDefaultEventActions,
   mergeEventActions,
 } from '../../src/events/event_actions.js';
@@ -67,54 +67,36 @@ describe('isDefaultEventActions', () => {
     expect(isDefaultEventActions(createEventActions())).toBe(true);
   });
 
-  it('returns false when stateDelta has an entry', () => {
-    const actions = createEventActions({stateDelta: {jobStarted: true}});
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when artifactDelta has an entry', () => {
-    const actions = createEventActions({artifactDelta: {'report.pdf': 1}});
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when requestedAuthConfigs has an entry', () => {
-    const authConfig: AuthConfig = {
-      authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
-      credentialKey: 'call-1-key',
-    };
-    const actions = createEventActions({
-      requestedAuthConfigs: {'call-1': authConfig},
-    });
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when requestedToolConfirmations has an entry', () => {
-    const actions = createEventActions({
-      requestedToolConfirmations: {
-        'call-1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+  const nonDefaults: Array<[string, Partial<EventActions>]> = [
+    ['stateDelta has an entry', {stateDelta: {jobStarted: true}}],
+    ['artifactDelta has an entry', {artifactDelta: {'report.pdf': 1}}],
+    [
+      'requestedAuthConfigs has an entry',
+      {
+        requestedAuthConfigs: {
+          'call-1': {
+            authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+            credentialKey: 'call-1-key',
+          },
+        },
       },
-    });
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
+    ],
+    [
+      'requestedToolConfirmations has an entry',
+      {
+        requestedToolConfirmations: {
+          'call-1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      },
+    ],
+    ['skipSummarization is true', {skipSummarization: true}],
+    ['skipSummarization is explicitly false', {skipSummarization: false}],
+    ['transferToAgent is set', {transferToAgent: 'other_agent'}],
+    ['escalate is set', {escalate: true}],
+  ];
 
-  it('returns false when skipSummarization is set to true', () => {
-    const actions = createEventActions({skipSummarization: true});
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when skipSummarization is explicitly set to false', () => {
-    const actions = createEventActions({skipSummarization: false});
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when transferToAgent is set', () => {
-    const actions = createEventActions({transferToAgent: 'other_agent'});
-    expect(isDefaultEventActions(actions)).toBe(false);
-  });
-
-  it('returns false when escalate is set', () => {
-    const actions = createEventActions({escalate: true});
-    expect(isDefaultEventActions(actions)).toBe(false);
+  it.each(nonDefaults)('returns false when %s', (_label, overrides) => {
+    expect(isDefaultEventActions(createEventActions(overrides))).toBe(false);
   });
 });
 

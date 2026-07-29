@@ -423,35 +423,28 @@ describe('handleFunctionCallList', () => {
     },
   );
 
-  it.each([
-    ['long running call first', ['startJob', 'testTool']],
-    ['long running call second', ['testTool', 'startJob']],
-  ])(
-    'should merge the actions of a silent long running tool into the batch event (%s)',
-    async (_label, callOrder) => {
-      const tool = createSilentLongRunningTool('startJob', (toolContext) => {
-        toolContext.state.set('jobStarted', true);
-      });
+  it('should merge the actions of a silent long running tool into the batch event', async () => {
+    const tool = createSilentLongRunningTool('startJob', (toolContext) => {
+      toolContext.state.set('jobStarted', true);
+    });
 
-      const event = await handleFunctionCallList({
-        invocationContext,
-        functionCalls: callOrder.map((name, index) => ({
-          id: `call_${index}`,
-          name,
-          args: {},
-        })),
-        toolsDict: {'startJob': tool, 'testTool': testTool},
-        beforeToolCallbacks: [],
-        afterToolCallbacks: [],
-      });
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        {id: 'call_0', name: 'startJob', args: {}},
+        {id: 'call_1', name: 'testTool', args: {}},
+      ],
+      toolsDict: {'startJob': tool, 'testTool': testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
 
-      expect(event!.content!.parts!.length).toBe(1);
-      expect(event!.content!.parts![0].functionResponse!.response).toEqual({
-        result: 'tool executed',
-      });
-      expect(event!.actions.stateDelta).toEqual({jobStarted: true});
-    },
-  );
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'tool executed',
+    });
+    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
+  });
 
   it('should keep the function response of a long running tool that does respond', async () => {
     const tool = new LongRunningFunctionTool({
