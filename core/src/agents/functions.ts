@@ -421,8 +421,6 @@ export async function handleFunctionCallList({
       // The tool's response will arrive later, but any actions it recorded on
       // the tool context (state/artifact deltas, auth or confirmation
       // requests, transfer, escalation, skipSummarization) must not be lost.
-      // Emit a content-less event carrying just those actions; emit nothing
-      // when the tool left its actions untouched.
       if (!isDefaultEventActions(toolContext.actions)) {
         functionResponseEvents.push(
           createEvent({

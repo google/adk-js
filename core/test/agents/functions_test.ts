@@ -359,27 +359,14 @@ describe('handleFunctionCallList', () => {
     expect(event).toBeNull();
   });
 
-  it('should emit a content-less event carrying the stateDelta of a silent long running tool', async () => {
-    const tool = createSilentLongRunningTool('startJob', (toolContext) => {
-      toolContext.state.set('jobStarted', true);
-    });
-
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [{id: 'lro_1', name: 'startJob', args: {}}],
-      toolsDict: {'startJob': tool},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-
-    expect(event).not.toBeNull();
-    expect(event!.content).toBeUndefined();
-    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
-    expect(event!.author).toBe('test_agent');
-    expect(event!.invocationId).toBe('inv_123');
-  });
-
   it.each([
+    [
+      'a stateDelta',
+      (toolContext: Context) => {
+        toolContext.state.set('jobStarted', true);
+      },
+      {stateDelta: {jobStarted: true}},
+    ],
     [
       'skipSummarization',
       (toolContext: Context) => {
@@ -420,6 +407,8 @@ describe('handleFunctionCallList', () => {
 
       expect(event!.content).toBeUndefined();
       expect(event!.actions).toMatchObject(expectedActions);
+      expect(event!.author).toBe('test_agent');
+      expect(event!.invocationId).toBe('inv_123');
     },
   );
 
