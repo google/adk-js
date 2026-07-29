@@ -8,12 +8,14 @@ import {
   BaseLlm,
   BaseLlmConnection,
   Context,
+  createSession,
   GlobalInstructionPlugin,
   InMemoryRunner,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
+  PluginManager,
   ReadonlyContext,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
@@ -40,25 +42,23 @@ class MockLlm extends BaseLlm {
 }
 
 describe('GlobalInstructionPlugin', () => {
-  const mockSession = {
+  const mockSession = createSession({
     id: 'session-1',
-    state: {
-      user_id: 'test_user_123',
-    },
-  } as unknown as InvocationContext['session'];
-
-  const mockInvocationContext = {
-    invocationId: 'inv-1',
-    session: mockSession,
-    userId: 'user-1',
     appName: 'test-app',
-  } as unknown as InvocationContext;
+    userId: 'user-1',
+    state: {user_id: 'test_user_123'},
+  });
 
-  const mockCallbackContext = {
-    agentName: 'test_agent',
+  const mockInvocationContext = new InvocationContext({
     invocationId: 'inv-1',
+    agent: new LlmAgent({name: 'test_agent'}),
+    session: mockSession,
+    pluginManager: new PluginManager(),
+  });
+
+  const mockCallbackContext = new Context({
     invocationContext: mockInvocationContext,
-  } as unknown as Context;
+  });
 
   it('should initialize with default name "global_instruction"', () => {
     const plugin = new GlobalInstructionPlugin('instruction');
@@ -115,18 +115,11 @@ describe('GlobalInstructionPlugin', () => {
     );
   });
 
-  it('should not modify system instruction when global instruction is empty or undefined', async () => {
+  it('should not modify system instruction when global instruction resolves empty', async () => {
     const pluginEmpty = new GlobalInstructionPlugin('');
-    const pluginUndefined = new GlobalInstructionPlugin();
     const pluginProviderEmpty = new GlobalInstructionPlugin(async () => '');
 
     const llmRequest1: LlmRequest = {
-      contents: [],
-      toolsDict: {},
-      liveConnectConfig: {},
-      config: {systemInstruction: 'Original instruction'},
-    };
-    const llmRequest2: LlmRequest = {
       contents: [],
       toolsDict: {},
       liveConnectConfig: {},
@@ -143,17 +136,12 @@ describe('GlobalInstructionPlugin', () => {
       callbackContext: mockCallbackContext,
       llmRequest: llmRequest1,
     });
-    await pluginUndefined.beforeModelCallback({
-      callbackContext: mockCallbackContext,
-      llmRequest: llmRequest2,
-    });
     await pluginProviderEmpty.beforeModelCallback({
       callbackContext: mockCallbackContext,
       llmRequest: llmRequest3,
     });
 
     expect(llmRequest1.config?.systemInstruction).toBe('Original instruction');
-    expect(llmRequest2.config?.systemInstruction).toBe('Original instruction');
     expect(llmRequest3.config?.systemInstruction).toBe('Original instruction');
   });
 
@@ -261,14 +249,14 @@ describe('GlobalInstructionPlugin', () => {
     );
   });
 
-  it('should prepend global instruction to existing object (non-Iterable) system instruction', async () => {
+  it('should prepend global instruction to an existing bare Part system instruction', async () => {
     const plugin = new GlobalInstructionPlugin('Global instruction.');
-    const existingObj = {text: 'Some object instruction'};
+    const existingPart = {text: 'Some object instruction'};
     const llmRequest: LlmRequest = {
       contents: [],
       toolsDict: {},
       liveConnectConfig: {},
-      config: {systemInstruction: existingObj as unknown as string},
+      config: {systemInstruction: existingPart},
     };
 
     await plugin.beforeModelCallback({
@@ -278,8 +266,62 @@ describe('GlobalInstructionPlugin', () => {
 
     expect(llmRequest.config?.systemInstruction).toEqual([
       'Global instruction.',
-      existingObj,
+      existingPart,
     ]);
+  });
+
+  it('should keep an existing Content system instruction a Content', async () => {
+    const plugin = new GlobalInstructionPlugin('Global instruction.');
+    const existingContent = {
+      role: 'system',
+      parts: [{text: 'Agent instruction.'}],
+    };
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+      config: {systemInstruction: existingContent},
+    };
+
+    await plugin.beforeModelCallback({
+      callbackContext: mockCallbackContext,
+      llmRequest,
+    });
+
+    expect(llmRequest.config?.systemInstruction).toEqual({
+      role: 'system',
+      parts: [{text: 'Global instruction.'}, {text: 'Agent instruction.'}],
+    });
+    // The agent's own Content must not be mutated: the request config is a
+    // shallow copy of it, so mutating would accumulate on every invocation.
+    expect(existingContent.parts).toEqual([{text: 'Agent instruction.'}]);
+  });
+
+  it('should not accumulate the global instruction across repeated invocations', async () => {
+    const plugin = new GlobalInstructionPlugin('Global instruction.');
+    const agentContent = {
+      role: 'system',
+      parts: [{text: 'Agent instruction.'}],
+    };
+
+    for (let i = 0; i < 3; i++) {
+      const llmRequest: LlmRequest = {
+        contents: [],
+        toolsDict: {},
+        liveConnectConfig: {},
+        // Mirrors basic_llm_request_processor: a shallow copy that shares the
+        // agent's Content object.
+        config: {systemInstruction: agentContent},
+      };
+      await plugin.beforeModelCallback({
+        callbackContext: mockCallbackContext,
+        llmRequest,
+      });
+      expect(llmRequest.config?.systemInstruction).toEqual({
+        role: 'system',
+        parts: [{text: 'Global instruction.'}, {text: 'Agent instruction.'}],
+      });
+    }
   });
 
   it('should inject system instruction in an end-to-end InMemoryRunner simulation', async () => {
