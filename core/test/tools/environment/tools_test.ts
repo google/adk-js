@@ -4,22 +4,57 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
+import {
+  Context,
+  EditFileTool,
+  EnvironmentToolset,
+  ExecuteResult,
+  ExecuteTool,
+  InvocationContext,
+  LlmRequest,
+  ReadFileTool,
+  ToolConfirmation,
+  WriteFileTool,
+} from '@google/adk';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
-import {EditFileTool} from '../../../src/tools/environment/edit_file_tool.js';
-import {EnvironmentToolset} from '../../../src/tools/environment/environment_toolset.js';
-import {ExecuteTool} from '../../../src/tools/environment/execute_tool.js';
-import {ReadFileTool} from '../../../src/tools/environment/read_file_tool.js';
+// `truncate`, `toError` and `resolveAndValidatePath` are implementation
+// details of the environment tools and are deliberately not part of the
+// package's public surface, so they are imported from the module directly.
 import {
   resolveAndValidatePath,
+  toError,
   truncate,
 } from '../../../src/tools/environment/utils.js';
-import {WriteFileTool} from '../../../src/tools/environment/write_file_tool.js';
+
+const FUNCTION_CALL_ID = 'fc-1';
+
+const REQUIRE_CONFIRMATION_MESSAGE =
+  'This tool call needs external confirmation before completion.';
+
+/**
+ * Builds the `Context` the framework hands to a tool call. Only the fields the
+ * environment tools read are populated; the surrounding invocation is stubbed,
+ * matching `run_skill_inline_script_tool_test.ts`.
+ */
+function createContext(toolConfirmation?: ToolConfirmation): Context {
+  return new Context({
+    invocationContext: {
+      session: {state: {}},
+      agent: {name: 'test-agent'},
+    } as unknown as InvocationContext,
+    functionCallId: FUNCTION_CALL_ID,
+    toolConfirmation,
+  });
+}
+
+/** A context whose tool call the client has already approved. */
+function confirmedContext(): Context {
+  return createContext(new ToolConfirmation({confirmed: true}));
+}
 
 describe('Environment Tools Parity', () => {
   let tmpDir: string;
@@ -35,7 +70,7 @@ describe('Environment Tools Parity', () => {
   describe('utils', () => {
     it('truncates correctly', () => {
       expect(truncate('1234567890', 5)).toBe(
-        '12345\n... (truncated to 10 chars)',
+        '12345\n... (truncated, 10 total chars)',
       );
       expect(truncate('12', 5)).toBe('12');
       expect(truncate('1234567890', 0)).toBe('');
@@ -52,6 +87,12 @@ describe('Environment Tools Parity', () => {
         path.join(tmpDir, 'ok', 'file.txt'),
       );
     });
+
+    it('normalizes thrown values to Error', () => {
+      const err = new Error('boom');
+      expect(toError(err)).toBe(err);
+      expect(toError('boom').message).toBe('boom');
+    });
   });
 
   describe('ExecuteTool', () => {
@@ -60,51 +101,92 @@ describe('Environment Tools Parity', () => {
     const normalizeShellOutput = (value: string) =>
       value.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
 
+    /**
+     * Runs the tool with an approved confirmation and narrows away the
+     * confirmation-pending branch of the result union.
+     */
+    async function runExecute(
+      tool: ExecuteTool,
+      args: Record<string, unknown>,
+    ): Promise<ExecuteResult> {
+      const res = await tool.runAsync({args, toolContext: confirmedContext()});
+      if (!('status' in res)) {
+        throw new Error('Execute unexpectedly paused for confirmation.');
+      }
+      return res;
+    }
+
     it('executes successfully', async () => {
       const tool = new ExecuteTool({workingDir: tmpDir});
       expect(tool._getDeclaration()).toBeDefined();
 
-      let res: any = await tool.runAsync({args: {}, toolContext: {} as any});
-      expect(res.status).toBe('error');
+      const missingArgs = await runExecute(tool, {});
+      expect(missingArgs.status).toBe('error');
 
-      res = await tool.runAsync({
-        args: {command: 'echo test && echo err >&2'},
-        toolContext: {} as any,
+      const res = await runExecute(tool, {
+        command: 'echo test && echo err >&2',
       });
       expect(res.status).toBe('ok');
-      expect(normalizeShellOutput(res.stdout)).toBe('test\n');
-      expect(normalizeShellOutput(res.stderr)).toBe('err\n');
+      expect(normalizeShellOutput(res.stdout ?? '')).toBe('test\n');
+      expect(normalizeShellOutput(res.stderr ?? '')).toBe('err\n');
     });
 
     it('reports failure on nonzero exit code with stdout/err', async () => {
       const tool = new ExecuteTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
-        args: {command: 'echo out && echo err >&2 && exit 10'},
-        toolContext: {} as any,
+      const res = await runExecute(tool, {
+        command: 'echo out && echo err >&2 && exit 10',
       });
       expect(res.status).toBe('error');
       expect(res.exit_code).toBe(10);
-      expect(normalizeShellOutput(res.stdout)).toBe('out\n');
-      expect(normalizeShellOutput(res.stderr)).toBe('err\n');
+      expect(normalizeShellOutput(res.stdout ?? '')).toBe('out\n');
+      expect(normalizeShellOutput(res.stderr ?? '')).toBe('err\n');
     });
 
     it('reports timeout', async () => {
       const tool = new ExecuteTool({workingDir: tmpDir, executeTimeoutMs: 100});
-      const res: any = await tool.runAsync({
-        args: {command: 'sleep 1'},
-        toolContext: {} as any,
-      });
+      const res = await runExecute(tool, {command: 'sleep 1'});
       expect(res.status).toBe('error');
       expect(res.error).toMatch(/timed out/i);
     });
 
     it('handles spawn errors and includes stdout/stderr on exit code', async () => {
       const tool = new ExecuteTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
-        args: {command: 'non_existent_command_123'},
-        toolContext: {} as any,
-      });
+      const res = await runExecute(tool, {command: 'non_existent_command_123'});
       expect(res.status).toBe('error');
+    });
+
+    it('requests confirmation and runs nothing until it is granted', async () => {
+      const tool = new ExecuteTool({workingDir: tmpDir});
+      const toolContext = createContext();
+
+      const res = await tool.runAsync({
+        args: {command: 'echo marker > marker.txt'},
+        toolContext,
+      });
+
+      expect(res).toEqual({partial: REQUIRE_CONFIRMATION_MESSAGE});
+      expect(
+        toolContext.actions.requestedToolConfirmations[FUNCTION_CALL_ID],
+      ).toBeDefined();
+      await expect(
+        fs.access(path.join(tmpDir, 'marker.txt')),
+      ).rejects.toThrowError();
+    });
+
+    it('refuses to run when the confirmation was rejected', async () => {
+      const tool = new ExecuteTool({workingDir: tmpDir});
+      const res = await tool.runAsync({
+        args: {command: 'echo marker > marker.txt'},
+        toolContext: createContext(new ToolConfirmation({confirmed: false})),
+      });
+
+      expect(res).toEqual({
+        status: 'error',
+        error: 'Command execution was not confirmed and was rejected.',
+      });
+      await expect(
+        fs.access(path.join(tmpDir, 'marker.txt')),
+      ).rejects.toThrowError();
     });
   });
 
@@ -113,9 +195,9 @@ describe('Environment Tools Parity', () => {
       const tool = new WriteFileTool({workingDir: tmpDir});
       expect(tool._getDeclaration()).toBeDefined();
 
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'test.txt', content: 'hello'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('ok');
       const content = await fs.readFile(path.join(tmpDir, 'test.txt'), 'utf8');
@@ -124,34 +206,37 @@ describe('Environment Tools Parity', () => {
 
     it('fails if path invalid', async () => {
       const tool = new WriteFileTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: '../test.txt', content: 'hello'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
     });
 
     it('fails on missing arguments', async () => {
       const tool = new WriteFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({args: {}, toolContext: {} as any});
-      expect(res.status).toBe('error');
-      expect(res.error).toContain('path');
-
-      res = await tool.runAsync({
-        args: {path: 'test.txt'},
-        toolContext: {} as any,
+      const missingPath = await tool.runAsync({
+        args: {},
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
-      expect(res.error).toContain('content');
+      expect(missingPath.status).toBe('error');
+      expect(missingPath.error).toContain('path');
+
+      const missingContent = await tool.runAsync({
+        args: {path: 'test.txt'},
+        toolContext: createContext(),
+      });
+      expect(missingContent.status).toBe('error');
+      expect(missingContent.error).toContain('content');
     });
 
     it('handles write errors', async () => {
       const tool = new WriteFileTool({
         workingDir: '/invalid/path/that/does_not_exist',
       });
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'test.txt', content: 'hello'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
     });
@@ -170,9 +255,9 @@ describe('Environment Tools Parity', () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
       expect(tool._getDeclaration()).toBeDefined();
 
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'lines.txt'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('ok');
       expect(res.content).toContain('1\tline1\n');
@@ -181,62 +266,68 @@ describe('Environment Tools Parity', () => {
 
     it('reads specific lines', async () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'lines.txt', start_line: 2, end_line: 3},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('ok');
-      expect(res.content.trim()).toBe('2\tline2\n     3\tline3'.trim());
+      expect((res.content ?? '').trim()).toBe('2\tline2\n     3\tline3'.trim());
       expect(res.total_lines).toBe(4);
     });
 
     it('handles out of bounds', async () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({
+      const pastEnd = await tool.runAsync({
         args: {path: 'lines.txt', start_line: 10},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
-      expect(res.total_lines).toBe(4);
+      expect(pastEnd.status).toBe('error');
+      expect(pastEnd.total_lines).toBe(4);
 
-      res = await tool.runAsync({
+      const inverted = await tool.runAsync({
         args: {path: 'lines.txt', start_line: 2, end_line: 1},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
+      expect(inverted.status).toBe('error');
     });
 
     it('fails if path invalid or missing', async () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({args: {}, toolContext: {} as any});
-      expect(res.status).toBe('error');
-
-      res = await tool.runAsync({
-        args: {path: '../escape'},
-        toolContext: {} as any,
+      const missingPath = await tool.runAsync({
+        args: {},
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
+      expect(missingPath.status).toBe('error');
+
+      const escaping = await tool.runAsync({
+        args: {path: '../escape'},
+        toolContext: createContext(),
+      });
+      expect(escaping.status).toBe('error');
     });
 
     it('fails if file not found or read error', async () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({
+      const notFound = await tool.runAsync({
         args: {path: 'notfound.txt'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
-      expect(res.error).toContain('File not found');
+      expect(notFound.status).toBe('error');
+      expect(notFound.error).toContain('File not found');
 
       // non-ENOENT error (like EISDIR)
-      res = await tool.runAsync({args: {path: '.'}, toolContext: {} as any});
-      expect(res.status).toBe('error');
+      const directory = await tool.runAsync({
+        args: {path: '.'},
+        toolContext: createContext(),
+      });
+      expect(directory.status).toBe('error');
     });
 
     it('validates args', async () => {
       const tool = new ReadFileTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'lines.txt', start_line: 'not_number'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
       expect(res.error).toContain('integer');
@@ -256,9 +347,9 @@ describe('Environment Tools Parity', () => {
       const tool = new EditFileTool({workingDir: tmpDir});
       expect(tool._getDeclaration()).toBeDefined();
 
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'edit.txt', old_string: 'world', new_string: 'mars'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('ok');
 
@@ -267,11 +358,71 @@ describe('Environment Tools Parity', () => {
       expect(content).toContain('universe');
     });
 
+    it('matches old_string literally rather than as a regex', async () => {
+      await fs.writeFile(
+        path.join(tmpDir, 'meta.txt'),
+        'value = compute(a.b)\n',
+        'utf8',
+      );
+      const tool = new EditFileTool({workingDir: tmpDir});
+      const res = await tool.runAsync({
+        args: {
+          path: 'meta.txt',
+          old_string: 'compute(a.b)',
+          new_string: 'compute(c)',
+        },
+        toolContext: createContext(),
+      });
+      expect(res.status).toBe('ok');
+      expect(await fs.readFile(path.join(tmpDir, 'meta.txt'), 'utf8')).toBe(
+        'value = compute(c)\n',
+      );
+    });
+
+    it('does not edit text that only matches when metacharacters are live', async () => {
+      await fs.writeFile(path.join(tmpDir, 'meta.txt'), 'axb\n', 'utf8');
+      const tool = new EditFileTool({workingDir: tmpDir});
+      const res = await tool.runAsync({
+        args: {path: 'meta.txt', old_string: 'a.b', new_string: 'zzz'},
+        toolContext: createContext(),
+      });
+      expect(res.status).toBe('error');
+      expect(res.error).toContain('not found');
+      expect(await fs.readFile(path.join(tmpDir, 'meta.txt'), 'utf8')).toBe(
+        'axb\n',
+      );
+    });
+
+    it('reports an unbalanced old_string as a missing match, not a crash', async () => {
+      const tool = new EditFileTool({workingDir: tmpDir});
+      const res = await tool.runAsync({
+        args: {path: 'edit.txt', old_string: 'foo(bar', new_string: 'x'},
+        toolContext: createContext(),
+      });
+      expect(res.status).toBe('error');
+      expect(res.error).toContain('not found');
+    });
+
+    it('inserts new_string literally when it contains $ patterns', async () => {
+      const tool = new EditFileTool({workingDir: tmpDir});
+      const res = await tool.runAsync({
+        args: {
+          path: 'edit.txt',
+          old_string: 'world',
+          new_string: 'cost is $& dollars',
+        },
+        toolContext: createContext(),
+      });
+      expect(res.status).toBe('ok');
+      const content = await fs.readFile(path.join(tmpDir, 'edit.txt'), 'utf8');
+      expect(content).toContain('hello cost is $& dollars');
+    });
+
     it('fails if non-unique match', async () => {
       const tool = new EditFileTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'edit.txt', old_string: 'hello', new_string: 'hi'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
       expect(res.error).toContain('appears 2 times');
@@ -279,9 +430,9 @@ describe('Environment Tools Parity', () => {
 
     it('fails if zero matches', async () => {
       const tool = new EditFileTool({workingDir: tmpDir});
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'edit.txt', old_string: 'notfound', new_string: 'hi'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
       expect(res.error).toContain('not found');
@@ -289,43 +440,46 @@ describe('Environment Tools Parity', () => {
 
     it('validates args', async () => {
       const tool = new EditFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({
+      const emptyOldString = await tool.runAsync({
         args: {path: 'edit.txt', old_string: '', new_string: 'hi'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
-      expect(res.error).toContain('cannot be empty');
+      expect(emptyOldString.status).toBe('error');
+      expect(emptyOldString.error).toContain('cannot be empty');
 
-      res = await tool.runAsync({args: {}, toolContext: {} as any});
-      expect(res.status).toBe('error');
+      const noArgs = await tool.runAsync({
+        args: {},
+        toolContext: createContext(),
+      });
+      expect(noArgs.status).toBe('error');
 
-      res = await tool.runAsync({
+      const missingNewString = await tool.runAsync({
         args: {path: 'edit.txt', old_string: 'hello'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
+      expect(missingNewString.status).toBe('error');
     });
 
     it('fails if path invalid or file does not exist', async () => {
       const tool = new EditFileTool({workingDir: tmpDir});
-      let res: any = await tool.runAsync({
+      const escaping = await tool.runAsync({
         args: {path: '../escape', old_string: 'h', new_string: 'b'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
+      expect(escaping.status).toBe('error');
 
-      res = await tool.runAsync({
+      const missingFile = await tool.runAsync({
         args: {path: 'missing.txt', old_string: 'h', new_string: 'b'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
-      expect(res.error).toContain('File not found');
+      expect(missingFile.status).toBe('error');
+      expect(missingFile.error).toContain('File not found');
 
-      res = await tool.runAsync({
+      const directory = await tool.runAsync({
         args: {path: '.', old_string: 'h', new_string: 'b'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
-      expect(res.status).toBe('error');
+      expect(directory.status).toBe('error');
     });
 
     it('handles write errors', async () => {
@@ -334,9 +488,9 @@ describe('Environment Tools Parity', () => {
       // We need to trigger an error writing to an existing file.
       // We can make the file read-only!
       await fs.chmod(path.join(tmpDir, 'edit.txt'), 0o444);
-      const res: any = await tool.runAsync({
+      const res = await tool.runAsync({
         args: {path: 'edit.txt', old_string: 'world', new_string: 'mars'},
-        toolContext: {} as any,
+        toolContext: createContext(),
       });
       expect(res.status).toBe('error');
     });
@@ -349,19 +503,18 @@ describe('Environment Tools Parity', () => {
       expect(tools.length).toBe(4);
       expect(tools.some((t) => t.name === 'Execute')).toBe(true);
 
-      const request: any = {
+      // `appendInstructions` writes through to `config.systemInstruction`, so
+      // the injected instruction is observable on the request itself.
+      const request: LlmRequest = {
         config: {},
         toolsDict: {},
         contents: [],
+        liveConnectConfig: {},
       };
-      const appendInstructionsSpy = vi.fn();
 
-      // Override or mock it? No, wait! `appendInstructions` is a utility method imported by the toolset.
-      // Wait, let's just observe if the config is updated! The actual `appendInstructions` method updates llmRequest.config.systemInstruction.
-
-      await set.processLlmRequest({} as any, request);
-      expect(request.config.systemInstruction).toContain('Environment Rules');
-      expect(request.config.systemInstruction).toContain(tmpDir);
+      await set.processLlmRequest(createContext(), request);
+      expect(request.config?.systemInstruction).toContain('Environment Rules');
+      expect(request.config?.systemInstruction).toContain(tmpDir);
     });
 
     it('returns filtered and unfiltered tools', async () => {
@@ -372,7 +525,7 @@ describe('Environment Tools Parity', () => {
       let tools = await set.getTools(); // no context, unfiltered
       expect(tools.length).toBeGreaterThan(1);
 
-      tools = await set.getTools({} as any); // filtered
+      tools = await set.getTools(createContext()); // filtered
       expect(tools.length).toBe(1);
       expect(tools[0].name).toBe('Execute');
     });
