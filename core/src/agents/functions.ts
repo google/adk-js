@@ -15,7 +15,10 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../events/event.js';
-import {mergeEventActions} from '../events/event_actions.js';
+import {
+  isDefaultEventActions,
+  mergeEventActions,
+} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
@@ -109,7 +112,7 @@ export function generateAuthEvent(
     branch: invocationContext.branch,
     content: {
       parts: parts,
-      role: functionResponseEvent.content!.role,
+      role: functionResponseEvent.content?.role ?? 'user',
     },
     longRunningToolIds: Array.from(longRunningToolIds),
   });
@@ -162,7 +165,7 @@ export function generateRequestConfirmationEvent({
     branch: invocationContext.branch,
     content: {
       parts: parts,
-      role: functionResponseEvent.content!.role,
+      role: functionResponseEvent.content?.role ?? 'user',
     },
     actions: functionResponseEvent.actions,
     longRunningToolIds: Array.from(longRunningToolIds),
@@ -415,6 +418,21 @@ export async function handleFunctionCallList({
     // TODO - b/425992518: state event polluting runtime, consider fix.
     // Allow long running function to return None as response.
     if (tool.isLongRunning && !functionResponse) {
+      // The tool's response will arrive later, but any actions it recorded on
+      // the tool context (state/artifact deltas, auth or confirmation
+      // requests, transfer, escalation, skipSummarization) must not be lost.
+      // Emit a content-less event carrying just those actions; emit nothing
+      // when the tool left its actions untouched.
+      if (!isDefaultEventActions(toolContext.actions)) {
+        functionResponseEvents.push(
+          createEvent({
+            invocationId: invocationContext.invocationId,
+            author: invocationContext.agent.name,
+            actions: toolContext.actions,
+            branch: invocationContext.branch,
+          }),
+        );
+      }
       continue;
     }
 
