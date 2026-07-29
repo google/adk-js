@@ -9,7 +9,11 @@ import {experimental} from '../utils/experimental.js';
 import {guessMimeType} from '../utils/file_utils.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
-import {CodeExecutionResult, File} from './code_execution_utils.js';
+import {
+  CodeExecutionLanguage,
+  CodeExecutionResult,
+  File,
+} from './code_execution_utils.js';
 
 const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const CODE_INTERPRETER_EXTENSION_ENV = 'CODE_INTERPRETER_EXTENSION_NAME';
@@ -346,6 +350,13 @@ class DefaultCodeInterpreterExtensionClient implements CodeInterpreterExtensionC
  * A code executor that uses the managed Vertex AI Code Interpreter Extension to
  * execute model-generated Python code, returning stdout, stderr, and generated
  * output files (images and data files).
+ *
+ * Python is the only language this executor can run: the managed extension is
+ * provisioned from the public `code_interpreter.yaml` manifest, which exposes a
+ * Python runtime and no other. Any other {@link CodeExecutionLanguage} is
+ * reported back as unsupported rather than sent to the Python interpreter. Use
+ * `AgentEngineSandboxCodeExecutor` for JavaScript, or `UnsafeLocalCodeExecutor`
+ * for the shell family.
  */
 @experimental
 export class VertexAiCodeExecutor extends BaseCodeExecutor {
@@ -390,6 +401,17 @@ export class VertexAiCodeExecutor extends BaseCodeExecutor {
     params: ExecuteCodeParams,
   ): Promise<CodeExecutionResult> {
     const {codeExecutionInput} = params;
+    // Report an unrunnable language the way UnsafeLocalCodeExecutor does — as
+    // stderr rather than a throw — so the model can retry in Python instead of
+    // seeing a Python SyntaxError for, say, TypeScript.
+    if (codeExecutionInput.language !== CodeExecutionLanguage.PYTHON) {
+      return {
+        stdout: '',
+        stderr: `Unsupported language: ${codeExecutionInput.language}. The Vertex AI Code Interpreter extension only runs ${CodeExecutionLanguage.PYTHON}.`,
+        outputFiles: [],
+      };
+    }
+
     const resourceName = await this.getResourceName();
 
     const executeParams: ExtensionExecuteParams = {

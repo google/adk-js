@@ -349,6 +349,24 @@ describe('VertexAiCodeExecutor', () => {
       expect(result.stdout).toBe('');
       expect(result.stderr).toBe('');
     });
+
+    it.each([
+      CodeExecutionLanguage.TYPESCRIPT,
+      CodeExecutionLanguage.JAVASCRIPT,
+      CodeExecutionLanguage.SHELL,
+      CodeExecutionLanguage.UNSPECIFIED,
+    ])(
+      'reports %s as unsupported without calling the extension',
+      async (language) => {
+        const result = await run({language});
+        expect(result.stderr).toBe(
+          `Unsupported language: ${language}. The Vertex AI Code Interpreter extension only runs python.`,
+        );
+        expect(result.stdout).toBe('');
+        expect(result.outputFiles).toEqual([]);
+        expect(mockClient.execute).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('default REST client', () => {
