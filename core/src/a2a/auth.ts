@@ -57,6 +57,11 @@ function timingSafeEqualStrings(a: string, b: string): boolean {
  * A shared secret is only as good as the transport carrying it: serve the A2A
  * surface over HTTPS so the token is not exposed on the wire.
  *
+ * A rejected request surfaces as whatever the `@a2a-js/sdk` handler produces
+ * for a failing `UserBuilder`, which is an HTTP 500 rather than a 401. The
+ * guarantee this helper provides is that the agent is never reached, not that
+ * the caller gets a particular status code.
+ *
  * @param token The shared secret callers must present. Must be non-empty.
  * @throws If `token` is empty or contains only whitespace.
  */
