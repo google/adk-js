@@ -29,72 +29,35 @@ describe('bearerTokenUserBuilder', () => {
     );
   });
 
-  it('authenticates a request carrying the configured token', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
+  it.each([
+    ['the configured token', TOKEN, `Bearer ${TOKEN}`],
+    ['a case-insensitive bearer scheme', TOKEN, `bearer ${TOKEN}`],
+    // HTTP strips whitespace around header values, so a padded token would
+    // otherwise be impossible for any caller to present.
+    ['a token configured with padding', `  ${TOKEN}  `, `Bearer ${TOKEN}`],
+  ])('authenticates %s', async (_label, configuredToken, authorization) => {
+    const userBuilder = bearerTokenUserBuilder(configuredToken);
 
-    const user = await userBuilder(
-      requestWithHeaders({authorization: `Bearer ${TOKEN}`}),
-    );
+    const user = await userBuilder(requestWithHeaders({authorization}));
 
-    expect(user.isAuthenticated).toBe(true);
-    expect(user.userName).toBe('a2a-bearer-token');
+    expect(user).toEqual({
+      isAuthenticated: true,
+      userName: 'a2a-bearer-token',
+    });
   });
 
-  it('accepts a case-insensitive bearer scheme', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
-
-    const user = await userBuilder(
-      requestWithHeaders({authorization: `bearer ${TOKEN}`}),
-    );
-
-    expect(user.isAuthenticated).toBe(true);
-  });
-
-  it('rejects a request with no Authorization header', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
-
-    await expect(userBuilder(requestWithHeaders({}))).rejects.toThrow(
-      /missing or invalid/,
-    );
-  });
-
-  it('rejects a non-bearer scheme', async () => {
+  it.each([
+    ['no Authorization header', undefined],
+    ['a non-bearer scheme', 'Basic czNjcjN0'],
+    // Same length as TOKEN, so this exercises the comparison itself rather
+    // than the length guard in front of it.
+    ['a wrong token of the same length', 'Bearer S3CR3T'],
+    ['a wrong token of a different length', `Bearer ${TOKEN}-and-more`],
+  ])('rejects %s', async (_label, authorization) => {
     const userBuilder = bearerTokenUserBuilder(TOKEN);
 
     await expect(
-      userBuilder(requestWithHeaders({authorization: 'Basic czNjcjN0'})),
+      userBuilder(requestWithHeaders({authorization})),
     ).rejects.toThrow(/missing or invalid/);
-  });
-
-  it('rejects a wrong token of the same length', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
-    const wrongToken = 'S3CR3T';
-    expect(wrongToken).toHaveLength(TOKEN.length);
-
-    await expect(
-      userBuilder(requestWithHeaders({authorization: `Bearer ${wrongToken}`})),
-    ).rejects.toThrow(/missing or invalid/);
-  });
-
-  it('rejects a wrong token of a different length', async () => {
-    const userBuilder = bearerTokenUserBuilder(TOKEN);
-
-    await expect(
-      userBuilder(
-        requestWithHeaders({authorization: `Bearer ${TOKEN}-and-more`}),
-      ),
-    ).rejects.toThrow(/missing or invalid/);
-  });
-
-  it('trims surrounding whitespace from the configured token', async () => {
-    // HTTP strips whitespace around header values, so an untrimmed token
-    // would be impossible for any caller to present.
-    const userBuilder = bearerTokenUserBuilder(`  ${TOKEN}  `);
-
-    const user = await userBuilder(
-      requestWithHeaders({authorization: `Bearer ${TOKEN}`}),
-    );
-
-    expect(user.isAuthenticated).toBe(true);
   });
 });
