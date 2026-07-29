@@ -85,7 +85,7 @@ describe('toA2a', () => {
     agent = new TestAgent();
   });
 
-  it('creates an express app that parses JSON bodies only', async () => {
+  it('creates an express app with JSON-only body parsing and handlers', async () => {
     const app = await toA2a(agent, {allowUnauthenticated: true});
 
     expect(express).toHaveBeenCalled();

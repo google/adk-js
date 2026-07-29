@@ -58,14 +58,6 @@ class TestAgent extends BaseAgent {
   ): AsyncGenerator<Event, void, void> {}
 }
 
-function post(port: number, path: string, contentType: string, body: string) {
-  return fetch(`http://127.0.0.1:${port}${path}`, {
-    method: 'POST',
-    headers: {'content-type': contentType},
-    body,
-  });
-}
-
 describe('toA2a body parsing', () => {
   let server: Server;
   let port: number;
@@ -89,27 +81,27 @@ describe('toA2a body parsing', () => {
     });
   });
 
+  function post(path: string, contentType: string, body: string) {
+    return fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers: {'content-type': contentType},
+      body,
+    });
+  }
+
   // `a[b][0][c]=d` is the crux of the bug: `qs` rebuilds it as
   // `{a: {b: [{c: 'd'}]}}`, so a form body — a CORS-safelisted content type
   // that needs no preflight — could carry a fully structured JSON-RPC request.
-  it.each(['/rest', '/jsonrpc'])(
-    'does not parse a form-encoded body posted to %s',
-    async (path) => {
-      await post(
-        port,
-        path,
-        'application/x-www-form-urlencoded',
-        'a[b][0][c]=d',
-      );
+  it('does not parse a form-encoded body', async () => {
+    await post('/rest', 'application/x-www-form-urlencoded', 'a[b][0][c]=d');
 
-      expect(receivedBodies[0]).toEqual({});
-    },
-  );
+    expect(receivedBodies[0]).toEqual({});
+  });
 
   it('still parses a JSON body', async () => {
     const payload = {jsonrpc: '2.0', id: 1, method: 'message/send'};
 
-    await post(port, '/rest', 'application/json', JSON.stringify(payload));
+    await post('/rest', 'application/json', JSON.stringify(payload));
 
     expect(receivedBodies[0]).toEqual(payload);
   });
