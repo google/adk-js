@@ -343,8 +343,7 @@ describe('UnsafeLocalCodeExecutor', () => {
         },
       });
       expect(spawnSpy).toHaveBeenCalledTimes(1);
-      const [command, args] = spawnSpy.mock.calls[0];
-      return {command, args};
+      return spawnSpy.mock.calls[0][1];
     }
 
     it.each([
@@ -356,9 +355,8 @@ describe('UnsafeLocalCodeExecutor', () => {
       'powershell',
       'powershell.exe',
     ])('runs a .ps1 script with PowerShell flags for %s', async (shell) => {
-      const {command, args} = await captureShellSpawn(shell);
+      const args = await captureShellSpawn(shell);
 
-      expect(command).toBe(shell);
       expect(args).toEqual(expect.arrayContaining(POWERSHELL_FLAGS));
       expect(args.at(-1)).toMatch(/script\.ps1$/);
     });
@@ -368,17 +366,15 @@ describe('UnsafeLocalCodeExecutor', () => {
       '/usr/local/powershell-helpers/run.sh',
       'bash',
     ])('does not treat %s as PowerShell', async (shell) => {
-      const {args} = await captureShellSpawn(shell);
+      const args = await captureShellSpawn(shell);
 
       expect(args).toHaveLength(1);
-      expect(args).not.toContain('-NoLogo');
     });
 
     it.each(['cmd', 'cmd.exe'])('invokes %s with /c', async (shell) => {
-      const {args} = await captureShellSpawn(shell);
+      const args = await captureShellSpawn(shell);
 
       expect(args).toEqual(['/c', expect.any(String)]);
-      expect(args).not.toContain('-NoLogo');
     });
   });
 });

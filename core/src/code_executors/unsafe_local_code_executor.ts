@@ -21,20 +21,13 @@ import {
 const IS_WINDOWS = os.platform() === 'win32';
 
 /**
- * Whether `commandPath` names Windows PowerShell (`powershell`) or
- * PowerShell 7+ (`pwsh`).
- *
- * Only the executable name is matched, so unrelated commands whose path merely
- * contains the word (for example `/opt/pwsh-tools/bin/bash`) are not
- * misdetected. `path.win32` is used because it splits on both separators on
- * every platform.
+ * Whether `commandPath` names Windows PowerShell (`powershell`) or PowerShell
+ * 7+ (`pwsh`), with or without an `.exe` suffix. Only the executable name is
+ * matched, so `/opt/pwsh-tools/bin/bash` is not misdetected. `path.win32`
+ * splits on both separators on every platform.
  */
 function isPowerShellCommand(commandPath: string): boolean {
-  const name = path.win32
-    .basename(commandPath)
-    .toLowerCase()
-    .replace(/\.exe$/, '');
-  return name === 'powershell' || name === 'pwsh';
+  return /^(powershell|pwsh)(\.exe)?$/i.test(path.win32.basename(commandPath));
 }
 
 /**
@@ -125,7 +118,7 @@ function getExtensionForLanguage(
  * **Execution Details**:
  * - **JavaScript**: Executed via `node` (defaults to `process.execPath`).
  * - **Python**: Executed via `python3` on Unix, and `python` on Windows.
- * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` or `cmd.exe` on Windows. A `shellCommandPath` naming a PowerShell host (`powershell` or `pwsh`) runs a `.ps1` script with ExecutionPolicy Bypass injected.
+ * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` or `cmd.exe` on Windows. A `powershell` or `pwsh` command injects ExecutionPolicy Bypass.
  *
  * WARNING: This executor runs code in the local environment without sandboxing or security restrictions.
  * Use with caution and only for trusted code.
