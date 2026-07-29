@@ -1,19 +1,17 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, it} from 'vitest';
-import {AgentEngineClient} from '../../src/agents/agent_engine_client.js';
+import {AgentEngineClient} from '@google/adk';
+import {describe, expect, it} from 'vitest';
 
 describe('AgentEngineClient E2E', () => {
   it.skipIf(!process.env.AGENT_ENGINE_ID)('should run e2e query', async () => {
     const project = process.env.GOOGLE_CLOUD_PROJECT || 'test-project';
     const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-    const reasoningEngineId = process.env.AGENT_ENGINE_ID;
-
-    if (!reasoningEngineId) return;
+    const reasoningEngineId = process.env.AGENT_ENGINE_ID!;
 
     const client = new AgentEngineClient({
       project,
@@ -21,13 +19,13 @@ describe('AgentEngineClient E2E', () => {
       reasoningEngineId,
     });
 
-    console.log('--- Testing Query ---');
     const qRes = await client.query({message: 'Hello, what can you do?'});
-    console.log('Query Response:', qRes);
+    expect(qRes).toBeDefined();
 
-    console.log('--- Testing Stream Query ---');
+    const chunks: unknown[] = [];
     for await (const chunk of client.streamQuery({message: 'Hello'})) {
-      console.log('Chunk:', chunk);
+      chunks.push(chunk);
     }
+    expect(chunks.length).toBeGreaterThan(0);
   });
 });

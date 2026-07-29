@@ -1,30 +1,33 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import {helpers, v1} from '@google-cloud/aiplatform';
+import {AgentEngineClient, AgentExecutionError} from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {
-  AgentEngineClient,
-  AgentExecutionError,
-} from '../../src/agents/agent_engine_client';
 
-// Mock the grpc client
+// Mock the grpc client. The method mocks are hoisted so the tests can drive
+// them directly instead of reaching into `.mock.instances[0]`, which is typed
+// as the real client and therefore not assignable to a mock-shaped local.
+const mockGrpcClient = vi.hoisted(() => ({
+  reasoningEnginePath: vi.fn(
+    (project: string, location: string, id: string) =>
+      `projects/${project}/locations/${location}/reasoningEngines/${id}`,
+  ),
+  queryReasoningEngine: vi.fn(),
+  streamQueryReasoningEngine: vi.fn(),
+}));
+
 vi.mock('@google-cloud/aiplatform', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('@google-cloud/aiplatform')>();
   const MockReasoningEngineExecutionServiceClient = vi.fn();
-  MockReasoningEngineExecutionServiceClient.prototype.reasoningEnginePath =
-    vi.fn(
-      (project, location, id) =>
-        `projects/${project}/locations/${location}/reasoningEngines/${id}`,
-    );
-  MockReasoningEngineExecutionServiceClient.prototype.queryReasoningEngine =
-    vi.fn();
-  MockReasoningEngineExecutionServiceClient.prototype.streamQueryReasoningEngine =
-    vi.fn();
+  Object.assign(
+    MockReasoningEngineExecutionServiceClient.prototype,
+    mockGrpcClient,
+  );
 
   return {
     ...actual,
@@ -44,17 +47,10 @@ describe('AgentEngineClient', () => {
   };
 
   let client: AgentEngineClient;
-  let mockGrpcClient: {
-    reasoningEnginePath: ReturnType<typeof vi.fn>;
-    queryReasoningEngine: ReturnType<typeof vi.fn>;
-    streamQueryReasoningEngine: ReturnType<typeof vi.fn>;
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     client = new AgentEngineClient(mockConfig);
-    mockGrpcClient = vi.mocked(v1.ReasoningEngineExecutionServiceClient).mock
-      .instances[0];
   });
 
   describe('constructor', () => {
@@ -111,16 +107,27 @@ describe('AgentEngineClient', () => {
       );
     });
 
-    it('handles undefined config safely', async () => {
-      mockGrpcClient.queryReasoningEngine.mockResolvedValue([{}]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await client.createSession(undefined as any);
+    it('returns the created session so a generated sessionId is readable', async () => {
+      mockGrpcClient.queryReasoningEngine.mockResolvedValue([
+        {
+          output: helpers.toValue({
+            id: 'generated-session-id',
+            userId: 'u1',
+          }),
+        },
+      ]);
 
-      expect(mockGrpcClient.queryReasoningEngine).toHaveBeenCalledWith(
-        expect.objectContaining({
-          input: undefined,
-        }),
-      );
+      const created = await client.createSession({userId: 'u1'});
+
+      expect(created).toEqual({id: 'generated-session-id', userId: 'u1'});
+    });
+
+    it('returns undefined when the response carries no output', async () => {
+      mockGrpcClient.queryReasoningEngine.mockResolvedValue([{}]);
+
+      await expect(
+        client.createSession({userId: 'u1'}),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -243,6 +250,19 @@ describe('AgentEngineClient', () => {
       const promise = gen.next();
       await expect(promise).rejects.toThrow(AgentExecutionError);
       await expect(promise).rejects.toThrow('Failed to parse stream fragment');
+    });
+
+    it('does not re-wrap a parse failure in a second AgentExecutionError', async () => {
+      async function* mockStream() {
+        yield {data: 'data: {invalid-json\n\n'};
+      }
+      mockGrpcClient.streamQueryReasoningEngine.mockReturnValue(mockStream());
+
+      const gen = client.streamQuery({message: 'hello'});
+      // Anchored: a re-wrap would prefix 'Failed to execute stream query: '.
+      await expect(gen.next()).rejects.toThrow(
+        /^Failed to parse stream fragment: \{invalid-json$/,
+      );
     });
 
     it('throws AgentExecutionError on stream query failure with primitive error', async () => {

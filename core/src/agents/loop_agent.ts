@@ -106,6 +106,11 @@ export class LoopAgent extends BaseAgent<LoopAgentConfig> {
   ): AsyncGenerator<Event, void, void> {
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       for (const subAgent of this.subAgents) {
+        // Mirrors runAsyncImpl: let the escalating sub-agent finish its turn
+        // before unwinding. Returning from inside the `for await` would call
+        // `.return()` on the sub-agent's generator, tearing a live stream down
+        // mid-turn and dropping events it had already produced.
+        let shouldExit = false;
         for await (const event of subAgent.runLive(context)) {
           if (context.abortSignal?.aborted) {
             return;
@@ -113,9 +118,13 @@ export class LoopAgent extends BaseAgent<LoopAgentConfig> {
 
           yield event;
 
-          if (event.actions?.escalate) {
-            return;
+          if (event.actions.escalate) {
+            shouldExit = true;
           }
+        }
+
+        if (shouldExit) {
+          return;
         }
       }
     }
