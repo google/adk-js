@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {CodeExecutionInput, InvocationContext} from '@google/adk';
+import type {
+  CodeExecutionInput,
+  CodeInterpreterExtensionClient,
+  InvocationContext,
+} from '@google/adk';
 import {CodeExecutionLanguage, VertexAiCodeExecutor} from '@google/adk';
+import type {Mocked} from 'vitest';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.mock('google-auth-library', async (importOriginal) => {
@@ -22,11 +27,6 @@ vi.mock('google-auth-library', async (importOriginal) => {
   };
 });
 
-interface MockClient {
-  importFromHub: ReturnType<typeof vi.fn>;
-  execute: ReturnType<typeof vi.fn>;
-}
-
 const invocationContext = {} as unknown as InvocationContext;
 
 function makeInput(
@@ -41,7 +41,7 @@ function makeInput(
 }
 
 describe('VertexAiCodeExecutor', () => {
-  let mockClient: MockClient;
+  let mockClient: Mocked<CodeInterpreterExtensionClient>;
 
   beforeEach(() => {
     vi.stubEnv('CODE_INTERPRETER_EXTENSION_NAME', '');
@@ -50,34 +50,40 @@ describe('VertexAiCodeExecutor', () => {
 
     mockClient = {
       importFromHub: vi
-        .fn()
+        .fn<CodeInterpreterExtensionClient['importFromHub']>()
         .mockResolvedValue('projects/p/locations/us-central1/extensions/999'),
-      execute: vi.fn().mockResolvedValue({
-        execution_result: 'hello',
-        execution_error: '',
-        output_files: [],
-      }),
+      execute: vi
+        .fn<CodeInterpreterExtensionClient['execute']>()
+        .mockResolvedValue({
+          execution_result: 'hello',
+          execution_error: '',
+          output_files: [],
+        }),
     };
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
+  /**
+   * Builds an executor backed by {@link mockClient}. A project is always
+   * resolvable unless a test overrides it, since creating an extension from the
+   * hub requires one.
+   */
   function newExecutor(
     options: {
       resourceName?: string;
       projectId?: string;
       location?: string;
-      withClient?: boolean;
     } = {},
   ): VertexAiCodeExecutor {
     return new VertexAiCodeExecutor({
-      resourceName: options.resourceName,
-      projectId: options.projectId,
-      location: options.location,
-      client: options.withClient === false ? undefined : (mockClient as never),
+      projectId: 'test-project',
+      ...options,
+      client: mockClient,
     });
   }
 
@@ -182,23 +188,37 @@ describe('VertexAiCodeExecutor', () => {
       );
     });
 
-    it('defaults location to us-central1', () => {
-      const executor = new VertexAiCodeExecutor({projectId: 'test-project'});
-      expect(executor['location']).toBe('us-central1');
+    it('requires a project even when a client is injected', () => {
+      expect(() => new VertexAiCodeExecutor({client: mockClient})).toThrow(
+        'Project ID is required.',
+      );
     });
 
-    it('reads location from GOOGLE_CLOUD_LOCATION', () => {
-      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west1');
-      const executor = new VertexAiCodeExecutor({projectId: 'test-project'});
-      expect(executor['location']).toBe('europe-west1');
+    it('rejects a malformed resourceName at construction', () => {
+      expect(() => newExecutor({resourceName: 'not-a-resource'})).toThrow(
+        'Invalid code interpreter extension resource name: not-a-resource',
+      );
     });
 
-    it('reads location from options', () => {
+    it('rejects a malformed CODE_INTERPRETER_EXTENSION_NAME at construction', () => {
+      vi.stubEnv('CODE_INTERPRETER_EXTENSION_NAME', 'garbage');
+      expect(() => newExecutor()).toThrow(
+        'Invalid code interpreter extension resource name: garbage',
+      );
+    });
+
+    it('requires a project when the resourceName is cleared after construction', async () => {
       const executor = new VertexAiCodeExecutor({
-        projectId: 'test-project',
-        location: 'asia-east1',
+        resourceName: 'projects/p/locations/us-central1/extensions/1',
+        client: mockClient,
       });
-      expect(executor['location']).toBe('asia-east1');
+      executor.resourceName = undefined;
+      await expect(
+        executor.executeCode({
+          invocationContext,
+          codeExecutionInput: makeInput(),
+        }),
+      ).rejects.toThrow('Project ID is required.');
     });
   });
 
@@ -227,7 +247,7 @@ describe('VertexAiCodeExecutor', () => {
 
     it('prefixes code with the imported-library preamble', async () => {
       await run({code: 'print("my code")'});
-      const sentCode = mockClient.execute.mock.calls[0][1].code as string;
+      const sentCode = mockClient.execute.mock.calls[0][1].code;
       expect(sentCode).toContain('import pandas as pd');
       expect(sentCode).toContain('print("my code")');
     });
@@ -427,18 +447,82 @@ describe('VertexAiCodeExecutor', () => {
       );
     });
 
-    it('throws on an invalid extension resource name', async () => {
-      stubFetch(vi.fn());
-      const executor = new VertexAiCodeExecutor({
-        resourceName: 'not-a-resource',
+    /**
+     * Runs one executeCode() that has to create the extension first, and returns
+     * the URL of the resulting extensions:import request.
+     */
+    async function importUrlFor(options: {
+      projectId: string;
+      location?: string;
+    }): Promise<string> {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: 'operations/1',
+            done: true,
+            response: {
+              name: 'projects/p/locations/us-central1/extensions/789',
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            content: JSON.stringify({execution_result: 'ok'}),
+          }),
+        });
+      stubFetch(fetchMock);
+
+      const executor = new VertexAiCodeExecutor(options);
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: makeInput(),
       });
-      await expect(
-        executor.executeCode({
-          invocationContext,
-          codeExecutionInput: makeInput(),
-        }),
-      ).rejects.toThrow(
-        'Invalid code interpreter extension resource name: not-a-resource',
+      return fetchMock.mock.calls[0][0];
+    }
+
+    it('defaults to the us-central1 endpoint', async () => {
+      expect(await importUrlFor({projectId: 'test-project'})).toBe(
+        'https://us-central1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/us-central1/extensions:import',
+      );
+    });
+
+    it('takes the endpoint region from GOOGLE_CLOUD_LOCATION', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west1');
+      expect(await importUrlFor({projectId: 'test-project'})).toBe(
+        'https://europe-west1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/europe-west1/extensions:import',
+      );
+    });
+
+    it('takes the endpoint region from the location option', async () => {
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west1');
+      expect(
+        await importUrlFor({projectId: 'test-project', location: 'asia-east1'}),
+      ).toBe(
+        'https://asia-east1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/asia-east1/extensions:import',
+      );
+    });
+
+    it('takes the endpoint region from the configured resource name', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({content: JSON.stringify({execution_result: 'ok'})}),
+      });
+      stubFetch(fetchMock);
+
+      const executor = new VertexAiCodeExecutor({
+        resourceName: 'projects/p/locations/asia-east1/extensions/456',
+        location: 'europe-west1',
+      });
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: makeInput(),
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        'https://asia-east1-aiplatform.googleapis.com/v1beta1/projects/p/locations/asia-east1/extensions/456:execute',
       );
     });
 
@@ -517,7 +601,6 @@ describe('VertexAiCodeExecutor', () => {
       });
       await vi.runAllTimersAsync();
       const result = await executePromise;
-      vi.useRealTimers();
 
       // Second call is the polling GET (no request body).
       expect(fetchMock.mock.calls[1][1].method).toBe('GET');
@@ -548,7 +631,46 @@ describe('VertexAiCodeExecutor', () => {
         ),
         vi.runAllTimersAsync(),
       ]);
-      vi.useRealTimers();
+    });
+
+    it('surfaces the error of an import operation that fails', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          name: 'operations/1',
+          done: true,
+          error: {code: 7, message: 'Permission denied on extension import.'},
+        }),
+      });
+      stubFetch(fetchMock);
+
+      const executor = new VertexAiCodeExecutor({projectId: 'test-project'});
+      await expect(
+        executor.executeCode({
+          invocationContext,
+          codeExecutionInput: makeInput(),
+        }),
+      ).rejects.toThrow(
+        'Code Interpreter extension creation failed: Permission denied on extension import.',
+      );
+    });
+
+    it('reports a done import operation that carries no response', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({name: 'operations/1', done: true}),
+      });
+      stubFetch(fetchMock);
+
+      const executor = new VertexAiCodeExecutor({projectId: 'test-project'});
+      await expect(
+        executor.executeCode({
+          invocationContext,
+          codeExecutionInput: makeInput(),
+        }),
+      ).rejects.toThrow(
+        'Code Interpreter extension creation failed: operation returned no response',
+      );
     });
   });
 });
