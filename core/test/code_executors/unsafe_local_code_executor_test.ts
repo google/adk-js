@@ -315,7 +315,9 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.outputFiles![0].mimeType).toBe('application/json');
   });
 
-  describe('shell command detection', () => {
+  // Runners that ship PowerShell really launch it, and a cold start there
+  // exceeds the default 5s test timeout.
+  describe('shell command detection', {timeout: 30_000}, () => {
     const POWERSHELL_FLAGS = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File'];
 
     async function captureShellSpawn(shellCommandPath: string) {
