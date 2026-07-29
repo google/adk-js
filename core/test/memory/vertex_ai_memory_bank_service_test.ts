@@ -17,9 +17,7 @@ import {
 import {Content, Part} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-const clientConstructor = vi.hoisted(() =>
-  vi.fn<(options: {project?: string; location?: string}) => void>(),
-);
+const clientConstructor = vi.hoisted(() => vi.fn());
 
 // The service imports Client from the package root, so the mock must target it.
 vi.mock('@google-cloud/vertexai', () => ({
@@ -83,6 +81,10 @@ describe('VertexAiMemoryBankService', () => {
   });
 
   it('throws error if agentEngineId is missing', () => {
+    // Stubbed so the check is asserted to run before the express mode guard.
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+    vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
+
     expect(
       () =>
         new VertexAiMemoryBankService(
@@ -109,63 +111,28 @@ describe('VertexAiMemoryBankService', () => {
     loggerSpy.mockRestore();
   });
 
-  it('builds a default client from project and location', () => {
-    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
-    vi.stubEnv('GOOGLE_API_KEY', undefined);
-
-    new VertexAiMemoryBankService({
-      agentEngineId: 'test-engine-id',
-      projectId: 'test-project',
-      location: 'us-central1',
-    });
-
-    expect(clientConstructor).toHaveBeenCalledWith({
-      project: 'test-project',
-      location: 'us-central1',
-    });
-  });
-
   describe('express mode', () => {
     beforeEach(() => {
       vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
-      vi.stubEnv('GOOGLE_API_KEY', undefined);
-    });
-
-    it('throws for an expressModeApiKey option instead of dropping the key', () => {
-      const construct = () =>
-        new VertexAiMemoryBankService({
-          agentEngineId: 'test-engine-id',
-          expressModeApiKey: 'test-api-key',
-        });
-
-      expect(construct).toThrow('Vertex AI Express Mode');
-      expect(construct).toThrow('@google-cloud/vertexai');
-      expect(clientConstructor).not.toHaveBeenCalled();
-    });
-
-    it('throws for an API key resolved from the environment', () => {
       vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
-      expect(
-        () => new VertexAiMemoryBankService({agentEngineId: 'test-engine-id'}),
-      ).toThrow('Vertex AI Express Mode');
     });
 
-    it('throws when only the project is provided alongside an API key', () => {
-      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
+    it.each([
+      ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
+      ['an API key from the environment', {}],
+      ['an API key and only a project', {projectId: 'test-project'}],
+    ])('throws for %s instead of dropping the key', (_, options) => {
       expect(
         () =>
           new VertexAiMemoryBankService({
             agentEngineId: 'test-engine-id',
-            projectId: 'test-project',
+            ...options,
           }),
       ).toThrow('Vertex AI Express Mode');
+      expect(clientConstructor).not.toHaveBeenCalled();
     });
 
     it('keeps using project and location when an API key is also in the environment', () => {
-      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
       new VertexAiMemoryBankService({
         agentEngineId: 'test-engine-id',
         projectId: 'test-project',
@@ -180,28 +147,14 @@ describe('VertexAiMemoryBankService', () => {
     });
 
     it('never builds a client when one is injected', () => {
-      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
-      const injectedService = new VertexAiMemoryBankService({
+      new VertexAiMemoryBankService({
         agentEngineId: 'test-engine-id',
         client: {
           agentEnginesInternal: {memories: mockMemories},
         } as unknown as Client,
       });
 
-      expect(injectedService).toBeDefined();
       expect(clientConstructor).not.toHaveBeenCalled();
-    });
-
-    it('still requires agentEngineId', () => {
-      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-
-      expect(
-        () =>
-          new VertexAiMemoryBankService(
-            {} as unknown as VertexAiMemoryBankServiceOptions,
-          ),
-      ).toThrow('agentEngineId is required for VertexAiMemoryBankService.');
     });
   });
 

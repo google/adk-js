@@ -101,7 +101,7 @@ export class VertexAiSessionService extends BaseSessionService {
         throw new Error(
           this.expressModeApiKey
             ? EXPRESS_MODE_UNSUPPORTED_MESSAGE
-            : 'Either (Project ID and Location) or an expressModeApiKey is required.',
+            : 'Project ID and Location are required.',
         );
       }
       const client = new Client({
