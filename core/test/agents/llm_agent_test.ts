@@ -104,8 +104,8 @@ class StreamingMockLlm extends BaseLlm {
 }
 
 /**
- * Yields the chunks of `turns[n]` on the n-th call, repeating the last turn
- * once they run out, and counts how many turns the agent asked for.
+ * Yields the chunks of `turns[n]` on the n-th call and counts how many turns
+ * the agent asked for.
  */
 class CountingMockLlm extends BaseLlm {
   callCount = 0;
@@ -117,9 +117,7 @@ class CountingMockLlm extends BaseLlm {
   async *generateContentAsync(
     _request: LlmRequest,
   ): AsyncGenerator<LlmResponse, void, void> {
-    const turn = this.turns[Math.min(this.callCount, this.turns.length - 1)];
-    this.callCount++;
-    yield* turn;
+    yield* this.turns[this.callCount++] ?? [];
   }
 
   async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
