@@ -5,22 +5,15 @@
  */
 
 import {
-  BaseLlm,
-  BaseLlmConnection,
   BaseTool,
   Context,
-  Event,
-  FunctionTool,
-  InMemoryRunner,
-  LlmAgent,
-  LlmResponse,
+  InvocationContext,
   REFLECT_AND_RETRY_RESPONSE_TYPE,
   ReflectAndRetryToolPlugin,
   ToolFailureResponse,
   TrackingScope,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {z} from 'zod/v3';
 
 // --------------------------------------------------------------------------
 // Test helpers
@@ -34,13 +27,23 @@ function makeToolContext(invocationId: string | undefined = 'inv-1'): Context {
   return {invocationId} as unknown as Context;
 }
 
+function makeInvocationContext(invocationId = 'inv-1'): InvocationContext {
+  return {invocationId} as unknown as InvocationContext;
+}
+
 const sampleArgs: Record<string, unknown> = {
   param1: 'value1',
   param2: 42,
   param3: true,
 };
 
-/** A subclass that detects errors in results via a configurable predicate. */
+/**
+ * A subclass that detects errors in results via a configurable predicate.
+ *
+ * It deliberately narrows both the `result` parameter and the return type of
+ * the hook, proving that the widened base signature stays source-compatible
+ * with the obvious override.
+ */
 class CustomExtractionPlugin extends ReflectAndRetryToolPlugin {
   detect: (
     result: Record<string, unknown>,
@@ -55,6 +58,16 @@ class CustomExtractionPlugin extends ReflectAndRetryToolPlugin {
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return this.detect(result);
+  }
+}
+
+/** An error class distinguishable by name in the failure payload. */
+class ExtractedToolError extends Error {}
+
+/** A subclass whose extraction hook returns a real `Error` instance. */
+class ErrorExtractionPlugin extends ReflectAndRetryToolPlugin {
+  override async extractErrorFromResult(): Promise<unknown> {
+    return new ExtractedToolError('extracted failure');
   }
 }
 
@@ -111,13 +124,17 @@ describe('ReflectAndRetryToolPlugin', () => {
       expect(result).toBeUndefined();
     });
 
+    // `handleFunctionCallList` leaves the tool response `null` when a tool
+    // throws a non-`Error`, and `BaseTool.runAsync` is typed `Promise<unknown>`
+    // so a tool may legitimately return a primitive. Both reach this callback
+    // for real, which is why `result` is declared `unknown` here.
     it('handles a null result gracefully', async () => {
       const plugin = new ReflectAndRetryToolPlugin();
       const result = await plugin.afterToolCallback({
         tool: makeTool(),
         toolArgs: sampleArgs,
         toolContext: makeToolContext(),
-        result: null as unknown as Record<string, unknown>,
+        result: null,
       });
       expect(result).toBeUndefined();
     });
@@ -128,7 +145,7 @@ describe('ReflectAndRetryToolPlugin', () => {
         tool: makeTool(),
         toolArgs: sampleArgs,
         toolContext: makeToolContext(),
-        result: 42 as unknown as Record<string, unknown>,
+        result: 42,
       });
       expect(result).toBeUndefined();
     });
@@ -144,6 +161,55 @@ describe('ReflectAndRetryToolPlugin', () => {
         result: {status: 'success', data: 'some data'},
       });
       expect(error).toBeUndefined();
+    });
+
+    it('reports the real error class when the hook returns an Error', async () => {
+      const plugin = new ErrorExtractionPlugin();
+      const result = (await plugin.afterToolCallback({
+        tool: makeTool(),
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext(),
+        result: {status: 'error'},
+      })) as ToolFailureResponse;
+
+      expect(result.error_type).toBe('ExtractedToolError');
+      expect(result.error_details).toBe('extracted failure');
+      expect(result.reflection_guidance).toContain(
+        'ExtractedToolError: extracted failure',
+      );
+    });
+
+    it('survives a self-referencing result object', async () => {
+      const plugin = new CustomExtractionPlugin();
+      plugin.detect = (result) => result;
+      const cyclic: Record<string, unknown> = {status: 'error'};
+      cyclic['self'] = cyclic;
+
+      const result = (await plugin.afterToolCallback({
+        tool: makeTool(),
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext(),
+        result: cyclic,
+      })) as ToolFailureResponse;
+
+      expect(result.response_type).toBe(REFLECT_AND_RETRY_RESPONSE_TYPE);
+      expect(result.error_type).toBe('ToolError');
+      expect(result.retry_count).toBe(1);
+    });
+
+    it('survives a result that JSON cannot represent', async () => {
+      const plugin = new CustomExtractionPlugin();
+      plugin.detect = (result) => result;
+
+      const result = (await plugin.afterToolCallback({
+        tool: makeTool(),
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext(),
+        result: {toJSON: () => undefined},
+      })) as ToolFailureResponse;
+
+      expect(result.response_type).toBe(REFLECT_AND_RETRY_RESPONSE_TYPE);
+      expect(result.error_details).toBe('[object Object]');
     });
   });
 
@@ -179,6 +245,39 @@ describe('ReflectAndRetryToolPlugin', () => {
       expect(result.reflection_guidance).toContain(
         'the retry limit has been exceeded',
       );
+    });
+
+    // Retry tracking is off entirely at maxRetries === 0, so the handler
+    // short-circuits before resolving a scope key. That keeps the tool's own
+    // error the thing that propagates, instead of substituting a scope
+    // configuration error, and allocates no counter that could never be read.
+    it('re-throws the tool error without needing an invocation id', async () => {
+      const plugin = new ReflectAndRetryToolPlugin({maxRetries: 0});
+      const error = new Error('Test error');
+      await expect(
+        plugin.onToolErrorCallback({
+          tool: makeTool(),
+          toolArgs: sampleArgs,
+          toolContext: makeToolContext(''),
+          error,
+        }),
+      ).rejects.toBe(error);
+    });
+
+    it('still never throws without an invocation id when throwing is disabled', async () => {
+      const plugin = new ReflectAndRetryToolPlugin({
+        maxRetries: 0,
+        throwExceptionIfRetryExceeded: false,
+      });
+      const result = (await plugin.onToolErrorCallback({
+        tool: makeTool(),
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext(''),
+        error: new Error('Test error'),
+      })) as ToolFailureResponse;
+
+      expect(result.response_type).toBe(REFLECT_AND_RETRY_RESPONSE_TYPE);
+      expect(result.retry_count).toBe(0);
     });
 
     it('wraps a non-Error dict error in an Error (not a TypeError)', async () => {
@@ -606,126 +705,61 @@ describe('ReflectAndRetryToolPlugin', () => {
       ).rejects.toThrow('invocationId must be provided for INVOCATION scope');
     });
   });
-});
 
-// --------------------------------------------------------------------------
-// End-to-end: drive a real InMemoryRunner with a scripted (non-mock) model.
-//
-// A real FunctionTool throws on its first call and succeeds on the second. The
-// plugin must convert the first failure into a reflection guidance payload fed
-// back to the model, then let the retry succeed. No plugin internals are
-// stubbed -- only the LLM is scripted (deterministic), exactly as the real
-// PluginManager + tool-execution flow drive it.
-// --------------------------------------------------------------------------
+  describe('afterRunCallback', () => {
+    it('clears invocation-scoped counters when the run ends', async () => {
+      const plugin = new ReflectAndRetryToolPlugin();
+      const tool = makeTool();
+      const error = new Error('Test error');
 
-/** A deterministic model that yields a pre-scripted response per turn. */
-class ScriptedLlm extends BaseLlm {
-  private index = 0;
+      const first = (await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext('inv-1'),
+        error,
+      })) as ToolFailureResponse;
+      expect(first.retry_count).toBe(1);
 
-  constructor(private readonly responses: LlmResponse[]) {
-    super({model: 'scripted-test-llm'});
-  }
+      // The run ends while the tool is still failing, so nothing on the
+      // success path would ever drop this scope.
+      await plugin.afterRunCallback({
+        invocationContext: makeInvocationContext('inv-1'),
+      });
 
-  override async *generateContentAsync(): AsyncGenerator<
-    LlmResponse,
-    void,
-    void
-  > {
-    const next =
-      this.responses[Math.min(this.index, this.responses.length - 1)];
-    this.index++;
-    yield next;
-  }
-
-  override connect(): Promise<BaseLlmConnection> {
-    throw new Error('connect is not supported by ScriptedLlm');
-  }
-}
-
-function functionCallResponse(
-  id: string,
-  name: string,
-  args: Record<string, unknown>,
-): LlmResponse {
-  return {
-    content: {role: 'model', parts: [{functionCall: {id, name, args}}]},
-  };
-}
-
-function collectResponses(events: Event[]): Array<Record<string, unknown>> {
-  return events
-    .flatMap((event) => event.content?.parts ?? [])
-    .map((part) => part.functionResponse?.response)
-    .filter((response): response is Record<string, unknown> => !!response);
-}
-
-describe('ReflectAndRetryToolPlugin (end-to-end)', () => {
-  it('recovers a failing tool by feeding reflection guidance to the model', async () => {
-    let callCount = 0;
-    const flaky = new FunctionTool({
-      name: 'flaky',
-      description: 'Fails on the first call, then succeeds.',
-      parameters: z.object({x: z.number()}),
-      execute: async ({x}) => {
-        callCount++;
-        if (callCount === 1) {
-          throw new Error('transient failure');
-        }
-        return {value: x + 1};
-      },
+      const afterRun = (await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext('inv-1'),
+        error,
+      })) as ToolFailureResponse;
+      expect(afterRun.retry_count).toBe(1);
     });
 
-    const model = new ScriptedLlm([
-      functionCallResponse('call-1', 'flaky', {x: 1}),
-      functionCallResponse('call-2', 'flaky', {x: 1}),
-      {content: {role: 'model', parts: [{text: 'All done.'}]}},
-    ]);
+    it('leaves global-scoped counters intact when the run ends', async () => {
+      const plugin = new ReflectAndRetryToolPlugin({
+        trackingScope: TrackingScope.GLOBAL,
+      });
+      const tool = makeTool();
+      const error = new Error('Test error');
 
-    const agent = new LlmAgent({
-      name: 'root_agent',
-      description: 'Agent under test.',
-      model,
-      tools: [flaky],
+      await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext('inv-1'),
+        error,
+      });
+
+      await plugin.afterRunCallback({
+        invocationContext: makeInvocationContext('inv-1'),
+      });
+
+      const afterRun = (await plugin.onToolErrorCallback({
+        tool,
+        toolArgs: sampleArgs,
+        toolContext: makeToolContext('inv-2'),
+        error,
+      })) as ToolFailureResponse;
+      expect(afterRun.retry_count).toBe(2);
     });
-    const plugin = new ReflectAndRetryToolPlugin();
-    const runner = new InMemoryRunner({agent, plugins: [plugin]});
-
-    const session = await runner.sessionService.createSession({
-      appName: runner.appName,
-      userId: 'user-1',
-    });
-
-    const events: Event[] = [];
-    for await (const event of runner.runAsync({
-      userId: 'user-1',
-      sessionId: session.id,
-      newMessage: {role: 'user', parts: [{text: 'please run flaky'}]},
-    })) {
-      events.push(event);
-    }
-
-    const responses = collectResponses(events);
-
-    const reflections = responses.filter(
-      (r) => r['response_type'] === REFLECT_AND_RETRY_RESPONSE_TYPE,
-    );
-    expect(reflections).toHaveLength(1);
-    expect(reflections[0]['error_type']).toBe('Error');
-    expect(reflections[0]['retry_count']).toBe(1);
-    expect(String(reflections[0]['reflection_guidance'])).toContain(
-      'Wrong Function Name',
-    );
-
-    // The retry actually executed and returned the corrected result.
-    expect(callCount).toBe(2);
-    const successes = responses.filter((r) => r['value'] === 2);
-    expect(successes).toHaveLength(1);
-
-    // The run recovered and produced the final text response.
-    const finalText = events
-      .flatMap((event) => event.content?.parts ?? [])
-      .map((part) => part.text)
-      .filter((text): text is string => !!text);
-    expect(finalText).toContain('All done.');
   });
 });

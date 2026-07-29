@@ -5,10 +5,19 @@
  */
 
 import {Context} from '../agents/context.js';
+import {InvocationContext} from '../agents/invocation_context.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {experimental} from '../utils/experimental.js';
 
 import {BasePlugin} from './base_plugin.js';
+
+// Constants
+
+/** Default value for `params.name`. */
+const DEFAULT_PLUGIN_NAME = 'reflect_retry_tool_plugin';
+
+/** Default value for `params.maxRetries`. */
+const DEFAULT_MAX_RETRIES = 3;
 
 /**
  * Marker written to every response this plugin produces. It lets the plugin
@@ -51,7 +60,11 @@ export type ToolFailureResponse = {
   error_type: string;
   /** The raw error message. */
   error_details: string;
-  /** The consecutive failure count that produced this response. */
+  /**
+   * The consecutive failure count that produced this response. For a terminal
+   * retry-limit-exceeded response this is `maxRetries`, not the actual attempt
+   * number that triggered it.
+   */
   retry_count: number;
   /** Human-readable guidance instructing the model how to recover. */
   reflection_guidance: string;
@@ -98,6 +111,11 @@ class ScopedFailureTracker {
       this.counters.delete(scopeKey);
     }
   }
+
+  /** Drops an entire scope, including every item counter it holds. */
+  resetScope(scopeKey: string): void {
+    this.counters.delete(scopeKey);
+  }
 }
 
 /** Resolves the tracking scope key for the given scope and invocation. */
@@ -114,13 +132,31 @@ function resolveScopeKey(
   return GLOBAL_SCOPE_KEY;
 }
 
+/** Narrows an arbitrary value to something safe to index by string key. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 /**
  * Renders an arbitrary value as a string. Objects use `JSON.stringify` so their
  * content is preserved (`String({})` would yield the useless `'[object
  * Object]'`); everything else falls back to `String`.
+ *
+ * This runs inside the error handler, so it must be total: `JSON.stringify`
+ * throws on circular structures (a real risk, since a tool *result* object
+ * reaches here via {@link ReflectAndRetryToolPlugin.extractErrorFromResult})
+ * and returns `undefined` for values it cannot represent. Either would replace
+ * the tool's actual failure with a `TypeError` and lose the reflection payload.
  */
 function stringifyError(error: unknown): string {
-  return typeof error === 'object' ? JSON.stringify(error) : String(error);
+  if (!isRecord(error)) {
+    return String(error);
+  }
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
 }
 
 /**
@@ -292,8 +328,8 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
     throwExceptionIfRetryExceeded?: boolean;
     trackingScope?: TrackingScope;
   }) {
-    super(params?.name ?? 'reflect_retry_tool_plugin');
-    const maxRetries = params?.maxRetries ?? 3;
+    super(params?.name ?? DEFAULT_PLUGIN_NAME);
+    const maxRetries = params?.maxRetries ?? DEFAULT_MAX_RETRIES;
     if (maxRetries < 0) {
       throw new Error('maxRetries must be a non-negative integer.');
     }
@@ -307,6 +343,15 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
    * Handles successful tool calls or extracts and processes errors hidden in
    * otherwise successful results.
    *
+   * `result` is declared `unknown` rather than inheriting
+   * `Record<string, unknown>` from {@link BasePlugin}, because that narrower
+   * type does not describe what the framework actually passes:
+   * `BaseTool.runAsync` returns `Promise<unknown>`, so a tool may return a
+   * primitive or an array, and `handleFunctionCallList` leaves the response
+   * `null` when a tool throws a non-`Error` value. Widening a parameter in an
+   * override is safe, and it lets the guard below be a real type narrowing
+   * instead of an untyped defensive check.
+   *
    * @returns Reflection guidance if an error is detected, or `undefined` if the
    *   call succeeded or the result is already a reflection message.
    */
@@ -319,12 +364,11 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
-    result: Record<string, unknown>;
+    result: unknown;
   }): Promise<Record<string, unknown> | undefined> {
     // Never re-process our own guidance objects as new errors.
     if (
-      result &&
-      typeof result === 'object' &&
+      isRecord(result) &&
       result['response_type'] === REFLECT_AND_RETRY_RESPONSE_TYPE
     ) {
       return undefined;
@@ -356,15 +400,42 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
    * trigger retry logic for results that indicate failure without throwing
    * (e.g. `{status: 'error'}`).
    *
+   * The return type is `unknown` so an override can return an `Error`.
+   * `Error` is an interface and therefore has no implicit index signature, so
+   * it is not assignable to `Record<string, unknown>`; returning one is what
+   * makes `error_type`/`error_details` report the real error class rather than
+   * the generic `'ToolError'`. An override may still narrow either the
+   * parameter or the return type.
+   *
    * @returns The extracted error, or `undefined` if no error was detected.
    */
   async extractErrorFromResult(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
-    result: Record<string, unknown>;
-  }): Promise<Record<string, unknown> | undefined> {
+    result: unknown;
+  }): Promise<unknown> {
     return undefined;
+  }
+
+  /**
+   * Drops this invocation's failure counters once the run has completed.
+   *
+   * Under {@link TrackingScope.INVOCATION} a scope entry is otherwise only
+   * removed when a tool later succeeds, so a run that ends while a tool is
+   * still failing — the model gives up, or the cap is reached with
+   * `throwExceptionIfRetryExceeded: false` — leaves its counters behind for the
+   * life of the process. {@link TrackingScope.GLOBAL} is deliberately untouched
+   * here, since its whole purpose is to outlive the invocation.
+   */
+  override async afterRunCallback({
+    invocationContext,
+  }: {
+    invocationContext: InvocationContext;
+  }): Promise<void> {
+    if (this.scope === TrackingScope.INVOCATION) {
+      this.tracker.resetScope(invocationContext.invocationId);
+    }
   }
 
   /**
