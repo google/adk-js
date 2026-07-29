@@ -170,27 +170,6 @@ Instructions content`,
       },
     );
 
-    it('exposes allowed-tools as allowedTools', async () => {
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
-      const skillDir = path.join(tempDir, 'test-skill');
-      await fs.mkdir(skillDir);
-
-      await fs.writeFile(
-        path.join(skillDir, 'SKILL.md'),
-        `---
-name: test-skill
-description: A test skill
-allowed-tools: "some-tool-*"
----
-Instructions content`,
-      );
-
-      const skill = await loadSkillFromDir(skillDir);
-      expect(skill.frontmatter.allowedTools).toBe('some-tool-*');
-
-      await fs.rm(tempDir, {recursive: true, force: true});
-    });
-
     it('throws error if SKILL.md not found', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
       const skillDir = path.join(tempDir, 'test-skill');
@@ -359,47 +338,29 @@ Instructions`,
       await fs.rm(tempDir, {recursive: true, force: true});
     });
 
-    it('returns no problems for a skill declaring allowed-tools', async () => {
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
-      const skillDir = path.join(tempDir, 'test-skill');
-      await fs.mkdir(skillDir);
+    it.each(['allowed-tools', 'allowedTools'])(
+      'returns no problems for a skill declaring %s',
+      async (key) => {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+        const skillDir = path.join(tempDir, 'test-skill');
+        await fs.mkdir(skillDir);
 
-      await fs.writeFile(
-        path.join(skillDir, 'SKILL.md'),
-        `---
+        await fs.writeFile(
+          path.join(skillDir, 'SKILL.md'),
+          `---
 name: test-skill
 description: A test skill
-allowed-tools: "some-tool-*"
+${key}: "some-tool-*"
 ---
 Instructions`,
-      );
+        );
 
-      const problems = await validateSkillDir(skillDir);
-      expect(problems).toEqual([]);
+        const problems = await validateSkillDir(skillDir);
+        expect(problems).toEqual([]);
 
-      await fs.rm(tempDir, {recursive: true, force: true});
-    });
-
-    it('returns no problems for a skill declaring allowedTools', async () => {
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
-      const skillDir = path.join(tempDir, 'test-skill');
-      await fs.mkdir(skillDir);
-
-      await fs.writeFile(
-        path.join(skillDir, 'SKILL.md'),
-        `---
-name: test-skill
-description: A test skill
-allowedTools: "some-tool-*"
----
-Instructions`,
-      );
-
-      const problems = await validateSkillDir(skillDir);
-      expect(problems).toEqual([]);
-
-      await fs.rm(tempDir, {recursive: true, force: true});
-    });
+        await fs.rm(tempDir, {recursive: true, force: true});
+      },
+    );
 
     it('still reports unknown fields alongside allowed-tools', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
