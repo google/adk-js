@@ -143,6 +143,14 @@ const A2A_OPTION = new Option(
   '--a2a [boolean]',
   'Optional. Whether to enable A2A for web/api server. Default: false',
 ).default(false);
+const A2A_AUTH_TOKEN_OPTION = new Option(
+  '--a2a_auth_token <string>',
+  'Optional. Shared bearer token used to authenticate the A2A surface. Callers must send "Authorization: Bearer <token>". Can also be set via the ADK_A2A_AUTH_TOKEN environment variable. If unset, the A2A surface is served WITHOUT authentication.',
+);
+const A2A_AUTH_TOKEN_DEPLOY_OPTION = new Option(
+  '--a2a_auth_token <string>',
+  'Optional. Shared bearer token used to authenticate the deployed A2A surface. Callers must send "Authorization: Bearer <token>". It is sent to Cloud Run as the ADK_A2A_AUTH_TOKEN environment variable and is never written into the image. If unset, the deployed A2A surface is served WITHOUT authentication.',
+);
 const RELOAD_AGENTS_OPTION = new Option(
   '--reload_agents [boolean]',
   'Optional. Watch agent files for changes and automatically reload them. Default: false. To see any changes to your agent file, you need to initiate a new agent run.',
@@ -218,6 +226,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_OPTION)
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
@@ -236,6 +245,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           reloadAgents: getBoolean(options['reload_agents']),
         });
 
@@ -262,6 +272,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_OPTION)
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
@@ -280,6 +291,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           reloadAgents: getBoolean(options['reload_agents']),
         });
         await server.start();
@@ -412,6 +424,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_DEPLOY_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
       for (const arg of process.argv.slice(5)) {
@@ -442,6 +455,7 @@ export function createProgram(): Command {
           artifactServiceUri: options['artifact_service_uri'],
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           extraGcloudArgs,
         });
       } catch (error) {
