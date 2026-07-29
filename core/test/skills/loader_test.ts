@@ -362,7 +362,7 @@ Instructions`,
       },
     );
 
-    it('still reports unknown fields alongside allowed-tools', async () => {
+    it('omits the allowedTools alias from the unknown fields message', async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
       const skillDir = path.join(tempDir, 'test-skill');
       await fs.mkdir(skillDir);

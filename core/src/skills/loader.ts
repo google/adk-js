@@ -22,9 +22,8 @@ const ALLOWED_FRONTMATTER_KEYS = new Set([
   'description',
   'license',
   'allowed-tools',
-  // Camel-case alias of 'allowed-tools': FrontmatterSchema accepts it from the
-  // author and otherwise derives it in its preprocessor, and the schema is
-  // `.loose()`, so either way it reaches the parsed frontmatter.
+  // Camel-case alias: FrontmatterSchema's preprocessor derives `allowedTools`
+  // from `allowed-tools`, and `.loose()` passes either spelling through.
   'allowedTools',
   'metadata',
   'compatibility',
