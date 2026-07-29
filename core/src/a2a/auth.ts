@@ -7,21 +7,14 @@
 import {timingSafeEqual} from 'node:crypto';
 import {A2aUserBuilder} from './agent_to_a2a.js';
 
-/**
- * The `userName` reported for a caller that presented the shared bearer token.
- *
- * A shared secret authenticates the deployment as a whole rather than an
- * individual principal, so every accepted caller resolves to this same
- * synthetic identity.
- */
+/** A shared secret identifies a deployment, not an individual principal. */
 const AUTHENTICATED_USER_NAME = 'a2a-bearer-token';
 
 const BEARER_SCHEME_PREFIX = 'bearer ';
 
 /**
- * Extracts the credential from an `Authorization: Bearer <token>` header
- * value, or returns `undefined` when the header is absent or uses a different
- * scheme. The scheme is matched case-insensitively, as RFC 6750 requires.
+ * Reads the credential out of an `Authorization: Bearer <token>` header value,
+ * matching the scheme case-insensitively as RFC 6750 requires.
  */
 function extractBearerCredential(
   header: string | undefined,
@@ -62,11 +55,13 @@ function timingSafeEqualStrings(a: string, b: string): boolean {
  * guarantee this helper provides is that the agent is never reached, not that
  * the caller gets a particular status code.
  *
- * @param token The shared secret callers must present. Must be non-empty.
+ * @param token The shared secret callers must present. Surrounding whitespace
+ *   is trimmed, because HTTP strips it from header values anyway.
  * @throws If `token` is empty or contains only whitespace.
  */
 export function bearerTokenUserBuilder(token: string): A2aUserBuilder {
-  if (!token.trim()) {
+  const expected = token.trim();
+  if (!expected) {
     throw new Error(
       'bearerTokenUserBuilder: an empty A2A bearer token is not a valid ' +
         'authenticator. Supply a real shared secret, or configure no token ' +
@@ -78,7 +73,7 @@ export function bearerTokenUserBuilder(token: string): A2aUserBuilder {
     const credential = extractBearerCredential(req.headers.authorization);
     if (
       credential === undefined ||
-      !timingSafeEqualStrings(credential, token)
+      !timingSafeEqualStrings(credential, expected)
     ) {
       throw new Error(
         'A2A request rejected: missing or invalid `Authorization: Bearer` ' +
