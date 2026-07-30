@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import AdmZip from 'adm-zip';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -11,6 +12,7 @@ import {describe, expect, it} from 'vitest';
 import {
   loadAllSkillsInDir,
   loadSkillFromDir,
+  loadSkillFromZipBuffer,
   parseSkillMdContent,
   validateSkillDir,
 } from '../../src/skills/loader.js';
@@ -506,6 +508,124 @@ Instructions`,
       expect(skills['skill-3']).toBeDefined();
 
       await fs.rm(tempDir, {recursive: true, force: true});
+    });
+  });
+
+  describe('loadSkillFromZipBuffer', () => {
+    const validSkillMd = `---
+name: test-skill
+description: A test skill
+---
+Instruction body`;
+
+    /**
+     * Builds an archive containing a member with a raw, unsanitised
+     * `entryName`. `AdmZip.addFile` canonicalises the names it is given
+     * (`'../evil.txt'` is stored as `'evil.txt'`), so the entry is added under a
+     * placeholder name and renamed afterwards.
+     */
+    function createZipWithRawEntryName(entryName: string): Buffer {
+      const zip = new AdmZip();
+      zip.addFile('SKILL.md', Buffer.from(validSkillMd, 'utf-8'));
+      zip.addFile('placeholder.txt', Buffer.from('x', 'utf-8'));
+      const placeholder = zip
+        .getEntries()
+        .find((e) => e.entryName === 'placeholder.txt');
+      if (!placeholder) {
+        expect.fail('fixture setup failed: placeholder.txt was not added');
+      }
+      placeholder.entryName = entryName;
+      return zip.toBuffer();
+    }
+
+    function createZipWithSkillMd(skillMd: string): Buffer {
+      const zip = new AdmZip();
+      zip.addFile('SKILL.md', Buffer.from(skillMd, 'utf-8'));
+      return zip.toBuffer();
+    }
+
+    function createZipWithSkillName(name: string): Buffer {
+      return createZipWithSkillMd(
+        `---\nname: ${name}\ndescription: A test skill\n---\nBody`,
+      );
+    }
+
+    it('loads a benign archive with all resource trees', () => {
+      const zip = new AdmZip();
+      zip.addFile('SKILL.md', Buffer.from(validSkillMd, 'utf-8'));
+      zip.addFile('references/ref1.md', Buffer.from('ref content', 'utf-8'));
+      zip.addFile('assets/a.txt', Buffer.from('asset content', 'utf-8'));
+      zip.addFile('scripts/run.sh', Buffer.from('echo hello', 'utf-8'));
+
+      const skill = loadSkillFromZipBuffer(zip.toBuffer());
+
+      expect(skill.frontmatter.name).toBe('test-skill');
+      expect(skill.instructions).toBe('Instruction body');
+      expect(skill.resources?.references?.['ref1.md']).toBe('ref content');
+      expect(skill.resources?.assets?.['a.txt']).toBe('asset content');
+      expect(skill.resources?.scripts?.['run.sh']?.src).toBe('echo hello');
+    });
+
+    it.each(['/etc/passwd', '../evil.txt', 'references/../../esc.txt'])(
+      'rejects the whole archive for the dangerous entry %s',
+      (entryName) => {
+        expect(() =>
+          loadSkillFromZipBuffer(createZipWithRawEntryName(entryName)),
+        ).toThrow(`Dangerous zip entry ignored: ${entryName}`);
+      },
+    );
+
+    it('reports the dangerous entry even when SKILL.md is absent', () => {
+      const zip = new AdmZip();
+      zip.addFile('placeholder.txt', Buffer.from('x', 'utf-8'));
+      const placeholder = zip.getEntries()[0];
+      placeholder.entryName = '../evil.txt';
+
+      expect(() => loadSkillFromZipBuffer(zip.toBuffer())).toThrow(
+        'Dangerous zip entry ignored: ../evil.txt',
+      );
+    });
+
+    it.each(['../evil', 'a/b', '..'])(
+      'rejects the non-bare skill name %s',
+      (name) => {
+        expect(() =>
+          loadSkillFromZipBuffer(createZipWithSkillName(name)),
+        ).toThrow(`Invalid skill name in SKILL.md: ${name}`);
+      },
+    );
+
+    it('rejects a skill name that is not a string', () => {
+      expect(() =>
+        loadSkillFromZipBuffer(createZipWithSkillName('123')),
+      ).toThrow('Invalid skill name in SKILL.md: 123');
+    });
+
+    it('rejects frontmatter with no name', () => {
+      const zipBuffer = createZipWithSkillMd(
+        '---\ndescription: A test skill\n---\nBody',
+      );
+      expect(() => loadSkillFromZipBuffer(zipBuffer)).toThrow(
+        "SKILL.md frontmatter must contain 'name'",
+      );
+    });
+
+    it('reports a YAML sequence as a non-mapping, not as a missing name', () => {
+      const zipBuffer = createZipWithSkillMd(
+        '---\n- item1\n- item2\n---\nBody',
+      );
+      expect(() => loadSkillFromZipBuffer(zipBuffer)).toThrow(
+        'Invalid YAML in frontmatter: SKILL.md frontmatter must be a YAML mapping',
+      );
+    });
+
+    it('still reports a missing SKILL.md in a benign archive', () => {
+      const zip = new AdmZip();
+      zip.addFile('references/ref1.md', Buffer.from('ref content', 'utf-8'));
+
+      expect(() => loadSkillFromZipBuffer(zip.toBuffer())).toThrow(
+        'SKILL.md not found in zipped filesystem.',
+      );
     });
   });
 });
