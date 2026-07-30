@@ -13,6 +13,16 @@ import {toCamelCase, toSnakeCase} from '../utils/object_notation_utils.js';
 import {createEventActions, EventActions} from './event_actions.js';
 
 /**
+ * A unique symbol identifying ADK Event objects.
+ *
+ * Events are plain objects produced by {@link createEvent} rather than class
+ * instances, so they carry this signature as a brand and {@link isEvent} checks
+ * for it — mirroring the `Symbol.for('google.adk.*')` guards used across ADK
+ * (e.g. {@link isBaseTool}, {@link isBaseAgent}).
+ */
+const EVENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.event');
+
+/**
  * Workflow-node provenance attached to an event.
  *
  * Mirrors `google/adk-python` `Event.node_info`. Present only on events emitted
@@ -39,6 +49,15 @@ export interface NodeInfo {
   taken by the agents like function calls, etc.
  */
 export interface Event extends LlmResponse {
+  /**
+   * Signature brand identifying this object as an ADK {@link Event}.
+   *
+   * Set by {@link createEvent} and checked by {@link isEvent}. Optional because
+   * events are also reconstructed from storage/session payloads, where the
+   * (non-serializable) brand is absent.
+   */
+  readonly [EVENT_SIGNATURE_SYMBOL]?: true;
+
   /**
    * The unique identifier of the event.
    * Do not assign the ID. It will be assigned by the session.
@@ -129,6 +148,7 @@ export interface CreateEventParams extends Omit<Partial<Event>, 'actions'> {
 export function createEvent(params: CreateEventParams = {}): Event {
   return {
     ...params,
+    [EVENT_SIGNATURE_SYMBOL]: true,
     id: params.id || createNewEventId(),
     invocationId: params.invocationId || '',
     author: params.author,
@@ -294,10 +314,9 @@ export function isEvent(obj: unknown): obj is Event {
   return (
     typeof obj === 'object' &&
     obj !== null &&
-    'invocationId' in obj &&
-    typeof (obj as Event).invocationId === 'string' &&
-    'actions' in obj &&
-    typeof (obj as Event).actions === 'object'
+    EVENT_SIGNATURE_SYMBOL in obj &&
+    (obj as {[EVENT_SIGNATURE_SYMBOL]?: unknown})[EVENT_SIGNATURE_SYMBOL] ===
+      true
   );
 }
 

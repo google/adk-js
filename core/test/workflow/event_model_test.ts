@@ -7,6 +7,7 @@
 import {describe, expect, it} from 'vitest';
 import {
   createEvent,
+  isEvent,
   transformToCamelCaseEvent,
   transformToSnakeCaseEvent,
 } from '../../src/events/event.js';
@@ -62,5 +63,35 @@ describe('Phase 0 — workflow event-model extensions', () => {
     expect(back.route).toBe('question');
     expect(back.actions.agentState).toEqual({status: 3});
     expect(back.actions.endOfAgent).toBe(true);
+  });
+});
+
+describe('isEvent — signature-symbol brand', () => {
+  it('recognizes events built by createEvent', () => {
+    expect(isEvent(createEvent({author: 'node_a'}))).toBe(true);
+  });
+
+  it('rejects non-objects and null', () => {
+    expect(isEvent(null)).toBe(false);
+    expect(isEvent(undefined)).toBe(false);
+    expect(isEvent('event')).toBe(false);
+    expect(isEvent(42)).toBe(false);
+  });
+
+  it('rejects event-shaped impostors that lack the brand', () => {
+    // Structurally event-like, but not produced by createEvent: the old
+    // duck-typing guard would accept this; the brand-based guard does not.
+    const impostor = {invocationId: 'inv-1', actions: {}, output: {value: 1}};
+    expect(isEvent(impostor)).toBe(false);
+  });
+
+  it('drops the (non-serializable) brand across a snake/camel round-trip', () => {
+    // The brand is a runtime marker only; a rehydrated event is not branded.
+    const branded = createEvent({author: 'node_a', output: {value: 42}});
+    const rehydrated = transformToCamelCaseEvent(
+      transformToSnakeCaseEvent(branded),
+    );
+    expect(isEvent(branded)).toBe(true);
+    expect(isEvent(rehydrated)).toBe(false);
   });
 });
