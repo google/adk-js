@@ -199,13 +199,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
 }
 
 /**
- * Constructs the path to the artifact.
+ * Constructs the storage key for the artifact.
  *
  * @param appName The app name.
  * @param userId The user ID.
  * @param sessionId The session ID.
  * @param filename The filename.
- * @return The path to the artifact.
+ * @return The encoded storage key for the artifact.
  */
 function artifactPath(
   appName: string,
@@ -221,8 +221,14 @@ function artifactPath(
 }
 
 type ArtifactStorageKey =
-  | ['session', string, string, string, string]
-  | ['user', string, string, string];
+  | [
+      'session',
+      appName: string,
+      userId: string,
+      sessionId: string,
+      filename: string,
+    ]
+  | ['user', appName: string, userId: string, filename: string];
 
 /**
  * Checks if the filename has a user namespace prefix.

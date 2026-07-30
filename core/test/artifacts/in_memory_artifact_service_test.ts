@@ -32,13 +32,40 @@ describe('InMemoryArtifactService', () => {
       artifact: {text: 'artifact-b'},
     });
 
-    const artifact = await service.loadArtifact({
+    const artifactA = await service.loadArtifact({
       appName: 'app',
       userId: 'user',
       sessionId: 'session',
       filename: 'nested/report.txt',
     });
+    const artifactB = await service.loadArtifact({
+      appName: 'app',
+      userId: 'user',
+      sessionId: 'session/nested',
+      filename: 'report.txt',
+    });
 
-    expect(artifact?.text).toBe('artifact-a');
+    expect(artifactA?.text).toBe('artifact-a');
+    expect(artifactB?.text).toBe('artifact-b');
+  });
+
+  it('does not leak a session named user into other sessions', async () => {
+    const service = new InMemoryArtifactService();
+
+    await service.saveArtifact({
+      appName: 'app',
+      userId: 'user',
+      sessionId: 'user',
+      filename: 'foo.txt',
+      artifact: {text: 'session-scoped'},
+    });
+
+    const keys = await service.listArtifactKeys({
+      appName: 'app',
+      userId: 'user',
+      sessionId: 'other',
+    });
+
+    expect(keys).toEqual([]);
   });
 });
