@@ -101,19 +101,15 @@ export class InMemoryArtifactService implements BaseArtifactService {
     userId,
     sessionId,
   }: ListArtifactKeysRequest): Promise<string[]> {
+    const sessionPrefix = artifactPrefix('session', appName, userId, sessionId);
+    const userPrefix = artifactPrefix('user', appName, userId);
     const filenames: string[] = [];
 
     for (const path in this.artifacts) {
-      const key = JSON.parse(path) as ArtifactStorageKey;
-      if (
-        key[0] === 'session' &&
-        key[1] === appName &&
-        key[2] === userId &&
-        key[3] === sessionId
-      ) {
-        filenames.push(key[4]);
-      } else if (key[0] === 'user' && key[1] === appName && key[2] === userId) {
-        filenames.push(key[3]);
+      if (path.startsWith(sessionPrefix)) {
+        filenames.push(decodeURIComponent(path.slice(sessionPrefix.length)));
+      } else if (path.startsWith(userPrefix)) {
+        filenames.push(decodeURIComponent(path.slice(userPrefix.length)));
       }
     }
 
@@ -214,21 +210,15 @@ function artifactPath(
   filename: string,
 ): string {
   if (fileHasUserNamespace(filename)) {
-    return JSON.stringify(['user', appName, userId, filename]);
+    return `${artifactPrefix('user', appName, userId)}${encodeURIComponent(filename)}`;
   }
 
-  return JSON.stringify(['session', appName, userId, sessionId, filename]);
+  return `${artifactPrefix('session', appName, userId, sessionId)}${encodeURIComponent(filename)}`;
 }
 
-type ArtifactStorageKey =
-  | [
-      'session',
-      appName: string,
-      userId: string,
-      sessionId: string,
-      filename: string,
-    ]
-  | ['user', appName: string, userId: string, filename: string];
+function artifactPrefix(scope: string, ...parts: string[]): string {
+  return `${[scope, ...parts].map(encodeURIComponent).join('/')}/`;
+}
 
 /**
  * Checks if the filename has a user namespace prefix.

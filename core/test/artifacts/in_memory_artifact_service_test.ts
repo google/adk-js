@@ -49,6 +49,41 @@ describe('InMemoryArtifactService', () => {
     expect(artifactB?.text).toBe('artifact-b');
   });
 
+  it('keeps artifacts with ambiguous app and user components isolated', async () => {
+    const service = new InMemoryArtifactService();
+
+    await service.saveArtifact({
+      appName: 'app',
+      userId: 'nested/user',
+      sessionId: 'session',
+      filename: 'report.txt',
+      artifact: {text: 'artifact-a'},
+    });
+    await service.saveArtifact({
+      appName: 'app/nested',
+      userId: 'user',
+      sessionId: 'session',
+      filename: 'report.txt',
+      artifact: {text: 'artifact-b'},
+    });
+
+    const artifactA = await service.loadArtifact({
+      appName: 'app',
+      userId: 'nested/user',
+      sessionId: 'session',
+      filename: 'report.txt',
+    });
+    const artifactB = await service.loadArtifact({
+      appName: 'app/nested',
+      userId: 'user',
+      sessionId: 'session',
+      filename: 'report.txt',
+    });
+
+    expect(artifactA?.text).toBe('artifact-a');
+    expect(artifactB?.text).toBe('artifact-b');
+  });
+
   it('does not leak a session named user into other sessions', async () => {
     const service = new InMemoryArtifactService();
 
