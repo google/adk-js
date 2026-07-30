@@ -9,13 +9,8 @@ import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
 
 /**
  * Returns whether the model can natively accept an output schema at the same
- * time as tools.
- *
- * When it can, the request should carry the schema directly
- * (`config.responseSchema`); native structured output is strictly more
- * reliable than the prompt-based `set_model_response` workaround, which asks
- * the model to route its final answer through a synthetic function call.
- * When it cannot, callers must fall back to that workaround.
+ * time as tools, which is strictly more reliable than the prompt-based
+ * `set_model_response` workaround.
  *
  * Early Access Program model names encode no numeric version, so
  * `isGemini2OrAbove` rejects them even on Vertex AI. The Python
