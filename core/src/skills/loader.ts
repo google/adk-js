@@ -176,13 +176,10 @@ export function parseSkillMdContent(content: string): {
 }
 
 /**
- * Checks whether a zip member name attempts to escape the extraction root
- * (zip slip). Mirrors the guard in adk-python's `_load_skill_from_zip_bytes`
- * (`src/google/adk/skills/_utils.py`).
- *
- * This is a name-shape check on the archive metadata, not a sandbox: it rejects
- * traversal spellings, and says nothing about symlinks or what a caller
- * subsequently does with the extracted names.
+ * Checks whether a zip member name attempts to escape the extraction root (zip
+ * slip), mirroring adk-python's `_load_skill_from_zip_bytes`. This is a
+ * name-shape check on archive metadata, not a sandbox: it says nothing about
+ * symlinks.
  */
 function isDangerousZipEntryName(entryName: string): boolean {
   return (
@@ -193,12 +190,10 @@ function isDangerousZipEntryName(entryName: string): boolean {
 }
 
 /**
- * Checks that a skill name is a single bare path segment.
- *
- * Mirrors adk-python's `pathlib.Path(name).name != name` check. Node's
- * `path.basename` differs from `pathlib` for the two relative markers -
- * `path.basename('..') === '..'` whereas `pathlib.Path('..').name === ''` - so
- * '.' and '..' are rejected explicitly to keep the two languages in agreement.
+ * Checks that a skill name is a single bare path segment, mirroring
+ * adk-python's `pathlib.Path(name).name != name`. '.' and '..' are rejected
+ * explicitly because `path.basename('..') === '..'` whereas
+ * `pathlib.Path('..').name === ''`.
  */
 function isBareSkillName(name: string): boolean {
   return name !== '.' && name !== '..' && path.basename(name) === name;
@@ -393,9 +388,8 @@ export async function loadAllSkillsInDir(
 /**
  * Loads a complete skill directly from in-memory zip file buffer.
  *
- * The archive is attacker-influenced content, so the whole archive is rejected
- * if any member name escapes the extraction root, and the skill name is
- * required to be a bare path segment.
+ * The whole archive is rejected if any member name escapes the extraction
+ * root, and the skill name must be a bare path segment.
  *
  * @param zipBuffer - The raw Buffer of the zip file containing the skill.
  * @returns A Skill object with all components loaded.
