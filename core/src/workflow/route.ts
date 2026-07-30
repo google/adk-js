@@ -13,3 +13,21 @@
  * have the same type.
  */
 export type RouteValue = string | number | boolean;
+
+/**
+ * The route of the fallback edge out of a node.
+ *
+ * An edge declaring this route is followed only when none of the node's other
+ * routed edges matched. At most one such edge per source node is allowed.
+ */
+export const DEFAULT_ROUTE = '__DEFAULT__';
+
+/** Normalizes a single route, a list of routes or nothing into a list. */
+export function toRouteList(
+  route: RouteValue | RouteValue[] | undefined,
+): RouteValue[] {
+  if (route === undefined) {
+    return [];
+  }
+  return Array.isArray(route) ? route : [route];
+}

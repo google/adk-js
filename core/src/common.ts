@@ -293,12 +293,15 @@ export type {
   FunctionNodeConfig,
   NodeFunction,
 } from './workflow/function_node.js';
+export {Graph} from './workflow/graph.js';
+export type {ChainElement, Edge, EdgeItem} from './workflow/graph.js';
 export {JoinNode} from './workflow/join_node.js';
 export {node} from './workflow/node.js';
 export type {NodeLike, NodeOptions} from './workflow/node.js';
 export {NodeContext} from './workflow/node_context.js';
 export type {NodeContextConfig} from './workflow/node_context.js';
 export type {RetryConfig} from './workflow/retry_config.js';
+export {DEFAULT_ROUTE} from './workflow/route.js';
 export type {RouteValue} from './workflow/route.js';
 
 export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
