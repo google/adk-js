@@ -63,13 +63,11 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
       appendInstructions(llmRequest, [instructionWithState]);
     }
 
-    // Skipped when the model can take the output schema natively alongside
-    // tools; the basic processor then sets `config.responseSchema` instead.
     if (
       agent.outputSchema &&
       agent.tools &&
       agent.tools.length > 0 &&
-      !canUseOutputSchemaWithTools(agent.canonicalModel)
+      !canUseOutputSchemaWithTools(agent.canonicalModel.model)
     ) {
       appendInstructions(llmRequest, [
         'To output the final result, you must call the "set_model_response" function with the appropriate values. Do not output anything else.',

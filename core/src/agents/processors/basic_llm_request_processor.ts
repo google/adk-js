@@ -43,9 +43,8 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     // `LlmAgent.runOneStepAsync` and the instructions processor.
     if (
       agent.outputSchema &&
-      (!agent.tools ||
-        agent.tools.length === 0 ||
-        canUseOutputSchemaWithTools(agent.canonicalModel))
+      (!agent.tools?.length ||
+        canUseOutputSchemaWithTools(agent.canonicalModel.model))
     ) {
       setOutputSchema(llmRequest, agent.outputSchema);
     }

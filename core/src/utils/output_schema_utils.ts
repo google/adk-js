@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseLlm, isBaseLlm} from '../models/base_llm.js';
-
 import {isGemini2OrAbove} from './model_name.js';
 import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
 
@@ -19,18 +17,14 @@ import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
  * the model to route its final answer through a synthetic function call.
  * When it cannot, callers must fall back to that workaround.
  *
- * Note that Gemini 2.0+ is recognised by numeric version alone, so Gemini
- * Early Access Program model names — which encode no numeric version — return
- * false here even on Vertex AI. That is narrower than the Python
- * implementation and is deliberate: recognising those names belongs in the
- * shared `isGemini2OrAbove` predicate, which several other call sites share.
+ * Early Access Program model names encode no numeric version, so
+ * `isGemini2OrAbove` rejects them even on Vertex AI. The Python
+ * implementation accepts them; that gap lives in the shared predicate.
  *
- * @param model The model name, or a resolved model instance to read it from.
+ * @param modelString A simple or path-based model name.
  * @return True if the model supports an output schema alongside tools.
  */
-export function canUseOutputSchemaWithTools(model: string | BaseLlm): boolean {
-  const modelString = isBaseLlm(model) ? model.model : model;
-
+export function canUseOutputSchemaWithTools(modelString: string): boolean {
   return (
     getGoogleLlmVariant() === GoogleLLMVariant.VERTEX_AI &&
     isGemini2OrAbove(modelString)
