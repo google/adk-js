@@ -412,24 +412,24 @@ export class Runner {
                   return;
                 }
 
-                if (!event.partial) {
-                  await this.sessionService.appendEvent({session, event});
-                }
                 // Step 3: Run the on_event callbacks to optionally modify the event.
                 const modifiedEvent =
                   await this.pluginManager.runOnEventCallback({
                     invocationContext,
                     event,
                   });
+                const outputEvent = modifiedEvent ?? event;
+                if (!event.partial) {
+                  await this.sessionService.appendEvent({
+                    session,
+                    event: outputEvent,
+                  });
+                }
                 if (params.abortSignal?.aborted) {
                   return;
                 }
 
-                if (modifiedEvent) {
-                  yield modifiedEvent;
-                } else {
-                  yield event;
-                }
+                yield outputEvent;
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
               await this.pluginManager.runAfterRunCallback({invocationContext});

@@ -570,6 +570,16 @@ describe('Runner with plugins', () => {
     const modifiedEventMessage = generatedEvent.content!.parts![0].text;
 
     expect(modifiedEventMessage).toEqual(MockPlugin.ON_EVENT_CALLBACK_MSG);
+
+    const session = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const persistedEvent = session!.events[1];
+    expect(persistedEvent.content!.parts![0].text).toEqual(
+      MockPlugin.ON_EVENT_CALLBACK_MSG,
+    );
   });
 
   it('should call beforeRunCallback and stop execution', async () => {
