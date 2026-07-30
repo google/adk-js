@@ -101,17 +101,19 @@ export class InMemoryArtifactService implements BaseArtifactService {
     userId,
     sessionId,
   }: ListArtifactKeysRequest): Promise<string[]> {
-    const sessionPrefix = `${appName}/${userId}/${sessionId}/`;
-    const usernamespacePrefix = `${appName}/${userId}/user/`;
     const filenames: string[] = [];
 
     for (const path in this.artifacts) {
-      if (path.startsWith(sessionPrefix)) {
-        const filename = path.replace(sessionPrefix, '');
-        filenames.push(filename);
-      } else if (path.startsWith(usernamespacePrefix)) {
-        const filename = path.replace(usernamespacePrefix, '');
-        filenames.push(filename);
+      const key = JSON.parse(path) as ArtifactStorageKey;
+      if (
+        key[0] === 'session' &&
+        key[1] === appName &&
+        key[2] === userId &&
+        key[3] === sessionId
+      ) {
+        filenames.push(key[4]);
+      } else if (key[0] === 'user' && key[1] === appName && key[2] === userId) {
+        filenames.push(key[3]);
       }
     }
 
@@ -212,11 +214,15 @@ function artifactPath(
   filename: string,
 ): string {
   if (fileHasUserNamespace(filename)) {
-    return `${appName}/${userId}/user/${filename}`;
+    return JSON.stringify(['user', appName, userId, filename]);
   }
 
-  return `${appName}/${userId}/${sessionId}/${filename}`;
+  return JSON.stringify(['session', appName, userId, sessionId, filename]);
 }
+
+type ArtifactStorageKey =
+  | ['session', string, string, string, string]
+  | ['user', string, string, string];
 
 /**
  * Checks if the filename has a user namespace prefix.
