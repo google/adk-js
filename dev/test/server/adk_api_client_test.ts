@@ -10,8 +10,8 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {AdkApiClient} from '../../src/server/adk_api_client.js';
 
 /** Makes the mocked `fetch` resolve to an SSE response that yields no events. */
-function mockEmptyStream(): void {
-  (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+function mockEmptyStream(fetchMock: ReturnType<typeof vi.fn>): void {
+  fetchMock.mockResolvedValue({
     ok: true,
     body: {
       getReader: () => ({read: async () => ({done: true, value: undefined})}),
@@ -22,10 +22,12 @@ function mockEmptyStream(): void {
 describe('AdkApiClient', () => {
   const mockBackendUrl = 'http://localhost:3000';
   let client: AdkApiClient;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     client = new AdkApiClient({backendUrl: mockBackendUrl});
-    global.fetch = vi.fn();
+    fetchMock = vi.fn();
+    global.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -345,7 +347,7 @@ describe('AdkApiClient', () => {
     });
 
     it('should omit optional fields from the request body when they are omitted', async () => {
-      mockEmptyStream();
+      mockEmptyStream(fetchMock);
 
       await client
         .runAsync({appName: 'app1', userId: 'user1', sessionId: 'session1'})
@@ -363,7 +365,7 @@ describe('AdkApiClient', () => {
     });
 
     it('should include only the optional fields that are provided', async () => {
-      mockEmptyStream();
+      mockEmptyStream(fetchMock);
 
       await client
         .runAsync({
@@ -387,7 +389,7 @@ describe('AdkApiClient', () => {
     });
 
     it('should send explicit false for streaming when provided', async () => {
-      mockEmptyStream();
+      mockEmptyStream(fetchMock);
 
       await client
         .runAsync({

@@ -19,10 +19,7 @@ export interface AdkApiClientConfig {
  * Run agent request interface.
  *
  * Mirrors the body accepted by the ADK API server's `POST /run` and
- * `POST /run_sse` endpoints. Fields the server treats as optional are optional
- * here too; when omitted they are left out of the JSON body entirely and the
- * server applies its own default (no new turn content, no state delta,
- * non-streaming).
+ * `POST /run_sse`; omitted optional fields are dropped from the JSON body.
  */
 export interface RunAgentRequest {
   appName: string;
