@@ -89,6 +89,26 @@ a subject before you open one:
 node scripts/check_commit_message.mjs "fix(dev): stop dropping piped stdin lines"
 ```
 
+### Dependency declarations
+
+By default a workspace declares exactly what its own `src/` imports; anything
+declared but never imported is removed. `package.json` cannot hold comments, so
+an intentional exception must be recorded here — and, where possible, pinned by
+a test:
+
+1. **The five `@mikro-orm` dialect drivers in `dev/package.json`.** Core loads
+   them with a dynamic `import()` (`core/src/sessions/db/operations.ts`) and
+   declares them only as `peerDependencies`, so nothing guarantees they are on
+   disk. `adk deploy` generates a Dockerfile that installs only
+   `@google/adk-devtools`, so that package must ship the drivers itself.
+   `tests/integration/lazy_load_db_drivers/driver_manifest_test.ts` keeps the
+   three lists in sync.
+1. **`@google/adk` in `integrations/package.json`.** The package is a scaffold
+   whose every future module will import it. npm workspaces hoist into the root
+   `node_modules`, so adding the import later without the declaration would
+   resolve locally and in CI while breaking consumers of the published tarball;
+   declaring it now avoids that.
+
 ### Sign our Contributor License Agreement
 
 Contributions to this project must be accompanied by a
