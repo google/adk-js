@@ -14,7 +14,13 @@ import {
   StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import {formatError, logTransportError} from './mcp_error_utils.js';
+import {formatError} from '../../utils/error_utils.js';
+import {logger} from '../../utils/logger.js';
+
+/** Surfaces a background transport error that would otherwise be dropped. */
+function logTransportError(err: unknown): void {
+  logger.error('MCP transport error: ' + formatError(err));
+}
 
 /**
  * Defines the parameters for establishing a connection to an MCP server using

@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {logger} from '../../utils/logger.js';
+/**
+ * Helpers for turning arbitrary thrown values into readable, root-cause
+ * messages, so that wrapped, aggregated or HTTP-flavoured failures are not
+ * reduced to an empty or generic string when they are reported.
+ */
 
 /**
  * Maximum number of characters of an HTTP response body surfaced by
@@ -65,10 +69,11 @@ function baseMessage(err: unknown): string {
 /**
  * Extracts synchronously-available HTTP details (status, status text and a
  * truncated response body) from a duck-typed error, or `undefined` when none
- * are present. Handles the MCP SDK `StreamableHTTPError` (status on `.code`),
- * axios/httpx-style errors (`.response`), and errors carrying `.status`
- * directly. A body is only read when it is already a string, so no async
- * `Response.text()` is ever invoked.
+ * are present. Several shapes are supported: errors carrying `.status`
+ * directly, axios/httpx-style errors nesting them under `.response`, and
+ * errors that expose the status as a numeric `.code` (as the MCP SDK's
+ * `StreamableHTTPError` does). A body is only read when it is already a
+ * string, so no async `Response.text()` is ever invoked.
  */
 function extractHttpDetails(err: unknown): string | undefined {
   const record = asRecord(err);
@@ -153,9 +158,4 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
  */
 export function formatError(err: unknown): string {
   return formatErrorRecursive(err, new Set<unknown>());
-}
-
-/** Surfaces a background transport error that would otherwise be dropped. */
-export function logTransportError(err: unknown): void {
-  logger.error('MCP transport error: ' + formatError(err));
 }
