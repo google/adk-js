@@ -144,9 +144,8 @@ export class LocalEnvironment extends BaseEnvironment {
       const exitCode = await new Promise<number>((resolve, reject) => {
         // 'close' rather than 'exit': the stdio streams are drained by then.
         child.on('close', (code, signal) => {
-          // Node reports either an exit code or the name of the signal that
-          // terminated the process; Python reports the negative signal number
-          // (`-9` for SIGKILL) via `proc.returncode or 0`, so map it back.
+          // Node reports either an exit code or the terminating signal; Python
+          // reports the negative signal number (`-9` for SIGKILL), so map back.
           resolve(
             signal === null ? (code ?? 0) : -os.constants.signals[signal],
           );

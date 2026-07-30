@@ -14,7 +14,7 @@ import {experimental} from '../utils/experimental.js';
  * produced, whereas an environment runs a *shell command* inside a working
  * directory and reports its process exit status.
  *
- * Every field is required. A command that succeeds with no output yields
+ * A command that succeeds with no output yields
  * `{exitCode: 0, stdout: '', stderr: '', timedOut: false}`.
  */
 export interface ExecutionResult {
