@@ -13,6 +13,26 @@ import {toCamelCase, toSnakeCase} from '../utils/object_notation_utils.js';
 import {createEventActions, EventActions} from './event_actions.js';
 
 /**
+ * Workflow-node provenance attached to an event.
+ *
+ * Mirrors `google/adk-python` `Event.node_info`. Present only on events emitted
+ * from within a workflow node.
+ */
+export interface NodeInfo {
+  /** The workflow node path that produced this event (e.g. `wf.child.0`). */
+  path?: string;
+
+  /** The node run id this event's output should be attributed to. */
+  outputFor?: string;
+
+  /**
+   * Whether the event's textual content should be promoted to the node's
+   * structured output.
+   */
+  messageAsOutput?: boolean;
+}
+
+/**
  * Represents an event in a conversation between agents and users.
 
   It is used to store the content of the conversation, as well as the actions
@@ -63,6 +83,41 @@ export interface Event extends LlmResponse {
    * The timestamp of the event.
    */
   timestamp: number;
+
+  /**
+   * Workflow: the structured output produced by the emitting node, if any.
+   *
+   * First-class field mirroring `google/adk-python` `Event.output`. Used by the
+   * workflow engine to carry a node's return value alongside its content.
+   */
+  output?: unknown;
+
+  /**
+   * Workflow: the route key(s) emitted by a routing node, used by the graph to
+   * select the matching outgoing edge(s). A single value fires one branch; an
+   * array fires every branch whose route matches any listed value (multi-route
+   * dispatch). Mirrors Python `Event.route`.
+   */
+  route?: string | number | boolean | Array<string | number | boolean>;
+
+  /**
+   * Workflow: provenance of the emitting node. Mirrors Python `Event.node_info`.
+   */
+  nodeInfo?: NodeInfo;
+
+  /**
+   * Workflow: scope tag used to isolate multi-agent conversations so peer
+   * scopes don't see each other's events. Mirrors Python
+   * `Event.isolation_scope`.
+   */
+  isolationScope?: string;
+}
+
+/**
+ * Parameters for creating an event with partial fields.
+ */
+export interface CreateEventParams extends Omit<Partial<Event>, 'actions'> {
+  actions?: Partial<EventActions>;
 }
 
 /**
@@ -71,13 +126,13 @@ export interface Event extends LlmResponse {
  * @param params The partial event to create the event from.
  * @returns The event.
  */
-export function createEvent(params: Partial<Event> = {}): Event {
+export function createEvent(params: CreateEventParams = {}): Event {
   return {
     ...params,
     id: params.id || createNewEventId(),
     invocationId: params.invocationId || '',
     author: params.author,
-    actions: params.actions || createEventActions(),
+    actions: createEventActions(params.actions),
     longRunningToolIds: params.longRunningToolIds || [],
     branch: params.branch,
     timestamp: params.timestamp || Date.now(),
@@ -230,6 +285,23 @@ const ASCII_LETTERS_AND_NUMBERS =
   'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 /**
+ * Type guard to check if an object is an instance of Event.
+ *
+ * @param obj The object to check.
+ * @returns True if the object matches the Event structure.
+ */
+export function isEvent(obj: unknown): obj is Event {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'invocationId' in obj &&
+    typeof (obj as Event).invocationId === 'string' &&
+    'actions' in obj &&
+    typeof (obj as Event).actions === 'object'
+  );
+}
+
+/**
  * Generates a new unique ID for the event.
  */
 export function createNewEventId(): string {
@@ -262,6 +334,11 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'customMetadata',
   'content.parts.functionCall.args',
   'content.parts.functionResponse.response',
+  // Workflow: arbitrary node output and checkpointed node state carry
+  // user-defined keys that must survive round-trips verbatim (a node's original
+  // input is stashed under `actions.agentState` for HITL resume).
+  'output',
+  'actions.agentState',
 ];
 
 /**
@@ -281,6 +358,10 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'custom_metadata',
   'content.parts.function_call.args',
   'content.parts.function_response.response',
+  // Workflow: arbitrary node output and checkpointed node state (see the
+  // camelCase list above).
+  'output',
+  'actions.agent_state',
 ];
 
 /**
