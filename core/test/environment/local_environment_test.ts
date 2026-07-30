@@ -20,6 +20,15 @@ const NODE = `"${process.execPath}"`;
 /** Spawning a child process is slow on Windows CI runners. */
 const SPAWN_TIMEOUT_MS = 30_000;
 
+/**
+ * How long the commands used by the timeout tests run for. A killed shell can
+ * leave the command running, so this also bounds how long cleanup has to wait.
+ */
+const SURVIVOR_LIFETIME_MS = 5_000;
+
+/** Upper bound on a timed-out call: comfortably short of the command itself. */
+const TIMED_OUT_BY_MS = 4_000;
+
 const decoder = new TextDecoder();
 
 describe('LocalEnvironment', () => {
@@ -30,15 +39,16 @@ describe('LocalEnvironment', () => {
   });
 
   afterEach(async () => {
-    // A command killed by a timeout can outlive the test, and Windows refuses
-    // to remove a directory that is a live process's cwd; retry until it goes.
+    // A command killed by a timeout outlives the test by up to
+    // SURVIVOR_LIFETIME_MS, and Windows refuses to remove a directory that is
+    // a live process's cwd; retry until that process exits.
     await fs.rm(tmpRoot, {
       recursive: true,
       force: true,
       maxRetries: 10,
       retryDelay: 500,
     });
-  });
+  }, SPAWN_TIMEOUT_MS);
 
   describe('lifecycle', () => {
     it('reports isInitialized across initialize() and close()', async () => {
@@ -327,13 +337,13 @@ describe('LocalEnvironment', () => {
         const startedAt = Date.now();
 
         const result = await env.execute(
-          `${NODE} -e "setTimeout(() => {}, 10000)"`,
+          `${NODE} -e "setTimeout(() => {}, ${SURVIVOR_LIFETIME_MS})"`,
           0.5,
         );
 
         expect(result.timedOut).toBe(true);
         expect(result.exitCode).not.toBe(0);
-        expect(Date.now() - startedAt).toBeLessThan(9_000);
+        expect(Date.now() - startedAt).toBeLessThan(TIMED_OUT_BY_MS);
       },
       SPAWN_TIMEOUT_MS,
     );
@@ -348,10 +358,10 @@ describe('LocalEnvironment', () => {
           'spawn_survivor.cjs',
           [
             "const {spawn} = require('node:child_process');",
-            "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {",
+            `spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${SURVIVOR_LIFETIME_MS})'], {`,
             "  stdio: 'inherit',",
             '});',
-            'setTimeout(() => {}, 10000);',
+            `setTimeout(() => {}, ${SURVIVOR_LIFETIME_MS});`,
           ].join('\n'),
         );
         const startedAt = Date.now();
@@ -359,7 +369,7 @@ describe('LocalEnvironment', () => {
         const result = await env.execute(`${NODE} spawn_survivor.cjs`, 0.5);
 
         expect(result.timedOut).toBe(true);
-        expect(Date.now() - startedAt).toBeLessThan(9_000);
+        expect(Date.now() - startedAt).toBeLessThan(TIMED_OUT_BY_MS);
       },
       SPAWN_TIMEOUT_MS,
     );
