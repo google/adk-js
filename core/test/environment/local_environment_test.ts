@@ -283,8 +283,11 @@ describe('LocalEnvironment', () => {
           `${NODE} -e "process.stdout.write(process.cwd())"`,
         );
 
-        // macOS resolves the temp dir through a symlink, so compare real paths.
-        expect(result.stdout.trim()).toBe(await fs.realpath(env.workingDir));
+        // Normalise both sides: macOS reaches the temp dir through a symlink,
+        // and Windows CI reports it as an 8.3 short path.
+        expect(await fs.realpath(result.stdout.trim())).toBe(
+          await fs.realpath(env.workingDir),
+        );
       },
       SPAWN_TIMEOUT_MS,
     );
@@ -323,6 +326,32 @@ describe('LocalEnvironment', () => {
 
         expect(result.timedOut).toBe(true);
         expect(result.exitCode).not.toBe(0);
+        expect(Date.now() - startedAt).toBeLessThan(9_000);
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    it(
+      'times out even when the command leaves a child holding the pipes open',
+      async () => {
+        // A shell that forks rather than exec's its command leaves a survivor
+        // that keeps stdout/stderr open after the kill. Reproduce that with a
+        // script file so no shell-specific syntax is needed.
+        await env.writeFile(
+          'spawn_survivor.cjs',
+          [
+            "const {spawn} = require('node:child_process');",
+            "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {",
+            "  stdio: 'inherit',",
+            '});',
+            'setTimeout(() => {}, 10000);',
+          ].join('\n'),
+        );
+        const startedAt = Date.now();
+
+        const result = await env.execute(`${NODE} spawn_survivor.cjs`, 0.5);
+
+        expect(result.timedOut).toBe(true);
         expect(Date.now() - startedAt).toBeLessThan(9_000);
       },
       SPAWN_TIMEOUT_MS,

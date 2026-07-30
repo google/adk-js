@@ -69,7 +69,7 @@ function resolvePathInWorkingDir(workingDir: string, filePath: string): string {
  * - The child inherits the whole of `process.env`, so any secret in the parent
  *   environment is visible to the command.
  * - A timeout sends `SIGKILL` to the spawned shell; processes it forked itself
- *   may survive.
+ *   may survive, and anything they write after the kill is not captured.
  * - File paths are confined to the working directory by a lexical check only
  *   (see {@link readFile} and {@link writeFile}).
  */
@@ -137,6 +137,12 @@ export class LocalEnvironment extends BaseEnvironment {
       timer = setTimeout(() => {
         timedOut = true;
         child.kill('SIGKILL');
+        // Killing the shell does not kill a command it forked rather than
+        // exec'd, and that survivor keeps the pipes open, which would hold
+        // 'close' back until it exits on its own. Release the read ends so
+        // the timeout is actually enforced.
+        child.stdout.destroy();
+        child.stderr.destroy();
       }, timeoutSeconds * 1000);
     }
 
