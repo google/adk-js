@@ -12,6 +12,7 @@ import {
   InvocationContext,
   NodeContext,
   PluginManager,
+  runNode,
 } from '@google/adk';
 
 /** A minimal agent, used only to satisfy `InvocationContext.agent`. */
@@ -58,4 +59,23 @@ export async function drainNode(
     events.push(event);
   }
   return {events, ctx};
+}
+
+/**
+ * Runs a node through the node runner, collecting its events and its finished
+ * context — the way a caller drives a workflow.
+ */
+export async function runToCompletion(
+  node: BaseNode,
+  nodeInput?: unknown,
+  invocationContext = makeInvocationContext(),
+): Promise<{events: Event[]; ctx: NodeContext}> {
+  const events: Event[] = [];
+  const run = runNode(node, {invocationContext, nodeInput});
+  let step = await run.next();
+  while (!step.done) {
+    events.push(step.value);
+    step = await run.next();
+  }
+  return {events, ctx: step.value};
 }

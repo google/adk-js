@@ -288,6 +288,7 @@ export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 export {BaseNode, START} from './workflow/base_node.js';
 export type {BaseNodeConfig} from './workflow/base_node.js';
+export {NodeTimeoutError} from './workflow/errors.js';
 export {FunctionNode} from './workflow/function_node.js';
 export type {
   FunctionNodeConfig,
@@ -300,9 +301,13 @@ export {node} from './workflow/node.js';
 export type {NodeLike, NodeOptions} from './workflow/node.js';
 export {NodeContext} from './workflow/node_context.js';
 export type {NodeContextConfig} from './workflow/node_context.js';
+export {runNode} from './workflow/node_runner.js';
+export type {RunNodeOptions} from './workflow/node_runner.js';
 export type {RetryConfig} from './workflow/retry_config.js';
 export {DEFAULT_ROUTE} from './workflow/route.js';
 export type {RouteValue} from './workflow/route.js';
+export {Workflow} from './workflow/workflow.js';
+export type {WorkflowConfig} from './workflow/workflow.js';
 
 export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
 export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
