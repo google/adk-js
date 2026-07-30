@@ -580,6 +580,7 @@ describe('Runner with plugins', () => {
     expect(persistedEvent.content!.parts![0].text).toEqual(
       MockPlugin.ON_EVENT_CALLBACK_MSG,
     );
+    expect(persistedEvent.author).toEqual('test_agent');
   });
 
   it('should call beforeRunCallback and stop execution', async () => {

@@ -412,13 +412,23 @@ export class Runner {
                   return;
                 }
 
-                // Step 3: Run the on_event callbacks to optionally modify the event.
+                // Step 3: Run the on_event callbacks before persisting so callback
+                // changes are stored in the session and match the streamed event.
                 const modifiedEvent =
                   await this.pluginManager.runOnEventCallback({
                     invocationContext,
                     event,
                   });
-                const outputEvent = modifiedEvent ?? event;
+                const outputEvent = modifiedEvent
+                  ? {
+                      ...modifiedEvent,
+                      id: event.id,
+                      invocationId: event.invocationId,
+                      timestamp: event.timestamp,
+                      author: modifiedEvent.author || event.author,
+                      branch: modifiedEvent.branch ?? event.branch,
+                    }
+                  : event;
                 if (!event.partial) {
                   await this.sessionService.appendEvent({
                     session,
