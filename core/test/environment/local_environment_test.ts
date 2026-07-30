@@ -30,7 +30,14 @@ describe('LocalEnvironment', () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpRoot, {recursive: true, force: true});
+    // A command killed by a timeout can outlive the test, and Windows refuses
+    // to remove a directory that is a live process's cwd; retry until it goes.
+    await fs.rm(tmpRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 500,
+    });
   });
 
   describe('lifecycle', () => {

@@ -69,7 +69,9 @@ function resolvePathInWorkingDir(workingDir: string, filePath: string): string {
  * - The child inherits the whole of `process.env`, so any secret in the parent
  *   environment is visible to the command.
  * - A timeout sends `SIGKILL` to the spawned shell; processes it forked itself
- *   may survive, and anything they write after the kill is not captured.
+ *   may survive, and anything they write after the kill is not captured. On
+ *   Windows such a survivor also keeps the working directory locked, so a
+ *   {@link close} following a timeout can fail to remove a temporary workspace.
  * - File paths are confined to the working directory by a lexical check only
  *   (see {@link readFile} and {@link writeFile}).
  */
