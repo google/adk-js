@@ -6,6 +6,7 @@
 
 import {Event} from '../../events/event.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
+import {canUseOutputSchemaWithTools} from '../../utils/output_schema_utils.js';
 import {injectSessionState} from '../instructions.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
@@ -62,7 +63,14 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
       appendInstructions(llmRequest, [instructionWithState]);
     }
 
-    if (agent.outputSchema && agent.tools && agent.tools.length > 0) {
+    // Skipped when the model can take the output schema natively alongside
+    // tools; the basic processor then sets `config.responseSchema` instead.
+    if (
+      agent.outputSchema &&
+      agent.tools &&
+      agent.tools.length > 0 &&
+      !canUseOutputSchemaWithTools(agent.canonicalModel)
+    ) {
       appendInstructions(llmRequest, [
         'To output the final result, you must call the "set_model_response" function with the appropriate values. Do not output anything else.',
       ]);
