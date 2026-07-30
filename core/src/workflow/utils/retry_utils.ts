@@ -11,7 +11,7 @@
  */
 
 import {NodeState} from '../node_state.js';
-import {RetryConfig, normalizeRetryExceptions} from '../retry_config.js';
+import {PreparedRetryConfig} from '../retry_config.js';
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_INITIAL_DELAY_SECONDS = 1.0;
@@ -39,18 +39,14 @@ function errorName(error: unknown): string {
  * Checks if a failed node should be retried based on its retry config.
  *
  * @param error The error thrown by the node.
- * @param retryConfig The node's retry configuration, if any.
+ * @param retryConfig The node's prepared (normalized) retry configuration.
  * @param nodeState The current node state (its `attemptCount` is 1-based).
  */
 export function shouldRetryNode(
   error: unknown,
-  retryConfig: RetryConfig | undefined,
+  retryConfig: PreparedRetryConfig,
   nodeState: NodeState,
 ): boolean {
-  if (!retryConfig) {
-    return false;
-  }
-
   const attemptCount = nodeState.attemptCount;
   const maxAttempts = retryConfig.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
@@ -60,11 +56,9 @@ export function shouldRetryNode(
     return false;
   }
 
-  const exceptions = normalizeRetryExceptions(retryConfig.exceptions);
-  if (exceptions !== undefined) {
-    if (!exceptions.includes(errorName(error))) {
-      return false;
-    }
+  const exceptions = retryConfig.exceptions;
+  if (exceptions !== undefined && !exceptions.includes(errorName(error))) {
+    return false;
   }
 
   return true;
@@ -73,20 +67,16 @@ export function shouldRetryNode(
 /**
  * Calculates the delay, in seconds, before retrying a node.
  *
- * @param retryConfig The node's retry configuration, if any.
+ * @param retryConfig The node's prepared (normalized) retry configuration.
  * @param nodeState The current node state (its `attemptCount` is the 1-based
  *   attempt number that just failed).
  * @param randomFn Injectable uniform RNG in [0, 1) for deterministic testing.
  */
 export function getRetryDelaySeconds(
-  retryConfig: RetryConfig | undefined,
+  retryConfig: PreparedRetryConfig,
   nodeState: NodeState,
   randomFn: () => number = Math.random,
 ): number {
-  if (!retryConfig) {
-    return DEFAULT_INITIAL_DELAY_SECONDS;
-  }
-
   const initialDelay =
     retryConfig.initialDelay ?? DEFAULT_INITIAL_DELAY_SECONDS;
   const maxDelay = retryConfig.maxDelay ?? DEFAULT_MAX_DELAY_SECONDS;

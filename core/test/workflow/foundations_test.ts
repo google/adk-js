@@ -16,7 +16,10 @@ import {
   NodeState,
 } from '../../src/workflow/node_state.js';
 import {NodeStatus} from '../../src/workflow/node_status.js';
-import {normalizeRetryExceptions} from '../../src/workflow/retry_config.js';
+import {
+  normalizeRetryExceptions,
+  prepareRetryConfig,
+} from '../../src/workflow/retry_config.js';
 import {
   getRetryDelaySeconds,
   shouldRetryNode,
@@ -105,45 +108,51 @@ describe('Phase 0 — retry config normalization', () => {
       'RangeError',
     ]);
   });
+
+  it('prepareRetryConfig validates exceptions eagerly (throws on malformed)', () => {
+    expect(() =>
+      prepareRetryConfig({
+        exceptions: [42 as unknown as string],
+      }),
+    ).toThrow(/error class names/i);
+    // Well-formed config normalizes the exception filter up front.
+    expect(prepareRetryConfig({exceptions: [TypeError]}).exceptions).toEqual([
+      'TypeError',
+    ]);
+  });
 });
 
 describe('Phase 0 — shouldRetryNode', () => {
   const state = (attemptCount: number): NodeState =>
     createNodeState({attemptCount});
 
-  it('never retries without a config', () => {
-    expect(shouldRetryNode(new Error('x'), undefined, state(1))).toBe(false);
-  });
-
   it('retries until maxAttempts is reached (default 5)', () => {
-    expect(shouldRetryNode(new Error('x'), {}, state(1))).toBe(true);
-    expect(shouldRetryNode(new Error('x'), {}, state(4))).toBe(true);
-    expect(shouldRetryNode(new Error('x'), {}, state(5))).toBe(false);
+    const cfg = prepareRetryConfig({});
+    expect(shouldRetryNode(new Error('x'), cfg, state(1))).toBe(true);
+    expect(shouldRetryNode(new Error('x'), cfg, state(4))).toBe(true);
+    expect(shouldRetryNode(new Error('x'), cfg, state(5))).toBe(false);
   });
 
   it('respects an explicit maxAttempts', () => {
-    expect(shouldRetryNode(new Error('x'), {maxAttempts: 2}, state(1))).toBe(
-      true,
-    );
-    expect(shouldRetryNode(new Error('x'), {maxAttempts: 2}, state(2))).toBe(
-      false,
-    );
+    const cfg = prepareRetryConfig({maxAttempts: 2});
+    expect(shouldRetryNode(new Error('x'), cfg, state(1))).toBe(true);
+    expect(shouldRetryNode(new Error('x'), cfg, state(2))).toBe(false);
   });
 
   it('only retries listed exception types when provided', () => {
-    const cfg = {exceptions: [TypeError]};
+    const cfg = prepareRetryConfig({exceptions: [TypeError]});
     expect(shouldRetryNode(new TypeError('x'), cfg, state(1))).toBe(true);
     expect(shouldRetryNode(new RangeError('x'), cfg, state(1))).toBe(false);
   });
 });
 
 describe('Phase 0 — getRetryDelaySeconds', () => {
-  it('defaults to 1.0s with no config', () => {
-    expect(getRetryDelaySeconds(undefined, createNodeState())).toBe(1.0);
-  });
-
   it('applies exponential backoff (jitter disabled)', () => {
-    const cfg = {initialDelay: 1, backoffFactor: 2, jitter: 0};
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      jitter: 0,
+    });
     // attempt 1 -> exponent 0 -> 1s
     expect(getRetryDelaySeconds(cfg, createNodeState({attemptCount: 1}))).toBe(
       1,
@@ -155,14 +164,23 @@ describe('Phase 0 — getRetryDelaySeconds', () => {
   });
 
   it('caps delay at maxDelay', () => {
-    const cfg = {initialDelay: 10, backoffFactor: 10, maxDelay: 30, jitter: 0};
+    const cfg = prepareRetryConfig({
+      initialDelay: 10,
+      backoffFactor: 10,
+      maxDelay: 30,
+      jitter: 0,
+    });
     expect(getRetryDelaySeconds(cfg, createNodeState({attemptCount: 5}))).toBe(
       30,
     );
   });
 
   it('applies bounded symmetric jitter using the injected RNG', () => {
-    const cfg = {initialDelay: 4, backoffFactor: 1, jitter: 1};
+    const cfg = prepareRetryConfig({
+      initialDelay: 4,
+      backoffFactor: 1,
+      jitter: 1,
+    });
     // randomFn=0.5 -> offset 0 -> exactly base delay (4)
     expect(
       getRetryDelaySeconds(cfg, createNodeState({attemptCount: 1}), () => 0.5),

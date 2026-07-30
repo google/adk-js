@@ -67,26 +67,26 @@ export class BranchPath {
     }
     return new BranchPath(common);
   }
+}
 
-  /**
-   * Creates a new dot-separated sub-branch string by appending a segment.
-   *
-   * @example createSubBranch('parent', {name: 'child', runId: '1'}) -> 'parent.child@1'
-   * @example createSubBranch(undefined, {name: 'agent'}) -> 'agent'
-   */
-  static createSubBranch(
-    baseBranch: string | undefined | null,
-    options: {name: string; runId?: string},
-  ): string {
-    return BranchPath.fromString(baseBranch)
-      .append(options.name, options.runId)
-      .toString();
-  }
+/**
+ * Creates a new dot-separated sub-branch string by appending a segment.
+ *
+ * @example createSubBranch('parent', {name: 'child', runId: '1'}) -> 'parent.child@1'
+ * @example createSubBranch(undefined, {name: 'agent'}) -> 'agent'
+ */
+export function createSubBranch(
+  baseBranch: string | undefined | null,
+  options: {name: string; runId?: string},
+): string {
+  return BranchPath.fromString(baseBranch)
+    .append(options.name, options.runId)
+    .toString();
+}
 
-  /** Finds the common prefix of a list of dot-separated branch strings. */
-  static commonPrefixOf(branches: string[]): string {
-    return BranchPath.commonPrefix(
-      branches.map((b) => BranchPath.fromString(b)),
-    ).toString();
-  }
+/** Finds the common prefix of a list of dot-separated branch strings. */
+export function commonPrefixOf(branches: string[]): string {
+  return BranchPath.commonPrefix(
+    branches.map((b) => BranchPath.fromString(b)),
+  ).toString();
 }

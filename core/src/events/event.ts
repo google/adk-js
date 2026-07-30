@@ -23,6 +23,18 @@ import {createEventActions, EventActions} from './event_actions.js';
 const EVENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.event');
 
 /**
+ * A single route key emitted by a routing node and matched against graph edge
+ * routes. Mirrors the graph's `RouteValue`.
+ */
+export type RouteKey = string | number | boolean;
+
+/**
+ * The route(s) a routing node emits: a single key fires one branch; an array
+ * fires every branch whose route matches any listed key (multi-route dispatch).
+ */
+export type Route = RouteKey | RouteKey[];
+
+/**
  * Workflow-node provenance attached to an event.
  *
  * Mirrors `google/adk-python` `Event.node_info`. Present only on events emitted
@@ -117,7 +129,7 @@ export interface Event extends LlmResponse {
    * array fires every branch whose route matches any listed value (multi-route
    * dispatch). Mirrors Python `Event.route`.
    */
-  route?: string | number | boolean | Array<string | number | boolean>;
+  route?: Route;
 
   /**
    * Workflow: provenance of the emitting node. Mirrors Python `Event.node_info`.

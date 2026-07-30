@@ -83,3 +83,40 @@ export function normalizeRetryExceptions(
     );
   });
 }
+
+/**
+ * A {@link RetryConfig} whose `exceptions` filter has been normalized to error
+ * class-name strings once, up front.
+ *
+ * Produced by {@link prepareRetryConfig} when a node accepts its config, so the
+ * retry hot path neither re-normalizes on every failure nor throws on a
+ * malformed config from inside the retry loop.
+ */
+export interface PreparedRetryConfig {
+  readonly maxAttempts?: number;
+  readonly initialDelay?: number;
+  readonly maxDelay?: number;
+  readonly backoffFactor?: number;
+  readonly jitter?: number;
+  /** Normalized exception names; `undefined` means retry on all errors. */
+  readonly exceptions?: readonly string[];
+}
+
+/**
+ * Validates and normalizes a {@link RetryConfig} once, at config-acceptance
+ * time (i.e. when a node is constructed).
+ *
+ * Throws if `exceptions` contains a malformed entry, surfacing the
+ * misconfiguration at construction rather than masking a node's real error from
+ * inside the retry path.
+ */
+export function prepareRetryConfig(config: RetryConfig): PreparedRetryConfig {
+  return {
+    maxAttempts: config.maxAttempts,
+    initialDelay: config.initialDelay,
+    maxDelay: config.maxDelay,
+    backoffFactor: config.backoffFactor,
+    jitter: config.jitter,
+    exceptions: normalizeRetryExceptions(config.exceptions),
+  };
+}
