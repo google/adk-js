@@ -53,10 +53,9 @@ describe('DB driver manifest contract', () => {
   });
 
   it('re-declares every dialect as a runtime dependency of dev', () => {
-    // Core only lists the dialects as peer dependencies, so nothing guarantees
-    // they are installed. `adk deploy` generates a Dockerfile that installs
-    // only `@google/adk-devtools`, so that package has to ship them itself for
-    // `--session_service_uri` to resolve a driver in the container.
+    // Core declares the dialects only as peer dependencies, and `adk deploy`
+    // generates a Dockerfile that installs just `@google/adk-devtools`, so that
+    // package has to ship them for `--session_service_uri` to find a driver.
     const {dependencies} = readManifest('dev');
 
     expect(mikroOrmPackages(dependencies)).toEqual(
