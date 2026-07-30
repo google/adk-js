@@ -25,8 +25,11 @@ export interface RunAgentRequest {
   appName: string;
   userId: string;
   sessionId: string;
-  /** New turn content. Omit to run without adding a message to the session. */
-  newMessage?: Content | string;
+  /**
+   * New turn content. Required: the server runs the agent only when a new
+   * message is present, so a request without one returns an empty stream.
+   */
+  newMessage: Content | string;
   /** Whether to stream partial events. Defaults to non-streaming server-side. */
   streaming?: boolean;
   /** State delta to apply before the run. Omit to apply none. */

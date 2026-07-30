@@ -346,11 +346,16 @@ describe('AdkApiClient', () => {
       }).rejects.toThrow(errorMsg);
     });
 
-    it('should omit optional fields from the request body when they are omitted', async () => {
+    it('should omit streaming and stateDelta from the request body when they are omitted', async () => {
       mockEmptyStream(fetchMock);
 
       await client
-        .runAsync({appName: 'app1', userId: 'user1', sessionId: 'session1'})
+        .runAsync({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        })
         .next();
 
       expect(global.fetch).toHaveBeenCalledWith(`${mockBackendUrl}/run_sse`, {
@@ -360,6 +365,7 @@ describe('AdkApiClient', () => {
           appName: 'app1',
           userId: 'user1',
           sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
         }),
       });
     });
@@ -372,6 +378,7 @@ describe('AdkApiClient', () => {
           appName: 'app1',
           userId: 'user1',
           sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
           stateDelta: {counter: 1},
         })
         .next();
@@ -384,6 +391,7 @@ describe('AdkApiClient', () => {
           userId: 'user1',
           sessionId: 'session1',
           stateDelta: {counter: 1},
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
         }),
       });
     });
