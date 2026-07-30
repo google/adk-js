@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {formatError} from '@google/adk';
 import {describe, expect, it} from 'vitest';
+// mcp_error_utils is internal to the MCP tooling and is deliberately not part
+// of the `@google/adk` public surface, so it is imported by relative path.
+import {formatError} from '../../../src/tools/mcp/mcp_error_utils.js';
 
 const TRUNCATION_MARKER = '... [truncated]';
 const MAX_RESPONSE_BODY_LENGTH = 1000;
