@@ -286,6 +286,20 @@ export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
+export {BaseNode, START} from './workflow/base_node.js';
+export type {BaseNodeConfig} from './workflow/base_node.js';
+export {FunctionNode} from './workflow/function_node.js';
+export type {
+  FunctionNodeConfig,
+  NodeFunction,
+} from './workflow/function_node.js';
+export {JoinNode} from './workflow/join_node.js';
+export {node} from './workflow/node.js';
+export type {NodeLike, NodeOptions} from './workflow/node.js';
+export {NodeContext} from './workflow/node_context.js';
+export type {NodeContextConfig} from './workflow/node_context.js';
+export type {RetryConfig} from './workflow/retry_config.js';
+export type {RouteValue} from './workflow/route.js';
 
 export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
 export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
