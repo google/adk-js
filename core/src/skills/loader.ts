@@ -22,6 +22,9 @@ const ALLOWED_FRONTMATTER_KEYS = new Set([
   'description',
   'license',
   'allowed-tools',
+  // Camel-case alias: FrontmatterSchema's preprocessor derives `allowedTools`
+  // from `allowed-tools`, and `.loose()` passes either spelling through.
+  'allowedTools',
   'metadata',
   'compatibility',
 ]);
