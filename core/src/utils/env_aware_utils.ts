@@ -12,29 +12,47 @@ export function isBrowser() {
 }
 
 /**
- * Generates a random UUID.
+ * Generates a random UUID from a cryptographically secure source.
+ *
+ * `crypto.randomUUID()` is only exposed in secure contexts, so it is absent on
+ * plain-HTTP origins even though `crypto` itself is present.
+ * `crypto.getRandomValues()` carries no such restriction, so it is used as the
+ * fallback rather than `Math.random()`.
+ *
+ * Some callers use this value to make security decisions — the OAuth2 `state`
+ * parameter in `AuthHandler` and the session identifiers minted by the session
+ * services — so this function must not silently degrade to a non-cryptographic
+ * generator.
  */
-const UUID_MASK = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
 export function randomUUID(): string {
   if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
   }
 
-  let uuid = '';
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    // RFC 4122 section 4.4: version 4 in the high nibble of octet 6, variant
+    // 10xx in the two high bits of octet 8.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
-  for (let i = 0; i < UUID_MASK.length; i++) {
-    const randomValue = (Math.random() * 16) | 0;
-
-    if (UUID_MASK[i] === 'x') {
-      uuid += randomValue.toString(16);
-    } else if (UUID_MASK[i] === 'y') {
-      uuid += ((randomValue & 0x3) | 0x8).toString(16);
-    } else {
-      uuid += UUID_MASK[i];
-    }
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+    return [
+      hex.slice(0, 4),
+      hex.slice(4, 6),
+      hex.slice(6, 8),
+      hex.slice(8, 10),
+      hex.slice(10, 16),
+    ]
+      .map((group) => group.join(''))
+      .join('-');
   }
 
-  return uuid;
+  throw new Error(
+    'randomUUID: no cryptographically secure source of randomness is ' +
+      'available. Neither crypto.randomUUID() nor crypto.getRandomValues() is ' +
+      'present in this environment.',
+  );
 }
 
 /**
