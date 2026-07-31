@@ -14,12 +14,8 @@ import {
   type MockInstance,
 } from 'vitest';
 import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
-import {
-  getBooleanEnvVar,
-  isEnterpriseModeEnabled,
-  randomUUID,
-} from '../../src/utils/env_aware_utils.js';
-import {logger} from '../../src/utils/logger.js';
+import {getBooleanEnvVar, randomUUID} from '../../src/utils/env_aware_utils.js';
+import type {Logger} from '../../src/utils/logger.js';
 
 describe('env_aware_utils', () => {
   describe('getBooleanEnvVar', () => {
@@ -151,13 +147,20 @@ describe('env_aware_utils', () => {
 
   describe('isEnterpriseModeEnabled', () => {
     const originalEnv = process.env;
-    let warnSpy: MockInstance<typeof logger.warn>;
+    let isEnterpriseModeEnabled: () => boolean;
+    let warnSpy: MockInstance<Logger['warn']>;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env = {...originalEnv};
       delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
       delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+      // The deprecation warning is emitted once per module instance, so each
+      // test needs its own copy of the module and of the logger it warns to.
+      vi.resetModules();
+      const {logger} = await import('../../src/utils/logger.js');
       warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      ({isEnterpriseModeEnabled} =
+        await import('../../src/utils/env_aware_utils.js'));
     });
 
     afterEach(() => {
@@ -205,6 +208,13 @@ describe('env_aware_utils', () => {
     it('should warn when GOOGLE_GENAI_USE_VERTEXAI is present but disabled', () => {
       process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
       expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).toHaveBeenCalledOnce();
+    });
+
+    it('should warn only once even when read repeatedly', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(isEnterpriseModeEnabled()).toBe(true);
       expect(warnSpy).toHaveBeenCalledOnce();
     });
   });
