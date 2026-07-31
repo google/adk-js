@@ -8,14 +8,10 @@ import {FunctionDeclaration, Type} from '@google/genai';
 import * as fs from 'fs/promises';
 
 import {experimental} from '../../utils/experimental.js';
+import {resolveAndValidatePath} from '../../utils/file_utils.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {MAX_OUTPUT_CHARS} from './constants.js';
-import {
-  isFileNotFoundError,
-  resolveAndValidatePath,
-  toError,
-  truncate,
-} from './utils.js';
+import {isFileNotFoundError, toError, truncate} from './utils.js';
 
 export interface ReadFileToolParams {
   workingDir: string;
