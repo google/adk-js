@@ -27,9 +27,10 @@ import {AnyFunctionTool, IntegrationRegistry} from './integration_registry.js';
 /**
  * Built-in tools that a YAML config can name directly, mirroring adk-python's
  * `LlmAgent._resolve_tools`, which resolves a bare built-in name to the real
- * tool object.
+ * tool object. Looked up with `Object.hasOwn` so that a YAML string naming an
+ * inherited member such as `constructor` does not resolve to one.
  */
-const BUILTIN_TOOLS = new Map<string, BaseTool>([['exit_loop', EXIT_LOOP]]);
+const BUILTIN_TOOLS: Record<string, BaseTool> = {exit_loop: EXIT_LOOP};
 
 /**
  * Server-side built-ins that are dropped instead of resolved: they are executed
@@ -148,9 +149,8 @@ export class AgentRegistry {
 
       const tools = config.tools
         ?.map((toolConfig) => {
-          const builtinTool = BUILTIN_TOOLS.get(toolConfig.name);
-          if (builtinTool) {
-            return builtinTool;
+          if (Object.hasOwn(BUILTIN_TOOLS, toolConfig.name)) {
+            return BUILTIN_TOOLS[toolConfig.name];
           }
 
           if (SKIPPED_BUILTIN_TOOLS.includes(toolConfig.name)) {
