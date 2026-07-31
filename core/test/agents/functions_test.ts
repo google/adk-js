@@ -6,7 +6,6 @@
 import {
   BasePlugin,
   BaseTool,
-  Context,
   createEvent,
   createEventActions,
   Event,
@@ -14,7 +13,6 @@ import {
   FunctionTool,
   InvocationContext,
   LlmAgent,
-  LongRunningFunctionTool,
   PluginManager,
   Session,
   SingleAfterToolCallback,
@@ -94,25 +92,6 @@ class TestPlugin extends BasePlugin {
 
 function randomIdForTestingOnly(): string {
   return (Math.random() * 100).toString();
-}
-
-/**
- * Builds a long-running tool that returns no response, after optionally
- * mutating its tool context.
- */
-function createSilentLongRunningTool(
-  name: string,
-  mutate?: (toolContext: Context) => void,
-) {
-  return new LongRunningFunctionTool({
-    name,
-    description: 'long running tool that returns nothing',
-    parameters: z.object({}),
-    execute: async (_args, toolContext) => {
-      mutate?.(toolContext!);
-      return undefined;
-    },
-  });
 }
 
 describe('handleFunctionCallList', () => {
@@ -347,140 +326,6 @@ describe('handleFunctionCallList', () => {
     });
   });
 
-  it('should return null when a long running tool returns nothing and touches no actions', async () => {
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [{id: 'lro_1', name: 'silentTool', args: {}}],
-      toolsDict: {'silentTool': createSilentLongRunningTool('silentTool')},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-
-    expect(event).toBeNull();
-  });
-
-  it.each([
-    [
-      'a stateDelta',
-      (toolContext: Context) => {
-        toolContext.state.set('jobStarted', true);
-      },
-      {stateDelta: {jobStarted: true}},
-    ],
-    [
-      'skipSummarization',
-      (toolContext: Context) => {
-        toolContext.actions.skipSummarization = true;
-      },
-      {skipSummarization: true},
-    ],
-    [
-      'transferToAgent',
-      (toolContext: Context) => {
-        toolContext.actions.transferToAgent = 'other_agent';
-      },
-      {transferToAgent: 'other_agent'},
-    ],
-    [
-      'a requested tool confirmation',
-      (toolContext: Context) => {
-        toolContext.requestConfirmation({hint: 'ok?'});
-      },
-      {
-        requestedToolConfirmations: {
-          'lro_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
-        },
-      },
-    ],
-  ])(
-    'should emit a content-less event carrying %s',
-    async (_label, mutate, expectedActions) => {
-      const event = await handleFunctionCallList({
-        invocationContext,
-        functionCalls: [{id: 'lro_1', name: 'startJob', args: {}}],
-        toolsDict: {
-          'startJob': createSilentLongRunningTool('startJob', mutate),
-        },
-        beforeToolCallbacks: [],
-        afterToolCallbacks: [],
-      });
-
-      expect(event!.content).toBeUndefined();
-      expect(event!.actions).toMatchObject(expectedActions);
-      expect(event!.author).toBe('test_agent');
-      expect(event!.invocationId).toBe('inv_123');
-    },
-  );
-
-  it('should merge the actions of a silent long running tool into the batch event', async () => {
-    const tool = createSilentLongRunningTool('startJob', (toolContext) => {
-      toolContext.state.set('jobStarted', true);
-    });
-
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [
-        {id: 'call_0', name: 'startJob', args: {}},
-        {id: 'call_1', name: 'testTool', args: {}},
-      ],
-      toolsDict: {'startJob': tool, 'testTool': testTool},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-
-    expect(event!.content!.parts!.length).toBe(1);
-    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
-      result: 'tool executed',
-    });
-    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
-  });
-
-  it('should keep the function response of a long running tool that does respond', async () => {
-    const tool = new LongRunningFunctionTool({
-      name: 'startJob',
-      description: 'starts a background job',
-      parameters: z.object({}),
-      execute: async (_args, toolContext) => {
-        toolContext!.state.set('jobStarted', true);
-        return {status: 'pending'};
-      },
-    });
-
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [{id: 'lro_1', name: 'startJob', args: {}}],
-      toolsDict: {'startJob': tool},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-
-    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
-      status: 'pending',
-    });
-    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
-  });
-
-  it('should keep wrapping the undefined response of a non long running tool', async () => {
-    const tool = new FunctionTool({
-      name: 'quietTool',
-      description: 'returns nothing',
-      parameters: z.object({}),
-      execute: async () => undefined,
-    });
-
-    const event = await handleFunctionCallList({
-      invocationContext,
-      functionCalls: [{id: 'call_1', name: 'quietTool', args: {}}],
-      toolsDict: {'quietTool': tool},
-      beforeToolCallbacks: [],
-      afterToolCallbacks: [],
-    });
-
-    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
-      result: undefined,
-    });
-  });
-
   it('should pass abortSignal to tool execution', async () => {
     const abortController = new AbortController();
     const signal = abortController.signal;
@@ -586,27 +431,6 @@ describe('generateAuthEvent', () => {
     expect(call2).toBeDefined();
     expect(call2!.functionCall!.name).toBe('adk_request_credential');
     expect(call2!.functionCall!.args!['auth_config']).toBe('auth_config_2');
-  });
-
-  it('should default the role to user for a content-less event', () => {
-    const functionResponseEvent = createEvent({
-      actions: createEventActions({
-        requestedAuthConfigs: {
-          'call_1': {
-            authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
-            credentialKey: 'test-credential-key',
-          },
-        },
-      }),
-    });
-
-    const event = generateAuthEvent(invocationContext, functionResponseEvent);
-
-    expect(event!.content!.role).toBe('user');
-    expect(event!.content!.parts!.length).toBe(1);
-    expect(event!.content!.parts![0].functionCall!.name).toBe(
-      'adk_request_credential',
-    );
   });
 });
 
@@ -781,34 +605,6 @@ describe('generateRequestConfirmationEvent', () => {
         'call_1',
     );
     expect(call1).toBeDefined();
-  });
-
-  it('should default the role to user for a content-less event', () => {
-    const functionCallEvent = createEvent({
-      content: {
-        role: 'user',
-        parts: [{functionCall: {name: 'tool_1', args: {}, id: 'call_1'}}],
-      },
-    });
-    const functionResponseEvent = createEvent({
-      actions: createEventActions({
-        requestedToolConfirmations: {
-          'call_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
-        },
-      }),
-    });
-
-    const event = generateRequestConfirmationEvent({
-      invocationContext,
-      functionCallEvent,
-      functionResponseEvent,
-    });
-
-    expect(event!.content!.role).toBe('user');
-    expect(event!.content!.parts!.length).toBe(1);
-    expect(event!.content!.parts![0].functionCall!.name).toBe(
-      'adk_request_confirmation',
-    );
   });
 });
 

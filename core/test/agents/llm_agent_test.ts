@@ -21,7 +21,6 @@ import {
   LlmAgent,
   LlmRequest,
   LlmResponse,
-  LongRunningFunctionTool,
   PluginManager,
   RunAsyncToolRequest,
   Session,
@@ -96,28 +95,6 @@ class StreamingMockLlm extends BaseLlm {
       yield chunk;
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-  }
-
-  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
-    return new MockLlmConnection();
-  }
-}
-
-/**
- * Yields the chunks of `turns[n]` on the n-th call and counts how many turns
- * the agent asked for.
- */
-class CountingMockLlm extends BaseLlm {
-  callCount = 0;
-
-  constructor(private readonly turns: LlmResponse[][]) {
-    super({model: 'counting-mock-llm'});
-  }
-
-  async *generateContentAsync(
-    _request: LlmRequest,
-  ): AsyncGenerator<LlmResponse, void, void> {
-    yield* this.turns[this.callCount++] ?? [];
   }
 
   async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
@@ -846,83 +823,6 @@ describe('LlmAgent postprocess empty parts filtering', () => {
     }
 
     expect(events).toHaveLength(0);
-  });
-});
-
-describe('LlmAgent long running tool termination', () => {
-  const startJobCall: LlmResponse = {
-    content: {
-      role: 'model',
-      parts: [{functionCall: {name: 'startJob', args: {}, id: 'call_1'}}],
-    },
-  };
-  const secondTurnText: LlmResponse = {
-    content: {role: 'model', parts: [{text: 'second turn'}]},
-  };
-
-  function runAgent(model: BaseLlm, startJob: LongRunningFunctionTool) {
-    const agent = new LlmAgent({name: 'test_agent', model, tools: [startJob]});
-    const invocationContext = new InvocationContext({
-      invocationId: 'inv_123',
-      session: {
-        id: 'sess_123',
-        state: {},
-        events: [],
-      } as unknown as Session,
-      agent,
-      pluginManager: new PluginManager(),
-    });
-    return agent.runAsync(invocationContext);
-  }
-
-  function createStartJobTool(mutate?: (toolContext: Context) => void) {
-    return new LongRunningFunctionTool({
-      name: 'startJob',
-      description: 'starts a background job',
-      execute: async (_args, toolContext) => {
-        mutate?.(toolContext!);
-        return undefined;
-      },
-    });
-  }
-
-  it('should stop the step loop after an actions-only event', async () => {
-    const model = new CountingMockLlm([[startJobCall], [secondTurnText]]);
-    const startJob = createStartJobTool((toolContext) => {
-      toolContext.actions.skipSummarization = true;
-    });
-
-    const events: Event[] = [];
-    for await (const event of runAgent(model, startJob)) {
-      events.push(event);
-    }
-
-    expect(model.callCount).toBe(1);
-    expect(
-      events.some((event) =>
-        event.content?.parts?.some((part) => part.text === 'second turn'),
-      ),
-    ).toBe(false);
-    const lastEvent = events[events.length - 1];
-    expect(lastEvent.content).toBeUndefined();
-    expect(lastEvent.actions.skipSummarization).toBe(true);
-  });
-
-  it('should keep running the step loop after a trailing empty chunk with default actions', async () => {
-    const model = new CountingMockLlm([
-      [startJobCall, {content: {role: 'model'}}],
-      [secondTurnText],
-    ]);
-
-    const events: Event[] = [];
-    for await (const event of runAgent(model, createStartJobTool())) {
-      events.push(event);
-    }
-
-    expect(model.callCount).toBe(2);
-    expect(events[events.length - 1].content?.parts?.[0].text).toBe(
-      'second turn',
-    );
   });
 });
 

@@ -82,30 +82,6 @@ export function createEventActions(
 }
 
 /**
- * Returns whether the given {@link EventActions} still holds only its default
- * values, i.e. the event carries no state, artifact, auth, confirmation,
- * transfer, escalation or summarization signal.
- *
- * An actions object is considered non-default when any dictionary field has at
- * least one entry, or when any scalar field has been explicitly set (including
- * being set to `false`).
- *
- * @param actions - The actions to inspect.
- * @returns `true` when every field is at its default value.
- */
-export function isDefaultEventActions(actions: EventActions): boolean {
-  return (
-    Object.keys(actions.stateDelta).length === 0 &&
-    Object.keys(actions.artifactDelta).length === 0 &&
-    Object.keys(actions.requestedAuthConfigs).length === 0 &&
-    Object.keys(actions.requestedToolConfirmations).length === 0 &&
-    actions.skipSummarization === undefined &&
-    actions.transferToAgent === undefined &&
-    actions.escalate === undefined
-  );
-}
-
-/**
  * Merges a list of {@link EventActions} objects into a single
  * {@link EventActions} object.
  *

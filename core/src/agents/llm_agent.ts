@@ -22,7 +22,6 @@ import {
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
-import {isDefaultEventActions} from '../events/event_actions.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
@@ -702,8 +701,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const isEmptyMetadataEvent =
         lastEvent.author === this.name &&
         !lastEvent.partial &&
-        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0) &&
-        isDefaultEventActions(lastEvent.actions);
+        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0);
 
       if (
         isFinalResponse(lastEvent) &&
