@@ -21,12 +21,22 @@ import {
 const IS_WINDOWS = os.platform() === 'win32';
 
 /**
- * Whether `commandPath` names Windows PowerShell (`powershell`) or PowerShell
- * 7+ (`pwsh`). `path.win32` splits on both separators on every platform.
+ * Prepended to every PowerShell invocation; `-NoProfile` keeps ambient profile
+ * state (PATH, aliases, preference variables, stray output) out of the script.
  */
-function isPowerShellCommand(commandPath: string): boolean {
-  return /^(powershell|pwsh)(\.exe)?$/i.test(path.win32.basename(commandPath));
-}
+const POWERSHELL_BASE_ARGS = [
+  '-NoLogo',
+  '-NoProfile',
+  '-ExecutionPolicy',
+  'Bypass',
+  '-File',
+] as const;
+
+/**
+ * Prepended to every cmd.exe invocation; `/D` skips the registry AutoRun
+ * commands, the `-NoProfile` analogue.
+ */
+const CMD_BASE_ARGS = ['/D', '/c'] as const;
 
 /**
  * Options for UnsafeLocalCodeExecutor.
@@ -46,9 +56,6 @@ export interface UnsafeLocalCodeExecutorOptions {
   pythonCommandPath?: string;
   /**
    * The command to run Shell code. Default is `bash`.
-   *
-   * When it names `powershell` or `pwsh` (with or without `.exe`) the script
-   * is written as `.ps1` and run with `-NoLogo -ExecutionPolicy Bypass -File`.
    */
   shellCommandPath?: string;
 }
@@ -93,9 +100,6 @@ function getExtensionForLanguage(
   }
 
   if (language === CodeExecutionLanguage.SHELL) {
-    if (shellCommandPath && isPowerShellCommand(shellCommandPath)) {
-      return '.ps1';
-    }
     if (IS_WINDOWS) {
       if (shellCommandPath && shellCommandPath.toLowerCase().includes('cmd')) {
         return '.bat';
@@ -115,7 +119,7 @@ function getExtensionForLanguage(
  * **Execution Details**:
  * - **JavaScript**: Executed via `node` (defaults to `process.execPath`).
  * - **Python**: Executed via `python3` on Unix, and `python` on Windows.
- * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` or `cmd.exe` on Windows. A `powershell` or `pwsh` command injects ExecutionPolicy Bypass.
+ * - **Shell**: Executed via `bash` on Unix, and defaults to `powershell` (injecting `-NoProfile` and `-ExecutionPolicy Bypass`) or `cmd.exe` (injecting `/D`) on Windows.
  *
  * WARNING: This executor runs code in the local environment without sandboxing or security restrictions.
  * Use with caution and only for trusted code.
@@ -185,17 +189,17 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         command = this.pythonCommandPath;
       } else if (language === CodeExecutionLanguage.SHELL) {
         command = this.shellCommandPath;
-        if (isPowerShellCommand(this.shellCommandPath)) {
-          args = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', filePath];
+        if (this.shellCommandPath.toLowerCase().includes('powershell')) {
+          args = [...POWERSHELL_BASE_ARGS, filePath];
         } else if (this.shellCommandPath.toLowerCase().includes('cmd')) {
-          args = ['/c', filePath];
+          args = [...CMD_BASE_ARGS, filePath];
         }
       } else if (language === CodeExecutionLanguage.POWERSHELL) {
         command = IS_WINDOWS ? 'powershell' : 'pwsh';
-        args = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', filePath];
+        args = [...POWERSHELL_BASE_ARGS, filePath];
       } else if (language === CodeExecutionLanguage.WINDOWS_CMD) {
         command = 'cmd.exe';
-        args = ['/c', filePath];
+        args = [...CMD_BASE_ARGS, filePath];
       }
 
       if (params.codeExecutionInput.args) {

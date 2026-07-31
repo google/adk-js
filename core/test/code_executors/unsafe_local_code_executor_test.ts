@@ -13,13 +13,37 @@ import {
   UnsafeLocalCodeExecutor,
   createSession,
 } from '@google/adk';
-import * as childProcess from 'node:child_process';
+import {EventEmitter} from 'node:events';
+import * as os from 'node:os';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
-// Records the spawn arguments while still running the real `spawn`, so the
-// surrounding tests keep executing actual child processes.
-vi.mock('node:child_process', {spy: true});
-const spawnSpy = vi.mocked(childProcess.spawn);
+// Only `spawn` is mocked; it defaults to the real implementation (see
+// `beforeEach`) so the pre-existing tests still execute real scripts.
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawn: spawnMock,
+}));
+
+const {spawn: realSpawn} =
+  await vi.importActual<typeof import('node:child_process')>(
+    'node:child_process',
+  );
+
+const POWERSHELL_COMMAND = os.platform() === 'win32' ? 'powershell' : 'pwsh';
+
+const POWERSHELL_FLAGS = [
+  '-NoLogo',
+  '-NoProfile',
+  '-ExecutionPolicy',
+  'Bypass',
+  '-File',
+];
+
+const EXPECTED_POWERSHELL_ARGS = [
+  ...POWERSHELL_FLAGS,
+  expect.stringMatching(/script\.ps1$/),
+];
 
 function createMockInvocationContext(): InvocationContext {
   const agent = new LlmAgent({
@@ -45,6 +69,8 @@ describe('UnsafeLocalCodeExecutor', () => {
   const invocationContext = createMockInvocationContext();
 
   beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(realSpawn);
     executor = new UnsafeLocalCodeExecutor();
   });
 
@@ -315,55 +341,109 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.outputFiles![0].mimeType).toBe('application/json');
   });
 
-  // Runners that ship PowerShell really launch it, and a cold start there
-  // exceeds the default 5s test timeout.
-  describe('shell command detection', {timeout: 30_000}, () => {
-    const POWERSHELL_FLAGS = ['-NoLogo', '-ExecutionPolicy', 'Bypass', '-File'];
+  describe('spawn arguments', () => {
+    beforeEach(() => {
+      // Return a child process that immediately exits with code 0, so the
+      // interpreters under test need not be installed on the host.
+      spawnMock.mockImplementation(() => {
+        const child = new EventEmitter();
+        setImmediate(() => child.emit('close', 0, null));
+        return child;
+      });
+    });
 
-    async function captureShellSpawn(shellCommandPath: string) {
-      spawnSpy.mockClear();
-      const customExecutor = new UnsafeLocalCodeExecutor({shellCommandPath});
-      await customExecutor.executeCode({
+    it('should pass -NoProfile when shell code runs through powershell', async () => {
+      const shellExecutor = new UnsafeLocalCodeExecutor({
+        shellCommandPath: 'powershell',
+      });
+
+      await shellExecutor.executeCode({
         invocationContext,
         codeExecutionInput: {
-          code: 'echo "test"',
+          code: 'Write-Output "hi"',
           language: CodeExecutionLanguage.SHELL,
           inputFiles: [],
         },
       });
-      expect(spawnSpy).toHaveBeenCalledTimes(1);
-      return spawnSpy.mock.calls[0][1];
-    }
 
-    it.each([
-      'pwsh',
-      'pwsh.exe',
-      '/usr/bin/pwsh',
-      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-      'PWSH',
-      'powershell',
-      'powershell.exe',
-    ])('runs a .ps1 script with PowerShell flags for %s', async (shell) => {
-      const args = await captureShellSpawn(shell);
-
-      expect(args).toEqual(expect.arrayContaining(POWERSHELL_FLAGS));
-      expect(args.at(-2)).toBe('-File');
-      expect(args.at(-1)).toMatch(/script\.ps1$/);
+      expect(spawnMock).toHaveBeenCalledWith(
+        'powershell',
+        // The extension follows the host platform, the command follows
+        // `shellCommandPath`.
+        [...POWERSHELL_FLAGS, expect.stringMatching(/script\.(ps1|sh)$/)],
+        expect.anything(),
+      );
     });
 
-    it.each([
-      '/opt/pwsh-tools/bin/bash',
-      '/usr/local/powershell-helpers/run.sh',
-    ])('does not treat %s as PowerShell', async (shell) => {
-      const args = await captureShellSpawn(shell);
+    it('should pass -NoProfile for the powershell language, appending user args after the script path without accumulating them across executions', async () => {
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'Write-Output $args',
+          language: CodeExecutionLanguage.POWERSHELL,
+          inputFiles: [],
+          args: ['first-run-only'],
+        },
+      });
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'Write-Output "hi"',
+          language: CodeExecutionLanguage.POWERSHELL,
+          inputFiles: [],
+        },
+      });
 
-      expect(args).toHaveLength(1);
+      expect(spawnMock).toHaveBeenNthCalledWith(
+        1,
+        POWERSHELL_COMMAND,
+        [...EXPECTED_POWERSHELL_ARGS, 'first-run-only'],
+        expect.anything(),
+      );
+      expect(spawnMock).toHaveBeenNthCalledWith(
+        2,
+        POWERSHELL_COMMAND,
+        EXPECTED_POWERSHELL_ARGS,
+        expect.anything(),
+      );
     });
 
-    it.each(['cmd', 'cmd.exe'])('invokes %s with /c', async (shell) => {
-      const args = await captureShellSpawn(shell);
+    it('should pass /D when shell code runs through cmd', async () => {
+      const shellExecutor = new UnsafeLocalCodeExecutor({
+        shellCommandPath: 'cmd.exe',
+      });
 
-      expect(args).toEqual(['/c', expect.any(String)]);
+      await shellExecutor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'echo hi',
+          language: CodeExecutionLanguage.SHELL,
+          inputFiles: [],
+        },
+      });
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'cmd.exe',
+        ['/D', '/c', expect.stringMatching(/script\.(bat|sh)$/)],
+        expect.anything(),
+      );
+    });
+
+    it('should pass /D for the windows_cmd language', async () => {
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'echo hi',
+          language: CodeExecutionLanguage.WINDOWS_CMD,
+          inputFiles: [],
+        },
+      });
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'cmd.exe',
+        ['/D', '/c', expect.stringMatching(/script\.bat$/)],
+        expect.anything(),
+      );
     });
   });
 });
