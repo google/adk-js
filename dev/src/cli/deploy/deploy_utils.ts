@@ -157,7 +157,7 @@ USER myuser
 
 # Set up environment variables - Start
 ENV PATH="/home/myuser/.local/bin:$PATH"
-ENV GOOGLE_GENAI_USE_ENTERPRISE=1
+ENV GOOGLE_GENAI_USE_VERTEXAI=1
 ENV GOOGLE_CLOUD_PROJECT=${options.project}
 ENV GOOGLE_CLOUD_LOCATION=${options.region}
 # Set up environment variables - End

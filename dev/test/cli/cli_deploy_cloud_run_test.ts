@@ -81,12 +81,6 @@ describe('createDockerFileContent', () => {
     expect(content).not.toContain('--a2a');
   });
 
-  it('should enable enterprise mode with the non-deprecated env var', () => {
-    const content = createDockerFileContent(defaultOptions);
-    expect(content).toContain('ENV GOOGLE_GENAI_USE_ENTERPRISE=1');
-    expect(content).not.toContain('GOOGLE_GENAI_USE_VERTEXAI');
-  });
-
   it('should create Dockerfile content with --a2a when option is true', () => {
     const content = createDockerFileContent({
       ...defaultOptions,

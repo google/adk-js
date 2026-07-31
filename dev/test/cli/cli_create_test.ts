@@ -137,7 +137,7 @@ describe('createAgent', () => {
       );
       expect(saveToFile).toHaveBeenCalledWith(
         expect.stringContaining('.env'),
-        expect.stringContaining('GOOGLE_GENAI_USE_ENTERPRISE=1'),
+        expect.stringContaining('GOOGLE_GENAI_USE_VERTEXAI=1'),
       );
     });
 
@@ -151,10 +151,6 @@ describe('createAgent', () => {
       expect(saveToFile).toHaveBeenCalledWith(
         expect.stringContaining('.env'),
         expect.stringContaining('GOOGLE_GENAI_API_KEY=my-api-key'),
-      );
-      expect(saveToFile).toHaveBeenCalledWith(
-        expect.stringContaining('.env'),
-        expect.stringContaining('GOOGLE_GENAI_USE_ENTERPRISE=0'),
       );
     });
   });

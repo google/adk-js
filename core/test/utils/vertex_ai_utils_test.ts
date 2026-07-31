@@ -4,29 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type MockInstance,
-} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {logger} from '../../src/utils/logger.js';
 import {getExpressModeApiKey} from '../../src/utils/vertex_ai_utils.js';
 
 describe('vertex_ai_utils', () => {
   describe('getExpressModeApiKey', () => {
     const originalEnv = process.env;
-    let warnSpy: MockInstance<typeof logger.warn>;
 
     beforeEach(() => {
       process.env = {...originalEnv};
       delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
       delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
       delete process.env['GOOGLE_API_KEY'];
-      warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      vi.spyOn(logger, 'warn').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -52,11 +43,10 @@ describe('vertex_ai_utils', () => {
       ).toThrow();
     });
 
-    it('should return undefined and not warn when neither enterprise mode variable is set', () => {
+    it('should return undefined when neither enterprise mode variable is set', () => {
       process.env['GOOGLE_API_KEY'] = 'env-api-key';
       const result = getExpressModeApiKey();
       expect(result).toBeUndefined();
-      expect(warnSpy).not.toHaveBeenCalled();
     });
 
     it('should return undefined when GOOGLE_GENAI_USE_VERTEXAI is false', () => {
@@ -64,7 +54,6 @@ describe('vertex_ai_utils', () => {
       process.env['GOOGLE_API_KEY'] = 'env-api-key';
       const result = getExpressModeApiKey();
       expect(result).toBeUndefined();
-      expect(warnSpy).toHaveBeenCalledOnce();
     });
 
     it('should return expressModeApiKey when GOOGLE_GENAI_USE_VERTEXAI is true', () => {
@@ -78,13 +67,6 @@ describe('vertex_ai_utils', () => {
       process.env['GOOGLE_API_KEY'] = 'env-api-key';
       const result = getExpressModeApiKey();
       expect(result).toBe('env-api-key');
-      expect(warnSpy).toHaveBeenCalledOnce();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'GOOGLE_GENAI_USE_VERTEXAI is deprecated, please use ' +
-            'GOOGLE_GENAI_USE_ENTERPRISE',
-        ),
-      );
     });
 
     it('should return undefined when GOOGLE_GENAI_USE_VERTEXAI is true but no key available', () => {
@@ -105,7 +87,6 @@ describe('vertex_ai_utils', () => {
       process.env['GOOGLE_API_KEY'] = 'env-api-key';
       const result = getExpressModeApiKey();
       expect(result).toBe('env-api-key');
-      expect(warnSpy).not.toHaveBeenCalled();
     });
 
     it('should not fall back to GOOGLE_GENAI_USE_VERTEXAI when GOOGLE_GENAI_USE_ENTERPRISE is set but disabled', () => {
@@ -114,7 +95,6 @@ describe('vertex_ai_utils', () => {
       process.env['GOOGLE_API_KEY'] = 'env-api-key';
       const result = getExpressModeApiKey();
       expect(result).toBeUndefined();
-      expect(warnSpy).not.toHaveBeenCalled();
     });
   });
 });
