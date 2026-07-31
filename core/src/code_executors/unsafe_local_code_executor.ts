@@ -56,7 +56,7 @@ export interface UnsafeLocalCodeExecutorOptions {
 async function createTempScriptFile(
   code: string,
   language: CodeExecutionLanguage,
-  shellCommandPath: string,
+  shellCommandPath?: string,
 ): Promise<{filePath: string; tempDir: string}> {
   const tempDir = path.join(
     os.tmpdir(),
@@ -74,7 +74,7 @@ async function createTempScriptFile(
 
 function getExtensionForLanguage(
   language: CodeExecutionLanguage,
-  shellCommandPath: string,
+  shellCommandPath?: string,
 ): string | undefined {
   if (language === CodeExecutionLanguage.JAVASCRIPT) {
     return '.js';
@@ -93,11 +93,11 @@ function getExtensionForLanguage(
   }
 
   if (language === CodeExecutionLanguage.SHELL) {
-    if (isPowerShellCommand(shellCommandPath)) {
+    if (shellCommandPath && isPowerShellCommand(shellCommandPath)) {
       return '.ps1';
     }
     if (IS_WINDOWS) {
-      if (shellCommandPath.toLowerCase().includes('cmd')) {
+      if (shellCommandPath && shellCommandPath.toLowerCase().includes('cmd')) {
         return '.bat';
       }
       return '.ps1';
