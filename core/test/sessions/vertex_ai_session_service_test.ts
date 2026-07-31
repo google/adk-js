@@ -7,6 +7,7 @@
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {createEvent, State, VertexAiSessionService} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
+import {ApiError} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 // Mock the unreleased nodejs-vertexai package so the import resolves
@@ -276,6 +277,48 @@ describe('VertexAiSessionService', () => {
 
       expect(session.lastUpdateTime).toBeGreaterThan(0);
     });
+
+    it('forwards ttl to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        ttl: '7200s',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {ttl: '7200s'},
+      });
+    });
+
+    it('forwards expireTime to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        expireTime: '2025-10-01T00:00:00Z',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {expireTime: '2025-10-01T00:00:00Z'},
+      });
+    });
+
+    it('throws when both ttl and expireTime are specified', async () => {
+      await expect(
+        service.createSession({
+          appName: '12345',
+          userId: 'testUser',
+          ttl: '7200s',
+          expireTime: '2025-10-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+      expect(mockClient.createInternal).not.toHaveBeenCalled();
+    });
   });
 
   describe('getSession', () => {
@@ -425,6 +468,54 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(session).toBeUndefined();
+    });
+
+    it('returns undefined when sessions.get rejects with an ApiError 404', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+      expect(loggerSpy).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it('returns undefined when events.listInternal rejects with an ApiError 404', async () => {
+      mockClient.events.listInternal.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+    });
+
+    it('throws an ApiError 403 instead of reporting the session as missing', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Permission denied', status: 403}),
+      );
+
+      await expect(
+        service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow('Permission denied');
+      expect(loggerSpy).toHaveBeenCalled();
+      loggerSpy.mockRestore();
     });
 
     it('falls back to empty array if sessionEvents is missing in getSession', async () => {

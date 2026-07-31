@@ -10,6 +10,7 @@ import {
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
+  bearerTokenUserBuilder,
   Event,
   getFunctionCalls,
   getFunctionResponses,
@@ -42,6 +43,13 @@ import {
 } from '../utils/telemetry_utils.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
+/**
+ * Environment variable holding the shared bearer token used to authenticate
+ * the A2A surface, for operators who prefer not to put the secret on the
+ * command line.
+ */
+export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
+
 interface ServerOptions {
   agentsDir?: string;
   host?: string;
@@ -57,6 +65,12 @@ interface ServerOptions {
   logger?: Logger;
   logLevel?: LogLevel;
   a2a?: boolean;
+  /**
+   * Shared bearer token used to authenticate the A2A surface. Falls back to
+   * the `ADK_A2A_AUTH_TOKEN` environment variable. When neither is set and
+   * `a2a` is enabled, the A2A surface is mounted WITHOUT authentication.
+   */
+  a2aAuthToken?: string;
   reloadAgents?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
@@ -93,6 +107,7 @@ export class AdkApiServer {
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;
+  private readonly a2aAuthToken?: string;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -126,6 +141,10 @@ export class AdkApiServer {
       });
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     this.a2a = options.a2a ?? false;
+    // An exported-but-empty value means "no token"; anything else is handed
+    // to the authenticator, which rejects a token that is not usable.
+    this.a2aAuthToken =
+      options.a2aAuthToken || process.env[A2A_AUTH_TOKEN_ENV_VAR] || undefined;
     this.app = express();
   }
 
@@ -145,6 +164,9 @@ export class AdkApiServer {
 
   private async initA2A() {
     const appNames = await this.agentLoader.listAgents();
+    const authentication = this.a2aAuthToken
+      ? bearerTokenUserBuilder(this.a2aAuthToken)
+      : undefined;
 
     for (const appName of appNames) {
       const agentFile = await this.agentLoader.getAgentFile(appName);
@@ -163,11 +185,12 @@ export class AdkApiServer {
         artifactService: this.artifactService,
         runner,
         app: this.app,
-        // This is the local development API server. `toA2a` fails closed by
-        // default, so explicitly opt out of authentication
-        // here; a loud warning is logged at startup. Production A2A deployments
-        // should instead pass an `authentication` UserBuilder.
-        allowUnauthenticated: true,
+        // `toA2a` fails closed by default. When the operator configured a
+        // shared bearer token the A2A surface is authenticated with it;
+        // otherwise this local development server explicitly opts out and a
+        // loud warning is logged at startup.
+        authentication,
+        allowUnauthenticated: authentication === undefined,
       });
     }
   }

@@ -6,6 +6,7 @@
 import fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import {A2A_AUTH_TOKEN_ENV_VAR} from '../../server/adk_api_server.js';
 import {AgentLoader} from '../../utils/agent_loader.js';
 import {isFile, isFolderExists} from '../../utils/file_utils.js';
 import {
@@ -24,6 +25,12 @@ export {createDockerFileContent, type CreateDockerFileContentOptions};
 export interface DeployToCloudRunOptions extends BaseDeployOptions {
   serviceName: string;
   extraGcloudArgs?: string[];
+  /**
+   * Shared bearer token for the A2A surface; forwarded to Cloud Run as the
+   * `ADK_A2A_AUTH_TOKEN` environment variable. It is deliberately never
+   * written into the generated Dockerfile or any image layer.
+   */
+  a2aAuthToken?: string;
 }
 
 function validateGcloudExtraArgs(
@@ -45,7 +52,7 @@ function validateGcloudExtraArgs(
     throw new Error(
       `The argument(s) ${conflicts.join(
         ', ',
-      )} conflict with ADK's automatic configuration. ADK will set these arguments automatically, so please remove them from your command.`,
+      )} conflict with ADK's automatic configuration. ADK manages these arguments itself, so please remove them from your command.`,
     );
   }
 }
@@ -57,6 +64,16 @@ function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
   const adkManagedArgs = ['--source', '--project', '--port', '--verbosity'];
   if (options.region) {
     adkManagedArgs.push('--region');
+  }
+  if (options.a2aAuthToken) {
+    // Any gcloud env-var flag can drop the injected token, so claim them all.
+    adkManagedArgs.push(
+      '--update-env-vars',
+      '--set-env-vars',
+      '--remove-env-vars',
+      '--clear-env-vars',
+      '--env-vars-file',
+    );
   }
 
   if (options.extraGcloudArgs) {
@@ -77,6 +94,13 @@ function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
     '--verbosity',
     options.logLevel.toLowerCase(),
   ];
+
+  if (options.a2aAuthToken) {
+    gcloudCommands.push(
+      '--update-env-vars',
+      `${A2A_AUTH_TOKEN_ENV_VAR}=${options.a2aAuthToken}`,
+    );
+  }
 
   const userLabels = [];
   const extraArgsWithoutLabels = [];
@@ -129,6 +153,15 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
   }
 
   const gcloudCommands = prepareGCloudArguments(options);
+
+  if (options.a2a && !options.a2aAuthToken) {
+    console.warn(
+      'SECURITY WARNING: deploying the A2A surface WITHOUT authentication, ' +
+        'so any caller that can reach the service can invoke the agent and ' +
+        'its tools. Pass --a2a_auth_token=<secret> to require a bearer ' +
+        'credential.',
+    );
+  }
 
   // Request to bundle any js or ts file into a single cjs file to be able to
   // copy file with all it's dependencies correctly.
