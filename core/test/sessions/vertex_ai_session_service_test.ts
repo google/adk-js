@@ -277,6 +277,48 @@ describe('VertexAiSessionService', () => {
 
       expect(session.lastUpdateTime).toBeGreaterThan(0);
     });
+
+    it('forwards ttl to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        ttl: '7200s',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {ttl: '7200s'},
+      });
+    });
+
+    it('forwards expireTime to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        expireTime: '2025-10-01T00:00:00Z',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {expireTime: '2025-10-01T00:00:00Z'},
+      });
+    });
+
+    it('throws when both ttl and expireTime are specified', async () => {
+      await expect(
+        service.createSession({
+          appName: '12345',
+          userId: 'testUser',
+          ttl: '7200s',
+          expireTime: '2025-10-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+      expect(mockClient.createInternal).not.toHaveBeenCalled();
+    });
   });
 
   describe('getSession', () => {

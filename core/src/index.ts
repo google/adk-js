@@ -41,7 +41,10 @@ export * from './common.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
-export type {VertexAiSessionServiceOptions} from './sessions/vertex_ai_session_service.js';
+export type {
+  VertexAiCreateSessionRequest,
+  VertexAiSessionServiceOptions,
+} from './sessions/vertex_ai_session_service.js';
 export {
   loadAllSkillsInDir,
   loadSkillFromDir,
