@@ -6,8 +6,6 @@
 
 import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
