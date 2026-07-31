@@ -20,6 +20,11 @@ export interface EnvironmentToolsetParams {
   workingDir: string;
   maxOutputChars?: number;
   toolFilter?: ToolPredicate | string[];
+  /**
+   * The shell {@link ExecuteTool} hands commands to. Defaults to `/bin/sh` on
+   * POSIX and `cmd.exe` on Windows.
+   */
+  shell?: string;
 }
 
 /**
@@ -38,12 +43,14 @@ export interface EnvironmentToolsetParams {
 export class EnvironmentToolset extends BaseToolset {
   private readonly workingDir: string;
   private readonly maxOutputChars?: number;
+  private readonly shell?: string;
   private tools: BaseTool[] | undefined;
 
   constructor(params: EnvironmentToolsetParams) {
     super(params.toolFilter || []);
     this.workingDir = params.workingDir;
     this.maxOutputChars = params.maxOutputChars;
+    this.shell = params.shell;
   }
 
   override async getTools(context?: Context): Promise<BaseTool[]> {
@@ -52,6 +59,7 @@ export class EnvironmentToolset extends BaseToolset {
         new ExecuteTool({
           workingDir: this.workingDir,
           maxOutputChars: this.maxOutputChars,
+          shell: this.shell,
         }),
         new ReadFileTool({
           workingDir: this.workingDir,

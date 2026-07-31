@@ -22,15 +22,20 @@ import * as path from 'path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
 // `truncate`, `toError` and `resolveAndValidatePath` are implementation
-// details of the environment tools and are deliberately not part of the
-// package's public surface, so they are imported from the module directly.
-import {
-  resolveAndValidatePath,
-  toError,
-  truncate,
-} from '../../../src/tools/environment/utils.js';
+// details and are deliberately not part of the package's public surface, so
+// they are imported from their modules directly.
+import {toError, truncate} from '../../../src/tools/environment/utils.js';
+import {resolveAndValidatePath} from '../../../src/utils/file_utils.js';
 
 const FUNCTION_CALL_ID = 'fc-1';
+
+const IS_WINDOWS = os.platform() === 'win32';
+
+/**
+ * PowerShell start-up dominates these runs, and a cold Windows CI agent can
+ * take several seconds before the first statement executes.
+ */
+const WINDOWS_SHELL_TIMEOUT_MS = 60_000;
 
 const REQUIRE_CONFIRMATION_MESSAGE =
   'This tool call needs external confirmation before completion.';
@@ -187,6 +192,99 @@ describe('Environment Tools Parity', () => {
       await expect(
         fs.access(path.join(tmpDir, 'marker.txt')),
       ).rejects.toThrowError();
+    });
+
+    describe('shell selection', () => {
+      it.skipIf(IS_WINDOWS)(
+        'hands the command to the configured shell instead of the default',
+        async () => {
+          // A stand-in shell that echoes back the command it was invoked
+          // with. `child_process.exec` runs `<shell> -c <command>`, so the
+          // command lands in `$2`. Seeing it here proves the configured shell
+          // ran the command rather than the platform default.
+          const fakeShell = path.join(tmpDir, 'fake-shell.sh');
+          await fs.writeFile(
+            fakeShell,
+            '#!/bin/sh\necho "fake-shell ran: $2"\n',
+            'utf8',
+          );
+          await fs.chmod(fakeShell, 0o755);
+
+          const tool = new ExecuteTool({workingDir: tmpDir, shell: fakeShell});
+          const res = await runExecute(tool, {command: 'echo hello'});
+
+          expect(res.status).toBe('ok');
+          expect((res.stdout ?? '').trim()).toBe('fake-shell ran: echo hello');
+        },
+      );
+
+      it.skipIf(!IS_WINDOWS)(
+        'runs through cmd.exe by default on Windows',
+        async () => {
+          // `%VAR%` is only expanded by `cmd.exe`; PowerShell and POSIX
+          // shells would echo the text back verbatim.
+          const tool = new ExecuteTool({workingDir: tmpDir});
+          const res = await runExecute(tool, {command: 'echo %COMSPEC%'});
+
+          expect(res.status).toBe('ok');
+          expect((res.stdout ?? '').toLowerCase()).toContain('cmd.exe');
+        },
+        WINDOWS_SHELL_TIMEOUT_MS,
+      );
+
+      it.skipIf(!IS_WINDOWS)(
+        'runs through cmd.exe when it is selected explicitly',
+        async () => {
+          const tool = new ExecuteTool({
+            workingDir: tmpDir,
+            shell: 'cmd.exe',
+            executeTimeoutMs: WINDOWS_SHELL_TIMEOUT_MS,
+          });
+          const res = await runExecute(tool, {
+            command: 'echo %COMSPEC% && exit 0',
+          });
+
+          expect(res.status).toBe('ok');
+          expect((res.stdout ?? '').toLowerCase()).toContain('cmd.exe');
+        },
+        WINDOWS_SHELL_TIMEOUT_MS,
+      );
+
+      it.skipIf(!IS_WINDOWS)(
+        'runs through powershell when it is selected',
+        async () => {
+          // `Write-Output` and parenthesised arithmetic are PowerShell
+          // syntax; `cmd.exe` would report an unrecognised command.
+          const tool = new ExecuteTool({
+            workingDir: tmpDir,
+            shell: 'powershell.exe',
+            executeTimeoutMs: WINDOWS_SHELL_TIMEOUT_MS,
+          });
+          const res = await runExecute(tool, {command: 'Write-Output (3 + 4)'});
+
+          expect(res.status).toBe('ok');
+          expect(
+            (res.stdout ?? '').split(/\r?\n/).map((l) => l.trim()),
+          ).toContain('7');
+        },
+        WINDOWS_SHELL_TIMEOUT_MS * 2,
+      );
+
+      it.skipIf(!IS_WINDOWS)(
+        'reports a nonzero exit code from powershell',
+        async () => {
+          const tool = new ExecuteTool({
+            workingDir: tmpDir,
+            shell: 'powershell.exe',
+            executeTimeoutMs: WINDOWS_SHELL_TIMEOUT_MS,
+          });
+          const res = await runExecute(tool, {command: 'exit 3'});
+
+          expect(res.status).toBe('error');
+          expect(res.exit_code).toBe(3);
+        },
+        WINDOWS_SHELL_TIMEOUT_MS * 2,
+      );
     });
   });
 
@@ -529,6 +627,40 @@ describe('Environment Tools Parity', () => {
       expect(tools.length).toBe(1);
       expect(tools[0].name).toBe('Execute');
     });
+
+    it.skipIf(IS_WINDOWS)(
+      'forwards the configured shell to Execute',
+      async () => {
+        const fakeShell = path.join(tmpDir, 'fake-shell.sh');
+        await fs.writeFile(
+          fakeShell,
+          '#!/bin/sh\necho "fake-shell ran: $2"\n',
+          'utf8',
+        );
+        await fs.chmod(fakeShell, 0o755);
+
+        const set = new EnvironmentToolset({
+          workingDir: tmpDir,
+          shell: fakeShell,
+        });
+        const execute = (await set.getTools()).find(
+          (t) => t.name === 'Execute',
+        );
+        if (!(execute instanceof ExecuteTool)) {
+          throw new Error('Execute tool missing from the toolset.');
+        }
+
+        const res = await execute.runAsync({
+          args: {command: 'echo hello'},
+          toolContext: confirmedContext(),
+        });
+        if (!('status' in res)) {
+          throw new Error('Execute unexpectedly paused for confirmation.');
+        }
+        expect(res.status).toBe('ok');
+        expect((res.stdout ?? '').trim()).toBe('fake-shell ran: echo hello');
+      },
+    );
 
     it('closes without error', async () => {
       const set = new EnvironmentToolset({workingDir: tmpDir});

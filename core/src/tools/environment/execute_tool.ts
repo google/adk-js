@@ -37,6 +37,22 @@ export interface ExecuteToolParams {
   workingDir: string;
   maxOutputChars?: number;
   executeTimeoutMs?: number;
+  /**
+   * The shell the command is handed to, as a path or a name resolvable on
+   * `PATH`.
+   *
+   * Defaults to the platform shell `child_process.exec` picks: `/bin/sh` on
+   * POSIX and `%ComSpec%` (that is, `cmd.exe`) on Windows. Node only special
+   * cases `cmd`: any other shell is invoked as `<shell> -c <command>`, which
+   * covers `bash`, `zsh`, `pwsh` and `powershell.exe` (whose `-c` is the
+   * documented short form of `-Command`).
+   *
+   * Note that the environment instruction tells the model to chain dependent
+   * commands with `&&`. Windows PowerShell 5.1 (`powershell.exe`) has no `&&`
+   * operator -- it was added in PowerShell 7 -- so prefer `pwsh` when the
+   * model is expected to chain commands on Windows.
+   */
+  shell?: string;
 }
 
 /**
@@ -78,12 +94,17 @@ export type ExecuteToolResult = ExecuteResult | ExecuteConfirmationRequired;
  * boundary. Every call therefore passes through the repo's standard
  * tool-confirmation gate before it runs, the same way
  * `RunSkillInlineScriptTool` gates model-provided scripts.
+ *
+ * The command runs under `/bin/sh` on POSIX and under `cmd.exe` on Windows;
+ * pass {@link ExecuteToolParams.shell} to select another shell, such as
+ * `pwsh`.
  */
 @experimental
 export class ExecuteTool extends BaseTool {
   private readonly workingDir: string;
   private readonly maxOutputChars: number;
   private readonly executeTimeoutMs: number;
+  private readonly shell?: string;
 
   constructor(params: ExecuteToolParams) {
     super({
@@ -93,6 +114,7 @@ export class ExecuteTool extends BaseTool {
     this.workingDir = params.workingDir;
     this.maxOutputChars = params.maxOutputChars ?? MAX_OUTPUT_CHARS;
     this.executeTimeoutMs = params.executeTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.shell = params.shell;
   }
 
   override _getDeclaration(): FunctionDeclaration | undefined {
@@ -128,9 +150,12 @@ export class ExecuteTool extends BaseTool {
     }
 
     try {
+      // `shell: undefined` leaves `exec` on its platform default, so the
+      // option can be forwarded unconditionally.
       const {stdout, stderr} = await execAsync(command, {
         cwd: this.workingDir,
         timeout: this.executeTimeoutMs,
+        shell: this.shell,
       });
 
       const result: ExecuteResult = {status: 'ok'};

@@ -8,8 +8,9 @@ import {FunctionDeclaration, Type} from '@google/genai';
 import * as fs from 'fs/promises';
 
 import {experimental} from '../../utils/experimental.js';
+import {resolveAndValidatePath} from '../../utils/file_utils.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
-import {isFileNotFoundError, resolveAndValidatePath, toError} from './utils.js';
+import {isFileNotFoundError, toError} from './utils.js';
 
 /**
  * Escapes every regular-expression metacharacter in `str` so that the result
