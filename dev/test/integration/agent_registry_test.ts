@@ -348,4 +348,20 @@ describe('AgentRegistry', () => {
 
     expect(agentRegistry.summary()).toBe('2 configs, 1 instantiated agents');
   });
+
+  it('should not resolve an inherited Object member as a built-in tool', () => {
+    const config = {
+      name: 'bad_agent',
+      model: 'model',
+      description: 'desc',
+      instruction: 'inst',
+      agentClass: 'LlmAgent',
+      tools: [{name: 'constructor'}],
+    } as unknown as YamlAgentConfig;
+
+    agentRegistry.registerAgentConfig('bad_agent', config);
+    expect(() => agentRegistry.getAgent('bad_agent')).toThrow(
+      'Tool constructor not found in registry',
+    );
+  });
 });
