@@ -43,32 +43,29 @@ export enum TrackingScope {
 
 /**
  * Structured payload returned to the model when a tool fails, containing the
- * failure details and reflection guidance.
+ * failure details and reflection guidance. This object becomes the
+ * `functionResponse.response` observed by the model.
  *
- * Property names are intentionally `snake_case` to match the exact wire format
- * emitted by the Python ADK, since this object becomes a
- * `functionResponse.response` payload observed by the model.
- *
- * Declared as a type alias (not an interface) so it carries an implicit index
- * signature and is therefore assignable to the `Record<string, unknown>`
- * return type of the plugin callbacks.
+ * Property names are `camelCase`, following this repository's convention. The
+ * Python ADK emits the same fields in `snake_case`; only
+ * {@link REFLECT_AND_RETRY_RESPONSE_TYPE} is a wire value shared with it.
  */
-export type ToolFailureResponse = {
+export interface ToolFailureResponse {
   /** Always {@link REFLECT_AND_RETRY_RESPONSE_TYPE}. */
-  response_type: string;
+  responseType: string;
   /** The error's class name, or `'ToolError'` for non-`Error` values. */
-  error_type: string;
+  errorType: string;
   /** The raw error message. */
-  error_details: string;
+  errorDetails: string;
   /**
    * The consecutive failure count that produced this response. For a terminal
    * retry-limit-exceeded response this is `maxRetries`, not the actual attempt
    * number that triggered it.
    */
-  retry_count: number;
+  retryCount: number;
   /** Human-readable guidance instructing the model how to recover. */
-  reflection_guidance: string;
-};
+  reflectionGuidance: string;
+}
 
 /**
  * Per-scope, per-item consecutive-failure counter.
@@ -181,13 +178,25 @@ function buildFailureResponse(
   reflectionGuidance: string,
 ): ToolFailureResponse {
   return {
-    response_type: REFLECT_AND_RETRY_RESPONSE_TYPE,
-    error_type: error instanceof Error ? error.constructor.name : 'ToolError',
-    error_details:
+    responseType: REFLECT_AND_RETRY_RESPONSE_TYPE,
+    errorType: error instanceof Error ? error.constructor.name : 'ToolError',
+    errorDetails:
       error instanceof Error ? error.message : stringifyError(error),
-    retry_count: retryCount,
-    reflection_guidance: reflectionGuidance,
+    retryCount,
+    reflectionGuidance,
   };
+}
+
+/**
+ * Widens a {@link ToolFailureResponse} into the plain record the plugin
+ * callbacks are contractually required to return. An interface has no implicit
+ * index signature and so is not assignable to `Record<string, unknown>`;
+ * spreading it into a fresh object literal is, with no cast involved.
+ */
+function toResponseRecord(
+  response: ToolFailureResponse,
+): Record<string, unknown> {
+  return {...response};
 }
 
 /** Generates structured reflection guidance for a recoverable tool failure. */
@@ -369,7 +378,7 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
     // Never re-process our own guidance objects as new errors.
     if (
       isRecord(result) &&
-      result['response_type'] === REFLECT_AND_RETRY_RESPONSE_TYPE
+      result['responseType'] === REFLECT_AND_RETRY_RESPONSE_TYPE
     ) {
       return undefined;
     }
@@ -382,7 +391,9 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
     });
 
     if (error) {
-      return this.handleToolError(tool, toolArgs, toolContext, error);
+      return toResponseRecord(
+        this.handleToolError(tool, toolArgs, toolContext, error),
+      );
     }
 
     // On success, reset the failure count for this specific tool within scope.
@@ -403,7 +414,7 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
    * The return type is `unknown` so an override can return an `Error`.
    * `Error` is an interface and therefore has no implicit index signature, so
    * it is not assignable to `Record<string, unknown>`; returning one is what
-   * makes `error_type`/`error_details` report the real error class rather than
+   * makes `errorType`/`errorDetails` report the real error class rather than
    * the generic `'ToolError'`. An override may still narrow either the
    * parameter or the return type.
    *
@@ -455,16 +466,21 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
     toolContext: Context;
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
-    return this.handleToolError(tool, toolArgs, toolContext, error);
+    return toResponseRecord(
+      this.handleToolError(tool, toolArgs, toolContext, error),
+    );
   }
 
-  /** Central decision tree for processing a tool error. */
+  /**
+   * Central decision tree for processing a tool error. Every path either
+   * returns guidance or throws, so there is no `undefined` case.
+   */
   private handleToolError(
     tool: BaseTool,
     toolArgs: Record<string, unknown>,
     toolContext: Context,
     error: unknown,
-  ): Record<string, unknown> | undefined {
+  ): ToolFailureResponse {
     if (this.maxRetries === 0) {
       if (this.throwExceptionIfRetryExceeded) {
         throw ensureError(error);

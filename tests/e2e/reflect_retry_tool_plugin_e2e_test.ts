@@ -117,12 +117,12 @@ describe('ReflectAndRetryToolPlugin (end-to-end)', () => {
     const responses = collectResponses(events);
 
     const reflections = responses.filter(
-      (r) => r['response_type'] === REFLECT_AND_RETRY_RESPONSE_TYPE,
+      (r) => r['responseType'] === REFLECT_AND_RETRY_RESPONSE_TYPE,
     );
     expect(reflections).toHaveLength(1);
-    expect(reflections[0]['error_type']).toBe('Error');
-    expect(reflections[0]['retry_count']).toBe(1);
-    expect(String(reflections[0]['reflection_guidance'])).toContain(
+    expect(reflections[0]['errorType']).toBe('Error');
+    expect(reflections[0]['retryCount']).toBe(1);
+    expect(String(reflections[0]['reflectionGuidance'])).toContain(
       'Wrong Function Name',
     );
 
