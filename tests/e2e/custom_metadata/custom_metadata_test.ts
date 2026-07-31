@@ -40,7 +40,7 @@ describe.skipIf(!hasAKey)('E2e customMetadata Support', () => {
     const agent = new Agent({
       name: 'custom_metadata_agent',
       model,
-      instructions: 'You are a helpful assistant. Reply shortly.',
+      instruction: 'You are a helpful assistant. Reply shortly.',
     });
 
     const runner = new InMemoryRunner({

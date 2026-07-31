@@ -17,14 +17,23 @@ export interface AdkApiClientConfig {
 
 /**
  * Run agent request interface.
+ *
+ * Mirrors the body accepted by the ADK API server's `POST /run` and
+ * `POST /run_sse`; omitted optional fields are dropped from the JSON body.
  */
 export interface RunAgentRequest {
   appName: string;
   userId: string;
   sessionId: string;
+  /**
+   * New turn content. Required: the server runs the agent only when a new
+   * message is present, so a request without one returns an empty stream.
+   */
   newMessage: Content | string;
-  streaming: boolean;
-  stateDelta: Record<string, unknown>;
+  /** Whether to stream partial events. Defaults to non-streaming server-side. */
+  streaming?: boolean;
+  /** State delta to apply before the run. Omit to apply none. */
+  stateDelta?: Record<string, unknown>;
 }
 
 /**

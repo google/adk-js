@@ -257,14 +257,12 @@ export async function createAgent(options: AgentCreationOptions) {
       const defaultProject = await getGcpProject();
       const defaultRegion = await getGcpRegion();
 
-      const projectResponse: string = options.forceYes
+      const projectResponse: symbol | string = options.forceYes
         ? defaultProject
-        : (
-            await text({
-              message: 'Enter the Google Cloud Project ID',
-              initialValue: defaultProject,
-            })
-          ).toString();
+        : await text({
+            message: 'Enter the Google Cloud Project ID',
+            initialValue: defaultProject,
+          });
 
       if (isCancel(projectResponse)) {
         process.exit(0);

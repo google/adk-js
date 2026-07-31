@@ -236,6 +236,10 @@ export type {
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
+export {
+  ENTERPRISE_WEB_SEARCH,
+  EnterpriseWebSearchTool,
+} from './tools/enterprise_web_search_tool.js';
 export {ExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
@@ -245,6 +249,7 @@ export type {
   ToolInputParameters,
   ToolOptions,
 } from './tools/function_tool.js';
+export {getUserChoiceTool} from './tools/get_user_choice_tool.js';
 export {
   GOOGLE_MAPS_GROUNDING,
   GoogleMapsGroundingTool,
@@ -262,6 +267,7 @@ export {
   PRELOAD_MEMORY,
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
+export {requestInputTool} from './tools/request_input_tool.js';
 export {ToolConfirmation} from './tools/tool_confirmation.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';

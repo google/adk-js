@@ -6,10 +6,13 @@
 
 import {InvocationContext} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
-import {CompactedEvent, isCompactedEvent} from '../events/compacted_event.js';
+import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
-import {calculateRetainStartIndex} from './compaction_utils.js';
+import {
+  calculateRetainStartIndex,
+  getActiveEvents,
+} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 /** Rough estimate used when no usage metadata is available. */
@@ -48,35 +51,11 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     this.summarizer = options.summarizer;
   }
 
-  private getActiveEvents(events: Event[]): Event[] {
-    let latestCompactedEvent: CompactedEvent | undefined = undefined;
-
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (isCompactedEvent(e)) {
-        if (!latestCompactedEvent || e.endTime > latestCompactedEvent.endTime) {
-          latestCompactedEvent = e as CompactedEvent;
-        }
-      }
-    }
-
-    if (!latestCompactedEvent) {
-      return events;
-    }
-
-    const activeRawEvents = events.filter(
-      (e) =>
-        !isCompactedEvent(e) && e.timestamp > latestCompactedEvent!.endTime,
-    );
-
-    return [latestCompactedEvent, ...activeRawEvents];
-  }
-
   shouldCompact(
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = getActiveEvents(events);
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -104,7 +83,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = getActiveEvents(events);
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
