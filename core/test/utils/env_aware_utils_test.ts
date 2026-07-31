@@ -4,9 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {afterEach, describe, expect, it} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from 'vitest';
 import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
-import {getBooleanEnvVar, randomUUID} from '../../src/utils/env_aware_utils.js';
+import {
+  getBooleanEnvVar,
+  isEnterpriseModeEnabled,
+  randomUUID,
+} from '../../src/utils/env_aware_utils.js';
+import {logger} from '../../src/utils/logger.js';
 
 describe('env_aware_utils', () => {
   describe('getBooleanEnvVar', () => {
@@ -133,6 +146,66 @@ describe('env_aware_utils', () => {
       expect(() => shimRandomUUID()).toThrow(
         /no cryptographically secure source of randomness/,
       );
+    });
+  });
+
+  describe('isEnterpriseModeEnabled', () => {
+    const originalEnv = process.env;
+    let warnSpy: MockInstance<typeof logger.warn>;
+
+    beforeEach(() => {
+      process.env = {...originalEnv};
+      delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
+      delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+      warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+      vi.restoreAllMocks();
+    });
+
+    it('should return false and not warn when neither variable is set', () => {
+      expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should return true when GOOGLE_GENAI_USE_ENTERPRISE is enabled', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should prefer an enabled GOOGLE_GENAI_USE_ENTERPRISE over GOOGLE_GENAI_USE_VERTEXAI', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should not fall back to GOOGLE_GENAI_USE_VERTEXAI when GOOGLE_GENAI_USE_ENTERPRISE is set but disabled', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = '';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should fall back to an enabled GOOGLE_GENAI_USE_VERTEXAI and warn', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'GOOGLE_GENAI_USE_VERTEXAI is deprecated, please use ' +
+            'GOOGLE_GENAI_USE_ENTERPRISE',
+        ),
+      );
+    });
+
+    it('should warn when GOOGLE_GENAI_USE_VERTEXAI is present but disabled', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
+      expect(isEnterpriseModeEnabled()).toBe(false);
+      expect(warnSpy).toHaveBeenCalledOnce();
     });
   });
 });

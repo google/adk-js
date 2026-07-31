@@ -13,7 +13,7 @@ import {
   LiveServerMessage,
 } from '@google/genai';
 
-import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
+import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
@@ -373,7 +373,7 @@ export function geminiInitParams({
 
   params.vertexai = !!vertexai;
   if (!params.vertexai && !isBrowser()) {
-    params.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');
+    params.vertexai = isEnterpriseModeEnabled();
   }
 
   if (params.vertexai) {

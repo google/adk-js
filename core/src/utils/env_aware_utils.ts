@@ -5,6 +5,10 @@
  */
 
 import {randomUUID as nodeRandomUUID} from 'node:crypto';
+import {logger} from './logger.js';
+
+const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
+const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
 
 /**
  * Returns true if the environment is a browser.
@@ -130,4 +134,30 @@ export function getBooleanEnvVar(envVar: string): boolean {
   const envVarValue = (process.env[envVar] || '').toLowerCase();
 
   return ['true', '1'].includes(envVarValue);
+}
+
+/**
+ * Returns whether Google GenAI enterprise mode is enabled.
+ *
+ * `GOOGLE_GENAI_USE_ENTERPRISE` takes precedence whenever it is set, even when
+ * it is set to a falsy value. `GOOGLE_GENAI_USE_VERTEXAI` is only consulted
+ * when `GOOGLE_GENAI_USE_ENTERPRISE` is absent, and using it logs a deprecation
+ * warning.
+ *
+ * @return True if enterprise mode is enabled, false otherwise.
+ */
+export function isEnterpriseModeEnabled(): boolean {
+  if (process.env?.[ENTERPRISE_MODE_ENV_VAR] !== undefined) {
+    return getBooleanEnvVar(ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  if (process.env?.[DEPRECATED_ENTERPRISE_MODE_ENV_VAR] !== undefined) {
+    logger.warn(
+      `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
+        `${ENTERPRISE_MODE_ENV_VAR} instead`,
+    );
+    return getBooleanEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  return false;
 }

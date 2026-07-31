@@ -4,35 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getBooleanEnvVar} from './env_aware_utils.js';
-import {logger} from './logger.js';
-
-const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
-const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
-
-/**
- * Returns whether Google GenAI enterprise mode is enabled.
- *
- * `GOOGLE_GENAI_USE_ENTERPRISE` takes precedence whenever it is set, even when
- * it is set to a falsy value. `GOOGLE_GENAI_USE_VERTEXAI` is only consulted
- * when `GOOGLE_GENAI_USE_ENTERPRISE` is absent, and using it logs a deprecation
- * warning.
- */
-function isEnterpriseModeEnabled(): boolean {
-  if (process.env?.[ENTERPRISE_MODE_ENV_VAR] !== undefined) {
-    return getBooleanEnvVar(ENTERPRISE_MODE_ENV_VAR);
-  }
-
-  if (process.env?.[DEPRECATED_ENTERPRISE_MODE_ENV_VAR] !== undefined) {
-    logger.warn(
-      `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
-        `${ENTERPRISE_MODE_ENV_VAR} instead`,
-    );
-    return getBooleanEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR);
-  }
-
-  return false;
-}
+import {isEnterpriseModeEnabled} from './env_aware_utils.js';
 
 export const EXPRESS_MODE_UNSUPPORTED_MESSAGE =
   'Vertex AI Express Mode (expressModeApiKey / GOOGLE_API_KEY) is not ' +
