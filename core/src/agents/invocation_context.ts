@@ -8,16 +8,31 @@ import {Content} from '@google/genai';
 
 import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {Event} from '../events/event.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {AsyncQueue} from '../utils/async_queue.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
+
+/**
+ * Workflow: data exposed to `{Class.field}` and `<Class.field from source_node>`
+ * instruction placeholders when an LlmAgent runs as a workflow node. Populated by
+ * `LLMAgentWrapper`; absent for ordinary (non-workflow) agent runs, in which case
+ * those placeholders are left untouched.
+ */
+export interface WorkflowInstructionScope {
+  /** The current node's input, exposing fields for `{Class.field}`. */
+  input?: unknown;
+  /** Predecessor node outputs keyed by node name, for `<Class.field from node>`. */
+  outputsByNode?: Record<string, unknown>;
+}
 
 /**
  * The parameters for creating an invocation context.
@@ -38,6 +53,9 @@ export interface InvocationContextParams {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
+  agentStates?: Record<string, unknown>;
+  endOfAgents?: Record<string, boolean>;
+  workflowInstructionScope?: WorkflowInstructionScope;
 }
 
 /**
@@ -186,6 +204,32 @@ export class InvocationContext {
   readonly abortSignal?: AbortSignal;
 
   /**
+   * An optional channel into which a running tool can push events to be
+   * interleaved into the agent's output stream. Set by the LLM flow around tool
+   * execution so a {@link NodeTool} (running a node/workflow) can surface the
+   * node's intermediate and interrupt events. Cleared once tools finish.
+   */
+  eventQueue?: AsyncQueue<Event>;
+
+  /**
+   * Checkpointed states for workflow nodes under this invocation.
+   */
+  agentStates: Record<string, unknown>;
+
+  /**
+   * Tracks whether specific agents or workflows have reached the end of their execution.
+   */
+
+  endOfAgents: Record<string, boolean>;
+
+  /**
+   * Workflow: field-resolution scope for `{Class.field}` /
+   * `<Class.field from node>` instruction placeholders (set by
+   * `LLMAgentWrapper`).
+   */
+  workflowInstructionScope?: WorkflowInstructionScope;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -203,7 +247,11 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
+    this.agentStates = params.agentStates ?? {};
+    this.endOfAgents = params.endOfAgents ?? {};
+    this.workflowInstructionScope = params.workflowInstructionScope;
     // Inherit the parent invocation's cost manager when one is available.
+
     // Child contexts created for sub-agents, agent transfers and loop
     // iterations (via createInvocationContext / createBranchCtxForSubAgent)
     // carry the parent context's fields over, so reusing its cost manager

@@ -41,8 +41,12 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     // Models that cannot take an output schema alongside tools get the
     // prompt-based `set_model_response` workaround instead, injected by
     // `LlmAgent.runOneStepAsync` and the instructions processor.
+    // Task-mode agents complete via the `finish_task` tool, so the JSON response
+    // mode must not be set (function calling is incompatible with a JSON
+    // response mime type).
     if (
       agent.outputSchema &&
+      agent.mode !== 'task' &&
       (!agent.tools?.length ||
         canUseOutputSchemaWithTools(agent.canonicalModel.model))
     ) {

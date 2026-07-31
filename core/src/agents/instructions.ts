@@ -5,9 +5,35 @@
  */
 
 import {State} from '../sessions/state.js';
+import type {WorkflowInstructionScope} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
 const ARTIFACT_PREFIX = 'artifact.';
+
+/** Matches a `{Class.field}` workflow placeholder key (dotted identifier pair). */
+const WORKFLOW_FIELD_KEY = /^[A-Za-z_]\w*\.[A-Za-z_]\w*$/;
+
+/** Matches a `<Class.field from source_node>` workflow placeholder. */
+const SOURCE_NODE_PLACEHOLDER =
+  /<\s*[A-Za-z_]\w*\.([A-Za-z_]\w*)\s+from\s+([A-Za-z_]\w*)\s*>/g;
+
+/**
+ * Resolves `<Class.field from source_node>` placeholders against a workflow
+ * scope (predecessor outputs by node name). Synchronous; unresolved placeholders
+ * are left untouched. Mirrors Python's source-node-qualified data selection.
+ */
+function resolveSourceNodePlaceholders(
+  template: string,
+  scope: WorkflowInstructionScope,
+): string {
+  return template.replace(SOURCE_NODE_PLACEHOLDER, (raw, field, nodeName) => {
+    const out = scope.outputsByNode?.[nodeName];
+    if (out && typeof out === 'object' && field in (out as object)) {
+      return formatValue((out as Record<string, unknown>)[field], false);
+    }
+    return raw;
+  });
+}
 
 /**
  * Resolves a single key from the context (state or artifact).
@@ -39,19 +65,30 @@ async function resolveKey(
   }
 
   // Step 3: Handle state variable injection.
-  if (!isValidStateName(key)) {
-    return rawMatch;
+  if (isValidStateName(key)) {
+    if (key in invocationContext.session.state) {
+      return formatValue(invocationContext.session.state[key], false);
+    }
+    if (isOptional) {
+      return '';
+    }
+    throw new Error(`Context variable not found: \`${key}\`.`);
   }
 
-  if (key in invocationContext.session.state) {
-    return formatValue(invocationContext.session.state[key], false);
+  // Step 4: Workflow — resolve `{Class.field}` from the current node input.
+  const scope = invocationContext.workflowInstructionScope;
+  if (scope && WORKFLOW_FIELD_KEY.test(key)) {
+    const field = key.slice(key.indexOf('.') + 1);
+    const input = scope.input;
+    if (input && typeof input === 'object' && field in (input as object)) {
+      return formatValue((input as Record<string, unknown>)[field], false);
+    }
+    if (isOptional) {
+      return '';
+    }
   }
 
-  if (isOptional) {
-    return '';
-  }
-
-  throw new Error(`Context variable not found: \`${key}\`.`);
+  return rawMatch;
 }
 
 /**
@@ -115,6 +152,14 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
+  // Workflow: first resolve `<Class.field from source_node>` placeholders, and
+  // enable `{Class.field}` resolution below. Both are no-ops (placeholders left
+  // untouched) for ordinary agents, which have no workflow scope.
+  const scope = readonlyContext.invocationContext.workflowInstructionScope;
+  if (scope) {
+    template = resolveSourceNodePlaceholders(template, scope);
+  }
+
   const pattern = /\{+[^{}]*}+/g;
   const matches = Array.from(template.matchAll(pattern));
 
@@ -130,7 +175,10 @@ export async function injectSessionState(
     if (isOptional) {
       key = key.slice(0, -1);
     }
-    const isValid = key.startsWith(ARTIFACT_PREFIX) || isValidStateName(key);
+    const isValid =
+      key.startsWith(ARTIFACT_PREFIX) ||
+      isValidStateName(key) ||
+      (!!scope && WORKFLOW_FIELD_KEY.test(key));
     return {
       raw,
       key,
