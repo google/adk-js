@@ -7,7 +7,8 @@
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {createEvent, State, VertexAiSessionService} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {ApiError} from '@google/genai';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 // Mock the unreleased nodejs-vertexai package so the import resolves
 vi.mock('nodejs-vertexai', () => ({
@@ -19,24 +20,6 @@ vi.mock('nodejs-vertexai', () => ({
     events = {append: vi.fn()};
   },
 }));
-
-const clientConstructor = vi.hoisted(() => vi.fn());
-
-// The service imports Client from this deep path, so the mock must target it.
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
-  Client: class {
-    readonly agentEnginesInternal = {sessions: {}};
-
-    constructor(options: {project?: string; location?: string}) {
-      clientConstructor(options);
-    }
-  },
-}));
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-  clientConstructor.mockClear();
-});
 
 import {
   isVertexAiConnectionString,
@@ -144,52 +127,9 @@ describe('VertexAiSessionService', () => {
   });
 
   it('throws an error if no client and no project/location provided', () => {
-    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
-
     expect(() => new VertexAiSessionService({})).toThrow(
-      'Project ID and Location are required.',
+      'Either (Project ID and Location) or an expressModeApiKey is required.',
     );
-    expect(
-      () => new VertexAiSessionService({projectId: 'test-project'}),
-    ).toThrow('Project ID and Location are required.');
-  });
-
-  describe('express mode', () => {
-    beforeEach(() => {
-      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
-      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
-    });
-
-    it.each([
-      ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
-      ['an API key from the environment', {}],
-      ['an API key and only a project', {projectId: 'test-project'}],
-    ])('throws for %s instead of dropping the key', (_, options) => {
-      expect(() => new VertexAiSessionService(options)).toThrow(
-        'Vertex AI Express Mode',
-      );
-      expect(clientConstructor).not.toHaveBeenCalled();
-    });
-
-    it('keeps using project and location when an API key is also in the environment', () => {
-      new VertexAiSessionService({
-        projectId: 'test-project',
-        location: 'us-central1',
-      });
-
-      expect(clientConstructor).toHaveBeenCalledWith({
-        project: 'test-project',
-        location: 'us-central1',
-      });
-    });
-
-    it('never builds a client when sessions are injected', () => {
-      new VertexAiSessionService({
-        sessions: mockClient as unknown as Sessions,
-      });
-
-      expect(clientConstructor).not.toHaveBeenCalled();
-    });
   });
 
   it('uses agentEngineId if provided', async () => {
@@ -336,6 +276,48 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(session.lastUpdateTime).toBeGreaterThan(0);
+    });
+
+    it('forwards ttl to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        ttl: '7200s',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {ttl: '7200s'},
+      });
+    });
+
+    it('forwards expireTime to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        expireTime: '2025-10-01T00:00:00Z',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {expireTime: '2025-10-01T00:00:00Z'},
+      });
+    });
+
+    it('throws when both ttl and expireTime are specified', async () => {
+      await expect(
+        service.createSession({
+          appName: '12345',
+          userId: 'testUser',
+          ttl: '7200s',
+          expireTime: '2025-10-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+      expect(mockClient.createInternal).not.toHaveBeenCalled();
     });
   });
 
@@ -486,6 +468,54 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(session).toBeUndefined();
+    });
+
+    it('returns undefined when sessions.get rejects with an ApiError 404', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+      expect(loggerSpy).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it('returns undefined when events.listInternal rejects with an ApiError 404', async () => {
+      mockClient.events.listInternal.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+    });
+
+    it('throws an ApiError 403 instead of reporting the session as missing', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Permission denied', status: 403}),
+      );
+
+      await expect(
+        service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow('Permission denied');
+      expect(loggerSpy).toHaveBeenCalled();
+      loggerSpy.mockRestore();
     });
 
     it('falls back to empty array if sessionEvents is missing in getSession', async () => {
