@@ -5,10 +5,7 @@
  */
 
 import type Docker from 'dockerode';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {PassThrough} from 'node:stream';
-import {text} from 'node:stream/consumers';
 import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
@@ -16,24 +13,12 @@ import {
   CodeExecutionLanguage,
   CodeExecutionResult,
 } from './code_execution_utils.js';
+import {
+  DockerContainer,
+  type DockerContainerOptions,
+} from './docker_container.js';
 
 const DEFAULT_IMAGE_TAG = 'adk-code-executor:latest';
-
-type DockerConstructor = new (options?: Docker.DockerOptions) => Docker;
-
-/**
- * Lazily loads the `dockerode` constructor. It is imported dynamically (rather
- * than at the top of the module) so that importing `@google/adk` does not
- * eagerly pull in dockerode and its native transitive dependencies (`ssh2`);
- * the client is only loaded when an executor is actually used. This mirrors
- * adk-python's lazy `import docker` and the sibling DB-driver loading in
- * `sessions/db`.
- */
-let dockerodeCtor: Promise<DockerConstructor> | undefined;
-function loadDockerodeCtor(): Promise<DockerConstructor> {
-  dockerodeCtor ??= import('dockerode').then((mod) => mod.default);
-  return dockerodeCtor;
-}
 
 /**
  * Options for {@link ContainerCodeExecutor}.
@@ -66,195 +51,21 @@ export interface ContainerCodeExecutorOptions {
   docker?: Docker;
 }
 
-/** Decoded output of a single command executed inside the container. */
-interface ExecOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-}
-
 /**
- * Containers that must be cleaned up when the process exits. A single set with
- * one set of process hooks avoids leaking a listener per executor instance.
- */
-const activeContainers = new Set<Docker.Container>();
-let exitHooksRegistered = false;
-
-/** Stops and removes a container, tolerating a missing container. */
-async function stopAndRemove(container?: Docker.Container): Promise<void> {
-  if (!container) {
-    return;
-  }
-  await container.stop();
-  await container.remove();
-}
-
-/** Best-effort cleanup of every tracked container on process exit. */
-async function cleanupContainers(): Promise<void> {
-  for (const container of activeContainers) {
-    try {
-      await stopAndRemove(container);
-    } catch (error) {
-      logger.error(`Failed to stop and remove container on exit: ${error}`);
-    }
-    activeContainers.delete(container);
-  }
-}
-
-/**
- * Registers process-exit hooks once. Node cannot run async Docker cleanup on
- * the synchronous `'exit'` event, so `'beforeExit'` and termination signals are
- * used instead (the parity substitute for Python's `atexit`).
- */
-function registerExitHooks(): void {
-  if (exitHooksRegistered) {
-    return;
-  }
-  exitHooksRegistered = true;
-  process.once('beforeExit', cleanupContainers);
-  process.once('SIGINT', cleanupContainers);
-  process.once('SIGTERM', cleanupContainers);
-}
-
-const PROTOCOL_BY_SCHEME: Record<string, 'https' | 'http' | 'ssh'> = {
-  'https:': 'https',
-  'ssh:': 'ssh',
-};
-
-/** Maps a Docker daemon base url string to dockerode client options. */
-function parseBaseUrl(baseUrl: string): Docker.DockerOptions {
-  const url = new URL(baseUrl);
-  if (url.protocol === 'unix:') {
-    return {socketPath: url.pathname};
-  }
-  return {
-    host: url.hostname,
-    port: url.port || undefined,
-    protocol: PROTOCOL_BY_SCHEME[url.protocol] ?? 'http',
-  };
-}
-
-/**
- * How each supported language is executed inside the container: the interpreter
- * to probe for on startup, and the argv used to run a code string.
+ * The argv prefix used to run a code string for each supported language; the
+ * code is appended as the final argument.
  *
  * TypeScript is run through `npx tsx`, which type-strips and executes in one
  * step, so no separate compile step or `tsconfig` is needed in the image.
  */
-const RUNTIME_BY_LANGUAGE: Partial<
-  Record<
-    CodeExecutionLanguage,
-    {probe: string; command: (code: string) => string[]}
-  >
+const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
+  Record<CodeExecutionLanguage, string[]>
 > = {
-  [CodeExecutionLanguage.PYTHON]: {
-    probe: 'python3',
-    command: (code) => ['python3', '-c', code],
-  },
-  [CodeExecutionLanguage.JAVASCRIPT]: {
-    probe: 'node',
-    command: (code) => ['node', '-e', code],
-  },
-  [CodeExecutionLanguage.TYPESCRIPT]: {
-    probe: 'npx',
-    command: (code) => ['npx', '--yes', 'tsx', '--eval', code],
-  },
-  [CodeExecutionLanguage.SHELL]: {
-    probe: 'sh',
-    command: (code) => ['sh', '-c', code],
-  },
+  [CodeExecutionLanguage.PYTHON]: ['python3', '-c'],
+  [CodeExecutionLanguage.JAVASCRIPT]: ['node', '-e'],
+  [CodeExecutionLanguage.TYPESCRIPT]: ['npx', '--yes', 'tsx', '--eval'],
+  [CodeExecutionLanguage.SHELL]: ['sh', '-c'],
 };
-
-/**
- * The Docker container backing a {@link ContainerCodeExecutor}, wrapping the
- * whole lifecycle (`build` -> `start` -> `execute` -> `stop`) behind one small
- * API so the executor itself only decides *what* to run, not *how* to drive
- * Docker.
- */
-class DockerContainer {
-  private container?: Docker.Container;
-
-  constructor(
-    private readonly client: Docker,
-    private readonly image: string,
-    private readonly networkEnabled: boolean,
-  ) {}
-
-  /** Builds the image from a directory containing a Dockerfile. */
-  async build(dockerPath: string): Promise<void> {
-    if (!fs.existsSync(dockerPath)) {
-      throw new Error(`Invalid Docker path: ${dockerPath}`);
-    }
-    logger.debug('Building Docker image...');
-    const stream = await this.client.buildImage(
-      {context: dockerPath, src: fs.readdirSync(dockerPath)},
-      {t: this.image},
-    );
-    await new Promise<void>((resolve, reject) => {
-      this.client.modem.followProgress(stream, (error) =>
-        error ? reject(error) : resolve(),
-      );
-    });
-    logger.debug(`Docker image ${this.image} built.`);
-  }
-
-  /** Creates and starts the container, registering it for exit cleanup. */
-  async start(): Promise<void> {
-    logger.debug('Starting container for ContainerCodeExecutor...');
-    this.container = await this.client.createContainer({
-      Image: this.image,
-      Tty: true,
-      NetworkDisabled: !this.networkEnabled,
-      HostConfig: {CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges']},
-    });
-    await this.container.start();
-    activeContainers.add(this.container);
-    logger.debug(`Container ${this.container.id} started.`);
-  }
-
-  /**
-   * Runs a command inside the container and returns its decoded output. The
-   * exec is created without a TTY so the stream stays multiplexed and can be
-   * split into stdout and stderr via `modem.demuxStream`.
-   */
-  async execute(cmd: string[]): Promise<ExecOutput> {
-    if (!this.container) {
-      throw new Error('Container is not started.');
-    }
-    const exec = await this.container.exec({
-      Cmd: cmd,
-      AttachStdout: true,
-      AttachStderr: true,
-    });
-    const stream = await exec.start({hijack: true, stdin: false});
-
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    this.client.modem.demuxStream(stream, stdout, stderr);
-    const collected = Promise.all([text(stdout), text(stderr)]);
-
-    await new Promise<void>((resolve, reject) => {
-      stream.on('end', resolve);
-      stream.on('error', reject);
-    });
-    stdout.end();
-    stderr.end();
-
-    const [stdoutText, stderrText] = await collected;
-    const info = await exec.inspect();
-    return {stdout: stdoutText, stderr: stderrText, exitCode: info.ExitCode};
-  }
-
-  /** Stops and removes the container. Safe to call when never started. */
-  async stop(): Promise<void> {
-    const container = this.container;
-    this.container = undefined;
-    if (container) {
-      activeContainers.delete(container);
-    }
-    await stopAndRemove(container);
-  }
-}
 
 /**
  * A code executor that runs model-generated code inside a hardened Docker
@@ -270,11 +81,8 @@ class DockerContainer {
  */
 @experimental
 export class ContainerCodeExecutor extends BaseCodeExecutor {
-  private readonly image: string;
   private readonly dockerPath?: string;
-  private readonly networkEnabled: boolean;
-  private readonly baseUrl?: string;
-  private readonly injectedClient?: Docker;
+  private readonly containerOptions: DockerContainerOptions;
   private container?: DockerContainer;
   private initPromise?: Promise<void>;
 
@@ -285,18 +93,19 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
         'Either image or dockerPath must be set for ContainerCodeExecutor.',
       );
     }
-    this.image = options.image ?? DEFAULT_IMAGE_TAG;
     this.dockerPath = options.dockerPath
       ? path.resolve(options.dockerPath)
       : undefined;
-    this.networkEnabled = options.networkEnabled ?? false;
-    this.baseUrl = options.baseUrl;
-    this.injectedClient = options.docker;
+    this.containerOptions = {
+      image: options.image ?? DEFAULT_IMAGE_TAG,
+      networkEnabled: options.networkEnabled ?? false,
+      baseUrl: options.baseUrl,
+      docker: options.docker,
+    };
     // These invariants mirror Python's frozen fields: this executor is never
     // stateful and never optimizes data files.
     this.stateful = false;
     this.optimizeDataFile = false;
-    registerExitHooks();
   }
 
   override async executeCode(
@@ -306,17 +115,15 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     // Unlike adk-python (which always shells out to python3), dispatch on the
     // declared language so JS/TS and shell snippets run under the right
     // interpreter instead of being fed to Python and failing at parse time.
-    const runtime = RUNTIME_BY_LANGUAGE[language];
-    if (!runtime) {
+    const command = LANGUAGE_RUNTIME_COMMAND_MAP[language];
+    if (!command) {
       throw new Error(
         `Unsupported language for ContainerCodeExecutor: ${language}. ` +
-          `Supported: ${Object.keys(RUNTIME_BY_LANGUAGE).join(', ')}.`,
+          `Supported: ${Object.keys(LANGUAGE_RUNTIME_COMMAND_MAP).join(', ')}.`,
       );
     }
     await this.ensureContainer();
-    const {stdout, stderr} = await this.container!.execute(
-      runtime.command(code),
-    );
+    const {stdout, stderr} = await this.container!.execute([...command, code]);
     logger.debug(`Executed ${language} code:\n\`\`\`\n${code}\n\`\`\``);
     return {stdout, stderr, outputFiles: []};
   }
@@ -341,35 +148,19 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   }
 
   private async initContainer(): Promise<void> {
-    const client = await this.resolveClient();
-    const container = new DockerContainer(
-      client,
-      this.image,
-      this.networkEnabled,
-    );
+    const container = new DockerContainer(this.containerOptions);
     if (this.dockerPath) {
       await container.build(this.dockerPath);
     }
     await container.start();
     this.container = container;
 
-    // Probe only python3: it is the baseline the default image guarantees, and
-    // failing here would otherwise leave a started container behind. Other
-    // languages are validated lazily by their own `which` probe on first use.
+    // Probe python3 after start: it is the baseline the default image
+    // guarantees, and assigning `this.container` first means a failure here
+    // still leaves the container tracked so `close()` can clean it up.
     const {exitCode} = await container.execute(['which', 'python3']);
     if (exitCode !== 0) {
       throw new Error('python3 is not installed in the container.');
     }
-  }
-
-  /** Resolves the Docker client, lazily loading dockerode when not injected. */
-  private async resolveClient(): Promise<Docker> {
-    if (this.injectedClient) {
-      return this.injectedClient;
-    }
-    const DockerClient = await loadDockerodeCtor();
-    return new DockerClient(
-      this.baseUrl ? parseBaseUrl(this.baseUrl) : undefined,
-    );
   }
 }
