@@ -85,18 +85,17 @@ describe('toA2a', () => {
     agent = new TestAgent();
   });
 
-  it('should create an express app with handlers when unauthenticated access is explicitly allowed', async () => {
+  it('creates an express app with JSON-only body parsing and handlers', async () => {
     const app = await toA2a(agent, {allowUnauthenticated: true});
 
     expect(express).toHaveBeenCalled();
     const expressMock = express as unknown as MockExpress;
-    expect(expressMock.urlencoded).toHaveBeenCalledWith({
-      limit: '50mb',
-      extended: true,
-    });
-    expect(expressMock.json).toHaveBeenCalledWith({limit: '50mb'});
+    // `application/x-www-form-urlencoded` is CORS-safelisted, so parsing it
+    // would make these endpoints reachable by a cross-origin form POST that
+    // never triggers a preflight.
+    expect(expressMock.urlencoded).not.toHaveBeenCalled();
 
-    expect(app.use).toHaveBeenCalledWith('urlencoded_middleware');
+    expect(expressMock.json).toHaveBeenCalledWith({limit: '50mb'});
     expect(app.use).toHaveBeenCalledWith('json_middleware');
 
     expect(getA2AAgentCard).toHaveBeenCalledWith(agent, [

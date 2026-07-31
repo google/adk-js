@@ -274,6 +274,24 @@ export async function handleFunctionCallsAsync({
 }
 
 /**
+ * Normalizes callback and tool responses into a Record<string, unknown> or undefined.
+ */
+function normalizeCallbackResponse(
+  response: unknown,
+): Record<string, unknown> | undefined {
+  if (response == null) {
+    return undefined;
+  }
+  if (typeof response !== 'object') {
+    return {result: response};
+  }
+  if (Array.isArray(response)) {
+    return {results: response};
+  }
+  return response as Record<string, unknown>;
+}
+
+/**
  * The underlying implementation of handleFunctionCalls, but takes a list of
  * function calls instead of an event.
  * This is also used by llm_agent execution flow in preprocessing.
@@ -332,7 +350,6 @@ export async function handleFunctionCallList({
 
     // Step 2: If no overrides are provided from the plugins, further run the
     // canonical callback.
-    // TODO - b/425992518: validate the callback response type matches.
     if (functionResponse == null) {
       // Cover both null and undefined
       for (const callback of beforeToolCallbacks) {
@@ -346,6 +363,10 @@ export async function handleFunctionCallList({
         }
       }
     }
+
+    // An override from step 1 or 2 bypasses the tool call and is handed to the
+    // after-tool callbacks as-is, so normalize it before they see it.
+    functionResponse = normalizeCallbackResponse(functionResponse);
 
     // Step 3: Otherwise, proceed calling the tool normally.
     if (functionResponse == null) {
@@ -364,8 +385,8 @@ export async function handleFunctionCallList({
 
           // Set function response to the result of the error callback and
           // continue execution, do not shortcut
-          if (onToolErrorResponse) {
-            functionResponse = onToolErrorResponse;
+          if (onToolErrorResponse != null) {
+            functionResponse = normalizeCallbackResponse(onToolErrorResponse);
           } else {
             // If the error callback returns undefined, use the error message
             // as the function response error.
@@ -409,24 +430,24 @@ export async function handleFunctionCallList({
     // Step 6: If alternative response exists from after_tool_callback, use it
     // instead of the original function response.
     if (alteredFunctionResponse != null) {
-      functionResponse = alteredFunctionResponse;
+      functionResponse = normalizeCallbackResponse(alteredFunctionResponse);
     }
 
-    // TODO - b/425992518: state event polluting runtime, consider fix.
     // Allow long running function to return None as response.
-    if (tool.isLongRunning && !functionResponse) {
+    // Only a nullish response defers the event. A falsy-but-present response
+    // ('', 0, false) is a real result and still emits one, so long-running
+    // tools that return such a value now produce a response event where they
+    // previously produced none.
+    if (tool.isLongRunning && functionResponse == null) {
       continue;
     }
 
     if (functionResponseError) {
       functionResponse = {error: functionResponseError};
-    } else if (
-      typeof functionResponse !== 'object' ||
-      functionResponse == null
-    ) {
+    } else if (functionResponse == null) {
       functionResponse = {result: functionResponse};
-    } else if (Array.isArray(functionResponse)) {
-      functionResponse = {results: functionResponse};
+    } else {
+      functionResponse = normalizeCallbackResponse(functionResponse);
     }
 
     // Builds the function response event.

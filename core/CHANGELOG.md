@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.5.0](https://github.com/google/adk-js/compare/adk-v1.4.0...adk-v1.5.0) (2026-07-29)
+
+
+### Features
+
+* Add EnterpriseWebSearchTool for Gemini web grounding (adk-python parity) ([#525](https://github.com/google/adk-js/issues/525)) ([d9a9692](https://github.com/google/adk-js/commit/d9a9692dd3d00803943b08fcba934a6bff5de6d2))
+* Add ExampleTool for few-shot examples (adk-python parity) ([#554](https://github.com/google/adk-js/issues/554)) ([49c34a8](https://github.com/google/adk-js/commit/49c34a8cc7ded990e152e236cf975b45ad2529ea))
+* add LoadMcpResourceTool (read MCP server resources) for adk-python parity ([#542](https://github.com/google/adk-js/issues/542)) ([0bfc44a](https://github.com/google/adk-js/commit/0bfc44a8fff3a2e726a1f5e371323080e174ee08))
+* Add SSRF-safe load_web_page tool (adk-python parity) ([#524](https://github.com/google/adk-js/issues/524)) ([9fa7e6e](https://github.com/google/adk-js/commit/9fa7e6e93a6816aec919ca76771a74ff2709ec35))
+* **agents:** add clone() to BaseAgent ([#545](https://github.com/google/adk-js/issues/545)) ([d600e26](https://github.com/google/adk-js/commit/d600e262bb495da279c30b2a8a422fcf3b2eeb8f))
+* Implement Anchored Iterative Summarization in adk-js context compactors ([#470](https://github.com/google/adk-js/issues/470)) ([85d0321](https://github.com/google/adk-js/commit/85d03217663214ec89da5ddbe71c433fcee29ac4))
+* Move populateClientFunctionCallId into event.ts and update references ([#511](https://github.com/google/adk-js/issues/511)) ([a8be520](https://github.com/google/adk-js/commit/a8be520b4c5e5a5387609881a221df2375fa4a95))
+* Port LoopAgent live streaming support (runLiveImpl) to TypeScript ([#504](https://github.com/google/adk-js/issues/504)) ([312b463](https://github.com/google/adk-js/commit/312b463e7861b6a353c4ad6822239e67db123334))
+* scope global instructions using GlobalInstructionPlugin (parity with adk-python b/425992518) ([#507](https://github.com/google/adk-js/issues/507)) ([c9089be](https://github.com/google/adk-js/commit/c9089be394e0419112653d439841f299b7a265b4))
+* support clone() for RoutedAgent (Part 2/2) ([#556](https://github.com/google/adk-js/issues/556)) ([0815a8c](https://github.com/google/adk-js/commit/0815a8c7010d6ceb4934ceaf762b95ad1d9c6941))
+* Upgrade branch string matching to Trie search structure in content_processor_utils.ts ([#509](https://github.com/google/adk-js/issues/509)) ([c10ccd6](https://github.com/google/adk-js/commit/c10ccd61e67f5eb55941eace7b3a6b902dd65059))
+
+
+### Bug Fixes
+
+* **a2a:** handle contentless events ([#547](https://github.com/google/adk-js/issues/547)) ([1dad6f9](https://github.com/google/adk-js/commit/1dad6f9509501787758f839335a9cbae5c056d4e))
+* **a2a:** preserve errorCode in event metadata ([#537](https://github.com/google/adk-js/issues/537)) ([72d647c](https://github.com/google/adk-js/commit/72d647c28249e1531a82d78b7ae5145f5b7d1d34))
+* Artifact Saving Message Part Replacement & LLM Exposure (TODO b/425992518) ([#515](https://github.com/google/adk-js/issues/515)) ([24bb8e9](https://github.com/google/adk-js/commit/24bb8e92858a9e23d419948bca465fa24fc3328c))
+* **artifacts:** return undefined for missing in-memory versions ([#538](https://github.com/google/adk-js/issues/538)) ([3157c0a](https://github.com/google/adk-js/commit/3157c0a9ca0a8dbba2daa32a5da4158ad9277032))
+* **config:** validate the effective maxLlmCalls value ([#539](https://github.com/google/adk-js/issues/539)) ([13deefe](https://github.com/google/adk-js/commit/13deefe494393e002fe13a10e345d19f3b90d18a))
+* **mcp:** close agent registry tool-discovery sessions ([#540](https://github.com/google/adk-js/issues/540)) ([daf636d](https://github.com/google/adk-js/commit/daf636dd7c80b4fbb66492222c860f18bc3534d5))
+* **security:** require authentication when mounting A2A server ([#529](https://github.com/google/adk-js/issues/529)) ([7f39b6c](https://github.com/google/adk-js/commit/7f39b6c330bcadfedc35c29d67d103e7d0f6bb2b))
+* **security:** require confirmation before executing inline skill scripts ([#528](https://github.com/google/adk-js/issues/528)) ([b6b8296](https://github.com/google/adk-js/commit/b6b82966e3b3d6c1932e24cf27322570b927cd8d))
+* **tools:** use the statically configured credential in OpenAPI tools ([#536](https://github.com/google/adk-js/issues/536)) ([fe0ad34](https://github.com/google/adk-js/commit/fe0ad34d023c9dfa0367d5eb766ad59ecd4504ab))
+
 ## [1.4.0](https://github.com/google/adk-js/compare/adk-v1.3.0...adk-v1.4.0) (2026-07-20)
 
 

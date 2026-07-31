@@ -94,6 +94,26 @@ function randomIdForTestingOnly(): string {
   return (Math.random() * 100).toString();
 }
 
+const silentLongRunningTool = new FunctionTool({
+  name: 'silentLongRunningTool',
+  description: 'long running tool returning nullish',
+  parameters: z.object({}),
+  execute: async () => null,
+  isLongRunning: true,
+});
+
+const falsyLongRunningTool = new FunctionTool({
+  name: 'falsyLongRunningTool',
+  description: 'long running tool returning an empty string',
+  parameters: z.object({}),
+  execute: async () => '',
+  isLongRunning: true,
+});
+
+function callFor(tool: BaseTool): FunctionCall {
+  return {id: randomIdForTestingOnly(), name: tool.name, args: {}};
+}
+
 describe('handleFunctionCallList', () => {
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
@@ -362,6 +382,60 @@ describe('handleFunctionCallList', () => {
         }),
       }),
     );
+  });
+
+  it('should still emit an event when a regular tool returns nothing', async () => {
+    const nullTool = new FunctionTool({
+      name: 'nullTool',
+      description: 'tool returning nullish',
+      parameters: z.object({}),
+      execute: async () => null,
+    });
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(nullTool)],
+      toolsDict: {'nullTool': nullTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).not.toBeNull();
+    expect(event?.content?.parts?.[0].functionResponse?.response).toStrictEqual(
+      {
+        result: null,
+      },
+    );
+  });
+
+  it('should cleanly return null and emit no event when long-running tool returns null or undefined', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(silentLongRunningTool)],
+      toolsDict: {silentLongRunningTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event).toBeNull();
+  });
+
+  it('should emit a response part only for the long-running tool that returned something', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        callFor(silentLongRunningTool),
+        callFor(falsyLongRunningTool),
+      ],
+      toolsDict: {silentLongRunningTool, falsyLongRunningTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+    expect(event?.content?.parts).toEqual([
+      expect.objectContaining({
+        functionResponse: expect.objectContaining({
+          name: 'falsyLongRunningTool',
+          response: {result: ''},
+        }),
+      }),
+    ]);
   });
 });
 

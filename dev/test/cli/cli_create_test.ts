@@ -221,6 +221,23 @@ describe('createAgent', () => {
         expect.stringContaining('GOOGLE_CLOUD_PROJECT=gcloud-project'),
       );
     });
+
+    it('should exit without writing files if project prompt is cancelled', async () => {
+      // Mirror clack's contract: only the raw cancel symbol counts as a cancel.
+      (isCancel as unknown as Mock).mockImplementation(
+        (value: unknown) => typeof value === 'symbol',
+      );
+      (select as Mock).mockResolvedValueOnce('gemini-2.5-flash'); // Model
+      (select as Mock).mockResolvedValueOnce('ts'); // Language
+      (select as Mock).mockResolvedValueOnce('vertex'); // Backend
+      (text as Mock).mockResolvedValueOnce(Symbol('clack:cancel')); // Project
+
+      await expect(createAgent(getFreshOptions())).rejects.toThrow(
+        /process\.exit/,
+      );
+
+      expect(saveToFile).not.toHaveBeenCalled();
+    });
   });
 
   describe('Folder Handling', () => {
