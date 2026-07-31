@@ -16,9 +16,9 @@ import {createEventActions, EventActions} from './event_actions.js';
  * A unique symbol identifying ADK Event objects.
  *
  * Events are plain objects produced by {@link createEvent} rather than class
- * instances, so they carry this signature as a brand and {@link isEvent} checks
- * for it — mirroring the `Symbol.for('google.adk.*')` guards used across ADK
- * (e.g. {@link isBaseTool}, {@link isBaseAgent}).
+ * instances, so they carry this signature as a brand and `isEvent` checks for
+ * it — mirroring the `Symbol.for('google.adk.*')` guards used across ADK (e.g.
+ * `isBaseTool`, `isBaseAgent`).
  */
 const EVENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.event');
 
@@ -64,7 +64,7 @@ export interface Event extends LlmResponse {
   /**
    * Signature brand identifying this object as an ADK {@link Event}.
    *
-   * Set by {@link createEvent} and checked by {@link isEvent}. Optional because
+   * Set by {@link createEvent} and checked by `isEvent`. Optional because
    * events are also reconstructed from storage/session payloads, where the
    * (non-serializable) brand is absent.
    */
