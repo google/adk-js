@@ -445,5 +445,49 @@ describe('UnsafeLocalCodeExecutor', () => {
         expect.anything(),
       );
     });
+
+    describe('shell command detection', () => {
+      async function runShellCode(shellCommandPath: string) {
+        await new UnsafeLocalCodeExecutor({shellCommandPath}).executeCode({
+          invocationContext,
+          codeExecutionInput: {
+            code: 'echo "test"',
+            language: CodeExecutionLanguage.SHELL,
+            inputFiles: [],
+          },
+        });
+      }
+
+      it.each([
+        'pwsh',
+        'pwsh.exe',
+        '/usr/bin/pwsh',
+        'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+        'PWSH',
+        'powershell',
+        'powershell.exe',
+      ])('runs a .ps1 script through PowerShell for %s', async (shell) => {
+        await runShellCode(shell);
+
+        expect(spawnMock).toHaveBeenCalledWith(
+          shell,
+          EXPECTED_POWERSHELL_ARGS,
+          expect.anything(),
+        );
+      });
+
+      it.each([
+        '/opt/pwsh-tools/bin/bash',
+        '/usr/local/powershell-helpers/run.sh',
+      ])('does not treat %s as PowerShell', async (shell) => {
+        await runShellCode(shell);
+
+        expect(spawnMock).toHaveBeenCalledWith(
+          shell,
+          [expect.stringMatching(/script\.(sh|ps1)$/)],
+          expect.anything(),
+        );
+      });
+    });
   });
 });
