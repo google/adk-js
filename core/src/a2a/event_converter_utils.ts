@@ -272,9 +272,13 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
       string,
       unknown
     >,
+    // `transferToAgent` is intentionally NOT restored from peer metadata:
+    // it drives the local orchestrator's own control flow (which agent
+    // runs next, see llm_agent.ts), so it must never be rebuilt from data
+    // a remote A2A peer controls. Only `escalate` is safe to restore, since
+    // it does not let a peer redirect execution or mutate session state.
     actions: createEventActions({
       escalate: !!metadata[A2AMetadataKeys.ESCALATE],
-      transferToAgent: metadata[A2AMetadataKeys.TRANSFER_TO_AGENT] as string,
     }),
   });
 }
