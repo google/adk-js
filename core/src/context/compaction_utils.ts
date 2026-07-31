@@ -4,11 +4,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isCompactedEvent} from '../events/compacted_event.js';
 import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
 } from '../events/event.js';
+
+/**
+ * Filters the events to return only the active events since the latest compaction.
+ * If no compaction has occurred, returns all events.
+ *
+ * @param events The full history of events.
+ * @returns The active events, starting with the latest CompactedEvent if present.
+ */
+export function getActiveEvents(events: Event[]): Event[] {
+  const latest = events.filter(isCompactedEvent).pop();
+  return latest
+    ? [
+        latest,
+        ...events.filter(
+          (e) => !isCompactedEvent(e) && e.timestamp > latest.endTime,
+        ),
+      ]
+    : events;
+}
 
 /**
  * Determines the baseline index to retain from active raw events,

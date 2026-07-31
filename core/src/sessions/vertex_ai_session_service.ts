@@ -72,6 +72,20 @@ export interface VertexAiSessionServiceOptions {
 }
 
 /**
+ * The parameters for `VertexAiSessionService.createSession`.
+ *
+ * Extends the common {@link CreateSessionRequest} with the mutually exclusive
+ * session-expiration options supported by Vertex AI Agent Engine Sessions. See
+ * https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/projects.locations.reasoningEngines.sessions
+ */
+export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
+  /** Lifetime relative to creation, in seconds, e.g. `'7200s'`. */
+  ttl?: string;
+  /** Absolute RFC 3339 UTC expiration, e.g. `'2025-10-01T00:00:00Z'`. */
+  expireTime?: string;
+}
+
+/**
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
 @experimental
@@ -130,12 +144,26 @@ export class VertexAiSessionService extends BaseSessionService {
     return match[3];
   }
 
+  /**
+   * Creates a session on Vertex AI Agent Engine.
+   *
+   * @throws if both `ttl` and `expireTime` are specified.
+   */
   async createSession({
     appName,
     userId,
     state,
     sessionId,
-  }: CreateSessionRequest): Promise<Session> {
+    ttl,
+    expireTime,
+  }: VertexAiCreateSessionRequest): Promise<Session> {
+    // The API rejects both together; fail before the RPC.
+    if (ttl != null && expireTime != null) {
+      throw new Error(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+    }
+
     const reasoningEngineId = this.getReasoningEngineId(appName);
     const filteredState = state ? trimTempState(state) : undefined;
     let apiResponse = await this.sessions.createInternal({
@@ -144,6 +172,8 @@ export class VertexAiSessionService extends BaseSessionService {
       config: {
         ...(filteredState ? {sessionState: filteredState} : {}),
         ...(sessionId ? {sessionId} : {}),
+        ...(ttl != null ? {ttl} : {}),
+        ...(expireTime != null ? {expireTime} : {}),
       },
     });
 
@@ -249,8 +279,17 @@ export class VertexAiSessionService extends BaseSessionService {
 
       return session;
     } catch (error: unknown) {
-      const err = error as {code?: number; message?: string};
-      if (err.code === GRPC_NOT_FOUND || err.code === HTTP_NOT_FOUND) {
+      const err = error as {code?: number; status?: number; message?: string};
+      // gRPC transports report NOT_FOUND as a numeric `code`; the
+      // `@google/genai` `ApiClient` behind the Sessions client throws an
+      // `ApiError` carrying a numeric `status` instead. Matched structurally,
+      // not with `instanceof`: `@google-cloud/vertexai` resolves its own copy
+      // of `@google/genai`, so its `ApiError` is a different class object.
+      if (
+        err.code === GRPC_NOT_FOUND ||
+        err.code === HTTP_NOT_FOUND ||
+        err.status === HTTP_NOT_FOUND
+      ) {
         return undefined;
       }
       logger.error(`Error getting session from Vertex AI: ${err.message}`);

@@ -181,7 +181,11 @@ export async function toA2a(
 
   const app = options.app ?? express();
   if (!options.app) {
-    app.use(express.urlencoded({limit: '50mb', extended: true}));
+    // Parse JSON bodies only. `application/x-www-form-urlencoded` is a
+    // CORS-safelisted content type, so a browser sends it cross-origin as a
+    // simple request with no preflight; parsing it would let any web page
+    // drive these endpoints with a drive-by form POST. Requiring JSON forces
+    // a preflight, which this app does not answer.
     app.use(express.json({limit: '50mb'}));
   }
 

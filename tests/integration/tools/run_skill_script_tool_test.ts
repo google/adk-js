@@ -21,6 +21,12 @@ import {describe, expect, it} from 'vitest';
 const IS_WINDOWS = os.platform() === 'win32';
 const IS_UNIX = os.platform() === 'linux' || os.platform() === 'darwin';
 
+// PowerShell/cmd cold-start on the windows-latest CI runner can exceed vitest's
+// 5000ms default. Must also exceed UnsafeLocalCodeExecutor's default
+// timeoutSeconds (30) so the executor's own timeout error surfaces first; see
+// core/src/code_executors/unsafe_local_code_executor.ts
+const TEST_EXECUTION_TIMEOUT = 40000;
+
 describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
   function createMockContext(agentName = 'test-agent') {
     return new Context({
@@ -206,6 +212,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stdout).toContain('hello from skill powershell');
       expect(result.stderr).toBe('');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -227,6 +234,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stderr).toContain('skill');
       expect(result.stderr).toContain('powershell error');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -248,6 +256,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result.stdout).toContain('hello from skill cmd');
       expect(result.stderr).toBe('');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it.skipIf(!IS_WINDOWS)(
@@ -268,6 +277,7 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
       expect(result).toBeDefined();
       expect(result.stderr).toContain('skill cmd error');
     },
+    TEST_EXECUTION_TIMEOUT,
   );
 
   it('creates files in process.cwd returned from execution', async () => {

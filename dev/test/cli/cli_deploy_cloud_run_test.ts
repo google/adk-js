@@ -11,6 +11,7 @@ import {
   CreateDockerFileContentOptions,
   deployToCloudRun,
 } from '../../src/cli/deploy/cli_deploy_cloud_run.js';
+import {A2A_AUTH_TOKEN_ENV_VAR} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
   isFile,
@@ -21,8 +22,11 @@ import {
 
 type Callback = (error: Error | null, result?: unknown) => void;
 
+const A2A_TOKEN = 'test-a2a-token';
+
 const execMock = vi.fn();
-const spawnMock = vi.fn();
+const spawnMock =
+  vi.fn<(cmd: string, args: string[], opts: unknown) => unknown>();
 
 vi.mock('node:child_process', () => ({
   exec: (cmd: string, callback: Callback) => execMock(cmd, callback),
@@ -127,6 +131,7 @@ describe('deployToCloudRun', () => {
     vi.clearAllMocks();
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     // Default mock behavior
     (isFile as Mock).mockResolvedValue(false);
@@ -282,6 +287,67 @@ describe('deployToCloudRun', () => {
         'Package "@google/adk" is required but not found',
       ),
       expect.stringContaining('\x1b[0m'),
+    );
+  });
+
+  it('should forward the A2A token to Cloud Run as an environment variable', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn');
+
+    await deployToCloudRun({
+      ...defaultOptions,
+      a2a: true,
+      a2aAuthToken: A2A_TOKEN,
+    });
+
+    const gcloudArgs = spawnMock.mock.calls[0][1];
+    const flagIndex = gcloudArgs.indexOf('--update-env-vars');
+    expect(flagIndex).toBeGreaterThan(-1);
+    expect(gcloudArgs[flagIndex + 1]).toBe(
+      `${A2A_AUTH_TOKEN_ENV_VAR}=${A2A_TOKEN}`,
+    );
+    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('WITHOUT authentication'),
+    );
+  });
+
+  it('should not touch environment variables when no A2A token is given', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    const gcloudArgs = spawnMock.mock.calls[0][1];
+    expect(gcloudArgs).not.toContain('--update-env-vars');
+    expect(gcloudArgs.join(' ')).not.toContain(A2A_AUTH_TOKEN_ENV_VAR);
+  });
+
+  it.each(['--set-env-vars=FOO=bar', '--remove-env-vars=FOO'])(
+    'should reject %s, which would clobber the A2A token',
+    async (extraGcloudArg) => {
+      await expect(
+        deployToCloudRun({
+          ...defaultOptions,
+          a2a: true,
+          a2aAuthToken: A2A_TOKEN,
+          extraGcloudArgs: [extraGcloudArg],
+        }),
+      ).rejects.toThrow(/conflict with ADK's automatic configuration/);
+    },
+  );
+
+  it('should still allow user env-var flags when no A2A token is given', async () => {
+    await deployToCloudRun({
+      ...defaultOptions,
+      extraGcloudArgs: ['--set-env-vars=FOO=bar'],
+    });
+
+    expect(spawnMock.mock.calls[0][1]).toContain('--set-env-vars=FOO=bar');
+  });
+
+  it('should warn when deploying an A2A surface with no token', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn');
+
+    await deployToCloudRun({...defaultOptions, a2a: true});
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('WITHOUT authentication'),
     );
   });
 
