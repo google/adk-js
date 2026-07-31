@@ -16,6 +16,7 @@ import {
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createSession,
   Event,
   InvocationContext,
   LlmAgent,
@@ -864,11 +865,7 @@ describe('LlmAgent long running tool termination', () => {
     const agent = new LlmAgent({name: 'test_agent', model, tools: [startJob]});
     const invocationContext = new InvocationContext({
       invocationId: 'inv_123',
-      session: {
-        id: 'sess_123',
-        state: {},
-        events: [],
-      } as unknown as Session,
+      session: createSession({id: 'sess_123', appName: 'test_app'}),
       agent,
       pluginManager: new PluginManager(),
     });
