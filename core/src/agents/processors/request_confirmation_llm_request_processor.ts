@@ -99,6 +99,17 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       }
     }
 
+    // Plain-text fallback: an interactive user (e.g. `adk run`) can approve or
+    // deny a pending confirmation by simply typing a reply (yes/no) instead of
+    // sending a structured confirmation response.
+    if (Object.keys(requestConfirmationFunctionResponses).length === 0) {
+      const fallback = mapPlainTextConfirmation(events);
+      Object.assign(requestConfirmationFunctionResponses, fallback.responses);
+      if (fallback.turnIndex >= 0) {
+        confirmationEventIndex = fallback.turnIndex;
+      }
+    }
+
     if (Object.keys(requestConfirmationFunctionResponses).length === 0) {
       return;
     }
@@ -188,6 +199,85 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       return;
     }
   }
+}
+
+/** Words interpreted as an approval when a user confirms by plain text. */
+const AFFIRMATIVE = new Set([
+  'yes',
+  'y',
+  'true',
+  'approve',
+  'approved',
+  'ok',
+  'okay',
+  'confirm',
+  'confirmed',
+]);
+
+/**
+ * Maps a plain-text user reply to confirmations for any still-pending
+ * `adk_request_confirmation` calls, so a user can approve/deny by typing.
+ * Returns the synthesized confirmations keyed by the confirmation call id, and
+ * the index of the plain-text user turn (or -1 when not applicable).
+ */
+function mapPlainTextConfirmation(events: Event[]): {
+  responses: Record<string, ToolConfirmation>;
+  turnIndex: number;
+} {
+  const answered = new Set<string>();
+  for (const event of events) {
+    if (event.author !== 'user') {
+      continue;
+    }
+    for (const fr of getFunctionResponses(event)) {
+      if (fr.id) {
+        answered.add(fr.id);
+      }
+    }
+  }
+  const pendingIds: string[] = [];
+  for (const event of events) {
+    for (const fc of getFunctionCalls(event)) {
+      if (
+        fc.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME &&
+        fc.id &&
+        !answered.has(fc.id)
+      ) {
+        pendingIds.push(fc.id);
+      }
+    }
+  }
+  if (pendingIds.length === 0) {
+    return {responses: {}, turnIndex: -1};
+  }
+
+  // Only the most recent user turn is considered, and only if it is plain text.
+  let turnIndex = -1;
+  let text = '';
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.author !== 'user') {
+      continue;
+    }
+    const parts = event.content?.parts ?? [];
+    const isPlainText =
+      parts.length > 0 && parts.every((p) => typeof p.text === 'string');
+    if (isPlainText) {
+      turnIndex = i;
+      text = parts.map((p) => p.text).join('');
+    }
+    break;
+  }
+  if (turnIndex < 0) {
+    return {responses: {}, turnIndex: -1};
+  }
+
+  const confirmed = AFFIRMATIVE.has(text.trim().toLowerCase());
+  const responses: Record<string, ToolConfirmation> = {};
+  for (const id of pendingIds) {
+    responses[id] = new ToolConfirmation({confirmed});
+  }
+  return {responses, turnIndex};
 }
 
 export const REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR =
