@@ -213,8 +213,7 @@ function sanitizeSchemaTypes(
  */
 function resolveServerUrl(server: OpenAPIV3.ServerObject | undefined): string {
   if (!server?.url) return '';
-  const variables = server.variables;
-  if (!variables) return server.url;
+  const variables = server.variables ?? {};
   return server.url.replace(
     /\{([^{}]+)\}/g,
     (placeholder, name: string) => variables[name]?.default ?? placeholder,
