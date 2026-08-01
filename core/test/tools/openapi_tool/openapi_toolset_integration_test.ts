@@ -4,8 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Context, OpenAPIToolset} from '@google/adk';
+import {
+  AuthCredentialTypes,
+  Context,
+  createSession,
+  InvocationContext,
+  LlmAgent,
+  OpenAPIToolset,
+  PluginManager,
+} from '@google/adk';
 import * as fs from 'fs';
+import {OpenAPIV3} from 'openapi-types';
 import * as path from 'path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -122,5 +131,73 @@ describe('OpenAPIToolset Integration', () => {
     expect(result).toEqual({
       error: 'Failed to execute API call: Network error',
     });
+  });
+
+  it('should keep a malicious path argument inside the declared endpoint', async () => {
+    const apiKeyScheme: OpenAPIV3.ApiKeySecurityScheme = {
+      type: 'apiKey',
+      in: 'query',
+      name: 'key',
+    };
+    const spec: OpenAPIV3.Document = {
+      openapi: '3.0.3',
+      info: {title: 'Users API', version: '1.0.0'},
+      servers: [{url: 'https://api.example.com'}],
+      security: [{ApiKeyAuth: []}],
+      paths: {
+        '/v1/users/{user_id}': {
+          get: {
+            operationId: 'getUser',
+            parameters: [
+              {
+                name: 'user_id',
+                in: 'path',
+                required: true,
+                schema: {type: 'string'},
+              },
+            ],
+            responses: {'200': {description: 'ok'}},
+          },
+        },
+      },
+      components: {securitySchemes: {ApiKeyAuth: apiKeyScheme}},
+    };
+    const toolset = new OpenAPIToolset({
+      specStr: JSON.stringify(spec),
+      specType: 'json',
+      authScheme: apiKeyScheme,
+      authCredential: {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'test-api-key',
+      },
+    });
+    const tools = await toolset.getTools();
+    const getUserTool = tools.find((t) => t.name === 'get_user');
+    if (!getUserTool) expect.fail('get_user tool was not created');
+
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response('{}', {headers: {'content-type': 'application/json'}}),
+    );
+
+    await getUserTool.runAsync({
+      args: {user_id: '../../admin/export'},
+      toolContext: new Context({
+        invocationContext: new InvocationContext({
+          invocationId: 'invocation-1',
+          agent: new LlmAgent({name: 'test_agent'}),
+          session: createSession({id: 'session-1', appName: 'test_app'}),
+          pluginManager: new PluginManager(),
+        }),
+      }),
+    });
+
+    const [calledUrl] = vi.mocked(globalThis.fetch).mock.calls[0];
+    if (typeof calledUrl !== 'string') {
+      expect.fail('fetch was not called with a URL string');
+    }
+    const requestUrl = new URL(calledUrl);
+    expect(requestUrl.host).toBe('api.example.com');
+    expect(requestUrl.pathname).toBe('/v1/users/..%2F..%2Fadmin%2Fexport');
+    expect(requestUrl.searchParams.get('key')).toBe('test-api-key');
   });
 });
