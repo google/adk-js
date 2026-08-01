@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {randomUUID as nodeRandomUUID} from 'node:crypto';
+
 /**
  * Returns true if the environment is a browser.
  */
@@ -18,6 +20,13 @@ export function isBrowser() {
  * plain-HTTP origins even though `crypto` itself is present.
  * `crypto.getRandomValues()` carries no such restriction, so it is used as the
  * fallback rather than `Math.random()`.
+ *
+ * In Node the `globalThis.crypto` global was added in v17.4.0 and stayed behind
+ * `--experimental-global-webcrypto` until v19.0.0, so neither of those branches
+ * matches on a default Node 18 or earlier. `node:crypto` carries no such gate —
+ * its `randomUUID` has existed since v14.17.0 — so it is the last resort. In
+ * the web build that import is aliased to `crypto_shim.ts`, which throws,
+ * because a browser without the Web Crypto API has no secure source left.
  *
  * Some callers use this value to make security decisions — the OAuth2 `state`
  * parameter in `AuthHandler` and the session identifiers minted by the session
@@ -48,11 +57,7 @@ export function randomUUID(): string {
       .join('-');
   }
 
-  throw new Error(
-    'randomUUID: no cryptographically secure source of randomness is ' +
-      'available. Neither crypto.randomUUID() nor crypto.getRandomValues() is ' +
-      'present in this environment.',
-  );
+  return nodeRandomUUID();
 }
 
 /**
