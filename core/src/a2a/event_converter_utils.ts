@@ -252,6 +252,11 @@ function taskToAdkEvent(
   };
 }
 
+// EventActions fields a remote A2A peer may set on the event we emit
+// for it. Every other field is dropped: see the comment at the call
+// site in createAdkEventFromMetadata for why.
+const PEER_SETTABLE_ACTION_FIELDS: ReadonlySet<string> = new Set(['escalate']);
+
 function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
   const metadata = a2aEvent.metadata || {};
 
@@ -272,14 +277,21 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
       string,
       unknown
     >,
-    // `transferToAgent` is intentionally NOT restored from peer metadata:
-    // it drives the local orchestrator's own control flow (which agent
-    // runs next, see llm_agent.ts), so it must never be rebuilt from data
-    // a remote A2A peer controls. Only `escalate` is safe to restore, since
-    // it does not let a peer redirect execution or mutate session state.
-    actions: createEventActions({
-      escalate: !!metadata[A2AMetadataKeys.ESCALATE],
-    }),
+    // Only fields in PEER_SETTABLE_ACTION_FIELDS may be restored from
+    // metadata a remote A2A peer controls. Every other action field either
+    // mutates the caller's own session or drives the caller's own control
+    // flow (e.g. `transferToAgent`, see llm_agent.ts), so it must never be
+    // rebuilt from peer-supplied data. Filtering through an allowlist here
+    // (rather than just omitting the unsafe field) means a future action
+    // field is unsafe-by-default: adding it to `candidateActions` alone
+    // does nothing until it's also added to the allowlist.
+    actions: createEventActions(
+      Object.fromEntries(
+        Object.entries({
+          escalate: !!metadata[A2AMetadataKeys.ESCALATE],
+        }).filter(([key]) => PEER_SETTABLE_ACTION_FIELDS.has(key)),
+      ),
+    ),
   });
 }
 
