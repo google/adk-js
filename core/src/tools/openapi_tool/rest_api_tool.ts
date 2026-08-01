@@ -159,6 +159,28 @@ export interface PreparedParams {
   bodyData: Record<string, unknown>;
 }
 
+/**
+ * Percent-encodes a model-supplied value for substitution into a single URL
+ * path segment.
+ *
+ * Path parameter values come from the LLM and are therefore untrusted. Left
+ * raw, a `/`, `?` or `#` lets the value escape the segment, and the endpoint,
+ * declared by the OpenAPI spec. Values that are exactly `.` or `..` are
+ * rejected rather than encoded, because URL normalization resolves a
+ * percent-encoded dot-segment (`%2E%2E`) exactly like a literal one.
+ *
+ * @throws {Error} If the value is a relative path segment.
+ */
+function encodePathParamValue(name: string, value: string): string {
+  if (value === '.' || value === '..') {
+    throw new Error(
+      `Invalid value for path parameter '${name}': relative path segments ` +
+        `('.' and '..') are not allowed.`,
+    );
+  }
+  return encodeURIComponent(value);
+}
+
 export function prepareRequestParams(
   endpoint: OperationEndpoint,
   parameters: ApiParameter[],
@@ -169,7 +191,10 @@ export function prepareRequestParams(
   let body: unknown = undefined;
 
   const paramsMap = new Map(parameters.map((p) => [p.name, p]));
-  const pathParams: Record<string, string> = {};
+  // A Map, not a plain object: placeholder names come from the spec's path
+  // template, and an object lookup would resolve `{constructor}` against
+  // Object.prototype.
+  const pathParams = new Map<string, string>();
   const bodyData: Record<string, unknown> = {};
 
   for (const [argName, argValue] of Object.entries(args)) {
@@ -180,7 +205,10 @@ export function prepareRequestParams(
     const location = param.paramLocation;
 
     if (location === 'path') {
-      pathParams[originalName] = String(argValue);
+      pathParams.set(
+        originalName,
+        encodePathParamValue(originalName, String(argValue)),
+      );
     } else if (location === 'query') {
       queryParams.append(originalName, String(argValue));
     } else if (location === 'header') {
@@ -198,12 +226,13 @@ export function prepareRequestParams(
     }
   }
 
-  let url = `${endpoint.baseUrl}${endpoint.path}`;
-
-  // Replace path parameters
-  for (const [key, value] of Object.entries(pathParams)) {
-    url = url.replace(`{${key}}`, value);
-  }
+  // Placeholders are resolved against the path only, so a path parameter can
+  // never reach the host.
+  const resolvedPath = endpoint.path.replace(
+    /\{([^{}]+)\}/g,
+    (placeholder, name: string) => pathParams.get(name) ?? placeholder,
+  );
+  let url = `${endpoint.baseUrl}${resolvedPath}`;
 
   // Extract query parameters from path if any
   const urlParts = url.split('?');
