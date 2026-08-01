@@ -205,6 +205,23 @@ function sanitizeSchemaTypes(
 }
 
 /**
+ * Resolves OpenAPI Server Object variables (`{name}`) in a server URL using
+ * their declared `default` values.
+ *
+ * Placeholders with no matching variable are left as-is so an incomplete spec
+ * still parses; they can no longer be filled in by a path parameter.
+ */
+function resolveServerUrl(server: OpenAPIV3.ServerObject | undefined): string {
+  if (!server?.url) return '';
+  const variables = server.variables;
+  if (!variables) return server.url;
+  return server.url.replace(
+    /\{([^{}]+)\}/g,
+    (placeholder, name: string) => variables[name]?.default ?? placeholder,
+  );
+}
+
+/**
  * Collects and parses all operations defined in the OpenAPI spec document.
  */
 function collectOperations(
@@ -213,7 +230,7 @@ function collectOperations(
 ): ParsedOperation[] {
   const preservePropertyNames = options.preservePropertyNames ?? false;
   const operations: ParsedOperation[] = [];
-  const baseUrl = spec.servers?.[0]?.url || '';
+  const baseUrl = resolveServerUrl(spec.servers?.[0]);
 
   const globalSecurity = spec.security || [];
   let globalSchemeName: string | undefined;

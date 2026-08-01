@@ -254,4 +254,64 @@ describe('OpenApiSpecParser', () => {
     expect(postOp).toBeDefined();
     expect(postOp?.authScheme?.type).toBe('oauth2');
   });
+
+  describe('server URL resolution', () => {
+    function parseBaseUrl(servers?: OpenAPIV3.ServerObject[]): string {
+      const spec: OpenAPIV3.Document = {
+        openapi: '3.0.0',
+        info: {title: 'Server API', version: '1.0.0'},
+        ...(servers ? {servers} : {}),
+        paths: {
+          '/v1/data': {
+            get: {operationId: 'getData', responses: {}},
+          },
+        },
+      };
+
+      const parsed = new OpenApiSpecParser().parse(spec);
+      expect(parsed.length).toBe(1);
+      return parsed[0].endpoint.baseUrl;
+    }
+
+    it('should resolve server variables from their default values', () => {
+      const baseUrl = parseBaseUrl([
+        {
+          url: 'https://{region}.api.example.com/{version}',
+          variables: {
+            region: {default: 'us-central1'},
+            version: {default: 'v1'},
+          },
+        },
+      ]);
+
+      expect(baseUrl).toBe('https://us-central1.api.example.com/v1');
+    });
+
+    it('should leave a server placeholder literal when no variable is declared', () => {
+      const baseUrl = parseBaseUrl([{url: 'https://{region}.api.example.com'}]);
+
+      expect(baseUrl).toBe('https://{region}.api.example.com');
+    });
+
+    it('should leave an undeclared placeholder literal when other variables resolve', () => {
+      const baseUrl = parseBaseUrl([
+        {
+          url: 'https://{region}.api.{tld}',
+          variables: {region: {default: 'us'}},
+        },
+      ]);
+
+      expect(baseUrl).toBe('https://us.api.{tld}');
+    });
+
+    it('should default the base URL to an empty string when the spec has no servers', () => {
+      expect(parseBaseUrl()).toBe('');
+    });
+
+    it('should use a plain server URL unchanged', () => {
+      expect(parseBaseUrl([{url: 'https://api.example.com'}])).toBe(
+        'https://api.example.com',
+      );
+    });
+  });
 });
