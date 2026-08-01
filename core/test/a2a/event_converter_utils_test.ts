@@ -200,7 +200,13 @@ describe('event_converter_utils', () => {
         ]);
         expect(event!.turnComplete).toBe(true);
         expect(event!.actions?.escalate).toBe(true);
-        expect(event!.actions?.transferToAgent).toBe('agent2');
+        // Peer-supplied `adk_transfer_to_agent` in the fixture below must be
+        // dropped, not restored -- it drives the local orchestrator's own
+        // control flow and must never come from a remote peer. Asserting
+        // `toBeUndefined()` here (rather than removing the assertion) means
+        // a future regression that re-restores it fails loudly instead of
+        // passing silently.
+        expect(event!.actions?.transferToAgent).toBeUndefined();
         expect(event!.customMetadata).toEqual({
           'a2a:task_id': 'task1',
           'a2a:context_id': 'context1',
