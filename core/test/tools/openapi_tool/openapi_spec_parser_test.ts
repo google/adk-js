@@ -342,8 +342,8 @@ describe('OpenApiSpecParser', () => {
           },
         ]),
       ).toThrow(
-        "Unresolved server URL variable(s) in 'https://{region}.api.{tld}': " +
-          'tld. Declare a default for each under servers[].variables.',
+        "Unresolved server URL variable 'tld' in 'https://{region}.api.{tld}'. " +
+          'Declare a default under servers[].variables.',
       );
     });
 

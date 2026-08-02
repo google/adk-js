@@ -217,28 +217,17 @@ function sanitizeSchemaTypes(
  * @throws {Error} If a placeholder has no variable declaring a value for it.
  */
 function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
-  const unresolved: string[] = [];
-  const url = server.url.replace(
-    SERVER_VARIABLE_PATTERN,
-    (placeholder, name: string) => {
-      const variable = server.variables?.[name];
-      const value = variable?.default || variable?.enum?.[0];
-      if (!value) {
-        unresolved.push(name);
-        return placeholder;
-      }
-      return value;
-    },
-  );
-
-  if (unresolved.length > 0) {
-    throw new Error(
-      `Unresolved server URL variable(s) in '${server.url}': ` +
-        `${unresolved.join(', ')}. Declare a default for each under ` +
-        `servers[].variables.`,
-    );
-  }
-  return url;
+  return server.url.replace(SERVER_VARIABLE_PATTERN, (_, name: string) => {
+    const variable = server.variables?.[name];
+    const value = variable?.default || variable?.enum?.[0];
+    if (!value) {
+      throw new Error(
+        `Unresolved server URL variable '${name}' in '${server.url}'. ` +
+          `Declare a default under servers[].variables.`,
+      );
+    }
+    return value;
+  });
 }
 
 /**
