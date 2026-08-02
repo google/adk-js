@@ -25,8 +25,11 @@ export function isBrowser() {
  * `--experimental-global-webcrypto` until v19.0.0, so neither of those branches
  * matches on a default Node 18 or earlier. `node:crypto` carries no such gate —
  * its `randomUUID` has existed since v14.17.0 — so it is the last resort. In
- * the web build that import is aliased to `crypto_shim.ts`, which throws,
- * because a browser without the Web Crypto API has no secure source left.
+ * the bundled web build the import is aliased to `crypto_shim.ts`, which
+ * throws, because a browser without the Web Crypto API has no secure source
+ * left. The non-bundle `dist/web` output that `package.json#browser` points
+ * at keeps the import verbatim, as it already does for `node:async_hooks`
+ * and `node:path`.
  *
  * Some callers use this value to make security decisions — the OAuth2 `state`
  * parameter in `AuthHandler` and the session identifiers minted by the session
