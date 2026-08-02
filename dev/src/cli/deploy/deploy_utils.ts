@@ -56,9 +56,34 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
   agentFileLoadOptions?: AgentFileOptions;
 }
 
+// Dockerfile instructions and the generated CMD's shell form have no
+// generic escaping mechanism for interpolated values: a newline breaks out
+// of the current instruction to start a new one, and shell metacharacters in
+// the CMD line are interpreted by /bin/sh at container start. Restricting
+// these values to a plain identifier closes both at once, since none of them
+// (an agent name, a GCP project ID, or a GCP region) legitimately need
+// anything outside this set.
+const SAFE_DOCKERFILE_TOKEN_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+
+function assertSafeDockerfileToken(value: string, label: string): void {
+  if (!SAFE_DOCKERFILE_TOKEN_RE.test(value)) {
+    throw new Error(
+      `Invalid ${label} "${value}": must match ${SAFE_DOCKERFILE_TOKEN_RE} to be safely embedded in the generated Dockerfile.`,
+    );
+  }
+}
+
 export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
+  assertSafeDockerfileToken(options.project, 'project');
+  if (options.region) {
+    assertSafeDockerfileToken(options.region, 'region');
+  }
+  if (options.appName) {
+    assertSafeDockerfileToken(options.appName, 'appName');
+  }
+
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
 

