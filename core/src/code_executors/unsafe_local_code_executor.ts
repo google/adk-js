@@ -65,10 +65,7 @@ async function createTempScriptFile(
   language: CodeExecutionLanguage,
   shellCommandPath?: string,
 ): Promise<{filePath: string; tempDir: string}> {
-  // mkdtemp creates the directory itself, exclusively and mode 0o700. The
-  // previous Date.now()/Math.random() name was predictable, and mkdir with
-  // `recursive` does not fail on a path that already exists, so a directory
-  // pre-created by another local user was adopted rather than rejected.
+  // mkdtemp names the directory itself and creates it exclusively at 0o700.
   const tempDir = await fs.mkdtemp(
     path.join(os.tmpdir(), 'adk_js_unsafe_code_executor_'),
   );

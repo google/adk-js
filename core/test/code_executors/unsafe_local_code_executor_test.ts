@@ -108,8 +108,13 @@ describe('UnsafeLocalCodeExecutor', () => {
       },
     };
 
-    const first = JSON.parse((await executor.executeCode(params)).stdout);
-    const second = JSON.parse((await executor.executeCode(params)).stdout);
+    const firstResult = await executor.executeCode(params);
+    const secondResult = await executor.executeCode(params);
+    expect(firstResult.stderr).toBe('');
+    expect(secondResult.stderr).toBe('');
+
+    const first = JSON.parse(firstResult.stdout);
+    const second = JSON.parse(secondResult.stdout);
 
     // mkdtemp appends six random characters to the prefix it is given.
     expect(path.basename(first.dir)).toMatch(
