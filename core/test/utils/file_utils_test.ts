@@ -69,6 +69,29 @@ describe('file_utils', () => {
       );
     });
 
+    it('should throw an error if file attempts to escape into a sibling directory sharing a name prefix', async () => {
+      // A plain `resolvedPath.startsWith(resolvedBaseDir)` check is fooled by a
+      // sibling directory whose name merely starts with the same string as the
+      // target directory (e.g. target `.../sandbox` vs sibling
+      // `.../sandbox-evil`), since it never requires a path-separator boundary.
+      const siblingName = `${path.basename(tempDir)}-evil`;
+      const files = [
+        {
+          name: `../${siblingName}/escape.txt`,
+          content: 'dangerous',
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+      ];
+
+      await expect(materializeFiles(files, tempDir)).rejects.toThrow(
+        /Path traversal detected/,
+      );
+
+      const siblingPath = path.join(path.dirname(tempDir), siblingName);
+      await expect(fs.access(siblingPath)).rejects.toThrow();
+    });
+
     it('should throw an error if file attempts to escape target directory via absolute path', async () => {
       const outsidePath = path.resolve(tempDir, '../outside.txt');
       const files = [
