@@ -7,6 +7,7 @@
 import {
   ApiParameter,
   AuthCredential,
+  AuthCredentialTypes,
   Context,
   createRestApiTool,
   RestApiTool,
@@ -14,6 +15,10 @@ import {
 } from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {
+  applyCredential,
+  createApiKeyScheme,
+} from '../../../src/tools/openapi_tool/auth/auth_helpers.js';
 import {
   prepareRequestBody,
   prepareRequestParams,
@@ -784,6 +789,48 @@ describe('RestApiTool Utilities', () => {
           'http://api.example.com/v1/users/x%3Frole%3Dadmin%26debug%3Dtrue',
         );
         expect(new URL(result.url).searchParams.get('role')).toBeNull();
+        expect([...new URL(result.url).searchParams.keys()]).toEqual([]);
+      });
+
+      it('should not attach the credential to a traversed path', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: '../../admin/export',
+        });
+
+        const withKey = applyCredential(
+          result.url,
+          {},
+          {authType: AuthCredentialTypes.API_KEY, apiKey: 'test-api-key'},
+          createApiKeyScheme('key', 'query'),
+        );
+
+        expect(new URL(withKey).pathname).toBe(
+          '/v1/users/..%2F..%2Fadmin%2Fexport',
+        );
+        expect(new URL(withKey).searchParams.get('key')).toBe('test-api-key');
+      });
+
+      it('should merge declared query parameters with an encoded path value', () => {
+        const parameters: ApiParameter[] = [
+          ...userIdParameters,
+          {
+            name: 'q',
+            originalName: 'q',
+            paramLocation: 'query',
+            paramSchema: {},
+            required: false,
+          },
+        ];
+
+        const result = prepareRequestParams(usersEndpoint, parameters, {
+          user_id: 'a/b',
+          q: 'search term',
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/a%2Fb?q=search+term',
+        );
+        expect(new URL(result.url).searchParams.get('q')).toBe('search term');
       });
 
       it('should reject a path parameter value that is a relative path segment', () => {
@@ -845,6 +892,49 @@ describe('RestApiTool Utilities', () => {
         });
 
         expect(result.url).toBe('http://api.example.com/v1/users/a%24%26b');
+      });
+
+      it('should encode a space in a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'John Doe',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/John%20Doe');
+      });
+
+      it('should encode non-ASCII characters in a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'café',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/caf%C3%A9');
+      });
+
+      it('should round-trip a value made of reserved characters', () => {
+        const value = "a/b?c#d&e=f%g$&h'i";
+
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: value,
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/' +
+            "a%2Fb%3Fc%23d%26e%3Df%25g%24%26h'i",
+        );
+        const segment = new URL(result.url).pathname.split('/').pop();
+        if (segment === undefined) expect.fail('the URL had no path segment');
+        expect(decodeURIComponent(segment)).toBe(value);
+      });
+
+      it('should stringify non-string path parameter values', () => {
+        expect(
+          prepareRequestParams(usersEndpoint, userIdParameters, {user_id: 123})
+            .url,
+        ).toBe('http://api.example.com/v1/users/123');
+        expect(
+          prepareRequestParams(usersEndpoint, userIdParameters, {user_id: true})
+            .url,
+        ).toBe('http://api.example.com/v1/users/true');
       });
 
       it('should substitute every occurrence of a repeated path placeholder', () => {
