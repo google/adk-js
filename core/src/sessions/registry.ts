@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {redactUriPassword} from '../utils/redact_uri.js';
 import {BaseSessionService} from './base_session_service.js';
 import {
   DatabaseSessionService,
@@ -32,5 +33,5 @@ export function getSessionServiceFromUri(uri: string): BaseSessionService {
     return new VertexAiSessionService({});
   }
 
-  throw new Error(`Unsupported session service URI: ${uri}`);
+  throw new Error(`Unsupported session service URI: ${redactUriPassword(uri)}`);
 }
