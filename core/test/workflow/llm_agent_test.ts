@@ -10,33 +10,12 @@ import {injectSessionState} from '../../src/agents/instructions.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {ReadonlyContext} from '../../src/agents/readonly_context.js';
 import {createEvent, Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {LLMAgentWrapper} from '../../src/workflow/nodes/llm_agent_wrapper.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-
-function createIc(): InvocationContext {
-  const session = {
-    id: 's1',
-    appName: 'app',
-    userId: 'u',
-    events: [],
-    state: {},
-    lastUpdateTime: Date.now(),
-  } as unknown as Session;
-  return new InvocationContext({
-    invocationId: 'inv-1',
-    session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
-    pluginManager: new PluginManager(),
-  });
-}
+import {createIc} from './test_helpers.js';
 
 async function driveWorkflow(
   wf: Workflow,
