@@ -113,26 +113,26 @@ export async function executeChildNode({
     runId,
   });
 
-  for (;;) {
+  let succeeded = false;
+  while (!succeeded) {
     resetState(child);
     child.attemptCount = nodeState.attemptCount;
     try {
       await runOnce({node, child, input, nodeName, branch, isolationScope});
-      break;
+      succeeded = true;
     } catch (err) {
       // Check retry eligibility with the attempt that just failed, compute its
       // backoff delay, THEN advance the counter (matches Python semantics).
       const retryConfig = node.preparedRetryConfig;
       if (
-        retryConfig &&
-        shouldRetryNode({error: err, retryConfig, nodeState})
+        !retryConfig ||
+        !shouldRetryNode({error: err, retryConfig, nodeState})
       ) {
-        const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
-        nodeState.attemptCount += 1;
-        await delay(delaySeconds * 1000, parent.invocationContext.abortSignal);
-        continue;
+        throw err;
       }
-      throw err;
+      const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
+      nodeState.attemptCount += 1;
+      await delay(delaySeconds * 1000, parent.invocationContext.abortSignal);
     }
   }
 
@@ -256,12 +256,10 @@ async function runOnce({
 
   const iterator = node.run(child, input)[Symbol.asyncIterator]();
   try {
-    for (;;) {
-      const result = await Promise.race([iterator.next(), aborted]);
-      if (result.done) {
-        break;
-      }
+    let result = await Promise.race([iterator.next(), aborted]);
+    while (!result.done) {
       consume(result.value);
+      result = await Promise.race([iterator.next(), aborted]);
     }
   } finally {
     clearTimeout(timer);
