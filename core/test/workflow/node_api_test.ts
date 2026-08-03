@@ -10,7 +10,7 @@ import {Event} from '../../src/events/event.js';
 import {BaseTool} from '../../src/tools/base_tool.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {BaseNode} from '../../src/workflow/base_node.js';
-import {node, Node} from '../../src/workflow/node.js';
+import {node, WorkflowNode} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
@@ -155,7 +155,7 @@ describe('Phase 3 — node() factory', () => {
 });
 
 describe('Phase 3 — Node subclass', () => {
-  class DoubleNode extends Node<number, number> {
+  class DoubleNode extends WorkflowNode<number, number> {
     protected async *runNodeImpl(_ctx: NodeContext, input: number) {
       yield input * 2;
     }
