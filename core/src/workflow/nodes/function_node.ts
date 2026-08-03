@@ -73,6 +73,11 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
 > {
   readonly authConfig?: AuthConfig;
   private readonly handler: FunctionNodeHandler<TInput, TOutput>;
+  /** Per-run shadow of the state entries already attached to an emitted event. */
+  private readonly attachedStateByCtx = new WeakMap<
+    NodeContext,
+    Map<string, unknown>
+  >();
 
   constructor(
     name: string,
@@ -82,7 +87,9 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     if (typeof handler !== 'function') {
       throw new TypeError('FunctionNode handler must be a function.');
     }
-    super({name, ...config});
+    // Spread first so an explicit `undefined` name in `config` can't clobber
+    // the resolved name (which BaseNode requires to be non-empty).
+    super({...config, name});
     this.handler = handler;
     this.authConfig = config.authConfig;
   }
@@ -131,7 +138,11 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     }
     const resumeResponse = ctx.resumeInputs[authConfig.credentialKey];
     if (resumeResponse !== undefined) {
-      await processAuthResume(resumeResponse, authConfig, ctx.state);
+      await processAuthResume({
+        responseData: resumeResponse,
+        authConfig,
+        state: ctx.state,
+      });
       if (hasAuthCredential(authConfig, ctx.state)) {
         return undefined;
       }
@@ -141,11 +152,35 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     return createAuthRequestEvent(authConfig, authConfig.credentialKey);
   }
 
+  /**
+   * Returns the state-delta entries written since the last event was emitted
+   * for this run (new keys or changed values). A multi-event handler would
+   * otherwise re-emit the whole growing delta on every event.
+   *
+   * `ctx.actions.stateDelta` can't be drained — `NodeContext` builds its
+   * `State` over it — so we track what has already been attached in a shadow
+   * map keyed by the run's context (GC'd with the context).
+   */
+  private pendingStateDelta(
+    ctx: NodeContext,
+  ): Record<string, unknown> | undefined {
+    let shadow = this.attachedStateByCtx.get(ctx);
+    if (!shadow) {
+      shadow = new Map<string, unknown>();
+      this.attachedStateByCtx.set(ctx, shadow);
+    }
+    const delta: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(ctx.actions.stateDelta)) {
+      if (!shadow.has(key) || shadow.get(key) !== value) {
+        delta[key] = value;
+        shadow.set(key, value);
+      }
+    }
+    return Object.keys(delta).length > 0 ? delta : undefined;
+  }
+
   protected override toEvent(ctx: NodeContext, data: unknown): Event | null {
-    const stateDelta =
-      Object.keys(ctx.actions.stateDelta).length > 0
-        ? {...ctx.actions.stateDelta}
-        : undefined;
+    const stateDelta = this.pendingStateDelta(ctx);
 
     if (data === null || data === undefined) {
       return stateDelta
@@ -164,7 +199,9 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
         event.output = this.validateOutput(event.output);
       }
       if (stateDelta) {
-        Object.assign(event.actions.stateDelta, stateDelta);
+        // The handler's own writes on the event it yielded win over the
+        // node's accumulated context state.
+        event.actions.stateDelta = {...stateDelta, ...event.actions.stateDelta};
       }
       return event;
     }
@@ -199,6 +236,16 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   );
 }
 
+function isSyncGenerator(value: unknown): value is Generator<unknown> {
+  // A string is iterable but has no `.next`, so the `.next` check already
+  // excludes it — no separate string guard needed.
+  return (
+    value != null &&
+    typeof (value as Iterable<unknown>)[Symbol.iterator] === 'function' &&
+    typeof (value as Generator<unknown>).next === 'function'
+  );
+}
+
 /**
  * Registers the builder that turns a plain function into a {@link FunctionNode},
  * so `node(fn)` and graph parsing work without the engine statically importing
@@ -206,6 +253,7 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
  * makes the builder available).
  */
 registerNodeBuilder({
+  id: 'function',
   match: (value): boolean => typeof value === 'function',
   build: (value, options) => {
     const handler = value as FunctionNodeHandler;
@@ -218,12 +266,3 @@ registerNodeBuilder({
     return new FunctionNode(name, handler, options);
   },
 });
-
-function isSyncGenerator(value: unknown): value is Generator<unknown> {
-  return (
-    value != null &&
-    typeof value !== 'string' &&
-    typeof (value as Iterable<unknown>)[Symbol.iterator] === 'function' &&
-    typeof (value as Generator<unknown>).next === 'function'
-  );
-}
