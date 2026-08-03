@@ -62,7 +62,7 @@ export class RequestInput {
 /**
  * Type guard for {@link RequestInput}.
  *
- * Matches on the {@link REQUEST_INPUT_SIGNATURE_SYMBOL} brand rather than
+ * Matches on the `REQUEST_INPUT_SIGNATURE_SYMBOL` brand rather than
  * `instanceof` so it stays correct across package copies (see the brand's doc).
  */
 export function isRequestInput(value: unknown): value is RequestInput {

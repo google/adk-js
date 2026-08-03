@@ -19,7 +19,7 @@ const DEFAULT_MAX_PARALLEL_WORKERS = 8;
 export interface ParallelWorkerConfig {
   /**
    * Maximum number of items processed concurrently. Defaults to
-   * {@link DEFAULT_MAX_PARALLEL_WORKERS}; pass `Infinity` for unbounded.
+   * `DEFAULT_MAX_PARALLEL_WORKERS` (8); pass `Infinity` for unbounded.
    */
   maxParallelWorkers?: number;
 }
