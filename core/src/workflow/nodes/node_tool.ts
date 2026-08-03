@@ -17,7 +17,7 @@ import {NodeContext} from '../node_context.js';
 import {executeChildNode} from '../node_runner.js';
 
 /**
- * A unique symbol branding {@link NodeTool} instances (see {@link isNodeTool}).
+ * A unique symbol branding {@link NodeTool} instances (see `isNodeTool`).
  */
 const NODE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.nodeTool');
 
@@ -46,7 +46,7 @@ const MAX_NODE_TOOL_DEPTH = 8;
  * (`RequestInput`) does not force a synthetic empty response.
  */
 export class NodeTool extends BaseTool {
-  /** Brand identifying this object as a {@link NodeTool} (see {@link isNodeTool}). */
+  /** Brand identifying this object as a {@link NodeTool} (see `isNodeTool`). */
   readonly [NODE_TOOL_SIGNATURE_SYMBOL] = true;
 
   readonly node: BaseNode;
