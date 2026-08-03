@@ -20,7 +20,7 @@ export type {WorkflowAgentConfig} from './workflow_agent.js';
 // --- Nodes ---
 export {BaseNode, START} from './base_node.js';
 export type {BaseNodeConfig} from './base_node.js';
-export {Node, node} from './node.js';
+export {WorkflowNode, node} from './node.js';
 export type {NodeOptions} from './node.js';
 export {FunctionNode} from './nodes/function_node.js';
 export type {
@@ -49,10 +49,15 @@ export type {
 // --- Execution context & state ---
 export {BranchPath, commonPrefixOf, createSubBranch} from './branch_path.js';
 export {NodeContext} from './node_context.js';
+export type {NodeContextOptions, NodeResult} from './node_context.js';
 export type {RunNodeOptions} from './node_runner.js';
 export {createNodeState, isNodeState} from './node_state.js';
 export type {NodeState} from './node_state.js';
 export {NodeStatus} from './node_status.js';
+export type {
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+} from './schedule_dynamic_node.js';
 
 // --- HITL ---
 export {RequestInput, isRequestInput} from './request_input.js';

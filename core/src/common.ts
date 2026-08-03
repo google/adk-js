@@ -285,6 +285,7 @@ export type {
   VertexAiSearchToolParams,
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
+export {AsyncQueue} from './utils/async_queue.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
@@ -331,6 +332,65 @@ export {
   RestApiTool,
   createRestApiTool,
 } from './tools/openapi_tool/rest_api_tool.js';
+
+// Workflow (parity port of google/adk-python `google/adk/workflow`). Named
+// explicitly (not `export *`) so the top-level surface stays intentional and
+// collisions are compile errors; keep this in sync with `./workflow/index.js`.
+export {
+  BaseNode,
+  BranchPath,
+  DEFAULT_ROUTE,
+  Edge,
+  FunctionNode,
+  Graph,
+  JoinNode,
+  NodeContext,
+  NodeStatus,
+  NodeTimeoutError,
+  ParallelWorker,
+  RequestInput,
+  START,
+  ToolNode,
+  Workflow,
+  WorkflowAgent,
+  WorkflowNode,
+  commonPrefixOf,
+  createNodeState,
+  createSubBranch,
+  isNodeState,
+  isRequestInput,
+  node,
+  normalizeRetryExceptions,
+  prepareRetryConfig,
+} from './workflow/index.js';
+export type {
+  BaseNodeConfig,
+  BuildNodeOptions,
+  ChainElement,
+  DynamicEntry,
+  EdgeItem,
+  ErrorClass,
+  FunctionNodeConfig,
+  FunctionNodeHandler,
+  FunctionNodeResult,
+  NodeContextOptions,
+  NodeLike,
+  NodeOptions,
+  NodeResult,
+  NodeState,
+  ParallelWorkerConfig,
+  PreparedRetryConfig,
+  RequestInputParams,
+  RetryConfig,
+  RouteValue,
+  RoutingMap,
+  RunNodeOptions,
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+  ToolNodeConfig,
+  WorkflowAgentConfig,
+  WorkflowConfig,
+} from './workflow/index.js';
 
 export * from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';

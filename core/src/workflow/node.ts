@@ -5,6 +5,7 @@
  */
 
 import {Event} from '../events/event.js';
+import {experimental} from '../utils/experimental.js';
 import {BaseNode} from './base_node.js';
 import {NodeLike} from './graph.js';
 import {NodeContext} from './node_context.js';
@@ -36,10 +37,16 @@ export function node(nodeLike: NodeLike, options: NodeOptions = {}): BaseNode {
  * provide node logic; subclasses inherit the schema/retry/timeout machinery of
  * {@link BaseNode}.
  *
+ * Named `WorkflowNode` (not `Node`) to read consistently with `WorkflowAgent`
+ * and `WorkflowConfig`, and to avoid shadowing the DOM / `@types/node` `Node`
+ * global in the flat `@google/adk` namespace. The `node()` factory remains the
+ * ergonomic way to wrap a function/tool/agent.
+ *
  * Mirrors `google/adk-python` `workflow/_node.py::Node`. The `parallel_worker`
  * capability is added in Phase 6.
  */
-export abstract class Node<
+@experimental
+export abstract class WorkflowNode<
   TInput = unknown,
   TOutput = unknown,
 > extends BaseNode<TInput, TOutput> {
