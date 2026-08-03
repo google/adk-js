@@ -121,9 +121,11 @@ export class NodeTool extends BaseTool {
     const segment = `${this.name}@${runId}`;
     const overrideBranch = base ? `${base}.${segment}` : segment;
 
-    return executeChildNode(nodeCtx, this.node, nodeInput, {
-      runId,
-      overrideBranch,
+    return executeChildNode({
+      parent: nodeCtx,
+      node: this.node,
+      input: nodeInput,
+      options: {runId, overrideBranch},
     });
   }
 }

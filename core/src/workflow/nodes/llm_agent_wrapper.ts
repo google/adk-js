@@ -5,7 +5,7 @@
  */
 
 import {Content} from '@google/genai';
-import {BaseAgent, isBaseAgent} from '../../agents/base_agent.js';
+import {BaseAgent} from '../../agents/base_agent.js';
 import {
   InvocationContext,
   InvocationContextParams,
@@ -18,14 +18,12 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
-import {isBaseTool} from '../../tools/base_tool.js';
 import {
   FINISH_TASK_SUCCESS_RESULT,
   FINISH_TASK_TOOL_NAME,
 } from '../../tools/finish_task_tool.js';
 import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
-import {registerNodeBuilder} from '../utils/workflow_graph_utils.js';
 
 /** Safety cap on chained `transfer_to_agent` hand-offs. */
 const MAX_TRANSFER_DEPTH = 10;
@@ -297,7 +295,7 @@ function toUserContent(input: unknown): Content {
 }
 
 /** Heuristic: an agent-like value exposes a `runAsync` method. */
-function isAgentLike(value: unknown): boolean {
+export function isAgentLike(value: unknown): boolean {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -306,16 +304,5 @@ function isAgentLike(value: unknown): boolean {
   );
 }
 
-/**
- * Registers the builder that wraps a {@link BaseAgent} (or agent-like object) in
- * an {@link LLMAgentWrapper}.
- *
- * Tools are excluded explicitly: a {@link BaseTool} also exposes `runAsync`, so
- * this preserves the original tool-before-agent precedence regardless of the
- * order in which node builders happen to be registered.
- */
-registerNodeBuilder({
-  match: (value): boolean =>
-    !isBaseTool(value) && (isBaseAgent(value) || isAgentLike(value)),
-  build: (value, options) => new LLMAgentWrapper(value as BaseAgent, options),
-});
+// The builder that wraps a BaseAgent in an LLMAgentWrapper is wired into the
+// static NODE_BUILDERS list in ../node_builders.ts.

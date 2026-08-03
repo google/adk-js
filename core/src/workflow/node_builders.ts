@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {FunctionNode, FunctionNodeHandler} from './nodes/function_node.js';
+import {isAgentLike, LLMAgentWrapper} from './nodes/llm_agent_wrapper.js';
 import {ParallelWorker} from './nodes/parallel_worker.js';
 import {ToolNode} from './nodes/tool_node.js';
 import type {
@@ -35,6 +37,17 @@ const TOOL_BUILDER: NodeBuilder = {
 };
 
 /**
+ * Builds an {@link LLMAgentWrapper} from a {@link BaseAgent} (or agent-like
+ * value). Tools are excluded explicitly (a `BaseTool` also exposes `runAsync`),
+ * so the tool builder wins for those.
+ */
+const AGENT_BUILDER: NodeBuilder = {
+  match: (value) =>
+    !isBaseTool(value) && (isBaseAgent(value) || isAgentLike(value)),
+  build: (value, options) => new LLMAgentWrapper(value as BaseAgent, options),
+};
+
+/**
  * The built-in node builders, consulted in order by `buildNode` / `isNodeLike`
  * to turn a bare function / tool / agent into the right `BaseNode`.
  *
@@ -46,6 +59,7 @@ const TOOL_BUILDER: NodeBuilder = {
 export const NODE_BUILDERS: readonly NodeBuilder[] = [
   FUNCTION_BUILDER,
   TOOL_BUILDER,
+  AGENT_BUILDER,
 ];
 
 /**
