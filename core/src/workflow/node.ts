@@ -8,8 +8,6 @@ import {Event} from '../events/event.js';
 import {BaseNode} from './base_node.js';
 import {NodeLike} from './graph.js';
 import {NodeContext} from './node_context.js';
-// Register the built-in node builders so node() works when imported directly.
-import './register_builtin_nodes.js';
 import {buildNode, BuildNodeOptions} from './utils/workflow_graph_utils.js';
 
 /** Options accepted by {@link node}. */

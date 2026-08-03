@@ -98,14 +98,19 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
     };
     this.state.runs.set(nodePath, run);
 
-    run.task = executeChildNode(ctx, node, input, {
-      nodeName: name,
-      runId,
-      overrideNodePath: nodePath,
-      useAsOutput: options.useAsOutput,
-      useSubBranch: options.useSubBranch,
-      overrideBranch: options.overrideBranch,
-      overrideIsolationScope: options.overrideIsolationScope,
+    run.task = executeChildNode({
+      parent: ctx,
+      node,
+      input,
+      options: {
+        nodeName: name,
+        runId,
+        overrideNodePath: nodePath,
+        useAsOutput: options.useAsOutput,
+        useSubBranch: options.useSubBranch,
+        overrideBranch: options.overrideBranch,
+        overrideIsolationScope: options.overrideIsolationScope,
+      },
     });
 
     const childCtx = await run.task;

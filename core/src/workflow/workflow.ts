@@ -8,14 +8,16 @@ import {Event} from '../events/event.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
 import {DynamicNodeScheduler} from './dynamic_node_scheduler.js';
-import {EdgeItem, Graph, RouteValue} from './graph.js';
+import {
+  createGraphFromEdgeItems,
+  EdgeItem,
+  Graph,
+  RouteValue,
+} from './graph.js';
 import {NodeContext} from './node_context.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
-// Register the built-in node builders so graph parsing accepts bare functions,
-// tools, etc. even when workflow.js is imported directly (not via the barrel).
-import './register_builtin_nodes.js';
 import {DynamicNodeState} from './schedule_dynamic_node.js';
 import {Trigger} from './trigger.js';
 import {
@@ -106,8 +108,8 @@ export class Workflow extends BaseNode {
     this.maxConcurrency = config.maxConcurrency;
     this.dynamicEntry = config.dynamicEntry;
     if (hasEdges) {
-      this.graph = Graph.fromEdgeItems(config.edges!);
-      this.graph.validate();
+      // createGraphFromEdgeItems validates as part of construction.
+      this.graph = createGraphFromEdgeItems(config.edges!);
     }
   }
 
@@ -358,17 +360,17 @@ export class Workflow extends BaseNode {
 
     // Static graph nodes are managed by this loop directly, bypassing the
     // dynamic scheduler (which serves user-initiated ctx.runNode() calls).
-    const task: Promise<CompletedTask> = executeChildNode(
-      ctx,
+    const task: Promise<CompletedTask> = executeChildNode({
+      parent: ctx,
       node,
-      nodeInput,
-      {
+      input: nodeInput,
+      options: {
         runId,
         useSubBranch: trigger.useSubBranch,
         overrideBranch: trigger.branch,
         overrideIsolationScope: trigger.isolationScope,
       },
-    ).then(
+    }).then(
       (childCtx) => ({name: nodeName, childCtx}),
       (error) => ({name: nodeName, error}),
     );

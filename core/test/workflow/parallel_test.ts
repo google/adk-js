@@ -12,7 +12,7 @@ import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Session} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {
-  BranchPath,
+  branchPathFromString,
   commonPrefixOf,
   createSubBranch,
 } from '../../src/workflow/branch_path.js';
@@ -77,10 +77,10 @@ describe('Phase 6 — BranchPath', () => {
   });
 
   it('detects descendants', () => {
-    const parent = BranchPath.fromString('a@1');
-    expect(BranchPath.fromString('a@1.b@2').isDescendantOf(parent)).toBe(true);
-    expect(BranchPath.fromString('a@1').isDescendantOf(parent)).toBe(false);
-    expect(BranchPath.fromString('x@1.b@2').isDescendantOf(parent)).toBe(false);
+    const parent = branchPathFromString('a@1');
+    expect(branchPathFromString('a@1.b@2').isDescendantOf(parent)).toBe(true);
+    expect(branchPathFromString('a@1').isDescendantOf(parent)).toBe(false);
+    expect(branchPathFromString('x@1.b@2').isDescendantOf(parent)).toBe(false);
   });
 });
 
