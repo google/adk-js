@@ -5,8 +5,6 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {
   AuthCredential,
   AuthCredentialTypes,
@@ -14,16 +12,14 @@ import {
 import {AuthScheme} from '../../src/auth/auth_schemes.js';
 import {AuthConfig} from '../../src/auth/auth_tool.js';
 import {Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {Runner} from '../../src/runner/runner.js';
 import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
-import {Session} from '../../src/sessions/session.js';
-import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {hasAuthRequestFunctionCall} from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {createIc, driveWorkflow} from './test_helpers.js';
 
 const CREDENTIAL_KEY = 'my_api';
 
@@ -137,48 +133,17 @@ describe('Phase 5b-cont — FunctionNode auth gate', () => {
     const wf = new Workflow({name: 'auth_wf2', edges: [['START', secured]]});
 
     // Pre-seed the credential directly in the session state.
-    const session = {
-      id: 's1',
-      appName: 'app',
-      userId: 'u',
-      events: [],
-      state: {
+    const {events, output} = await driveWorkflow(wf, 'go', {
+      ic: createIc({
         ['temp:' + CREDENTIAL_KEY]: {
           authType: AuthCredentialTypes.API_KEY,
           apiKey: 'pre-existing',
         },
-      },
-      lastUpdateTime: Date.now(),
-    } as unknown as Session;
-    const ic = new InvocationContext({
-      invocationId: 'inv-1',
-      session,
-      agent: {
-        name: 'wf',
-        runAsync: async function* () {},
-      } as unknown as BaseAgent,
-      pluginManager: new PluginManager(),
+      }),
     });
-
-    const channel = new AsyncQueue<Event>();
-    const root = new NodeContext({
-      invocationContext: ic,
-      channel,
-      nodePath: '',
-      runId: 'root',
-    });
-    const events: Event[] = [];
-    const settle = root.runNode(wf, 'go', {useAsOutput: true}).then(
-      () => channel.close(),
-      (err) => channel.fail(err),
-    );
-    for await (const e of channel) {
-      events.push(e);
-    }
-    await settle;
 
     expect(runs).toBe(1);
-    expect(root.output).toBe('ok');
+    expect(output).toBe('ok');
     expect(events.some(hasAuthRequestFunctionCall)).toBe(false);
   });
 });

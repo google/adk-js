@@ -5,13 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
-import {AsyncQueue} from '../../src/utils/async_queue.js';
-import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {
@@ -19,56 +13,19 @@ import {
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-
-function createIc(): InvocationContext {
-  const session = {
-    id: 's1',
-    appName: 'app',
-    userId: 'u',
-    events: [],
-    state: {},
-    lastUpdateTime: Date.now(),
-  } as unknown as Session;
-  return new InvocationContext({
-    invocationId: 'inv-1',
-    session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
-    pluginManager: new PluginManager(),
-  });
-}
+import {driveWorkflow} from './test_helpers.js';
 
 /**
  * Drives a workflow, optionally supplying resume inputs (keyed by interrupt id).
- * Returns the workflow output, its interrupt ids, and the streamed events.
+ * Thin wrapper over the shared {@link driveWorkflow} for this file's positional
+ * resume-input call sites.
  */
-async function drive(
+function drive(
   wf: Workflow,
   input?: unknown,
   resumeInputs: Record<string, unknown> = {},
 ): Promise<{output: unknown; interruptIds: string[]; events: Event[]}> {
-  const channel = new AsyncQueue<Event>();
-  const root = new NodeContext({
-    invocationContext: createIc(),
-    channel,
-    nodePath: '',
-    runId: 'root',
-    resumeInputs,
-  });
-  const events: Event[] = [];
-  const wfCtxPromise = root.runNode(wf, input, {useAsOutput: true});
-  const settle = wfCtxPromise.then(
-    () => channel.close(),
-    (err) => channel.fail(err),
-  );
-  for await (const ev of channel) {
-    events.push(ev);
-  }
-  await settle;
-  const wfCtx = await wfCtxPromise;
-  return {output: root.output, interruptIds: wfCtx.interruptIds, events};
+  return driveWorkflow(wf, input, {resumeInputs});
 }
 
 describe('Phase 5 — HITL (pause / resume)', () => {

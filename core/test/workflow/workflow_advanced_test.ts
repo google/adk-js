@@ -35,6 +35,61 @@ describe('workflow — maxConcurrency', () => {
     expect(peak).toBeLessThanOrEqual(2);
     expect(peak).toBeGreaterThan(0);
   });
+
+  it('rejects maxConcurrency below 1 (0 is not "unlimited")', () => {
+    const n = new FunctionNode('n', () => 'x');
+    expect(
+      () =>
+        new Workflow({name: 'bad0', edges: [['START', n]], maxConcurrency: 0}),
+    ).toThrow(/positive integer/);
+  });
+
+  it('rejects a non-integer maxConcurrency', () => {
+    const n = new FunctionNode('n', () => 'x');
+    expect(
+      () =>
+        new Workflow({
+          name: 'bad_frac',
+          edges: [['START', n]],
+          maxConcurrency: 1.5,
+        }),
+    ).toThrow(/positive integer/);
+  });
+});
+
+describe('workflow — sibling cancellation on failure', () => {
+  it('cancels an in-flight cooperative sibling when another node fails', async () => {
+    let siblingCancelled = false;
+    // A cooperative node that waits, but bails out early if the workflow-scoped
+    // abort signal fires (which happens when its sibling throws).
+    const patient = new FunctionNode('patient', async (ctx) => {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        ctx.abortSignal?.addEventListener(
+          'abort',
+          () => {
+            siblingCancelled = true;
+            clearTimeout(timer);
+            resolve();
+          },
+          {once: true},
+        );
+      });
+      return 'patient-done';
+    });
+    const boom = new FunctionNode('boom', async () => {
+      // Let `patient` start and attach its abort listener first, then fail.
+      await new Promise((r) => setTimeout(r, 10));
+      throw new Error('boom');
+    });
+    const wf = new Workflow({
+      name: 'cancel_siblings',
+      edges: [['START', [patient, boom]]],
+    });
+
+    await expect(driveNode(wf, 'x')).rejects.toThrow('boom');
+    expect(siblingCancelled).toBe(true);
+  });
 });
 
 describe('workflow — error propagation', () => {

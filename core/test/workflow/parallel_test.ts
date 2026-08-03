@@ -5,12 +5,6 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
-import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {
   branchPathFromString,
   commonPrefixOf,
@@ -21,46 +15,7 @@ import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-
-function createIc(): InvocationContext {
-  const session = {
-    id: 's1',
-    appName: 'app',
-    userId: 'u',
-    events: [],
-    state: {},
-    lastUpdateTime: Date.now(),
-  } as unknown as Session;
-  return new InvocationContext({
-    invocationId: 'inv-1',
-    session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
-    pluginManager: new PluginManager(),
-  });
-}
-
-async function driveWorkflow(wf: Workflow, input?: unknown): Promise<unknown> {
-  const channel = new AsyncQueue<Event>();
-  const root = new NodeContext({
-    invocationContext: createIc(),
-    channel,
-    nodePath: '',
-    runId: 'root',
-  });
-  const run = root.runNode(wf, input, {useAsOutput: true}).then(
-    () => channel.close(),
-    (err) => channel.fail(err),
-  );
-  // drain
-  for await (const _ of channel) {
-    void _;
-  }
-  await run;
-  return root.output;
-}
+import {driveWorkflow} from './test_helpers.js';
 
 describe('Phase 6 — BranchPath', () => {
   it('creates sub-branches with and without run ids', () => {
@@ -89,19 +44,21 @@ describe('Phase 6 — ParallelWorker', () => {
     const doubler = new FunctionNode('double', (_c, n: number) => n * 2);
     const worker = new ParallelWorker(doubler);
     const wf = new Workflow({name: 'pw', edges: [['START', worker]]});
-    expect(await driveWorkflow(wf, [1, 2, 3, 4])).toEqual([2, 4, 6, 8]);
+    expect((await driveWorkflow(wf, [1, 2, 3, 4])).output).toEqual([
+      2, 4, 6, 8,
+    ]);
   });
 
   it('wraps a single (non-list) input as a one-element list', async () => {
     const worker = new ParallelWorker(new FunctionNode('id', (_c, n) => n));
     const wf = new Workflow({name: 'pw1', edges: [['START', worker]]});
-    expect(await driveWorkflow(wf, 'solo')).toEqual(['solo']);
+    expect((await driveWorkflow(wf, 'solo')).output).toEqual(['solo']);
   });
 
   it('returns [] for an empty list', async () => {
     const worker = new ParallelWorker(new FunctionNode('id', (_c, n) => n));
     const wf = new Workflow({name: 'pw0', edges: [['START', worker]]});
-    expect(await driveWorkflow(wf, [])).toEqual([]);
+    expect((await driveWorkflow(wf, [])).output).toEqual([]);
   });
 
   it('respects maxParallelWorkers (bounded concurrency)', async () => {
@@ -116,7 +73,7 @@ describe('Phase 6 — ParallelWorker', () => {
     });
     const worker = new ParallelWorker(slow, {maxParallelWorkers: 2});
     const wf = new Workflow({name: 'bounded', edges: [['START', worker]]});
-    const out = await driveWorkflow(wf, [1, 2, 3, 4, 5, 6]);
+    const {output: out} = await driveWorkflow(wf, [1, 2, 3, 4, 5, 6]);
     expect(out).toEqual([1, 2, 3, 4, 5, 6]);
     expect(peak).toBeLessThanOrEqual(2);
   });
@@ -143,7 +100,9 @@ describe('Phase 6 — ParallelWorker', () => {
     });
     expect(n).toBeInstanceOf(ParallelWorker);
     const wf = new Workflow({name: 'pwnode', edges: [['START', n]]});
-    expect(await driveWorkflow(wf, [10, 20, 30])).toEqual([11, 21, 31]);
+    expect((await driveWorkflow(wf, [10, 20, 30])).output).toEqual([
+      11, 21, 31,
+    ]);
   });
 
   it('rejects maxParallelWorkers without parallelWorker', () => {
@@ -166,7 +125,7 @@ describe('Phase 6 — ParallelWorker', () => {
       {maxParallelWorkers: 2},
     );
     const wf = new Workflow({name: 'pw_ids', edges: [['START', worker]]});
-    expect(await driveWorkflow(wf, ['a', 'b', 'c', 'd'])).toEqual([
+    expect((await driveWorkflow(wf, ['a', 'b', 'c', 'd'])).output).toEqual([
       'a#0',
       'b#1',
       'c#2',

@@ -64,6 +64,31 @@ describe('Phase 0 — workflow event-model extensions', () => {
     expect(back.actions.agentState).toEqual({status: 3});
     expect(back.actions.endOfAgent).toBe(true);
   });
+
+  it('preserves user-defined keys in output/route/agentState across persistence', () => {
+    // A persistent session (e.g. VertexAiSessionService) round-trips events
+    // through snake_case. The workflow's arbitrary payloads — node output, the
+    // node input stashed under actions.agentState for HITL resume, and the
+    // emitted route — carry user-defined keys that must survive verbatim. Without
+    // the preserve-key allowlists, `{userName: 'Ada'}` would come back as
+    // `{user_name: 'Ada'}` and a resumed node would re-run with mangled keys.
+    const ev = createEvent({
+      author: 'node_a',
+      output: {userName: 'Ada', nested: {maxRetries: 3}},
+      route: 'needsReview',
+      actions: {
+        agentState: {input: {firstName: 'Ada', lastName: 'Lovelace'}},
+      },
+    });
+
+    const back = transformToCamelCaseEvent(transformToSnakeCaseEvent(ev));
+
+    expect(back.output).toEqual({userName: 'Ada', nested: {maxRetries: 3}});
+    expect(back.route).toBe('needsReview');
+    expect(back.actions.agentState).toEqual({
+      input: {firstName: 'Ada', lastName: 'Lovelace'},
+    });
+  });
 });
 
 describe('isEvent — signature-symbol brand', () => {

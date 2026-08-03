@@ -5,72 +5,12 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {createEvent, Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
-import {AsyncQueue} from '../../src/utils/async_queue.js';
+import {createEvent} from '../../src/events/event.js';
 import {BaseNode} from '../../src/workflow/base_node.js';
 import {DEFAULT_ROUTE} from '../../src/workflow/graph.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-
-function createIc(): InvocationContext {
-  const session = {
-    id: 's1',
-    appName: 'app',
-    userId: 'u',
-    events: [],
-    state: {},
-    lastUpdateTime: Date.now(),
-  } as unknown as Session;
-  return new InvocationContext({
-    invocationId: 'inv-1',
-    session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
-    pluginManager: new PluginManager(),
-  });
-}
-
-async function driveWorkflow(
-  workflow: Workflow,
-  input?: unknown,
-): Promise<{events: Event[]; output: unknown}> {
-  const channel = new AsyncQueue<Event>();
-  const root = new NodeContext({
-    invocationContext: createIc(),
-    channel,
-    nodePath: '',
-    runId: 'root',
-  });
-  const events: Event[] = [];
-  const run = root.runNode(workflow, input, {useAsOutput: true}).then(
-    () => channel.close(),
-    (err) => channel.fail(err),
-  );
-  for await (const ev of channel) {
-    events.push(ev);
-  }
-  await run;
-  return {events, output: root.output};
-}
-
-// Yields whatever the function returns (value | Event).
-class FnNode extends BaseNode {
-  constructor(
-    name: string,
-    private readonly fn: (ctx: NodeContext, input: unknown) => unknown,
-  ) {
-    super({name});
-  }
-  protected async *runImpl(ctx: NodeContext, input: unknown) {
-    yield await this.fn(ctx, input);
-  }
-}
+import {driveWorkflow, FnNode} from './test_helpers.js';
 
 // Fan-in barrier: waits for all predecessors, then emits the aggregated inputs.
 class JoinNode extends BaseNode {
