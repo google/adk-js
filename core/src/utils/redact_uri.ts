@@ -31,6 +31,8 @@ export function redactUriPassword(uri: string): string {
     return uri;
   } catch {
     const schemeEnd = uri.indexOf('://');
-    return schemeEnd === -1 ? '<redacted>' : `${uri.slice(0, schemeEnd)}://<redacted>`;
+    return schemeEnd === -1
+      ? '<redacted>'
+      : `${uri.slice(0, schemeEnd)}://<redacted>`;
   }
 }
