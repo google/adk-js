@@ -11,7 +11,10 @@ import {z as z4} from 'zod/v4';
 import {createEvent, Event} from '../../src/events/event.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {BaseNode} from '../../src/workflow/base_node.js';
-import {isNodeTimeoutError} from '../../src/workflow/errors.js';
+import {
+  isInvocationAbortedError,
+  isNodeTimeoutError,
+} from '../../src/workflow/errors.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {createIc, driveNode, FnNode} from './test_helpers.js';
 
@@ -286,5 +289,53 @@ describe('output schema validation (Zod v3 / Zod v4 / genai Schema)', () => {
     // passes through untouched even though it does not match the schema.
     const {output} = await driveNode(node);
     expect(output).toEqual({anything: 'goes'});
+  });
+});
+
+describe('input schema validation', () => {
+  it('validates input against a Zod v4 schema', async () => {
+    const node = new FnNode('n', (_c, i) => i, {
+      inputSchema: z4.object({x: z4.number()}),
+    });
+    const {output} = await driveNode(node, {x: 1});
+    expect(output).toEqual({x: 1});
+  });
+
+  it('rejects input that fails the schema', async () => {
+    const node = new FnNode('n', (_c, i) => i, {
+      inputSchema: z4.object({x: z4.number()}),
+    });
+    await expect(driveNode(node, {x: 'no'})).rejects.toThrow();
+  });
+
+  it('passes genai Content input through without schema validation', async () => {
+    const node = new FnNode('n', (_c, i) => i, {
+      inputSchema: z4.object({x: z4.number()}),
+    });
+    const content = {role: 'user', parts: [{text: 'hi'}]};
+    // Content bypasses inputSchema even though it would not match it.
+    const {output} = await driveNode(node, content);
+    expect(output).toEqual(content);
+  });
+});
+
+describe('retry backoff cancellation', () => {
+  it('rejects with InvocationAbortedError when the invocation is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(); // already aborted before the backoff delay
+    const ic = createIc({}, controller.signal);
+    const doomed = new FnNode(
+      'doomed',
+      () => {
+        throw new Error('boom');
+      },
+      {retryConfig: {maxAttempts: 3, initialDelay: 0.01, jitter: 0}},
+    );
+
+    const err = await driveNode(doomed, 'x', ic).then(
+      () => undefined,
+      (e) => e,
+    );
+    expect(isInvocationAbortedError(err)).toBe(true);
   });
 });

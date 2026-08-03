@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createModelContent} from '@google/genai';
+import {Content, createModelContent, PartListUnion} from '@google/genai';
 import {createEvent, Event, isEvent} from '../events/event.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import type {NodeContext} from './node_context.js';
@@ -253,6 +253,10 @@ export const START: BaseNode = new StartNode({name: '__START__'});
 
 /**
  * Best-effort conversion of an arbitrary value to genai `Content` for display.
+ *
+ * Strings, `Part`s, and arrays of them are converted via `createModelContent`.
+ * Any other value (a plain object, number, boolean, …) is not a valid genai
+ * part list, so it is serialized to text rather than throwing.
  */
 export function toContent(val: unknown): Content | undefined {
   if (val === null || val === undefined) {
@@ -263,5 +267,23 @@ export function toContent(val: unknown): Content | undefined {
     return val;
   }
 
-  return createModelContent(val);
+  try {
+    return createModelContent(val as PartListUnion);
+  } catch {
+    return createModelContent(valueToText(val));
+  }
+}
+
+/** Serializes an arbitrary value to a text string for display. */
+function valueToText(val: unknown): string {
+  if (typeof val === 'string') {
+    return val;
+  }
+  try {
+    // JSON.stringify returns undefined for functions/symbols; fall back to
+    // String() there (and for non-serializable values like circular refs).
+    return JSON.stringify(val) ?? String(val);
+  } catch {
+    return String(val);
+  }
 }

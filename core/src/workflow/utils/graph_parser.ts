@@ -128,11 +128,19 @@ function getOrBuildNode(
   return buildNode(nodeLike);
 }
 
-function processExplicitEdge(
-  edge: Edge,
-  nodeMap: Map<object, BaseNode>,
-  out: Edge[],
-): void {
+/** Shared accumulator threaded through the edge-processing helpers. */
+interface ParseContext {
+  /** Cache mapping a source node-like to the {@link BaseNode} built for it. */
+  nodeMap: Map<object, BaseNode>;
+  /** Accumulator the produced edges are pushed into. */
+  out: Edge[];
+}
+
+function processExplicitEdge({
+  edge,
+  nodeMap,
+  out,
+}: ParseContext & {edge: Edge}): void {
   out.push(
     new Edge(
       getOrBuildNode(edge.fromNode, nodeMap),
@@ -142,12 +150,12 @@ function processExplicitEdge(
   );
 }
 
-function processRoutingMapEdge(
-  fromEl: ChainElement,
-  toEl: RoutingMap,
-  nodeMap: Map<object, BaseNode>,
-  out: Edge[],
-): void {
+function processRoutingMapEdge({
+  fromEl,
+  toEl,
+  nodeMap,
+  out,
+}: ParseContext & {fromEl: ChainElement; toEl: RoutingMap}): void {
   if (isPlainObject(fromEl)) {
     throw new Error(
       'Consecutive routing maps are not allowed in a chain. Split them into separate edge items.',
@@ -168,12 +176,12 @@ function processRoutingMapEdge(
   }
 }
 
-function processUnconditionalEdge(
-  fromEl: ChainElement,
-  toEl: ChainElement,
-  nodeMap: Map<object, BaseNode>,
-  out: Edge[],
-): void {
+function processUnconditionalEdge({
+  fromEl,
+  toEl,
+  nodeMap,
+  out,
+}: ParseContext & {fromEl: ChainElement; toEl: ChainElement}): void {
   for (const fromNode of flattenElement(fromEl)) {
     for (const toNode of flattenElement(toEl)) {
       out.push(
@@ -187,18 +195,18 @@ function processUnconditionalEdge(
   }
 }
 
-function processChain(
-  chain: ChainElement[],
-  nodeMap: Map<object, BaseNode>,
-  out: Edge[],
-): void {
+function processChain({
+  chain,
+  nodeMap,
+  out,
+}: ParseContext & {chain: ChainElement[]}): void {
   for (let i = 0; i < chain.length - 1; i++) {
     const fromEl = chain[i];
     const toEl = chain[i + 1];
     if (isPlainObject(toEl)) {
-      processRoutingMapEdge(fromEl, toEl as RoutingMap, nodeMap, out);
+      processRoutingMapEdge({fromEl, toEl: toEl as RoutingMap, nodeMap, out});
     } else {
-      processUnconditionalEdge(fromEl, toEl, nodeMap, out);
+      processUnconditionalEdge({fromEl, toEl, nodeMap, out});
     }
   }
 }
@@ -210,9 +218,9 @@ export function parseEdgeItems(edgeItems: EdgeItem[]): Edge[] {
 
   for (const item of edgeItems) {
     if (isEdge(item)) {
-      processExplicitEdge(item, nodeMap, out);
+      processExplicitEdge({edge: item, nodeMap, out});
     } else if (Array.isArray(item)) {
-      processChain(item, nodeMap, out);
+      processChain({chain: item, nodeMap, out});
     } else {
       throw new Error(`Invalid edge item type: ${typeof item}`);
     }

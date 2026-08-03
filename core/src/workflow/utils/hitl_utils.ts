@@ -149,16 +149,26 @@ export function createAuthRequestEvent(
   });
 }
 
+/** Parameters for {@link processAuthResume}. */
+export interface ProcessAuthResumeParams {
+  /** The resume response: a full {@link AuthConfig} or a plain value. */
+  responseData: unknown;
+  /** The auth config the credential is being stored for. */
+  authConfig: AuthConfig;
+  /** The session state to store the credential in. */
+  state: State;
+}
+
 /**
  * Stores credentials from an auth resume response into session state. Accepts a
  * full {@link AuthConfig} (web UI flow) or a plain value (e.g. an API key
  * string), mirroring `google/adk-python` `process_auth_resume`.
  */
-export async function processAuthResume(
-  responseData: unknown,
-  authConfig: AuthConfig,
-  state: State,
-): Promise<void> {
+export async function processAuthResume({
+  responseData,
+  authConfig,
+  state,
+}: ProcessAuthResumeParams): Promise<void> {
   let responseConfig: AuthConfig;
   if (isAuthConfigLike(responseData)) {
     responseConfig = {

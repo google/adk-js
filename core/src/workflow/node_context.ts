@@ -151,6 +151,6 @@ export class NodeContext {
         runId,
       });
     }
-    return executeChildNode(this, node, input, options);
+    return executeChildNode({parent: this, node, input, options});
   }
 }

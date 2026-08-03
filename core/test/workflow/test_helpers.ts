@@ -28,6 +28,7 @@ class TestAgent extends BaseAgent {
 /** Builds a throwaway InvocationContext for driving nodes directly in tests. */
 export function createIc(
   state: Record<string, unknown> = {},
+  abortSignal?: AbortSignal,
 ): InvocationContext {
   const session = createSession({
     id: 's1',
@@ -41,6 +42,7 @@ export function createIc(
     session,
     agent: new TestAgent({name: 'wf'}),
     pluginManager: new PluginManager(),
+    abortSignal,
   });
 }
 

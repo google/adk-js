@@ -38,6 +38,18 @@ export interface RunNodeOptions {
   overrideNodePath?: string;
 }
 
+/** Parameters for {@link executeChildNode}. */
+export interface ExecuteChildNodeParams {
+  /** The context requesting the child run. */
+  parent: NodeContext;
+  /** The node to execute. */
+  node: BaseNode;
+  /** The input passed to the node. */
+  input: unknown;
+  /** Options controlling this run. */
+  options?: RunNodeOptions;
+}
+
 /**
  * Executes a child node on behalf of `parent.runNode(...)`.
  *
@@ -54,12 +66,12 @@ export interface RunNodeOptions {
  * duplicate observable events across retries should emit only after their
  * fallible work has succeeded.
  */
-export async function executeChildNode(
-  parent: NodeContext,
-  node: BaseNode,
-  input: unknown,
-  options: RunNodeOptions = {},
-): Promise<NodeContext> {
+export async function executeChildNode({
+  parent,
+  node,
+  input,
+  options = {},
+}: ExecuteChildNodeParams): Promise<NodeContext> {
   const nodeName = options.nodeName ?? node.name;
   const runId = options.runId ?? nodeName;
   const nodePath =
@@ -102,33 +114,20 @@ export async function executeChildNode(
   });
 
   for (;;) {
-    // Reset per-attempt state so a retry starts clean. This covers everything a
-    // failed attempt can leave behind on the child context: its output/route,
-    // interrupt ids, AND its state writes. A node that calls `ctx.state.set(...)`
-    // and then throws would otherwise leave the failed attempt's writes in the
-    // delta, to be committed alongside the successful attempt's. `NodeContext`
-    // builds its `State` over this exact `stateDelta` object once (in its
-    // constructor), so we clear the keys in place rather than reassigning it.
-    //
-    // Note: events already pushed through the channel on a failed attempt are
-    // downstream and cannot be retracted, so a node that emits N events and
-    // then fails re-emits those N on retry (see the note on `executeChildNode`).
-    child.output = undefined;
-    child.route = undefined;
-    child.interruptIds = [];
-    for (const key of Object.keys(child.actions.stateDelta)) {
-      delete child.actions.stateDelta[key];
-    }
+    resetState(child);
     child.attemptCount = nodeState.attemptCount;
     try {
-      await runOnce(node, child, input, nodeName, branch, isolationScope);
+      await runOnce({node, child, input, nodeName, branch, isolationScope});
       break;
     } catch (err) {
       // Check retry eligibility with the attempt that just failed, compute its
       // backoff delay, THEN advance the counter (matches Python semantics).
       const retryConfig = node.preparedRetryConfig;
-      if (retryConfig && shouldRetryNode(err, retryConfig, nodeState)) {
-        const delaySeconds = getRetryDelaySeconds(retryConfig, nodeState);
+      if (
+        retryConfig &&
+        shouldRetryNode({error: err, retryConfig, nodeState})
+      ) {
+        const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
         nodeState.attemptCount += 1;
         await delay(delaySeconds * 1000, parent.invocationContext.abortSignal);
         continue;
@@ -146,6 +145,39 @@ export async function executeChildNode(
 }
 
 /**
+ * Reset per-attempt state so a retry starts clean. This covers everything a
+ * failed attempt can leave behind on the child context: its output/route,
+ * interrupt ids, AND its state writes. A node that calls `ctx.state.set(...)`
+ * and then throws would otherwise leave the failed attempt's writes in the
+ * delta, to be committed alongside the successful attempt's. `NodeContext`
+ * builds its `State` over this exact `stateDelta` object once (in its
+ * constructor), so we clear the keys in place rather than reassigning it.
+ *
+ * Note: events already pushed through the channel on a failed attempt are
+ * downstream and cannot be retracted, so a node that emits N events and
+ * then fails re-emits those N on retry (see the note on `executeChildNode`).
+ *
+ * @param childNodeContext Node context to reset
+ */
+function resetState(childNodeContext: NodeContext): void {
+  childNodeContext.output = undefined;
+  childNodeContext.route = undefined;
+  childNodeContext.interruptIds = [];
+  for (const key of Object.keys(childNodeContext.actions.stateDelta)) {
+    delete childNodeContext.actions.stateDelta[key];
+  }
+}
+
+interface RunOnceParams {
+  node: BaseNode;
+  child: NodeContext;
+  input: unknown;
+  nodeName: string;
+  branch: string | undefined;
+  isolationScope: string | undefined;
+}
+
+/**
  * Drives one attempt of `node.run()`, enriching and pushing each event and
  * tracking the child's output/route.
  *
@@ -157,16 +189,16 @@ export async function executeChildNode(
  * in-flight work. Mirrors the cancellation semantics of Python's
  * `asyncio.wait_for`.
  */
-async function runOnce(
-  node: BaseNode,
-  child: NodeContext,
-  input: unknown,
-  nodeName: string,
-  branch: string | undefined,
-  isolationScope: string | undefined,
-): Promise<void> {
+async function runOnce({
+  node,
+  child,
+  input,
+  nodeName,
+  branch,
+  isolationScope,
+}: RunOnceParams): Promise<void> {
   const consume = (event: Event): void => {
-    enrichEvent(event, child, nodeName, branch, isolationScope);
+    enrichEvent({event, child, nodeName, branch, isolationScope});
     if (event.output !== undefined) {
       child.output = event.output;
     }
@@ -241,6 +273,14 @@ async function runOnce(
   }
 }
 
+interface EnrichEventParams {
+  event: Event;
+  child: NodeContext;
+  nodeName: string;
+  branch: string | undefined;
+  isolationScope: string | undefined;
+}
+
 /**
  * Stamps engine-owned provenance onto an event.
  *
@@ -249,13 +289,13 @@ async function runOnce(
  * engine-owned and always set to the child's real node path — a node must not be
  * able to misreport where it ran.
  */
-function enrichEvent(
-  event: Event,
-  child: NodeContext,
-  nodeName: string,
-  branch: string | undefined,
-  isolationScope: string | undefined,
-): void {
+function enrichEvent({
+  event,
+  child,
+  nodeName,
+  branch,
+  isolationScope,
+}: EnrichEventParams): void {
   if (!event.author) {
     event.author = nodeName;
   }
