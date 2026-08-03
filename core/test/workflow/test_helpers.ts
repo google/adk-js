@@ -8,30 +8,38 @@ import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
+import {createSession} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
-import {BaseNode} from '../../src/workflow/base_node.js';
+import {BaseNode, BaseNodeConfig} from '../../src/workflow/base_node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
+
+/** A minimal concrete {@link BaseAgent} for driving nodes directly in tests. */
+class TestAgent extends BaseAgent {
+  // eslint-disable-next-line require-yield
+  protected async *runAsyncImpl(): AsyncGenerator<Event, void, void> {
+    return;
+  }
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
+    return;
+  }
+}
 
 /** Builds a throwaway InvocationContext for driving nodes directly in tests. */
 export function createIc(
   state: Record<string, unknown> = {},
 ): InvocationContext {
-  const session = {
+  const session = createSession({
     id: 's1',
     appName: 'app',
     userId: 'u',
-    events: [],
     state,
     lastUpdateTime: Date.now(),
-  } as unknown as Session;
+  });
   return new InvocationContext({
     invocationId: 'inv-1',
     session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
+    agent: new TestAgent({name: 'wf'}),
     pluginManager: new PluginManager(),
   });
 }
@@ -65,8 +73,11 @@ export async function driveNode(
 export class FnNode extends BaseNode {
   constructor(
     name: string,
-    private readonly fn: (ctx: NodeContext, input: unknown) => unknown,
-    config: {rerunOnResume?: boolean} = {},
+    private readonly fn: (
+      ctx: NodeContext,
+      input: unknown,
+    ) => unknown | Promise<unknown>,
+    config: Partial<Omit<BaseNodeConfig, 'name'>> = {},
   ) {
     super({name, ...config});
   }

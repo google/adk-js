@@ -5,7 +5,11 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {DEFAULT_ROUTE, Edge, Graph} from '../../src/workflow/graph.js';
+import {
+  createGraphFromEdgeItems,
+  DEFAULT_ROUTE,
+  Edge,
+} from '../../src/workflow/graph.js';
 import {parseEdgeItems} from '../../src/workflow/utils/graph_parser.js';
 import {FnNode} from './test_helpers.js';
 
@@ -88,7 +92,7 @@ describe('graph parser', () => {
   it('dedupes nodes by identity in the Graph', () => {
     const [a, b, c] = [n('a'), n('b'), n('c')];
     // `a` referenced in two edge items -> one node in the graph.
-    const graph = Graph.fromEdgeItems([
+    const graph = createGraphFromEdgeItems([
       ['START', a, b],
       [a, c],
     ]);

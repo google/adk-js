@@ -4,8 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {ZodType} from 'zod';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import type {SchemaLike} from '../utils/schema.js';
+
+/**
+ * A unique symbol branding {@link RequestInput} instances.
+ *
+ * {@link isRequestInput} matches on this brand rather than `instanceof` so a
+ * request built by another copy of adk-js in the same runtime is still
+ * recognised (an `instanceof` check fails across package copies). This matters
+ * because the guard gates the HITL interrupt path in `BaseNode.run`: a missed
+ * match would silently stringify the request into a text part instead of
+ * pausing the workflow. Mirrors the `Symbol.for('google.adk.*')` brands used
+ * across ADK.
+ */
+const REQUEST_INPUT_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.workflow.requestInput',
+);
 
 /** Parameters for constructing a {@link RequestInput}. */
 export interface RequestInputParams {
@@ -15,8 +30,8 @@ export interface RequestInputParams {
   payload?: unknown;
   /** A message to display to the user when requesting input. */
   message?: string;
-  /** The expected schema of the response. */
-  responseSchema?: ZodType;
+  /** The expected schema of the response (Zod v3/v4 or genai `Schema`). */
+  responseSchema?: SchemaLike;
 }
 
 /**
@@ -28,10 +43,13 @@ export interface RequestInputParams {
  * Ported from `google/adk-python` `events/request_input.py`.
  */
 export class RequestInput {
+  /** Brand identifying this object as a {@link RequestInput} (see {@link isRequestInput}). */
+  readonly [REQUEST_INPUT_SIGNATURE_SYMBOL] = true;
+
   readonly interruptId: string;
   readonly payload?: unknown;
   readonly message?: string;
-  readonly responseSchema?: ZodType;
+  readonly responseSchema?: SchemaLike;
 
   constructor(params: RequestInputParams = {}) {
     this.interruptId = params.interruptId ?? randomUUID();
@@ -41,7 +59,17 @@ export class RequestInput {
   }
 }
 
-/** Type guard for {@link RequestInput}. */
+/**
+ * Type guard for {@link RequestInput}.
+ *
+ * Matches on the {@link REQUEST_INPUT_SIGNATURE_SYMBOL} brand rather than
+ * `instanceof` so it stays correct across package copies (see the brand's doc).
+ */
 export function isRequestInput(value: unknown): value is RequestInput {
-  return value instanceof RequestInput;
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    REQUEST_INPUT_SIGNATURE_SYMBOL in value &&
+    value[REQUEST_INPUT_SIGNATURE_SYMBOL] === true
+  );
 }

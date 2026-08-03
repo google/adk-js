@@ -8,7 +8,27 @@
  * Errors raised by the workflow framework.
  *
  * Ported from `google/adk-python` `workflow/_errors.py`.
+ *
+ * Each error carries a `Symbol.for('google.adk.*')` brand and its type guard
+ * matches on that brand rather than `instanceof` — mirroring the signature
+ * symbols used across ADK (`isBaseLlm`, `isBaseAgent`, `isEvent`). Registered
+ * symbols are shared across realms, so the brand stays correct even when two
+ * copies of adk-js are loaded in one runtime (an `instanceof` check between
+ * them would fail).
  */
+
+const NODE_INTERRUPTED_ERROR_SYMBOL = Symbol.for(
+  'google.adk.workflow.nodeInterruptedError',
+);
+const NODE_TIMEOUT_ERROR_SYMBOL = Symbol.for(
+  'google.adk.workflow.nodeTimeoutError',
+);
+const DYNAMIC_NODE_FAIL_ERROR_SYMBOL = Symbol.for(
+  'google.adk.workflow.dynamicNodeFailError',
+);
+const INVOCATION_ABORTED_ERROR_SYMBOL = Symbol.for(
+  'google.adk.workflow.invocationAbortedError',
+);
 
 /**
  * Internal: raised when a dynamic node interrupts (HITL).
@@ -20,10 +40,14 @@
  * Internal to the framework — not part of the public API.
  */
 export class NodeInterruptedError extends Error {
+  /** Brand identifying this error (see {@link isNodeInterruptedError}). */
+  readonly [NODE_INTERRUPTED_ERROR_SYMBOL] = true;
+
   constructor(message = 'Node interrupted (awaiting resume input).') {
     super(message);
     this.name = 'NodeInterruptedError';
-    // Restore prototype chain for `instanceof` across transpilation targets.
+    // Restore prototype chain so `instanceof Error` stays true across
+    // transpilation targets.
     Object.setPrototypeOf(this, NodeInterruptedError.prototype);
   }
 }
@@ -31,12 +55,15 @@ export class NodeInterruptedError extends Error {
 /**
  * Type guard for {@link NodeInterruptedError}.
  *
- * Matches on `name` rather than `instanceof` so it stays correct when errors
- * cross a package boundary (two copies of adk-js in one runtime would fail an
- * `instanceof` check between them).
+ * Matches on the {@link NODE_INTERRUPTED_ERROR_SYMBOL} brand (see the file doc).
  */
 export function isNodeInterruptedError(e: unknown): e is NodeInterruptedError {
-  return e instanceof Error && e.name === 'NodeInterruptedError';
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    NODE_INTERRUPTED_ERROR_SYMBOL in e &&
+    e[NODE_INTERRUPTED_ERROR_SYMBOL] === true
+  );
 }
 
 /**
@@ -46,6 +73,9 @@ export function isNodeInterruptedError(e: unknown): e is NodeInterruptedError {
  * `retryConfig`.
  */
 export class NodeTimeoutError extends Error {
+  /** Brand identifying this error (see {@link isNodeTimeoutError}). */
+  readonly [NODE_TIMEOUT_ERROR_SYMBOL] = true;
+
   readonly nodeName: string;
   readonly timeout: number;
 
@@ -64,9 +94,14 @@ export class NodeTimeoutError extends Error {
   }
 }
 
-/** Type guard for {@link NodeTimeoutError} (name-based; see above). */
+/** Type guard for {@link NodeTimeoutError} (brand-based; see the file doc). */
 export function isNodeTimeoutError(e: unknown): e is NodeTimeoutError {
-  return e instanceof Error && e.name === 'NodeTimeoutError';
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    NODE_TIMEOUT_ERROR_SYMBOL in e &&
+    e[NODE_TIMEOUT_ERROR_SYMBOL] === true
+  );
 }
 
 /**
@@ -76,6 +111,9 @@ export function isNodeTimeoutError(e: unknown): e is NodeTimeoutError {
  * Internal to the framework — not part of the public API.
  */
 export class DynamicNodeFailError extends Error {
+  /** Brand identifying this error (see {@link isDynamicNodeFailError}). */
+  readonly [DYNAMIC_NODE_FAIL_ERROR_SYMBOL] = true;
+
   readonly error: Error;
   readonly errorNodePath: string;
 
@@ -93,7 +131,42 @@ export class DynamicNodeFailError extends Error {
   }
 }
 
-/** Type guard for {@link DynamicNodeFailError} (name-based; see above). */
+/** Type guard for {@link DynamicNodeFailError} (brand-based; see the file doc). */
 export function isDynamicNodeFailError(e: unknown): e is DynamicNodeFailError {
-  return e instanceof Error && e.name === 'DynamicNodeFailError';
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    DYNAMIC_NODE_FAIL_ERROR_SYMBOL in e &&
+    e[DYNAMIC_NODE_FAIL_ERROR_SYMBOL] === true
+  );
+}
+
+/**
+ * Raised when the invocation is aborted (e.g. its abort signal fires) while the
+ * engine is waiting — currently during a node's retry backoff delay.
+ *
+ * Distinct from a node's own failure so a caller can tell "the invocation was
+ * cancelled" apart from "the node threw".
+ */
+export class InvocationAbortedError extends Error {
+  /** Brand identifying this error (see {@link isInvocationAbortedError}). */
+  readonly [INVOCATION_ABORTED_ERROR_SYMBOL] = true;
+
+  constructor(message = 'Invocation aborted.') {
+    super(message);
+    this.name = 'InvocationAbortedError';
+    Object.setPrototypeOf(this, InvocationAbortedError.prototype);
+  }
+}
+
+/** Type guard for {@link InvocationAbortedError} (brand-based; see the file doc). */
+export function isInvocationAbortedError(
+  e: unknown,
+): e is InvocationAbortedError {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    INVOCATION_ABORTED_ERROR_SYMBOL in e &&
+    e[INVOCATION_ABORTED_ERROR_SYMBOL] === true
+  );
 }

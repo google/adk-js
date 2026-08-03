@@ -5,8 +5,8 @@
  */
 
 import {Content} from '@google/genai';
-import type {ZodType} from 'zod';
 import {createEvent, Event, isEvent} from '../events/event.js';
+import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import type {NodeContext} from './node_context.js';
 import {isRequestInput} from './request_input.js';
 import {
@@ -15,6 +15,17 @@ import {
   RetryConfig,
 } from './retry_config.js';
 import {createRequestInputEvent} from './utils/hitl_utils.js';
+
+/**
+ * A unique symbol branding {@link BaseNode} instances.
+ *
+ * Guards match on this brand rather than `instanceof` so a node stays
+ * recognisable when it crosses a package boundary (two copies of adk-js in one
+ * runtime would fail an `instanceof` check between them) — mirroring the
+ * `Symbol.for('google.adk.*')` brands used across ADK (`isBaseAgent`,
+ * `isBaseTool`, `isEvent`).
+ */
+const BASE_NODE_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.baseNode');
 
 /**
  * Configuration shared by all workflow nodes.
@@ -46,14 +57,14 @@ export interface BaseNodeConfig {
   /** Maximum time, in seconds, for this node to complete. */
   timeout?: number;
 
-  /** Optional zod schema validating the node input. */
-  inputSchema?: ZodType;
+  /** Optional schema validating the node input (Zod v3/v4 or genai `Schema`). */
+  inputSchema?: SchemaLike;
 
-  /** Optional zod schema validating the node output. */
-  outputSchema?: ZodType;
+  /** Optional schema validating the node output (Zod v3/v4 or genai `Schema`). */
+  outputSchema?: SchemaLike;
 
-  /** Optional zod schema validating relevant session state. */
-  stateSchema?: ZodType;
+  /** Optional schema validating relevant session state (Zod v3/v4 or genai `Schema`). */
+  stateSchema?: SchemaLike;
 }
 
 /**
@@ -65,6 +76,9 @@ export interface BaseNodeConfig {
  * {@link Event}s consumed by the engine.
  */
 export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
+  /** Brand identifying this object as a {@link BaseNode} (see {@link isBaseNode}). */
+  readonly [BASE_NODE_SIGNATURE_SYMBOL] = true;
+
   readonly name: string;
   readonly description: string;
   readonly rerunOnResume: boolean;
@@ -77,9 +91,9 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
    */
   readonly preparedRetryConfig?: PreparedRetryConfig;
   readonly timeout?: number;
-  readonly inputSchema?: ZodType;
-  readonly outputSchema?: ZodType;
-  readonly stateSchema?: ZodType;
+  readonly inputSchema?: SchemaLike;
+  readonly outputSchema?: SchemaLike;
+  readonly stateSchema?: SchemaLike;
 
   constructor(config: BaseNodeConfig) {
     if (
@@ -146,20 +160,28 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     }
   }
 
-  /** Validates node input against `inputSchema` (Content passes through). */
+  /**
+   * Validates node input against `inputSchema` (Content passes through). Only
+   * enforced for Zod schemas; a genai `Schema` is left unvalidated (see
+   * {@link parseWithSchema}).
+   */
   protected validateInput(input: TInput): TInput {
-    if (!this.inputSchema || isContent(input)) {
+    if (isContent(input)) {
       return input;
     }
-    return this.inputSchema.parse(input) as TInput;
+    return parseWithSchema(this.inputSchema, input);
   }
 
-  /** Validates node output against `outputSchema` (Content passes through). */
+  /**
+   * Validates node output against `outputSchema` (Content passes through). Only
+   * enforced for Zod schemas; a genai `Schema` is left unvalidated (see
+   * {@link parseWithSchema}).
+   */
   protected validateOutput(output: unknown): unknown {
-    if (!this.outputSchema || isContent(output)) {
+    if (isContent(output)) {
       return output;
     }
-    return this.outputSchema.parse(output);
+    return parseWithSchema(this.outputSchema, output);
   }
 
   /**
@@ -186,6 +208,21 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
       output,
     });
   }
+}
+
+/**
+ * Type guard for {@link BaseNode}.
+ *
+ * Matches on the {@link BASE_NODE_SIGNATURE_SYMBOL} brand rather than
+ * `instanceof` so it stays correct across package copies (see the brand's doc).
+ */
+export function isBaseNode(value: unknown): value is BaseNode {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    BASE_NODE_SIGNATURE_SYMBOL in value &&
+    value[BASE_NODE_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /** Returns whether a value looks like a genai `Content` object. */
@@ -221,15 +258,21 @@ export function toContent(val: unknown): Content | undefined {
   if (val === null || val === undefined) {
     return undefined;
   }
-  if (typeof val === 'object' && 'role' in val && 'parts' in val) {
-    return val as Content;
+  // Use the same predicate as validateOutput so a value is never treated as
+  // `Content` by one and re-encoded as text by the other.
+  if (isContent(val)) {
+    return val;
   }
   if (typeof val === 'string') {
     return {role: 'model', parts: [{text: val}]};
   }
   try {
-    return {role: 'model', parts: [{text: JSON.stringify(val)}]};
+    // JSON.stringify returns `undefined` (rather than throwing) for a function
+    // or a symbol, so fall back to String() in that case too.
+    const json = JSON.stringify(val);
+    return {role: 'model', parts: [{text: json ?? String(val)}]};
   } catch {
+    // Reached for values JSON cannot serialize at all (e.g. circular refs).
     return {role: 'model', parts: [{text: String(val)}]};
   }
 }

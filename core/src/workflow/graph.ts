@@ -10,6 +10,16 @@ import {BaseNode} from './base_node.js';
 import {parseEdgeItems} from './utils/graph_parser.js';
 import {validateGraph} from './utils/graph_validation.js';
 
+/**
+ * A unique symbol branding {@link Edge} instances.
+ *
+ * {@link isEdge} matches on this brand rather than `instanceof` so an edge built
+ * by another copy of adk-js in the same runtime is still recognised (an
+ * `instanceof` check fails across package copies) — mirroring the
+ * `Symbol.for('google.adk.*')` brands used across ADK.
+ */
+const EDGE_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.edge');
+
 /** Valid routing values used in conditional graph edges. */
 export type RouteValue = boolean | number | string;
 
@@ -35,6 +45,17 @@ export type NodeLike =
  * @example
  *   {question: answerNode, statement: commentNode}
  *   {retry: [nodeA, nodeB]}   // fan-out: both triggered
+ *
+ * @remarks
+ * JavaScript object keys are always strings, so a numeric key (`{2: node}`) and
+ * a boolean key (`{true: node}`) are reconstructed to their typed
+ * {@link RouteValue} (`2`, `true`) when parsed — mirroring Python dict keys.
+ * Because of this, routes are matched **by string value**
+ * ({@link Graph.getNextPendingNodes} compares `String(route)` on both sides), so
+ * a node emitting `2` and one emitting `'2'` both fire a `{2: node}` edge. The
+ * flip side is that a numeric/boolean-looking route and its string spelling
+ * cannot be distinguished in a routing map; use distinct, non-ambiguous route
+ * keys when that matters.
  */
 export type RoutingMap = Record<
   string | number,
@@ -57,6 +78,9 @@ export type EdgeItem = Edge | ChainElement[];
  * Mirrors `google/adk-python` `workflow/_graph.py::Edge`.
  */
 export class Edge {
+  /** Brand identifying this object as an {@link Edge} (see {@link isEdge}). */
+  readonly [EDGE_SIGNATURE_SYMBOL] = true;
+
   constructor(
     readonly fromNode: BaseNode,
     readonly toNode: BaseNode,
@@ -67,6 +91,21 @@ export class Edge {
      */
     readonly route: RouteValue | RouteValue[] | null = null,
   ) {}
+}
+
+/**
+ * Type guard for {@link Edge}.
+ *
+ * Matches on the {@link EDGE_SIGNATURE_SYMBOL} brand rather than `instanceof` so
+ * it stays correct across package copies (see the brand's doc).
+ */
+export function isEdge(value: unknown): value is Edge {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    EDGE_SIGNATURE_SYMBOL in value &&
+    value[EDGE_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
@@ -93,11 +132,6 @@ export class Graph {
       }
     }
     this.nodes = nodes;
-  }
-
-  /** Builds and returns a graph from a list of edge items. */
-  static fromEdgeItems(edgeItems: EdgeItem[]): Graph {
-    return new Graph(parseEdgeItems(edgeItems));
   }
 
   /** Terminal node names (no outgoing edges); populated by {@link validate}. */
@@ -132,15 +166,20 @@ export class Graph {
         continue;
       }
 
-      const edgeRoutes = new Set<RouteValue>(
-        Array.isArray(edge.route) ? edge.route : [edge.route],
+      // Match by string value: a JS routing-map key is always a string, so
+      // `{2: n}`/`{'2': n}` are indistinguishable and are both normalized to the
+      // number 2 by the parser. Comparing `String(...)` on both sides keeps a
+      // node that emits `'2'` (or `'true'`) from silently missing its edge. See
+      // the RoutingMap doc comment.
+      const edgeRoutes = new Set<string>(
+        (Array.isArray(edge.route) ? edge.route : [edge.route]).map(String),
       );
 
       let edgeMatched = false;
       if (Array.isArray(routesToMatch)) {
-        edgeMatched = routesToMatch.some((r) => edgeRoutes.has(r));
+        edgeMatched = routesToMatch.some((r) => edgeRoutes.has(String(r)));
       } else if (routesToMatch !== null && routesToMatch !== undefined) {
-        edgeMatched = edgeRoutes.has(routesToMatch);
+        edgeMatched = edgeRoutes.has(String(routesToMatch));
       }
 
       if (edgeMatched) {
@@ -160,4 +199,19 @@ export class Graph {
   validate(): void {
     this._terminalNodeNames = validateGraph(this.nodes, this.edges);
   }
+}
+
+/**
+ * Builds, validates, and returns a {@link Graph} from a list of edge items.
+ *
+ * Validation runs here (not opt-in) so structural problems a graph can only
+ * have at build time — unreachable nodes, duplicate names/edges, routed edges
+ * from START, unconditional cycles — fail loudly at construction rather than
+ * surfacing as silent mis-routing at run time. It also populates the graph's
+ * {@link Graph.terminalNodeNames}, which is otherwise empty.
+ */
+export function createGraphFromEdgeItems(edgeItems: EdgeItem[]): Graph {
+  const graph = new Graph(parseEdgeItems(edgeItems));
+  graph.validate();
+  return graph;
 }

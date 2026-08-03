@@ -4,14 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  InvocationContext,
-  InvocationContextParams,
-} from '../agents/invocation_context.js';
+import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
-import {NodeTimeoutError} from './errors.js';
+import {InvocationAbortedError, NodeTimeoutError} from './errors.js';
 import {NodeContext} from './node_context.js';
 import {createNodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -48,6 +45,14 @@ export interface RunNodeOptions {
  * drive `node.run()`, enrich each emitted event (author, node path, branch,
  * isolation scope), track the child's `output`/`route`, apply the per-node
  * `timeout`, and retry on failure per `retryConfig`. Returns the child context.
+ *
+ * Retry semantics: each attempt starts with the child's per-attempt state
+ * cleared (output, route, interrupt ids, and `actions.stateDelta`). Events are
+ * the exception — they stream out through the shared channel as they are
+ * produced and cannot be retracted, so a node that emits some events and then
+ * fails will re-emit them when the attempt is retried. Nodes that must not
+ * duplicate observable events across retries should emit only after their
+ * fallible work has succeeded.
  */
 export async function executeChildNode(
   parent: NodeContext,
@@ -97,10 +102,23 @@ export async function executeChildNode(
   });
 
   for (;;) {
-    // Reset per-attempt output so a retry starts clean.
+    // Reset per-attempt state so a retry starts clean. This covers everything a
+    // failed attempt can leave behind on the child context: its output/route,
+    // interrupt ids, AND its state writes. A node that calls `ctx.state.set(...)`
+    // and then throws would otherwise leave the failed attempt's writes in the
+    // delta, to be committed alongside the successful attempt's. `NodeContext`
+    // builds its `State` over this exact `stateDelta` object once (in its
+    // constructor), so we clear the keys in place rather than reassigning it.
+    //
+    // Note: events already pushed through the channel on a failed attempt are
+    // downstream and cannot be retracted, so a node that emits N events and
+    // then fails re-emits those N on retry (see the note on `executeChildNode`).
     child.output = undefined;
     child.route = undefined;
     child.interruptIds = [];
+    for (const key of Object.keys(child.actions.stateDelta)) {
+      delete child.actions.stateDelta[key];
+    }
     child.attemptCount = nodeState.attemptCount;
     try {
       await runOnce(node, child, input, nodeName, branch, isolationScope);
@@ -224,8 +242,12 @@ async function runOnce(
 }
 
 /**
- * Stamps engine-owned provenance onto an event without clobbering values the
- * node explicitly set.
+ * Stamps engine-owned provenance onto an event.
+ *
+ * `author`, `branch` and `isolationScope` are only filled in when the node left
+ * them unset, so a node can override them. `path` is different: it is
+ * engine-owned and always set to the child's real node path — a node must not be
+ * able to misreport where it ran.
  */
 function enrichEvent(
   event: Event,
@@ -237,6 +259,7 @@ function enrichEvent(
   if (!event.author) {
     event.author = nodeName;
   }
+  // Engine-owned: always stamp the true node path (see doc above).
   event.nodeInfo = {...(event.nodeInfo ?? {}), path: child.nodePath};
   if (branch !== undefined && event.branch === undefined) {
     event.branch = branch;
@@ -247,26 +270,34 @@ function enrichEvent(
 }
 
 /**
- * Creates a shallow child InvocationContext with a different branch, preserving
- * the shared invocation cost manager and all services/session.
+ * Creates a child InvocationContext with a different branch, preserving the
+ * shared invocation cost manager and all services/session.
+ *
+ * Passes the parent context straight to the constructor (the same pattern
+ * `ParallelAgent.createBranchCtxForSubAgent` uses) instead of spreading it
+ * through a double cast: spreading copies only own enumerable properties, which
+ * silently drops anything the class exposes via a getter or derives in its
+ * constructor. The constructor already carries every field — including the
+ * private cost manager — across for us.
  */
 function withBranch(
   ic: InvocationContext,
   branch: string | undefined,
 ): InvocationContext {
-  return new InvocationContext({
-    ...(ic as unknown as InvocationContextParams),
-    branch,
-  });
+  const child = new InvocationContext(ic);
+  child.branch = branch;
+  return child;
 }
 
 /**
- * Promise-based delay that rejects early if the abort signal fires.
+ * Promise-based delay that rejects early (with {@link InvocationAbortedError})
+ * if the abort signal fires — so an abort during retry backoff is
+ * distinguishable from a node failure.
  */
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new Error('Aborted'));
+      reject(new InvocationAbortedError('Invocation aborted during retry.'));
       return;
     }
     const timer = setTimeout(() => {
@@ -275,7 +306,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new Error('Aborted'));
+      reject(new InvocationAbortedError('Invocation aborted during retry.'));
     };
     signal?.addEventListener('abort', onAbort, {once: true});
   });

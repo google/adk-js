@@ -157,7 +157,7 @@ function detectUnconditionalCycles(
         throw new Error(
           `Graph validation failed. Unconditional cycle detected: ${cycle.join(
             ' -> ',
-          )}. Cycles must include at least one conditional (routed) edge to avoid infinite loops.`,
+          )}. An unconditional cycle has no exit and would loop forever; break it with at least one conditional (routed) edge so a node can leave the cycle by not emitting that route. (A routed cycle can still loop if a node keeps emitting the route — bounding that is the node's responsibility, not this validator's.)`,
         );
       }
       if (!done.has(neighbor)) {

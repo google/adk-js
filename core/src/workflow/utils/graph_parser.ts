@@ -15,16 +15,12 @@ import {
   ChainElement,
   Edge,
   EdgeItem,
+  isEdge,
   NodeLike,
   RouteValue,
   RoutingMap,
 } from '../graph.js';
 import {buildNode, isNodeLike, isPlainObject} from './workflow_graph_utils.js';
-
-function isRouteValue(value: unknown): value is RouteValue {
-  const t = typeof value;
-  return t === 'string' || t === 'number' || t === 'boolean';
-}
 
 /**
  * Normalizes a routing-map key back to its typed {@link RouteValue}. JS object
@@ -74,9 +70,9 @@ function expandRoutingMap(
         `Invalid routing map value for route ${String(routeKey)}.`,
       );
     }
-    if (!isRouteValue(normalizedKey)) {
-      throw new Error(`Invalid routing map key: ${String(routeKey)}.`);
-    }
+    // `normalizeRouteKey` returns `string | number | boolean` by construction,
+    // which is exactly `RouteValue`, so no further validation of the key is
+    // needed here.
     expanded.push([
       fromElement,
       target as NodeLike | readonly NodeLike[],
@@ -213,7 +209,7 @@ export function parseEdgeItems(edgeItems: EdgeItem[]): Edge[] {
   const out: Edge[] = [];
 
   for (const item of edgeItems) {
-    if (item instanceof Edge) {
+    if (isEdge(item)) {
       processExplicitEdge(item, nodeMap, out);
     } else if (Array.isArray(item)) {
       processChain(item, nodeMap, out);

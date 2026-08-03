@@ -12,7 +12,6 @@
  */
 
 import {Part} from '@google/genai';
-import {z} from 'zod';
 import {
   AuthCredential,
   AuthCredentialTypes,
@@ -21,6 +20,7 @@ import {AuthHandler} from '../../auth/auth_handler.js';
 import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event} from '../../events/event.js';
 import {State} from '../../sessions/state.js';
+import {toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
 /** Function-call name marking a request-for-input interrupt. */
@@ -40,7 +40,7 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     payload: requestInput.payload ?? null,
     message: requestInput.message ?? null,
     responseSchema: requestInput.responseSchema
-      ? z.toJSONSchema(requestInput.responseSchema)
+      ? toJsonSchema(requestInput.responseSchema)
       : null,
   };
 

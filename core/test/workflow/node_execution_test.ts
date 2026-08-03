@@ -4,97 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {z as z3} from 'zod/v3';
+import {z as z4} from 'zod/v4';
 import {createEvent, Event} from '../../src/events/event.js';
-import {PluginManager} from '../../src/plugins/plugin_manager.js';
-import {Session} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {BaseNode} from '../../src/workflow/base_node.js';
-import {NodeTimeoutError} from '../../src/workflow/errors.js';
+import {isNodeTimeoutError} from '../../src/workflow/errors.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
-
-// --- Test harness ---------------------------------------------------------
-
-function createIc(params?: Partial<InvocationContext>): InvocationContext {
-  const session: Session = {
-    id: 'session-123',
-    appName: 'test-app',
-    userId: 'test-user',
-    events: [],
-    state: {},
-    lastUpdateTime: Date.now(),
-  } as unknown as Session;
-
-  return new InvocationContext({
-    invocationId: 'inv-1',
-    session,
-    agent: {
-      name: 'wf',
-      runAsync: async function* () {},
-    } as unknown as BaseAgent,
-    pluginManager: new PluginManager(),
-    ...params,
-  });
-}
-
-/**
- * Drives a root node the way the Phase 2 Workflow loop will: orchestration
- * pushes events into the channel concurrently while the consumer drains it.
- * This exercises the real push/pull bridge, not a buffer-then-read shortcut.
- */
-async function driveRoot(
-  ic: InvocationContext,
-  node: BaseNode,
-  input?: unknown,
-): Promise<{events: Event[]; output: unknown; route: unknown}> {
-  const channel = new AsyncQueue<Event>();
-  const root = new NodeContext({
-    invocationContext: ic,
-    channel,
-    nodePath: '',
-    runId: 'root',
-  });
-
-  const events: Event[] = [];
-  const orchestration = root.runNode(node, input, {useAsOutput: true}).then(
-    () => channel.close(),
-    (err) => channel.fail(err),
-  );
-
-  for await (const ev of channel) {
-    events.push(ev);
-  }
-  await orchestration;
-  return {events, output: root.output, route: root.route};
-}
-
-// A minimal node that yields whatever its function returns (value | Event).
-class FnNode extends BaseNode {
-  constructor(
-    name: string,
-    private readonly fn: (
-      ctx: NodeContext,
-      input: unknown,
-    ) => unknown | Promise<unknown>,
-    config?: Partial<
-      Omit<import('../../src/workflow/base_node.js').BaseNodeConfig, 'name'>
-    >,
-  ) {
-    super({name, ...config});
-  }
-  protected async *runImpl(ctx: NodeContext, input: unknown) {
-    yield await this.fn(ctx, input);
-  }
-}
+import {createIc, driveNode, FnNode} from './test_helpers.js';
 
 // --- Tests ----------------------------------------------------------------
 
 describe('Phase 1 — node execution & the push/pull bridge', () => {
   it('streams a node event and returns its output', async () => {
     const node = new FnNode('greet', (_ctx, input) => `hello ${input}`);
-    const {events, output} = await driveRoot(createIc(), node, 'world');
+    const {events, output} = await driveNode(node, 'world');
 
     expect(output).toBe('hello world');
     expect(events).toHaveLength(1);
@@ -107,12 +33,12 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     const node = new FnNode('router', () =>
       createEvent({route: 'question', output: 'q'}),
     );
-    const {events, output, route} = await driveRoot(createIc(), node, 'in');
+    const {events, output, ctx} = await driveNode(node, 'in');
 
     expect(events).toHaveLength(1);
     expect(events[0].route).toBe('question');
     expect(output).toBe('q');
-    expect(route).toBe('question');
+    expect(ctx.route).toBe('question');
     // Engine stamps provenance without clobbering.
     expect(events[0].nodeInfo?.path).toBe('router');
     expect(events[0].author).toBe('router');
@@ -125,7 +51,7 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       return `outer[${child.output}]`;
     });
 
-    const {events, output} = await driveRoot(createIc(), outer, 'x');
+    const {events, output} = await driveNode(outer, 'x');
 
     expect(output).toBe('outer[inner(x)]');
     // Both the child and parent events streamed out, child first.
@@ -151,7 +77,7 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     });
 
     // outer runs at the root (branch undefined); mid -> 'mid'; inner -> 'mid.inner'.
-    await driveRoot(createIc(), outer, 'x');
+    await driveNode(outer, 'x');
     expect(innerBranch).toBe('mid.inner');
   });
 
@@ -193,7 +119,7 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       },
     );
 
-    const {output} = await driveRoot(createIc(), flaky, 'x');
+    const {output} = await driveNode(flaky, 'x');
     expect(attempts).toBe(3);
     expect(output).toBe('ok-after-retry');
   });
@@ -209,10 +135,39 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       {retryConfig: {maxAttempts: 2, initialDelay: 0.001, jitter: 0}},
     );
 
-    await expect(driveRoot(createIc(), doomed, 'x')).rejects.toThrow(
-      'always fails',
-    );
+    await expect(driveNode(doomed, 'x')).rejects.toThrow('always fails');
     expect(attempts).toBe(2);
+  });
+
+  it('clears a failed attempt state writes before retrying', async () => {
+    let attempts = 0;
+    const node = new FnNode(
+      'writer',
+      (ctx) => {
+        attempts++;
+        // Each attempt writes a per-attempt key, then the first attempt fails.
+        ctx.state.set(`attempt-${attempts}`, attempts);
+        if (attempts < 2) {
+          throw new Error('transient');
+        }
+        return 'ok';
+      },
+      {retryConfig: {maxAttempts: 2, initialDelay: 0.001, jitter: 0}},
+    );
+
+    const channel = new AsyncQueue<Event>();
+    const root = new NodeContext({
+      invocationContext: createIc(),
+      channel,
+      nodePath: '',
+      runId: 'root',
+    });
+    const child = await root.runNode(node, 'x', {useAsOutput: true});
+
+    expect(child.output).toBe('ok');
+    // The failed first attempt's write must not survive into the committed
+    // delta — only the successful attempt's write remains.
+    expect(child.actions.stateDelta).toEqual({'attempt-2': 2});
   });
 
   it('enforces a per-node timeout with NodeTimeoutError', async () => {
@@ -222,9 +177,11 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       {timeout: 0.02},
     );
 
-    await expect(driveRoot(createIc(), slow, 'x')).rejects.toBeInstanceOf(
-      NodeTimeoutError,
+    const err = await driveNode(slow, 'x').then(
+      () => undefined,
+      (e) => e,
     );
+    expect(isNodeTimeoutError(err)).toBe(true);
   });
 
   it('cancels a timed-out node: aborts the signal and drops post-deadline events', async () => {
@@ -280,9 +237,54 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     }
     await orchestration.catch(() => {});
 
-    expect(thrown).toBeInstanceOf(NodeTimeoutError);
+    expect(isNodeTimeoutError(thrown)).toBe(true);
     expect(seen).toContain('early');
     expect(seen).not.toContain('late'); // produced after the deadline -> dropped
     expect(captured?.aborted).toBe(true); // signal fired for cooperative cancel
+  });
+});
+
+describe('output schema validation (Zod v3 / Zod v4 / genai Schema)', () => {
+  it('validates output against a Zod v4 schema', async () => {
+    const node = new FnNode('n', () => ({count: 1}), {
+      outputSchema: z4.object({count: z4.number()}),
+    });
+    const {output} = await driveNode(node);
+    expect(output).toEqual({count: 1});
+  });
+
+  it('rejects output that fails a Zod v4 schema', async () => {
+    const node = new FnNode('n', () => ({count: 'nope'}), {
+      outputSchema: z4.object({count: z4.number()}),
+    });
+    await expect(driveNode(node)).rejects.toThrow();
+  });
+
+  it('validates output against a Zod v3 schema', async () => {
+    const node = new FnNode('n', () => ({count: 2}), {
+      outputSchema: z3.object({count: z3.number()}),
+    });
+    const {output} = await driveNode(node);
+    expect(output).toEqual({count: 2});
+  });
+
+  it('rejects output that fails a Zod v3 schema', async () => {
+    const node = new FnNode('n', () => ({count: 'nope'}), {
+      outputSchema: z3.object({count: z3.number()}),
+    });
+    await expect(driveNode(node)).rejects.toThrow();
+  });
+
+  it('accepts a genai Schema and leaves the value unvalidated', async () => {
+    const node = new FnNode('n', () => ({anything: 'goes'}), {
+      outputSchema: {
+        type: Type.OBJECT,
+        properties: {count: {type: Type.NUMBER}},
+      },
+    });
+    // A genai Schema is a declaration, not a runtime validator, so the value
+    // passes through untouched even though it does not match the schema.
+    const {output} = await driveNode(node);
+    expect(output).toEqual({anything: 'goes'});
   });
 });

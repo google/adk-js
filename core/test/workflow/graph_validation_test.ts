@@ -6,16 +6,19 @@
 
 import {describe, expect, it} from 'vitest';
 import {START} from '../../src/workflow/base_node.js';
-import {DEFAULT_ROUTE, Edge, Graph} from '../../src/workflow/graph.js';
+import {
+  createGraphFromEdgeItems,
+  DEFAULT_ROUTE,
+  Edge,
+  Graph,
+} from '../../src/workflow/graph.js';
 import {FnNode} from './test_helpers.js';
 
 const n = (name: string) => new FnNode(name, (_c, i) => i);
 
-/** Builds and validates a graph from edge items, returning the graph. */
-function build(edges: Parameters<typeof Graph.fromEdgeItems>[0]): Graph {
-  const graph = Graph.fromEdgeItems(edges);
-  graph.validate();
-  return graph;
+/** Builds a graph from edge items (validation runs inside the factory). */
+function build(edges: Parameters<typeof createGraphFromEdgeItems>[0]): Graph {
+  return createGraphFromEdgeItems(edges);
 }
 
 describe('graph validation', () => {
