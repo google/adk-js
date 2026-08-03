@@ -13,7 +13,6 @@ import {
   hasAuthCredential,
   processAuthResume,
 } from '../utils/hitl_utils.js';
-import {registerNodeBuilder} from '../utils/workflow_graph_utils.js';
 
 /**
  * A value a {@link FunctionNodeHandler} may return or yield.
@@ -246,23 +245,5 @@ function isSyncGenerator(value: unknown): value is Generator<unknown> {
   );
 }
 
-/**
- * Registers the builder that turns a plain function into a {@link FunctionNode},
- * so `node(fn)` and graph parsing work without the engine statically importing
- * this module (importing it — directly or via the workflow barrel — is what
- * makes the builder available).
- */
-registerNodeBuilder({
-  id: 'function',
-  match: (value): boolean => typeof value === 'function',
-  build: (value, options) => {
-    const handler = value as FunctionNodeHandler;
-    const name = options.name ?? (handler as {name?: string}).name;
-    if (!name) {
-      throw new Error(
-        'node(): the wrapped function has no name; pass {name} explicitly.',
-      );
-    }
-    return new FunctionNode(name, handler, options);
-  },
-});
+// The builder that turns a plain function into a FunctionNode is wired into the
+// static NODE_BUILDERS list in ../node_builders.ts.

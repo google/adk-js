@@ -7,10 +7,9 @@
 import type {FunctionCall} from '@google/genai';
 import {handleFunctionCallList} from '../../agents/functions.js';
 import {Event, getFunctionResponses} from '../../events/event.js';
-import {BaseTool, isBaseTool} from '../../tools/base_tool.js';
+import {BaseTool} from '../../tools/base_tool.js';
 import {BaseNode, BaseNodeConfig, isContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
-import {registerNodeBuilder} from '../utils/workflow_graph_utils.js';
 
 /** Options for a {@link ToolNode}. */
 export interface ToolNodeConfig extends Partial<Omit<BaseNodeConfig, 'name'>> {
@@ -133,13 +132,5 @@ function extractText(content: {parts?: Array<{text?: string}>}): string {
   return (content.parts ?? []).map((p) => p.text ?? '').join('');
 }
 
-/**
- * Registers the builder that turns a {@link BaseTool} into a {@link ToolNode},
- * so `node(tool)` and graph parsing work without the engine statically
- * importing this module.
- */
-registerNodeBuilder({
-  id: 'tool',
-  match: (value): boolean => isBaseTool(value),
-  build: (value, options) => new ToolNode(value as BaseTool, options),
-});
+// The builder that turns a BaseTool into a ToolNode is wired into the static
+// NODE_BUILDERS list in ../node_builders.ts.
