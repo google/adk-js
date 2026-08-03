@@ -11,7 +11,7 @@ import {redactUriPassword} from '../../src/utils/redact_uri.js';
 
 describe('redactUriPassword', () => {
   it('masks the password while keeping the rest of the URI', () => {
-    expect(redactUriPassword('postgres://user:s3cr3t@db.host:5432/mydb')).toBe(
+    expect(redactUriPassword('postgres://user:pass@db.host:5432/mydb')).toBe(
       'postgres://user:***@db.host:5432/mydb',
     );
   });
