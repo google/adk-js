@@ -13,7 +13,7 @@ import type {
 } from './utils/workflow_graph_utils.js';
 
 /** Builds a {@link FunctionNode} from a plain function. */
-const functionBuilder: NodeBuilder = {
+const FUNCTION_BUILDER: NodeBuilder = {
   match: (value) => typeof value === 'function',
   build: (value, options) => {
     const handler = value as FunctionNodeHandler;
@@ -28,7 +28,7 @@ const functionBuilder: NodeBuilder = {
 };
 
 /** Builds a {@link ToolNode} from a {@link BaseTool}. */
-const toolBuilder: NodeBuilder = {
+const TOOL_BUILDER: NodeBuilder = {
   match: (value) => isBaseTool(value),
   build: (value, options) => new ToolNode(value as BaseTool, options),
 };
@@ -43,8 +43,8 @@ const toolBuilder: NodeBuilder = {
  * precedence (first match wins). Each node-type part adds its builder here.
  */
 export const NODE_BUILDERS: readonly NodeBuilder[] = [
-  functionBuilder,
-  toolBuilder,
+  FUNCTION_BUILDER,
+  TOOL_BUILDER,
 ];
 
 /**
