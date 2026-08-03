@@ -6,36 +6,50 @@
 
 import {BaseNode} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
-import {RetryConfig} from '../retry_config.js';
+
+/**
+ * Default concurrency when `maxParallelWorkers` is not set. Bounded so a
+ * data-driven list length can't fan out into an unbounded burst of concurrent
+ * inner runs (a rate-limit / cost hazard when the inner node is an LLM or a
+ * remote tool). Pass `Infinity` for explicitly unbounded concurrency.
+ */
+const DEFAULT_MAX_PARALLEL_WORKERS = 8;
 
 /** Options for a {@link ParallelWorker}. */
 export interface ParallelWorkerConfig {
-  /** Maximum number of items processed concurrently. `undefined` = unlimited. */
+  /**
+   * Maximum number of items processed concurrently. Defaults to
+   * {@link DEFAULT_MAX_PARALLEL_WORKERS}; pass `Infinity` for unbounded.
+   */
   maxParallelWorkers?: number;
-  retryConfig?: RetryConfig;
-  timeout?: number;
 }
 
 /**
- * A node that runs a wrapped node in parallel for each item of a list input,
- * preserving order, bounded by `maxParallelWorkers`, cancelling on first error.
+ * A node that runs a wrapped node once per item of a list input, preserving
+ * order, bounded by `maxParallelWorkers`, and stopping on the first error.
  *
  * Ported from `google/adk-python` `workflow/_parallel_worker.py`. A non-list
  * input is treated as a single-element list. Each item runs via
  * `ctx.runNode(inner, item, {useSubBranch: true})`; the node's output is the
  * ordered list of the children's outputs.
+ *
+ * Notes:
+ * - **retry/timeout live on the inner node.** `retryConfig`/`timeout` passed to
+ *   `buildNode` apply to the wrapped node (per item); the ParallelWorker itself
+ *   carries neither, so the two levels don't compose.
+ * - **All-or-nothing.** If any item throws, the first error is rethrown and the
+ *   already-computed sibling outputs are discarded. Make individual items
+ *   failure-tolerant if partial results matter.
+ * - **Cancellation stops scheduling only.** On abort/timeout the loop stops
+ *   claiming new items, but items already in flight run to completion —
+ *   `ctx.runNode` has no way to forward a signal into a child run.
  */
 export class ParallelWorker extends BaseNode {
   readonly maxParallelWorkers?: number;
   private readonly inner: BaseNode;
 
   constructor(inner: BaseNode, config: ParallelWorkerConfig = {}) {
-    super({
-      name: inner.name,
-      rerunOnResume: true,
-      retryConfig: config.retryConfig,
-      timeout: config.timeout,
-    });
+    super({name: inner.name, rerunOnResume: true});
     if (
       config.maxParallelWorkers !== undefined &&
       config.maxParallelWorkers < 1
@@ -58,16 +72,26 @@ export class ParallelWorker extends BaseNode {
 
     const results = new Array<unknown>(items.length);
     const poolSize = Math.min(
-      this.maxParallelWorkers ?? items.length,
+      this.maxParallelWorkers ?? DEFAULT_MAX_PARALLEL_WORKERS,
       items.length,
     );
 
     let nextIndex = 0;
+    // Separate flag from `firstError` so an item that rejects with `undefined`
+    // (a bare `Promise.reject()`) still counts as a failure instead of leaving a
+    // silent hole in `results` and resolving successfully.
+    let failed = false;
     let firstError: unknown;
+
+    // Populated only when the ParallelWorker itself declares a timeout; on a
+    // plain invocation abort the invocation-level signal is the one that fires.
+    const isAborted = (): boolean =>
+      ctx.abortSignal?.aborted === true ||
+      ctx.invocationContext.abortSignal?.aborted === true;
 
     const worker = async (): Promise<void> => {
       for (;;) {
-        if (firstError !== undefined) {
+        if (failed || isAborted()) {
           return;
         }
         const i = nextIndex++;
@@ -75,17 +99,20 @@ export class ParallelWorker extends BaseNode {
           return;
         }
         try {
-          // Key each child run by its item index (not call order) so the
-          // run id -> item mapping is deterministic. On resume this lets each
-          // item fast-forward from its own cached run rather than being matched
-          // to a differently-ordered run id.
+          // Key each child by its item index (not completion order): the runId
+          // makes the run deterministic, and the distinct node path makes each
+          // child's events attributable (they'd otherwise all share the inner
+          // node's path). The scheduler uses the same runId to fast-forward each
+          // item on resume (lands with the scheduler in a later part).
           const child = await ctx.runNode(this.inner, items[i], {
             useSubBranch: true,
             runId: String(i),
+            overrideNodePath: `${ctx.nodePath}.${this.inner.name}@${i}`,
           });
           results[i] = child.output;
         } catch (err) {
-          if (firstError === undefined) {
+          if (!failed) {
+            failed = true;
             firstError = err;
           }
           return;
@@ -95,8 +122,13 @@ export class ParallelWorker extends BaseNode {
 
     await Promise.all(Array.from({length: poolSize}, () => worker()));
 
-    if (firstError !== undefined) {
+    if (failed) {
       throw firstError;
+    }
+    if (isAborted()) {
+      // Aborted mid-flight: `results` may have holes for unscheduled items, so
+      // don't emit a wrong partial list — the invocation is being torn down.
+      return;
     }
     yield results;
   }

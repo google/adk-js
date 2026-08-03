@@ -9,9 +9,14 @@ import {BaseNode} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 
 /**
- * A fan-in barrier node: it waits for ALL of its predecessors to complete, then
- * emits the aggregated inputs (a map of predecessor name → output) as its
- * output.
+ * A fan-in barrier node: via {@link requiresAllPredecessors} the engine holds it
+ * until ALL of its predecessors complete, then runs it with their aggregated
+ * outputs as input.
+ *
+ * This node emits that input unchanged — the engine supplies the
+ * predecessor-name → output map; the join just passes it through as its output.
+ * The barrier itself is enforced by the orchestrator (which reads
+ * `requiresAllPredecessors`) and lands in a later part.
  *
  * Ported from `google/adk-python` `workflow/_join_node.py`.
  */

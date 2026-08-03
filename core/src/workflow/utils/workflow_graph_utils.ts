@@ -50,14 +50,13 @@ export interface NodeBuilder {
 /**
  * Wraps an already-built node in a parallel worker. Provided by the
  * `parallel_worker` node module via {@link PARALLEL_WORKER_FACTORY}.
+ *
+ * `retryConfig`/`timeout` are intentionally not forwarded to the wrapper: they
+ * apply to the inner node (per item), so the two levels don't compose.
  */
 export type ParallelWorkerFactory = (
   inner: BaseNode,
-  options: {
-    maxParallelWorkers?: number;
-    retryConfig?: RetryConfig;
-    timeout?: number;
-  },
+  options: {maxParallelWorkers?: number},
 ) => BaseNode;
 
 /**
@@ -115,10 +114,10 @@ export function buildNode(
           'the parallel worker node module is not part of this build.',
       );
     }
+    // retryConfig/timeout are applied to the inner (built) node, not the
+    // wrapper, so they aren't forwarded here (see ParallelWorkerFactory).
     return PARALLEL_WORKER_FACTORY(built, {
       maxParallelWorkers: options.maxParallelWorkers,
-      retryConfig: options.retryConfig,
-      timeout: options.timeout,
     });
   }
   return built;

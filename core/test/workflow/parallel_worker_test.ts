@@ -9,7 +9,7 @@ import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {buildNode} from '../../src/workflow/utils/workflow_graph_utils.js';
-import {driveNode} from './test_helpers.js';
+import {createIc, driveNode} from './test_helpers.js';
 
 describe('ParallelWorker', () => {
   it('maps a list input through the inner node, preserving order', async () => {
@@ -45,7 +45,28 @@ describe('ParallelWorker', () => {
       [1, 2, 3, 4, 5],
     );
     expect(output).toEqual([1, 2, 3, 4, 5]);
-    expect(peak).toBeLessThanOrEqual(2);
+    // Pin both halves: never more than 2, and it actually reached 2 (this would
+    // stay green at peak=1 if the pool regressed to running items serially).
+    expect(peak).toBe(2);
+  });
+
+  it('bounds concurrency by the default when maxParallelWorkers is unset', async () => {
+    let active = 0;
+    let peak = 0;
+    const inner = new FunctionNode('track', async (_c, n: number) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return n;
+    });
+    // 20 items with no explicit limit must not fan out to 20 concurrent runs.
+    const {output} = await driveNode(
+      new ParallelWorker(inner),
+      Array.from({length: 20}, (_v, i) => i),
+    );
+    expect(output).toHaveLength(20);
+    expect(peak).toBe(8); // DEFAULT_MAX_PARALLEL_WORKERS
   });
 
   it('rejects maxParallelWorkers < 1', () => {
@@ -65,6 +86,42 @@ describe('ParallelWorker', () => {
     await expect(
       driveNode(new ParallelWorker(inner), [1, 2, 3, 4]),
     ).rejects.toThrow('boom at 3');
+  });
+
+  it('fails (not silently) when an item rejects with undefined', async () => {
+    const inner = new FunctionNode('bad', (_c, n: number) => {
+      if (n === 2) {
+        throw undefined; // bare reject: must still count as a failure
+      }
+      return n;
+    });
+    let rejected = false;
+    try {
+      await driveNode(new ParallelWorker(inner), [1, 2, 3]);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+  });
+
+  it('stops scheduling items once the invocation is aborted', async () => {
+    let calls = 0;
+    const inner = new FunctionNode('count', (_c, n: number) => {
+      calls++;
+      return n;
+    });
+    const controller = new AbortController();
+    controller.abort(); // aborted before the run starts
+    const ic = createIc({}, controller.signal);
+
+    const {output} = await driveNode(
+      new ParallelWorker(inner),
+      [1, 2, 3, 4, 5],
+      ic,
+    );
+    // No item was scheduled, and no wrong partial list was emitted.
+    expect(calls).toBe(0);
+    expect(output).toBeUndefined();
   });
 });
 
