@@ -13,7 +13,7 @@ import {
 } from '../../events/event.js';
 import {ToolConfirmation} from '../../tools/tool_confirmation.js';
 import {AsyncQueue} from '../../utils/async_queue.js';
-import {NodeTool} from '../../workflow/nodes/node_tool.js';
+import {isNodeTool} from '../../workflow/nodes/node_tool.js';
 import {REQUEST_INPUT_FUNCTION_CALL_NAME} from '../../workflow/utils/hitl_utils.js';
 import {unwrapResponse} from '../../workflow/utils/rehydration_utils.js';
 import {handleFunctionCallList} from '../functions.js';
@@ -58,7 +58,7 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
     );
     const toolsDict = Object.fromEntries(toolsList.map((t) => [t.name, t]));
     const nodeToolNames = new Set(
-      toolsList.filter((t) => t instanceof NodeTool).map((t) => t.name),
+      toolsList.filter((t) => isNodeTool(t)).map((t) => t.name),
     );
     if (nodeToolNames.size === 0) {
       return;

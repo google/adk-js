@@ -53,9 +53,9 @@ export interface InvocationContextParams {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
-  agentStates?: Record<string, unknown>;
-  endOfAgents?: Record<string, boolean>;
   workflowInstructionScope?: WorkflowInstructionScope;
+  /** Nesting depth of node-as-tool executions; used to bound recursion. */
+  nodeToolDepth?: number;
 }
 
 /**
@@ -212,22 +212,18 @@ export class InvocationContext {
   eventQueue?: AsyncQueue<Event>;
 
   /**
-   * Checkpointed states for workflow nodes under this invocation.
-   */
-  agentStates: Record<string, unknown>;
-
-  /**
-   * Tracks whether specific agents or workflows have reached the end of their execution.
-   */
-
-  endOfAgents: Record<string, boolean>;
-
-  /**
    * Workflow: field-resolution scope for `{Class.field}` /
    * `<Class.field from node>` instruction placeholders (set by
    * `LLMAgentWrapper`).
    */
   workflowInstructionScope?: WorkflowInstructionScope;
+
+  /**
+   * Nesting depth of node-as-tool ({@link NodeTool}) executions in this
+   * invocation. Incremented each time a node runs as a tool (via a depth+1
+   * clone), so `NodeTool` can bound `node -> tool -> node` recursion.
+   */
+  readonly nodeToolDepth: number;
 
   /**
    * @param params The parameters for creating an invocation context.
@@ -247,9 +243,8 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
-    this.agentStates = params.agentStates ?? {};
-    this.endOfAgents = params.endOfAgents ?? {};
     this.workflowInstructionScope = params.workflowInstructionScope;
+    this.nodeToolDepth = params.nodeToolDepth ?? 0;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop
@@ -283,6 +278,19 @@ export class InvocationContext {
    */
   incrementLlmCallCount() {
     this.invocationCostManager.incrementAndEnforceLlmCallsLimit(this.runConfig);
+  }
+
+  /**
+   * Returns a copy of this context with `overrides` applied. The spread carries
+   * every own field over (including the shared cost manager), so the copy keeps
+   * a single LLM-call counter for the invocation.
+   *
+   * Note: this copies own enumerable fields by value — scalar mutable fields
+   * (e.g. `endInvocation`) are decoupled from the original, while object-valued
+   * fields (`session`, …) stay shared by reference.
+   */
+  clone(overrides: Partial<InvocationContextParams> = {}): InvocationContext {
+    return new InvocationContext({...this, ...overrides});
   }
 }
 

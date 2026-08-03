@@ -7,9 +7,7 @@
 import {FunctionDeclaration, Schema, Type} from '@google/genai';
 
 import {Context} from '../../agents/context.js';
-import {Event} from '../../events/event.js';
 import {BaseTool, RunAsyncToolRequest} from '../../tools/base_tool.js';
-import {AsyncQueue} from '../../utils/async_queue.js';
 import {
   isZodObject,
   zodObjectToSchema,
@@ -17,6 +15,18 @@ import {
 import {BaseNode} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 import {executeChildNode} from '../node_runner.js';
+
+/**
+ * A unique symbol branding {@link NodeTool} instances (see {@link isNodeTool}).
+ */
+const NODE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.nodeTool');
+
+/**
+ * Maximum nesting depth for node-as-tool executions, guarding against
+ * `node -> tool -> node` recursion (a node exposed as a tool whose agent can
+ * call that same tool again — unbounded model + tool spend otherwise).
+ */
+const MAX_NODE_TOOL_DEPTH = 8;
 
 /**
  * A tool that executes a {@link BaseNode} (e.g. a `Workflow` or a function node)
@@ -36,6 +46,9 @@ import {executeChildNode} from '../node_runner.js';
  * (`RequestInput`) does not force a synthetic empty response.
  */
 export class NodeTool extends BaseTool {
+  /** Brand identifying this object as a {@link NodeTool} (see {@link isNodeTool}). */
+  readonly [NODE_TOOL_SIGNATURE_SYMBOL] = true;
+
   readonly node: BaseNode;
 
   constructor(node: BaseNode, name?: string, description?: string) {
@@ -54,15 +67,12 @@ export class NodeTool extends BaseTool {
     this.node = node;
   }
 
-  /** Whether the node's input schema is a (Zod) object rather than a scalar. */
-  private get inputIsObject(): boolean {
-    return isZodObject(this.node.inputSchema);
-  }
-
   override _getDeclaration(): FunctionDeclaration {
+    const schema = this.node.inputSchema;
     let parameters: Schema;
-    if (this.inputIsObject) {
-      parameters = zodObjectToSchema(this.node.inputSchema as never);
+    // Narrow inline so `zodObjectToSchema` typechecks without a cast.
+    if (schema && isZodObject(schema)) {
+      parameters = zodObjectToSchema(schema);
     } else {
       // The GenAI API requires object-typed parameters; wrap a scalar schema
       // under a single `request` property.
@@ -73,6 +83,11 @@ export class NodeTool extends BaseTool {
       };
     }
     return {name: this.name, description: this.description, parameters};
+  }
+
+  /** Whether the node's input schema is a (Zod) object rather than a scalar. */
+  private get inputIsObject(): boolean {
+    return isZodObject(this.node.inputSchema);
   }
 
   override async runAsync({
@@ -95,29 +110,58 @@ export class NodeTool extends BaseTool {
 
   /**
    * Runs the wrapped node with a {@link NodeContext} bridged from the agent's
-   * tool context. Node events are streamed into the invocation's event queue
-   * when one is present (so intermediate/interrupt events surface to the agent);
-   * otherwise they are buffered and dropped (completion-only path).
+   * tool context. Node events are streamed into the invocation's event queue so
+   * intermediate/interrupt events surface to the agent (and a paused node can be
+   * resumed). Requires being invoked from an `LlmAgent` tool-call step, which is
+   * what provides that queue and the function-call id.
    */
   private async runNode(
     toolContext: Context,
     nodeInput: unknown,
   ): Promise<NodeContext> {
     const ic = toolContext.invocationContext;
-    const runId = toolContext.functionCallId ?? this.node.name;
-    const channel =
-      (ic as {eventQueue?: AsyncQueue<Event>}).eventQueue ??
-      new AsyncQueue<Event>();
+
+    // A paused node's interrupt event must reach the session, so an event queue
+    // is required; without one the pause would be a silent dead end.
+    const channel = ic.eventQueue;
+    if (!channel) {
+      throw new Error(
+        `NodeTool '${this.name}' requires an invocation event queue; ` +
+          'it must be invoked from an LlmAgent tool-call step.',
+      );
+    }
+
+    // A stable, unique run id per tool call: reused across resume so the paused
+    // run can be matched. (A shared fallback would collapse distinct calls.)
+    const runId = toolContext.functionCallId;
+    if (!runId) {
+      throw new Error(
+        `NodeTool '${this.name}' requires a function-call id; ` +
+          'it must be invoked from an LlmAgent tool-call step.',
+      );
+    }
+
+    if (ic.nodeToolDepth >= MAX_NODE_TOOL_DEPTH) {
+      throw new Error(
+        `NodeTool '${this.name}': node-tool nesting exceeded ` +
+          `${MAX_NODE_TOOL_DEPTH} (possible node -> tool -> node recursion).`,
+      );
+    }
+    // Run the node (and anything it reaches) at depth+1 so the guard above trips
+    // on unbounded recursion; the clone carries the depth across agent runs.
+    const childIc = ic.clone({nodeToolDepth: ic.nodeToolDepth + 1});
 
     const nodeCtx = new NodeContext({
-      invocationContext: ic,
+      invocationContext: childIc,
       channel,
-      nodePath: this.node.name,
+      // Empty so executeChildNode's path is a single segment (the node name),
+      // not the node name doubled.
+      nodePath: '',
       runId,
       resumeInputs: collectResumeInputs(toolContext),
     });
 
-    const base = ic.branch;
+    const base = childIc.branch;
     const segment = `${this.name}@${runId}`;
     const overrideBranch = base ? `${base}.${segment}` : segment;
 
@@ -128,6 +172,19 @@ export class NodeTool extends BaseTool {
       options: {runId, overrideBranch},
     });
   }
+}
+
+/**
+ * Type guard for {@link NodeTool}. Matches on the brand rather than `instanceof`
+ * so it stays correct across package copies (mirrors `isBaseTool`).
+ */
+export function isNodeTool(value: unknown): value is NodeTool {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    NODE_TOOL_SIGNATURE_SYMBOL in value &&
+    value[NODE_TOOL_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**

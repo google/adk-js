@@ -8,7 +8,6 @@ import {Content} from '@google/genai';
 import {BaseAgent} from '../../agents/base_agent.js';
 import {
   InvocationContext,
-  InvocationContextParams,
   WorkflowInstructionScope,
 } from '../../agents/invocation_context.js';
 import {isLlmAgent, LlmAgent} from '../../agents/llm_agent.js';
@@ -147,6 +146,16 @@ export class LLMAgentWrapper extends BaseNode {
 
       yield event;
     }
+
+    // The agent finished without a successful finish_task call (e.g. it answered
+    // in plain text). A task-mode agent must terminate via finish_task; failing
+    // loudly here avoids reporting the node COMPLETE with no output (which would
+    // make downstream `{Class.field}` placeholders resolve to nothing). The
+    // agent's own turn loop is bounded by the invocation's maxLlmCalls.
+    throw new Error(
+      `LLMAgentWrapper: task-mode agent '${agent.name}' ended without ` +
+        'calling finish_task; no output was produced.',
+    );
   }
 
   /**
@@ -235,10 +244,7 @@ function withWorkflowInstructionScope(
   ic: InvocationContext,
   scope: WorkflowInstructionScope,
 ): InvocationContext {
-  return new InvocationContext({
-    ...(ic as unknown as InvocationContextParams),
-    workflowInstructionScope: scope,
-  });
+  return ic.clone({workflowInstructionScope: scope});
 }
 
 /**

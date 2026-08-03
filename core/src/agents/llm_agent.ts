@@ -9,7 +9,7 @@ import {context, trace} from '@opentelemetry/api';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import {BaseNode} from '../workflow/base_node.js';
+import {isBaseNode, type BaseNode} from '../workflow/base_node.js';
 import {NodeTool} from '../workflow/nodes/node_tool.js';
 
 import {z as z3} from 'zod/v3';
@@ -338,7 +338,7 @@ async function convertToolUnionToTools(
   if (isBaseTool(toolUnion)) {
     return [toolUnion];
   }
-  if (toolUnion instanceof BaseNode) {
+  if (isBaseNode(toolUnion)) {
     // A node/Workflow passed as a tool is auto-wrapped as a NodeTool so the
     // model can call it (mirrors Python's Agent(tools=[node/workflow])).
     return [new NodeTool(toolUnion)];
