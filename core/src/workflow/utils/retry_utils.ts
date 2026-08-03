@@ -22,31 +22,42 @@ const DEFAULT_JITTER = 1.0;
 /**
  * Resolves the runtime name of a thrown value for exception-name matching.
  * Mirrors Python's `type(exception).__name__`.
+ *
+ * Duck-typed (no `instanceof`) so it works for error-like values from another
+ * package copy: it prefers an explicit `name` string, then the constructor
+ * name, then the primitive `typeof`.
  */
 function errorName(error: unknown): string {
-  if (error instanceof Error) {
-    // `name` is set by well-behaved Error subclasses; fall back to the
-    // constructor name for plain `throw new Error()` cases.
-    return error.name || error.constructor.name;
-  }
   if (typeof error === 'object' && error !== null) {
-    return error.constructor.name;
+    const named = error as {name?: unknown; constructor?: {name?: string}};
+    if (typeof named.name === 'string' && named.name) {
+      // `name` is set by well-behaved Error subclasses.
+      return named.name;
+    }
+    // Fall back to the constructor name for plain `throw new Error()` cases.
+    return named.constructor?.name ?? 'Object';
   }
   return typeof error;
 }
 
+/** Parameters for {@link shouldRetryNode}. */
+export interface ShouldRetryNodeParams {
+  /** The error thrown by the node. */
+  error: unknown;
+  /** The node's prepared (normalized) retry configuration. */
+  retryConfig: PreparedRetryConfig;
+  /** The current node state (its `attemptCount` is 1-based). */
+  nodeState: NodeState;
+}
+
 /**
  * Checks if a failed node should be retried based on its retry config.
- *
- * @param error The error thrown by the node.
- * @param retryConfig The node's prepared (normalized) retry configuration.
- * @param nodeState The current node state (its `attemptCount` is 1-based).
  */
-export function shouldRetryNode(
-  error: unknown,
-  retryConfig: PreparedRetryConfig,
-  nodeState: NodeState,
-): boolean {
+export function shouldRetryNode({
+  error,
+  retryConfig,
+  nodeState,
+}: ShouldRetryNodeParams): boolean {
   const attemptCount = nodeState.attemptCount;
   const maxAttempts = retryConfig.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
@@ -64,19 +75,27 @@ export function shouldRetryNode(
   return true;
 }
 
+/** Parameters for {@link getRetryDelaySeconds}. */
+export interface GetRetryDelaySecondsParams {
+  /** The node's prepared (normalized) retry configuration. */
+  retryConfig: PreparedRetryConfig;
+  /**
+   * The current node state (its `attemptCount` is the 1-based attempt number
+   * that just failed).
+   */
+  nodeState: NodeState;
+  /** Injectable uniform RNG in [0, 1) for deterministic testing. */
+  randomFn?: () => number;
+}
+
 /**
  * Calculates the delay, in seconds, before retrying a node.
- *
- * @param retryConfig The node's prepared (normalized) retry configuration.
- * @param nodeState The current node state (its `attemptCount` is the 1-based
- *   attempt number that just failed).
- * @param randomFn Injectable uniform RNG in [0, 1) for deterministic testing.
  */
-export function getRetryDelaySeconds(
-  retryConfig: PreparedRetryConfig,
-  nodeState: NodeState,
-  randomFn: () => number = Math.random,
-): number {
+export function getRetryDelaySeconds({
+  retryConfig,
+  nodeState,
+  randomFn = Math.random,
+}: GetRetryDelaySecondsParams): number {
   const initialDelay =
     retryConfig.initialDelay ?? DEFAULT_INITIAL_DELAY_SECONDS;
   const maxDelay = retryConfig.maxDelay ?? DEFAULT_MAX_DELAY_SECONDS;

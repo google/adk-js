@@ -19,14 +19,6 @@ export class BranchPath {
     this.segments = [...segments];
   }
 
-  /** Parses a dot-separated string into a {@link BranchPath}. */
-  static fromString(path?: string | null): BranchPath {
-    if (!path) {
-      return new BranchPath([]);
-    }
-    return new BranchPath(path.split('.'));
-  }
-
   toString(): string {
     return this.segments.join('.');
   }
@@ -49,24 +41,33 @@ export class BranchPath {
     const segment = runId !== undefined ? `${name}@${runId}` : name;
     return new BranchPath([...this.segments, segment]);
   }
+}
 
-  /** Finds the common prefix across a list of paths. */
-  static commonPrefix(paths: BranchPath[]): BranchPath {
-    if (paths.length === 0) {
-      return new BranchPath([]);
-    }
-    const common: string[] = [];
-    const minLen = Math.min(...paths.map((p) => p.segments.length));
-    for (let i = 0; i < minLen; i++) {
-      const seg = paths[0].segments[i];
-      if (paths.every((p) => p.segments[i] === seg)) {
-        common.push(seg);
-      } else {
-        break;
-      }
-    }
-    return new BranchPath(common);
+/** Parses a dot-separated string into a {@link BranchPath}. */
+export function branchPathFromString(path?: string | null): BranchPath {
+  if (!path) {
+    return new BranchPath([]);
   }
+  return new BranchPath(path.split('.'));
+}
+
+/** Finds the common prefix across a list of {@link BranchPath}s. */
+export function commonPrefixOfPaths(paths: BranchPath[]): BranchPath {
+  if (paths.length === 0) {
+    return new BranchPath([]);
+  }
+  const allSegments = paths.map((p) => p.getSegments());
+  const common: string[] = [];
+  const minLen = Math.min(...allSegments.map((s) => s.length));
+  for (let i = 0; i < minLen; i++) {
+    const seg = allSegments[0][i];
+    if (allSegments.every((s) => s[i] === seg)) {
+      common.push(seg);
+    } else {
+      break;
+    }
+  }
+  return new BranchPath(common);
 }
 
 /**
@@ -79,14 +80,14 @@ export function createSubBranch(
   baseBranch: string | undefined | null,
   options: {name: string; runId?: string},
 ): string {
-  return BranchPath.fromString(baseBranch)
+  return branchPathFromString(baseBranch)
     .append(options.name, options.runId)
     .toString();
 }
 
 /** Finds the common prefix of a list of dot-separated branch strings. */
 export function commonPrefixOf(branches: string[]): string {
-  return BranchPath.commonPrefix(
-    branches.map((b) => BranchPath.fromString(b)),
+  return commonPrefixOfPaths(
+    branches.map((b) => branchPathFromString(b)),
   ).toString();
 }
