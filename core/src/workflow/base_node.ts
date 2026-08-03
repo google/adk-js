@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
+import {Content, createModelContent} from '@google/genai';
 import {createEvent, Event, isEvent} from '../events/event.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import type {NodeContext} from './node_context.js';
@@ -258,21 +258,10 @@ export function toContent(val: unknown): Content | undefined {
   if (val === null || val === undefined) {
     return undefined;
   }
-  // Use the same predicate as validateOutput so a value is never treated as
-  // `Content` by one and re-encoded as text by the other.
+
   if (isContent(val)) {
     return val;
   }
-  if (typeof val === 'string') {
-    return {role: 'model', parts: [{text: val}]};
-  }
-  try {
-    // JSON.stringify returns `undefined` (rather than throwing) for a function
-    // or a symbol, so fall back to String() in that case too.
-    const json = JSON.stringify(val);
-    return {role: 'model', parts: [{text: json ?? String(val)}]};
-  } catch {
-    // Reached for values JSON cannot serialize at all (e.g. circular refs).
-    return {role: 'model', parts: [{text: String(val)}]};
-  }
+
+  return createModelContent(val);
 }

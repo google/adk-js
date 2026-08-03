@@ -82,7 +82,7 @@ export async function executeChildNode(
   const childIc =
     branch === parent.invocationContext.branch
       ? parent.invocationContext
-      : withBranch(parent.invocationContext, branch);
+      : new InvocationContext({...parent.invocationContext, branch});
 
   const child = new NodeContext({
     invocationContext: childIc,
@@ -267,26 +267,6 @@ function enrichEvent(
   if (isolationScope !== undefined && event.isolationScope === undefined) {
     event.isolationScope = isolationScope;
   }
-}
-
-/**
- * Creates a child InvocationContext with a different branch, preserving the
- * shared invocation cost manager and all services/session.
- *
- * Passes the parent context straight to the constructor (the same pattern
- * `ParallelAgent.createBranchCtxForSubAgent` uses) instead of spreading it
- * through a double cast: spreading copies only own enumerable properties, which
- * silently drops anything the class exposes via a getter or derives in its
- * constructor. The constructor already carries every field — including the
- * private cost manager — across for us.
- */
-function withBranch(
-  ic: InvocationContext,
-  branch: string | undefined,
-): InvocationContext {
-  const child = new InvocationContext(ic);
-  child.branch = branch;
-  return child;
 }
 
 /**
