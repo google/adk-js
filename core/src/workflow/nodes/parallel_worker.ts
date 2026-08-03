@@ -89,14 +89,13 @@ export class ParallelWorker extends BaseNode {
       ctx.abortSignal?.aborted === true ||
       ctx.invocationContext.abortSignal?.aborted === true;
 
+    // Keep claiming the next item until the list is exhausted, an item fails,
+    // or the invocation is aborted.
     const worker = async (): Promise<void> => {
-      for (;;) {
-        if (failed || isAborted()) {
-          return;
-        }
+      while (!failed && !isAborted()) {
         const i = nextIndex++;
         if (i >= items.length) {
-          return;
+          break;
         }
         try {
           // Key each child by its item index (not completion order): the runId
@@ -115,7 +114,7 @@ export class ParallelWorker extends BaseNode {
             failed = true;
             firstError = err;
           }
-          return;
+          break;
         }
       }
     };
