@@ -5,6 +5,7 @@
  */
 
 import {Event} from '../events/event.js';
+import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
 import {DynamicNodeScheduler} from './dynamic_node_scheduler.js';
@@ -14,7 +15,7 @@ import {
   Graph,
   RouteValue,
 } from './graph.js';
-import {NodeContext} from './node_context.js';
+import {NodeContext, NodeResult} from './node_context.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -22,7 +23,7 @@ import {DynamicNodeState} from './schedule_dynamic_node.js';
 import {Trigger} from './trigger.js';
 import {
   isFastForwardable,
-  makeFastForwardContext,
+  makeFastForwardResult,
   reconstructNodeStates,
   RehydratedNode,
 } from './utils/rehydration_utils.js';
@@ -39,21 +40,35 @@ export type DynamicEntry = (
 
 /**
  * Configuration for a {@link Workflow}.
+ *
+ * A workflow is driven either by a static `edges` graph or by an imperative
+ * `dynamicEntry` function — exactly one is required, and the two are mutually
+ * exclusive. The type is a discriminated union so that constraint is enforced at
+ * compile time (the runtime constructor keeps the equivalent throws for JS
+ * callers).
  */
-export interface WorkflowConfig extends BaseNodeConfig {
-  /** Edge definitions used to build the workflow graph. */
-  edges?: EdgeItem[];
-  /**
-   * An imperative entry function driving execution via `ctx.runNode(...)`.
-   * Mutually exclusive with {@link edges}.
-   */
-  dynamicEntry?: DynamicEntry;
+export type WorkflowConfig = BaseNodeConfig & {
   /**
    * Maximum number of graph-scheduled nodes running in parallel. `undefined`
-   * means unlimited. Does not throttle dynamic (`ctx.runNode`) children.
+   * means unlimited; must be a positive integer otherwise. Does not throttle
+   * dynamic (`ctx.runNode`) children.
    */
   maxConcurrency?: number;
-}
+} & (
+    | {
+        /** Edge definitions used to build the workflow graph. */
+        edges: EdgeItem[];
+        dynamicEntry?: never;
+      }
+    | {
+        /**
+         * An imperative entry function driving execution via `ctx.runNode(...)`.
+         * Mutually exclusive with `edges`.
+         */
+        dynamicEntry: DynamicEntry;
+        edges?: never;
+      }
+  );
 
 /**
  * Mutable, in-memory state for a single {@link Workflow} run. Not persisted;
@@ -70,11 +85,21 @@ class LoopState {
   /** Per-node state reconstructed from prior session events (resume). */
   rehydrated: Map<string, RehydratedNode> = new Map();
   errorShutDown = false;
+  /**
+   * Workflow-scoped abort signal handed to each scheduled node so a failure can
+   * cancel its in-flight siblings (see {@link Workflow.cleanupPending}).
+   */
+  abortSignal?: AbortSignal;
 }
 
 interface CompletedTask {
   name: string;
-  childCtx?: NodeContext;
+  /**
+   * The finished node's result: a live {@link NodeContext} for a node that ran,
+   * or a bare {@link NodeResult} for one fast-forwarded from cached output on
+   * resume. Completion handling reads only the shared fields.
+   */
+  childCtx?: NodeContext | NodeResult;
   error?: unknown;
 }
 
@@ -87,6 +112,7 @@ interface CompletedTask {
  * Replay/checkpointing, dynamic scheduling, and task/chat isolation scopes are
  * added in later phases; hook points are marked with TODO(phase-N).
  */
+@experimental
 export class Workflow extends BaseNode {
   readonly graph?: Graph;
   readonly dynamicEntry?: DynamicEntry;
@@ -105,15 +131,24 @@ export class Workflow extends BaseNode {
         `Workflow "${this.name}" requires either "edges" or "dynamicEntry".`,
       );
     }
+    if (
+      config.maxConcurrency !== undefined &&
+      (!Number.isInteger(config.maxConcurrency) || config.maxConcurrency < 1)
+    ) {
+      throw new Error(
+        `Workflow "${this.name}": "maxConcurrency" must be a positive integer ` +
+          `(got ${config.maxConcurrency}).`,
+      );
+    }
     this.maxConcurrency = config.maxConcurrency;
     this.dynamicEntry = config.dynamicEntry;
-    if (hasEdges) {
+    if (config.edges && config.edges.length > 0) {
       // createGraphFromEdgeItems validates as part of construction.
-      this.graph = createGraphFromEdgeItems(config.edges!);
+      this.graph = createGraphFromEdgeItems(config.edges);
     }
   }
 
-  // eslint-disable-next-line require-yield
+  // eslint-disable-next-line require-yield -- child events stream out via ctx.channel/ctx.runNode; this orchestration generator itself yields nothing
   protected async *runImpl(
     ctx: NodeContext,
     nodeInput: unknown,
@@ -121,8 +156,34 @@ export class Workflow extends BaseNode {
     // Child events are streamed through ctx.channel by ctx.runNode(), so this
     // orchestration generator itself yields nothing.
     const dynamicState = new DynamicNodeState();
-    ctx.scheduler = new DynamicNodeScheduler(dynamicState);
 
+    // Workflow-scoped cancellation: a controller chained to the invocation's
+    // abort signal. It is aborted when a node fails (see cleanupPending) so any
+    // in-flight siblings stop cooperatively instead of running to completion,
+    // and disposed in the finally so we don't leak the parent-abort listener.
+    const abort = createWorkflowAbort(ctx.invocationContext.abortSignal);
+    ctx.scheduler = new DynamicNodeScheduler(
+      dynamicState,
+      abort.controller.signal,
+    );
+
+    try {
+      await this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+    } finally {
+      abort.dispose();
+    }
+  }
+
+  /**
+   * The orchestration body, wrapped by {@link runImpl} so its workflow-scoped
+   * abort controller is always disposed.
+   */
+  private async orchestrate(
+    ctx: NodeContext,
+    nodeInput: unknown,
+    dynamicState: DynamicNodeState,
+    abortController: AbortController,
+  ): Promise<void> {
     // --- REHYDRATE (resume) ---
     // Reconstruct node state from prior session events and surface resolved
     // interrupt responses so waiting nodes can resume. Scope to this workflow's
@@ -141,12 +202,13 @@ export class Workflow extends BaseNode {
 
     const loop = new LoopState();
     loop.rehydrated = rehydrated;
+    loop.abortSignal = abortController.signal;
 
     // --- SETUP ---
     this.seedStartTriggers(loop, nodeInput);
 
     // --- LOOP ---
-    await this.runLoop(loop, ctx);
+    await this.runLoop(loop, ctx, abortController);
 
     if (loop.errorShutDown) {
       return;
@@ -214,7 +276,11 @@ export class Workflow extends BaseNode {
 
   // --- LOOP ---
 
-  private async runLoop(loop: LoopState, ctx: NodeContext): Promise<void> {
+  private async runLoop(
+    loop: LoopState,
+    ctx: NodeContext,
+    abortController: AbortController,
+  ): Promise<void> {
     for (;;) {
       this.scheduleReadyNodes(loop, ctx);
 
@@ -231,7 +297,7 @@ export class Workflow extends BaseNode {
           nodeState.status = NodeStatus.FAILED;
         }
         loop.errorShutDown = true;
-        await this.cleanupPending(loop);
+        await this.cleanupPending(loop, abortController);
         throw result.error;
       }
 
@@ -272,7 +338,10 @@ export class Workflow extends BaseNode {
   }
 
   private atConcurrencyLimit(loop: LoopState): boolean {
-    return !!this.maxConcurrency && loop.pending.size >= this.maxConcurrency;
+    return (
+      this.maxConcurrency !== undefined &&
+      loop.pending.size >= this.maxConcurrency
+    );
   }
 
   private prepareNodeStateForStarting(
@@ -307,7 +376,7 @@ export class Workflow extends BaseNode {
         nodeName,
         Promise.resolve({
           name: nodeName,
-          childCtx: makeFastForwardContext(ctx, prior),
+          childCtx: makeFastForwardResult(ctx, prior),
         }),
       );
       return;
@@ -327,17 +396,15 @@ export class Workflow extends BaseNode {
       const values = [...prior.interruptIds].map((id) => ctx.resumeInputs[id]);
       if (values.every((v) => v !== undefined)) {
         const output = values.length === 1 ? values[0] : values;
+        const resumeResult: NodeResult = {
+          output,
+          route: undefined,
+          branch: prior.branch ?? ctx.branch,
+          interruptIds: [],
+        };
         loop.pending.set(
           nodeName,
-          Promise.resolve({
-            name: nodeName,
-            childCtx: {
-              output,
-              route: undefined,
-              branch: prior.branch ?? ctx.branch,
-              interruptIds: [],
-            } as unknown as NodeContext,
-          }),
+          Promise.resolve({name: nodeName, childCtx: resumeResult}),
         );
         return;
       }
@@ -359,11 +426,13 @@ export class Workflow extends BaseNode {
     const nodeInput = resuming ? prior.input : trigger.input;
 
     // Static graph nodes are managed by this loop directly, bypassing the
-    // dynamic scheduler (which serves user-initiated ctx.runNode() calls).
+    // dynamic scheduler (which serves user-initiated ctx.runNode() calls). The
+    // workflow-scoped abort signal lets a sibling's failure cancel this node.
     const task: Promise<CompletedTask> = executeChildNode({
       parent: ctx,
       node,
       input: nodeInput,
+      abortSignal: loop.abortSignal,
       options: {
         runId,
         useSubBranch: trigger.useSubBranch,
@@ -382,7 +451,7 @@ export class Workflow extends BaseNode {
   private async handleCompletion(
     loop: LoopState,
     nodeName: string,
-    childCtx: NodeContext,
+    childCtx: NodeContext | NodeResult,
   ): Promise<void> {
     const nodeState = loop.nodes.get(nodeName)!;
     const node = this.getStaticNode(nodeName);
@@ -533,11 +602,44 @@ export class Workflow extends BaseNode {
     return node;
   }
 
-  private async cleanupPending(loop: LoopState): Promise<void> {
-    // Await outstanding tasks so their events flush; failures are swallowed
-    // because the workflow is already shutting down on error.
+  private async cleanupPending(
+    loop: LoopState,
+    abortController: AbortController,
+  ): Promise<void> {
+    // Signal in-flight siblings to stop: cooperative nodes observe
+    // `ctx.abortSignal`, and the node runner stops consuming their events once
+    // the signal fires (see node_runner). Then await the outstanding tasks so
+    // their cleanup runs and events flush; failures are swallowed because the
+    // workflow is already shutting down on error.
+    abortController.abort();
     const outstanding = [...loop.pending.values()];
     loop.pending.clear();
     await Promise.allSettled(outstanding);
   }
+}
+
+/**
+ * Creates the workflow-scoped {@link AbortController} that cancels in-flight
+ * nodes when the workflow shuts down on error. It is chained to the invocation's
+ * own abort signal (if any) so an invocation-level cancel still propagates to
+ * nodes; `dispose` detaches that listener to avoid a leak.
+ */
+function createWorkflowAbort(parentSignal?: AbortSignal): {
+  controller: AbortController;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  if (!parentSignal) {
+    return {controller, dispose: () => {}};
+  }
+  if (parentSignal.aborted) {
+    controller.abort();
+    return {controller, dispose: () => {}};
+  }
+  const onParentAbort = () => controller.abort();
+  parentSignal.addEventListener('abort', onParentAbort, {once: true});
+  return {
+    controller,
+    dispose: () => parentSignal.removeEventListener('abort', onParentAbort),
+  };
 }

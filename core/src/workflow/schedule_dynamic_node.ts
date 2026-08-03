@@ -5,7 +5,7 @@
  */
 
 import type {BaseNode} from './base_node.js';
-import type {NodeContext} from './node_context.js';
+import type {NodeContext, NodeResult} from './node_context.js';
 import {NodeState} from './node_state.js';
 
 /**
@@ -39,7 +39,7 @@ export interface ScheduleDynamicNode {
     node: BaseNode,
     input: unknown,
     options: ScheduleDynamicNodeOptions,
-  ): Promise<NodeContext>;
+  ): Promise<NodeContext | NodeResult>;
 }
 
 /**

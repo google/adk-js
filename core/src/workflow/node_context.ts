@@ -15,6 +15,28 @@ import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
 
 /**
+ * The result of running a node: the fields a caller (and the engine's
+ * completion handling) reads off a finished run — its `output`, emitted
+ * `route`, the `branch` it ran on, and any raised interrupt ids.
+ *
+ * A node that actually executes returns its full {@link NodeContext} (which
+ * satisfies this shape). A node that is *fast-forwarded* on resume (its output
+ * was cached in a prior turn, so its body is not re-run) returns a bare
+ * `NodeResult` with no live context behaviour — so callers of `ctx.runNode()`
+ * should treat the result as a `NodeResult` and read only these fields.
+ */
+export interface NodeResult {
+  /** The structured output the node produced (if any). */
+  output: unknown;
+  /** The route key(s) the node emitted, if any (array = multi-route). */
+  route?: RouteValue | RouteValue[];
+  /** The branch the node ran on. */
+  branch?: string;
+  /** Interrupt ids the node is blocked on (empty when it completed). */
+  interruptIds: string[];
+}
+
+/**
  * Options for constructing a {@link NodeContext}.
  */
 export interface NodeContextOptions {
@@ -59,12 +81,15 @@ export class NodeContext {
   interruptIds: string[] = [];
 
   /**
-   * Abort signal for the current node run, set by the engine while a node that
-   * declares a `timeout` is executing. It fires when the timeout elapses (or the
-   * invocation itself is aborted). Cooperative node bodies can observe
-   * `ctx.abortSignal` to cancel their own in-flight work (e.g. pass it to a
-   * model/tool call); the engine also stops consuming the node's events once it
-   * fires, so nothing is pushed past the deadline.
+   * Abort signal for the current node run, set by the engine while the node is
+   * executing under a deadline or an external cancellation signal — i.e. when
+   * the node declares a `timeout`, when the invocation itself can be aborted, or
+   * when it runs inside a Workflow (whose signal fires if a sibling fails).
+   * Cooperative node bodies can observe `ctx.abortSignal` to wind down their own
+   * in-flight work (e.g. pass it to a model/tool call); the engine also stops
+   * consuming the node's events once it fires, so nothing is pushed past
+   * cancellation. A fired `timeout` surfaces as a `NodeTimeoutError`; an external
+   * abort stops the node without raising.
    */
   abortSignal?: AbortSignal;
 
@@ -125,8 +150,11 @@ export class NodeContext {
 
   /**
    * Runs a child node programmatically, streaming its events through the same
-   * channel and resolving to the child's {@link NodeContext} (carrying its
-   * `output`, `route`, and `interruptIds`).
+   * channel and resolving to the child's result — a full {@link NodeContext}
+   * for a node that actually ran, or a bare {@link NodeResult} for one that was
+   * fast-forwarded from cached output on resume. Either way the caller can read
+   * `output`, `route`, `branch`, and `interruptIds`; only a `NodeContext`
+   * offers live behaviour (`emit`, `state`, nested `runNode`).
    *
    * When a dynamic-node {@link scheduler} is set (inside a Workflow subtree),
    * the call routes through it for dedup/resume; otherwise the child runs
@@ -136,7 +164,7 @@ export class NodeContext {
     node: BaseNode,
     input?: unknown,
     options?: RunNodeOptions,
-  ): Promise<NodeContext> {
+  ): Promise<NodeContext | NodeResult> {
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;

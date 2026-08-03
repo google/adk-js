@@ -5,7 +5,7 @@
  */
 
 import {BaseNode} from './base_node.js';
-import {NodeContext} from './node_context.js';
+import {NodeContext, NodeResult} from './node_context.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -17,7 +17,7 @@ import {
 } from './schedule_dynamic_node.js';
 import {
   isFastForwardable,
-  makeFastForwardContext,
+  makeFastForwardResult,
   reconstructNodeStatesByPath,
 } from './utils/rehydration_utils.js';
 
@@ -31,14 +31,23 @@ import {
  * marked hook point.
  */
 export class DynamicNodeScheduler implements ScheduleDynamicNode {
-  constructor(private readonly state: DynamicNodeState) {}
+  /**
+   * @param state Shared dynamic-node bookkeeping for this workflow subtree.
+   * @param abortSignal Workflow-scoped cancellation signal, forwarded to each
+   *   dynamic child so a workflow shutting down on error can cancel in-flight
+   *   `ctx.runNode()` children too.
+   */
+  constructor(
+    private readonly state: DynamicNodeState,
+    private readonly abortSignal?: AbortSignal,
+  ) {}
 
   async schedule(
     ctx: NodeContext,
     node: BaseNode,
     input: unknown,
     options: ScheduleDynamicNodeOptions,
-  ): Promise<NodeContext> {
+  ): Promise<NodeContext | NodeResult> {
     const name = options.nodeName ?? node.name;
     const runId = options.runId;
     const nodePath = ctx.nodePath
@@ -70,7 +79,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
           ctx.output = prior.output;
           ctx.route = prior.route;
         }
-        return makeFastForwardContext(ctx, prior);
+        return makeFastForwardResult(ctx, prior);
       }
       // Otherwise (waiting/unresolved): resume inputs were already merged into
       // ctx.resumeInputs by the Workflow; fall through to a fresh run.
@@ -102,6 +111,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       parent: ctx,
       node,
       input,
+      abortSignal: this.abortSignal,
       options: {
         nodeName: name,
         runId,

@@ -8,7 +8,11 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
-import {InvocationAbortedError, NodeTimeoutError} from './errors.js';
+import {
+  InvocationAbortedError,
+  isInvocationAbortedError,
+  NodeTimeoutError,
+} from './errors.js';
 import {NodeContext} from './node_context.js';
 import {createNodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -48,6 +52,12 @@ export interface ExecuteChildNodeParams {
   input: unknown;
   /** Options controlling this run. */
   options?: RunNodeOptions;
+  /**
+   * Engine-supplied cancellation signal that overrides the parent invocation's
+   * for this child (used by a Workflow to cancel in-flight siblings when a node
+   * fails). Defaults to the parent invocation's abort signal.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -71,6 +81,7 @@ export async function executeChildNode({
   node,
   input,
   options = {},
+  abortSignal,
 }: ExecuteChildNodeParams): Promise<NodeContext> {
   const nodeName = options.nodeName ?? node.name;
   const runId = options.runId ?? nodeName;
@@ -91,10 +102,20 @@ export async function executeChildNode({
   const isolationScope =
     options.overrideIsolationScope ?? parent.isolationScope;
 
+  // The child observes the engine-supplied abort signal when given (a Workflow
+  // uses it to cancel siblings on failure), otherwise the parent invocation's.
+  const effectiveAbortSignal =
+    abortSignal ?? parent.invocationContext.abortSignal;
+
   const childIc =
-    branch === parent.invocationContext.branch
+    branch === parent.invocationContext.branch &&
+    effectiveAbortSignal === parent.invocationContext.abortSignal
       ? parent.invocationContext
-      : new InvocationContext({...parent.invocationContext, branch});
+      : new InvocationContext({
+          ...parent.invocationContext,
+          branch,
+          abortSignal: effectiveAbortSignal,
+        });
 
   const child = new NodeContext({
     invocationContext: childIc,
@@ -121,6 +142,11 @@ export async function executeChildNode({
       await runOnce({node, child, input, nodeName, branch, isolationScope});
       succeeded = true;
     } catch (err) {
+      // Cancellation is terminal: an aborted invocation (or a sibling failure
+      // that cancelled this node) is never retried.
+      if (isInvocationAbortedError(err)) {
+        throw err;
+      }
       // Check retry eligibility with the attempt that just failed, compute its
       // backoff delay, THEN advance the counter (matches Python semantics).
       const retryConfig = node.preparedRetryConfig;
@@ -132,7 +158,7 @@ export async function executeChildNode({
       }
       const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
       nodeState.attemptCount += 1;
-      await delay(delaySeconds * 1000, parent.invocationContext.abortSignal);
+      await delay(delaySeconds * 1000, effectiveAbortSignal);
     }
   }
 
@@ -181,13 +207,19 @@ interface RunOnceParams {
  * Drives one attempt of `node.run()`, enriching and pushing each event and
  * tracking the child's output/route.
  *
- * When the node declares a `timeout`, execution is driven step-by-step and
- * raced against a deadline: on timeout the engine stops consuming events (so
- * nothing is pushed past the deadline — which would otherwise leak into a retry
- * or the next node), closes the generator so its `finally` blocks run, and
- * aborts `child.abortSignal` so a cooperative node body can cancel its own
- * in-flight work. Mirrors the cancellation semantics of Python's
+ * When the node declares a `timeout` OR an external abort signal is present
+ * (the invocation's, or the workflow-scoped one used to cancel siblings when
+ * another node fails), execution is driven step-by-step and raced against those
+ * conditions: a fired deadline raises {@link NodeTimeoutError}; any other abort
+ * raises {@link InvocationAbortedError}. Either way the engine stops consuming
+ * events (so nothing is pushed past cancellation — which would otherwise leak
+ * into a retry or the next node), closes the generator so its `finally` blocks
+ * run, and aborts `child.abortSignal` so a cooperative node body can cancel its
+ * own in-flight work. Mirrors the cancellation semantics of Python's
  * `asyncio.wait_for`.
+ *
+ * When there is neither a deadline nor an abort signal, a plain `for await`
+ * fast path is used.
  */
 async function runOnce({
   node,
@@ -223,30 +255,60 @@ async function runOnce({
     child.channel.push(event);
   };
 
-  if (!(typeof node.timeout === 'number' && node.timeout > 0)) {
+  const parentSignal = child.invocationContext.abortSignal;
+  const hasTimeout = typeof node.timeout === 'number' && node.timeout > 0;
+
+  // Fast path: no per-node deadline and no external cancellation to observe.
+  if (!hasTimeout && !parentSignal) {
     for await (const event of node.run(child, input)) {
       consume(event);
     }
     return;
   }
 
+  // Cooperative cancellation (external abort, no deadline): expose the abort
+  // signal as `ctx.abortSignal` so a cooperative node can wind down its own work
+  // (e.g. a Workflow child stopping when a sibling fails), then drain normally.
+  // We do NOT force-stop: a node that ignores the signal runs to completion
+  // (best-effort), and a node that fails still surfaces its error — with the
+  // retry backoff observing the same signal.
+  if (!hasTimeout) {
+    child.abortSignal = parentSignal;
+    try {
+      for await (const event of node.run(child, input)) {
+        consume(event);
+      }
+    } finally {
+      child.abortSignal = undefined;
+    }
+    return;
+  }
+
+  // Deadline path: drive the node step-by-step and race each step against the
+  // timeout (and any external abort). On the deadline (or abort) the engine
+  // stops consuming events, closes the generator so its `finally` runs, and
+  // aborts `child.abortSignal` so a cooperative body can cancel its in-flight
+  // work; the run rejects with NodeTimeoutError. Mirrors Python's
+  // `asyncio.wait_for`.
   const timeoutSeconds = node.timeout;
   const controller = new AbortController();
-  const parentSignal = child.invocationContext.abortSignal;
   const onParentAbort = () => controller.abort();
   if (parentSignal?.aborted) {
     controller.abort();
   } else {
     parentSignal?.addEventListener('abort', onParentAbort, {once: true});
   }
-  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  const timer = setTimeout(
+    () => controller.abort(),
+    (timeoutSeconds ?? 0) * 1000,
+  );
   child.abortSignal = controller.signal;
 
   // A single promise that rejects once the deadline (or external abort) fires;
   // reused across iterations so we don't leak a listener per step.
   const aborted = new Promise<never>((_, reject) => {
     const fail = () =>
-      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds}));
+      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds ?? 0}));
     if (controller.signal.aborted) {
       fail();
     } else {

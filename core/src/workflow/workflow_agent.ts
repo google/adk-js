@@ -9,6 +9,7 @@ import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
+import {experimental} from '../utils/experimental.js';
 import {toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 import {reconstructNodeStates} from './utils/rehydration_utils.js';
@@ -29,6 +30,7 @@ export interface WorkflowAgentConfig {
  * them to the runtime. The user message (`ctx.userContent`) becomes the
  * workflow input.
  */
+@experimental
 export class WorkflowAgent extends BaseAgent {
   readonly workflow: Workflow;
 
@@ -83,23 +85,39 @@ export class WorkflowAgent extends BaseAgent {
       }
     })();
 
-    for await (const event of channel) {
-      yield event;
+    try {
+      for await (const event of channel) {
+        yield event;
+      }
+      await settle;
+    } finally {
+      // Ensure a single exit path if the consumer stops early (breaks its
+      // for-await, or the Runner cancels the invocation): close the channel so
+      // the workflow's producer stops pushing into a queue nobody drains, and
+      // await `settle` so its cleanup runs and errors surface. Idempotent on the
+      // normal path (the channel is already closed and `settle` resolved).
+      channel.close();
+      await settle;
     }
-    await settle;
   }
 
-  // eslint-disable-next-line require-yield
+  // eslint-disable-next-line require-yield -- runLiveImpl must be an AsyncGenerator per BaseAgent, but live mode is unsupported so it only throws
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     throw new Error('WorkflowAgent does not support live mode.');
   }
 }
 
 /**
- * When the workflow is paused on unresolved interrupt(s) and the incoming
- * message is plain text (not a structured function response), maps that text to
- * every pending interrupt id so an interactive client (e.g. `adk run`) can
- * resume a HITL/auth pause by simply typing a reply.
+ * When the workflow is paused on exactly one unresolved interrupt and the
+ * incoming message is plain text (not a structured function response), maps that
+ * text to the single pending interrupt id so an interactive client (e.g. `adk
+ * run`) can resume a HITL/auth pause by simply typing a reply.
+ *
+ * If more than one interrupt is pending, a plain-text reply is ambiguous — it
+ * would be broadcast to every pause and at least one node would resume with data
+ * the user never gave it — so it is ignored here. Addressing a specific pause in
+ * a multi-interrupt workflow requires structured function responses (resolved by
+ * the workflow's own rehydration).
  */
 function resumeInputsFromPlainText(
   ic: InvocationContext,
@@ -121,11 +139,12 @@ function resumeInputsFromPlainText(
     }
   }
 
-  const resumeInputs: Record<string, unknown> = {};
-  for (const id of pending) {
-    resumeInputs[id] = text;
+  // Only the unambiguous single-pause case is resumable by plain text.
+  if (pending.size !== 1) {
+    return {};
   }
-  return resumeInputs;
+  const [id] = pending;
+  return {[id]: text};
 }
 
 /**

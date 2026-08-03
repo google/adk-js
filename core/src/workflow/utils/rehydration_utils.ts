@@ -15,7 +15,7 @@
 
 import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
-import type {NodeContext} from '../node_context.js';
+import type {NodeContext, NodeResult} from '../node_context.js';
 
 const RESULT_KEY = 'result';
 
@@ -122,11 +122,10 @@ function reconstruct(
       interruptOwner.set(id, key);
     }
     // Capture the node's original input, stashed on the interrupt event, so a
-    // resumed waiting node re-runs with it (not the resume message).
-    const agentState = event.actions?.agentState as
-      | {input?: unknown}
-      | undefined;
-    if (agentState && 'input' in agentState) {
+    // resumed waiting node re-runs with it (not the resume message). Guard the
+    // read since `agentState` is an unknown, arbitrarily-shaped payload.
+    const agentState = event.actions?.agentState;
+    if (isRecord(agentState) && 'input' in agentState) {
       node.input = agentState.input;
     }
   }
@@ -151,20 +150,21 @@ export function isFastForwardable(node: RehydratedNode): boolean {
 }
 
 /**
- * Builds a minimal completion result for a fast-forwarded (cached) node on
- * resume. Only the fields read by completion handling are populated; the node's
- * events are NOT re-emitted (they already exist in the session).
+ * Builds the completion result for a fast-forwarded (cached) node on resume.
+ * The node's body is not re-run and its events are NOT re-emitted (they already
+ * exist in the session), so this returns a bare {@link NodeResult} rather than a
+ * live {@link NodeContext} — the honest type for "cached output, no behaviour".
  */
-export function makeFastForwardContext(
+export function makeFastForwardResult(
   parent: NodeContext,
   prior: RehydratedNode,
-): NodeContext {
+): NodeResult {
   return {
     output: prior.output,
     route: prior.route,
     branch: prior.branch ?? parent.branch,
     interruptIds: [],
-  } as unknown as NodeContext;
+  };
 }
 
 /** Extracts the node name (leaf, without run id) from a dotted node path. */
@@ -189,6 +189,11 @@ function directChildName(path: string, parentPath: string): string | undefined {
     return undefined; // a deeper descendant, not a direct child
   }
   return rest.split('@')[0];
+}
+
+/** Narrows an unknown value to a plain (non-array) record. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Unwraps a `{result: value}` FunctionResponse envelope to the bare value. */
