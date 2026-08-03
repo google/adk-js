@@ -7,7 +7,6 @@
 import {BaseNode} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 import {RetryConfig} from '../retry_config.js';
-import {registerParallelWorkerFactory} from '../utils/workflow_graph_utils.js';
 
 /** Options for a {@link ParallelWorker}. */
 export interface ParallelWorkerConfig {
@@ -103,11 +102,6 @@ export class ParallelWorker extends BaseNode {
   }
 }
 
-/**
- * Registers the factory the engine uses to wrap a built node in a
- * {@link ParallelWorker} when `buildNode(..., {parallelWorker: true})` is
- * requested — keeping the engine core free of a static import of this module.
- */
-registerParallelWorkerFactory(
-  (inner, options) => new ParallelWorker(inner, options),
-);
+// The factory the engine uses to wrap a built node in a ParallelWorker (for
+// `buildNode(..., {parallelWorker: true})`) is wired into PARALLEL_WORKER_FACTORY
+// in ../node_builders.ts.
