@@ -6,6 +6,12 @@
 
 import {getBooleanEnvVar} from './env_aware_utils.js';
 
+export const EXPRESS_MODE_UNSUPPORTED_MESSAGE =
+  'Vertex AI Express Mode (expressModeApiKey / GOOGLE_API_KEY) is not ' +
+  'supported: the @google-cloud/vertexai Agent Engine client cannot send an ' +
+  'API key. Provide projectId and location (with Application Default ' +
+  'Credentials), or inject a preconfigured client.';
+
 /**
  * Validates and returns the API key for Express Mode.
  *
