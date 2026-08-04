@@ -245,12 +245,18 @@ describe('RunSkillScriptTool', () => {
     const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
     const tool = new RunSkillScriptTool(toolset);
 
+    // The module mock is shared by every test in this file and nothing clears
+    // it between them, so reset first: otherwise a run that never reached
+    // materializeFiles would silently assert against an earlier test's call.
+    vi.mocked(materializeFiles).mockClear();
+
     await tool.runAsync({
       args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
       toolContext: createMockContext(),
     });
 
-    const [, dir] = vi.mocked(materializeFiles).mock.calls.at(-1)!;
+    expect(materializeFiles).toHaveBeenCalledTimes(1);
+    const [, dir] = vi.mocked(materializeFiles).mock.calls[0];
     expect(dir).toBeTypeOf('string');
     expect(dir).not.toBe(process.cwd());
     expect(path.resolve(dir)).toBe(dir);
