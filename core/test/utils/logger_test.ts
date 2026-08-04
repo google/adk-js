@@ -5,8 +5,8 @@
  */
 
 import {getLogger, Logger, LogLevel, setLogger, setLogLevel} from '@google/adk';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {resetLogger} from '../../src/utils/logger.js';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {formatLogLine, resetLogger} from '../../src/utils/logger.js';
 
 describe('setLogger', () => {
   beforeEach(() => {
@@ -140,5 +140,118 @@ describe('setLogger', () => {
 
       expect(logger.constructor.name).toBe('SimpleLogger');
     });
+  });
+});
+
+describe('SimpleLogger', () => {
+  const ISO_TIMESTAMP = String.raw`\d{4}-\d{2}-\d{2}T[\d:.]+Z`;
+
+  beforeEach(() => {
+    resetLogger();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetLogger();
+  });
+
+  it('emits a message at the configured level', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    setLogLevel(LogLevel.INFO);
+
+    getLogger().info('hello');
+
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        new RegExp(`^INFO: \\[ADK\\] ${ISO_TIMESTAMP} hello$`),
+      ),
+    );
+  });
+
+  it('suppresses a message below the configured level', () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setLogLevel(LogLevel.WARN);
+
+    getLogger().debug('x');
+    getLogger().info('y');
+
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalled();
+
+    getLogger().warn('z');
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to INFO', () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    getLogger().debug('x');
+    getLogger().info('y');
+
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes each level to its matching console method', () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setLogLevel(LogLevel.DEBUG);
+
+    getLogger().debug('d');
+    getLogger().info('i');
+    getLogger().warn('w');
+    getLogger().error('e');
+
+    expect(debugSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining('DEBUG: [ADK] '),
+    );
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('INFO: [ADK] '),
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('WARN: [ADK] '),
+    );
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('ERROR: [ADK] '),
+    );
+  });
+
+  it('joins arguments with a single space', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    setLogLevel(LogLevel.INFO);
+
+    getLogger().info('a', 1, true);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        new RegExp(`^INFO: \\[ADK\\] ${ISO_TIMESTAMP} a 1 true$`),
+      ),
+    );
+  });
+
+  it('log() emits without throwing', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    setLogLevel(LogLevel.INFO);
+
+    expect(() => getLogger().log(LogLevel.INFO, 'via log')).not.toThrow();
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('via log'));
+  });
+
+  it('formatLogLine formats a line', () => {
+    expect(
+      formatLogLine(LogLevel.WARN, 'boom', '2026-01-01T00:00:00.000Z'),
+    ).toBe('WARN: [ADK] 2026-01-01T00:00:00.000Z boom');
   });
 });
