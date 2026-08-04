@@ -5,6 +5,7 @@
  */
 
 import {afterEach, describe, expect, it} from 'vitest';
+import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
 import {getBooleanEnvVar, randomUUID} from '../../src/utils/env_aware_utils.js';
 
 describe('env_aware_utils', () => {
@@ -109,10 +110,27 @@ describe('env_aware_utils', () => {
       expect(randomUUID()).toBe('abababab-abab-4bab-abab-abababababab');
     });
 
-    it('throws instead of degrading when no secure source exists', () => {
+    // globalThis.crypto was added in Node v17.4.0 and stayed behind
+    // --experimental-global-webcrypto until v19.0.0, so on a default Node 18 or
+    // earlier neither globalThis branch matches.
+    it('falls back to node:crypto when globalThis.crypto is absent', () => {
       setCrypto(undefined);
 
-      expect(() => randomUUID()).toThrow(
+      expect(randomUUID()).toMatch(UUID_V4);
+    });
+
+    it('does not repeat itself across calls without globalThis.crypto', () => {
+      setCrypto(undefined);
+
+      const ids = new Set(Array.from({length: 1000}, () => randomUUID()));
+
+      expect(ids.size).toBe(1000);
+    });
+
+    // The web build aliases node:crypto to this shim, so it stands in for the
+    // Node fallback in a browser that has no Web Crypto API at all.
+    it('throws instead of degrading in the browser shim', () => {
+      expect(() => shimRandomUUID()).toThrow(
         /no cryptographically secure source of randomness/,
       );
     });
