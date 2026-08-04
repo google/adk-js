@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
 import {
-  getTempDir,
+  createTempDir,
   isFile,
   isFileExists,
   isFolderExists,
@@ -169,13 +169,12 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
-      const outputDir = getTempDir('adk_agent_loader');
+      const outputDir = await createTempDir('adk_agent_loader');
       const compiledFilePath = path.join(
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
       const originalDir = path.dirname(filePath);
-      await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       await esbuild.build({
@@ -187,7 +186,6 @@ export class AgentFile {
         packages: 'bundle',
         bundle: this.options.bundle,
         minify: this.options.bundle,
-        allowOverwrite: true,
         plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
         // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
         external: [

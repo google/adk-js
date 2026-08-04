@@ -51,7 +51,12 @@ export interface CreateDockerFileContentOptions {
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
   agentPath: string;
-  tempFolder: string;
+  /**
+   * Directory the generated deployment sources are staged in. When omitted, the
+   * deploy command creates a private temporary directory for the run and
+   * removes it when the deployment finishes.
+   */
+  tempFolder?: string;
   adkVersion: string;
   agentFileLoadOptions?: AgentFileOptions;
 }
