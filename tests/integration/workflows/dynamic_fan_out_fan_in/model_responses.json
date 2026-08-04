@@ -1,0 +1,191 @@
+[
+  {
+    "key": "e22d71fa47fcc401",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space, oceans, volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "oceans"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Dive Deep: Unveiling the Ocean's Mysteries."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 57,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 84,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 57
+          }
+        ],
+        "thoughtsTokenCount": 15,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "4a0fb6899c30134c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space, oceans, volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Space, Oceans, Volcanoes: Unveiling the Universe's Most Extreme Stages."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 56,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 827,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 56
+          }
+        ],
+        "thoughtsTokenCount": 753,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "893fe50fb5617951",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space, oceans, volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "**Space, Sea, and Summit: Unveiling the universe's most dramatic frontiers.**"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 874,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 58
+          }
+        ],
+        "thoughtsTokenCount": 797,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

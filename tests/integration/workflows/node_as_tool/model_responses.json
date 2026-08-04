@@ -1,0 +1,243 @@
+[
+  {
+    "key": "5c12572a300d06ce",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user u123 and tell me my discount."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "customer_lookup_workflow",
+                  "args": {
+                    "userId": "u123"
+                  },
+                  "id": "adk-fd285b1d-b631-4b70-af75-2bfbad658de3"
+                },
+                "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 204,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 325,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 204
+          }
+        ],
+        "thoughtsTokenCount": 101,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "9198e0671a442787",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user u123 and tell me my discount."
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "customer_lookup_workflow",
+                "args": {
+                  "userId": "u123"
+                }
+              },
+              "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "customer_lookup_workflow",
+                "response": {
+                  "userId": "u123",
+                  "tier": "Verified VIP Member"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "calculate_discount",
+                  "args": {
+                    "tier": "Verified VIP Member"
+                  },
+                  "id": "adk-ad4e599b-b87b-498a-b85a-fd4d57b287e2"
+                },
+                "thoughtSignature": "CskBARFNMg8w0O19xRklAqwMQk8G8Ofbobo8Cn51FOb0XeQ9tViP4OGaHJQ/NYLS/4C3qrT23M7HEmbY+wdN6Qnsxxt+V7Lz9JgFNJpHLqvNhHlyi44zyNDyX6EhhlfxlRG+ZC11hXkaYqSNHgTwDMOk4VEWrrGsxtwgUA9hVtu8n87INMsCUC73l20FY+fj7iT2zS48LRejcRaDVe6PurVFVgK6R7UHueKsSTqyU1bR/Bsk/Y/8AIqHjNR8SdtCI4Zb55dlX9Wknnwt"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 252,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 308,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 252
+          }
+        ],
+        "thoughtsTokenCount": 39,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "5e0e6625f60e416c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user u123 and tell me my discount."
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "customer_lookup_workflow",
+                "args": {
+                  "userId": "u123"
+                }
+              },
+              "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "customer_lookup_workflow",
+                "response": {
+                  "userId": "u123",
+                  "tier": "Verified VIP Member"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[lookup_customer_data] said: {\"userId\":\"u123\",\"tier\":\"Verified VIP Member\"}"
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "calculate_discount",
+                "args": {
+                  "tier": "Verified VIP Member"
+                }
+              },
+              "thoughtSignature": "CskBARFNMg8w0O19xRklAqwMQk8G8Ofbobo8Cn51FOb0XeQ9tViP4OGaHJQ/NYLS/4C3qrT23M7HEmbY+wdN6Qnsxxt+V7Lz9JgFNJpHLqvNhHlyi44zyNDyX6EhhlfxlRG+ZC11hXkaYqSNHgTwDMOk4VEWrrGsxtwgUA9hVtu8n87INMsCUC73l20FY+fj7iT2zS48LRejcRaDVe6PurVFVgK6R7UHueKsSTqyU1bR/Bsk/Y/8AIqHjNR8SdtCI4Zb55dlX9Wknnwt"
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "calculate_discount",
+                "response": {
+                  "result": "20% off"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Your membership tier is \"Verified VIP Member\" and you get a 20% discount.",
+                "thoughtSignature": "CpUCARFNMg9D6HOPkkiMGyyxIENysDhYK+G4QMIaNTCQepr/de3zwVjrrT2WGdxDnvWOkDGFGn7s8eBoIGikoLBpYskhZ9lBE5qO3Dm1paFK5+iHECq6QYf5udHpCpzYcyih7kwFbg6u62NJCHV+HVzKgEG4HdSvnzS/9mRQYqzktIhueiGhwVvDJE9zLeNefJsOY1qGrV1XTd3BNOXD5noz5rdOz9azywcidw02CY6FBL4HCtWOtQ7U+eCza4ftTj9we7zbkaySQh5cW+7ifb9QldT+u5kAzWqUjTh8YTXwRQsT8RZr2zdtJ0uZFXvSpwWUNCH2PYRqoiG+yMZOKGwBeI27BlJEAUFfsNkZcCdjeobSR7TAfQ=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 314,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 396,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 314
+          }
+        ],
+        "thoughtsTokenCount": 63,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

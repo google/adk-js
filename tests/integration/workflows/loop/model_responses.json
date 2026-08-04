@@ -1,0 +1,109 @@
+[
+  {
+    "key": "5fc04152f12fe2c0",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "quantum computing"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"quantum computing\".\n    If feedback is provided, take it into account.\n    The feedback: \n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Quantum Computing: The Next Frontier in Processing Power"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 50,
+        "candidatesTokenCount": 9,
+        "totalTokenCount": 82,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 50
+          }
+        ],
+        "thoughtsTokenCount": 23,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "2a8cac0388159a84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "quantum computing"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_headline] said: Quantum Computing: The Next Frontier in Processing Power"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Quantum Computing: The Next Frontier in Processing Power"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"evaluate_headline\".\n\n\n    Grade whether the headline is related to technology or software engineering.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"grade\": \"tech-related\", \"feedback\": \"\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 64,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 184,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 64
+          }
+        ],
+        "thoughtsTokenCount": 108,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]
