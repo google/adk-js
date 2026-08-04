@@ -14,6 +14,7 @@ import {
 } from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
+  createTempDir,
   isFile,
   isFolderExists,
   loadFileData,
@@ -130,6 +131,7 @@ vi.mock('../../src/utils/agent_loader.js', () => ({
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFolderExists: vi.fn(),
   loadFileData: vi.fn(),
@@ -298,6 +300,25 @@ describe('deployToAgentEngine', () => {
       exists = false;
     }
     expect(exists).toBe(false);
+  });
+
+  it('should create a private temp folder when none is supplied', async () => {
+    const createdTempFolder = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent_engine_deploy_src-'),
+    );
+    globalThis.fsMockTempFolder = createdTempFolder;
+    (createTempDir as Mock).mockResolvedValue(createdTempFolder);
+
+    await deployToAgentEngine({...defaultOptions, tempFolder: undefined});
+
+    expect(createTempDir).toHaveBeenCalledWith('agent_engine_deploy_src');
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['builds', 'submit', createdTempFolder]),
+      expect.any(Object),
+    );
+    expect(isFolderExists).not.toHaveBeenCalled();
+    await expect(fs.access(createdTempFolder)).rejects.toThrow();
   });
 
   it('should deploy successfully with all optional parameters', async () => {

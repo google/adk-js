@@ -14,6 +14,7 @@ import {
 import {A2A_AUTH_TOKEN_ENV_VAR} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
+  createTempDir,
   isFile,
   isFolderExists,
   loadFileData,
@@ -57,6 +58,7 @@ vi.mock('../../src/utils/agent_loader.js', () => ({
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFolderExists: vi.fn(),
   loadFileData: vi.fn(),
@@ -245,6 +247,22 @@ describe('deployToCloudRun', () => {
     await expect(deployToCloudRun(optionsWithoutProject)).rejects.toThrow(
       /Project is not specified/,
     );
+  });
+
+  it('should create a private temp folder when none is supplied', async () => {
+    const createdTempFolder = '/tmp/cloud_run_deploy_src-abc123';
+    (createTempDir as Mock).mockResolvedValue(createdTempFolder);
+
+    await deployToCloudRun({...defaultOptions, tempFolder: undefined});
+
+    expect(createTempDir).toHaveBeenCalledWith('cloud_run_deploy_src');
+    expect(spawnMock.mock.calls[0][1]).toContain(createdTempFolder);
+    expect(isFolderExists).not.toHaveBeenCalled();
+    expect(fs.rm).toHaveBeenCalledTimes(1);
+    expect(fs.rm).toHaveBeenCalledWith(createdTempFolder, {
+      recursive: true,
+      force: true,
+    });
   });
 
   it('should clean up existing temp folder before deploying', async () => {
