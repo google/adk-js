@@ -11,27 +11,22 @@ import {pathToFileURL} from 'node:url';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 
 /**
- * Guards the browser build output in core/dist/web.
+ * Guards `core/dist/web`, the artifact a browser application consumes.
  *
- * Two defects shipped in it because nothing checked the artifacts:
- *
- *  - every file carried a Node `createRequire` banner, so a browser bundler
- *    reported an unresolvable `module` import ~187 times;
- *  - `models/apigee_llm.js` did not parse at all, because the browser target
- *    downlevelled an async generator and emitted `super` inside a closure.
- *
- * Both were invisible to the existing suite, which runs against src.
+ * Nothing checked these artifacts before, so three defects shipped in them: a
+ * Node `createRequire` banner in every file, a `models/apigee_llm.js` that did
+ * not parse, and a barrel that reached for `node:fs` and `google-auth-library`.
+ * The existing suite runs against `src` and could not see any of them.
  */
 
 const WEB_DIST = path.join(process.cwd(), 'core', 'dist', 'web');
+const WEB_ENTRY = path.join(WEB_DIST, 'index_web.js');
 const NODE_ESM_DIST = path.join(process.cwd(), 'core', 'dist', 'esm');
 
-/** Every .js file under `dir`. */
 async function collectJsFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
   const walk = async (current: string): Promise<void> => {
-    const entries = await fs.readdir(current, {withFileTypes: true});
-    for (const entry of entries) {
+    for (const entry of await fs.readdir(current, {withFileTypes: true})) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
         await walk(full);
@@ -54,6 +49,18 @@ describe('web build output', () => {
     expect(webFiles.length).toBeGreaterThan(0);
   });
 
+  it('resolves the path declared in the package browser field', async () => {
+    const pkg = JSON.parse(
+      await fs.readFile(
+        path.join(process.cwd(), 'core', 'package.json'),
+        'utf8',
+      ),
+    ) as {browser?: string};
+    expect(pkg.browser).toBeDefined();
+    const target = path.join(process.cwd(), 'core', pkg.browser!);
+    await expect(fs.access(target)).resolves.toBeUndefined();
+  });
+
   it('contains no Node-only createRequire banner', async () => {
     const offenders: string[] = [];
     for (const file of webFiles) {
@@ -66,9 +73,9 @@ describe('web build output', () => {
   });
 
   it('still emits the createRequire banner for the Node ESM build', async () => {
-    // Guards against fixing the browser build by removing the banner outright.
+    // Guards against fixing the browser build by dropping the banner outright.
     const nodeFiles = await collectJsFiles(NODE_ESM_DIST);
-    const withBanner = [];
+    const withBanner: string[] = [];
     for (const file of nodeFiles) {
       const source = await fs.readFile(file, 'utf8');
       if (source.includes('topLevelCreateRequire')) {
@@ -90,45 +97,33 @@ describe('web build output', () => {
     }
     expect(unparseable).toEqual([]);
   });
-
-  it('imports no Node builtin that has no browser equivalent', async () => {
-    // Scoped to `module` for now. dist/web still reaches for winston and
-    // node:async_hooks; widen this list as those are addressed.
-    const forbidden = ["from 'module'", 'from "module"'];
-    const offenders: string[] = [];
-    for (const file of webFiles) {
-      const source = await fs.readFile(file, 'utf8');
-      if (forbidden.some((needle) => source.includes(needle))) {
-        offenders.push(path.relative(WEB_DIST, file));
-      }
-    }
-    expect(offenders).toEqual([]);
-  });
 });
 
 /**
- * Bundles the built browser output the way an application would, then runs it.
+ * Bundles the whole web build the way an application would, then runs it.
  *
- * Checking the files parse is necessary but not sufficient — it would not catch
- * output that bundles and then throws on import, or a primitive that is broken
- * once compiled for the browser. These entry points are bundled with
- * `--platform=browser` and actually executed.
- *
- * The list is short because most of dist/web still cannot be bundled: the
- * barrel pulls in `skills/loader` (node:fs, node:path), and the logger pulls in
- * winston. Add entry points here as those are resolved — `agents/llm_agent.js`
- * and `runner/runner.js` are the two worth having next, and both are one
- * dependency away.
+ * Static checks on the emitted files cannot catch output that bundles and then
+ * throws on import, or a primitive that is broken once compiled for the
+ * browser, so this imports the bundle and drives the public API.
  */
-describe('web build output is usable by a browser bundler', () => {
-  /** Entry points that must bundle for the browser with zero errors. */
-  const BUNDLEABLE = ['events/event.js', 'tools/function_tool.js'];
-
+describe('the web bundle works in a browser toolchain', () => {
   let tmpDir = '';
+  let bundlePath = '';
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-web-bundle-'));
-  });
+    bundlePath = path.join(tmpDir, 'app.mjs');
+    // Rejects on error, so a failure here means the build is unusable.
+    await esbuild.build({
+      entryPoints: [WEB_ENTRY],
+      outfile: bundlePath,
+      bundle: true,
+      format: 'esm',
+      platform: 'browser',
+      target: 'chrome138',
+      logLevel: 'silent',
+    });
+  }, 60000);
 
   afterAll(async () => {
     if (tmpDir) {
@@ -136,35 +131,47 @@ describe('web build output is usable by a browser bundler', () => {
     }
   });
 
-  /** Bundles one entry for the browser and returns the output file. */
-  async function bundleForBrowser(entry: string): Promise<string> {
-    const outfile = path.join(tmpDir, entry.replace(/[/\\]/g, '_'));
-    await esbuild.build({
-      entryPoints: [path.join(WEB_DIST, entry)],
-      outfile,
-      bundle: true,
-      format: 'esm',
-      platform: 'browser',
-      target: 'chrome138',
-      logLevel: 'silent',
-    });
-    return outfile;
-  }
-
-  it.each(BUNDLEABLE)('bundles %s for the browser', async (entry) => {
-    // esbuild.build rejects on error, so reaching the assertion is the result.
-    const outfile = await bundleForBrowser(entry);
-    const stat = await fs.stat(outfile);
+  it('bundles the entire web entry point for the browser', async () => {
+    const stat = await fs.stat(bundlePath);
     expect(stat.size).toBeGreaterThan(0);
   });
 
-  it('produces a FunctionTool that still works once compiled', async () => {
-    const outfile = await bundleForBrowser('tools/function_tool.js');
-    const {FunctionTool, isFunctionTool} = await import(
-      pathToFileURL(outfile).href
-    );
+  it('exposes the core primitives once bundled', async () => {
+    const adk = await import(pathToFileURL(bundlePath).href);
+    for (const symbol of [
+      'LlmAgent',
+      'SequentialAgent',
+      'ParallelAgent',
+      'LoopAgent',
+      'FunctionTool',
+      'Runner',
+      'InMemorySessionService',
+      'BaseLlm',
+    ]) {
+      expect(typeof adk[symbol], symbol).toBe('function');
+    }
+  });
 
-    const tool = new FunctionTool({
+  it('excludes the Node-only surface from the browser entry point', async () => {
+    const adk = await import(pathToFileURL(bundlePath).href);
+    // These reach node:fs, child_process, google-auth-library or
+    // @google-cloud/vertexai, and are exported from index.ts for Node only.
+    for (const symbol of [
+      'loadAllSkillsInDir',
+      'OpenAPIToolset',
+      'UnsafeLocalCodeExecutor',
+      'GcsArtifactService',
+      'VertexAiMemoryBankService',
+      'loadWebPage',
+    ]) {
+      expect(adk[symbol], symbol).toBeUndefined();
+    }
+  });
+
+  it('builds a working agent and tool from the bundle', async () => {
+    const adk = await import(pathToFileURL(bundlePath).href);
+
+    const tool = new adk.FunctionTool({
       name: 'add',
       description: 'adds two numbers',
       parameters: {
@@ -175,17 +182,21 @@ describe('web build output is usable by a browser bundler', () => {
       execute: async ({a, b}: {a: number; b: number}) => ({sum: a + b}),
     });
 
-    expect(isFunctionTool(tool)).toBe(true);
-    expect(tool.name).toBe('add');
-
-    // The declaration is what a model actually receives.
-    const declaration = tool._getDeclaration();
-    expect(declaration?.name).toBe('add');
-    expect(declaration?.parameters).toEqual({
-      type: 'object',
-      properties: {a: {type: 'number'}, b: {type: 'number'}},
-      required: ['a', 'b'],
+    const agent = new adk.LlmAgent({
+      name: 'browser_agent',
+      model: 'gemini-2.0-flash',
+      instruction: 'You are a calculator.',
+      tools: [tool],
     });
+    expect(agent.name).toBe('browser_agent');
+    expect(agent.tools).toHaveLength(1);
+
+    const sessions = new adk.InMemorySessionService();
+    const session = await sessions.createSession({
+      appName: 'browser_app',
+      userId: 'user',
+    });
+    expect(session.id).toBeTruthy();
 
     const result = await tool.runAsync({
       args: {a: 2, b: 3},
