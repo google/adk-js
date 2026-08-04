@@ -65,12 +65,10 @@ async function createTempScriptFile(
   language: CodeExecutionLanguage,
   shellCommandPath?: string,
 ): Promise<{filePath: string; tempDir: string}> {
-  const tempDir = path.join(
-    os.tmpdir(),
-    'adk_js_unsafe_code_executor',
-    Date.now().toString() + '_' + Math.random().toString(36).slice(2),
+  // mkdtemp names the directory itself and creates it exclusively at 0o700.
+  const tempDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'adk_js_unsafe_code_executor_'),
   );
-  await fs.mkdir(tempDir, {recursive: true});
 
   const ext = getExtensionForLanguage(language, shellCommandPath) || '.js';
   const filePath = path.join(tempDir, `script${ext}`);

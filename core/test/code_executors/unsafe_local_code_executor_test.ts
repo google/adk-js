@@ -15,6 +15,7 @@ import {
 } from '@google/adk';
 import {EventEmitter} from 'node:events';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 // Only `spawn` is mocked; it defaults to the real implementation (see
@@ -88,6 +89,42 @@ describe('UnsafeLocalCodeExecutor', () => {
 
     expect(result.stdout).toContain('Hello, World!');
     expect(result.stderr).toBe('');
+  });
+
+  // The script runs with the temporary directory as its cwd, so it can report
+  // the name and mode the executor actually created.
+  it('creates a private, unpredictable temporary directory', async () => {
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: [
+          'const fs = require("node:fs");',
+          'const dir = process.cwd();',
+          'const mode = (fs.statSync(dir).mode & 0o777).toString(8);',
+          'console.log(JSON.stringify({dir, mode}));',
+        ].join('\n'),
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        inputFiles: [],
+      },
+    };
+
+    const firstResult = await executor.executeCode(params);
+    const secondResult = await executor.executeCode(params);
+    expect(firstResult.stderr).toBe('');
+    expect(secondResult.stderr).toBe('');
+
+    const first = JSON.parse(firstResult.stdout);
+    const second = JSON.parse(secondResult.stdout);
+
+    // mkdtemp appends six random characters to the prefix it is given.
+    expect(path.basename(first.dir)).toMatch(
+      /^adk_js_unsafe_code_executor_.{6}$/,
+    );
+    expect(second.dir).not.toBe(first.dir);
+
+    if (os.platform() !== 'win32') {
+      expect(first.mode).toBe('700');
+    }
   });
 
   it('should capture stderr', async () => {
