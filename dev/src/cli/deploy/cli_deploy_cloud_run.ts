@@ -8,7 +8,7 @@ import * as path from 'node:path';
 
 import {A2A_AUTH_TOKEN_ENV_VAR} from '../../server/adk_api_server.js';
 import {AgentLoader} from '../../utils/agent_loader.js';
-import {isFile, isFolderExists} from '../../utils/file_utils.js';
+import {createTempDir, isFile, isFolderExists} from '../../utils/file_utils.js';
 import {
   BaseDeployOptions,
   CreateDockerFileContentOptions,
@@ -57,7 +57,10 @@ function validateGcloudExtraArgs(
   }
 }
 
-function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
+function prepareGCloudArguments(
+  options: DeployToCloudRunOptions,
+  tempFolder: string,
+): string[] {
   const regionOptions: string[] = options.region
     ? ['--region', options.region]
     : [];
@@ -85,7 +88,7 @@ function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
     'deploy',
     options.serviceName,
     '--source',
-    options.tempFolder,
+    tempFolder,
     '--project',
     options.project,
     ...regionOptions,
@@ -152,7 +155,11 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     );
   }
 
-  const gcloudCommands = prepareGCloudArguments(options);
+  const callerTempFolder = options.tempFolder;
+  const tempFolder =
+    callerTempFolder ?? (await createTempDir('cloud_run_deploy_src'));
+
+  const gcloudCommands = prepareGCloudArguments(options, tempFolder);
 
   if (options.a2a && !options.a2aAuthToken) {
     console.warn(
@@ -181,23 +188,20 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
 
   console.info('Starting deployment to Cloud Run...');
 
-  if (await isFolderExists(options.tempFolder)) {
+  if (callerTempFolder && (await isFolderExists(tempFolder))) {
     console.info('Cleaning up existing temporary files...');
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+    await fs.rm(tempFolder, {recursive: true, force: true});
   }
 
   try {
     console.info('Copying agent source files...');
-    await copyAgentFiles(
-      agentLoader,
-      path.join(options.tempFolder, 'agents', appName),
-    );
+    await copyAgentFiles(agentLoader, path.join(tempFolder, 'agents', appName));
 
     console.info('Creating package.json...');
-    await createPackageJson(agentDir, options.tempFolder);
+    await createPackageJson(agentDir, tempFolder);
 
     console.info('Creating Dockerfile...');
-    await createDockerFile(options.tempFolder, {
+    await createDockerFile(tempFolder, {
       appName,
       project: options.project,
       region: options.region,
@@ -219,7 +223,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     );
   } finally {
     console.info('Cleaning up temporary files...');
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+    await fs.rm(tempFolder, {recursive: true, force: true});
     await agentLoader.disposeAll();
     console.info('Temporary files cleaned up.');
   }

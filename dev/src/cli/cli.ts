@@ -19,7 +19,6 @@ import * as path from 'path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
-import {getTempDir} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
@@ -410,8 +409,7 @@ export function createProgram(): Command {
     )
     .option(
       '--temp_folder [string]',
-      'Optional. Temp folder for the generated Cloud Run source files (default: a timestamped folder in the system temp directory).',
-      getTempDir('cloud_run_deploy_src'),
+      'Optional. Temp folder for the generated Cloud Run source files (default: a private directory created in the system temp directory).',
     )
     .addOption(ADK_VERSION_OPTION)
     .addOption(WITH_UI_OPTION)
@@ -475,8 +473,7 @@ export function createProgram(): Command {
       .addOption(REPOSITORY_DEPLOY_OPTION)
       .option(
         '--temp_folder [string]',
-        'Optional. Temp folder for the generated source files (default: a timestamped folder in the system temp directory).',
-        getTempDir('agent_engine_deploy_src'),
+        'Optional. Temp folder for the generated source files (default: a private directory created in the system temp directory).',
       )
       .addOption(ADK_VERSION_OPTION)
       .addOption(WITH_UI_OPTION)

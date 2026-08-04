@@ -10,7 +10,7 @@ import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {ReasoningEngine as VertexReasoningEngine} from '@google-cloud/vertexai/build/src/genai/types.js';
 
 import {AgentLoader} from '../../utils/agent_loader.js';
-import {isFile, isFolderExists} from '../../utils/file_utils.js';
+import {createTempDir, isFile, isFolderExists} from '../../utils/file_utils.js';
 import {
   BaseDeployOptions,
   copyAgentFiles,
@@ -79,24 +79,25 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
 
   console.info('Starting deployment to Agent Engine...');
 
-  if (await isFolderExists(options.tempFolder)) {
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+  const callerTempFolder = options.tempFolder;
+  const tempFolder =
+    callerTempFolder ?? (await createTempDir('agent_engine_deploy_src'));
+
+  if (callerTempFolder && (await isFolderExists(tempFolder))) {
+    await fs.rm(tempFolder, {recursive: true, force: true});
   }
 
   try {
-    await fs.mkdir(options.tempFolder, {recursive: true});
+    await fs.mkdir(tempFolder, {recursive: true});
 
     console.info('Copying agent source files...');
-    await copyAgentFiles(
-      agentLoader,
-      path.join(options.tempFolder, 'agents', appName),
-    );
+    await copyAgentFiles(agentLoader, path.join(tempFolder, 'agents', appName));
 
     console.info('Creating package.json...');
-    await createPackageJson(agentDir, options.tempFolder);
+    await createPackageJson(agentDir, tempFolder);
 
     console.info('Creating Dockerfile...');
-    await createDockerFile(options.tempFolder, {
+    await createDockerFile(tempFolder, {
       appName,
       project: options.project,
       region: options.region,
@@ -124,7 +125,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         'submit',
         '--tag',
         imageTag,
-        options.tempFolder,
+        tempFolder,
         '--project',
         options.project,
         '--gcs-log-dir',
@@ -215,7 +216,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
     throw e;
   } finally {
     console.info('Cleaning up temporary files...');
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+    await fs.rm(tempFolder, {recursive: true, force: true});
     await agentLoader.disposeAll();
     console.info('Temporary files cleaned up.');
   }
