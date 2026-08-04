@@ -8,7 +8,12 @@ import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
-  'browser': ['chrome58', 'firefox57', 'safari11'],
+  // Async generators are native from Chrome 63 / Safari 12. Targeting anything
+  // older makes esbuild downlevel them into an __asyncGenerator closure, and
+  // `super` is not valid inside that closure — so a class like ApigeeLlm, which
+  // does `yield* super.generateContentAsync(...)`, emits output that no
+  // downstream bundler can parse.
+  'browser': ['chrome63', 'firefox57', 'safari12'],
 };
 
 const licenseHeaderText = `/**
@@ -69,7 +74,10 @@ function build({
     buildOptions.outdir = `./dist/${targetDir}`;
   }
 
-  if (format === 'esm') {
+  // Node-only. `module` has no browser equivalent, and the web build never
+  // calls require(), so emitting this into dist/web produced an unresolvable
+  // import in all ~187 of its files.
+  if (format === 'esm' && platform === 'node') {
     buildOptions.banner = {
       js:
         (buildOptions.banner?.js || '') +
