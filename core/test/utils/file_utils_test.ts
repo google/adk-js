@@ -92,6 +92,30 @@ describe('file_utils', () => {
       await expect(fs.access(siblingPath)).rejects.toThrow();
     });
 
+    it('should not write through a dangling symlink planted in the target directory', async () => {
+      // The collision probe uses fs.access, which reports a *dangling* symlink
+      // as "nothing here" (it stats the missing target). Without an exclusive
+      // create, the write would then follow the link and land outside the
+      // target directory, bypassing the containment check entirely.
+      const outsidePath = path.join(
+        path.dirname(tempDir),
+        `${path.basename(tempDir)}_escape.txt`,
+      );
+      await fs.symlink(outsidePath, path.join(tempDir, 'link.txt'));
+
+      const files = [
+        {
+          name: 'link.txt',
+          content: 'dangerous',
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+      ];
+
+      await expect(materializeFiles(files, tempDir)).rejects.toThrow();
+      await expect(fs.access(outsidePath)).rejects.toThrow();
+    });
+
     it('should throw an error if file attempts to escape target directory via absolute path', async () => {
       const outsidePath = path.resolve(tempDir, '../outside.txt');
       const files = [

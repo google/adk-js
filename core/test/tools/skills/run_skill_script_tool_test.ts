@@ -18,6 +18,9 @@ import {
   Skill,
   SkillToolset,
 } from '@google/adk';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
@@ -227,6 +230,56 @@ describe('RunSkillScriptTool', () => {
       toolContext: createMockContext(),
     });
 
-    expect(materializeFiles).toHaveBeenCalledWith([testFile]);
+    const outputDir = await toolset.getScriptOutputDir();
+    expect(materializeFiles).toHaveBeenCalledWith([testFile], outputDir);
+  });
+
+  it('materializes output files into a dedicated dir, never the cwd', async () => {
+    // Output file names are chosen by the executed script, i.e. by whatever a
+    // prompt injection persuaded the model/skill to emit. Resolving them
+    // against process.cwd() would let that content drop files into the host
+    // application's working directory.
+    const mockExecutor = new MockCodeExecutor();
+    mockExecutor.mockResult = {stdout: '', stderr: '', outputFiles: []};
+
+    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
+      toolContext: createMockContext(),
+    });
+
+    const [, dir] = vi.mocked(materializeFiles).mock.calls.at(-1)!;
+    expect(dir).toBeTypeOf('string');
+    expect(dir).not.toBe(process.cwd());
+    expect(path.resolve(dir)).toBe(dir);
+    expect(dir.startsWith(os.tmpdir())).toBe(true);
+
+    await fs.rm(dir, {recursive: true, force: true});
+  });
+
+  it('honors an explicitly configured script output dir', async () => {
+    const configuredDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'skill_out_configured_'),
+    );
+    const mockExecutor = new MockCodeExecutor();
+    mockExecutor.mockResult = {stdout: '', stderr: '', outputFiles: []};
+
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: configuredDir,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    const result = (await tool.runAsync({
+      args: {skill_name: 'test-skill', script_path: 'scripts/setup.js'},
+      toolContext: createMockContext(),
+    })) as {outputDirectory: string};
+
+    expect(materializeFiles).toHaveBeenLastCalledWith([], configuredDir);
+    expect(result.outputDirectory).toBe(configuredDir);
+
+    await fs.rm(configuredDir, {recursive: true, force: true});
   });
 });

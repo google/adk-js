@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {Context} from '../../agents/context.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {BaseCodeExecutor} from '../../code_executors/base_code_executor.js';
@@ -45,8 +48,10 @@ export class SkillToolset extends BaseToolset {
   public additionalTools: Array<BaseTool | BaseToolset>;
   public codeExecutor?: BaseCodeExecutor;
   public registry?: SkillRegistry;
+  public scriptOutputDir?: string;
   private toolCache = new Map<string, BaseTool[]>();
   private fetchedSkillCache = new Map<string, Map<string, Skill>>();
+  private scriptOutputDirPromise?: Promise<string>;
 
   constructor(
     skills: Record<string, Skill> | Skill[],
@@ -63,6 +68,17 @@ export class SkillToolset extends BaseToolset {
        * confirmation.
        */
       allowInlineScripts?: boolean;
+      /**
+       * Directory that files produced by `run_skill_script` /
+       * `run_skill_inline_script` are written into. Output file names come from
+       * the executed script, so this must be a directory dedicated to
+       * throwaway script output — never the application's working directory or
+       * a source tree.
+       *
+       * Defaults to a private, randomly named directory created under the OS
+       * temp dir on first use.
+       */
+      scriptOutputDir?: string;
     } = {},
   ) {
     super([], 'adk_skill_toolset');
@@ -72,6 +88,7 @@ export class SkillToolset extends BaseToolset {
     this.codeExecutor = options.codeExecutor;
     this.additionalTools = options.additionalTools || [];
     this.registry = options.registry;
+    this.scriptOutputDir = options.scriptOutputDir;
 
     this.tools = [
       new ListSkillsTool(this),
@@ -102,6 +119,33 @@ export class SkillToolset extends BaseToolset {
 
   getSkill(name: string): Skill | undefined {
     return this.skills[name];
+  }
+
+  /**
+   * Resolves the directory that script output files are materialized into,
+   * creating it on first use and reusing it for the lifetime of the toolset.
+   *
+   * Script output file names are attacker-influenced (a prompt-injected skill
+   * controls what its script writes), so they must never be resolved against
+   * the host application's working directory. When no `scriptOutputDir` was
+   * configured this hands back a private temp directory instead.
+   */
+  getScriptOutputDir(): Promise<string> {
+    this.scriptOutputDirPromise ??= this.createScriptOutputDir();
+    return this.scriptOutputDirPromise;
+  }
+
+  private async createScriptOutputDir(): Promise<string> {
+    if (this.scriptOutputDir) {
+      const dir = path.resolve(this.scriptOutputDir);
+      await fs.mkdir(dir, {recursive: true});
+      return dir;
+    }
+
+    // mkdtemp names the directory itself and creates it exclusively at 0o700,
+    // so another local user can neither predict the path nor pre-create it as
+    // a symlink to somewhere else.
+    return fs.mkdtemp(path.join(os.tmpdir(), 'adk_skill_script_output_'));
   }
 
   async getOrFetchSkill(

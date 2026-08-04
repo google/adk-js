@@ -18,6 +18,8 @@ import {
   RunSkillInlineScriptTool,
   SkillToolset,
 } from '@google/adk';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import {describe, expect, it, vi} from 'vitest';
 import {ToolConfirmation} from '../../../src/tools/tool_confirmation.js';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
@@ -206,6 +208,7 @@ describe('RunSkillInlineScriptTool', () => {
       stdout: 'mock output',
       stderr: 'mock warning',
       outputFiles: [],
+      outputDirectory: await toolset.getScriptOutputDir(),
     });
 
     expect(mockExecutor.executeCodeParams).toBeDefined();
@@ -247,7 +250,15 @@ describe('RunSkillInlineScriptTool', () => {
       }),
     });
 
-    expect(materializeFiles).toHaveBeenCalledWith([testFile]);
+    // Output file names come from the model-supplied inline script, so they
+    // must be resolved against a dedicated output directory rather than
+    // process.cwd().
+    const outputDir = await toolset.getScriptOutputDir();
+    expect(materializeFiles).toHaveBeenCalledWith([testFile], outputDir);
+    expect(outputDir).not.toBe(process.cwd());
+    expect(outputDir.startsWith(os.tmpdir())).toBe(true);
+
+    await fs.rm(outputDir, {recursive: true, force: true});
   });
 
   it('successfully passes array arguments to code executor', async () => {
