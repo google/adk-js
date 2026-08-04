@@ -5,8 +5,10 @@
  */
 import * as esbuild from 'esbuild';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import {beforeAll, describe, expect, it} from 'vitest';
+import {pathToFileURL} from 'node:url';
+import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 
 /**
  * Guards the browser build output in core/dist/web.
@@ -101,5 +103,94 @@ describe('web build output', () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * Bundles the built browser output the way an application would, then runs it.
+ *
+ * Checking the files parse is necessary but not sufficient — it would not catch
+ * output that bundles and then throws on import, or a primitive that is broken
+ * once compiled for the browser. These entry points are bundled with
+ * `--platform=browser` and actually executed.
+ *
+ * The list is short because most of dist/web still cannot be bundled: the
+ * barrel pulls in `skills/loader` (node:fs, node:path), and the logger pulls in
+ * winston. Add entry points here as those are resolved — `agents/llm_agent.js`
+ * and `runner/runner.js` are the two worth having next, and both are one
+ * dependency away.
+ */
+describe('web build output is usable by a browser bundler', () => {
+  /** Entry points that must bundle for the browser with zero errors. */
+  const BUNDLEABLE = ['events/event.js', 'tools/function_tool.js'];
+
+  let tmpDir = '';
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-web-bundle-'));
+  });
+
+  afterAll(async () => {
+    if (tmpDir) {
+      await fs.rm(tmpDir, {recursive: true, force: true});
+    }
+  });
+
+  /** Bundles one entry for the browser and returns the output file. */
+  async function bundleForBrowser(entry: string): Promise<string> {
+    const outfile = path.join(tmpDir, entry.replace(/[/\\]/g, '_'));
+    await esbuild.build({
+      entryPoints: [path.join(WEB_DIST, entry)],
+      outfile,
+      bundle: true,
+      format: 'esm',
+      platform: 'browser',
+      target: 'chrome138',
+      logLevel: 'silent',
+    });
+    return outfile;
+  }
+
+  it.each(BUNDLEABLE)('bundles %s for the browser', async (entry) => {
+    // esbuild.build rejects on error, so reaching the assertion is the result.
+    const outfile = await bundleForBrowser(entry);
+    const stat = await fs.stat(outfile);
+    expect(stat.size).toBeGreaterThan(0);
+  });
+
+  it('produces a FunctionTool that still works once compiled', async () => {
+    const outfile = await bundleForBrowser('tools/function_tool.js');
+    const {FunctionTool, isFunctionTool} = await import(
+      pathToFileURL(outfile).href
+    );
+
+    const tool = new FunctionTool({
+      name: 'add',
+      description: 'adds two numbers',
+      parameters: {
+        type: 'object',
+        properties: {a: {type: 'number'}, b: {type: 'number'}},
+        required: ['a', 'b'],
+      },
+      execute: async ({a, b}: {a: number; b: number}) => ({sum: a + b}),
+    });
+
+    expect(isFunctionTool(tool)).toBe(true);
+    expect(tool.name).toBe('add');
+
+    // The declaration is what a model actually receives.
+    const declaration = tool._getDeclaration();
+    expect(declaration?.name).toBe('add');
+    expect(declaration?.parameters).toEqual({
+      type: 'object',
+      properties: {a: {type: 'number'}, b: {type: 'number'}},
+      required: ['a', 'b'],
+    });
+
+    const result = await tool.runAsync({
+      args: {a: 2, b: 3},
+      context: undefined,
+    });
+    expect(result).toEqual({sum: 5});
   });
 });
