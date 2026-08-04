@@ -11,7 +11,7 @@ import {
   createEvent,
   createEventActions,
 } from '@google/adk';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isInMemoryConnectionString} from '../../src/sessions/in_memory_session_service.js';
 
 describe('isInMemoryConnectionString', () => {
@@ -655,6 +655,148 @@ describe('InMemorySessionService', () => {
       // Should just log warnings and return event
       const returnedEvent = await service.appendEvent({session, event});
       expect(returnedEvent).toBe(event);
+    });
+  });
+
+  describe('prototype pollution', () => {
+    const POLLUTED_KEYS = [
+      'polluted',
+      'httpOptions',
+      'pwned',
+      'baseUrl',
+      'poc_sid',
+    ];
+
+    const clearPollution = () => {
+      for (const key of POLLUTED_KEYS) {
+        delete (Object.prototype as Record<string, unknown>)[key];
+      }
+    };
+
+    beforeEach(clearPollution);
+    afterEach(clearPollution);
+
+    it('does not pollute Object.prototype via appName', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    });
+
+    it('does not pollute Object.prototype via userId in user state', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: '__proto__',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {
+              [`${State.USER_PREFIX}httpOptions`]: {
+                baseUrl: 'https://evil.test',
+              },
+            },
+          }),
+        }),
+      });
+
+      expect(({} as Record<string, unknown>)['httpOptions']).toBeUndefined();
+    });
+
+    it('does not pollute Object.prototype via appName in app state', async () => {
+      const session = await service.createSession({
+        appName: '__proto__',
+        userId: 'u1',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {[`${State.APP_PREFIX}pwned`]: 'attacker-value'},
+          }),
+        }),
+      });
+
+      expect(({} as Record<string, unknown>)['pwned']).toBeUndefined();
+    });
+
+    it('does not pollute Object.prototype via a __proto__ state key', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {
+              [`${State.USER_PREFIX}__proto__`]: {
+                baseUrl: 'https://evil.test',
+              },
+            },
+          }),
+        }),
+      });
+
+      expect(({} as Record<string, unknown>)['baseUrl']).toBeUndefined();
+    });
+
+    it('does not leak sessions across apps as phantom entries', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      // An app/user pair that was never created must stay empty.
+      const phantom = await service.listSessions({
+        appName: 'polluted',
+        userId: 'polluted',
+      });
+      expect(phantom.sessions).toHaveLength(0);
+
+      // A real, unrelated app must not gain a phantom user either.
+      await service.createSession({
+        appName: 'real_app',
+        userId: 'alice',
+        sessionId: 's1',
+      });
+      const phantomUser = await service.listSessions({
+        appName: 'real_app',
+        userId: 'polluted',
+      });
+      expect(phantomUser.sessions).toHaveLength(0);
+    });
+
+    it('still stores and retrieves an app literally named __proto__', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      const session = await service.getSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+      });
+      expect(session?.id).toBe('poc_sid');
     });
   });
 });

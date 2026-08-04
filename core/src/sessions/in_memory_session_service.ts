@@ -31,6 +31,21 @@ export function isInMemoryConnectionString(uri?: string): boolean {
 }
 
 /**
+ * Creates a map with no prototype, for data keyed by untrusted input.
+ *
+ * The maps below are indexed by `appName`, `userId`, `sessionId` and state
+ * keys, all of which are attacker-controlled on a dev server (they arrive
+ * straight off the request path/body). With an ordinary `{}` literal, a key of
+ * `__proto__` resolves to `Object.prototype` instead of creating an own
+ * property, so `map[appName][userId] = ...` writes onto `Object.prototype` and
+ * pollutes every object in the process. A null-prototype map has no inherited
+ * `__proto__` accessor, so such keys become ordinary own properties.
+ */
+function createNullProtoMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+/**
  * An in-memory implementation of the session service.
  */
 export class InMemorySessionService extends BaseSessionService {
@@ -39,18 +54,19 @@ export class InMemorySessionService extends BaseSessionService {
    * session.
    */
   private sessions: Record<string, Record<string, Record<string, Session>>> =
-    {};
+    createNullProtoMap();
 
   /**
    * A map from app name to a map from user ID to a map from key to the value.
    */
   private userState: Record<string, Record<string, Record<string, unknown>>> =
-    {};
+    createNullProtoMap();
 
   /**
    * A map from app name to a map from key to the value.
    */
-  private appState: Record<string, Record<string, unknown>> = {};
+  private appState: Record<string, Record<string, unknown>> =
+    createNullProtoMap();
 
   async createSession({
     appName,
@@ -69,10 +85,10 @@ export class InMemorySessionService extends BaseSessionService {
     });
 
     if (!this.sessions[appName]) {
-      this.sessions[appName] = {};
+      this.sessions[appName] = createNullProtoMap();
     }
     if (!this.sessions[appName][userId]) {
-      this.sessions[appName][userId] = {};
+      this.sessions[appName][userId] = createNullProtoMap();
     }
 
     this.sessions[appName][userId][session.id] = session;
@@ -275,15 +291,17 @@ export class InMemorySessionService extends BaseSessionService {
     if (event.actions && event.actions.stateDelta) {
       for (const key of Object.keys(event.actions.stateDelta)) {
         if (key.startsWith(State.APP_PREFIX)) {
-          this.appState[appName] = this.appState[appName] || {};
+          this.appState[appName] =
+            this.appState[appName] || createNullProtoMap();
           this.appState[appName][key.replace(State.APP_PREFIX, '')] =
             event.actions.stateDelta[key];
         }
 
         if (key.startsWith(State.USER_PREFIX)) {
-          this.userState[appName] = this.userState[appName] || {};
+          this.userState[appName] =
+            this.userState[appName] || createNullProtoMap();
           this.userState[appName][userId] =
-            this.userState[appName][userId] || {};
+            this.userState[appName][userId] || createNullProtoMap();
           this.userState[appName][userId][key.replace(State.USER_PREFIX, '')] =
             event.actions.stateDelta[key];
         }

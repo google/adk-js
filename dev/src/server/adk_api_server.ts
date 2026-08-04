@@ -50,6 +50,19 @@ import {getAgentGraphAsDot} from './agent_graph.js';
  */
 export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
 
+/**
+ * Creates a map with no prototype, for data keyed by untrusted input.
+ *
+ * These caches are keyed by request path parameters (`appName`, `eventId`,
+ * `sessionId`). On an ordinary `{}` literal, inherited keys such as
+ * `toString` or `constructor` make `key in map` report a hit and
+ * `map[key]` yield a `Function` where a `Runner`/trace record is expected,
+ * and a key of `__proto__` aliases `Object.prototype` on write.
+ */
+function createNullProtoMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 interface ServerOptions {
   agentsDir?: string;
   host?: string;
@@ -91,7 +104,7 @@ export class AdkApiServer {
 
   readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
-  private readonly runnerCache: Record<string, Runner> = {};
+  private readonly runnerCache: Record<string, Runner> = createNullProtoMap();
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
@@ -102,8 +115,10 @@ export class AdkApiServer {
     tracerProvider: TracerProvider,
   ) => void;
   private server?: http.Server;
-  private readonly traceDict: Record<string, Record<string, unknown>> = {};
-  private readonly sessionTraceDict: Record<string, string[]> = {};
+  private readonly traceDict: Record<string, Record<string, unknown>> =
+    createNullProtoMap();
+  private readonly sessionTraceDict: Record<string, string[]> =
+    createNullProtoMap();
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;

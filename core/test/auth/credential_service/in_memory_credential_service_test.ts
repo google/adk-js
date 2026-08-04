@@ -14,7 +14,7 @@ import {
   InvocationContext,
   createSession,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it} from 'vitest';
 
 function createMockContext(appName: string, userId: string): Context {
   return new Context({
@@ -93,5 +93,41 @@ describe('InMemoryCredentialService', () => {
 
     const loaded = await service.loadCredential(authConfig, context);
     expect(loaded).toBeUndefined();
+  });
+
+  describe('prototype pollution', () => {
+    afterEach(() => {
+      delete (Object.prototype as Record<string, unknown>)['user1'];
+    });
+
+    it('does not pollute Object.prototype via appName', async () => {
+      const service = new InMemoryCredentialService();
+      const context = createMockContext('__proto__', 'user1');
+      const authConfig: AuthConfig = {
+        credentialKey: 'key1',
+        authScheme: {} as AuthScheme,
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'secret',
+        },
+      };
+
+      await service.saveCredential(authConfig, context);
+
+      expect(({} as Record<string, unknown>)['user1']).toBeUndefined();
+    });
+
+    it('returns undefined for inherited credentialKey names', async () => {
+      const service = new InMemoryCredentialService();
+      const context = createMockContext('testApp', 'user1');
+
+      for (const credentialKey of ['toString', 'constructor', '__proto__']) {
+        const loaded = await service.loadCredential(
+          {credentialKey, authScheme: {} as AuthScheme},
+          context,
+        );
+        expect(loaded).toBeUndefined();
+      }
+    });
   });
 });
