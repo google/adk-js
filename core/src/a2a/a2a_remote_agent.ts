@@ -219,7 +219,12 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
             }
           }
 
-          const adkEvent = toAdkEvent(chunk, context.invocationId, this.name);
+          const adkEvent = toAdkEvent(
+            chunk,
+            context.invocationId,
+            this.name,
+            context.branch,
+          );
           if (!adkEvent) {
             continue;
           }
@@ -242,7 +247,12 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
             await callback(context, result);
           }
         }
-        const adkEvent = toAdkEvent(result, context.invocationId, this.name);
+        const adkEvent = toAdkEvent(
+          result,
+          context.invocationId,
+          this.name,
+          context.branch,
+        );
         if (adkEvent) {
           processor.updateCustomMetadata(adkEvent, result);
           yield adkEvent;
