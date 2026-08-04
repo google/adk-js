@@ -5,6 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {getArtifactServiceFromUri} from '../../src/artifacts/registry.js';
 import {getConnectionOptionsFromUri} from '../../src/sessions/db/operations.js';
 import {getSessionServiceFromUri} from '../../src/sessions/registry.js';
 import {redactUriPassword} from '../../src/utils/redact_uri.js';
@@ -50,6 +51,15 @@ describe('connection-URI errors do not leak the password', () => {
     ).toThrow(/oracle:\/\/admin:\*\*\*@ora\.host\/xe/);
     expect(() =>
       getSessionServiceFromUri('oracle://admin:hunter2@ora.host/xe'),
+    ).not.toThrow(/hunter2/);
+  });
+
+  it('getArtifactServiceFromUri redacts the password in its error', () => {
+    expect(() =>
+      getArtifactServiceFromUri('s3://admin:hunter2@bucket/prefix'),
+    ).toThrow(/s3:\/\/admin:\*\*\*@bucket\/prefix/);
+    expect(() =>
+      getArtifactServiceFromUri('s3://admin:hunter2@bucket/prefix'),
     ).not.toThrow(/hunter2/);
   });
 });
