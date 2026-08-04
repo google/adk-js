@@ -40,8 +40,20 @@ export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
  */
 export type ToolExecuteFunction<TParameters extends ToolInputParameters> = (
   input: ToolExecuteArgument<TParameters>,
-  tool_context?: Context,
+  toolContext?: Context,
 ) => Promise<unknown> | unknown;
+
+/**
+ * Whether a {@link FunctionTool} requires user confirmation before it runs: a
+ * boolean, or a predicate over the (validated) call arguments and tool context.
+ * See {@link ToolOptions.requireConfirmation}.
+ */
+export type RequireConfirmation<TParameters extends ToolInputParameters> =
+  | boolean
+  | ((
+      input: ToolExecuteArgument<TParameters>,
+      toolContext?: Context,
+    ) => boolean | Promise<boolean>);
 
 /**
  * The configuration options for creating a function-based tool.
@@ -60,17 +72,21 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   /**
    * Whether this tool requires user confirmation before it runs. A boolean, or
    * a predicate over the (validated) call arguments and tool context returning
-   * a boolean. When confirmation is required the tool pauses the run (HITL):
-   * the framework emits an `adk_request_confirmation` interrupt, and the tool
-   * only executes once the user approves. Mirrors Python's
+   * a boolean.
+   *
+   * The HITL gate is enforced when the tool is invoked through an `LlmAgent`
+   * turn: `agents/functions.ts` surfaces an `adk_request_confirmation`
+   * interrupt from the tool's `requestedToolConfirmations`, and the tool only
+   * executes once the user approves (via the
+   * `RequestConfirmationLlmRequestProcessor`).
+   *
+   * NOTE: a workflow `ToolNode` does not yet route through that path, so a
+   * `requireConfirmation` tool used directly as a node does not pause — it
+   * returns the "requires confirmation" error as its node output. Approval for
+   * workflow nodes is not wired up. Mirrors Python's
    * `FunctionTool(require_confirmation=...)`.
    */
-  requireConfirmation?:
-    | boolean
-    | ((
-        input: ToolExecuteArgument<TParameters>,
-        tool_context?: Context,
-      ) => boolean | Promise<boolean>);
+  requireConfirmation?: RequireConfirmation<TParameters>;
 };
 
 function toSchema<TParameters extends ToolInputParameters>(
@@ -126,12 +142,7 @@ export class FunctionTool<
   // Typed input parameters.
   private readonly parameters?: TParameters;
   // Whether the tool requires user confirmation before running.
-  private readonly requireConfirmation:
-    | boolean
-    | ((
-        input: ToolExecuteArgument<TParameters>,
-        tool_context?: Context,
-      ) => boolean | Promise<boolean>);
+  private readonly requireConfirmation: RequireConfirmation<TParameters>;
 
   /**
    * The constructor acts as the user-friendly factory.
@@ -180,14 +191,10 @@ export class FunctionTool<
         validatedArgs = this.parameters.parse(req.args);
       }
 
-      // HITL confirmation gate (Python `require_confirmation`). On the first
-      // pass we record a confirmation request and pause; on resume the tool
-      // context carries the user's decision.
-      const confirmationResult = this.checkConfirmation(
+      const pending = await this.checkConfirmation(
         validatedArgs as ToolExecuteArgument<TParameters>,
         req.toolContext,
       );
-      const pending = await confirmationResult;
       if (pending !== undefined) {
         return pending;
       }
