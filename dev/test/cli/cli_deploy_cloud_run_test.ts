@@ -206,6 +206,7 @@ describe('createDockerFileContent', () => {
       project: 'my-project.example-123',
     });
     expect(content).toContain('agents/my-agent_v2.1/');
+    expect(content).toContain('GOOGLE_CLOUD_PROJECT=my-project.example-123');
   });
 });
 
