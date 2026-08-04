@@ -79,11 +79,10 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
 
   console.info('Starting deployment to Agent Engine...');
 
-  const callerTempFolder = options.tempFolder;
   const tempFolder =
-    callerTempFolder ?? (await createTempDir('agent_engine_deploy_src'));
+    options.tempFolder ?? (await createTempDir('agent_engine_deploy_src'));
 
-  if (callerTempFolder && (await isFolderExists(tempFolder))) {
+  if (options.tempFolder && (await isFolderExists(tempFolder))) {
     await fs.rm(tempFolder, {recursive: true, force: true});
   }
 

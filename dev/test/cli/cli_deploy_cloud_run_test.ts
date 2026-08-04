@@ -350,6 +350,19 @@ describe('deployToCloudRun', () => {
     },
   );
 
+  it('should not create a temp folder when the gcloud args are rejected', async () => {
+    await expect(
+      deployToCloudRun({
+        ...defaultOptions,
+        tempFolder: undefined,
+        extraGcloudArgs: ['--project=other'],
+      }),
+    ).rejects.toThrow(/conflict with ADK's automatic configuration/);
+
+    expect(createTempDir).not.toHaveBeenCalled();
+    expect(fs.rm).not.toHaveBeenCalled();
+  });
+
   it('should still allow user env-var flags when no A2A token is given', async () => {
     await deployToCloudRun({
       ...defaultOptions,

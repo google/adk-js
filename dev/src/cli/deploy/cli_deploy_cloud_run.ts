@@ -57,10 +57,7 @@ function validateGcloudExtraArgs(
   }
 }
 
-function prepareGCloudArguments(
-  options: DeployToCloudRunOptions,
-  tempFolder: string,
-): string[] {
+function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
   const regionOptions: string[] = options.region
     ? ['--region', options.region]
     : [];
@@ -87,8 +84,6 @@ function prepareGCloudArguments(
     'run',
     'deploy',
     options.serviceName,
-    '--source',
-    tempFolder,
     '--project',
     options.project,
     ...regionOptions,
@@ -155,11 +150,10 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     );
   }
 
-  const callerTempFolder = options.tempFolder;
-  const tempFolder =
-    callerTempFolder ?? (await createTempDir('cloud_run_deploy_src'));
-
-  const gcloudCommands = prepareGCloudArguments(options, tempFolder);
+  // Built before any directory is created: a conflicting extra gcloud arg
+  // throws out of deployToCloudRun, and there is no `finally` this early to
+  // remove a temp folder.
+  const gcloudCommands = prepareGCloudArguments(options);
 
   if (options.a2a && !options.a2aAuthToken) {
     console.warn(
@@ -188,7 +182,11 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
 
   console.info('Starting deployment to Cloud Run...');
 
-  if (callerTempFolder && (await isFolderExists(tempFolder))) {
+  const tempFolder =
+    options.tempFolder ?? (await createTempDir('cloud_run_deploy_src'));
+  gcloudCommands.push('--source', tempFolder);
+
+  if (options.tempFolder && (await isFolderExists(tempFolder))) {
     console.info('Cleaning up existing temporary files...');
     await fs.rm(tempFolder, {recursive: true, force: true});
   }
