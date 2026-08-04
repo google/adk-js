@@ -101,17 +101,15 @@ export class InMemoryArtifactService implements BaseArtifactService {
     userId,
     sessionId,
   }: ListArtifactKeysRequest): Promise<string[]> {
-    const sessionPrefix = `${appName}/${userId}/${sessionId}/`;
-    const usernamespacePrefix = `${appName}/${userId}/user/`;
+    const sessionPrefix = artifactPrefix('session', appName, userId, sessionId);
+    const userPrefix = artifactPrefix('user', appName, userId);
     const filenames: string[] = [];
 
     for (const path in this.artifacts) {
       if (path.startsWith(sessionPrefix)) {
-        const filename = path.replace(sessionPrefix, '');
-        filenames.push(filename);
-      } else if (path.startsWith(usernamespacePrefix)) {
-        const filename = path.replace(usernamespacePrefix, '');
-        filenames.push(filename);
+        filenames.push(decodeURIComponent(path.slice(sessionPrefix.length)));
+      } else if (path.startsWith(userPrefix)) {
+        filenames.push(decodeURIComponent(path.slice(userPrefix.length)));
       }
     }
 
@@ -197,13 +195,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
 }
 
 /**
- * Constructs the path to the artifact.
+ * Constructs the storage key for the artifact.
  *
  * @param appName The app name.
  * @param userId The user ID.
  * @param sessionId The session ID.
  * @param filename The filename.
- * @return The path to the artifact.
+ * @return The encoded storage key for the artifact.
  */
 function artifactPath(
   appName: string,
@@ -212,10 +210,14 @@ function artifactPath(
   filename: string,
 ): string {
   if (fileHasUserNamespace(filename)) {
-    return `${appName}/${userId}/user/${filename}`;
+    return `${artifactPrefix('user', appName, userId)}${encodeURIComponent(filename)}`;
   }
 
-  return `${appName}/${userId}/${sessionId}/${filename}`;
+  return `${artifactPrefix('session', appName, userId, sessionId)}${encodeURIComponent(filename)}`;
+}
+
+function artifactPrefix(scope: string, ...parts: string[]): string {
+  return `${[scope, ...parts].map(encodeURIComponent).join('/')}/`;
 }
 
 /**
