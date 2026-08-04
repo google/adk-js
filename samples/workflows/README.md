@@ -81,6 +81,9 @@ an API key, or confirm a tool call interactively.
 
 These ports exercise the full workflow + agent-integration surface:
 
+- **imperative `dynamicEntry`** (`dynamic_nodes`): a workflow driven by an entry
+  function that calls `ctx.runNode()` in a bounded loop, instead of a static
+  `edges` graph (the two are mutually exclusive).
 - **`task` mode** (`agent_in_workflow`): an `LlmAgent` runs a multi-round loop and
   completes via a `finish_task` tool whose arguments become the node output.
 - **node / workflow as a tool** (`node_as_tool`): a `BaseNode`/`Workflow` passed
@@ -92,6 +95,12 @@ These ports exercise the full workflow + agent-integration surface:
   (`request_input`) vs. the single-node re-run pattern (`request_input_rerun`).
 
 ## Notes
+
+`loop` drives a graph-level cycle (route back to `generate_headline` until the
+grade passes) with **no iteration cap**, so an off-topic input can loop many
+times, each iteration making two live model calls. `dynamic_nodes` bounds its
+equivalent loop with `MAX_ATTEMPTS`; `loop` is left uncapped to keep the cyclic
+graph the sample is demonstrating.
 
 `auth_oauth` issues a real GitHub OAuth authorization request; completing the
 token exchange requires registering an OAuth app and setting `GITHUB_CLIENT_ID` /

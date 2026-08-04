@@ -18,7 +18,7 @@
  * here the framework stores it at `temp:<credentialKey>` in state. Python uses
  * the `requests` library; this port uses the built-in `fetch`.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/auth_oauth/agent.ts
+ * Run:  npm run sample -- samples/workflows/auth_oauth/agent.ts
  * Turn 1: any message ("start") -> requests GitHub OAuth credentials.
  * Turn 2: complete the auth flow to list your repositories.
  */

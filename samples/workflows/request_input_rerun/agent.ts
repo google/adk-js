@@ -12,7 +12,7 @@
  * `contributing/samples/workflows/request_input_rerun`.
  *
  * REQUIRES an API key (draft_email calls a live model). Set GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/request_input_rerun/agent.ts
+ *   npm run sample -- samples/workflows/request_input_rerun/agent.ts
  * Turn 1: type a complaint. Turn 2: type "approve", "reject", or feedback text.
  */
 
@@ -64,10 +64,13 @@ const humanReview = node(
       });
     }
 
-    if (resumeInput === 'reject') {
+    // Normalize the reply (case/whitespace) before matching, so "Approve" or
+    // "approve " don't fall through to the revise branch.
+    const reply = String(resumeInput).trim().toLowerCase();
+    if (reply === 'reject') {
       return createEvent({route: 'rejected'});
     }
-    if (resumeInput === 'approve') {
+    if (reply === 'approve') {
       return createEvent({route: 'approved'});
     }
     ctx.state.set('feedback', resumeInput);

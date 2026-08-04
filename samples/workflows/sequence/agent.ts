@@ -11,7 +11,7 @@
  * `contributing/samples/workflows/sequence`.
  *
  * REQUIRES an API key (both nodes call a live model). Set GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/sequence/agent.ts
+ *   npm run sample -- samples/workflows/sequence/agent.ts
  */
 
 import {LlmAgent, Workflow, WorkflowAgent} from '@google/adk';

@@ -16,7 +16,7 @@
  * resume value as its output, which feeds the next node.
  *
  * REQUIRES an API key (draft_email calls a live model). Set GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/request_input/agent.ts
+ *   npm run sample -- samples/workflows/request_input/agent.ts
  * Turn 1: type a complaint. Turn 2: type "approve", "reject", or feedback text.
  */
 
@@ -70,10 +70,13 @@ const requestHumanReview = node(
 // Receives the human's reply (the resume value) as its input and routes on it.
 const handleHumanReview = node(
   (ctx: NodeContext, nodeInput: string) => {
-    if (nodeInput === 'reject') {
+    // Normalize the reply (case/whitespace) before matching, so "Approve" or
+    // "approve " don't fall through to the revise branch.
+    const reply = String(nodeInput).trim().toLowerCase();
+    if (reply === 'reject') {
       return createEvent({route: 'rejected'});
     }
-    if (nodeInput === 'approve') {
+    if (reply === 'approve') {
       return createEvent({route: 'approved'});
     }
     ctx.state.set('feedback', nodeInput);

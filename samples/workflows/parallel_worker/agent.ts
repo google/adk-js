@@ -50,7 +50,7 @@ const makeUpperCase = node(
   function* (_c: NodeContext, nodeInput: string) {
     yield nodeInput.toUpperCase();
   },
-  {name: 'make_upper_case', parallelWorker: true},
+  {name: 'make_upper_case', parallelWorker: true, maxParallelWorkers: 2},
 );
 
 const explainTopic = node(
@@ -58,10 +58,12 @@ const explainTopic = node(
     name: 'explain_topic',
     model: 'gemini-2.5-flash',
     instruction:
-      'Explain how the following topic relates the the original topic: "{topic}".',
+      'Explain how the following topic relates to the original topic: "{topic}".',
     outputSchema: z.object({topic: z.string(), explanation: z.string()}),
   }),
-  {parallelWorker: true},
+  // Bound concurrency (at most 2 live model calls at once), demonstrating the
+  // `maxParallelWorkers` field the README advertises.
+  {parallelWorker: true, maxParallelWorkers: 2},
 );
 
 const aggregate = node(

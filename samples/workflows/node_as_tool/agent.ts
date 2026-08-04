@@ -15,7 +15,7 @@
  * to confirm the discount — pausing the agent until the user responds.
  *
  * REQUIRES an API key. Set GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/node_as_tool/agent.ts
+ *   npm run sample -- samples/workflows/node_as_tool/agent.ts
  * Turn 1: "Look up user u123 and tell me my discount."
  * Turn 2 (VIP): resume by answering the confirmation (a function response to the
  * `confirm_vip_discount` interrupt, e.g. via the web UI).
@@ -59,7 +59,10 @@ const calculateDiscount = node(
         typeof resume === 'object' && resume !== null
           ? (resume as {text?: string}).text
           : resume;
-      yield ['yes', 'y', 'true'].includes(String(answer).toLowerCase())
+      // Same affirmative normalization the other HITL samples use.
+      yield ['yes', 'y', 'true', 'approve', 'approved'].includes(
+        String(answer).trim().toLowerCase(),
+      )
         ? '20% off'
         : '5% off (VIP declined)';
     } else {

@@ -12,7 +12,7 @@
  * Python `contributing/samples/workflows/agent_in_workflow`.
  *
  * REQUIRES an API key. Set GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/agent_in_workflow/agent.ts
+ *   npm run sample -- samples/workflows/agent_in_workflow/agent.ts
  * Provide a name + phone (use "Jane Doe" to pass the identity check). The
  * `find_orders` tool pauses for confirmation before running.
  */

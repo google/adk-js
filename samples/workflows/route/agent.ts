@@ -12,7 +12,7 @@
  *
  * REQUIRES an API key (classification and answers call a live model). Set
  * GEMINI_API_KEY, then:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/route/agent.ts
+ *   npm run sample -- samples/workflows/route/agent.ts
  * Try "What is ADK?" (question) or "ADK is great." (statement).
  */
 

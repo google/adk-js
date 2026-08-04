@@ -18,7 +18,7 @@
  * There is no such helper here; the framework stores the credential at
  * `temp:<credentialKey>` in state (see AuthHandler), which the node reads.
  *
- * Run:  node dev/dist/esm/cli_entrypoint.js run samples/workflows/auth_api_key/agent.ts
+ * Run:  npm run sample -- samples/workflows/auth_api_key/agent.ts
  * Turn 1: any message -> the workflow requests an API key.
  * Turn 2: type any API key value; the node runs and echoes it back (masked).
  */

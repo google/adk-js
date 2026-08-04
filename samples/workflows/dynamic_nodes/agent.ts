@@ -5,9 +5,13 @@
  */
 
 /**
- * Dynamic nodes: an imperative orchestrator drives LlmAgents with `ctx.runNode`
- * in a loop until the generated headline is tech-related. Faithful port of
- * Python `contributing/samples/workflows/dynamic_nodes`.
+ * Dynamic nodes: an imperative `dynamicEntry` drives LlmAgents with
+ * `ctx.runNode` in a loop until the generated headline is tech-related, instead
+ * of a static edge graph. Faithful port of Python
+ * `contributing/samples/workflows/dynamic_nodes`.
+ *
+ * The loop is bounded (`MAX_ATTEMPTS`) so an off-topic input can't spin forever
+ * making live model calls.
  *
  * Requires an API key. Set GEMINI_API_KEY, then:
  *   npm run sample -- samples/workflows/dynamic_nodes/agent.ts
@@ -50,26 +54,24 @@ const evaluateHeadline = node(
   }),
 );
 
-const orchestrate = node(
-  async function* (ctx: NodeContext, nodeInput: string) {
-    ctx.state.set('topic', nodeInput);
-
-    for (;;) {
-      const headline = (await ctx.runNode(generateHeadline)).output as string;
-      const feedback = (await ctx.runNode(evaluateHeadline, headline))
-        .output as {grade: string};
-      if (feedback.grade === 'tech-related') {
-        yield headline;
-        break;
-      }
-    }
-  },
-  {name: 'orchestrate', rerunOnResume: true},
-);
-
 export const rootAgent = new WorkflowAgent(
   new Workflow({
     name: 'root_agent',
-    edges: [['START', orchestrate]],
+    // Imperative entry: drive the child nodes directly via `ctx.runNode()`
+    // rather than a static edge graph (mutually exclusive with `edges`).
+    dynamicEntry: async (ctx: NodeContext, nodeInput: unknown) => {
+      ctx.state.set('topic', nodeInput as string);
+
+      const MAX_ATTEMPTS = 5;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const headline = (await ctx.runNode(generateHeadline)).output as string;
+        const feedback = (await ctx.runNode(evaluateHeadline, headline))
+          .output as {grade: string};
+        if (feedback.grade === 'tech-related') {
+          return headline;
+        }
+      }
+      return `Gave up after ${MAX_ATTEMPTS} attempts (headline never graded tech-related).`;
+    },
   }),
 );

@@ -16,7 +16,7 @@
  * feeds process_decision.
  *
  * REQUIRES an API key (process_request calls a live model). Set GEMINI_API_KEY:
- *   node dev/dist/esm/cli_entrypoint.js run samples/workflows/request_input_advanced/agent.ts
+ *   npm run sample -- samples/workflows/request_input_advanced/agent.ts
  * Turn 1: e.g. "I need 3 days off next week for a family trip".
  * Turn 2 (only if > 1 day): type "yes" or "no" to approve/deny.
  */
