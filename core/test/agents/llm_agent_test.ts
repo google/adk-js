@@ -16,7 +16,9 @@ import {
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createSession,
   Event,
+  FunctionTool,
   InvocationContext,
   LlmAgent,
   LlmRequest,
@@ -27,7 +29,7 @@ import {
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
@@ -838,4 +840,141 @@ describe('LlmAgent Default Request Processors', () => {
     );
     expect(authIndex).toBeLessThan(contentIndex);
   });
+});
+
+describe('LlmAgent outputSchema with tools', () => {
+  const VERTEX_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+
+  const OUTPUT_SCHEMA: Schema = {
+    type: Type.OBJECT,
+    properties: {answer: {type: Type.STRING}},
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * Records the single request the agent builds so that all three gated sites
+   * can be asserted against one run of the default processor chain.
+   */
+  class CapturingLlm extends BaseLlm {
+    capturedRequest?: LlmRequest;
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedRequest = request;
+      yield {content: {role: 'model', parts: [{text: '{"answer": "42"}'}]}};
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  async function captureRequest(options: {
+    model: string;
+    withTools: boolean;
+  }): Promise<LlmRequest> {
+    const llm = new CapturingLlm({model: options.model});
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: llm,
+      instruction: 'Base instruction',
+      outputSchema: OUTPUT_SCHEMA,
+      tools: options.withTools
+        ? [
+            new FunctionTool({
+              name: 'some_tool',
+              description: 'A test tool',
+              execute: () => 'result',
+            }),
+          ]
+        : [],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: createSession({
+        id: 'sess_123',
+        events: [],
+        appName: 'test-app',
+        userId: 'test-user',
+      }),
+      agent,
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _ of agent.runAsync(invocationContext)) {
+      // Drain the run so that the request is fully built.
+    }
+
+    const request = llm.capturedRequest;
+    if (!request) {
+      expect.fail('the agent never called the model');
+    }
+    return request;
+  }
+
+  it('uses the native response schema on Vertex AI with a Gemini 2.0+ model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeDefined();
+    expect(request.config?.responseMimeType).toBe('application/json');
+    expect(request.toolsDict).not.toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).not.toContain(
+      'set_model_response',
+    );
+  });
+
+  it('uses the set_model_response workaround outside the Vertex AI variant', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it('uses the set_model_response workaround on Vertex AI with a pre-2.0 model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-1.5-pro',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it.each(['true', undefined])(
+    'uses the native response schema without tools when %s',
+    async (vertexEnv) => {
+      vi.stubEnv(VERTEX_ENV_VAR, vertexEnv);
+
+      const request = await captureRequest({
+        model: 'gemini-2.5-flash',
+        withTools: false,
+      });
+
+      expect(request.config?.responseSchema).toBeDefined();
+      expect(request.toolsDict).not.toHaveProperty('set_model_response');
+      expect(request.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+    },
+  );
 });
