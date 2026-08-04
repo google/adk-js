@@ -63,14 +63,14 @@ describe('core package exports', () => {
   });
 
   it('exposes ./dist/web/* with its declarations', () => {
-    // "types" first for the same ordering reason: TypeScript would otherwise
-    // match "default" and look for a .d.ts next to dist/web/*.js, which the
-    // build emits to dist/types instead.
-    expect(Object.keys(manifest.exports['./dist/web/*'])[0]).toBe('types');
     expect(manifest.exports['./dist/web/*']).toEqual({
       types: './dist/types/*',
       default: './dist/web/*',
     });
+    // "types" first for the same ordering reason: TypeScript would otherwise
+    // match "default" and look for a .d.ts next to dist/web/*.js, which the
+    // build emits to dist/types instead.
+    expect(Object.keys(manifest.exports['./dist/web/*'])[0]).toBe('types');
   });
 
   it('re-exposes ./package.json', () => {
