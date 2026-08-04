@@ -6,7 +6,7 @@
 
 import {getLogger, Logger, LogLevel, setLogger, setLogLevel} from '@google/adk';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {formatLogLine, resetLogger} from '../../src/utils/logger.js';
+import {resetLogger} from '../../src/utils/logger.js';
 
 describe('setLogger', () => {
   beforeEach(() => {
@@ -249,9 +249,16 @@ describe('SimpleLogger', () => {
     expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('via log'));
   });
 
-  it('formatLogLine formats a line', () => {
-    expect(
-      formatLogLine(LogLevel.WARN, 'boom', '2026-01-01T00:00:00.000Z'),
-    ).toBe('WARN: [ADK] 2026-01-01T00:00:00.000Z boom');
+  it('formats the full line for a warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setLogLevel(LogLevel.WARN);
+
+    getLogger().warn('boom');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        new RegExp(`^WARN: \\[ADK\\] ${ISO_TIMESTAMP} boom$`),
+      ),
+    );
   });
 });

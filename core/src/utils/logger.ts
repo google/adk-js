@@ -29,17 +29,13 @@ export interface Logger {
   setLogLevel(level: LogLevel): void;
 }
 
-/** Label prefixed to every line the default logger emits. */
-const LOG_LABEL = 'ADK';
-
-/** Formats a single log line as `LEVEL: [ADK] <timestamp> <message>`. */
-export function formatLogLine(
-  level: LogLevel,
-  message: string,
-  timestamp: string,
-): string {
-  return `${LogLevel[level]}: [${LOG_LABEL}] ${timestamp} ${message}`;
-}
+/** The `console` method each level is written with. */
+const CONSOLE_METHOD = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+} as const;
 
 /**
  * The default logger. Writes through `console` so that it works unchanged in
@@ -57,26 +53,10 @@ class SimpleLogger implements Logger {
       return;
     }
 
-    const line = formatLogLine(
-      level,
-      messages.join(' '),
-      new Date().toISOString(),
-    );
+    const timestamp = new Date().toISOString();
+    const line = `${LogLevel[level]}: [ADK] ${timestamp} ${messages.join(' ')}`;
 
-    switch (level) {
-      case LogLevel.DEBUG:
-        console.debug(line);
-        break;
-      case LogLevel.INFO:
-        console.info(line);
-        break;
-      case LogLevel.WARN:
-        console.warn(line);
-        break;
-      case LogLevel.ERROR:
-        console.error(line);
-        break;
-    }
+    console[CONSOLE_METHOD[level]](line);
   }
 
   debug(...messages: unknown[]): void {
