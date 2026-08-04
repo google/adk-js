@@ -14,6 +14,14 @@ import {
   StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import {formatError} from '../../utils/error_utils.js';
+import {logger} from '../../utils/logger.js';
+
+/** Surfaces a background transport error that would otherwise be dropped. */
+function logTransportError(err: unknown): void {
+  logger.error('MCP transport error: ' + formatError(err));
+}
+
 /**
  * Defines the parameters for establishing a connection to an MCP server using
  * standard input/output (stdio). This is typically used for running MCP servers
@@ -81,37 +89,46 @@ export class MCPSessionManager {
   async createSession(): Promise<Client> {
     const client = new Client({name: 'MCPClient', version: '1.0.0'});
 
-    switch (this.connectionParams.type) {
-      case 'StdioConnectionParams':
-        await client.connect(
-          new StdioClientTransport(this.connectionParams.serverParams),
-        );
-        break;
-      case 'StreamableHTTPConnectionParams': {
-        const options = this.connectionParams.transportOptions ?? {};
-
-        if (
-          !options.requestInit &&
-          this.connectionParams.header !== undefined
-        ) {
-          options.requestInit = {
-            headers: this.connectionParams.header as Record<string, string>,
-          };
+    try {
+      switch (this.connectionParams.type) {
+        case 'StdioConnectionParams': {
+          const transport = new StdioClientTransport(
+            this.connectionParams.serverParams,
+          );
+          transport.onerror = logTransportError;
+          await client.connect(transport);
+          break;
         }
+        case 'StreamableHTTPConnectionParams': {
+          const options = this.connectionParams.transportOptions ?? {};
 
-        await client.connect(
-          new StreamableHTTPClientTransport(
+          if (
+            !options.requestInit &&
+            this.connectionParams.header !== undefined
+          ) {
+            options.requestInit = {
+              headers: this.connectionParams.header as Record<string, string>,
+            };
+          }
+
+          const transport = new StreamableHTTPClientTransport(
             new URL(this.connectionParams.url),
             options,
-          ),
-        );
-        break;
+          );
+          transport.onerror = logTransportError;
+          await client.connect(transport);
+          break;
+        }
+        default: {
+          // Triggers compile error if a case is missing.
+          const _exhaustiveCheck: never = this.connectionParams;
+          break;
+        }
       }
-      default: {
-        // Triggers compile error if a case is missing.
-        const _exhaustiveCheck: never = this.connectionParams;
-        break;
-      }
+    } catch (err) {
+      throw new Error('Failed to create MCP session: ' + formatError(err), {
+        cause: err,
+      });
     }
 
     this.activeSessions.add(client);
