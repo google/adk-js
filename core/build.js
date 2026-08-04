@@ -55,9 +55,12 @@ function build({
     logLevel: 'info',
   };
 
-  if (platform === 'browser' && bundle) {
+  // esbuild rejects `alias` unless bundling, so these only take effect on the
+  // always-bundled web target.
+  if (platform === 'browser') {
     buildOptions.alias = {
       'node:async_hooks': './src/utils/async_hooks_shim.ts',
+      'winston': './src/utils/winston_shim.ts',
     };
   }
 
@@ -68,7 +71,9 @@ function build({
 
   if (bundle) {
     buildOptions.entryPoints = [`./src/${entry}`];
-    buildOptions.outfile = `./dist/${targetDir}/index.js`;
+    // Keep the emitted filename aligned with the entry so package.json's
+    // "browser" field keeps resolving to dist/web/index_web.js.
+    buildOptions.outfile = `./dist/${targetDir}/${entry.replace(/\.ts$/, '.js')}`;
   } else {
     buildOptions.entryPoints = ['./src/**/*.ts'];
     buildOptions.outdir = `./dist/${targetDir}`;
@@ -109,12 +114,14 @@ async function main() {
     await Promise.all([
       build({targetDir: 'esm', platform: 'node', format: 'esm', bundle}),
       build({targetDir: 'cjs', platform: 'node', format: 'cjs', bundle}),
+      // The web target is always bundled. Node built-ins can only be swapped
+      // for browser shims through esbuild's `alias`, which requires bundling.
       build({
         targetDir: 'web',
         platform: 'browser',
         format: 'esm',
         entry: 'index_web.ts',
-        bundle,
+        bundle: true,
       }),
     ]);
 
