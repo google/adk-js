@@ -93,10 +93,16 @@ describe('file_utils', () => {
     });
 
     it('should not write through a dangling symlink planted in the target directory', async () => {
-      // The collision probe uses fs.access, which reports a *dangling* symlink
-      // as "nothing here" (it stats the missing target). Without an exclusive
-      // create, the write would then follow the link and land outside the
-      // target directory, bypassing the containment check entirely.
+      // Without an exclusive create the write follows the link and lands
+      // outside the target directory, bypassing the containment check
+      // entirely: the collision probe uses fs.access, which on POSIX reports a
+      // *dangling* symlink as "nothing here" (it stats the missing target).
+      //
+      // How the write is refused is platform-dependent, so only the property
+      // is asserted here. On POSIX the probe says the path is free and the
+      // `wx` write rejects; on Windows fs.access reports the link itself as
+      // present and the collision branch writes a suffixed name inside the
+      // target directory instead. Both are safe — nothing escapes.
       const outsidePath = path.join(
         path.dirname(tempDir),
         `${path.basename(tempDir)}_escape.txt`,
@@ -112,7 +118,8 @@ describe('file_utils', () => {
         },
       ];
 
-      await expect(materializeFiles(files, tempDir)).rejects.toThrow();
+      await materializeFiles(files, tempDir).catch(() => {});
+
       await expect(fs.access(outsidePath)).rejects.toThrow();
     });
 

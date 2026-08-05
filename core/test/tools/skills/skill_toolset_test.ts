@@ -14,6 +14,9 @@ import {
   Skill,
   SkillToolset,
 } from '@google/adk';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
 
 describe('skill_toolset', () => {
@@ -312,6 +315,74 @@ describe('skill_toolset', () => {
       const tools2 = await toolset.getTools(context);
       expect(tools2.map((t) => t.name)).toContain('cached_tool');
       expect(mockInnerGetTools).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('script output directory', () => {
+    it('reuses the same directory across calls', async () => {
+      const toolset = new SkillToolset([mockSkill]);
+
+      try {
+        const first = await toolset.getScriptOutputDir();
+        const second = await toolset.getScriptOutputDir();
+
+        expect(second).toBe(first);
+      } finally {
+        await toolset.close();
+      }
+    });
+
+    it('removes the private temp directory it created on close', async () => {
+      // Script output can be sensitive, and a process building one toolset per
+      // session would otherwise leave a directory of it per session behind.
+      const toolset = new SkillToolset([mockSkill]);
+      const dir = await toolset.getScriptOutputDir();
+      expect(path.dirname(dir)).toBe(os.tmpdir());
+      await fs.writeFile(path.join(dir, 'output.txt'), 'sensitive');
+
+      await toolset.close();
+
+      await expect(fs.access(dir)).rejects.toThrow();
+    });
+
+    it('keeps a caller-supplied directory on close', async () => {
+      const configuredDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'skill_toolset_test_'),
+      );
+
+      try {
+        const toolset = new SkillToolset([mockSkill], {
+          scriptOutputDir: configuredDir,
+        });
+        expect(await toolset.getScriptOutputDir()).toBe(configuredDir);
+
+        await toolset.close();
+
+        await fs.access(configuredDir);
+      } finally {
+        await fs.rm(configuredDir, {recursive: true, force: true});
+      }
+    });
+
+    it('creates a fresh directory when reused after close', async () => {
+      const toolset = new SkillToolset([mockSkill]);
+      const first = await toolset.getScriptOutputDir();
+      await toolset.close();
+
+      const second = await toolset.getScriptOutputDir();
+
+      try {
+        expect(second).not.toBe(first);
+        await fs.access(second);
+      } finally {
+        await toolset.close();
+      }
+    });
+
+    it('does not fail closing a toolset that never produced output', async () => {
+      const toolset = new SkillToolset([mockSkill]);
+
+      await expect(toolset.close()).resolves.toBeUndefined();
     });
   });
 });
