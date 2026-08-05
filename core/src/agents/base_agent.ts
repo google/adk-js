@@ -192,15 +192,16 @@ export abstract class BaseAgent<
   /**
    * Creates a copy of this agent with the given config fields overridden.
    *
-   * Mirrors adk-python's `BaseAgent.clone(update=...)`. The clone is a detached
-   * root: its `parentAgent` is always `undefined`. Sub-agents are recursively
-   * cloned (and re-parented to the clone) unless `subAgents` is overridden.
-   * Rebuilding via the concrete constructor re-derives all state, so a cloned
-   * `LlmAgent` gets a fresh `requestProcessors` array rather than sharing the
-   * original's. See google/adk-js#534.
+   * The clone is a detached root: its `parentAgent` is always `undefined`.
+   * Sub-agents are recursively cloned (and re-parented to the clone) unless
+   * `subAgents` is overridden. Rebuilding via the concrete constructor
+   * re-derives all state, so a cloned `LlmAgent` gets a fresh
+   * `requestProcessors` array rather than sharing the original's.
+   * See google/adk-js#534.
    *
    * @param overrides Config fields to override on the clone. Overriding
-   *     `parentAgent` is rejected, matching adk-python.
+   *     `parentAgent` is rejected: parentage is assigned only when a parent
+   *     agent is constructed with its sub-agents.
    * @returns A new detached agent instance of the same concrete class.
    */
   clone(overrides?: Partial<TConfig>): this {
@@ -213,13 +214,12 @@ export abstract class BaseAgent<
 
     const merged: TConfig = {...this.config, ...overrides};
 
-    // A clone is always a detached root (matches adk-python setting parent to
-    // None); the rebuilt parent constructor re-parents any cloned children.
+    // A clone is always a detached root; the rebuilt parent constructor
+    // re-parents any cloned children.
     merged.parentAgent = undefined;
 
-    // Shallow-copy any list-typed field not provided in overrides so the clone
-    // never shares a mutable array (e.g. `tools`) with the original, mirroring
-    // adk-python's per-field list copy.
+    // Shallow-copy any array-typed field not provided in overrides so the
+    // clone never shares a mutable array (e.g. `tools`) with the original.
     const mergedRecord = merged as Record<string, unknown>;
     for (const key of Object.keys(mergedRecord)) {
       if (key === 'subAgents' || (overrides && key in overrides)) {

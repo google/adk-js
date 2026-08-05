@@ -586,8 +586,8 @@ export function mergeParallelFunctionResponseEvents(
 // TODO - b/425992518: support function call in live connection.
 
 /**
- * Finds the function call event that matches the function call ID.
- * Mirrors Python ADK's `find_event_by_function_call_id`.
+ * Finds the most recent event before `endIndex` that contains a function call
+ * with the given ID.
  */
 export function findEventByFunctionCallId(
   events: Event[],
@@ -607,8 +607,9 @@ export function findEventByFunctionCallId(
 }
 
 /**
- * Finds the function call event that matches the function response ID of the last event.
- * Mirrors Python ADK's `find_matching_function_call`.
+ * Finds the event holding the function call that the last event's first
+ * function response answers, or `undefined` if the last event carries no
+ * function response.
  */
 export function findMatchingFunctionCall(events: Event[]): Event | undefined {
   if (!events.length) {

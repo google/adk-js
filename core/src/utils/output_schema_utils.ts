@@ -13,8 +13,8 @@ import {getGoogleLlmVariant, GoogleLLMVariant} from './variant_utils.js';
  * `set_model_response` workaround.
  *
  * Early Access Program model names encode no numeric version, so
- * `isGemini2OrAbove` rejects them even on Vertex AI. The Python
- * implementation accepts them; that gap lives in the shared predicate.
+ * `isGemini2OrAbove` rejects them and this returns `false` for them even on
+ * Vertex AI.
  *
  * @param modelString A simple or path-based model name.
  * @return True if the model supports an output schema alongside tools.

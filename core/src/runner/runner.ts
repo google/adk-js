@@ -415,8 +415,8 @@ export class Runner {
                 author: 'model',
                 content: beforeRunCallbackResponse,
               });
-              // TODO: b/447446338 - In the future, do *not* save live call audio
-              // content to session This is a feature in Python ADK
+              // TODO: b/447446338 - In the future, do *not* save live call
+              // audio content to the session.
               await this.sessionService.appendEvent({
                 session,
                 event: earlyExitEvent,
