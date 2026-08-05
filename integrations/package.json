@@ -4,6 +4,8 @@
   "description": "Google ADK JS Integrations",
   "author": "Google",
   "license": "Apache-2.0",
+  "//": "Not published: this package has no public API yet. Remove `private` and re-add it to release-please-config.json once it exports something.",
+  "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/google/adk-js"
@@ -41,8 +43,7 @@
     "build:watch": "concurrently \"tsc --noEmit --watch --preserveWatchOutput\" \"node ./build.js --watch\"",
     "test": "vitest",
     "lint": "eslint 'src/**/*.ts'",
-    "format": "prettier --write 'src/**/*.ts'",
-    "prepublishOnly": "npm run build"
+    "format": "prettier --write 'src/**/*.ts'"
   },
   "dependencies": {
     "@google/adk": "^1.6.0"
