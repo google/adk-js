@@ -170,6 +170,7 @@ export const secondApp = new App({
 describe('AgentLoader', () => {
   let tempAgentsDir: string;
   let tempLoaderDir: string;
+  let setSourceMapsEnabledSpy: Mock;
 
   const compiledPath = (fileName: string) => path.join(tempLoaderDir, fileName);
 
@@ -189,6 +190,9 @@ describe('AgentLoader', () => {
   });
 
   beforeEach(async () => {
+    setSourceMapsEnabledSpy = vi
+      .spyOn(process, 'setSourceMapsEnabled')
+      .mockImplementation(() => {}) as unknown as Mock;
     (fileUtils.createTempDir as Mock).mockImplementation(async () => {
       await fs.mkdir(tempLoaderDir, {recursive: true});
       return tempLoaderDir;
@@ -247,6 +251,7 @@ describe('AgentLoader', () => {
       // ignore
     }
 
+    setSourceMapsEnabledSpy.mockRestore();
     vi.clearAllMocks();
   });
 
@@ -330,7 +335,6 @@ describe('AgentLoader', () => {
         format: 'cjs',
         packages: 'bundle',
         bundle: true,
-        minify: true,
         external: expect.arrayContaining(['onnxruntime-node']),
       });
 
@@ -361,6 +365,53 @@ describe('AgentLoader', () => {
       expect(buildOptions.bundle).toBe(false);
       expect(buildOptions).not.toHaveProperty('external');
       expect(buildOptions).not.toHaveProperty('packages');
+
+      await agentFile.dispose();
+    });
+
+    it('builds a readable, source-mapped bundle by default', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent2.ts');
+      await fs.writeFile(agentPath, agent2TsContent);
+
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledPath('agent2.cjs'), agent2CjsContentMocked);
+      });
+
+      const agentFile = new AgentFile(agentPath);
+      await agentFile.load();
+
+      // Minified identifiers and collapsed line numbers make every stack
+      // trace out of an agent useless, so `adk run` / `adk web` must not
+      // minify and must emit a map the deleted temp bundle cannot lose.
+      expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
+        minify: false,
+        sourcemap: 'inline',
+      });
+      expect(setSourceMapsEnabledSpy).toHaveBeenCalledWith(true);
+
+      await agentFile.dispose();
+    });
+
+    it('minifies and drops the source map when asked to (deployment bundles)', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent2.ts');
+      await fs.writeFile(agentPath, agent2TsContent);
+
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledPath('agent2.cjs'), agent2CjsContentMocked);
+      });
+
+      const agentFile = new AgentFile(agentPath, {
+        compile: true,
+        bundle: true,
+        minify: true,
+      });
+      await agentFile.load();
+
+      expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
+        minify: true,
+        sourcemap: false,
+      });
+      expect(setSourceMapsEnabledSpy).not.toHaveBeenCalled();
 
       await agentFile.dispose();
     });
