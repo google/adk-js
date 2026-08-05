@@ -71,7 +71,19 @@ dependency.
 
 ## Quick Start
 
-Define an agent:
+Set up authentication. Get an API key from
+[Google AI Studio](https://aistudio.google.com/app/apikey) and put it in a
+`.env` file next to your agent:
+
+```bash
+echo "GOOGLE_GENAI_API_KEY=your-api-key-here" > .env
+```
+
+> Using Vertex AI instead? Set `GOOGLE_GENAI_USE_VERTEXAI=1`,
+> `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION` in place of the API key,
+> and authenticate with `gcloud auth application-default login`.
+
+Define an agent in `agent.ts`:
 
 ```typescript
 import {LlmAgent, GOOGLE_SEARCH} from '@google/adk';
@@ -90,11 +102,17 @@ Run from your agent project directory:
 
 ```bash
 # Interactive CLI
-npx adk run agent.ts
+npx @google/adk-devtools run agent.ts
 
 # Web UI
-npx adk web
+npx @google/adk-devtools web
 ```
+
+> The `adk` command comes from `@google/adk-devtools`. Invoke it as
+> `npx @google/adk-devtools ...` — the bare name `adk` on npm belongs to an
+> unrelated third party. Once `@google/adk-devtools` is a dev dependency you
+> can also add `"cli": "adk run agent.ts"` to your `package.json` scripts and
+> run `npm run cli`.
 
 The `adk web` command launches a development UI for testing and debugging
 agents:
