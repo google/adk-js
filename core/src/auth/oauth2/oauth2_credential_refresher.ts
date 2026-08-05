@@ -99,7 +99,8 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
       };
     } catch (error) {
       logger.error('Failed to refresh tokens:', error);
-      // Return original credential on failure, as per Python implementation
+      // Refresh is best-effort: return the credential unchanged and let the
+      // eventual request surface the auth failure.
       return authCredential;
     }
   }

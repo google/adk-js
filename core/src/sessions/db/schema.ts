@@ -18,9 +18,9 @@ export const STORAGE_KEY_COLUMN_LENGTH = 191;
 /**
  * Custom type for serializing and deserializing ADK Event objects.
  *
- * This type handles the conversion between camelCase (TypeScript ADK) and
- * snake_case (Python ADK) for Event objects, ensuring that nested
- * properties are converted correctly while preserving specific keys.
+ * Events are persisted with snake_case keys and surfaced in memory with
+ * camelCase keys. This type converts between the two, recursing into nested
+ * properties while preserving specific keys verbatim.
  */
 class CamelCaseToSnakeCaseJsonType extends JsonType {
   convertToDatabaseValue(value: Event): string {

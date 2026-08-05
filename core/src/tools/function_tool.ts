@@ -57,11 +57,23 @@ export type RequireConfirmation<TParameters extends ToolInputParameters> =
 
 /**
  * The configuration options for creating a function-based tool.
- * The `name`, `description` and `parameters` fields are used to generate the
- * tool definition that is passed to the LLM prompt.
  *
- * Note: Unlike Python's ADK, JSDoc on the `execute` function is ignored
- * for tool definition generation.
+ * Everything the model is told about the tool comes from these options: `name`,
+ * `description`, and the `parameters` schema. TypeScript types and JSDoc are
+ * erased at runtime and cannot be read back, so `description` is required and
+ * per-argument descriptions have to live in the schema — typically as Zod
+ * `.describe()` calls.
+ *
+ * ```ts
+ * new FunctionTool({
+ *   name: 'get_weather',
+ *   description: 'Returns the current weather for a city.',
+ *   parameters: z.object({
+ *     city: z.string().describe('City name, e.g. "San Francisco".'),
+ *   }),
+ *   execute: async ({city}) => fetchWeather(city),
+ * });
+ * ```
  */
 export type ToolOptions<TParameters extends ToolInputParameters> = {
   name?: string;
@@ -126,7 +138,7 @@ export function isFunctionTool(obj: unknown): obj is FunctionTool {
 /**
  * A tool that wraps a user-defined function, making it callable by an LLM.
  *
- * The function's name, description, and parameter schema are exposed to the
+ * The tool's name, description, and parameter schema are exposed to the
  * model as a function declaration. When the model requests a call, the
  * framework validates the arguments and invokes the user-provided `execute`
  * callback.
