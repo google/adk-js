@@ -38,9 +38,10 @@ export const rootAgent = new LlmAgent({
       allowInlineScripts: true,
       // Script output defaults to a private temp dir so that script-chosen file
       // names cannot land in the host app's working directory. This test asserts
-      // on the generated artwork files, so point it at the project dir - which
-      // is what the agent is expected to produce into here.
-      scriptOutputDir: PROJECT_DIR,
+      // on the generated artwork files, so point it at a directory dedicated to
+      // them - a subdirectory, never the project dir itself, which is also the
+      // agent's working directory.
+      scriptOutputDir: path.join(PROJECT_DIR, 'output'),
     }),
   ],
   // Executing model-provided inline scripts is gated behind a confirmation

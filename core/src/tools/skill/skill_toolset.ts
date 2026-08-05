@@ -48,10 +48,10 @@ export class SkillToolset extends BaseToolset {
   public additionalTools: Array<BaseTool | BaseToolset>;
   public codeExecutor?: BaseCodeExecutor;
   public registry?: SkillRegistry;
-  public readonly scriptOutputDir?: string;
+  private readonly scriptOutputDir?: string;
   private toolCache = new Map<string, BaseTool[]>();
   private fetchedSkillCache = new Map<string, Map<string, Skill>>();
-  private scriptOutputDirPromise?: Promise<string>;
+  private tempOutputDir?: Promise<string>;
 
   constructor(
     skills: Record<string, Skill> | Skill[],
@@ -76,11 +76,10 @@ export class SkillToolset extends BaseToolset {
        * a source tree.
        *
        * Defaults to a private, randomly named directory created under the OS
-       * temp dir on first use and deleted again by `close()` — which `Runner`
-       * calls at the end of every invocation, so by default script output on
-       * disk does not outlive the run that produced it (the file contents are
-       * still returned in the tool result). Set this to keep output around;
-       * a caller-supplied directory is never deleted.
+       * temp dir on first use. Nothing removes that directory: `close()` runs
+       * once per invocation on a toolset instance that concurrent invocations
+       * share (see `Runner`), so it cannot tell whose output is still in use.
+       * Set this to own the location and the lifetime of the output.
        */
       scriptOutputDir?: string;
     } = {},
@@ -119,7 +118,6 @@ export class SkillToolset extends BaseToolset {
 
   override async close(): Promise<void> {
     this.fetchedSkillCache.clear();
-    await this.removeScriptOutputDir();
   }
 
   getSkill(name: string): Skill | undefined {
@@ -127,65 +125,28 @@ export class SkillToolset extends BaseToolset {
   }
 
   /**
-   * Resolves the directory that script output files are materialized into,
-   * creating it on first use and reusing it until `close()`.
+   * Resolves the directory that script output files are materialized into.
    *
    * Script output file names are attacker-influenced (a prompt-injected skill
    * controls what its script writes), so they must never be resolved against
    * the host application's working directory. When no `scriptOutputDir` was
-   * configured this hands back a private temp directory instead, which
-   * `close()` deletes.
+   * configured this hands back a private temp directory instead, created once
+   * and reused for the lifetime of the toolset.
    */
   getScriptOutputDir(): Promise<string> {
-    this.scriptOutputDirPromise ??= this.createScriptOutputDir();
-    return this.scriptOutputDirPromise;
-  }
-
-  private async createScriptOutputDir(): Promise<string> {
     if (this.scriptOutputDir) {
+      // mkdir is idempotent, so it can just run per call; only the temp
+      // directory needs to be remembered, since its name is generated.
       const dir = path.resolve(this.scriptOutputDir);
-      await fs.mkdir(dir, {recursive: true});
-      return dir;
+      return fs.mkdir(dir, {recursive: true}).then(() => dir);
     }
 
     // mkdtemp names the directory itself and creates it exclusively at 0o700,
     // so another local user can neither predict the path nor pre-create it as
     // a symlink to somewhere else.
-    return fs.mkdtemp(path.join(os.tmpdir(), 'adk_skill_script_output_'));
-  }
-
-  /**
-   * Deletes the private temp directory this toolset created, if any.
-   *
-   * Script output can be sensitive, and a process that builds one toolset per
-   * session would otherwise accumulate a directory of it per session in the
-   * OS temp dir. Only the directory we created is removed — a caller-supplied
-   * `scriptOutputDir` belongs to the caller. The cached promise is dropped so
-   * that a toolset reused after `close()` gets a fresh 0o700 directory rather
-   * than a path that no longer exists.
-   */
-  private async removeScriptOutputDir(): Promise<void> {
-    const dirPromise = this.scriptOutputDirPromise;
-    this.scriptOutputDirPromise = undefined;
-
-    if (!dirPromise || this.scriptOutputDir) {
-      return;
-    }
-
-    // A rejected creation promise means there is nothing to clean up, and
-    // `close()` should not resurface that failure.
-    const dir = await dirPromise.catch(() => undefined);
-    if (!dir) {
-      return;
-    }
-
-    try {
-      await fs.rm(dir, {recursive: true, force: true});
-    } catch (e: unknown) {
-      logger.warn(
-        `Failed to remove skill script output directory ${dir}: ${e}`,
-      );
-    }
+    return (this.tempOutputDir ??= fs.mkdtemp(
+      path.join(os.tmpdir(), 'adk_skill_script_output_'),
+    ));
   }
 
   async getOrFetchSkill(

@@ -30,8 +30,10 @@ const TEST_EXECUTION_TIMEOUT = 40000;
 describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
   // Script output file names are chosen by the executed script, so the tool
   // materializes them into a dedicated directory instead of process.cwd().
-  // Point that at a temp dir per test and remove it afterwards, so a failing
-  // assertion can never leave files behind in the repository root.
+  // Every toolset here points at a temp dir owned by the test and removed
+  // afterwards: otherwise a failing assertion leaves files in the repository
+  // root, and the default (a fresh mkdtemp per toolset, which nothing
+  // removes) leaves a directory behind per test.
   let outputDir: string;
 
   beforeEach(async () => {
@@ -100,7 +102,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
 
   it('successfully executes a real JavaScript skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+    const toolset = new SkillToolset([testSkill], {
+      codeExecutor: executor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -120,7 +125,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'successfully executes a real Shell skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({
@@ -139,7 +147,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
 
   it('captures stderr from a failing JavaScript skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+    const toolset = new SkillToolset([testSkill], {
+      codeExecutor: executor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -158,7 +169,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'captures stderr and exit code from a failing Shell skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({
@@ -176,7 +190,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
 
   it('successfully executes a real Python skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+    const toolset = new SkillToolset([testSkill], {
+      codeExecutor: executor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -194,7 +211,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
 
   it('captures stderr from a failing Python skill script', async () => {
     const executor = new UnsafeLocalCodeExecutor();
-    const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+    const toolset = new SkillToolset([testSkill], {
+      codeExecutor: executor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -213,7 +233,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'successfully executes a real PowerShell skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({
@@ -235,7 +258,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'captures stderr from a failing PowerShell skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({
@@ -257,7 +283,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'successfully executes a real CMD skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({
@@ -279,7 +308,10 @@ describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {
     'captures stderr from a failing CMD skill script',
     async () => {
       const executor = new UnsafeLocalCodeExecutor();
-      const toolset = new SkillToolset([testSkill], {codeExecutor: executor});
+      const toolset = new SkillToolset([testSkill], {
+        codeExecutor: executor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillScriptTool(toolset);
 
       const result = (await tool.runAsync({

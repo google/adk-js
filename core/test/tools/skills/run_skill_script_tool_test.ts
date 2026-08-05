@@ -21,7 +21,7 @@ import {
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
 vi.mock('../../../src/utils/file_utils.js', () => ({
@@ -54,6 +54,20 @@ interface ToolErrorResponse {
 }
 
 describe('RunSkillScriptTool', () => {
+  // Running a script resolves an output directory and creates it on disk, even
+  // here where materializeFiles itself is mocked. Point the tests at a temp
+  // directory of their own and remove it in afterEach, so a failing assertion
+  // cannot leave directories behind.
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skill_script_test_'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(outputDir, {recursive: true, force: true});
+  });
+
   function createMockContext(
     agentName = 'test-agent',
     agentExecutor?: BaseCodeExecutor,
@@ -164,7 +178,10 @@ describe('RunSkillScriptTool', () => {
 
   it('executes script successfully via mock executor with JS wrapper', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -183,7 +200,10 @@ describe('RunSkillScriptTool', () => {
 
   it('extracts skill resource files correctly', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     await tool.runAsync({
@@ -222,7 +242,10 @@ describe('RunSkillScriptTool', () => {
       outputFiles: [testFile],
     };
 
-    const toolset = new SkillToolset([mockSkill], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([mockSkill], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillScriptTool(toolset);
 
     await tool.runAsync({
@@ -230,7 +253,6 @@ describe('RunSkillScriptTool', () => {
       toolContext: createMockContext(),
     });
 
-    const outputDir = await toolset.getScriptOutputDir();
     expect(materializeFiles).toHaveBeenCalledWith([testFile], outputDir);
   });
 
@@ -257,24 +279,26 @@ describe('RunSkillScriptTool', () => {
 
     expect(materializeFiles).toHaveBeenCalledTimes(1);
     const [, dir] = vi.mocked(materializeFiles).mock.calls[0];
-    expect(dir).toBeTypeOf('string');
-    expect(dir).not.toBe(process.cwd());
-    expect(path.resolve(dir)).toBe(dir);
-    expect(dir.startsWith(os.tmpdir())).toBe(true);
 
-    await fs.rm(dir, {recursive: true, force: true});
+    // This is the one test that exercises the default directory, so it owns
+    // the cleanup: nothing else knows the generated name.
+    try {
+      expect(dir).toBeTypeOf('string');
+      expect(dir).not.toBe(process.cwd());
+      expect(path.resolve(dir)).toBe(dir);
+      expect(dir.startsWith(os.tmpdir())).toBe(true);
+    } finally {
+      await fs.rm(dir, {recursive: true, force: true});
+    }
   });
 
   it('honors an explicitly configured script output dir', async () => {
-    const configuredDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'skill_out_configured_'),
-    );
     const mockExecutor = new MockCodeExecutor();
     mockExecutor.mockResult = {stdout: '', stderr: '', outputFiles: []};
 
     const toolset = new SkillToolset([mockSkill], {
       codeExecutor: mockExecutor,
-      scriptOutputDir: configuredDir,
+      scriptOutputDir: outputDir,
     });
     const tool = new RunSkillScriptTool(toolset);
 
@@ -283,9 +307,7 @@ describe('RunSkillScriptTool', () => {
       toolContext: createMockContext(),
     })) as {outputDirectory: string};
 
-    expect(materializeFiles).toHaveBeenLastCalledWith([], configuredDir);
-    expect(result.outputDirectory).toBe(configuredDir);
-
-    await fs.rm(configuredDir, {recursive: true, force: true});
+    expect(materializeFiles).toHaveBeenLastCalledWith([], outputDir);
+    expect(result.outputDirectory).toBe(outputDir);
   });
 });

@@ -319,70 +319,56 @@ describe('skill_toolset', () => {
   });
 
   describe('script output directory', () => {
-    it('reuses the same directory across calls', async () => {
+    it('creates one private temp directory and reuses it', async () => {
       const toolset = new SkillToolset([mockSkill]);
+      const dir = await toolset.getScriptOutputDir();
 
       try {
-        const first = await toolset.getScriptOutputDir();
-        const second = await toolset.getScriptOutputDir();
-
-        expect(second).toBe(first);
+        // Collision suffixing (`out_2.txt`) is only coherent if repeated calls
+        // land in the same directory.
+        expect(await toolset.getScriptOutputDir()).toBe(dir);
+        expect(path.dirname(dir)).toBe(os.tmpdir());
+        expect(dir).not.toBe(process.cwd());
       } finally {
-        await toolset.close();
+        await fs.rm(dir, {recursive: true, force: true});
       }
     });
 
-    it('removes the private temp directory it created on close', async () => {
-      // Script output can be sensitive, and a process building one toolset per
-      // session would otherwise leave a directory of it per session behind.
-      const toolset = new SkillToolset([mockSkill]);
-      const dir = await toolset.getScriptOutputDir();
-      expect(path.dirname(dir)).toBe(os.tmpdir());
-      await fs.writeFile(path.join(dir, 'output.txt'), 'sensitive');
-
-      await toolset.close();
-
-      await expect(fs.access(dir)).rejects.toThrow();
-    });
-
-    it('keeps a caller-supplied directory on close', async () => {
-      const configuredDir = await fs.mkdtemp(
+    it('creates a configured directory that does not exist yet', async () => {
+      const parent = await fs.mkdtemp(
         path.join(os.tmpdir(), 'skill_toolset_test_'),
       );
+      const configuredDir = path.join(parent, 'nested', 'output');
 
       try {
         const toolset = new SkillToolset([mockSkill], {
           scriptOutputDir: configuredDir,
         });
+
         expect(await toolset.getScriptOutputDir()).toBe(configuredDir);
-
-        await toolset.close();
-
         await fs.access(configuredDir);
       } finally {
-        await fs.rm(configuredDir, {recursive: true, force: true});
+        await fs.rm(parent, {recursive: true, force: true});
       }
     });
 
-    it('creates a fresh directory when reused after close', async () => {
-      const toolset = new SkillToolset([mockSkill]);
-      const first = await toolset.getScriptOutputDir();
-      await toolset.close();
-
-      const second = await toolset.getScriptOutputDir();
+    it('resolves a relative configured directory to an absolute path', async () => {
+      // materializeFiles resolves output names against this directory, so a
+      // relative value must be pinned to an absolute path rather than left to
+      // follow the process working directory.
+      const absoluteDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'skill_toolset_test_'),
+      );
 
       try {
-        expect(second).not.toBe(first);
-        await fs.access(second);
+        const toolset = new SkillToolset([mockSkill], {
+          scriptOutputDir: path.relative(process.cwd(), absoluteDir),
+        });
+
+        expect(await toolset.getScriptOutputDir()).toBe(absoluteDir);
       } finally {
-        await toolset.close();
+        await fs.rm(absoluteDir, {recursive: true, force: true});
       }
-    });
-
-    it('does not fail closing a toolset that never produced output', async () => {
-      const toolset = new SkillToolset([mockSkill]);
-
-      await expect(toolset.close()).resolves.toBeUndefined();
     });
   });
 });
