@@ -241,13 +241,14 @@ describe('CLI Entrypoint', () => {
       (runAgent as Mock).mockRejectedValueOnce(
         new Error('Agent file /nope/agent.ts does not exists'),
       );
-      const exit = vi
-        .spyOn(process, 'exit')
-        .mockImplementation((() => undefined) as never);
+      // The handler sets process.exitCode rather than calling process.exit, so
+      // async stderr (the error being surfaced) is not truncated on the way out.
+      const originalExitCode = process.exitCode;
 
       await parse(['run', '/nope/agent.ts']);
 
-      expect(exit).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
+      process.exitCode = originalExitCode;
     });
 
     it('should call runAgent with required args', async () => {
@@ -298,6 +299,36 @@ describe('CLI Entrypoint', () => {
           otelToCloud: true,
         }),
       );
+    });
+  });
+
+  // Minification mangles identifiers and line numbers, so local commands must
+  // leave it off to keep an agent's stack traces readable; only deployment
+  // bundles, where size matters, turn it on.
+  describe('agent bundle minification', () => {
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])('is off for %s', async (_name, args, target) => {
+      await parse(args);
+
+      const call = (target() as unknown as Mock).mock.calls[0][0];
+      expect(call.agentFileLoadOptions.minify).toBe(false);
+    });
+
+    it.each([
+      ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
+      [
+        'deploy agent_engine',
+        ['deploy', 'agent_engine'],
+        () => deployToAgentEngine,
+      ],
+    ])('is on for %s', async (_name, args, target) => {
+      await parse(args);
+
+      const call = (target() as unknown as Mock).mock.calls[0][0];
+      expect(call.agentFileLoadOptions.minify).toBe(true);
     });
   });
 

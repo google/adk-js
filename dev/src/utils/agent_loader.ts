@@ -86,6 +86,13 @@ export interface AgentFileOptions {
   compile?: boolean;
   bundle?: boolean;
   moduleType?: FileModuleType;
+  /**
+   * Minify the generated bundle. Off by default: minification mangles
+   * identifiers and collapses line numbers, which makes every stack trace
+   * thrown by an agent unreadable. Only deployment bundles, where size
+   * matters more than debuggability, turn it on.
+   */
+  minify?: boolean;
 }
 
 /**
@@ -128,6 +135,11 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
               '__filename': JSON.stringify(filePath),
               'import.meta.url': JSON.stringify(fileUrl),
             },
+            // Hand the build an inline map back to the original file. Without
+            // it the outer build can only map as far as this pre-transformed
+            // text, and stack traces land on the wrong line of the agent file.
+            sourcemap: 'inline',
+            sourcefile: filePath,
           });
 
           return {
@@ -191,6 +203,15 @@ export class AgentFile {
       const originalDir = path.dirname(filePath);
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
+      const minify = this.options.minify ?? false;
+      if (!minify) {
+        // The bundle lives in a temp dir that is deleted when the run ends, so
+        // an external .map file would be gone by the time anyone read a stack
+        // trace. Inline the map instead and tell Node to apply it, so traces
+        // point at the developer's own source file and line.
+        process.setSourceMapsEnabled(true);
+      }
+
       await esbuild.build({
         entryPoints: [filePath],
         outfile: compiledFilePath,
@@ -198,7 +219,11 @@ export class AgentFile {
         platform: 'node',
         format: moduleType,
         bundle: this.options.bundle,
-        minify: this.options.bundle,
+        minify,
+        sourcemap: minify ? false : 'inline',
+        // The original sources are still on disk, so leaving them out of the
+        // map halves the size of an unminified bundle.
+        sourcesContent: false,
         plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
         // esbuild rejects `packages` and `external` unless it is bundling, so
         // both have to be withheld when `--bundle false` asks it only to
