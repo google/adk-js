@@ -23,7 +23,7 @@ export class OAuth2CredentialRefresher implements BaseCredentialRefresher {
    *
    * @param authCredential The OAuth2 credential to check.
    * @param authScheme The OAuth2 authentication scheme (optional).
-   * @returns True if the credential needs to be refreshed, False otherwise.
+   * @returns True if the credential needs to be refreshed, false otherwise.
    */
   async isRefreshNeeded(authCredential: AuthCredential): Promise<boolean> {
     if (!authCredential.oauth2) {

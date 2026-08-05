@@ -149,11 +149,9 @@ export abstract class BaseAgent<
    * When a list of callbacks is provided, the callbacks will be called in the
    * order they are listed until a callback does not return undefined.
    *
-   * @param callbackContext: MUST be named 'callbackContext' (enforced).
-   *
-   * @return Content: The content to return to the user. When the content is
-   *     present, the agent run will be skipped and the provided content will be
-   *     returned to user.
+   * Each callback takes a single {@link Context} argument. Returning `Content`
+   * ends the invocation and emits that content as the agent's response instead
+   * of running the agent; return `undefined` to let the run proceed.
    */
   readonly beforeAgentCallback: SingleAgentCallback[];
 
@@ -163,11 +161,9 @@ export abstract class BaseAgent<
    * When a list of callbacks is provided, the callbacks will be called in the
    * order they are listed until a callback does not return undefined.
    *
-   * @param callbackContext: MUST be named 'callbackContext' (enforced).
-   *
-   * @return Content: The content to return to the user. When the content is
-   *     present, the provided content will be used as agent response and
-   *     appended to event history as agent response.
+   * Each callback takes a single {@link Context} argument. Returning `Content`
+   * emits it as the agent's response, appended to the event history; return
+   * `undefined` to leave the response as the agent produced it.
    */
   readonly afterAgentCallback: SingleAgentCallback[];
 

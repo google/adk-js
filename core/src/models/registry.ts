@@ -11,8 +11,9 @@ import {BaseLlm} from './base_llm.js';
 import {Gemini} from './google_llm.js';
 
 /**
- * type[BaseLlm] equivalent in TypeScript, represents a class that can be new-ed
- * to create a BaseLlm instance.
+ * The constructor of a {@link BaseLlm} subclass, rather than an instance of
+ * one: a class that can be `new`-ed with a model name, and that also exposes
+ * the static `supportedModels` patterns the registry matches against.
  */
 export type BaseLlmType = (new (params: {model: string}) => BaseLlm) & {
   readonly supportedModels: Array<string | RegExp>;

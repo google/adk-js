@@ -118,7 +118,7 @@ class InvocationCostManager {
  *  An LLM agent runs steps in a loop until:
  *    1. A final response is generated.
  *    2. The agent transfers to another agent.
- *    3. The end_invocation is set to true by any callbacks or tools.
+ *    3. `endInvocation` is set to true by any callbacks or tools.
  *
  *  A step:
  *    1. Calls the LLM only once and yields its response.
@@ -126,7 +126,7 @@ class InvocationCostManager {
  *
  *  The summarization of the function response is considered another step, since
  *  it is another llm call.
- *  A step ends when it's done calling llm and tools, or if the end_invocation
+ *  A step ends when it's done calling llm and tools, or if `endInvocation`
  *  is set to true at any time.
  *
  *  ```
@@ -185,7 +185,7 @@ export class InvocationContext {
 
   /**
    * Whether to end this invocation.
-   * Set to True in callbacks or tools to terminate this invocation.
+   * Set to `true` in callbacks or tools to terminate this invocation.
    */
   endInvocation: boolean;
 
