@@ -39,6 +39,14 @@ const POWERSHELL_BASE_ARGS = [
 const CMD_BASE_ARGS = ['/D', '/c'] as const;
 
 /**
+ * Whether `commandPath` names Windows PowerShell (`powershell`) or PowerShell
+ * 7+ (`pwsh`). `path.win32` splits on both separators on every platform.
+ */
+function isPowerShellCommand(commandPath: string): boolean {
+  return /^(powershell|pwsh)(\.exe)?$/i.test(path.win32.basename(commandPath));
+}
+
+/**
  * Options for UnsafeLocalCodeExecutor.
  */
 export interface UnsafeLocalCodeExecutorOptions {
@@ -56,6 +64,10 @@ export interface UnsafeLocalCodeExecutorOptions {
   pythonCommandPath?: string;
   /**
    * The command to run Shell code. Default is `bash`.
+   *
+   * When it names `powershell` or `pwsh` (with or without `.exe`) the script
+   * is written as `.ps1` and run through PowerShell rather than as a bare
+   * shell script.
    */
   shellCommandPath?: string;
 }
@@ -98,6 +110,9 @@ function getExtensionForLanguage(
   }
 
   if (language === CodeExecutionLanguage.SHELL) {
+    if (shellCommandPath && isPowerShellCommand(shellCommandPath)) {
+      return '.ps1';
+    }
     if (IS_WINDOWS) {
       if (shellCommandPath && shellCommandPath.toLowerCase().includes('cmd')) {
         return '.bat';
@@ -187,7 +202,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         command = this.pythonCommandPath;
       } else if (language === CodeExecutionLanguage.SHELL) {
         command = this.shellCommandPath;
-        if (this.shellCommandPath.toLowerCase().includes('powershell')) {
+        if (isPowerShellCommand(this.shellCommandPath)) {
           args = [...POWERSHELL_BASE_ARGS, filePath];
         } else if (this.shellCommandPath.toLowerCase().includes('cmd')) {
           args = [...CMD_BASE_ARGS, filePath];

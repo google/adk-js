@@ -8,7 +8,7 @@ import * as path from 'node:path';
 
 import {A2A_AUTH_TOKEN_ENV_VAR} from '../../server/adk_api_server.js';
 import {AgentLoader} from '../../utils/agent_loader.js';
-import {isFile, isFolderExists} from '../../utils/file_utils.js';
+import {createTempDir, isFile, isFolderExists} from '../../utils/file_utils.js';
 import {
   BaseDeployOptions,
   CreateDockerFileContentOptions,
@@ -84,8 +84,6 @@ function prepareGCloudArguments(options: DeployToCloudRunOptions): string[] {
     'run',
     'deploy',
     options.serviceName,
-    '--source',
-    options.tempFolder,
     '--project',
     options.project,
     ...regionOptions,
@@ -152,6 +150,9 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     );
   }
 
+  // Built before any directory is created: a conflicting extra gcloud arg
+  // throws out of deployToCloudRun, and there is no `finally` this early to
+  // remove a temp folder.
   const gcloudCommands = prepareGCloudArguments(options);
 
   if (options.a2a && !options.a2aAuthToken) {
@@ -181,23 +182,24 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
 
   console.info('Starting deployment to Cloud Run...');
 
-  if (await isFolderExists(options.tempFolder)) {
+  const tempFolder =
+    options.tempFolder ?? (await createTempDir('cloud_run_deploy_src'));
+  gcloudCommands.push('--source', tempFolder);
+
+  if (options.tempFolder && (await isFolderExists(tempFolder))) {
     console.info('Cleaning up existing temporary files...');
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+    await fs.rm(tempFolder, {recursive: true, force: true});
   }
 
   try {
     console.info('Copying agent source files...');
-    await copyAgentFiles(
-      agentLoader,
-      path.join(options.tempFolder, 'agents', appName),
-    );
+    await copyAgentFiles(agentLoader, path.join(tempFolder, 'agents', appName));
 
     console.info('Creating package.json...');
-    await createPackageJson(agentDir, options.tempFolder);
+    await createPackageJson(agentDir, tempFolder);
 
     console.info('Creating Dockerfile...');
-    await createDockerFile(options.tempFolder, {
+    await createDockerFile(tempFolder, {
       appName,
       project: options.project,
       region: options.region,
@@ -219,7 +221,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
     );
   } finally {
     console.info('Cleaning up temporary files...');
-    await fs.rm(options.tempFolder, {recursive: true, force: true});
+    await fs.rm(tempFolder, {recursive: true, force: true});
     await agentLoader.disposeAll();
     console.info('Temporary files cleaned up.');
   }

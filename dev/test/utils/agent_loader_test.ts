@@ -29,7 +29,7 @@ import {
 import * as fileUtils from '../../src/utils/file_utils.js';
 
 vi.mock('../../src/utils/file_utils.js', () => ({
-  getTempDir: vi.fn(),
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFileExists: vi.fn(),
   isFolderExists: vi.fn(),
@@ -161,7 +161,10 @@ describe('AgentLoader', () => {
   });
 
   beforeEach(async () => {
-    (fileUtils.getTempDir as Mock).mockImplementation(() => tempLoaderDir);
+    (fileUtils.createTempDir as Mock).mockImplementation(async () => {
+      await fs.mkdir(tempLoaderDir, {recursive: true});
+      return tempLoaderDir;
+    });
     (fileUtils.isFile as Mock).mockImplementation(async (filePath) => {
       try {
         const stat = await fs.stat(filePath as string);
@@ -281,12 +284,32 @@ describe('AgentLoader', () => {
         packages: 'bundle',
         bundle: true,
         minify: true,
-        allowOverwrite: true,
         external: expect.arrayContaining(['onnxruntime-node']),
       });
 
       await agentFile.dispose();
       await expect(fs.access(compiledAgentPath)).rejects.toThrow();
+    });
+
+    it('compiles into a private temp dir without allowing overwrite', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent1.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+
+      const compiledAgentPath = compiledPath('agent1.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAgentPath, agent1JsContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(agentPath);
+      await agentFile.load();
+
+      expect(fileUtils.createTempDir).toHaveBeenCalledWith('adk_agent_loader');
+      expect(
+        (esbuild.build as Mock).mock.calls[0][0].allowOverwrite,
+      ).toBeUndefined();
+
+      await agentFile.dispose();
     });
 
     it('throws if rootAgent is not found', async () => {
@@ -643,13 +666,10 @@ describe('AgentLoader', () => {
 
   describe('AgentLoader', () => {
     beforeEach(async () => {
-      let loaderOutputDirIndex = 0;
-      (fileUtils.getTempDir as Mock).mockImplementation(() =>
-        path.join(
-          tempLoaderDir,
-          `agent-${Date.now()}-${Math.random().toString(36).slice(2)}-${loaderOutputDirIndex++}`,
-        ),
-      );
+      (fileUtils.createTempDir as Mock).mockImplementation(async () => {
+        await fs.mkdir(tempLoaderDir, {recursive: true});
+        return fs.mkdtemp(path.join(tempLoaderDir, 'agent-'));
+      });
 
       await fs.writeFile(
         path.join(tempAgentsDir, 'agent1.js'),

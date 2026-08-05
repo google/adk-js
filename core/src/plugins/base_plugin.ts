@@ -168,8 +168,10 @@ export abstract class BasePlugin {
    * @param params.invocationContext The context for the entire invocation.
    * @param params.event The event raised by the runner.
    * @returns An optional value. A non-`undefined` return may be used by the
-   *     framework to modify or replace the response. Returning `undefined`
-   *     allows the original response to be used.
+   *     framework to modify or replace the response. Copy `params.event` when
+   *     constructing a replacement to preserve fields that are not being
+   *     modified, such as event actions. Returning `undefined` allows the
+   *     original response to be used.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async onEventCallback(params: {

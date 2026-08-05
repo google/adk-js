@@ -9,6 +9,23 @@ import * as path from 'node:path';
 import {File} from '../code_executors/code_execution_utils.js';
 
 /**
+ * Reports whether resolvedPath is resolvedBaseDir itself, or a path nested
+ * inside it.
+ *
+ * A plain `resolvedPath.startsWith(resolvedBaseDir)` check is a path-separator-
+ * unaware prefix match: it also accepts sibling directories whose name merely
+ * starts with the same string, e.g. base dir `/tmp/agent` wrongly "contains"
+ * `/tmp/agent-evil/x`. Requiring the trailing separator (or exact equality)
+ * closes that gap.
+ */
+function isInsideDir(resolvedPath: string, resolvedBaseDir: string): boolean {
+  return (
+    resolvedPath === resolvedBaseDir ||
+    resolvedPath.startsWith(resolvedBaseDir + path.sep)
+  );
+}
+
+/**
  * Creates files with the given paths in the current working directory.
  * @param files The files to materialize.
  */
@@ -21,7 +38,7 @@ export async function materializeFiles(
   for (const file of files) {
     const fullPath = path.resolve(dir, file.name);
 
-    if (!fullPath.startsWith(resolvedBaseDir)) {
+    if (!isInsideDir(fullPath, resolvedBaseDir)) {
       throw new Error(
         `Path traversal detected: ${file.name} resolves outside of ${dir}`,
       );
@@ -51,7 +68,7 @@ export async function materializeFiles(
       }
     }
 
-    if (!finalPath.startsWith(resolvedBaseDir)) {
+    if (!isInsideDir(finalPath, resolvedBaseDir)) {
       throw new Error(
         `Path traversal detected: ${file.name} resolves outside of ${dir}`,
       );

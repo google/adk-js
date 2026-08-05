@@ -34,6 +34,7 @@ import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
 
 import {logger} from '../utils/logger.js';
+import {canUseOutputSchemaWithTools} from '../utils/output_schema_utils.js';
 import {Context} from './context.js';
 
 import {
@@ -787,7 +788,11 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // TODO - b/425992518: check if tool preprocessors can be simplified.
     // Run pre-processors for tools.
     const allTools = [...this.tools];
-    if (this.outputSchema && allTools.length > 0) {
+    if (
+      this.outputSchema &&
+      allTools.length > 0 &&
+      !canUseOutputSchemaWithTools(this.canonicalModel.model)
+    ) {
       const setModelResponseTool = new FunctionTool({
         name: 'set_model_response',
         description:

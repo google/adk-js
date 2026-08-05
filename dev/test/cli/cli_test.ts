@@ -278,6 +278,14 @@ describe('CLI Entrypoint', () => {
       );
     });
 
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'cloud_run']);
+
+      expect(
+        (deployToCloudRun as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
+    });
+
     it('should pass args to deployToCloudRun including unknowns', async () => {
       const args = [
         'deploy',
@@ -348,6 +356,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
     });
 
     it('should pass args to deployToAgentEngine', async () => {

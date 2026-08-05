@@ -6,6 +6,7 @@
 
 import {Event} from '../../events/event.js';
 import {LlmRequest, setOutputSchema} from '../../models/llm_request.js';
+import {canUseOutputSchemaWithTools} from '../../utils/output_schema_utils.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
@@ -37,7 +38,14 @@ export class BasicLlmRequestProcessor extends BaseLlmRequestProcessor {
     llmRequest.model = agent.canonicalModel.model;
 
     llmRequest.config = {...(agent.generateContentConfig ?? {})};
-    if (agent.outputSchema && (!agent.tools || agent.tools.length === 0)) {
+    // Models that cannot take an output schema alongside tools get the
+    // prompt-based `set_model_response` workaround instead, injected by
+    // `LlmAgent.runOneStepAsync` and the instructions processor.
+    if (
+      agent.outputSchema &&
+      (!agent.tools?.length ||
+        canUseOutputSchemaWithTools(agent.canonicalModel.model))
+    ) {
       setOutputSchema(llmRequest, agent.outputSchema);
     }
 
