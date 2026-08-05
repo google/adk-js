@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MetricExporter} from '@google-cloud/opentelemetry-cloud-monitoring-exporter';
-import {TraceExporter} from '@google-cloud/opentelemetry-cloud-trace-exporter';
 import {gcpDetector} from '@opentelemetry/resource-detector-gcp';
 import {detectResources, Resource} from '@opentelemetry/resources';
 import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
@@ -13,6 +11,7 @@ import {BatchSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import {GoogleAuth} from 'google-auth-library';
 
 import {logger} from '../utils/logger.js';
+import {loadOptionalPeer} from '../utils/optional_peer.js';
 
 import {OtelExportersConfig, OTelHooks} from './setup.js';
 
@@ -28,6 +27,44 @@ async function getGcpProjectId(): Promise<string | undefined> {
   } catch (_e: unknown) {
     return undefined;
   }
+}
+
+/**
+ * Builds the Cloud Trace span processor, loading its exporter on demand.
+ *
+ * The two Cloud exporters are optional peer dependencies: they are only
+ * reachable from {@link getGcpExporters}, so an application that exports
+ * telemetry somewhere else — or nowhere at all — should not have to download
+ * them. Each is loaded only when its signal is actually enabled.
+ */
+async function createCloudTraceProcessor(
+  projectId: string,
+): Promise<BatchSpanProcessor> {
+  const {TraceExporter} = await loadOptionalPeer(
+    {
+      packageName: '@google-cloud/opentelemetry-cloud-trace-exporter',
+      feature: 'getGcpExporters({enableTracing: true})',
+    },
+    () => import('@google-cloud/opentelemetry-cloud-trace-exporter'),
+  );
+  return new BatchSpanProcessor(new TraceExporter({projectId}));
+}
+
+/** Builds the Cloud Monitoring metric reader, loading its exporter on demand. */
+async function createCloudMetricReader(
+  projectId: string,
+): Promise<PeriodicExportingMetricReader> {
+  const {MetricExporter} = await loadOptionalPeer(
+    {
+      packageName: '@google-cloud/opentelemetry-cloud-monitoring-exporter',
+      feature: 'getGcpExporters({enableMetrics: true})',
+    },
+    () => import('@google-cloud/opentelemetry-cloud-monitoring-exporter'),
+  );
+  return new PeriodicExportingMetricReader({
+    exporter: new MetricExporter({projectId}),
+    exportIntervalMillis: 5000,
+  });
 }
 
 export async function getGcpExporters(
@@ -47,15 +84,10 @@ export async function getGcpExporters(
 
   return {
     spanProcessors: enableTracing
-      ? [new BatchSpanProcessor(new TraceExporter({projectId}))]
+      ? [await createCloudTraceProcessor(projectId)]
       : [],
     metricReaders: enableMetrics
-      ? [
-          new PeriodicExportingMetricReader({
-            exporter: new MetricExporter({projectId}),
-            exportIntervalMillis: 5000,
-          }),
-        ]
+      ? [await createCloudMetricReader(projectId)]
       : [],
     logRecordProcessors: [],
   };
