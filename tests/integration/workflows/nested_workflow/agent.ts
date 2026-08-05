@@ -91,17 +91,15 @@ const aggregateResults = node(
   {name: 'aggregate_results'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      [
-        'START',
-        processInput,
-        [findFamousPerson, findHistoricalEvent],
-        joinForAggregation,
-        aggregateResults,
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    [
+      'START',
+      processInput,
+      [findFamousPerson, findHistoricalEvent],
+      joinForAggregation,
+      aggregateResults,
     ],
-  }),
-);
+  ],
+});

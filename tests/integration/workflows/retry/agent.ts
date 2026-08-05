@@ -14,13 +14,7 @@
  * Run (offline):  npm run sample -- samples/workflows/retry/agent.ts
  */
 
-import {
-  createEvent,
-  node,
-  NodeContext,
-  Workflow,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
 
 const getWeather = node(
   async function* (ctx: NodeContext) {
@@ -48,9 +42,7 @@ const reportWeather = node(
   {name: 'report_weather'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [['START', getWeather, reportWeather]],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [['START', getWeather, reportWeather]],
+});

@@ -19,7 +19,6 @@ import {
   JoinNode,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 
@@ -55,16 +54,14 @@ const aggregate = node(
   {name: 'aggregate'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      [
-        'START',
-        [makeUppercase, countCharacters, reverseString],
-        joinNode,
-        aggregate,
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    [
+      'START',
+      [makeUppercase, countCharacters, reverseString],
+      joinNode,
+      aggregate,
     ],
-  }),
-);
+  ],
+});

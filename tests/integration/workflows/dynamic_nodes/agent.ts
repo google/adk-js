@@ -19,13 +19,7 @@
  *   npm run sample -- samples/workflows/dynamic_nodes/agent.ts
  */
 
-import {
-  LlmAgent,
-  node,
-  NodeContext,
-  Workflow,
-  WorkflowAgent,
-} from '@google/adk';
+import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
 import {z} from 'zod';
 
 const feedbackSchema = z.object({
@@ -56,24 +50,22 @@ const evaluateHeadline = node(
   }),
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    // Imperative entry: drive the child nodes directly via `ctx.runNode()`
-    // rather than a static edge graph (mutually exclusive with `edges`).
-    dynamicEntry: async (ctx: NodeContext, nodeInput: unknown) => {
-      ctx.state.set('topic', nodeInput as string);
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  // Imperative entry: drive the child nodes directly via `ctx.runNode()`
+  // rather than a static edge graph (mutually exclusive with `edges`).
+  dynamicEntry: async (ctx: NodeContext, nodeInput: unknown) => {
+    ctx.state.set('topic', nodeInput as string);
 
-      const MAX_ATTEMPTS = 5;
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        const headline = (await ctx.runNode(generateHeadline)).output as string;
-        const feedback = (await ctx.runNode(evaluateHeadline, headline))
-          .output as {grade: string};
-        if (feedback.grade === 'tech-related') {
-          return headline;
-        }
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const headline = (await ctx.runNode(generateHeadline)).output as string;
+      const feedback = (await ctx.runNode(evaluateHeadline, headline))
+        .output as {grade: string};
+      if (feedback.grade === 'tech-related') {
+        return headline;
       }
-      return `Gave up after ${MAX_ATTEMPTS} attempts (headline never graded tech-related).`;
-    },
-  }),
-);
+    }
+    return `Gave up after ${MAX_ATTEMPTS} attempts (headline never graded tech-related).`;
+  },
+});

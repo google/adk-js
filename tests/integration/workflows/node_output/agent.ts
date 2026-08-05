@@ -20,7 +20,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 import {z} from 'zod';
@@ -60,17 +59,15 @@ const consumePydanticOutput = node(
   {name: 'consume_pydantic_output'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      [
-        'START',
-        generateStringOutput,
-        generateEventOutput,
-        generatePydanticOutput,
-        consumePydanticOutput,
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    [
+      'START',
+      generateStringOutput,
+      generateEventOutput,
+      generatePydanticOutput,
+      consumePydanticOutput,
     ],
-  }),
-);
+  ],
+});

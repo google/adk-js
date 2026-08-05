@@ -14,7 +14,7 @@
  * Run (offline):  npm run sample -- samples/workflows/message/agent.ts
  */
 
-import {createEvent, node, Workflow, WorkflowAgent} from '@google/adk';
+import {createEvent, node, WorkflowAgent} from '@google/adk';
 
 // A 16x16 solid red PNG, base64 encoded.
 const RED_SQUARE_PNG =
@@ -85,11 +85,9 @@ const streamSentence = node(
   {name: 'stream_sentence'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'message',
-    edges: [
-      ['START', sendString, sendMultimodal, multipleMessages, streamSentence],
-    ],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'message',
+  edges: [
+    ['START', sendString, sendMultimodal, multipleMessages, streamSentence],
+  ],
+});

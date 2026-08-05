@@ -33,7 +33,6 @@ import {
   createEvent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 
@@ -95,9 +94,7 @@ const summarize = node(
   {name: 'summarize'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'auth_api_key',
-    edges: [['START', fetchWeather, summarize]],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'auth_api_key',
+  edges: [['START', fetchWeather, summarize]],
+});

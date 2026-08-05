@@ -14,13 +14,7 @@
  * Enter a number between 0 and 10.
  */
 
-import {
-  createEvent,
-  node,
-  NodeContext,
-  Workflow,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
 
 const validateInput = node(
   function* (ctx: NodeContext, nodeInput: string) {
@@ -57,12 +51,10 @@ const guessNumber = node(
   {name: 'guess_number'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      ['START', validateInput, guessNumber],
-      [guessNumber, {guessed_wrong: guessNumber}],
-    ],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    ['START', validateInput, guessNumber],
+    [guessNumber, {guessed_wrong: guessNumber}],
+  ],
+});

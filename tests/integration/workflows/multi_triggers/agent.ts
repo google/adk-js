@@ -13,13 +13,7 @@
  * Run (offline):  npm run sample -- samples/workflows/multi_triggers/agent.ts
  */
 
-import {
-  createEvent,
-  node,
-  NodeContext,
-  Workflow,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
 import {z} from 'zod';
 
 const makeUppercase = node((_c: NodeContext, s: string) => s.toUpperCase(), {
@@ -45,12 +39,10 @@ const sendMessage = node(
   {name: 'send_message'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    inputSchema: z.string(),
-    edges: [
-      ['START', [makeUppercase, countCharacters, reverseString], sendMessage],
-    ],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  inputSchema: z.string(),
+  edges: [
+    ['START', [makeUppercase, countCharacters, reverseString], sendMessage],
+  ],
+});

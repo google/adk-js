@@ -24,7 +24,6 @@ import {
   node,
   NodeContext,
   RequestInput,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 
@@ -89,15 +88,13 @@ const sendEmail = node(() => message('Draft approved and sent successfully.'), {
   name: 'send_email',
 });
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'request_input_rerun',
-    edges: [
-      ['START', processInput, draftEmail, humanReview],
-      [
-        humanReview,
-        {revise: draftEmail, approved: sendEmail, rejected: rejectEmail},
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'request_input_rerun',
+  edges: [
+    ['START', processInput, draftEmail, humanReview],
+    [
+      humanReview,
+      {revise: draftEmail, approved: sendEmail, rejected: rejectEmail},
     ],
-  }),
-);
+  ],
+});

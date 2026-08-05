@@ -20,7 +20,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 import {z} from 'zod';
@@ -71,18 +70,10 @@ const routeHeadline = node(
   {name: 'route_headline'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      [
-        'START',
-        processInput,
-        generateHeadline,
-        evaluateHeadline,
-        routeHeadline,
-      ],
-      [routeHeadline, {unrelated: generateHeadline}],
-    ],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    ['START', processInput, generateHeadline, evaluateHeadline, routeHeadline],
+    [routeHeadline, {unrelated: generateHeadline}],
+  ],
+});

@@ -23,7 +23,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 import {z} from 'zod';
@@ -81,19 +80,17 @@ const handleOther = node(
   {name: 'handle_other'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      ['START', processInput, classifyInput, routeOnCategory],
-      [
-        routeOnCategory,
-        {
-          question: answerQuestion,
-          statement: commentOnStatement,
-          other: handleOther,
-        },
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    ['START', processInput, classifyInput, routeOnCategory],
+    [
+      routeOnCategory,
+      {
+        question: answerQuestion,
+        statement: commentOnStatement,
+        other: handleOther,
+      },
     ],
-  }),
-);
+  ],
+});

@@ -15,7 +15,7 @@
  * Run (offline):  npm run sample -- samples/workflows/state/agent.ts
  */
 
-import {node, NodeContext, Workflow, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, WorkflowAgent} from '@google/adk';
 
 function processInitialInput(ctx: NodeContext, nodeInput: string): string {
   // Set initial input in state via direct dictionary modification.
@@ -41,17 +41,15 @@ function readStateViaParam(ctx: NodeContext): string {
   return `Final Result: ${appendedText}!`;
 }
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'state_sample',
-    edges: [
-      [
-        'START',
-        node(processInitialInput, {name: 'process_initial_input'}),
-        node(updateStateViaEvent, {name: 'update_state_via_event'}),
-        node(readStateViaCtx, {name: 'read_state_via_ctx'}),
-        node(readStateViaParam, {name: 'read_state_via_param'}),
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'state_sample',
+  edges: [
+    [
+      'START',
+      node(processInitialInput, {name: 'process_initial_input'}),
+      node(updateStateViaEvent, {name: 'update_state_via_event'}),
+      node(readStateViaCtx, {name: 'read_state_via_ctx'}),
+      node(readStateViaParam, {name: 'read_state_via_param'}),
     ],
-  }),
-);
+  ],
+});

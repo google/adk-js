@@ -22,7 +22,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 
@@ -75,9 +74,7 @@ const orchestrator = node(
   {name: 'orchestrator', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'dynamic_fan_out_fan_in',
-    edges: [['START', orchestrator]],
-  }),
-);
+export const rootAgent = new WorkflowAgent({
+  name: 'dynamic_fan_out_fan_in',
+  edges: [['START', orchestrator]],
+});

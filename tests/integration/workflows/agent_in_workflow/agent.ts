@@ -26,7 +26,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 import {z} from 'zod';
@@ -93,20 +92,18 @@ then generate a concise instruction about how to prepare based on those orders.`
   tools: [findOrders],
 });
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'task_in_workflow',
-    edges: [
-      ['START', intakeAgent, checkIdentity],
-      [
-        checkIdentity,
-        {
-          retry: intakeAgent,
-          // generate_instruction re-runs on resume so its tool-confirmation can
-          // resolve after the user approves the find_orders call.
-          [DEFAULT_ROUTE]: node(generateInstruction, {rerunOnResume: true}),
-        },
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'task_in_workflow',
+  edges: [
+    ['START', intakeAgent, checkIdentity],
+    [
+      checkIdentity,
+      {
+        retry: intakeAgent,
+        // generate_instruction re-runs on resume so its tool-confirmation can
+        // resolve after the user approves the find_orders call.
+        [DEFAULT_ROUTE]: node(generateInstruction, {rerunOnResume: true}),
+      },
     ],
-  }),
-);
+  ],
+});

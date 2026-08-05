@@ -22,7 +22,6 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  Workflow,
   WorkflowAgent,
 } from '@google/adk';
 import {Type} from '@google/genai';
@@ -85,18 +84,16 @@ const aggregate = node(
   {name: 'aggregate'},
 );
 
-export const rootAgent = new WorkflowAgent(
-  new Workflow({
-    name: 'root_agent',
-    edges: [
-      [
-        'START',
-        processInput,
-        findRelatedTopics,
-        makeUpperCase,
-        explainTopic,
-        aggregate,
-      ],
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [
+    [
+      'START',
+      processInput,
+      findRelatedTopics,
+      makeUpperCase,
+      explainTopic,
+      aggregate,
     ],
-  }),
-);
+  ],
+});
