@@ -59,7 +59,9 @@ function build({
     // mangling, so keep the original names in the bundle.
     keepNames: true,
     sourcemap: bundle,
-    packages: 'external',
+    // The web target ships a self-contained bundle so a browser can load it
+    // directly; bare specifiers like '@google/genai' are not resolvable there.
+    packages: platform === 'browser' ? 'bundle' : 'external',
     logLevel: 'info',
   };
 
