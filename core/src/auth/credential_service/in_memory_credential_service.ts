@@ -11,27 +11,25 @@ import {AuthConfig} from '../auth_tool.js';
 import {BaseCredentialService} from './base_credential_service.js';
 
 /**
- * Creates a map with no prototype, for data keyed by untrusted input.
- *
- * `appName`, `userId` and `credentialKey` are all attacker-influenced. With an
- * ordinary `{}` literal a key of `__proto__` resolves to `Object.prototype`
- * rather than creating an own property, so nested assignment would pollute
- * every object in the process; and a lookup of an inherited key such as
- * `toString` would return a function instead of `undefined`.
- */
-function createNullProtoMap<T>(): Record<string, T> {
-  return Object.create(null) as Record<string, T>;
-}
-
-/**
  * @experimental  (Experimental, subject to change) Class for in memory
  * implementation of credential service
  */
 export class InMemoryCredentialService implements BaseCredentialService {
+  /**
+   * A map from app name to a map from user ID to a map from credential key to
+   * credential.
+   *
+   * `appName`, `userId` and `credentialKey` are all attacker-influenced, so
+   * every level is created with `Object.create(null)`. On an ordinary `{}`
+   * literal a key of `__proto__` resolves to the inherited `__proto__`
+   * accessor rather than creating an own property, so nested assignment
+   * pollutes every object in the process, and a lookup of an inherited key
+   * such as `toString` returns a function instead of `undefined`.
+   */
   private readonly credentials: Record<
     string,
     Record<string, Record<string, AuthCredential>>
-  > = createNullProtoMap();
+  > = Object.create(null);
 
   loadCredential(
     authConfig: AuthConfig,
@@ -60,11 +58,11 @@ export class InMemoryCredentialService implements BaseCredentialService {
     const {appName, userId} = toolContext.invocationContext.session;
 
     if (!this.credentials[appName]) {
-      this.credentials[appName] = createNullProtoMap();
+      this.credentials[appName] = Object.create(null);
     }
 
     if (!this.credentials[appName][userId]) {
-      this.credentials[appName][userId] = createNullProtoMap();
+      this.credentials[appName][userId] = Object.create(null);
     }
 
     return this.credentials[appName][userId];

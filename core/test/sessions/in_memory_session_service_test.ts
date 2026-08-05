@@ -659,12 +659,20 @@ describe('InMemorySessionService', () => {
   });
 
   describe('prototype pollution', () => {
+    // Every key that any test below can plant on `Object.prototype` when the
+    // fix is reverted, so that reverting it fails these tests instead of
+    // corrupting the ones that run afterwards. `sessions['app1']['__proto__']`
+    // resolves to `Object.prototype`, so the *session id* lands there too, and
+    // `sessions['__proto__']` does the same for the *user id*.
     const POLLUTED_KEYS = [
       'polluted',
       'httpOptions',
       'pwned',
       'baseUrl',
       'poc_sid',
+      'isAdmin',
+      'u1',
+      's1',
     ];
 
     const clearPollution = () => {
@@ -675,6 +683,13 @@ describe('InMemorySessionService', () => {
 
     beforeEach(clearPollution);
     afterEach(clearPollution);
+
+    // A `'__proto__': value` pair in an object literal invokes the prototype
+    // setter instead of creating an own key, so it cannot express what an
+    // attacker actually sends. `JSON.parse` is what the dev server does with a
+    // request body, and it does produce an own `__proto__` key.
+    const parseBody = (json: string): Record<string, unknown> =>
+      JSON.parse(json) as Record<string, unknown>;
 
     it('does not pollute Object.prototype via appName', async () => {
       await service.createSession({
@@ -731,7 +746,7 @@ describe('InMemorySessionService', () => {
       expect(({} as Record<string, unknown>)['pwned']).toBeUndefined();
     });
 
-    it('does not pollute Object.prototype via a __proto__ state key', async () => {
+    it('keeps a __proto__ user state key as an own property', async () => {
       const session = await service.createSession({
         appName: 'app1',
         userId: 'u1',
@@ -752,7 +767,59 @@ describe('InMemorySessionService', () => {
         }),
       });
 
-      expect(({} as Record<string, unknown>)['baseUrl']).toBeUndefined();
+      // Read the key back through a *second* session. `updateSessionState`
+      // also writes the prefixed key into the originating session's own state,
+      // so only a sibling session exercises the `userState` map: writing
+      // `__proto__` into a plain map re-parents it rather than storing an own
+      // key, and `mergeStates` then silently drops the entry for every other
+      // session of the same user.
+      const sibling = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's2',
+      });
+      expect(sibling.state[`${State.USER_PREFIX}__proto__`]).toEqual({
+        baseUrl: 'https://evil.test',
+      });
+    });
+
+    it('does not re-parent session state via __proto__ in the initial state', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+        state: parseBody('{"__proto__": {"isAdmin": true}}'),
+      });
+
+      // `State` looks keys up with `in`, so a re-parented state object hands
+      // back every key of the attacker's object as if it were session state.
+      expect(new State(session.state).get('isAdmin')).toBeUndefined();
+      expect(session.state['__proto__']).toEqual({isAdmin: true});
+    });
+
+    it('does not re-parent session state via __proto__ in a state delta', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: parseBody('{"__proto__": {"isAdmin": true}}'),
+          }),
+        }),
+      });
+
+      const stored = await service.getSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+      expect(new State(stored!.state).get('isAdmin')).toBeUndefined();
+      expect(stored?.state['__proto__']).toEqual({isAdmin: true});
     });
 
     it('does not leak sessions across apps as phantom entries', async () => {
