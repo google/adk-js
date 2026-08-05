@@ -163,7 +163,11 @@ async function generateAgentFolder(agentDir: string, forceYes: boolean) {
 function generateEnvFile(options: AgentCreationOptions): string {
   const lines = [];
   if (options.apiKey) {
-    lines.push(`GOOGLE_API_KEY=${options.apiKey}`);
+    // The Gemini API path — the one `GOOGLE_GENAI_USE_VERTEXAI=0` selects —
+    // reads GOOGLE_GENAI_API_KEY / GEMINI_API_KEY (see `geminiInitParams` in
+    // core). GOOGLE_API_KEY is only consulted for Vertex AI Express Mode, so
+    // writing it here left every scaffolded project unable to authenticate.
+    lines.push(`GOOGLE_GENAI_API_KEY=${options.apiKey}`);
     lines.push(`GOOGLE_GENAI_USE_VERTEXAI=0`);
   }
   if (options.project) {
