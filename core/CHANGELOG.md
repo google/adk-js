@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.6.0](https://github.com/google/adk-js/compare/adk-v1.5.0...adk-v1.6.0) (2026-08-05)
+
+
+### Features
+
+* Add bearerTokenUserBuilder for A2A authentication (Part 1/2) ([#562](https://github.com/google/adk-js/issues/562)) ([f077722](https://github.com/google/adk-js/commit/f077722d54528c609c95fed51019fc013093a8e5))
+* CLI-level A2A authenticator for the dev server and Cloud Run deploy (Part 2/2) ([#559](https://github.com/google/adk-js/issues/559)) ([0c0bba2](https://github.com/google/adk-js/commit/0c0bba2cc4639ff89e4fa517ace25e34babb64b0))
+* Support ttl and expireTime session-expiration options in VertexAiSessionService.createSession ([#561](https://github.com/google/adk-js/issues/561)) ([b390217](https://github.com/google/adk-js/commit/b390217e65dc69af85373a8eac79f0bc3baae165))
+* **tools:** add getUserChoiceTool and requestInputTool for parity with adk-python ([#506](https://github.com/google/adk-js/issues/506)) ([03abf76](https://github.com/google/adk-js/commit/03abf761e97ef2c2902e776886b1a8d2a653a527))
+* Validate tool callback response types and prevent state event pollution ([#505](https://github.com/google/adk-js/issues/505)) ([b99f21b](https://github.com/google/adk-js/commit/b99f21b8a549d9b4e1255ae4233d9f691eeb9fe3))
+
+
+### Bug Fixes
+
+* **a2a:** stop restoring event branch from A2A peer metadata ([#606](https://github.com/google/adk-js/issues/606)) ([0000925](https://github.com/google/adk-js/commit/00009258373f8adc213171cf664dee2a21c19417))
+* accept the derived allowedTools alias in skill frontmatter validation ([#560](https://github.com/google/adk-js/issues/560)) ([fcfd043](https://github.com/google/adk-js/commit/fcfd04363ebbbea03e7a7c32d11f05358fdb4a4e))
+* **artifacts:** isolate in-memory composite keys ([#576](https://github.com/google/adk-js/issues/576)) ([693a1d7](https://github.com/google/adk-js/commit/693a1d7959f68a7e578312c5c88d9ad70c283cd1))
+* **core:** fall back to node:crypto so randomUUID cannot throw on Node ([#599](https://github.com/google/adk-js/issues/599)) ([3dc1b20](https://github.com/google/adk-js/commit/3dc1b2012cac86dbed249e0b3d17e16f1d0bd791))
+* **core:** use a cryptographically secure source for randomUUID ([#577](https://github.com/google/adk-js/issues/577)) ([81bcc8d](https://github.com/google/adk-js/commit/81bcc8dd4784d1d94e64b599f9d092a99333539d))
+* detect PowerShell 7+ (pwsh) in the UnsafeLocalCodeExecutor SHELL branch ([#568](https://github.com/google/adk-js/issues/568)) ([ce0e474](https://github.com/google/adk-js/commit/ce0e474bb5ab931894bf379588e357617ce0b5a1))
+* fail fast when a Vertex AI Express Mode API key cannot be used ([#563](https://github.com/google/adk-js/issues/563)) ([e1112c6](https://github.com/google/adk-js/commit/e1112c6df905853ad99d84f6490d12e4dbbbfd22))
+* gate the set_model_response workaround on canUseOutputSchemaWithTools (adk-python parity) ([#580](https://github.com/google/adk-js/issues/580)) ([5b65ee1](https://github.com/google/adk-js/commit/5b65ee109083002263f1e30593035e9778add996))
+* parse JSON bodies only in the toA2a server (drop express.urlencoded) ([#558](https://github.com/google/adk-js/issues/558)) ([605b469](https://github.com/google/adk-js/commit/605b46980cabd2a8928e08d3fc3669a1de13c24c))
+* pass -NoProfile to spawned PowerShell and /D to cmd.exe in UnsafeLocalCodeExecutor ([#566](https://github.com/google/adk-js/issues/566)) ([b56761b](https://github.com/google/adk-js/commit/b56761bfb0d9b0d139cc95ba1a6d1803732507dd))
+* reject zip-slip entries and non-bare skill names when loading zipped skills (adk-python parity) ([#584](https://github.com/google/adk-js/issues/584)) ([4fe80b0](https://github.com/google/adk-js/commit/4fe80b0ef7e5df1803c76e8681cd9740fcf6ebf5))
+* **runner:** persist events returned by onEventCallback ([#575](https://github.com/google/adk-js/issues/575)) ([c4c5582](https://github.com/google/adk-js/commit/c4c55829394cb4f15fa13f54235a9a77c5417e54))
+* **security:** prevent prototype pollution via untrusted map keys ([#619](https://github.com/google/adk-js/issues/619)) ([2c07ad3](https://github.com/google/adk-js/commit/2c07ad3741cd84788d0b30a793587d5dd4b46106))
+* surface root-cause MCP session errors instead of swallowing them ([#527](https://github.com/google/adk-js/issues/527)) ([13d7304](https://github.com/google/adk-js/commit/13d7304a0611fe8f1dc00a2e5de9dc3ac4d63943))
+* treat @google/genai ApiError 404 as session not found in VertexAiSessionService ([#567](https://github.com/google/adk-js/issues/567)) ([5331c77](https://github.com/google/adk-js/commit/5331c771cde1c3af8ef1d87e44d41161c9919721))
+* **utils:** fix sibling-directory escape in materializeFiles path check ([#603](https://github.com/google/adk-js/issues/603)) ([868ca1f](https://github.com/google/adk-js/commit/868ca1f373a175c7fe2c788b167f05a58e6eed2e))
+
 ## [1.5.0](https://github.com/google/adk-js/compare/adk-v1.4.0...adk-v1.5.0) (2026-07-29)
 
 
