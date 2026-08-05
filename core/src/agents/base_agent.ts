@@ -150,8 +150,14 @@ export abstract class BaseAgent<
    * order they are listed until a callback does not return undefined.
    *
    * Each callback takes a single {@link Context} argument. Returning `Content`
-   * ends the invocation and emits that content as the agent's response instead
-   * of running the agent; return `undefined` to let the run proceed.
+   * skips this agent's own run — its `runAsyncImpl` body and its
+   * `afterAgentCallback` — and emits the returned content as this agent's
+   * response; return `undefined` to let the run proceed.
+   *
+   * That skip is scoped to this agent. It sets `endInvocation` on the
+   * invocation context the agent created for itself, which is a copy of its
+   * parent's, so callers above are unaffected: a `SequentialAgent` still runs
+   * the remaining sub-agents.
    */
   readonly beforeAgentCallback: SingleAgentCallback[];
 

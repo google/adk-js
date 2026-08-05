@@ -235,9 +235,10 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /**
    * The additional content generation configurations.
    *
-   * NOTE: not all fields are usable, e.g. tools must be configured via
-   * `tools`, and `thinkingConfig` must be configured via `planner` in
-   * LlmAgent.
+   * Three fields are rejected by the constructor, because the agent owns them:
+   * `tools` (set them through `tools`), `systemInstruction` (through
+   * `instruction`) and `responseSchema` (through `outputSchema`). Every other
+   * field is forwarded to the model as given — `thinkingConfig` included.
    *
    * For example: use this config to adjust model temperature, configure safety
    * settings, etc.

@@ -153,7 +153,9 @@ export function isFunctionTool(obj: unknown): obj is FunctionTool {
  *
  * Those arguments are checked only when `parameters` is a Zod object schema:
  * it is applied with `parse()`, so a call that does not match is rejected and
- * `execute` receives the parsed value with unknown keys removed. A plain
+ * `execute` receives the parsed value. Keys the schema does not declare are
+ * handled however that schema says: a plain `z.object()` drops them,
+ * `.passthrough()` forwards them, `.strict()` rejects the call. A plain
  * genai `Schema`, or no `parameters` at all, is shown to the model but is not
  * a runtime guard — the arguments reach `execute` exactly as the model
  * produced them, wrong types and extra keys included. Validate them inside
