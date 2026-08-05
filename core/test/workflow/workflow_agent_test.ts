@@ -9,6 +9,8 @@ import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
+import {isBaseNode} from '../../src/workflow/base_node.js';
+import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {createRequestInputEvent} from '../../src/workflow/utils/hitl_utils.js';
@@ -77,5 +79,36 @@ describe('WorkflowAgent — plain-text resume', () => {
     // user never gave it; the ambiguous case is dropped (structured function
     // responses are required to address a specific interrupt).
     expect(await resumeInputsFor(['first', 'second'], 'yes')).toEqual({});
+  });
+});
+
+describe('WorkflowAgent — constructor forms', () => {
+  const step = node(() => 'done', {name: 'step'});
+
+  it('builds the Workflow from config (the convenience signature)', () => {
+    const agent = new WorkflowAgent({
+      name: 'from_config',
+      edges: [['START', step]],
+    });
+    expect(agent.name).toBe('from_config');
+    expect(isBaseNode(agent.workflow)).toBe(true);
+    expect(agent.workflow.name).toBe('from_config');
+  });
+
+  it('accepts a dynamicEntry config too', () => {
+    const agent = new WorkflowAgent({
+      name: 'dyn',
+      dynamicEntry: async () => 'ok',
+    });
+    expect(agent.workflow.name).toBe('dyn');
+  });
+
+  it('still accepts a pre-built Workflow, with optional overrides', () => {
+    const workflow = new Workflow({name: 'wf', edges: [['START', step]]});
+    expect(new WorkflowAgent(workflow).name).toBe('wf');
+    expect(new WorkflowAgent(workflow).workflow).toBe(workflow);
+    expect(new WorkflowAgent(workflow, {name: 'override'}).name).toBe(
+      'override',
+    );
   });
 });
