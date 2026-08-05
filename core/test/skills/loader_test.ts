@@ -612,14 +612,17 @@ Instruction body`;
       expect(skill.resources?.scripts?.['run.sh']?.src).toBe('echo hello');
     });
 
-    it.each(['/etc/passwd', '../evil.txt', 'references/../../esc.txt'])(
-      'rejects the whole archive for the dangerous entry %s',
-      (entryName) => {
-        expect(() =>
-          loadSkillFromZipBuffer(createZipWithRawEntryName(entryName)),
-        ).toThrow(`Dangerous zip entry ignored: ${entryName}`);
-      },
-    );
+    it.each([
+      '/etc/passwd',
+      '../evil.txt',
+      'references/../../esc.txt',
+      'scripts/..',
+      'scripts\\..\\..\\pwned.txt',
+    ])('rejects the whole archive for the dangerous entry %s', (entryName) => {
+      expect(() =>
+        loadSkillFromZipBuffer(createZipWithRawEntryName(entryName)),
+      ).toThrow(`Dangerous zip entry ignored: ${entryName}`);
+    });
 
     it('reports the dangerous entry even when SKILL.md is absent', () => {
       const zip = new AdmZip();
