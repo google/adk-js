@@ -185,11 +185,10 @@ export function parseSkillMdContent(content: string): {
  * symlinks.
  */
 function isDangerousZipEntryName(entryName: string): boolean {
-  return (
-    entryName.startsWith('/') ||
-    entryName.startsWith('../') ||
-    entryName.includes('/../')
-  );
+  if (path.posix.isAbsolute(entryName) || path.win32.isAbsolute(entryName)) {
+    return true;
+  }
+  return entryName.split(/[/\\]/).some((segment) => segment === '..');
 }
 
 /**
