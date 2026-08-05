@@ -21,14 +21,25 @@ import {MemoryEntry} from './memory_entry.js';
  */
 export class InMemoryMemoryService implements BaseMemoryService {
   private readonly memories: MemoryEntry[] = [];
+  /**
+   * A map from user key to a map from session ID to events.
+   *
+   * The inner map is keyed by `session.id`, which arrives off the request path
+   * and contains no `/`, so it can be exactly `__proto__`. On a plain object
+   * literal that key would reach the inherited `__proto__` setter and
+   * re-parent the map instead of creating an own property, silently dropping
+   * the session from the `Object.values` scan in `searchMemory`. The outer key
+   * always contains a `/` (see `getUserKey`) and cannot collide, but is
+   * created the same way for consistency.
+   */
   private readonly sessionEvents: {
     [userKey: string]: {[sessionId: string]: Event[]};
-  } = {};
+  } = Object.create(null);
 
   async addSessionToMemory(session: Session): Promise<void> {
     const userKey = getUserKey(session.appName, session.userId);
     if (!this.sessionEvents[userKey]) {
-      this.sessionEvents[userKey] = {};
+      this.sessionEvents[userKey] = Object.create(null);
     }
     this.sessionEvents[userKey][session.id] = session.events.filter(
       (event) => (event.content?.parts?.length ?? 0) > 0,

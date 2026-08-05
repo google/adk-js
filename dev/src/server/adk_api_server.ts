@@ -91,7 +91,15 @@ export class AdkApiServer {
 
   readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
-  private readonly runnerCache: Record<string, Runner> = {};
+  /**
+   * Caches below are keyed by request path parameters (`appName`, `eventId`,
+   * `sessionId`), so each is created with `Object.create(null)`. On an
+   * ordinary `{}` literal, inherited names such as `toString` make
+   * `key in cache` report a spurious hit and `cache[key]` yield a `Function`
+   * where a `Runner` or trace record is expected, and a key of `__proto__`
+   * aliases `Object.prototype` on write.
+   */
+  private readonly runnerCache: Record<string, Runner> = Object.create(null);
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
@@ -102,8 +110,10 @@ export class AdkApiServer {
     tracerProvider: TracerProvider,
   ) => void;
   private server?: http.Server;
-  private readonly traceDict: Record<string, Record<string, unknown>> = {};
-  private readonly sessionTraceDict: Record<string, string[]> = {};
+  private readonly traceDict: Record<string, Record<string, unknown>> =
+    Object.create(null);
+  private readonly sessionTraceDict: Record<string, string[]> =
+    Object.create(null);
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;

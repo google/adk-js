@@ -1255,4 +1255,33 @@ describe('AdkWebServer', () => {
       }
     });
   });
+
+  describe('Internal caches keyed by request input', () => {
+    // `appName` / `eventId` arrive straight off the request path. On a plain
+    // object literal, inherited names such as `toString` make `key in cache`
+    // report a spurious hit and hand back a Function where a Runner or trace
+    // record is expected.
+    const INHERITED_KEYS = ['toString', 'constructor', 'hasOwnProperty'];
+
+    it('builds a real Runner for an app named after an inherited key', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      for (const appName of INHERITED_KEYS) {
+        const runner = await getRunner(TEST_AGENT, appName);
+        expect(runner).toBeInstanceOf(Runner);
+        expect(runner.appName).toBe(appName);
+      }
+    });
+
+    it('returns 404 for a trace id matching an inherited key', async () => {
+      for (const eventId of INHERITED_KEYS) {
+        const response = await fetch(`${server.url}/debug/trace/${eventId}`);
+        expect(response.status).toBe(404);
+      }
+    });
+  });
 });
