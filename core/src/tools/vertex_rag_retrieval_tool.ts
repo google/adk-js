@@ -22,15 +22,20 @@ import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
  *
  * @example
  * ```ts
- * import { VertexRagRetrievalTool } from '@google/adk';
- * import { VertexRagStore } from '@google/genai';
+ * import {LlmAgent, VertexRagRetrievalTool} from '@google/adk';
  *
  * const ragTool = new VertexRagRetrievalTool({
- *   ragResources: [{ragCorpus: 'projects/my-project/locations/us-central1/ragCorpora/my-corpus'}],
+ *   ragResources: [
+ *     {ragCorpus: 'projects/my-project/locations/us-central1/ragCorpora/my-corpus'},
+ *   ],
  *   similarityTopK: 5,
  * });
  *
- * const agent = new LlmAgent({ tools: [ragTool], ... });
+ * const agent = new LlmAgent({
+ *   name: 'rag_agent',
+ *   model: 'gemini-2.5-flash',
+ *   tools: [ragTool],
+ * });
  * ```
  */
 export class VertexRagRetrievalTool extends BaseTool {

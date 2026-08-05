@@ -617,7 +617,7 @@ export class Runner {
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
    * @param agentToRun The agent to check for transferability.
-   * @returns True if the agent can transfer, False otherwise.
+   * @returns True if the agent can transfer, false otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     return isRoutableLlmAgent(agentToRun);
@@ -716,7 +716,7 @@ function isWorkflowNodeEvent(event: Event): boolean {
  *    `disallowTransferToParent` set to false).
  *
  * @param agentToRun The agent to check for transferability.
- * @returns True if the agent can transfer, False otherwise.
+ * @returns True if the agent can transfer, false otherwise.
  */
 export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
   let agent: BaseAgent | undefined = agentToRun;

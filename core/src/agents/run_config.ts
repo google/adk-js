@@ -95,8 +95,9 @@ export interface RunConfig {
    * A limit on the total number of llm calls for a given run.
    *
    * Valid Values:
-   *   - More than 0 and less than sys.maxsize: The bound on the number of llm
-   *     calls is enforced, if the value is set in this range.
+   *   - More than 0 and at most `Number.MAX_SAFE_INTEGER`: The bound on the
+   *     number of llm calls is enforced. `createRunConfig()` throws for
+   *     anything larger.
    *   - Less than or equal to 0: This allows for unbounded number of llm calls.
    */
   maxLlmCalls?: number;

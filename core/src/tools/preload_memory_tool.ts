@@ -15,7 +15,7 @@ import {
 /**
  * A tool that preloads the memory for the current user.
  *
- * This tool will be automatically executed for each llm_request, and it won't be
+ * This tool is automatically executed for each `LlmRequest`, and it won't be
  * called by the model.
  *
  * NOTE: Currently this tool only uses text part from the memory.
@@ -24,7 +24,7 @@ export class PreloadMemoryTool extends BaseTool {
   constructor() {
     super({
       // Name and description are not used because this tool only
-      // changes llm_request.
+      // changes the LlmRequest.
       name: 'preload_memory',
       description: 'preload_memory',
     });

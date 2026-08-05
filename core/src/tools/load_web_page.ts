@@ -25,7 +25,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * IPv4 ranges that are not globally routable and therefore blocked to defeat
- * SSRF.
+ * SSRF. "Not globally routable" is used in the sense of RFC 6890 and the IANA
+ * special-purpose address registry it establishes; consult those before adding
+ * to or removing from this list.
  */
 const BLOCKED_IPV4_CIDRS = [
   '0.0.0.0/8', // "this host on this network"
