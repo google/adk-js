@@ -29,7 +29,9 @@
 * **security:** prevent prototype pollution via untrusted map keys ([#619](https://github.com/google/adk-js/issues/619)) ([2c07ad3](https://github.com/google/adk-js/commit/2c07ad3741cd84788d0b30a793587d5dd4b46106))
 * surface root-cause MCP session errors instead of swallowing them ([#527](https://github.com/google/adk-js/issues/527)) ([13d7304](https://github.com/google/adk-js/commit/13d7304a0611fe8f1dc00a2e5de9dc3ac4d63943))
 * treat @google/genai ApiError 404 as session not found in VertexAiSessionService ([#567](https://github.com/google/adk-js/issues/567)) ([5331c77](https://github.com/google/adk-js/commit/5331c771cde1c3af8ef1d87e44d41161c9919721))
+* unsafe A2A peer-supplied transferToAgent metadata ([#596](https://github.com/google/adk-js/issues/596)) ([d3f250e](https://github.com/google/adk-js/commit/d3f250e876d0a76f4d09b3439e84e7dbd1fc32ec))
 * **utils:** fix sibling-directory escape in materializeFiles path check ([#603](https://github.com/google/adk-js/issues/603)) ([868ca1f](https://github.com/google/adk-js/commit/868ca1f373a175c7fe2c788b167f05a58e6eed2e))
+* zip-slip blacklist bypass in isDangerousZipEntryName ([#621](https://github.com/google/adk-js/issues/621)) ([7bc05f6](https://github.com/google/adk-js/commit/7bc05f6156e3e121663acee2c6476e953a626b61))
 
 ## [1.5.0](https://github.com/google/adk-js/compare/adk-v1.4.0...adk-v1.5.0) (2026-07-29)
 
