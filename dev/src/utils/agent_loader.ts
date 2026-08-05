@@ -87,10 +87,22 @@ export interface AgentFileOptions {
   bundle?: boolean;
   moduleType?: FileModuleType;
   /**
-   * Minify the generated bundle. Off by default: minification mangles
-   * identifiers and collapses line numbers, which makes every stack trace
-   * thrown by an agent unreadable. Only deployment bundles, where size
-   * matters more than debuggability, turn it on.
+   * Minify the generated bundle.
+   *
+   * Passing `false` explicitly asks for a *debug build*: esbuild keeps the
+   * original identifiers and emits an inline source map, so a stack trace
+   * thrown by an agent names the developer's own function, file and line
+   * instead of `at new H_ (/tmp/.../agent.cjs:537:1742)`.
+   *
+   * A debug build is ~3.5x larger than a minified one (23.6 MB -> 83.1 MB
+   * across the four agents in the app_loader fixture) and costs roughly a
+   * second of extra load time per agent, so it is opt-in per call site. The
+   * interactive commands — `adk run`, `adk web`, `adk api_server` — ask for
+   * it because a human reads their output. Deployment bundles and
+   * programmatic callers leave it unset and keep the small artifact.
+   *
+   * When unset, a bundled file is minified, which is the historical
+   * behaviour.
    */
   minify?: boolean;
 }
@@ -113,9 +125,15 @@ const DEFAULT_AGENT_FILE_OPTIONS: AgentFileOptions = {
  *
  * @param filePath - The path to the agent file.
  * @param originalDir - The original directory path of the agent file.
+ * @param sourcemap - Whether this is a debug build, in which case the entry
+ *   file is handed back to the outer build with a chained inline map.
  * @returns An esbuild plugin that replaces path and URL references in the agent file.
  */
-export function replaceDirnamePlugin(filePath: string, originalDir: string) {
+export function replaceDirnamePlugin(
+  filePath: string,
+  originalDir: string,
+  sourcemap = false,
+) {
   return {
     name: 'replace-dirname',
     setup(build: esbuild.PluginBuild) {
@@ -135,11 +153,13 @@ export function replaceDirnamePlugin(filePath: string, originalDir: string) {
               '__filename': JSON.stringify(filePath),
               'import.meta.url': JSON.stringify(fileUrl),
             },
-            // Hand the build an inline map back to the original file. Without
-            // it the outer build can only map as far as this pre-transformed
-            // text, and stack traces land on the wrong line of the agent file.
-            sourcemap: 'inline',
-            sourcefile: filePath,
+            // On a debug build, hand the outer build an inline map back to
+            // the original file. Without it the outer build can only map as
+            // far as this pre-transformed text, and stack traces land on the
+            // wrong line of the agent file.
+            ...(sourcemap
+              ? {sourcemap: 'inline' as const, sourcefile: filePath}
+              : {}),
           });
 
           return {
@@ -203,8 +223,14 @@ export class AgentFile {
       const originalDir = path.dirname(filePath);
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
-      const minify = this.options.minify ?? false;
-      if (!minify) {
+      // An explicit `minify: false` is a request for a debug build: readable
+      // identifiers plus a source map. Callers that say nothing keep the
+      // small minified bundle, so nobody pays 3.5x the bundle size for a
+      // stack trace they will never read.
+      const debugBuild = this.options.minify === false;
+      const minify = this.options.minify ?? !!this.options.bundle;
+
+      if (debugBuild) {
         // The bundle lives in a temp dir that is deleted when the run ends, so
         // an external .map file would be gone by the time anyone read a stack
         // trace. Inline the map instead and tell Node to apply it, so traces
@@ -220,11 +246,14 @@ export class AgentFile {
         format: moduleType,
         bundle: this.options.bundle,
         minify,
-        sourcemap: minify ? false : 'inline',
+        sourcemap: debugBuild ? 'inline' : false,
         // The original sources are still on disk, so leaving them out of the
-        // map halves the size of an unminified bundle.
+        // map halves the size of a debug bundle.
         sourcesContent: false,
-        plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
+        plugins: [
+          replaceDirnamePlugin(filePath, originalDir, debugBuild),
+          shimPlugin(),
+        ],
         // esbuild rejects `packages` and `external` unless it is bundling, so
         // both have to be withheld when `--bundle false` asks it only to
         // transpile. Nothing is being inlined in that mode, so there is
@@ -405,6 +434,7 @@ export class AgentFile {
  */
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
+  private preloadInFlight?: Promise<void>;
   private readonly preloadedAgents: Record<string, AgentFile> = {};
   private readonly loadFailures: Record<string, AgentLoadFailure> = {};
   private watcher?: fs.FSWatcher;
@@ -485,6 +515,9 @@ export class AgentLoader {
     }
 
     this.agentsAlreadyPreloaded = false;
+    // Drop any pass still in flight so the next caller starts a fresh one
+    // rather than awaiting a result gathered before the file changed.
+    this.preloadInFlight = undefined;
   }
 
   /**
@@ -559,11 +592,24 @@ export class AgentLoader {
     );
   }
 
-  async preloadAgents() {
+  async preloadAgents(): Promise<void> {
     if (this.agentsAlreadyPreloaded) {
       return;
     }
 
+    // Callers overlap in practice: `adk web` serves concurrent requests and
+    // lists agents from several routes. Without sharing the in-flight pass,
+    // every caller that arrives before the first one finishes bundles all
+    // agents again — three overlapping callers turned 4 esbuild builds into
+    // 12 and 5.1s into 13.6s on the app_loader fixture.
+    this.preloadInFlight ??= this.runPreload().finally(() => {
+      this.preloadInFlight = undefined;
+    });
+
+    return this.preloadInFlight;
+  }
+
+  private async runPreload(): Promise<void> {
     const files = (await isFile(this.agentsDirPath))
       ? [await getFileMetadata(this.agentsDirPath)]
       : await getDirFiles(this.agentsDirPath);

@@ -315,6 +315,7 @@ describe('AgentLoader', () => {
         format: 'cjs',
         packages: 'bundle',
         bundle: true,
+        minify: true,
         external: expect.arrayContaining(['onnxruntime-node']),
       });
 
@@ -349,30 +350,7 @@ describe('AgentLoader', () => {
       await agentFile.dispose();
     });
 
-    it('builds a readable, source-mapped bundle by default', async () => {
-      const agentPath = path.join(tempAgentsDir, 'agent2.ts');
-      await fs.writeFile(agentPath, agent2TsContent);
-
-      (esbuild.build as Mock).mockImplementation(async () => {
-        await fs.writeFile(compiledPath('agent2.cjs'), agent2CjsContentMocked);
-      });
-
-      const agentFile = new AgentFile(agentPath);
-      await agentFile.load();
-
-      // Minified identifiers and collapsed line numbers make every stack
-      // trace out of an agent useless, so `adk run` / `adk web` must not
-      // minify and must emit a map the deleted temp bundle cannot lose.
-      expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
-        minify: false,
-        sourcemap: 'inline',
-      });
-      expect(setSourceMapsEnabledSpy).toHaveBeenCalledWith(true);
-
-      await agentFile.dispose();
-    });
-
-    it('minifies and drops the source map when asked to (deployment bundles)', async () => {
+    it('builds a readable, source-mapped bundle when minify is off', async () => {
       const agentPath = path.join(tempAgentsDir, 'agent2.ts');
       await fs.writeFile(agentPath, agent2TsContent);
 
@@ -383,8 +361,34 @@ describe('AgentLoader', () => {
       const agentFile = new AgentFile(agentPath, {
         compile: true,
         bundle: true,
-        minify: true,
+        minify: false,
       });
+      await agentFile.load();
+
+      // Minified identifiers and collapsed line numbers make every stack
+      // trace out of an agent useless, so the interactive commands ask for a
+      // debug build and get a map the deleted temp bundle cannot lose.
+      // cli_test.ts asserts run/web/api_server are the callers that do so.
+      expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
+        minify: false,
+        sourcemap: 'inline',
+      });
+      expect(setSourceMapsEnabledSpy).toHaveBeenCalledWith(true);
+
+      await agentFile.dispose();
+    });
+
+    it('minifies and drops the source map by default (deployment bundles)', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent2.ts');
+      await fs.writeFile(agentPath, agent2TsContent);
+
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledPath('agent2.cjs'), agent2CjsContentMocked);
+      });
+
+      // A debug build is ~3.5x larger, so a caller that does not ask for one
+      // keeps the small artifact.
+      const agentFile = new AgentFile(agentPath);
       await agentFile.load();
 
       expect((esbuild.build as Mock).mock.calls[0][0]).toMatchObject({
@@ -921,6 +925,24 @@ describe('AgentLoader', () => {
       await loader.preloadAgents();
 
       expect(spy).not.toHaveBeenCalled();
+      await loader.disposeAll();
+    });
+
+    it('shares one preload pass between concurrent callers', async () => {
+      // `agentsAlreadyPreloaded` is only set once the pass finishes, so
+      // callers that overlap it used to each start their own full pass and
+      // bundle every agent again. `adk web` does exactly this: several routes
+      // list agents, and requests arrive concurrently.
+      const loader = new AgentLoader(tempAgentsDir);
+
+      await Promise.all([
+        loader.listAgents(),
+        loader.listApps(),
+        loader.getAgentFile('agent1'),
+      ]);
+
+      // Three agents in the fixture, so three builds - not nine.
+      expect((esbuild.build as Mock).mock.calls).toHaveLength(3);
       await loader.disposeAll();
     });
 
