@@ -108,11 +108,9 @@ npx @google/adk-devtools run agent.ts
 npx @google/adk-devtools web
 ```
 
-> The `adk` command comes from `@google/adk-devtools`. Invoke it as
-> `npx @google/adk-devtools ...` — the bare name `adk` on npm belongs to an
-> unrelated third party. Once `@google/adk-devtools` is a dev dependency you
-> can also add `"cli": "adk run agent.ts"` to your `package.json` scripts and
-> run `npm run cli`.
+> Always name the package. If `@google/adk-devtools` is not installed, bare
+> `npx adk` silently downloads and runs an unrelated `adk` package from the
+> public registry.
 
 The `adk web` command launches a development UI for testing and debugging
 agents:
