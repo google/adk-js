@@ -373,6 +373,51 @@ describe('Event Utils', () => {
         NestedKey: 'value2',
       });
     });
+
+    it('preserves workflow output and agentState keys verbatim', () => {
+      const camelEvent = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        output: {cityName: 'Paris', timeInfo: '10:10 AM'},
+        actions: createEventActions({
+          agentState: {input: {userId: 42, requestedItems: ['a']}},
+        }),
+      });
+      const snakeEvent = transformToSnakeCaseEvent(camelEvent);
+      // Arbitrary payloads must NOT be snake_cased.
+      expect(snakeEvent.output).toEqual({
+        cityName: 'Paris',
+        timeInfo: '10:10 AM',
+      });
+      expect(
+        (snakeEvent.actions as Record<string, unknown>).agent_state,
+      ).toEqual({input: {userId: 42, requestedItems: ['a']}});
+    });
+  });
+
+  describe('event round-trip serialization', () => {
+    it('round-trips workflow output and agentState without mangling keys', () => {
+      const original = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        output: {cityName: 'Paris', nested: {timeInfo: '10:10 AM'}},
+        route: ['BUG', 'LOGISTICS'],
+        actions: createEventActions({
+          agentState: {input: {userId: 42, camelKey: 'v'}},
+        }),
+      });
+      const restored = transformToCamelCaseEvent(
+        transformToSnakeCaseEvent(original),
+      );
+      expect(restored.output).toEqual({
+        cityName: 'Paris',
+        nested: {timeInfo: '10:10 AM'},
+      });
+      expect(restored.route).toEqual(['BUG', 'LOGISTICS']);
+      expect(restored.actions?.agentState).toEqual({
+        input: {userId: 42, camelKey: 'v'},
+      });
+    });
   });
 
   describe('generateClientFunctionCallId', () => {

@@ -143,7 +143,13 @@ export {
   pruneThoughts,
   stringifyContent,
 } from './events/event.js';
-export type {Event} from './events/event.js';
+export type {
+  CreateEventParams,
+  Event,
+  NodeInfo,
+  Route,
+  RouteKey,
+} from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';

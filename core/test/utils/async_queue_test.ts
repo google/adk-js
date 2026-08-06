@@ -86,3 +86,69 @@ describe('AsyncQueue', () => {
     expect(res.done).toBe(true);
   });
 });
+
+describe('AsyncQueue — failure & lifecycle', () => {
+  async function drain<T>(queue: AsyncQueue<T>): Promise<T[]> {
+    const out: T[] = [];
+    for await (const item of queue) {
+      out.push(item);
+    }
+    return out;
+  }
+
+  it('exposes isClosed and buffered size', () => {
+    const queue = new AsyncQueue<number>();
+    expect(queue.isClosed).toBe(false);
+    queue.push(1);
+    expect(queue.size).toBe(1);
+    queue.close();
+    expect(queue.isClosed).toBe(true);
+    queue.push(2); // ignored after close
+    expect(queue.size).toBe(1);
+  });
+
+  it('fail() surfaces the error to the consumer', async () => {
+    const queue = new AsyncQueue<number>();
+    queue.fail(new Error('boom'));
+    await expect(drain(queue)).rejects.toThrow('boom');
+  });
+
+  it('fail() drains buffered items before throwing (drain-before-error)', async () => {
+    const queue = new AsyncQueue<number>();
+    queue.push(1);
+    queue.push(2);
+    queue.fail(new Error('later'));
+
+    const seen: number[] = [];
+    await expect(
+      (async () => {
+        for await (const item of queue) {
+          seen.push(item);
+        }
+      })(),
+    ).rejects.toThrow('later');
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it('keeps the failure sticky across repeated next() calls', async () => {
+    const queue = new AsyncQueue<number>();
+    const iterator = queue[Symbol.asyncIterator]();
+    queue.fail(new Error('sticky'));
+    await expect(iterator.next()).rejects.toThrow('sticky');
+    await expect(iterator.next()).rejects.toThrow('sticky');
+  });
+
+  it('does not swallow a fail() that lands after close()', async () => {
+    const queue = new AsyncQueue<number>();
+    queue.close();
+    queue.fail(new Error('late failure'));
+    await expect(drain(queue)).rejects.toThrow('late failure');
+  });
+
+  it('keeps the first failure (first failure wins)', async () => {
+    const queue = new AsyncQueue<number>();
+    queue.fail(new Error('first'));
+    queue.fail(new Error('second'));
+    await expect(drain(queue)).rejects.toThrow('first');
+  });
+});
