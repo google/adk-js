@@ -61,28 +61,21 @@ interface FileMetadata {
 }
 
 /**
- * Error class for agent file loading.
- *
  * Signals "this file is not an agent file" (missing, empty, or exporting no
- * agent). It is expected in a directory that mixes agents with helper modules,
- * so it is swallowed silently. Any OTHER error means the file *is* an agent
- * that failed to construct — see {@link AgentLoadFailure}.
+ * agent), which is normal in a directory that also holds helper modules, so it
+ * is swallowed silently. Any OTHER error means the file *is* an agent that
+ * failed to construct — see {@link AgentLoadFailure}.
  */
 class AgentFileLoadingError extends Error {}
 
 /**
- * A single agent that could not be loaded.
- *
- * Recorded instead of thrown so that one broken agent cannot take down the
- * whole server: the remaining agents still load, and the failure is reported
- * against the app it belongs to.
+ * An agent that could not be loaded. Recorded rather than thrown, so one broken
+ * agent cannot take the whole server down with it.
  */
 export interface AgentLoadFailure {
   /** The app name the broken file would have been served under. */
   name: string;
-  /** Absolute path of the file that failed to load. */
   filePath: string;
-  /** The error thrown while importing/constructing the agent. */
   error: Error;
 }
 
@@ -461,11 +454,8 @@ export class AgentLoader {
   }
 
   /**
-   * Returns the agents that failed to load, keyed by app name.
-   *
-   * These are excluded from {@link listAgents} so a single broken agent does
-   * not make the whole directory unusable; asking for one by name via
-   * {@link getAgentFile} rethrows its original error.
+   * The agents that failed to load. They are excluded from {@link listAgents},
+   * and {@link getAgentFile} rethrows the original error for one by name.
    */
   async listLoadFailures(): Promise<AgentLoadFailure[]> {
     await this.preloadAgents();
@@ -595,15 +585,10 @@ export class AgentLoader {
   }
 
   /**
-   * Records a failed agent load instead of propagating it.
-   *
-   * Propagating would reject the `Promise.all` in `preloadAgents` and make
-   * every endpoint that lists or resolves agents fail, so a single malformed
-   * agent would take the whole server down with it.
+   * Propagating here would reject the `Promise.all` in `preloadAgents`, failing
+   * every endpoint that lists or resolves agents — so record instead of throw.
    */
   private recordLoadFailure(name: string, filePath: string, e: unknown): void {
-    // "Not an agent file" is normal in a directory that also holds helper
-    // modules; only genuine construction failures are worth reporting.
     if (e instanceof AgentFileLoadingError) {
       return;
     }

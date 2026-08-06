@@ -30,7 +30,6 @@ import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
 
-/** How the user answers each kind of pause in the interactive REPL. */
 const HOW_TO_ANSWER: Record<UserInputKind, string> = {
   input: 'Type your reply at the next prompt to continue.',
   credential: 'Type the credential at the next prompt to continue.',
@@ -38,10 +37,8 @@ const HOW_TO_ANSWER: Record<UserInputKind, string> = {
 };
 
 /**
- * Renders a pending request for user input as human-readable text.
- *
- * The detection and shape of an interrupt live in `getUserInputRequests`; this
- * only decides how the CLI words it and how the user is told to answer.
+ * Formatting only — detection lives in `getUserInputRequests`. This decides how
+ * the CLI words a pause and how the user is told to answer it.
  */
 function renderUserInputRequest(request: UserInputRequest): string {
   const author = request.author ?? 'agent';
@@ -88,10 +85,7 @@ function renderUserInputRequest(request: UserInputRequest): string {
   return lines.join('\n');
 }
 
-/**
- * Prints one event: its text, any error it reports, and any request for user
- * input that would otherwise be invisible to an interactive user.
- */
+/** Prints one event's text, plus anything the user would otherwise not see. */
 function printEvent(event: Event): void {
   const author = event.author ?? 'agent';
 
@@ -102,8 +96,7 @@ function printEvent(event: Event): void {
     console.log(`[${author}]: ${text}`);
   }
 
-  // An error is reported on the event itself, not as a text part, so it is
-  // otherwise swallowed: the turn just ends with no explanation.
+  // Reported on the event, not as a text part, so text-only printing drops it.
   if (event.errorCode || event.errorMessage) {
     const detail = [event.errorCode, event.errorMessage]
       .filter(Boolean)

@@ -5,18 +5,13 @@
  */
 
 /**
- * Inspection helpers for the "the run is paused, waiting on a human" state.
+ * Inspection helpers for the "paused, waiting on a human" state.
  *
  * A pause is not visible in an event's text: it is carried in a `functionCall`
- * part whose name is one of the `adk_request_*` interrupt names, with the
- * prompt buried in that call's `args`. A client that renders only text parts
- * shows the user nothing and leaves them at an idle prompt with the run
- * blocked.
- *
- * These helpers turn that wire representation into a flat, uniform summary so
- * any surface — the CLI, the dev UI, an SDK consumer — can ask "is input
- * required, and what is being asked for?" without knowing how each interrupt
- * kind encodes its arguments.
+ * part named `adk_request_*`, with the prompt buried in that call's `args`. A
+ * client that renders only text parts therefore shows the user nothing while
+ * the run sits blocked. These helpers flatten the three encodings into one
+ * shape so a caller need not know how each kind stores its id and prompt.
  */
 
 import {AuthConfig} from '../auth/auth_tool.js';
@@ -38,7 +33,6 @@ export type UserInputKind = 'input' | 'credential' | 'confirmation';
 
 /** A single request for user input carried by an event. */
 export interface UserInputRequest {
-  /** What is being asked for. */
   kind: UserInputKind;
 
   /**
@@ -47,10 +41,10 @@ export interface UserInputRequest {
    */
   interruptId: string;
 
-  /** The interrupt's function-call name, i.e. the name to answer with. */
+  /** The name to answer with, alongside {@link interruptId}. */
   functionCallName: string;
 
-  /** The node or agent that raised the request, when known. */
+  /** The node or agent that raised the request. */
   author?: string;
 
   /**
@@ -151,12 +145,7 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
   return requests;
 }
 
-/**
- * Whether this event asks the user for something.
- *
- * A convenience over {@link getUserInputRequests} for the common "should I
- * prompt?" check.
- */
+/** Whether this event asks the user for something. */
 export function requiresUserInput(event: Event): boolean {
   return getUserInputRequests(event).length > 0;
 }

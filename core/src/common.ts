@@ -15,7 +15,6 @@ export type {
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
 export {
-  // Every HITL interrupt function-call name, defined in one place.
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_EUC_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,

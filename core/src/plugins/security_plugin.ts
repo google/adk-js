@@ -14,9 +14,7 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 // Constants
-// Re-exported (not redefined) so every HITL function-call name has exactly one
-// definition, in `agents/functions.ts`. Kept exported here for backwards
-// compatibility with the existing public import path.
+// Re-exported, not redefined: `agents/functions.ts` is the single definition.
 export {REQUEST_CONFIRMATION_FUNCTION_CALL_NAME};
 
 const TOOL_CALL_SECURITY_CHECK_STATES = 'orcas_tool_call_security_check_states';

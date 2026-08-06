@@ -21,19 +21,15 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   saveToFile: vi.fn(),
 }));
 
-/**
- * Events the mocked Runner yields for a turn. Mutable so a test can drive the
- * REPL with interrupt events instead of the default text reply.
- */
+/** Events the mocked Runner yields for a turn; set per test. */
 const runnerState = vi.hoisted(() => ({
   events: [
     {author: 'model', content: {parts: [{text: 'Response from model'}]}},
   ] as unknown[],
 }));
 
-// Only the Runner and the services are faked; everything else (notably
-// `getUserInputRequests`, which decides what the REPL prints) is the real
-// implementation, so these tests exercise the shipped detection logic.
+// Only the Runner and services are faked, so interrupt detection under test is
+// the real `getUserInputRequests` rather than a stand-in.
 vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
   return {
@@ -240,9 +236,8 @@ describe('cli_run', () => {
   });
 
   /**
-   * An interrupt is carried in a `functionCall` part, which has no `text`, so
-   * without explicit rendering the REPL prints nothing and the user is left at
-   * a prompt with no idea a reply is expected.
+   * An interrupt has no `text` part, so without explicit rendering the REPL
+   * prints nothing and the user never learns a reply is expected.
    */
   describe('interrupt rendering', () => {
     /** Drives one interactive turn, then exits, and returns what was printed. */
