@@ -6,6 +6,7 @@
 
 import {describe, expect, it} from 'vitest';
 import {BaseNode, START} from '../../src/workflow/base_node.js';
+import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {
   buildNode,
   isNodeLike,
@@ -57,8 +58,10 @@ describe('buildNode', () => {
     expect(() => buildNode(node, {maxParallelWorkers: 2})).toThrow();
   });
 
-  it('throws when parallelWorker is requested but unavailable', () => {
+  it('wraps a node in a ParallelWorker when requested', () => {
     const node = new FnNode('n', (_c, i) => i);
-    expect(() => buildNode(node, {parallelWorker: true})).toThrow();
+    expect(buildNode(node, {parallelWorker: true})).toBeInstanceOf(
+      ParallelWorker,
+    );
   });
 });

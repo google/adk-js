@@ -6,6 +6,7 @@
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {FunctionNode, FunctionNodeHandler} from './nodes/function_node.js';
+import {ParallelWorker} from './nodes/parallel_worker.js';
 import {ToolNode} from './nodes/tool_node.js';
 import type {
   NodeBuilder,
@@ -48,9 +49,10 @@ export const NODE_BUILDERS: readonly NodeBuilder[] = [
 ];
 
 /**
- * Wraps an already-built node in a parallel worker. Wired in by the
- * parallel-worker node part; `undefined` until then, so requesting
- * `parallelWorker` before that part is present throws.
+ * Wraps an already-built node in a parallel worker, used by the engine for
+ * `buildNode(..., {parallelWorker: true})`.
  */
-export const PARALLEL_WORKER_FACTORY: ParallelWorkerFactory | undefined =
-  undefined;
+export const PARALLEL_WORKER_FACTORY: ParallelWorkerFactory | undefined = (
+  inner,
+  options,
+) => new ParallelWorker(inner, options);
