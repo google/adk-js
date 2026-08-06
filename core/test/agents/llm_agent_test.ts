@@ -19,12 +19,14 @@ import {
   createSession,
   Event,
   FunctionTool,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   PluginManager,
   RunAsyncToolRequest,
+  Runner,
   Session,
   ToolProcessLlmRequest,
 } from '@google/adk';
@@ -977,4 +979,83 @@ describe('LlmAgent outputSchema with tools', () => {
       );
     },
   );
+
+  it('persists state writes made in processLlmRequest across turns', async () => {
+    class StateProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'state_probe_tool', description: 'test probe'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        const {toolContext} = request;
+        const current = toolContext.state.get<number>('probe_counter') ?? 0;
+        toolContext.state.set('probe_counter', current + 1);
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return Promise.resolve({result: 'ok'});
+      }
+    }
+
+    const tool = new StateProbeTool();
+    const mockLlm = new MockLlm({
+      content: {role: 'model', parts: [{text: 'Done'}]},
+    });
+    const agent = new LlmAgent({
+      name: 'probe_agent',
+      model: mockLlm,
+      tools: [tool],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 1'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn1 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn1?.state?.['probe_counter']).toBe(1);
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 2'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn2 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
+  });
 });
