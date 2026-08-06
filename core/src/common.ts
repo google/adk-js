@@ -20,7 +20,10 @@ export {
   functionsExportedForTestingOnly,
 } from './agents/functions.js';
 export {InvocationContext} from './agents/invocation_context.js';
-export type {InvocationContextParams} from './agents/invocation_context.js';
+export type {
+  InvocationContextParams,
+  WorkflowInstructionScope,
+} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
 export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
@@ -248,6 +251,11 @@ export {
 } from './tools/enterprise_web_search_tool.js';
 export {ExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
+export {
+  FINISH_TASK_SUCCESS_RESULT,
+  FINISH_TASK_TOOL_NAME,
+  FinishTaskTool,
+} from './tools/finish_task_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   ToolExecuteArgument,
@@ -344,9 +352,11 @@ export {
   FunctionNode,
   Graph,
   JoinNode,
+  LLMAgentWrapper,
   NodeContext,
   NodeStatus,
   NodeTimeoutError,
+  NodeTool,
   ParallelWorker,
   RequestInput,
   START,
@@ -373,6 +383,7 @@ export type {
   FunctionNodeConfig,
   FunctionNodeHandler,
   FunctionNodeResult,
+  LLMAgentWrapperConfig,
   NodeContextOptions,
   NodeLike,
   NodeOptions,
