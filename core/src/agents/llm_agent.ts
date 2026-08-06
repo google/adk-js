@@ -846,8 +846,18 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       });
       allTools.push(setModelResponseTool);
     }
+    // Collect turn metadata and event actions
+    // TODO - b/425992518: misleading, this is passing metadata.
+    const modelResponseEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: this.name,
+      branch: invocationContext.branch,
+    });
     for (const toolUnion of allTools) {
-      const toolContext = new Context({invocationContext});
+      const toolContext = new Context({
+        invocationContext,
+        eventActions: modelResponseEvent.actions,
+      });
 
       // process all tools from this tool union
       const tools = (
@@ -888,12 +898,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    // TODO - b/425992518: misleading, this is passing metadata.
-    const modelResponseEvent = createEvent({
-      invocationId: invocationContext.invocationId,
-      author: this.name,
-      branch: invocationContext.branch,
-    });
     const span = tracer.startSpan('call_llm');
     const ctx = trace.setSpan(context.active(), span);
     yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
