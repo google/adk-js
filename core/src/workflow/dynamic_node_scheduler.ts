@@ -16,6 +16,7 @@ import {
   ScheduleDynamicNodeOptions,
 } from './schedule_dynamic_node.js';
 import {
+  eventsForCurrentRun,
   isFastForwardable,
   makeFastForwardResult,
   reconstructNodeStatesByPath,
@@ -61,11 +62,12 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       return existing.task;
     }
 
-    // Cross-turn resume: rehydrate this dynamic run from prior session events.
+    // Cross-turn resume: rehydrate this dynamic run from the events of the run
+    // still in progress (a run that already completed must not be replayed).
     if (!this.state.runs.has(nodePath)) {
-      const prior = reconstructNodeStatesByPath(ctx.session?.events ?? []).get(
-        nodePath,
-      );
+      const prior = reconstructNodeStatesByPath(
+        eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
+      ).get(nodePath);
       if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
         return this.completeWithoutRunning(

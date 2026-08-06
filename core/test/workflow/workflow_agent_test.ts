@@ -23,6 +23,10 @@ function pendingInterruptEvent(id: string): Event {
     new RequestInput({interruptId: id, message: '?'}),
   );
   event.author = id;
+  // The engine stamps the emitting node's path onto every node event; carry it
+  // here too, since run scoping uses it to tell node events from plain
+  // conversation turns.
+  event.nodeInfo = {path: `capture.${id}`};
   return event;
 }
 

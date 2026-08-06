@@ -16,6 +16,10 @@
 import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
 import type {NodeContext, NodeResult} from '../node_context.js';
+import {
+  hasAuthRequestFunctionCall,
+  hasRequestInputFunctionCall,
+} from './hitl_utils.js';
 
 const RESULT_KEY = 'result';
 
@@ -33,6 +37,91 @@ export interface RehydratedNode {
   interruptIds: Set<string>;
   /** Resolved interrupt responses, keyed by interrupt id. */
   resolvedResponses: Map<string, unknown>;
+}
+
+/**
+ * Narrows session events to the workflow run still in progress, dropping every
+ * earlier run that already finished.
+ *
+ * Rehydration exists to resume a run that paused, so it must not see a run that
+ * already completed: the finished nodes' cached outputs would be fast-forwarded
+ * into the new run, and the workflow would replay its previous answer instead
+ * of acting on the new input.
+ *
+ * `google/adk-python` scopes this by invocation id, because there a resumed
+ * invocation keeps its id. The TypeScript runner mints a fresh invocation id
+ * for every turn (`Runner.runAsync`), so a run that spans a pause covers
+ * several invocations and an id filter would discard the very outputs resume
+ * needs. Runs are delimited by pausing instead:
+ *
+ *   - An invocation that raised an interrupt ended paused, so it belongs to the
+ *     run still in progress.
+ *   - An invocation that emitted node events without raising one ran to
+ *     completion; it is the boundary, and it and everything before it are
+ *     dropped.
+ *
+ * The current invocation is always kept: it is in progress by definition, and
+ * it carries the user function responses that resolve the pending interrupts.
+ */
+export function eventsForCurrentRun(
+  events: Event[],
+  currentInvocationId: string,
+): Event[] {
+  // Ordered summary of each prior invocation that emitted workflow node events.
+  const priorRuns: Array<{
+    start: number;
+    invocationId?: string;
+    paused: boolean;
+  }> = [];
+  let currentStart = events.length;
+  // Not every node event carries an invocation id: events minted inside the
+  // engine (a RequestInput interrupt, for one) are enriched with author, path
+  // and branch but no id. Such an event belongs to the invocation whose events
+  // it sits among, so carry the last id seen forward rather than let it open a
+  // phantom run of its own — which would put the boundary in the middle of a
+  // paused run and re-execute nodes that had already completed.
+  let lastInvocationId: string | undefined;
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    const invocationId = event.invocationId || lastInvocationId;
+    if (event.invocationId) {
+      lastInvocationId = event.invocationId;
+    }
+    if (invocationId === currentInvocationId) {
+      currentStart = Math.min(currentStart, i);
+      continue;
+    }
+    if (!event.nodeInfo?.path) {
+      continue;
+    }
+    let entry = priorRuns[priorRuns.length - 1];
+    if (!entry || entry.invocationId !== invocationId) {
+      entry = {start: i, invocationId, paused: false};
+      priorRuns.push(entry);
+    }
+    if (raisedInterrupt(event)) {
+      entry.paused = true;
+    }
+  }
+
+  // Walk back over the prior invocations that ended paused; the earliest of
+  // them starts the run still in progress.
+  let boundary = currentStart;
+  for (let i = priorRuns.length - 1; i >= 0 && priorRuns[i].paused; i--) {
+    boundary = priorRuns[i].start;
+  }
+
+  return boundary <= 0 ? events : events.slice(boundary);
+}
+
+/** Whether an event raised an interrupt (HITL request-input, or auth). */
+function raisedInterrupt(event: Event): boolean {
+  return (
+    (event.longRunningToolIds?.length ?? 0) > 0 ||
+    hasRequestInputFunctionCall(event) ||
+    hasAuthRequestFunctionCall(event)
+  );
 }
 
 /**

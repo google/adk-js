@@ -22,6 +22,7 @@ import {NodeStatus} from './node_status.js';
 import {DynamicNodeState} from './schedule_dynamic_node.js';
 import {Trigger} from './trigger.js';
 import {
+  eventsForCurrentRun,
   isFastForwardable,
   makeFastForwardResult,
   reconstructNodeStates,
@@ -186,11 +187,12 @@ export class Workflow extends BaseNode {
   ): Promise<void> {
     // --- REHYDRATE (resume) ---
     // Reconstruct node state from prior session events and surface resolved
-    // interrupt responses so waiting nodes can resume. Scope to this workflow's
-    // own direct children (by path) so nested workflows with same-named nodes
-    // don't collide.
+    // interrupt responses so waiting nodes can resume. Scope to the run still
+    // in progress (so a run that already completed is not replayed), and to
+    // this workflow's own direct children (by path) so nested workflows with
+    // same-named nodes don't collide.
     const rehydrated = reconstructNodeStates(
-      ctx.session?.events ?? [],
+      eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
       ctx.nodePath || undefined,
     );
     this.applyResumeInputs(ctx, rehydrated);
