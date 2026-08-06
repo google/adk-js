@@ -11,15 +11,15 @@ import {
   BaseMemoryService,
   BaseSessionService,
   Event,
+  getUserInputRequests,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
-  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-  REQUEST_EUC_FUNCTION_CALL_NAME,
-  REQUEST_INPUT_FUNCTION_CALL_NAME,
   Runner,
   Session,
+  UserInputKind,
+  UserInputRequest,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -30,104 +30,89 @@ import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
 
-/**
- * Renders an interrupt (a pause waiting on the user) as human-readable text.
- *
- * A pause is carried in a `functionCall` part, not a text part, so without this
- * the REPL prints nothing and silently returns to the `[user]:` prompt while
- * the run is blocked — the user has no way to know a reply is expected.
- *
- * Returns undefined for anything that is not an interrupt.
- */
-function renderInterrupt(
-  author: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- genai FunctionCall args are untyped.
-  functionCall: {name?: string; args?: Record<string, any>},
-): string | undefined {
-  // An unnamed call can never be an interrupt; bail before the switch so it
-  // cannot accidentally match a constant that failed to resolve.
-  if (!functionCall.name) {
-    return undefined;
-  }
+/** How the user answers each kind of pause in the interactive REPL. */
+const HOW_TO_ANSWER: Record<UserInputKind, string> = {
+  input: 'Type your reply at the next prompt to continue.',
+  credential: 'Type the credential at the next prompt to continue.',
+  confirmation: "Reply 'yes' to approve or 'no' to reject.",
+};
 
-  const args = functionCall.args ?? {};
+/**
+ * Renders a pending request for user input as human-readable text.
+ *
+ * The detection and shape of an interrupt live in `getUserInputRequests`; this
+ * only decides how the CLI words it and how the user is told to answer.
+ */
+function renderUserInputRequest(request: UserInputRequest): string {
+  const author = request.author ?? 'agent';
   const lines: string[] = [];
 
-  switch (functionCall.name) {
-    case REQUEST_INPUT_FUNCTION_CALL_NAME: {
+  switch (request.kind) {
+    case 'input':
       lines.push(`--- [${author}] is waiting for your input ---`);
-      if (typeof args['message'] === 'string') {
-        lines.push(args['message']);
-      }
-      if (args['payload'] != null) {
-        lines.push(`Payload: ${JSON.stringify(args['payload'])}`);
-      }
-      if (args['responseSchema'] != null) {
-        lines.push(
-          `Expected response: ${JSON.stringify(args['responseSchema'])}`,
-        );
-      }
-      lines.push('Type your reply at the next prompt to continue.');
       break;
-    }
-    case REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: {
-      const toolName = args['originalFunctionCall']?.name;
+    case 'credential':
+      lines.push(`--- [${author}] is waiting for a credential ---`);
+      break;
+    case 'confirmation':
       lines.push(
         `--- [${author}] is waiting for confirmation ---` +
-          (toolName ? `\nTool: ${toolName}` : ''),
+          (request.toolName ? `\nTool: ${request.toolName}` : ''),
       );
-      const hint = args['toolConfirmation']?.hint;
-      if (typeof hint === 'string' && hint.trim()) {
-        lines.push(hint);
-      }
-      lines.push("Reply 'yes' to approve or 'no' to reject.");
       break;
-    }
-    case REQUEST_EUC_FUNCTION_CALL_NAME: {
-      lines.push(`--- [${author}] is waiting for a credential ---`);
-      if (typeof args['message'] === 'string') {
-        lines.push(args['message']);
-      }
-      const scheme = args['authConfig']?.authScheme;
-      if (scheme?.type) {
-        const where =
-          scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
-        lines.push(`Auth scheme: ${scheme.type}${where}`);
-      }
-      lines.push('Type the credential at the next prompt to continue.');
-      break;
-    }
     default:
-      return undefined;
+      break;
   }
+
+  if (request.message) {
+    lines.push(request.message);
+  }
+  if (request.payload != null) {
+    lines.push(`Payload: ${JSON.stringify(request.payload)}`);
+  }
+  if (request.responseSchema != null) {
+    lines.push(`Expected response: ${JSON.stringify(request.responseSchema)}`);
+  }
+
+  const scheme = request.authConfig?.authScheme as
+    | {type?: string; in?: string; name?: string}
+    | undefined;
+  if (scheme?.type) {
+    const where =
+      scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
+    lines.push(`Auth scheme: ${scheme.type}${where}`);
+  }
+
+  lines.push(HOW_TO_ANSWER[request.kind]);
 
   return lines.join('\n');
 }
 
 /**
- * Prints one event to the console: its text, plus any interrupt prompt that
- * would otherwise be invisible to an interactive user.
+ * Prints one event: its text, any error it reports, and any request for user
+ * input that would otherwise be invisible to an interactive user.
  */
 function printEvent(event: Event): void {
-  const parts = event.content?.parts;
-  if (!parts) {
-    return;
-  }
-
   const author = event.author ?? 'agent';
-  const text = parts.map((part) => part.text || '').join('');
+
+  const text = (event.content?.parts ?? [])
+    .map((part) => part.text || '')
+    .join('');
   if (text) {
     console.log(`[${author}]: ${text}`);
   }
 
-  for (const part of parts) {
-    if (!part.functionCall) {
-      continue;
-    }
-    const prompt = renderInterrupt(author, part.functionCall);
-    if (prompt) {
-      console.log(prompt);
-    }
+  // An error is reported on the event itself, not as a text part, so it is
+  // otherwise swallowed: the turn just ends with no explanation.
+  if (event.errorCode || event.errorMessage) {
+    const detail = [event.errorCode, event.errorMessage]
+      .filter(Boolean)
+      .join(': ');
+    console.error(`[${author}] error: ${detail}`);
+  }
+
+  for (const request of getUserInputRequests(event)) {
+    console.log(renderUserInputRequest(request));
   }
 }
 

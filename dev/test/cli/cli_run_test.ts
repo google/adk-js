@@ -31,8 +31,13 @@ const runnerState = vi.hoisted(() => ({
   ] as unknown[],
 }));
 
-vi.mock('@google/adk', () => {
+// Only the Runner and the services are faked; everything else (notably
+// `getUserInputRequests`, which decides what the REPL prints) is the real
+// implementation, so these tests exercise the shipped detection logic.
+vi.mock('@google/adk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@google/adk')>();
   return {
+    ...actual,
     Runner: vi.fn().mockImplementation(() => ({
       runAsync: vi.fn().mockImplementation(async function* () {
         for (const event of runnerState.events) {
@@ -58,10 +63,6 @@ vi.mock('@google/adk', () => {
     })),
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
-    // Interrupt function-call names, needed so the REPL can render a pause.
-    REQUEST_INPUT_FUNCTION_CALL_NAME: 'adk_request_input',
-    REQUEST_EUC_FUNCTION_CALL_NAME: 'adk_request_credential',
-    REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: 'adk_request_confirmation',
   };
 });
 
@@ -366,6 +367,23 @@ describe('cli_run', () => {
 
       expect(output).toContain('[agent]: Looking that up.');
       expect(output).not.toContain('is waiting');
+    });
+
+    it('reports an error carried on the event', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await runOneTurn({
+        author: 'draft_email',
+        errorCode: 'SAFETY',
+        errorMessage: 'Blocked by safety filters.',
+      });
+
+      const errors = (console.error as Mock).mock.calls
+        .map((call) => call.join(' '))
+        .join('\n');
+      expect(errors).toContain(
+        '[draft_email] error: SAFETY: Blocked by safety filters.',
+      );
     });
 
     it('does not announce a pause for an unnamed function call', async () => {
