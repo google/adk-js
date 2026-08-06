@@ -31,9 +31,9 @@ export class NodeInterruptedError extends Error {
 /**
  * Type guard for {@link NodeInterruptedError}.
  *
- * Matches on `name` rather than `instanceof` so it stays correct when errors
- * cross a package boundary (two copies of adk-js in one runtime would fail an
- * `instanceof` check between them).
+ * Matches on `name` rather than `instanceof <subclass>` so it stays correct when
+ * errors cross a package boundary (two copies of adk-js in one runtime would
+ * fail an `instanceof` check between them).
  */
 export function isNodeInterruptedError(e: unknown): e is NodeInterruptedError {
   return e instanceof Error && e.name === 'NodeInterruptedError';
@@ -96,4 +96,26 @@ export class DynamicNodeFailError extends Error {
 /** Type guard for {@link DynamicNodeFailError} (name-based; see above). */
 export function isDynamicNodeFailError(e: unknown): e is DynamicNodeFailError {
   return e instanceof Error && e.name === 'DynamicNodeFailError';
+}
+
+/**
+ * Raised when the invocation is aborted (e.g. its abort signal fires) while the
+ * engine is waiting — currently during a node's retry backoff delay.
+ *
+ * Distinct from a node's own failure so a caller can tell "the invocation was
+ * cancelled" apart from "the node threw".
+ */
+export class InvocationAbortedError extends Error {
+  constructor(message = 'Invocation aborted.') {
+    super(message);
+    this.name = 'InvocationAbortedError';
+    Object.setPrototypeOf(this, InvocationAbortedError.prototype);
+  }
+}
+
+/** Type guard for {@link InvocationAbortedError} (name-based; see above). */
+export function isInvocationAbortedError(
+  e: unknown,
+): e is InvocationAbortedError {
+  return e instanceof Error && e.name === 'InvocationAbortedError';
 }

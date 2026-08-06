@@ -19,7 +19,8 @@ import {toJSONSchema as toJSONSchemaV4, z as z4} from 'zod/v4';
 
 type ZodSchema<T = unknown> = z3.ZodType<T> | z4.ZodType<T>;
 
-function isZodSchema(obj: unknown): obj is ZodSchema {
+/** Returns true if the value is a Zod schema (v3 or v4). */
+export function isZodSchema(obj: unknown): obj is ZodSchema {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -30,11 +31,13 @@ function isZodSchema(obj: unknown): obj is ZodSchema {
   );
 }
 
-function isZodV3Schema(obj: unknown): obj is z3.ZodTypeAny {
+/** Returns true if the value is a Zod v3 schema. */
+export function isZodV3Schema(obj: unknown): obj is z3.ZodTypeAny {
   return isZodSchema(obj) && !('_zod' in obj);
 }
 
-function isZodV4Schema(obj: unknown): obj is z4.ZodType {
+/** Returns true if the value is a Zod v4 schema. */
+export function isZodV4Schema(obj: unknown): obj is z4.ZodType {
   return isZodSchema(obj) && '_zod' in obj;
 }
 

@@ -7,6 +7,9 @@
 import {describe, expect, it} from 'vitest';
 import {
   DynamicNodeFailError,
+  InvocationAbortedError,
+  isInvocationAbortedError,
+  isNodeTimeoutError,
   NodeInterruptedError,
   NodeTimeoutError,
 } from '../../src/workflow/errors.js';
@@ -52,6 +55,20 @@ describe('Phase 0 — errors', () => {
     expect(err).toBeInstanceOf(DynamicNodeFailError);
     expect(err.error).toBe(cause);
     expect(err.errorNodePath).toBe('wf.child.0');
+  });
+
+  it('InvocationAbortedError is guarded by name (not by other error guards)', () => {
+    const err = new InvocationAbortedError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('InvocationAbortedError');
+    expect(isInvocationAbortedError(err)).toBe(true);
+    // Guards are distinct: a different error is not misidentified.
+    expect(
+      isInvocationAbortedError(
+        new NodeTimeoutError({nodeName: 'n', timeout: 1}),
+      ),
+    ).toBe(false);
+    expect(isNodeTimeoutError(err)).toBe(false);
   });
 });
 

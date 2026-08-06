@@ -22,20 +22,15 @@ const DEFAULT_JITTER = 1.0;
 /**
  * Resolves the runtime name of a thrown value for exception-name matching.
  * Mirrors Python's `type(exception).__name__`.
- *
- * Duck-typed (no `instanceof`) so it works for error-like values from another
- * package copy: it prefers an explicit `name` string, then the constructor
- * name, then the primitive `typeof`.
  */
 function errorName(error: unknown): string {
+  if (error instanceof Error) {
+    // `name` is set by well-behaved Error subclasses; fall back to the
+    // constructor name for plain `throw new Error()` cases.
+    return error.name || error.constructor.name;
+  }
   if (typeof error === 'object' && error !== null) {
-    const named = error as {name?: unknown; constructor?: {name?: string}};
-    if (typeof named.name === 'string' && named.name) {
-      // `name` is set by well-behaved Error subclasses.
-      return named.name;
-    }
-    // Fall back to the constructor name for plain `throw new Error()` cases.
-    return named.constructor?.name ?? 'Object';
+    return error.constructor.name;
   }
   return typeof error;
 }
