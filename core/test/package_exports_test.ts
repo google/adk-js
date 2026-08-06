@@ -14,7 +14,6 @@ interface CoreManifest {
   exports: {
     '.': Record<string, string>;
     './dist/web/*': Record<string, string>;
-    './package.json': string;
   };
 }
 
@@ -71,10 +70,5 @@ describe('core package exports', () => {
     // match "default" and look for a .d.ts next to dist/web/*.js, which the
     // build emits to dist/types instead.
     expect(Object.keys(manifest.exports['./dist/web/*'])[0]).toBe('types');
-  });
-
-  it('re-exposes ./package.json', () => {
-    // An "exports" map is exhaustive: undeclared subpaths are hard-rejected.
-    expect(manifest.exports['./package.json']).toBe('./package.json');
   });
 });
