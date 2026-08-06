@@ -52,14 +52,14 @@ export class BuiltInPlanner extends BasePlanner {
   override buildPlanningInstruction(
     _readonlyContext: ReadonlyContext,
     _llmRequest: LlmRequest,
-  ): undefined {
+  ): string | undefined {
     return undefined;
   }
 
   override processPlanningResponse(
     _callbackContext: Context,
     _responseParts: Part[],
-  ): undefined {
+  ): Part[] | undefined {
     return undefined;
   }
 }
