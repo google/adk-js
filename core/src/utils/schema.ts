@@ -26,8 +26,8 @@ import {
  * A schema accepted by ADK APIs, expressed as a Zod v3 type, a Zod v4 type, or
  * a genai `Schema`.
  *
- * Use {@link parseWithSchema} to validate a value against one, and
- * {@link toJsonSchema} to render one as a plain JSON Schema.
+ * Use `parseWithSchema` to validate a value against one, and `toJsonSchema` to
+ * render one as a plain JSON Schema.
  */
 export type SchemaLike = z3.ZodType | z4.ZodType | Schema;
 

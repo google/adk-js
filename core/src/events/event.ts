@@ -365,10 +365,12 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'customMetadata',
   'content.parts.functionCall.args',
   'content.parts.functionResponse.response',
-  // Workflow: arbitrary node output and checkpointed node state carry
-  // user-defined keys that must survive round-trips verbatim (a node's original
-  // input is stashed under `actions.agentState` for HITL resume).
+  // Workflow: arbitrary node output, emitted route(s), and checkpointed node
+  // state carry user-defined keys that must survive round-trips verbatim (a
+  // node's original input is stashed under `actions.agentState` for HITL
+  // resume, and rehydration reads `output`/`route`/`actions.agentState` back).
   'output',
+  'route',
   'actions.agentState',
 ];
 
@@ -389,9 +391,10 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'custom_metadata',
   'content.parts.function_call.args',
   'content.parts.function_response.response',
-  // Workflow: arbitrary node output and checkpointed node state (see the
-  // camelCase list above).
+  // Workflow: arbitrary node output, emitted route(s), and checkpointed node
+  // state (see the camelCase list above).
   'output',
+  'route',
   'actions.agent_state',
 ];
 

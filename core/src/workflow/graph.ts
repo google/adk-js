@@ -13,7 +13,7 @@ import {validateGraph} from './utils/graph_validation.js';
 /**
  * A unique symbol branding {@link Edge} instances.
  *
- * {@link isEdge} matches on this brand rather than `instanceof` so an edge built
+ * `isEdge` matches on this brand rather than `instanceof` so an edge built
  * by another copy of adk-js in the same runtime is still recognised (an
  * `instanceof` check fails across package copies) — mirroring the
  * `Symbol.for('google.adk.*')` brands used across ADK.
@@ -78,7 +78,7 @@ export type EdgeItem = Edge | ChainElement[];
  * Mirrors `google/adk-python` `workflow/_graph.py::Edge`.
  */
 export class Edge {
-  /** Brand identifying this object as an {@link Edge} (see {@link isEdge}). */
+  /** Brand identifying this object as an {@link Edge} (see `isEdge`). */
   readonly [EDGE_SIGNATURE_SYMBOL] = true;
 
   constructor(

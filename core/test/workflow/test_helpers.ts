@@ -71,6 +71,47 @@ export async function driveNode(
   return {events, output: root.output, ctx: root};
 }
 
+/** Options for {@link driveWorkflow}. */
+export interface DriveWorkflowOptions {
+  /** InvocationContext to run under (defaults to a fresh {@link createIc}). */
+  ic?: InvocationContext;
+  /** Resume inputs keyed by interrupt id (for HITL/auth resume). */
+  resumeInputs?: Record<string, unknown>;
+}
+
+/**
+ * Drives a workflow (or any node) to completion and returns its streamed events,
+ * final output, and the interrupt ids it is paused on — the shared harness for
+ * the workflow-level tests (replaces the per-file `createIc`/`driveWorkflow`
+ * copies that reached for `as unknown as Session/BaseAgent`).
+ */
+export async function driveWorkflow(
+  wf: BaseNode,
+  input?: unknown,
+  options: DriveWorkflowOptions = {},
+): Promise<{events: Event[]; output: unknown; interruptIds: string[]}> {
+  const channel = new AsyncQueue<Event>();
+  const root = new NodeContext({
+    invocationContext: options.ic ?? createIc(),
+    channel,
+    nodePath: '',
+    runId: 'root',
+    resumeInputs: options.resumeInputs,
+  });
+  const events: Event[] = [];
+  const resultPromise = root.runNode(wf, input, {useAsOutput: true});
+  const settle = resultPromise.then(
+    () => channel.close(),
+    (err) => channel.fail(err),
+  );
+  for await (const ev of channel) {
+    events.push(ev);
+  }
+  await settle;
+  const result = await resultPromise;
+  return {events, output: root.output, interruptIds: result.interruptIds};
+}
+
 /** A node whose behavior is a plain function returning a value or Event. */
 export class FnNode extends BaseNode {
   constructor(

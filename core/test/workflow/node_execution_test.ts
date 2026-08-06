@@ -16,6 +16,7 @@ import {
   isNodeTimeoutError,
 } from '../../src/workflow/errors.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
+import {executeChildNode} from '../../src/workflow/node_runner.js';
 import {createIc, driveNode, FnNode} from './test_helpers.js';
 
 // --- Tests ----------------------------------------------------------------
@@ -96,7 +97,14 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       nodePath: '',
       runId: 'root',
     });
-    const child = await root.runNode(node, undefined, {useAsOutput: true});
+    // executeChildNode returns the concrete child NodeContext (runNode's return
+    // type widens to NodeContext | NodeResult for the resume fast-forward case).
+    const child = await executeChildNode({
+      parent: root,
+      node,
+      input: undefined,
+      options: {useAsOutput: true},
+    });
     expect(child.state.get('counter')).toBe(7);
     expect(child.actions.stateDelta['counter']).toBe(7);
   });
@@ -165,7 +173,12 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
       nodePath: '',
       runId: 'root',
     });
-    const child = await root.runNode(node, 'x', {useAsOutput: true});
+    const child = await executeChildNode({
+      parent: root,
+      node,
+      input: 'x',
+      options: {useAsOutput: true},
+    });
 
     expect(child.output).toBe('ok');
     // The failed first attempt's write must not survive into the committed

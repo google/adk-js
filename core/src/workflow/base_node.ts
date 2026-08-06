@@ -76,7 +76,7 @@ export interface BaseNodeConfig {
  * {@link Event}s consumed by the engine.
  */
 export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
-  /** Brand identifying this object as a {@link BaseNode} (see {@link isBaseNode}). */
+  /** Brand identifying this object as a {@link BaseNode} (see `isBaseNode`). */
   readonly [BASE_NODE_SIGNATURE_SYMBOL] = true;
 
   readonly name: string;
@@ -163,7 +163,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
   /**
    * Validates node input against `inputSchema` (Content passes through). Only
    * enforced for Zod schemas; a genai `Schema` is left unvalidated (see
-   * {@link parseWithSchema}).
+   * `parseWithSchema`).
    */
   protected validateInput(input: TInput): TInput {
     if (isContent(input)) {
@@ -175,7 +175,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
   /**
    * Validates node output against `outputSchema` (Content passes through). Only
    * enforced for Zod schemas; a genai `Schema` is left unvalidated (see
-   * {@link parseWithSchema}).
+   * `parseWithSchema`).
    */
   protected validateOutput(output: unknown): unknown {
     if (isContent(output)) {
