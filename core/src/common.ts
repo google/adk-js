@@ -15,6 +15,7 @@ export type {
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
 export {
+  REQUEST_EUC_FUNCTION_CALL_NAME,
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
@@ -359,6 +360,11 @@ export {
   NodeTimeoutError,
   NodeTool,
   ParallelWorker,
+  // The credential counterpart is exported as `REQUEST_EUC_FUNCTION_CALL_NAME`
+  // (see `./agents/functions.js`); it carries the same value and is shared with
+  // the non-workflow auth path, so it is not re-exported here under a second
+  // name.
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   RequestInput,
   START,
   ToolNode,

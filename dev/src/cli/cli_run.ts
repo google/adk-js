@@ -10,10 +10,14 @@ import {
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
+  Event,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   Runner,
   Session,
 } from '@google/adk';
@@ -25,6 +29,107 @@ import {AgentFile, AgentFileOptions} from '../utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
+
+/**
+ * Renders an interrupt (a pause waiting on the user) as human-readable text.
+ *
+ * A pause is carried in a `functionCall` part, not a text part, so without this
+ * the REPL prints nothing and silently returns to the `[user]:` prompt while
+ * the run is blocked — the user has no way to know a reply is expected.
+ *
+ * Returns undefined for anything that is not an interrupt.
+ */
+function renderInterrupt(
+  author: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- genai FunctionCall args are untyped.
+  functionCall: {name?: string; args?: Record<string, any>},
+): string | undefined {
+  // An unnamed call can never be an interrupt; bail before the switch so it
+  // cannot accidentally match a constant that failed to resolve.
+  if (!functionCall.name) {
+    return undefined;
+  }
+
+  const args = functionCall.args ?? {};
+  const lines: string[] = [];
+
+  switch (functionCall.name) {
+    case REQUEST_INPUT_FUNCTION_CALL_NAME: {
+      lines.push(`--- [${author}] is waiting for your input ---`);
+      if (typeof args['message'] === 'string') {
+        lines.push(args['message']);
+      }
+      if (args['payload'] != null) {
+        lines.push(`Payload: ${JSON.stringify(args['payload'])}`);
+      }
+      if (args['responseSchema'] != null) {
+        lines.push(
+          `Expected response: ${JSON.stringify(args['responseSchema'])}`,
+        );
+      }
+      lines.push('Type your reply at the next prompt to continue.');
+      break;
+    }
+    case REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: {
+      const toolName = args['originalFunctionCall']?.name;
+      lines.push(
+        `--- [${author}] is waiting for confirmation ---` +
+          (toolName ? `\nTool: ${toolName}` : ''),
+      );
+      const hint = args['toolConfirmation']?.hint;
+      if (typeof hint === 'string' && hint.trim()) {
+        lines.push(hint);
+      }
+      lines.push("Reply 'yes' to approve or 'no' to reject.");
+      break;
+    }
+    case REQUEST_EUC_FUNCTION_CALL_NAME: {
+      lines.push(`--- [${author}] is waiting for a credential ---`);
+      if (typeof args['message'] === 'string') {
+        lines.push(args['message']);
+      }
+      const scheme = args['authConfig']?.authScheme;
+      if (scheme?.type) {
+        const where =
+          scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
+        lines.push(`Auth scheme: ${scheme.type}${where}`);
+      }
+      lines.push('Type the credential at the next prompt to continue.');
+      break;
+    }
+    default:
+      return undefined;
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Prints one event to the console: its text, plus any interrupt prompt that
+ * would otherwise be invisible to an interactive user.
+ */
+function printEvent(event: Event): void {
+  const parts = event.content?.parts;
+  if (!parts) {
+    return;
+  }
+
+  const author = event.author ?? 'agent';
+  const text = parts.map((part) => part.text || '').join('');
+  if (text) {
+    console.log(`[${author}]: ${text}`);
+  }
+
+  for (const part of parts) {
+    if (!part.functionCall) {
+      continue;
+    }
+    const prompt = renderInterrupt(author, part.functionCall);
+    if (prompt) {
+      console.log(prompt);
+    }
+  }
+}
 
 interface InputFile {
   state: Record<string, unknown>;
@@ -87,14 +192,7 @@ async function runFromInputFile(
     };
 
     for await (const event of runner.runAsync(runOptions)) {
-      if (event.content && event.content.parts) {
-        const text = event.content.parts
-          .map((part) => part.text || '')
-          .join('');
-        if (text) {
-          console.log(`[${event.author}]: ${text}`);
-        }
-      }
+      printEvent(event);
     }
   }
 
@@ -154,14 +252,7 @@ async function runInteractively(
       // confirmation (opt-in; off by default on non-interactive surfaces).
       runConfig: {plainTextToolConfirmation: true},
     })) {
-      if (event.content && event.content.parts) {
-        const text = event.content.parts
-          .map((part) => part.text || '')
-          .join('');
-        if (text) {
-          console.log(`[${event.author}]: ${text}`);
-        }
-      }
+      printEvent(event);
     }
   }
 }
@@ -248,15 +339,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         if (loadedSession) {
           for (const event of loadedSession.events) {
             await sessionService.appendEvent({session, event});
-            const content = event.content;
-            if (content && content.parts?.length) {
-              const text = content.parts
-                .map((part) => part.text || '')
-                .join('');
-              if (text) {
-                console.log(`[${event.author}]: ${text}`);
-              }
-            }
+            printEvent(event);
           }
         }
 

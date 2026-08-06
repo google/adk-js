@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, BaseSessionService} from '@google/adk';
+import {BaseAgent, BaseSessionService, Runner} from '@google/adk';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {runAgent} from '../../src/cli/cli_run.js';
@@ -21,14 +21,23 @@ vi.mock('../../src/utils/file_utils.js', () => ({
   saveToFile: vi.fn(),
 }));
 
+/**
+ * Events the mocked Runner yields for a turn. Mutable so a test can drive the
+ * REPL with interrupt events instead of the default text reply.
+ */
+const runnerState = vi.hoisted(() => ({
+  events: [
+    {author: 'model', content: {parts: [{text: 'Response from model'}]}},
+  ] as unknown[],
+}));
+
 vi.mock('@google/adk', () => {
   return {
     Runner: vi.fn().mockImplementation(() => ({
       runAsync: vi.fn().mockImplementation(async function* () {
-        yield {
-          author: 'model',
-          content: {parts: [{text: 'Response from model'}]},
-        };
+        for (const event of runnerState.events) {
+          yield event;
+        }
       }),
     })),
     InMemoryArtifactService: vi.fn(),
@@ -49,6 +58,10 @@ vi.mock('@google/adk', () => {
     })),
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
+    // Interrupt function-call names, needed so the REPL can render a pause.
+    REQUEST_INPUT_FUNCTION_CALL_NAME: 'adk_request_input',
+    REQUEST_EUC_FUNCTION_CALL_NAME: 'adk_request_credential',
+    REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: 'adk_request_confirmation',
   };
 });
 
@@ -64,6 +77,20 @@ describe('cli_run', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    runnerState.events = [
+      {author: 'model', content: {parts: [{text: 'Response from model'}]}},
+    ];
+
+    // `restoreAllMocks` in afterEach strips the implementation set in the
+    // module factory, so re-establish it for every test.
+    (Runner as unknown as Mock).mockImplementation(() => ({
+      runAsync: async function* () {
+        for (const event of runnerState.events) {
+          yield event;
+        }
+      },
+    }));
 
     mockRootAgent = {
       name: 'test-agent',
@@ -209,5 +236,145 @@ describe('cli_run', () => {
       expect.stringContaining('prompted-session-id.session.json'),
       expect.anything(),
     );
+  });
+
+  /**
+   * An interrupt is carried in a `functionCall` part, which has no `text`, so
+   * without explicit rendering the REPL prints nothing and the user is left at
+   * a prompt with no idea a reply is expected.
+   */
+  describe('interrupt rendering', () => {
+    /** Drives one interactive turn, then exits, and returns what was printed. */
+    async function runOneTurn(event: unknown): Promise<string> {
+      runnerState.events = [event];
+      (mockRl.question as Mock)
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('hello'),
+        )
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('exit'),
+        );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      return (console.log as Mock).mock.calls
+        .map((call) => call.join(' '))
+        .join('\n');
+    }
+
+    it('renders a request-for-input pause with its message and schema', async () => {
+      const output = await runOneTurn({
+        author: 'step1',
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'adk_request_input',
+                id: 'interrupt-1',
+                args: {
+                  interruptId: 'interrupt-1',
+                  message: 'Enter a number:',
+                  payload: {draft: 'hi'},
+                  responseSchema: {type: 'object'},
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      expect(output).toContain('[step1] is waiting for your input');
+      expect(output).toContain('Enter a number:');
+      expect(output).toContain('Payload: {"draft":"hi"}');
+      expect(output).toContain('Expected response: {"type":"object"}');
+      expect(output).toContain('Type your reply at the next prompt');
+    });
+
+    it('renders a credential pause with its auth scheme', async () => {
+      const output = await runOneTurn({
+        author: 'fetch_weather',
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'adk_request_credential',
+                id: 'weather_api_key',
+                args: {
+                  message: 'Please provide your API key.',
+                  authConfig: {
+                    authScheme: {
+                      type: 'apiKey',
+                      in: 'header',
+                      name: 'X-Api-Key',
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      expect(output).toContain('[fetch_weather] is waiting for a credential');
+      expect(output).toContain('Please provide your API key.');
+      expect(output).toContain('Auth scheme: apiKey (header X-Api-Key)');
+    });
+
+    it('renders a tool-confirmation pause with the tool name and hint', async () => {
+      const output = await runOneTurn({
+        author: 'generate_instruction',
+        content: {
+          parts: [
+            {
+              functionCall: {
+                name: 'adk_request_confirmation',
+                id: 'confirm-1',
+                args: {
+                  originalFunctionCall: {name: 'find_orders', args: {}},
+                  toolConfirmation: {
+                    hint: 'This reads patient records.',
+                    confirmed: false,
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      expect(output).toContain(
+        '[generate_instruction] is waiting for confirmation',
+      );
+      expect(output).toContain('Tool: find_orders');
+      expect(output).toContain('This reads patient records.');
+      expect(output).toContain("Reply 'yes' to approve or 'no' to reject.");
+    });
+
+    it('does not announce a pause for an ordinary function call', async () => {
+      const output = await runOneTurn({
+        author: 'agent',
+        content: {
+          parts: [
+            {text: 'Looking that up.'},
+            {functionCall: {name: 'get_weather', id: 'c1', args: {city: 'SF'}}},
+          ],
+        },
+      });
+
+      expect(output).toContain('[agent]: Looking that up.');
+      expect(output).not.toContain('is waiting');
+    });
+
+    it('does not announce a pause for an unnamed function call', async () => {
+      const output = await runOneTurn({
+        author: 'agent',
+        content: {parts: [{functionCall: {args: {}}}]},
+      });
+
+      expect(output).not.toContain('is waiting');
+    });
   });
 });
