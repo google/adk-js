@@ -1,0 +1,54 @@
+[
+  {
+    "key": "57df526204e44e91",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "I need 3 days off next week for a family trip."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "I need 3 days off next week for a family trip."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"process_request\".\n\nExtract the number of days and the reason from the user's natural language time off request."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"days\":3,\"reason\":\"family trip\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 63,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 134,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 63
+          }
+        ],
+        "thoughtsTokenCount": 61,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

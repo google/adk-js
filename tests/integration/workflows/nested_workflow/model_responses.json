@@ -1,0 +1,153 @@
+[
+  {
+    "key": "778e1cce4468601d",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1955"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1955.\n    Return ONLY their name, nothing else.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Bill Gates"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 54,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 131,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 54
+          }
+        ],
+        "thoughtsTokenCount": 75,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "228440ecf0c1e553",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1955"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[find_name] said: Bill Gates"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Bill Gates"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_bio\".\n\n\n    Write a short, engaging 3-sentence biography for the specified person.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Bill Gates co-founded Microsoft, igniting the personal computer revolution and making computing accessible worldwide. His vision transformed industries and everyday life, cementing his legacy as a technology pioneer. Today, he is a leading philanthropist through the Bill & Melinda Gates Foundation, dedicated to global health and poverty eradication."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 55,
+        "candidatesTokenCount": 58,
+        "totalTokenCount": 229,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 55
+          }
+        ],
+        "thoughtsTokenCount": 116,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "e15dc3fa645e73fc",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1955"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1955.\n    Keep the description to 2 sentences.\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "In 1955, the Soviet Union and its Eastern Bloc allies established the Warsaw Pact, a collective defense treaty. This alliance formally solidified the communist military bloc in Europe, directly confronting NATO and intensifying the Cold War."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 54,
+        "candidatesTokenCount": 45,
+        "totalTokenCount": 727,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 54
+          }
+        ],
+        "thoughtsTokenCount": 628,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

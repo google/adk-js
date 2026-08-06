@@ -1,0 +1,65 @@
+[
+  {
+    "key": "c22ca69dcb15fada",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "ocean exploration"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_string_output] said: Processed input: ocean exploration"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Event wrapped output: Processed input: ocean exploration"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_pydantic_output\".\n\nGenerate a creative topic based on the following input."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"title\": \"Abyssal Pioneers: Unveiling the Ocean's Deepest Secrets with Autonomous Fleets\", \"description\": \"Explore the next frontier of ocean exploration, focusing on the development and deployment of advanced autonomous underwater vehicles (AUVs) and robotic fleets to map, analyze, and discover the mysteries of the deep sea, from unexplored trenches to hydrothermal vents and their unique ecosystems.\", \"category\": \"Future Technology & Marine Science\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 63,
+        "candidatesTokenCount": 89,
+        "totalTokenCount": 393,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 63
+          }
+        ],
+        "thoughtsTokenCount": 241,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

@@ -10,10 +10,10 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {experimental} from '../utils/experimental.js';
-import {toContent} from './base_node.js';
+import {isBaseNode, toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 import {reconstructNodeStates} from './utils/rehydration_utils.js';
-import {Workflow} from './workflow.js';
+import {Workflow, WorkflowConfig} from './workflow.js';
 
 /** Options for a {@link WorkflowAgent}. */
 export interface WorkflowAgentConfig {
@@ -34,7 +34,29 @@ export interface WorkflowAgentConfig {
 export class WorkflowAgent extends BaseAgent {
   readonly workflow: Workflow;
 
-  constructor(workflow: Workflow, config: WorkflowAgentConfig = {}) {
+  /**
+   * Wraps an existing {@link Workflow}. The agent's name/description default to
+   * the workflow's; pass `config` to override them.
+   */
+  constructor(workflow: Workflow, config?: WorkflowAgentConfig);
+  /**
+   * Convenience form: pass the {@link Workflow} constructor options directly and
+   * the workflow is created internally, so you can write
+   * `new WorkflowAgent({name, edges})` instead of
+   * `new WorkflowAgent(new Workflow({name, edges}))`. The agent's name and
+   * description come from the config.
+   */
+  constructor(config: WorkflowConfig);
+  constructor(
+    workflowOrConfig: Workflow | WorkflowConfig,
+    config: WorkflowAgentConfig = {},
+  ) {
+    // A branded BaseNode is an already-built Workflow; anything else is config
+    // to build one from (avoids `instanceof`, per the workflow conventions).
+    // The overload signatures guarantee an instance here is a Workflow.
+    const workflow = isBaseNode(workflowOrConfig)
+      ? (workflowOrConfig as Workflow)
+      : new Workflow(workflowOrConfig);
     super({
       name: config.name ?? workflow.name,
       description: config.description ?? workflow.description,

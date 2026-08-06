@@ -1,0 +1,54 @@
+[
+  {
+    "key": "8069171463b0c7a3",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "The quick brown fox jumps over the lazy dog, repeatedly, all day."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "The quick brown fox jumps over the lazy dog, repeatedly, all day."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"summarizer\".\n\nSummarize the following text in one sentence."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "A quick brown fox repeatedly jumps over a lazy dog throughout the entire day."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 56,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 177,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 56
+          }
+        ],
+        "thoughtsTokenCount": 106,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]
