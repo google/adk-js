@@ -258,6 +258,7 @@ export {
 } from './tools/finish_task_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
+  RequireConfirmation,
   ToolExecuteArgument,
   ToolExecuteFunction,
   ToolInputParameters,

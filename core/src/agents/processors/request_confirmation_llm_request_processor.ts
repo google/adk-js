@@ -99,6 +99,23 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       }
     }
 
+    // Plain-text fallback: an interactive user (e.g. `adk run`) can approve or
+    // deny a pending confirmation by simply typing a reply (yes/no) instead of
+    // sending a structured confirmation response. Opt-in only
+    // (`runConfig.plainTextToolConfirmation`) so that on a web/API surface an
+    // ordinary chat message is never silently reinterpreted as a tool-gate
+    // decision — that binding is what the structured path exists to guarantee.
+    if (
+      Object.keys(requestConfirmationFunctionResponses).length === 0 &&
+      invocationContext.runConfig?.plainTextToolConfirmation
+    ) {
+      const fallback = mapPlainTextConfirmation(events);
+      Object.assign(requestConfirmationFunctionResponses, fallback.responses);
+      if (fallback.turnIndex >= 0) {
+        confirmationEventIndex = fallback.turnIndex;
+      }
+    }
+
     if (Object.keys(requestConfirmationFunctionResponses).length === 0) {
       return;
     }
@@ -188,6 +205,132 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       return;
     }
   }
+}
+
+/** Words interpreted as an approval when a user confirms by plain text. */
+const AFFIRMATIVE = new Set([
+  'yes',
+  'y',
+  'true',
+  'approve',
+  'approved',
+  'ok',
+  'okay',
+  'confirm',
+  'confirmed',
+]);
+
+/** Words interpreted as an explicit denial when a user confirms by plain text. */
+const NEGATIVE = new Set([
+  'no',
+  'n',
+  'false',
+  'reject',
+  'rejected',
+  'deny',
+  'denied',
+  'cancel',
+  'cancelled',
+]);
+
+/**
+ * Maps a plain-text user reply to a confirmation for the single pending
+ * `adk_request_confirmation` call it is answering, so an interactive user can
+ * approve/deny by typing. Deliberately conservative (see the security review on
+ * PR #594):
+ *
+ * - Only the SINGLE most-recent pending confirmation is resolved — never a
+ *   broadcast across every unanswered gate in the history.
+ * - The plain-text reply must IMMEDIATELY follow the confirmation request (no
+ *   intervening user turn), so an unrelated later message can't resolve a stale
+ *   gate.
+ * - Only recognized affirmative/negative words decide; any other text (a
+ *   question, a typo, an answer to something else) is left as NO decision so the
+ *   gate stays pending rather than being silently denied.
+ *
+ * Returns the synthesized confirmation keyed by the confirmation call id, and
+ * the index of the plain-text user turn (or -1 when not applicable).
+ */
+function mapPlainTextConfirmation(events: Event[]): {
+  responses: Record<string, ToolConfirmation>;
+  turnIndex: number;
+} {
+  const none = {responses: {}, turnIndex: -1};
+
+  // The reply is the most recent user turn, and only if it is plain text.
+  let turnIndex = -1;
+  let text = '';
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.author !== 'user') {
+      continue;
+    }
+    const parts = event.content?.parts ?? [];
+    const isPlainText =
+      parts.length > 0 && parts.every((p) => typeof p.text === 'string');
+    if (isPlainText) {
+      turnIndex = i;
+      text = parts.map((p) => p.text).join('');
+    }
+    break;
+  }
+  if (turnIndex < 0) {
+    return none;
+  }
+
+  const answered = new Set<string>();
+  for (const event of events) {
+    if (event.author !== 'user') {
+      continue;
+    }
+    for (const fr of getFunctionResponses(event)) {
+      if (fr.id) {
+        answered.add(fr.id);
+      }
+    }
+  }
+
+  // Find the pending confirmation call the reply is answering: scan back from
+  // the reply for the most recent unanswered `adk_request_confirmation`, and
+  // require it to immediately precede the reply (stop at any other user turn).
+  let pendingId: string | undefined;
+  for (let i = turnIndex - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.author === 'user') {
+      break; // another user turn between request and reply -> not immediate
+    }
+    for (const fc of getFunctionCalls(event)) {
+      if (
+        fc.name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME &&
+        fc.id &&
+        !answered.has(fc.id)
+      ) {
+        pendingId = fc.id;
+        break;
+      }
+    }
+    if (pendingId) {
+      break;
+    }
+  }
+  if (!pendingId) {
+    return none;
+  }
+
+  const normalized = text.trim().toLowerCase();
+  let confirmed: boolean;
+  if (AFFIRMATIVE.has(normalized)) {
+    confirmed = true;
+  } else if (NEGATIVE.has(normalized)) {
+    confirmed = false;
+  } else {
+    return none; // unrecognized -> no decision, leave the gate pending
+  }
+
+  return {
+    responses: {[pendingId]: new ToolConfirmation({confirmed})},
+    turnIndex,
+  };
 }
 
 export const REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR =

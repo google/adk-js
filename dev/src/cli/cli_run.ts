@@ -81,6 +81,9 @@ async function runFromInputFile(
       userId: session.userId,
       sessionId: session.id,
       newMessage: {role: 'user', parts: [{text: query}]},
+      // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+      // confirmation (opt-in; off by default on non-interactive surfaces).
+      runConfig: {plainTextToolConfirmation: true},
     };
 
     for await (const event of runner.runAsync(runOptions)) {
@@ -147,6 +150,9 @@ async function runInteractively(
       userId: options.session.userId,
       sessionId: options.session.id,
       newMessage: {role: 'user', parts: [{text: query}]},
+      // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+      // confirmation (opt-in; off by default on non-interactive surfaces).
+      runConfig: {plainTextToolConfirmation: true},
     })) {
       if (event.content && event.content.parts) {
         const text = event.content.parts
