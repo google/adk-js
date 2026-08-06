@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isEmpty} from 'lodash-es';
+
 import {AuthConfig} from '../auth/auth_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
@@ -95,10 +97,10 @@ export function createEventActions(
  */
 export function isDefaultEventActions(actions: EventActions): boolean {
   return (
-    Object.keys(actions.stateDelta).length === 0 &&
-    Object.keys(actions.artifactDelta).length === 0 &&
-    Object.keys(actions.requestedAuthConfigs).length === 0 &&
-    Object.keys(actions.requestedToolConfirmations).length === 0 &&
+    isEmpty(actions.stateDelta) &&
+    isEmpty(actions.artifactDelta) &&
+    isEmpty(actions.requestedAuthConfigs) &&
+    isEmpty(actions.requestedToolConfirmations) &&
     actions.skipSummarization === undefined &&
     actions.transferToAgent === undefined &&
     actions.escalate === undefined
