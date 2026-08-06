@@ -1,0 +1,53 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * TypeScript port of the Python snippet in
+ * https://adk.dev/graphs/routes/#nodes
+ *
+ * The simplest node type: a plain function wrapped as a FunctionNode. It takes
+ * text in, returns text out, and the framework hands that value to the next
+ * node as its input — no session-state writes needed.
+ *
+ * Python returns `Event(output=...)` explicitly; in TypeScript a bare return
+ * value is boxed into an `Event` with that `output` for you, so both forms
+ * below are equivalent.
+ *
+ * Run (offline, no API key):
+ *   npm run sample -- samples/workflows/routes/function_node/agent.ts
+ */
+
+import {
+  createEvent,
+  node,
+  NodeContext,
+  WorkflowAgent,
+  type FunctionNodeHandler,
+} from '@google/adk';
+
+/** Python: `return Event(output=node_input.upper())`. */
+const myFunctionNode: FunctionNodeHandler<string, string> = (
+  _ctx: NodeContext,
+  nodeInput: string,
+) => {
+  const inputTextModified = nodeInput.toUpperCase();
+  return inputTextModified;
+};
+
+/** The explicit form — identical behaviour, useful when you also set `route`. */
+const myExplicitEventNode = (_ctx: NodeContext, nodeInput: string) =>
+  createEvent({output: `${nodeInput} IS AWESOME!`});
+
+export const rootAgent = new WorkflowAgent({
+  name: 'function_node_pipeline',
+  edges: [
+    [
+      'START',
+      node(myFunctionNode, {name: 'my_function_node'}),
+      node(myExplicitEventNode, {name: 'add_suffix'}),
+    ],
+  ],
+});

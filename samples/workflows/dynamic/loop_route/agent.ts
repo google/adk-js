@@ -1,0 +1,102 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * TypeScript port of the Python snippet in
+ * https://adk.dev/graphs/dynamic/#loop-route
+ *
+ *   @node # workflow node
+ *   async def code_workflow(ctx: Context, user_request: str):
+ *     code = await ctx.run_node(coder_agent, user_request)
+ *     check_resp = await ctx.run_node(compile_lint_check, code)
+ *
+ *     while check_resp.findings:
+ *       yield Event(state={"code": code, "findings": check_resp.findings})
+ *       code = await ctx.run_node(fixer_agent, {"code": code, "findings": ...})
+ *       check_resp = await ctx.run_node(compile_lint_check, code)
+ *
+ *     return code
+ *
+ * This is where dynamic workflows earn their keep: the iteration is an ordinary
+ * `while` loop, not a back-edge you have to reason about. Values live in local
+ * variables; state is written only where an agent's instruction template needs
+ * to read it back (`{code}`, `{findings}`).
+ *
+ * Unlike a graph cycle, the loop is trivially bounded — `MAX_FIX_ROUNDS` here —
+ * so a stubborn model cannot spin forever burning live model calls.
+ *
+ * REQUIRES an API key (two agents call a live model). Set GEMINI_API_KEY:
+ *   npm run sample -- samples/workflows/dynamic/loop_route/agent.ts
+ * Try "a function that returns the nth fibonacci number".
+ */
+
+import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+
+/** Safety bound on the refine loop. */
+const MAX_FIX_ROUNDS = 3;
+
+const coderAgent = node(
+  new LlmAgent({
+    name: 'generator_agent',
+    model: 'gemini-2.5-flash',
+    instruction: 'Write python code for the user request. Output code only.',
+  }),
+);
+
+/** Simulates a compile / lint pass. Empty findings means "clean". */
+const compileLintCheck = node(
+  (_ctx: NodeContext, code: string) => {
+    const findings: string[] = [];
+    if (!/"""/.test(code)) {
+      findings.push('every function needs a docstring');
+    }
+    if (!/->/.test(code)) {
+      findings.push('add return type annotations');
+    }
+    return {findings: findings.join('; ')};
+  },
+  {name: 'lint_reviewer'},
+);
+
+const fixerAgent = node(
+  new LlmAgent({
+    name: 'fixer_agent',
+    model: 'gemini-2.5-flash',
+    instruction: `Refactor current code {code}.
+        Based on compile & lint review: {findings}
+        Output code only.`,
+  }),
+);
+
+const codeWorkflow = node(
+  async (ctx: NodeContext, userRequest: string) => {
+    let code = (await ctx.runNode(coderAgent, userRequest)).output as string;
+    let checkResp = (await ctx.runNode(compileLintCheck, code)).output as {
+      findings: string;
+    };
+
+    for (let round = 0; checkResp.findings && round < MAX_FIX_ROUNDS; round++) {
+      // The fixer agent reads `{code}` / `{findings}` from session state.
+      ctx.state.set('code', code);
+      ctx.state.set('findings', checkResp.findings);
+
+      code = (
+        await ctx.runNode(fixerAgent, {code, findings: checkResp.findings})
+      ).output as string;
+      checkResp = (await ctx.runNode(compileLintCheck, code)).output as {
+        findings: string;
+      };
+    }
+
+    return code;
+  },
+  {name: 'code_workflow', rerunOnResume: true},
+);
+
+export const rootAgent = new WorkflowAgent({
+  name: 'root_agent',
+  edges: [['START', codeWorkflow]],
+});
