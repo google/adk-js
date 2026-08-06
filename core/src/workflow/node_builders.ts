@@ -4,10 +4,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {BaseTool, isBaseTool} from '../tools/base_tool.js';
+import {FunctionNode, FunctionNodeHandler} from './nodes/function_node.js';
+import {ToolNode} from './nodes/tool_node.js';
 import type {
   NodeBuilder,
   ParallelWorkerFactory,
 } from './utils/workflow_graph_utils.js';
+
+/** Builds a {@link FunctionNode} from a plain function. */
+const FUNCTION_BUILDER: NodeBuilder = {
+  match: (value) => typeof value === 'function',
+  build: (value, options) => {
+    const handler = value as FunctionNodeHandler;
+    const name = options.name ?? (handler as {name?: string}).name;
+    if (!name) {
+      throw new Error(
+        'node(): the wrapped function has no name; pass {name} explicitly.',
+      );
+    }
+    return new FunctionNode(name, handler, options);
+  },
+};
+
+/** Builds a {@link ToolNode} from a {@link BaseTool}. */
+const TOOL_BUILDER: NodeBuilder = {
+  match: (value) => isBaseTool(value),
+  build: (value, options) => new ToolNode(value as BaseTool, options),
+};
 
 /**
  * The built-in node builders, consulted in order by `buildNode` / `isNodeLike`
@@ -16,10 +40,12 @@ import type {
  * This is a single, explicit, statically-imported list — node-type modules are
  * wired in here rather than self-registering at import time, so there is no
  * global mutable registry and no import-order side effects. Order is the match
- * precedence (first match wins). Each node-type part adds its builder here; the
- * list is empty in the engine-core part.
+ * precedence (first match wins). Each node-type part adds its builder here.
  */
-export const NODE_BUILDERS: readonly NodeBuilder[] = [];
+export const NODE_BUILDERS: readonly NodeBuilder[] = [
+  FUNCTION_BUILDER,
+  TOOL_BUILDER,
+];
 
 /**
  * Wraps an already-built node in a parallel worker. Wired in by the
