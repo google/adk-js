@@ -7,9 +7,15 @@
 import {createEvent, Event} from '../../events/event.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
 import {LlmResponse} from '../../models/llm_response.js';
-import {BasePlanner} from '../../planners/base_planner.js';
-import {BuiltInPlanner} from '../../planners/built_in_planner.js';
-import {PlanReActPlanner} from '../../planners/plan_re_act_planner.js';
+import {BasePlanner, isBasePlanner} from '../../planners/base_planner.js';
+import {
+  BuiltInPlanner,
+  isBuiltInPlanner,
+} from '../../planners/built_in_planner.js';
+import {
+  isPlanReActPlanner,
+  PlanReActPlanner,
+} from '../../planners/plan_re_act_planner.js';
 import {Context} from '../context.js';
 import {InvocationContext, requireAgent} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
@@ -33,9 +39,9 @@ export class NlPlanningRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    if (planner instanceof BuiltInPlanner) {
+    if (isBuiltInPlanner(planner)) {
       planner.applyThinkingConfig(llmRequest);
-    } else if (planner instanceof PlanReActPlanner) {
+    } else if (isPlanReActPlanner(planner)) {
       const planningInstruction = planner.buildPlanningInstruction(
         new ReadonlyContext(invocationContext),
         llmRequest,
@@ -64,6 +70,8 @@ export class NlPlanningResponseProcessor extends BaseLlmResponseProcessor {
     }
 
     const planner = getPlanner(invocationContext);
+    // This asks whether the planner overrode the hook, not what type it is, so
+    // a BuiltInPlanner subclass that implements it still runs.
     if (
       !planner ||
       planner.processPlanningResponse ===
@@ -111,7 +119,7 @@ function getPlanner(
   if (!agent.planner) {
     return undefined;
   }
-  if (agent.planner instanceof BasePlanner) {
+  if (isBasePlanner(agent.planner)) {
     return agent.planner;
   }
   return new PlanReActPlanner();

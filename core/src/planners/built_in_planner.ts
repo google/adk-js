@@ -13,9 +13,34 @@ import {logger} from '../utils/logger.js';
 import {BasePlanner} from './base_planner.js';
 
 /**
+ * A unique symbol to identify ADK built-in planner classes.
+ * Defined once and shared by all BuiltInPlanner instances.
+ */
+const BUILT_IN_PLANNER_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.builtInPlanner',
+);
+
+/**
+ * Type guard to check if an object is an instance of BuiltInPlanner.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of BuiltInPlanner, false
+ *     otherwise.
+ */
+export function isBuiltInPlanner(obj: unknown): obj is BuiltInPlanner {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    BUILT_IN_PLANNER_SIGNATURE_SYMBOL in obj &&
+    obj[BUILT_IN_PLANNER_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * The built-in planner that uses the model's built-in thinking features.
  */
 export class BuiltInPlanner extends BasePlanner {
+  readonly [BUILT_IN_PLANNER_SIGNATURE_SYMBOL] = true;
+
   /**
    * Config for model built-in thinking features. An error will be returned if
    * this field is set for models that don't support thinking.

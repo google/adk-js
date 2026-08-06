@@ -23,6 +23,29 @@ export const ACTION_TAG = '/*ACTION*/';
 export const FINAL_ANSWER_TAG = '/*FINAL_ANSWER*/';
 
 /**
+ * A unique symbol to identify ADK Plan-Re-Act planner classes.
+ * Defined once and shared by all PlanReActPlanner instances.
+ */
+const PLAN_RE_ACT_PLANNER_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.planReActPlanner',
+);
+
+/**
+ * Type guard to check if an object is an instance of PlanReActPlanner.
+ * @param obj The object to check.
+ * @returns True if the object is an instance of PlanReActPlanner, false
+ *     otherwise.
+ */
+export function isPlanReActPlanner(obj: unknown): obj is PlanReActPlanner {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    PLAN_RE_ACT_PLANNER_SIGNATURE_SYMBOL in obj &&
+    obj[PLAN_RE_ACT_PLANNER_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * Plan-Re-Act planner that constrains the LLM response to generate a plan
  * before any action/observation.
  *
@@ -30,6 +53,8 @@ export const FINAL_ANSWER_TAG = '/*FINAL_ANSWER*/';
  * features or setting the thinking config.
  */
 export class PlanReActPlanner extends BasePlanner {
+  readonly [PLAN_RE_ACT_PLANNER_SIGNATURE_SYMBOL] = true;
+
   override buildPlanningInstruction(
     _readonlyContext: ReadonlyContext,
     _llmRequest: LlmRequest,

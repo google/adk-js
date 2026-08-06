@@ -68,7 +68,7 @@ import {
 import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
 import {BasePlanner} from '../planners/base_planner.js';
-import {BuiltInPlanner} from '../planners/built_in_planner.js';
+import {isBuiltInPlanner} from '../planners/built_in_planner.js';
 import {InvocationContext, requireAgent} from './invocation_context.js';
 import {LiveRequest, LiveRequestQueue} from './live_request_queue.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
@@ -624,7 +624,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // BuiltInPlanner; the planner's configuration takes precedence.
     if (
       config.generateContentConfig?.thinkingConfig &&
-      this.planner instanceof BuiltInPlanner &&
+      isBuiltInPlanner(this.planner) &&
       this.planner.thinkingConfig
     ) {
       logger.warn(

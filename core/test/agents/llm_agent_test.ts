@@ -49,6 +49,7 @@ import {
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 import {logger} from '../../src/utils/logger.js';
+import {CODE_EXECUTION_REQUEST_PROCESSOR} from '../../src/agents/processors/code_execution_request_processor.js';
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
@@ -1453,8 +1454,8 @@ describe('LlmAgent planner wiring', () => {
       NL_PLANNING_REQUEST_PROCESSOR,
     );
     expect(nlIndex).toBeGreaterThanOrEqual(0);
-    expect(agent.requestProcessors[nlIndex + 1].constructor.name).toBe(
-      'CodeExecutionRequestProcessor',
+    expect(agent.requestProcessors[nlIndex + 1]).toBe(
+      CODE_EXECUTION_REQUEST_PROCESSOR,
     );
   });
 

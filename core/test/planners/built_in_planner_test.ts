@@ -7,7 +7,9 @@
 import {
   BuiltInPlanner,
   Context,
+  isBuiltInPlanner,
   LlmRequest,
+  PlanReActPlanner,
   ReadonlyContext,
 } from '@google/adk';
 import {ThinkingConfig} from '@google/genai';
@@ -84,5 +86,33 @@ describe('BuiltInPlanner', () => {
       thinkingConfig: {includeThoughts: true},
     });
     expect(planner.processPlanningResponse({} as Context, [])).toBeUndefined();
+  });
+});
+
+class SubclassedBuiltInPlanner extends BuiltInPlanner {}
+
+describe('isBuiltInPlanner', () => {
+  it('accepts a BuiltInPlanner and a subclass of it', () => {
+    expect(isBuiltInPlanner(new BuiltInPlanner({thinkingConfig: {}}))).toBe(
+      true,
+    );
+    expect(
+      isBuiltInPlanner(new SubclassedBuiltInPlanner({thinkingConfig: {}})),
+    ).toBe(true);
+  });
+
+  it('rejects a sibling planner class', () => {
+    expect(isBuiltInPlanner(new PlanReActPlanner())).toBe(false);
+  });
+
+  it('rejects undefined, null, and a plain object', () => {
+    expect(isBuiltInPlanner(undefined)).toBe(false);
+    expect(isBuiltInPlanner(null)).toBe(false);
+    expect(isBuiltInPlanner({})).toBe(false);
+  });
+
+  it('rejects an object that fakes the brand with a wrong value', () => {
+    const impostor = {[Symbol.for('google.adk.builtInPlanner')]: 'yes'};
+    expect(isBuiltInPlanner(impostor)).toBe(false);
   });
 });

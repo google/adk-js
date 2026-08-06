@@ -5,7 +5,9 @@
  */
 
 import {
+  BuiltInPlanner,
   Context,
+  isPlanReActPlanner,
   LlmRequest,
   PlanReActPlanner,
   ReadonlyContext,
@@ -229,5 +231,31 @@ describe('handleNonFunctionCallParts', () => {
     handleNonFunctionCallParts({}, preserved);
     expect(preserved).toHaveLength(1);
     expect(preserved[0].thought).toBeUndefined();
+  });
+});
+
+class SubclassedPlanReActPlanner extends PlanReActPlanner {}
+
+describe('isPlanReActPlanner', () => {
+  it('accepts a PlanReActPlanner and a subclass of it', () => {
+    expect(isPlanReActPlanner(new PlanReActPlanner())).toBe(true);
+    expect(isPlanReActPlanner(new SubclassedPlanReActPlanner())).toBe(true);
+  });
+
+  it('rejects a sibling planner class', () => {
+    expect(isPlanReActPlanner(new BuiltInPlanner({thinkingConfig: {}}))).toBe(
+      false,
+    );
+  });
+
+  it('rejects undefined, null, and a plain object', () => {
+    expect(isPlanReActPlanner(undefined)).toBe(false);
+    expect(isPlanReActPlanner(null)).toBe(false);
+    expect(isPlanReActPlanner({})).toBe(false);
+  });
+
+  it('rejects an object that fakes the brand with a wrong value', () => {
+    const impostor = {[Symbol.for('google.adk.planReActPlanner')]: 'yes'};
+    expect(isPlanReActPlanner(impostor)).toBe(false);
   });
 });
