@@ -117,9 +117,10 @@ export class NodeContext {
     this.actions = opts.actions ?? createEventActions();
     // Writes via `ctx.state` accumulate into `actions.stateDelta`, mirroring
     // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour.
-    this._state = new State(
-      opts.invocationContext.session.state,
+    this._state = new NodeStateView(
+      invocationOverlay(opts.invocationContext),
       this.actions.stateDelta,
+      opts.invocationContext.session.state,
     );
   }
 
@@ -180,5 +181,87 @@ export class NodeContext {
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+}
+
+/**
+ * Per-invocation record of every `ctx.state` write made by the nodes of one
+ * invocation, keyed by the session's live state object.
+ *
+ * `session.state` object identity is stable for the duration of a turn (the
+ * session services mutate it in place, and hand out a fresh object per
+ * `getSession`), so the WeakMap entry naturally scopes to one turn. The
+ * `invocationId` guard covers the case where two invocations share a session
+ * object.
+ */
+const invocationOverlays = new WeakMap<
+  Record<string, unknown>,
+  {invocationId: string; values: Record<string, unknown>}
+>();
+
+/** Returns the write overlay for `ic`'s invocation, creating it on first use. */
+function invocationOverlay(ic: InvocationContext): Record<string, unknown> {
+  const sessionState = ic.session.state;
+  const existing = invocationOverlays.get(sessionState);
+  if (existing && existing.invocationId === ic.invocationId) {
+    return existing.values;
+  }
+  const created = {invocationId: ic.invocationId, values: {}};
+  invocationOverlays.set(sessionState, created);
+  return created.values;
+}
+
+/**
+ * The state view a workflow node sees: its own pending delta, then the
+ * invocation's write overlay, then the session's committed state.
+ *
+ * The overlay exists to keep node-to-node reads honest. `session.state` is
+ * mutated from two directions during a run: nodes write through it
+ * immediately, while the runner separately re-applies each event's
+ * `actions.stateDelta` as it commits that event — and that commit lags node
+ * execution. Re-applying an earlier node's delta therefore rolls back a later
+ * node's write, and any node reading in that window observes the stale value:
+ *
+ *   a: set('attempts', 0)
+ *   b: get -> 0, set('attempts', 1)
+ *   commit(a) re-applies attempts=0        <- rolls back b's write
+ *   c: get -> 0                            <- wrong; b already set 1
+ *   commit(b) re-applies attempts=1        <- rolls forward, too late
+ *
+ * Reads are served from the overlay, which only ever moves forward, so `c`
+ * sees `1`. Writes still land in `session.state` as well, so consumers that
+ * read it directly — notably `{key}` instruction templating in an agent node —
+ * behave exactly as before.
+ */
+class NodeStateView extends State {
+  constructor(
+    overlay: Record<string, unknown>,
+    delta: Record<string, unknown>,
+    private readonly committed: Record<string, unknown>,
+  ) {
+    super(overlay, delta);
+  }
+
+  override get<T>(key: string, defaultValue?: T): T | undefined {
+    if (super.has(key)) {
+      return super.get<T>(key, defaultValue);
+    }
+    return key in this.committed ? (this.committed[key] as T) : defaultValue;
+  }
+
+  override has(key: string): boolean {
+    return super.has(key) || key in this.committed;
+  }
+
+  override set(key: string, value: unknown): void {
+    super.set(key, value);
+    // Keep writing through to the session so readers of `session.state` (agent
+    // instruction templates, callbacks, tools) see the write immediately, as
+    // they did before the overlay existed.
+    this.committed[key] = value;
+  }
+
+  override toRecord(): Record<string, unknown> {
+    return {...this.committed, ...super.toRecord()};
   }
 }
