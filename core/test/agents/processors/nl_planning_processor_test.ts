@@ -15,15 +15,13 @@ import {
   LlmAgent,
   LlmRequest,
   LlmResponse,
+  NL_PLANNING_REQUEST_PROCESSOR,
+  NL_PLANNING_RESPONSE_PROCESSOR,
   PlanReActPlanner,
   PluginManager,
 } from '@google/adk';
 import {Content, Part} from '@google/genai';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {
-  NL_PLANNING_REQUEST_PROCESSOR,
-  NL_PLANNING_RESPONSE_PROCESSOR,
-} from '../../../src/agents/processors/nl_planning_processor.js';
 import {PLANNING_TAG} from '../../../src/planners/plan_re_act_planner.js';
 
 class MockNonLlmAgent extends BaseAgent {

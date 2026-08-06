@@ -47,7 +47,7 @@ class CapturingEchoLlm extends BaseLlm {
   }
 }
 
-describe('PlanReActPlanner end-to-end through the LlmAgent pipeline', () => {
+describe('PlanReActPlanner through the LlmAgent pipeline', () => {
   it('injects the planning instruction and post-processes the response', async () => {
     const model = new CapturingEchoLlm([
       {text: `${PLANNING_TAG} Look up the answer.`},
