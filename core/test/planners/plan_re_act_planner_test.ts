@@ -42,6 +42,8 @@ function functionCallNames(
 }
 
 // The callback context is unused by PlanReActPlanner.processPlanningResponse.
+// PlanReActPlanner ignores the callback context, so the tests pass none. The
+// cast supplies a value the Context parameter type does not allow.
 const NO_CONTEXT = undefined as unknown as Context;
 
 describe('PlanReActPlanner.processPlanningResponse', () => {
@@ -97,6 +99,8 @@ describe('PlanReActPlanner.processPlanningResponse', () => {
     expect(
       planner.processPlanningResponse(
         NO_CONTEXT,
+        // Mirrors adk-python's `if not response_parts` guard, which the
+        // non-nullable Part[] parameter type cannot express.
         undefined as unknown as Part[],
       ),
     ).toBeUndefined();

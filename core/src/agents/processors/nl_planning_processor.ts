@@ -29,7 +29,7 @@ import {
  * Request processor that applies the agent's planner before the model call.
  */
 export class NlPlanningRequestProcessor extends BaseLlmRequestProcessor {
-  // eslint-disable-next-line require-yield
+  // eslint-disable-next-line require-yield -- BaseLlmRequestProcessor mandates an AsyncGenerator, but this processor only mutates the request and has no event to emit
   override async *runAsync(
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,

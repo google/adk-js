@@ -251,6 +251,8 @@ describe('NlPlanningRequestProcessor', () => {
     });
     const ctx = createInvocationContext(agent);
     const llmRequest = createLlmRequest({
+      // LlmRequest.contents is non-nullable, so the cast is the only way to
+      // reach the parity guard that returns early without contents.
       contents: undefined as unknown as Content[],
     });
 
@@ -456,6 +458,8 @@ describe('NlPlanningResponseProcessor', () => {
     const ctx = createInvocationContext(agent);
 
     expect(
+      // Reaches the `!llmResponse` parity guard, which the non-nullable
+      // LlmResponse parameter type cannot express.
       await drainResponse(ctx, undefined as unknown as LlmResponse),
     ).toEqual([]);
   });
