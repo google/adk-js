@@ -7,14 +7,17 @@
 import {FunctionCall} from '@google/genai';
 
 import {Context} from '../agents/context.js';
+import {REQUEST_CONFIRMATION_FUNCTION_CALL_NAME} from '../agents/functions.js';
 import {Event} from '../events/event.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 // Constants
-export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
-  'adk_request_confirmation';
+// Re-exported (not redefined) so every HITL function-call name has exactly one
+// definition, in `agents/functions.ts`. Kept exported here for backwards
+// compatibility with the existing public import path.
+export {REQUEST_CONFIRMATION_FUNCTION_CALL_NAME};
 
 const TOOL_CALL_SECURITY_CHECK_STATES = 'orcas_tool_call_security_check_states';
 const INTERMEDIATE_REQUIRE_TOOL_CALL_CONFIRMATION_ERROR =

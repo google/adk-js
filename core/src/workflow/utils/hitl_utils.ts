@@ -13,6 +13,10 @@
 
 import {Part} from '@google/genai';
 import {
+  REQUEST_EUC_FUNCTION_CALL_NAME as REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from '../../agents/functions.js';
+import {
   AuthCredential,
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
@@ -23,11 +27,10 @@ import {State} from '../../sessions/state.js';
 import {toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
-/** Function-call name marking a request-for-input interrupt. */
-export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
-
-/** Function-call name marking a request-for-credential interrupt. */
-export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
+export {
+  REQUEST_EUC_FUNCTION_CALL_NAME as REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from '../../agents/functions.js';
 
 /**
  * Creates an interrupt {@link Event} from a {@link RequestInput}. The event

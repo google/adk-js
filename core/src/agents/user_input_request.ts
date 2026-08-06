@@ -1,0 +1,212 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Inspection helpers for the "the run is paused, waiting on a human" state.
+ *
+ * A pause is not visible in an event's text: it is carried in a `functionCall`
+ * part whose name is one of the `adk_request_*` interrupt names, with the
+ * prompt buried in that call's `args`. A client that renders only text parts
+ * shows the user nothing and leaves them at an idle prompt with the run
+ * blocked.
+ *
+ * These helpers turn that wire representation into a flat, uniform summary so
+ * any surface — the CLI, the dev UI, an SDK consumer — can ask "is input
+ * required, and what is being asked for?" without knowing how each interrupt
+ * kind encodes its arguments.
+ */
+
+import {AuthConfig} from '../auth/auth_tool.js';
+import {Event} from '../events/event.js';
+import {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from './functions.js';
+
+/**
+ * What a paused run is waiting for.
+ *
+ * - `input`: free-form or structured data (`RequestInput`).
+ * - `credential`: an auth credential, e.g. an API key or an OAuth flow.
+ * - `confirmation`: approval to run a tool guarded by `requireConfirmation`.
+ */
+export type UserInputKind = 'input' | 'credential' | 'confirmation';
+
+/** A single request for user input carried by an event. */
+export interface UserInputRequest {
+  /** What is being asked for. */
+  kind: UserInputKind;
+
+  /**
+   * The id that answers this request: reply with a `functionResponse` carrying
+   * this same id (and {@link functionCallName}).
+   */
+  interruptId: string;
+
+  /** The interrupt's function-call name, i.e. the name to answer with. */
+  functionCallName: string;
+
+  /** The node or agent that raised the request, when known. */
+  author?: string;
+
+  /**
+   * Human-readable prompt for the user. Populated for every kind: the
+   * `RequestInput` message, the credential prompt, or the tool-confirmation
+   * hint. Absent when the raiser supplied none.
+   */
+  message?: string;
+
+  /** Structured data attached to the request (`RequestInput.payload`). */
+  payload?: unknown;
+
+  /** JSON schema the reply is expected to satisfy, when declared. */
+  responseSchema?: unknown;
+
+  /** `confirmation` only: the tool awaiting approval. */
+  toolName?: string;
+
+  /** `credential` only: the auth config to complete. */
+  authConfig?: AuthConfig;
+}
+
+/**
+ * Returns every user-input request carried by a single event, in part order.
+ *
+ * This reports what the event *asks for*; it does not know whether the request
+ * was later answered. Use {@link getPendingUserInputRequests} over a session's
+ * events to get only the ones still outstanding.
+ */
+export function getUserInputRequests(event: Event): UserInputRequest[] {
+  const requests: UserInputRequest[] = [];
+
+  for (const part of event.content?.parts ?? []) {
+    const functionCall = part.functionCall;
+    if (!functionCall?.name) {
+      continue;
+    }
+
+    const args = (functionCall.args ?? {}) as Record<string, unknown>;
+    // Every interrupt kind stashes its id somewhere slightly different.
+    const interruptId =
+      functionCall.id ??
+      asString(args['interruptId']) ??
+      asString(args['functionCallId']);
+    if (!interruptId) {
+      continue;
+    }
+
+    const base = {
+      interruptId,
+      functionCallName: functionCall.name,
+      author: event.author,
+    };
+
+    switch (functionCall.name) {
+      case REQUEST_INPUT_FUNCTION_CALL_NAME:
+        requests.push({
+          ...base,
+          kind: 'input',
+          message: asString(args['message']),
+          payload: args['payload'] ?? undefined,
+          responseSchema: args['responseSchema'] ?? undefined,
+        });
+        break;
+
+      case REQUEST_EUC_FUNCTION_CALL_NAME:
+        requests.push({
+          ...base,
+          kind: 'credential',
+          message: asString(args['message']),
+          authConfig: (args['authConfig'] as AuthConfig) ?? undefined,
+        });
+        break;
+
+      case REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: {
+        const confirmation = args['toolConfirmation'] as
+          | {hint?: unknown; payload?: unknown}
+          | undefined;
+        const originalCall = args['originalFunctionCall'] as
+          | {name?: unknown}
+          | undefined;
+        requests.push({
+          ...base,
+          kind: 'confirmation',
+          // Surfaced as `message` so callers can render any kind uniformly.
+          message: asNonEmptyString(confirmation?.hint),
+          payload: confirmation?.payload ?? undefined,
+          toolName: asString(originalCall?.name),
+        });
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  return requests;
+}
+
+/**
+ * Whether this event asks the user for something.
+ *
+ * A convenience over {@link getUserInputRequests} for the common "should I
+ * prompt?" check.
+ */
+export function requiresUserInput(event: Event): boolean {
+  return getUserInputRequests(event).length > 0;
+}
+
+/**
+ * Returns the requests across a sequence of events that have not been answered
+ * yet, in the order they were raised.
+ *
+ * A request is answered by a later `functionResponse` part carrying the same
+ * id, which is how a resumed session records the user's reply. Pass a session's
+ * events to answer "is this session waiting on the user right now, and for
+ * what?".
+ */
+export function getPendingUserInputRequests(
+  events: readonly Event[],
+): UserInputRequest[] {
+  const answeredIds = new Set<string>();
+  for (const event of events) {
+    for (const part of event.content?.parts ?? []) {
+      const id = part.functionResponse?.id;
+      if (id) {
+        answeredIds.add(id);
+      }
+    }
+  }
+
+  const pending: UserInputRequest[] = [];
+  const seenIds = new Set<string>();
+  for (const event of events) {
+    for (const request of getUserInputRequests(event)) {
+      // A re-run node can raise the same interrupt id more than once; the user
+      // still only owes one answer.
+      if (
+        answeredIds.has(request.interruptId) ||
+        seenIds.has(request.interruptId)
+      ) {
+        continue;
+      }
+      seenIds.add(request.interruptId);
+      pending.push(request);
+    }
+  }
+
+  return pending;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}

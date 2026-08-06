@@ -36,6 +36,7 @@ export {
   generateClientFunctionCallId,
   populateClientFunctionCallId,
 } from '../events/event.js';
+export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
 export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
   'adk_request_confirmation';
