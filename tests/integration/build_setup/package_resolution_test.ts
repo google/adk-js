@@ -80,20 +80,25 @@ function readManifest(dir: string): PackageManifest {
   return JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageManifest;
 }
 
+/** Resolves a manifest-relative target, such as `./dist/esm/index.js`. */
+function distPath(dir: string, target: string): string {
+  return normalize(path.resolve(REPO_ROOT, dir, target));
+}
+
 describe.each(PACKAGES)('$specifier resolution', ({specifier, dir}) => {
   const manifest = readManifest(dir);
-  const distPath = (target: string) =>
-    normalize(path.resolve(REPO_ROOT, dir, target));
 
   beforeAll(() => {
     expect(
-      existsSync(distPath('./dist/esm/index.js')),
+      existsSync(distPath(dir, './dist/esm/index.js')),
       `${dir} is not built; run "npm run build" before this suite`,
     ).toBe(true);
   });
 
   it('resolves the browser condition to the legacy "browser" target', () => {
-    expect(resolveWith('browser', specifier)).toBe(distPath(manifest.browser));
+    expect(resolveWith('browser', specifier)).toBe(
+      distPath(dir, manifest.browser),
+    );
   });
 
   it('resolves the browser condition to a file that exists', () => {
@@ -104,13 +109,13 @@ describe.each(PACKAGES)('$specifier resolution', ({specifier, dir}) => {
 
   it('leaves Node ESM resolution on the esm build', () => {
     expect(resolveWith('import', specifier)).toBe(
-      distPath('./dist/esm/index.js'),
+      distPath(dir, './dist/esm/index.js'),
     );
   });
 
   it('leaves Node CJS resolution on the cjs build', () => {
     expect(resolveWith('require', specifier)).toBe(
-      distPath('./dist/cjs/index.js'),
+      distPath(dir, './dist/cjs/index.js'),
     );
   });
 
@@ -120,7 +125,7 @@ describe.each(PACKAGES)('$specifier resolution', ({specifier, dir}) => {
       `${specifier}/dist/web/index_web.js`,
     );
 
-    expect(resolved).toBe(distPath('./dist/web/index_web.js'));
+    expect(resolved).toBe(distPath(dir, './dist/web/index_web.js'));
     expect(existsSync(resolved)).toBe(true);
   });
 });
