@@ -16,6 +16,7 @@ import {sendInput} from '../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 const TEST_EXECUTION_TIMEOUT = 60000;
+const HOOK_TIMEOUT = 120000;
 
 describe('App loader CLI integration', () => {
   describe.each(['app_ts', 'app_js', 'app_default'])(
@@ -29,7 +30,7 @@ describe('App loader CLI integration', () => {
 
       beforeAll(async () => {
         await execAsync('npm install', {cwd: projectPath});
-      }, TEST_EXECUTION_TIMEOUT);
+      }, HOOK_TIMEOUT);
 
       it(
         'should run app via package.json start script and get responses',
@@ -62,7 +63,7 @@ describe('App loader CLI integration', () => {
         await fs
           .unlink(path.join(projectPath, 'package-lock.json'))
           .catch(() => {});
-      }, TEST_EXECUTION_TIMEOUT);
+      }, HOOK_TIMEOUT);
     },
   );
 });
@@ -77,7 +78,8 @@ describe('AgentLoader discovery and loading integration', () => {
   beforeAll(async () => {
     await execAsync('npm install', {cwd: projectPath});
     loader = new AgentLoader(projectPath);
-  }, TEST_EXECUTION_TIMEOUT);
+    await loader.preloadAgents();
+  }, HOOK_TIMEOUT);
 
   it(
     'should discover apps vs agents across directories and standalone files',
@@ -138,5 +140,5 @@ describe('AgentLoader discovery and loading integration', () => {
     await fs
       .unlink(path.join(projectPath, 'package-lock.json'))
       .catch(() => {});
-  }, TEST_EXECUTION_TIMEOUT);
+  }, HOOK_TIMEOUT);
 });

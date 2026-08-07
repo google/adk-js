@@ -541,6 +541,12 @@ export class AgentLoader {
         }
 
         if (fileOrDir.isDirectory) {
+          if (
+            fileOrDir.name === 'node_modules' ||
+            fileOrDir.name.startsWith('.')
+          ) {
+            return;
+          }
           return this.loadAgentFromDirectory(fileOrDir);
         }
       }),
