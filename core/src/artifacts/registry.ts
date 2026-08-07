@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {redactUriPassword} from '../utils/redact_uri.js';
 import {BaseArtifactService} from './base_artifact_service.js';
 import {FileArtifactService} from './file_artifact_service.js';
 import {GcsArtifactService} from './gcs_artifact_service.js';
@@ -29,5 +30,7 @@ export function getArtifactServiceFromUri(uri: string): BaseArtifactService {
     return new FileArtifactService(rootDir);
   }
 
-  throw new Error(`Unsupported artifact service URI: ${uri}`);
+  throw new Error(
+    `Unsupported artifact service URI: ${redactUriPassword(uri)}`,
+  );
 }

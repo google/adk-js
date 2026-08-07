@@ -5,6 +5,7 @@
  */
 
 import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
+import {redactUriPassword} from '../../utils/redact_uri.js';
 import {
   ENTITIES,
   SCHEMA_VERSION_1_JSON,
@@ -40,7 +41,7 @@ export async function getConnectionOptionsFromUri(
     const {MsSqlDriver} = await import('@mikro-orm/mssql');
     driver = MsSqlDriver;
   } else {
-    throw new Error(`Unsupported database URI: ${uri}`);
+    throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
   }
 
   if (uri.startsWith('sqlite://')) {
