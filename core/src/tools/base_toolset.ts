@@ -77,7 +77,11 @@ export abstract class BaseToolset {
    * @return Whether the tool should be exposed to LLM.
    */
   protected isToolSelected(tool: BaseTool, context: ReadonlyContext): boolean {
-    if (!this.toolFilter) {
+    // An empty tool filter means no filtering: all tools are selected.
+    if (
+      !this.toolFilter ||
+      (Array.isArray(this.toolFilter) && this.toolFilter.length === 0)
+    ) {
       return true;
     }
 

@@ -59,9 +59,15 @@ export interface RoutedAgentConfig extends BaseAgentConfig {
 /**
  * A BaseAgent implementation that delegates to one of multiple agents based on a router function.
  * Routing is strictly limited to the agents passed in the config.
+ *
+ * @remarks
+ * Cloning is supported: {@link RoutedAgent.clone} deep-clones the routing
+ * targets from `config.agents` and re-parents the fresh copies onto the clone,
+ * so the clone is a detached root that routes identically to the original while
+ * leaving the original agent tree untouched.
  */
 @experimental
-export class RoutedAgent extends BaseAgent {
+export class RoutedAgent extends BaseAgent<RoutedAgentConfig> {
   readonly [ROUTED_AGENT_SIGNATURE_SYMBOL] = true;
 
   private readonly agents: Readonly<Record<string, BaseAgent>>;
@@ -88,6 +94,30 @@ export class RoutedAgent extends BaseAgent {
   }
 
   /**
+   * Creates a detached copy of this routed agent.
+   *
+   * The inherited {@link BaseAgent.clone} only deep-clones `subAgents`, but a
+   * `RoutedAgent` derives its routing targets from `config.agents`. Rebuilding
+   * through the base clone alone would re-read the already-parented original
+   * agents and throw "already has a parent agent". This override deep-clones the
+   * routing targets (unless the caller overrides `agents`) so the rebuilt
+   * constructor re-parents fresh, detached copies. The array-vs-record shape
+   * and, for records, the keys are preserved so the router keeps selecting the
+   * same targets.
+   *
+   * @param overrides Config fields to override on the clone. Overriding
+   *     `parentAgent` is rejected by the base implementation.
+   * @returns A new detached `RoutedAgent` of the same concrete class.
+   */
+  override clone(overrides?: Partial<RoutedAgentConfig>): this {
+    const nextOverrides: Partial<RoutedAgentConfig> = {...overrides};
+    if (!('agents' in nextOverrides)) {
+      nextOverrides.agents = cloneRoutingTargets(this.config.agents);
+    }
+    return super.clone(nextOverrides);
+  }
+
+  /**
    * Runs the selected agent via text-based conversation.
    */
   protected async *runAsyncImpl(
@@ -108,4 +138,21 @@ export class RoutedAgent extends BaseAgent {
       agent.runLive(context),
     );
   }
+}
+
+/**
+ * Deep-clones a RoutedAgent's routing targets, preserving whether they were
+ * supplied as an array or a keyed record so the rebuilt constructor derives the
+ * same routing map. Each clone is detached (no parent), so the constructor can
+ * re-parent it without conflict.
+ */
+function cloneRoutingTargets(
+  agents: Readonly<Record<string, BaseAgent>> | BaseAgent[],
+): Readonly<Record<string, BaseAgent>> | BaseAgent[] {
+  if (Array.isArray(agents)) {
+    return agents.map((agent) => agent.clone());
+  }
+  return Object.fromEntries(
+    Object.entries(agents).map(([key, agent]) => [key, agent.clone()]),
+  );
 }

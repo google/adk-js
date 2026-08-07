@@ -1,0 +1,34 @@
+{
+  "assistant": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "lookup",
+                  "args": {"key": "answer"},
+                  "id": "call-1"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "The looked-up value is 42."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}

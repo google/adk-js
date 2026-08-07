@@ -56,6 +56,13 @@ function toGenerateContentResponse(
   return response;
 }
 
+/**
+ * Helper function to advance time / allow microtasks and clocks to tick in tests.
+ */
+export async function tick(ms = 5): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class MockModels {
   private responseIndex = 0;
   private readonly responses: GenerateContentResponse[];
@@ -65,12 +72,14 @@ class MockModels {
   }
 
   async generateContent(_req: unknown): Promise<GenerateContentResponse> {
+    await tick();
     return this.getNextResponse();
   }
 
   async generateContentStream(
     _req: unknown,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
+    await tick();
     const response = this.getNextResponse();
     // Use an IIFE to create the async generator
     return (async function* () {

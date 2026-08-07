@@ -10,14 +10,18 @@ import {
   createEventActions,
   getFunctionCalls,
   getFunctionResponses,
+  hasThoughts,
   hasTrailingCodeExecutionResult,
   isFinalResponse,
+  pruneThoughts,
   stringifyContent,
 } from '@google/adk';
 import {Outcome} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
   createNewEventId,
+  generateClientFunctionCallId,
+  populateClientFunctionCallId,
   transformToCamelCaseEvent,
   transformToSnakeCaseEvent,
 } from '../../src/events/event.js';
@@ -250,6 +254,53 @@ describe('Event Utils', () => {
     });
   });
 
+  describe('hasThoughts', () => {
+    it('returns false if no content or parts', () => {
+      const event = createEvent();
+      expect(hasThoughts(event)).toBe(false);
+    });
+
+    it('returns true if any part has thought === true', () => {
+      const event = createEvent({
+        content: {
+          parts: [{text: 'hello'}, {text: 'thinking...', thought: true}],
+        },
+      });
+      expect(hasThoughts(event)).toBe(true);
+    });
+
+    it('returns false if no part has thought === true', () => {
+      const event = createEvent({
+        content: {
+          parts: [{text: 'hello'}, {text: 'world'}],
+        },
+      });
+      expect(hasThoughts(event)).toBe(false);
+    });
+  });
+
+  describe('pruneThoughts', () => {
+    it('returns event unchanged if no content or parts', () => {
+      const event = createEvent();
+      expect(pruneThoughts(event)).toEqual(event);
+    });
+
+    it('removes parts with thought === true', () => {
+      const event = createEvent({
+        content: {
+          parts: [
+            {text: 'thinking...', thought: true},
+            {text: 'hello'},
+            {text: 'more thoughts', thought: true},
+            {text: 'world'},
+          ],
+        },
+      });
+      const pruned = pruneThoughts(event);
+      expect(pruned.content!.parts).toEqual([{text: 'hello'}, {text: 'world'}]);
+    });
+  });
+
   describe('createNewEventId', () => {
     it('generates an 8-character string', () => {
       const id = createNewEventId();
@@ -321,6 +372,96 @@ describe('Event Utils', () => {
         'preserve-my-key': 'value',
         NestedKey: 'value2',
       });
+    });
+
+    it('preserves workflow output and agentState keys verbatim', () => {
+      const camelEvent = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        output: {cityName: 'Paris', timeInfo: '10:10 AM'},
+        actions: createEventActions({
+          agentState: {input: {userId: 42, requestedItems: ['a']}},
+        }),
+      });
+      const snakeEvent = transformToSnakeCaseEvent(camelEvent);
+      // Arbitrary payloads must NOT be snake_cased.
+      expect(snakeEvent.output).toEqual({
+        cityName: 'Paris',
+        timeInfo: '10:10 AM',
+      });
+      expect(
+        (snakeEvent.actions as Record<string, unknown>).agent_state,
+      ).toEqual({input: {userId: 42, requestedItems: ['a']}});
+    });
+  });
+
+  describe('event round-trip serialization', () => {
+    it('round-trips workflow output and agentState without mangling keys', () => {
+      const original = createEvent({
+        id: '123',
+        invocationId: 'inv1',
+        output: {cityName: 'Paris', nested: {timeInfo: '10:10 AM'}},
+        route: ['BUG', 'LOGISTICS'],
+        actions: createEventActions({
+          agentState: {input: {userId: 42, camelKey: 'v'}},
+        }),
+      });
+      const restored = transformToCamelCaseEvent(
+        transformToSnakeCaseEvent(original),
+      );
+      expect(restored.output).toEqual({
+        cityName: 'Paris',
+        nested: {timeInfo: '10:10 AM'},
+      });
+      expect(restored.route).toEqual(['BUG', 'LOGISTICS']);
+      expect(restored.actions?.agentState).toEqual({
+        input: {userId: 42, camelKey: 'v'},
+      });
+    });
+  });
+
+  describe('generateClientFunctionCallId', () => {
+    it('should generate a valid ID with prefix', () => {
+      const id = generateClientFunctionCallId();
+      expect(id).toMatch(/^adk-/);
+    });
+  });
+
+  describe('populateClientFunctionCallId', () => {
+    it('should populate ID if missing', () => {
+      const event = createEvent({
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'testTool', args: {}}}],
+        },
+      });
+      populateClientFunctionCallId(event);
+      expect(event.content!.parts![0].functionCall!.id).toBeDefined();
+      expect(event.content!.parts![0].functionCall!.id).toMatch(/^adk-/);
+    });
+
+    it('should not overwrite existing ID', () => {
+      const event = createEvent({
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {name: 'testTool', args: {}, id: 'existing-id'}},
+          ],
+        },
+      });
+      populateClientFunctionCallId(event);
+      expect(event.content!.parts![0].functionCall!.id).toBe('existing-id');
+    });
+
+    it('should handle event with no function calls', () => {
+      const event = createEvent({
+        content: {
+          role: 'model',
+          parts: [{text: 'hello'}],
+        },
+      });
+      populateClientFunctionCallId(event);
+      expect(event.content!.parts![0].text).toBe('hello');
     });
   });
 });

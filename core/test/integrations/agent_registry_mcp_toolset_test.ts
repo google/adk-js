@@ -10,6 +10,7 @@ import {
   GCP_MCP_SERVER_DESTINATION_ID,
 } from '../../src/index.js';
 import {StreamableHTTPConnectionParams} from '../../src/tools/mcp/mcp_session_manager.js';
+import {logger} from '../../src/utils/logger.js';
 
 const mockListTools = vi.fn().mockResolvedValue({
   tools: [
@@ -19,10 +20,12 @@ const mockListTools = vi.fn().mockResolvedValue({
 });
 
 const mockConnect = vi.fn().mockResolvedValue(undefined);
+const mockClose = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: vi.fn().mockImplementation(() => ({
     connect: mockConnect,
+    close: mockClose,
     listTools: mockListTools,
   })),
 }));
@@ -189,6 +192,45 @@ describe('AgentRegistrySingleMCPToolset', () => {
       });
       await toolset.getTools(context);
       expect(headerProvider).toHaveBeenCalledWith(context);
+    });
+  });
+
+  describe('getTools — session cleanup', () => {
+    it('closes the discovery session after listing tools', async () => {
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+
+      await toolset.getTools();
+
+      expect(mockClose).toHaveBeenCalledOnce();
+    });
+
+    it('closes the discovery session when listing tools fails', async () => {
+      mockListTools.mockRejectedValueOnce(new Error('discovery failed'));
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+
+      await expect(toolset.getTools()).rejects.toThrow('discovery failed');
+      expect(mockClose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves the discovery error when closing also fails', async () => {
+      mockListTools.mockRejectedValueOnce(new Error('discovery failed'));
+      mockClose.mockRejectedValueOnce(new Error('close failed'));
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const toolset = new AgentRegistrySingleMCPToolset({
+        connectionParams: BASE_PARAMS,
+      });
+
+      await expect(toolset.getTools()).rejects.toThrow('discovery failed');
+      expect(mockClose).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to close MCP discovery session',
+        expect.objectContaining({message: 'close failed'}),
+      );
+      warnSpy.mockRestore();
     });
   });
 

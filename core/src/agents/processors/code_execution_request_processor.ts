@@ -503,9 +503,6 @@ async function postProcessCodeExecutionResult(
   // Handle output files
   for (const outputFile of codeExecutionResult.outputFiles) {
     const version = await invocationContext.artifactService.saveArtifact({
-      appName: invocationContext.appName || '',
-      userId: invocationContext.userId || '',
-      sessionId: invocationContext.session.id,
       filename: outputFile.name,
       artifact: {
         inlineData: {data: outputFile.content, mimeType: outputFile.mimeType},

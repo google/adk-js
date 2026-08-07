@@ -47,7 +47,7 @@ export function isLoopAgent(obj: unknown): obj is LoopAgent {
  * When sub-agent generates an event with escalate or max_iterations are
  * reached, the loop agent will stop.
  */
-export class LoopAgent extends BaseAgent {
+export class LoopAgent extends BaseAgent<LoopAgentConfig> {
   /**
    * A unique symbol to identify ADK loop agent class.
    */
@@ -91,10 +91,23 @@ export class LoopAgent extends BaseAgent {
     return;
   }
 
-  // eslint-disable-next-line require-yield
   protected async *runLiveImpl(
-    _context: InvocationContext,
+    context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    throw new Error('This is not supported yet for LoopAgent.');
+    for (let iteration = 0; iteration < this.maxIterations; iteration++) {
+      for (const subAgent of this.subAgents) {
+        for await (const event of subAgent.runLive(context)) {
+          if (context.abortSignal?.aborted) {
+            return;
+          }
+
+          yield event;
+
+          if (event.actions?.escalate) {
+            return;
+          }
+        }
+      }
+    }
   }
 }

@@ -14,6 +14,7 @@ import {
 } from '../../src/cli/deploy/cli_deploy_agent_engine.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
+  createTempDir,
   isFile,
   isFolderExists,
   loadFileData,
@@ -38,7 +39,12 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const actual = (await importOriginal<
+    typeof import('node:fs/promises')
+  >()) as typeof import('node:fs/promises') & {
+    cp: (...args: unknown[]) => unknown;
+    default?: Record<string, unknown>;
+  };
   const isCoveragePath = (path: unknown) => {
     const pathStr = typeof path === 'string' ? path : String(path || '');
     return (
@@ -93,7 +99,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     return actual.readdir(path, opts);
   });
 
-  const mockFs = {
+  const mockFs: Record<string, unknown> = {
     ...actual,
     cp: mockCp,
     mkdir: mockMkdir,
@@ -125,6 +131,7 @@ vi.mock('../../src/utils/agent_loader.js', () => ({
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFolderExists: vi.fn(),
   loadFileData: vi.fn(),
@@ -133,12 +140,14 @@ vi.mock('../../src/utils/file_utils.js', () => ({
 }));
 
 const mockCreateInternal = vi.fn();
+const mockUpdateInternal = vi.fn();
 const mockGetAgentOperationInternal = vi.fn();
 
 vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
   Client: class {
     agentEnginesInternal = {
       createInternal: mockCreateInternal,
+      updateInternal: mockUpdateInternal,
       getAgentOperationInternal: mockGetAgentOperationInternal,
     };
   },
@@ -214,6 +223,11 @@ describe('deployToAgentEngine', () => {
       done: false,
     });
 
+    mockUpdateInternal.mockResolvedValue({
+      name: 'operations/test-update-operation',
+      done: false,
+    });
+
     mockGetAgentOperationInternal.mockResolvedValue({
       done: true,
       response: {
@@ -286,6 +300,25 @@ describe('deployToAgentEngine', () => {
       exists = false;
     }
     expect(exists).toBe(false);
+  });
+
+  it('should create a private temp folder when none is supplied', async () => {
+    const createdTempFolder = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent_engine_deploy_src-'),
+    );
+    globalThis.fsMockTempFolder = createdTempFolder;
+    (createTempDir as Mock).mockResolvedValue(createdTempFolder);
+
+    await deployToAgentEngine({...defaultOptions, tempFolder: undefined});
+
+    expect(createTempDir).toHaveBeenCalledWith('agent_engine_deploy_src');
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['builds', 'submit', createdTempFolder]),
+      expect.any(Object),
+    );
+    expect(isFolderExists).not.toHaveBeenCalled();
+    await expect(fs.access(createdTempFolder)).rejects.toThrow();
   });
 
   it('should deploy successfully with all optional parameters', async () => {
@@ -567,4 +600,153 @@ describe('deployToAgentEngine', () => {
 
     vi.useRealTimers();
   }, 30000);
+
+  it('should update existing Reasoning Engine successfully when short agentEngineId is provided', async () => {
+    const options = {
+      ...defaultOptions,
+      agentEngineId: '12345',
+    };
+
+    mockGetAgentOperationInternal.mockResolvedValue({
+      done: true,
+      response: {
+        name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+      },
+    });
+
+    await deployToAgentEngine(options);
+
+    expect(mockUpdateInternal).toHaveBeenCalledWith({
+      name: 'projects/test-project/locations/us-central1/reasoningEngines/12345',
+      config: {
+        displayName: 'test-agent',
+        description: undefined,
+        spec: {
+          containerSpec: {
+            imageUri:
+              'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
+          },
+          deploymentSpec: {
+            containerConcurrency: 9,
+            minInstances: 1,
+            maxInstances: 10,
+            resourceLimits: {
+              cpu: '1',
+              memory: '2Gi',
+            },
+          },
+        },
+      },
+    });
+    expect(mockCreateInternal).not.toHaveBeenCalled();
+  });
+
+  it('should update existing Reasoning Engine successfully when full resource name agentEngineId is provided', async () => {
+    const options = {
+      ...defaultOptions,
+      agentEngineId:
+        'projects/custom-proj/locations/europe-west4/reasoningEngines/999',
+    };
+
+    mockGetAgentOperationInternal.mockResolvedValue({
+      done: true,
+      response: {
+        name: 'projects/custom-proj/locations/europe-west4/reasoningEngines/999',
+      },
+    });
+
+    await deployToAgentEngine(options);
+
+    expect(mockUpdateInternal).toHaveBeenCalledWith({
+      name: 'projects/custom-proj/locations/europe-west4/reasoningEngines/999',
+      config: {
+        displayName: 'test-agent',
+        description: undefined,
+        spec: {
+          containerSpec: {
+            imageUri:
+              'us-central1-docker.pkg.dev/test-project/agent-engine-repo/agent-engine-agent:latest',
+          },
+          deploymentSpec: {
+            containerConcurrency: 9,
+            minInstances: 1,
+            maxInstances: 10,
+            resourceLimits: {
+              cpu: '1',
+              memory: '2Gi',
+            },
+          },
+        },
+      },
+    });
+    expect(mockCreateInternal).not.toHaveBeenCalled();
+  });
+
+  it('should throw descriptive error if update operation times out when agentEngineId is provided', async () => {
+    const options = {
+      ...defaultOptions,
+      agentEngineId: '12345',
+    };
+
+    let resolveReachedLoop: () => void = () => {};
+    const reachedLoopPromise = new Promise<void>((r) => {
+      resolveReachedLoop = r;
+    });
+
+    mockUpdateInternal.mockImplementation(() => {
+      resolveReachedLoop();
+      return Promise.resolve({
+        name: 'operations/test-update-op',
+        done: false,
+      });
+    });
+
+    mockGetAgentOperationInternal.mockResolvedValue({
+      name: 'operations/test-update-op',
+      done: false,
+    });
+
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+
+    const deployPromise = deployToAgentEngine(options);
+
+    await reachedLoopPromise;
+    await Promise.resolve(); // yield
+
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+
+    await expect(deployPromise).rejects.toThrow(
+      'Reasoning Engine update operation operations/test-update-op did not complete in time.',
+    );
+
+    vi.useRealTimers();
+  }, 30000);
+
+  it('should throw descriptive error if update operation returns apiResponse.error', async () => {
+    const options = {
+      ...defaultOptions,
+      agentEngineId: '12345',
+    };
+
+    mockUpdateInternal.mockResolvedValue({
+      name: 'operations/test-update-op',
+      done: false,
+    });
+
+    mockGetAgentOperationInternal.mockResolvedValue({
+      name: 'operations/test-update-op',
+      done: true,
+      error: {
+        code: 404,
+        message: 'Resource not found',
+      },
+    });
+
+    await expect(deployToAgentEngine(options)).rejects.toThrow(
+      'Reasoning Engine update failed: [Code 404] Resource not found',
+    );
+  });
 });

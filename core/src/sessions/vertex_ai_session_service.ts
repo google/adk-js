@@ -22,7 +22,10 @@ import {Event} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
-import {getExpressModeApiKey} from '../utils/vertex_ai_utils.js';
+import {
+  EXPRESS_MODE_UNSUPPORTED_MESSAGE,
+  getExpressModeApiKey,
+} from '../utils/vertex_ai_utils.js';
 
 import {partialCopy} from '../utils/partial_copy.js';
 import {
@@ -48,12 +51,38 @@ export function isVertexAiConnectionString(uri?: string): boolean {
   return uri?.startsWith('vertexai://') || false;
 }
 
+/**
+ * Quotes a value for safe use as a Google AIP-160 filter string literal.
+ *
+ * Backslashes are escaped first, then double quotes, so that caller-controlled
+ * input stays inside the quoted value and cannot break out to inject additional
+ * filter predicates. See https://google.aip.dev/160.
+ */
+export function quoteFilterLiteral(value: string): string {
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 export interface VertexAiSessionServiceOptions {
   projectId?: string;
   location?: string;
   agentEngineId?: string;
   expressModeApiKey?: string;
   sessions?: Sessions;
+}
+
+/**
+ * The parameters for `VertexAiSessionService.createSession`.
+ *
+ * Extends the common {@link CreateSessionRequest} with the mutually exclusive
+ * session-expiration options supported by Vertex AI Agent Engine Sessions. See
+ * https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1beta1/projects.locations.reasoningEngines.sessions
+ */
+export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
+  /** Lifetime relative to creation, in seconds, e.g. `'7200s'`. */
+  ttl?: string;
+  /** Absolute RFC 3339 UTC expiration, e.g. `'2025-10-01T00:00:00Z'`. */
+  expireTime?: string;
 }
 
 /**
@@ -78,18 +107,17 @@ export class VertexAiSessionService extends BaseSessionService {
       options.expressModeApiKey,
     );
 
-    if (!options.sessions) {
-      if (!this.expressModeApiKey && (!this.projectId || !this.location)) {
-        throw new Error(
-          'Either (Project ID and Location) or an expressModeApiKey is required.',
-        );
-      }
-    }
-
     // sessions is primarily for testing to inject a mock client.
     if (options.sessions) {
       this.sessions = options.sessions;
     } else {
+      if (!this.projectId || !this.location) {
+        throw new Error(
+          this.expressModeApiKey
+            ? EXPRESS_MODE_UNSUPPORTED_MESSAGE
+            : 'Project ID and Location are required.',
+        );
+      }
       const client = new Client({
         project: this.projectId,
         location: this.location,
@@ -116,12 +144,26 @@ export class VertexAiSessionService extends BaseSessionService {
     return match[3];
   }
 
+  /**
+   * Creates a session on Vertex AI Agent Engine.
+   *
+   * @throws if both `ttl` and `expireTime` are specified.
+   */
   async createSession({
     appName,
     userId,
     state,
     sessionId,
-  }: CreateSessionRequest): Promise<Session> {
+    ttl,
+    expireTime,
+  }: VertexAiCreateSessionRequest): Promise<Session> {
+    // The API rejects both together; fail before the RPC.
+    if (ttl != null && expireTime != null) {
+      throw new Error(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+    }
+
     const reasoningEngineId = this.getReasoningEngineId(appName);
     const filteredState = state ? trimTempState(state) : undefined;
     let apiResponse = await this.sessions.createInternal({
@@ -130,6 +172,8 @@ export class VertexAiSessionService extends BaseSessionService {
       config: {
         ...(filteredState ? {sessionState: filteredState} : {}),
         ...(sessionId ? {sessionId} : {}),
+        ...(ttl != null ? {ttl} : {}),
+        ...(expireTime != null ? {expireTime} : {}),
       },
     });
 
@@ -235,8 +279,17 @@ export class VertexAiSessionService extends BaseSessionService {
 
       return session;
     } catch (error: unknown) {
-      const err = error as {code?: number; message?: string};
-      if (err.code === GRPC_NOT_FOUND || err.code === HTTP_NOT_FOUND) {
+      const err = error as {code?: number; status?: number; message?: string};
+      // gRPC transports report NOT_FOUND as a numeric `code`; the
+      // `@google/genai` `ApiClient` behind the Sessions client throws an
+      // `ApiError` carrying a numeric `status` instead. Matched structurally,
+      // not with `instanceof`: `@google-cloud/vertexai` resolves its own copy
+      // of `@google/genai`, so its `ApiError` is a different class object.
+      if (
+        err.code === GRPC_NOT_FOUND ||
+        err.code === HTTP_NOT_FOUND ||
+        err.status === HTTP_NOT_FOUND
+      ) {
         return undefined;
       }
       logger.error(`Error getting session from Vertex AI: ${err.message}`);
@@ -260,7 +313,7 @@ export class VertexAiSessionService extends BaseSessionService {
       const response = await this.sessions.listInternal({
         name: `reasoningEngines/${reasoningEngineId}`,
         config: {
-          ...(userId ? {filter: `user_id="${userId}"`} : {}),
+          ...(userId ? {filter: `user_id=${quoteFilterLiteral(userId)}`} : {}),
           ...(pageToken ? {pageToken} : {}),
         },
       });
@@ -333,10 +386,26 @@ export class VertexAiSessionService extends BaseSessionService {
 
   async deleteSession({
     appName,
-    userId: _userId,
+    userId,
     sessionId,
   }: DeleteSessionRequest): Promise<void> {
     const reasoningEngineId = this.getReasoningEngineId(appName);
+
+    // A session may only be deleted by the user it belongs to. getSession
+    // already enforces this and throws when the stored session's userId does
+    // not match, so load the session first and stop if it is missing or not
+    // owned by this user. This keeps deleteSession consistent with getSession
+    // and with InMemorySessionService.deleteSession.
+    const session = await this.getSession({
+      appName,
+      userId,
+      sessionId,
+      config: {numRecentEvents: 0},
+    });
+    if (!session) {
+      return;
+    }
+
     await this.sessions.delete({
       name: `reasoningEngines/${reasoningEngineId}/sessions/${sessionId}`,
     });

@@ -1,0 +1,46 @@
+[
+  {
+    "key": "2286e7d95f2f2225",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "The product I bought broke after a day."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"The product I bought broke after a day.\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Subject: We're Sorry to Hear About Your Product Issue - How Can We Help?\n\nDear Valued Customer,\n\nThank you for reaching out to us. I'm truly sorry to hear that the product you purchased broke after just one day. That is certainly not the experience we want our customers to have, and I understand how frustrating this must be.\n\nWe pride ourselves on the quality of our products, and we want to make this right for you.\n\nTo help us resolve this swiftly, could you please provide us with a few more details?\n\n*   Your order number (if you have it)\n*   The exact name of the product that broke\n*   A brief description of what happened when it broke\n\nOnce we have this information, we can promptly guide you through our [replacement/return/warranty] process to ensure you either receive a working replacement or a full refund.\n\nPlease reply to this email with the details, or feel free to call our customer service team directly at [Your Phone Number] if you prefer to speak with someone. We're available [Your Customer Service Hours, e.g., Monday-Friday, 9 AM - 5 PM EST].\n\nThank you for your patience and for bringing this to our attention. We look forward to assisting you and ensuring your satisfaction.\n\nSincerely,\n\nThe [Your Company Name] Team"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 73,
+        "candidatesTokenCount": 280,
+        "totalTokenCount": 833,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 73
+          }
+        ],
+        "thoughtsTokenCount": 480,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

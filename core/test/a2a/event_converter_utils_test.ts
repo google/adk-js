@@ -120,12 +120,79 @@ describe('event_converter_utils', () => {
 
       const event = toAdkEvent(message, 'inv1', 'agent1');
       expect(event).toBeDefined();
-      expect(event!.branch).toBe('test-branch');
       expect(event!.errorCode).toBe('404');
       expect(event!.errorMessage).toBe('not found');
     });
 
+    it('never restores branch from peer-supplied metadata, even without a caller-supplied branch', () => {
+      // A remote A2A peer fully controls its own outgoing `adk_branch`
+      // metadata. getContents() (content_processor_utils.ts) uses an
+      // event's `branch` to keep sibling sub-agent conversation contexts
+      // isolated, so restoring it from peer metadata would let a malicious
+      // peer forge a shared-ancestor (or absent) branch to leak its content
+      // into an unrelated sibling agent's LLM context.
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-forged-branch',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hello'}],
+        metadata: {'adk_branch': 'forged-parent-branch'},
+      };
+
+      const event = toAdkEvent(message, 'inv1', 'agent1');
+      expect(event!.branch).toBeUndefined();
+    });
+
+    it('sets branch from the caller-supplied local invocation branch, not from peer metadata', () => {
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-branch-override',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hello'}],
+        metadata: {'adk_branch': 'forged-parent-branch'},
+      };
+
+      const event = toAdkEvent(
+        message,
+        'inv1',
+        'agent1',
+        'coordinator.sub_agent_a',
+      );
+      expect(event!.branch).toBe('coordinator.sub_agent_a');
+    });
+
     describe('Message', () => {
+      it('preserves messages without parts as contentless events', () => {
+        const userMessage: Message = {
+          kind: 'message',
+          messageId: 'msg-empty-user',
+          role: 'user',
+          parts: [],
+        };
+        const agentMessage: Message = {
+          kind: 'message',
+          messageId: 'msg-empty-agent',
+          role: 'agent',
+          parts: [],
+          metadata: {'adk_error_code': 'EMPTY_RESPONSE'},
+        };
+
+        const userEvent = toAdkEvent(userMessage, 'inv1', 'agent1');
+        const agentEvent = toAdkEvent(agentMessage, 'inv1', 'agent1');
+
+        expect(userEvent).toMatchObject({
+          author: 'user',
+          content: undefined,
+          turnComplete: true,
+        });
+        expect(agentEvent).toMatchObject({
+          author: 'agent1',
+          content: undefined,
+          errorCode: 'EMPTY_RESPONSE',
+          turnComplete: true,
+        });
+      });
+
       it('converts user message to AdkEvent', () => {
         const message: Message = {
           kind: 'message',
@@ -169,7 +236,13 @@ describe('event_converter_utils', () => {
         ]);
         expect(event!.turnComplete).toBe(true);
         expect(event!.actions?.escalate).toBe(true);
-        expect(event!.actions?.transferToAgent).toBe('agent2');
+        // Peer-supplied `adk_transfer_to_agent` in the fixture below must be
+        // dropped, not restored -- it drives the local orchestrator's own
+        // control flow and must never come from a remote peer. Asserting
+        // `toBeUndefined()` here (rather than removing the assertion) means
+        // a future regression that re-restores it fails loudly instead of
+        // passing silently.
+        expect(event!.actions?.transferToAgent).toBeUndefined();
         expect(event!.customMetadata).toEqual({
           'a2a:task_id': 'task1',
           'a2a:context_id': 'context1',
@@ -266,6 +339,26 @@ describe('event_converter_utils', () => {
         expect(event!.content?.parts).toEqual([
           {text: 'thinking loudly...', thought: false},
         ]);
+      });
+
+      it('returns undefined for non-final status update with no parts', () => {
+        const nonFinalUpdate: TaskStatusUpdateEvent = {
+          kind: 'status-update',
+          taskId: 'task1',
+          contextId: 'context1',
+          status: {
+            state: 'working',
+            message: {
+              kind: 'message',
+              messageId: 'msg-empty',
+              role: 'agent',
+              parts: [],
+            },
+          },
+          final: false,
+        };
+
+        expect(toAdkEvent(nonFinalUpdate, 'inv1', 'agent1')).toBeUndefined();
       });
 
       it('returns undefined if non-final status update has no message', () => {
@@ -400,6 +493,28 @@ describe('event_converter_utils', () => {
           contextId: 'context1',
           status: {state: 'working'},
         };
+        expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
+      });
+
+      it('returns undefined for completed task with no parts', () => {
+        const task: Task = {
+          kind: 'task',
+          id: 'task1',
+          contextId: 'context1',
+          status: {state: 'completed'},
+        };
+
+        expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
+      });
+
+      it('returns undefined for input-required task with no parts', () => {
+        const task: Task = {
+          kind: 'task',
+          id: 'task1',
+          contextId: 'context1',
+          status: {state: 'input-required'},
+        };
+
         expect(toAdkEvent(task, 'inv1', 'agent1')).toBeUndefined();
       });
 

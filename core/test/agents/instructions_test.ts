@@ -15,6 +15,7 @@ import {injectSessionState} from '../../src/agents/instructions.js';
 function makeContext(
   state: Record<string, unknown> = {},
   artifactService?: unknown,
+  workflowInstructionScope?: unknown,
 ): ReadonlyContext {
   const fakeInvocationContext = {
     session: {
@@ -24,6 +25,7 @@ function makeContext(
       state,
     },
     artifactService,
+    workflowInstructionScope,
   } as unknown as InvocationContext;
 
   return new ReadonlyContext(fakeInvocationContext);
@@ -161,9 +163,6 @@ describe('injectSessionState', () => {
       );
       expect(result).toBe('data=artifact content here');
       expect(mockArtifactService.loadArtifact).toHaveBeenCalledWith({
-        appName: 'app',
-        userId: 'user-1',
-        sessionId: 'sess-1',
         filename: 'report.txt',
       });
     });
@@ -256,5 +255,114 @@ describe('injectSessionState', () => {
     expect(
       await injectSessionState('Hello {invalid key?} and {invalid key}!', ctx),
     ).toBe('Hello {invalid key?} and {invalid key}!');
+  });
+
+  it('serializes object state values to JSON string', async () => {
+    const ctx = makeContext({fruits: {apple: 'red', banana: 'yellow'}});
+    expect(
+      await injectSessionState(
+        'Please tell me all of the keys in `{fruits}`.',
+        ctx,
+      ),
+    ).toBe(
+      'Please tell me all of the keys in `{"apple":"red","banana":"yellow"}`.',
+    );
+  });
+
+  it('serializes array state values to JSON string', async () => {
+    const ctx = makeContext({list: ['apple', 'banana']});
+    expect(await injectSessionState('Fruits: {list}', ctx)).toBe(
+      'Fruits: ["apple","banana"]',
+    );
+  });
+
+  it('throws an error if object state value cannot be serialized', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const ctx = makeContext({circular});
+    await expect(injectSessionState('Data: {circular}', ctx)).rejects.toThrow(
+      /Failed to serialize value for instruction template: Converting circular structure to JSON/,
+    );
+  });
+
+  it('extracts text property when artifact resolves to a Part object', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({text: 'report text content'}),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Data: {artifact.report.txt}', ctx)).toBe(
+      'Data: report text content',
+    );
+  });
+
+  it('serializes non-text Part artifact object to JSON string', async () => {
+    const mockArtifactService = {
+      loadArtifact: vi.fn().mockResolvedValue({
+        inlineData: {mimeType: 'text/plain', data: 'abc'},
+      }),
+    };
+    const ctx = makeContext({}, mockArtifactService);
+    expect(await injectSessionState('Data: {artifact.data.bin}', ctx)).toBe(
+      'Data: {"inlineData":{"mimeType":"text/plain","data":"abc"}}',
+    );
+  });
+
+  describe('workflow field placeholders', () => {
+    it('resolves {Class.field} from the node input', async () => {
+      const ctx = makeContext({}, undefined, {
+        input: {time_info: '10:10 AM', city: 'Paris'},
+      });
+      expect(
+        await injectSessionState(
+          'It is {CityTime.time_info} in {CityTime.city} right now.',
+          ctx,
+        ),
+      ).toBe('It is 10:10 AM in Paris right now.');
+    });
+
+    it('resolves <Class.field from source_node> from predecessor outputs', async () => {
+      const ctx = makeContext({}, undefined, {
+        outputsByNode: {
+          lookup_time_function: {time_info: '9:00 AM', city: 'Rome'},
+        },
+      });
+      expect(
+        await injectSessionState(
+          'It is <CityTime.time_info from lookup_time_function> in ' +
+            '<CityTime.city from lookup_time_function>.',
+          ctx,
+        ),
+      ).toBe('It is 9:00 AM in Rome.');
+    });
+
+    it('resolves workflow fields alongside normal state keys', async () => {
+      const ctx = makeContext({tone: 'formal'}, undefined, {
+        input: {city: 'Paris'},
+      });
+      expect(await injectSessionState('{tone}: {City.city}', ctx)).toBe(
+        'formal: Paris',
+      );
+    });
+
+    it('leaves {Class.field} untouched when there is no workflow scope', async () => {
+      const ctx = makeContext();
+      expect(await injectSessionState('It is {CityTime.time_info}.', ctx)).toBe(
+        'It is {CityTime.time_info}.',
+      );
+    });
+
+    it('leaves <field from node> untouched when there is no workflow scope', async () => {
+      const ctx = makeContext();
+      expect(await injectSessionState('X <A.b from n> Y', ctx)).toBe(
+        'X <A.b from n> Y',
+      );
+    });
+
+    it('leaves an unknown {Class.field} untouched when the field is absent', async () => {
+      const ctx = makeContext({}, undefined, {input: {city: 'Paris'}});
+      expect(await injectSessionState('{CityTime.missing}', ctx)).toBe(
+        '{CityTime.missing}',
+      );
+    });
   });
 });

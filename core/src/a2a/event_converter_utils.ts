@@ -75,6 +75,9 @@ export function toA2AMessage(
  *   status update).
  * @param invocationId - The ADK invocation ID to attach to the resulting event.
  * @param agentName - The name of the agent to use as the event author.
+ * @param branch - The local invocation's branch to attach to the resulting
+ *   event. Must come from the caller's own `InvocationContext`, never from
+ *   the A2A peer: see the comment on `createAdkEventFromMetadata` for why.
  * @returns The converted ADK event, or `undefined` if the A2A event type
  *   produces no content.
  */
@@ -82,23 +85,24 @@ export function toAdkEvent(
   event: A2AEvent,
   invocationId: string,
   agentName: string,
+  branch?: string,
 ): AdkEvent | undefined {
   if (isMessage(event)) {
-    return messageToAdkEvent(event, invocationId, agentName);
+    return messageToAdkEvent(event, invocationId, agentName, branch);
   }
 
   if (isTask(event)) {
-    return taskToAdkEvent(event, invocationId, agentName);
+    return taskToAdkEvent(event, invocationId, agentName, branch);
   }
 
   if (isTaskArtifactUpdateEvent(event)) {
-    return artifactUpdateToAdkEvent(event, invocationId, agentName);
+    return artifactUpdateToAdkEvent(event, invocationId, agentName, branch);
   }
 
   if (isTaskStatusUpdateEvent(event)) {
     return event.final
-      ? finalTaskStatusUpdateToAdkEvent(event, invocationId, agentName)
-      : taskStatusUpdateToAdkEvent(event, invocationId, agentName);
+      ? finalTaskStatusUpdateToAdkEvent(event, invocationId, agentName, branch)
+      : taskStatusUpdateToAdkEvent(event, invocationId, agentName, branch);
   }
 
   return undefined;
@@ -108,18 +112,22 @@ function messageToAdkEvent(
   msg: Message,
   invocationId: string,
   agentName: string,
-  parentEvent?: TaskStatusUpdateEvent,
+  branch?: string,
 ): AdkEvent {
   const parts = toGenAIParts(msg.parts);
+  const content =
+    parts.length === 0
+      ? undefined
+      : msg.role === MessageRole.USER
+        ? createUserContent(parts)
+        : createModelContent(parts);
 
   return {
-    ...createAdkEventFromMetadata(parentEvent || msg),
+    ...createAdkEventFromMetadata(msg),
     invocationId,
     author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
-    content:
-      msg.role === MessageRole.USER
-        ? createUserContent(parts)
-        : createModelContent(parts),
+    branch,
+    content,
     turnComplete: true,
     partial: false,
   };
@@ -129,6 +137,7 @@ function artifactUpdateToAdkEvent(
   a2aEvent: TaskArtifactUpdateEvent,
   invocationId: string,
   agentName: string,
+  branch?: string,
 ): AdkEvent | undefined {
   const partsToConvert = a2aEvent.artifact?.parts || [];
   if (partsToConvert.length === 0) {
@@ -144,6 +153,7 @@ function artifactUpdateToAdkEvent(
     ...createAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
+    branch,
     content: createModelContent(toGenAIParts(partsToConvert)),
     longRunningToolIds: getLongRunningToolIDs(partsToConvert),
     partial,
@@ -154,6 +164,7 @@ function finalTaskStatusUpdateToAdkEvent(
   a2aEvent: TaskStatusUpdateEvent,
   invocationId: string,
   agentName: string,
+  branch?: string,
 ): AdkEvent | undefined {
   const partsToConvert = a2aEvent.status.message?.parts || [];
   if (partsToConvert.length === 0) {
@@ -168,6 +179,7 @@ function finalTaskStatusUpdateToAdkEvent(
     ...createAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
+    branch,
     errorMessage: isFailedTask
       ? getFailedTaskStatusUpdateEventError(a2aEvent)
       : undefined,
@@ -181,6 +193,7 @@ function taskStatusUpdateToAdkEvent(
   a2aEvent: TaskStatusUpdateEvent,
   invocationId: string,
   agentName: string,
+  branch?: string,
 ): AdkEvent | undefined {
   const msg = a2aEvent.status.message;
   if (!msg) {
@@ -188,11 +201,15 @@ function taskStatusUpdateToAdkEvent(
   }
 
   const parts = toGenAIParts(msg.parts);
+  if (parts.length === 0) {
+    return undefined;
+  }
 
   return {
     ...createAdkEventFromMetadata(a2aEvent),
     invocationId,
     author: agentName,
+    branch,
     content: createModelContent(parts),
     turnComplete: false,
     partial: true,
@@ -203,6 +220,7 @@ function taskToAdkEvent(
   a2aTask: Task,
   invocationId: string,
   agentName: string,
+  branch?: string,
 ): AdkEvent | undefined {
   const parts: GenAIPart[] = [];
   const longRunningToolIds: string[] = [];
@@ -230,7 +248,7 @@ function taskToAdkEvent(
     isInputRequiredTaskStatusUpdateEvent(a2aTask);
   const isFailed = isFailedTaskStatusUpdateEvent(a2aTask);
 
-  if (parts.length === 0 && !isTerminal) {
+  if (parts.length === 0 && !isFailed) {
     return undefined;
   }
 
@@ -238,6 +256,7 @@ function taskToAdkEvent(
     ...createAdkEventFromMetadata(a2aTask),
     invocationId,
     author: agentName,
+    branch,
     content: isFailed ? undefined : createModelContent(parts),
     errorMessage: isFailed
       ? getFailedTaskStatusUpdateEventError(a2aTask)
@@ -247,11 +266,24 @@ function taskToAdkEvent(
   };
 }
 
+// EventActions fields a remote A2A peer may set on the event we emit
+// for it. Every other field is dropped: see the comment at the call
+// site in createAdkEventFromMetadata for why.
+const PEER_SETTABLE_ACTION_FIELDS: ReadonlySet<string> = new Set(['escalate']);
+
 function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
   const metadata = a2aEvent.metadata || {};
 
   return createEvent({
-    branch: metadata[A2AMetadataKeys.BRANCH] as string,
+    // `branch` is intentionally NOT restored from peer metadata here (unlike
+    // the other fields below): it is the mechanism getContents() (see
+    // content_processor_utils.ts) uses to keep sibling sub-agent branches'
+    // conversation contexts isolated from each other. A remote A2A peer that
+    // controls its own outgoing metadata could otherwise forge `adk_branch`
+    // (set it to a shared ancestor branch, or omit it) to leak its content
+    // into an unrelated sibling agent's LLM context. Every caller of the
+    // `*ToAdkEvent` functions in this file force-sets `branch` from its own
+    // local `InvocationContext` instead, the same way `author` is handled.
     author: metadata[A2AMetadataKeys.AUTHOR] as string,
     partial: metadata[A2AMetadataKeys.PARTIAL] as boolean,
     errorCode: metadata[A2AMetadataKeys.ERROR_CODE] as string,
@@ -267,10 +299,21 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
       string,
       unknown
     >,
-    actions: createEventActions({
-      escalate: !!metadata[A2AMetadataKeys.ESCALATE],
-      transferToAgent: metadata[A2AMetadataKeys.TRANSFER_TO_AGENT] as string,
-    }),
+    // Only fields in PEER_SETTABLE_ACTION_FIELDS may be restored from
+    // metadata a remote A2A peer controls. Every other action field either
+    // mutates the caller's own session or drives the caller's own control
+    // flow (e.g. `transferToAgent`, see llm_agent.ts), so it must never be
+    // rebuilt from peer-supplied data. Filtering through an allowlist here
+    // (rather than just omitting the unsafe field) means a future action
+    // field is unsafe-by-default: adding it to `candidateActions` alone
+    // does nothing until it's also added to the allowlist.
+    actions: createEventActions(
+      Object.fromEntries(
+        Object.entries({
+          escalate: !!metadata[A2AMetadataKeys.ESCALATE],
+        }).filter(([key]) => PEER_SETTABLE_ACTION_FIELDS.has(key)),
+      ),
+    ),
   });
 }
 

@@ -9,13 +9,25 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {AdkApiClient} from '../../src/server/adk_api_client.js';
 
+/** Makes the mocked `fetch` resolve to an SSE response that yields no events. */
+function mockEmptyStream(fetchMock: ReturnType<typeof vi.fn>): void {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    body: {
+      getReader: () => ({read: async () => ({done: true, value: undefined})}),
+    },
+  });
+}
+
 describe('AdkApiClient', () => {
   const mockBackendUrl = 'http://localhost:3000';
   let client: AdkApiClient;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     client = new AdkApiClient({backendUrl: mockBackendUrl});
-    global.fetch = vi.fn();
+    fetchMock = vi.fn();
+    global.fetch = fetchMock;
   });
 
   afterEach(() => {
@@ -332,6 +344,84 @@ describe('AdkApiClient', () => {
           // do nothing
         }
       }).rejects.toThrow(errorMsg);
+    });
+
+    it('should omit streaming and stateDelta from the request body when they are omitted', async () => {
+      mockEmptyStream(fetchMock);
+
+      await client
+        .runAsync({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        })
+        .next();
+
+      expect(global.fetch).toHaveBeenCalledWith(`${mockBackendUrl}/run_sse`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        }),
+      });
+    });
+
+    it('should include only the optional fields that are provided', async () => {
+      mockEmptyStream(fetchMock);
+
+      await client
+        .runAsync({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+          stateDelta: {counter: 1},
+        })
+        .next();
+
+      expect(global.fetch).toHaveBeenCalledWith(`${mockBackendUrl}/run_sse`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          stateDelta: {counter: 1},
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        }),
+      });
+    });
+
+    it('should send explicit false for streaming when provided', async () => {
+      mockEmptyStream(fetchMock);
+
+      await client
+        .runAsync({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+          streaming: false,
+          stateDelta: {},
+        })
+        .next();
+
+      expect(global.fetch).toHaveBeenCalledWith(`${mockBackendUrl}/run_sse`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          appName: 'app1',
+          userId: 'user1',
+          sessionId: 'session1',
+          streaming: false,
+          stateDelta: {},
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        }),
+      });
     });
   });
 

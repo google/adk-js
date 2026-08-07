@@ -7,8 +7,29 @@
 import path from 'path';
 import {defineConfig} from 'vitest/config';
 
+/**
+ * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
+ * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
+ * exceeds Vitest's 10s default on a slow or loaded machine.
+ */
+const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
+
+/**
+ * Test budget (ms) for the `integration` project: matches the largest per-file
+ * timeout in the repo. Per-file `it()`/hook timeouts still override both.
+ */
+const INTEGRATION_TEST_TIMEOUT_MS = 60000;
+
 export default defineConfig({
   test: {
+    poolOptions: {
+      forks: {
+        execArgv: ['--max-old-space-size=8192'],
+      },
+      threads: {
+        execArgv: ['--max-old-space-size=8192'],
+      },
+    },
     projects: [
       {
         test: {
@@ -56,6 +77,8 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
+          testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(

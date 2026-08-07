@@ -1,0 +1,273 @@
+[
+  {
+    "key": "58068ee216d63eb1",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"intake_agent\".\n\nYou are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "name": "Jane Doe",
+                    "phoneNumber": "555-123-4567"
+                  },
+                  "id": "adk-ef58a3ea-f2ab-4ace-af69-c611706d22de"
+                },
+                "thoughtSignature": "CuADARFNMg9GT3TBqfAtQkC299opTrVHTOTgRRnuDS2d1rVWaTYKLXtlnYz5gXaQE+zgORiDxCRxNjVilAn9F9/vHx0bNDsQkVSFbxpgTAC/tRQvaSB+YEnEL8pA5SgJlNVQ9zDurfcHo8idZ4VhskYxUIv/8hpuXk19uBXMhDbJcntpty+CwAmeIEMYsUwel450UuAGkQ4rExcjtJSJQmeN9su5zLE3iGE7rU/hPdxgfQb+BJT2GPXkESnAcdvKumMcUrFYUZPU7+1xsCwsn63mhS/v8AW+nLDmZPjHoC6MWYVqHSv6strcTy4G3fGSQtN0nyU5tcwnTDPqtMpyBIrH0g+qqWS7O5yIvdpwhWK3EWvZzhK144vrJ6ZfxIYazHo5G20JTSTQbCnU9Z8tB8OfhW9dwGZECcGtUi/oun77s5Of7KKQqetekHdoqiNXUw+HzV5TRiehLWj3SVCoFyvv3eK7rIwC4ztn+gXv/dBpWweSzTpcykapbE1AaiSQxJv98FwECBqM7VWJ1pwV6hyrDnlsIij8JPu9FPAgGAruirtmXjhdaOFZf6iOSM7BwyhUN231FRxP0PZJEo6v7eqqmYmWP2ujZMACxySoHbea5J8b0PgTxPlJW4wlg0ILVcDy"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 266,
+        "candidatesTokenCount": 32,
+        "totalTokenCount": 409,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 266
+          }
+        ],
+        "thoughtsTokenCount": 111,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "4d654d41f3ce18f9",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[intake_agent] called tool `finish_task` with parameters: {\"name\":\"Jane Doe\",\"phoneNumber\":\"555-123-4567\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[intake_agent] tool `finish_task` returned result: {\"result\":\"Task completed.\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-260437d1-712b-4857-b21d-9a6772944737"
+                },
+                "thoughtSignature": "CpMCARFNMg/GyJi/a3WGeYtBjbQgJGfReCduuU7Aez1tzyYkckkGnDFCpL+2yVS2wzIasyjwXBOFaejPdYWAkOrvUBHH9zB934s32gVjAzBFvasswkRXu7DgS0srvUqgtZQHY0tT81vJERo1xU0fUhV/LPbm2KrQzkgRAWXi8KvT/ERUQt+crjJPoGNWVcshRSjUhA3wC634iL36XWSVJuoRcEmQMXkfFMqBZ6Ngx4+TAL9z0iCKTta2opg8ur/D4VowHrGSU50vQh6Z6iLl13RbvEDpx7EC8uc8MXDWDQzf/Xx1rEoghYni1hkMsH7UdwKYBoSzTfkOkcROA/VKZPir8V3G2pKZ1XstblJvEAAo0nORx3U="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 235,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 296,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 235
+          }
+        ],
+        "thoughtsTokenCount": 51,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "e21a9474d751f471",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[intake_agent] called tool `finish_task` with parameters: {\"name\":\"Jane Doe\",\"phoneNumber\":\"555-123-4567\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[intake_agent] tool `finish_task` returned result: {\"result\":\"Task completed.\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "name": "find_orders",
+                "args": {}
+              },
+              "thoughtSignature": "CpMCARFNMg/GyJi/a3WGeYtBjbQgJGfReCduuU7Aez1tzyYkckkGnDFCpL+2yVS2wzIasyjwXBOFaejPdYWAkOrvUBHH9zB934s32gVjAzBFvasswkRXu7DgS0srvUqgtZQHY0tT81vJERo1xU0fUhV/LPbm2KrQzkgRAWXi8KvT/ERUQt+crjJPoGNWVcshRSjUhA3wC634iL36XWSVJuoRcEmQMXkfFMqBZ6Ngx4+TAL9z0iCKTta2opg8ur/D4VowHrGSU50vQh6Z6iLl13RbvEDpx7EC8uc8MXDWDQzf/Xx1rEoghYni1hkMsH7UdwKYBoSzTfkOkcROA/VKZPir8V3G2pKZ1XstblJvEAAo0nORx3U="
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "yes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-073f219b-5ff5-4610-9234-953a9582fdd3"
+                },
+                "thoughtSignature": "CosCARFNMg/NlEQswaTxIggapo/vt59KmAsMQN9Z5N0Cio6e7eMj315KCbtJXNtGab6bjfatIDZHnE7ARgOCi+DJ9d4atPj1tA5BI2s2Ms2s444m05pEOFFih7v1JAbBd4S+7hrsaJdR4TvKuRX6sgc8PLfXFl7SbKUfSdLRhW3HaEoBQAgKaJlAFSfgZj/9Vmu7oue5i5Pkcfe+vULjoQAT8q6eUbYiLynwUF5AxyR8/c9gcBI1Y4mhWr/TK+n4mxMmXNlrMAV2NAXR6Kf+PwjIvAPLdYxjbMtsODlDYBpuLEP7Ss28PtTYo/DOAR8O8etNTLUxcPyHtRi85+jTPKcQyMGOpUXI1KQLo3SE"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 270,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 331,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 270
+          }
+        ],
+        "thoughtsTokenCount": 51,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

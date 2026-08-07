@@ -52,6 +52,8 @@ web runtimes.
 
 ## 🚀 Installation
 
+> **Prerequisite:** ADK for TypeScript requires a current Node.js LTS release.
+
 ```bash
 npm install @google/adk
 npm install -D @google/adk-devtools
@@ -69,7 +71,19 @@ dependency.
 
 ## Quick Start
 
-Define an agent:
+Set up authentication. Get an API key from
+[Google AI Studio](https://aistudio.google.com/app/apikey) and put it in a
+`.env` file next to your agent:
+
+```bash
+echo "GOOGLE_GENAI_API_KEY=your-api-key-here" > .env
+```
+
+> Using Vertex AI instead? Set `GOOGLE_GENAI_USE_VERTEXAI=1`,
+> `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION` in place of the API key,
+> and authenticate with `gcloud auth application-default login`.
+
+Define an agent in `agent.ts`:
 
 ```typescript
 import {LlmAgent, GOOGLE_SEARCH} from '@google/adk';
@@ -88,11 +102,15 @@ Run from your agent project directory:
 
 ```bash
 # Interactive CLI
-npx adk run agent.ts
+npx @google/adk-devtools run agent.ts
 
 # Web UI
-npx adk web
+npx @google/adk-devtools web
 ```
+
+> Always name the package. If `@google/adk-devtools` is not installed, bare
+> `npx adk` silently downloads and runs an unrelated `adk` package from the
+> public registry.
 
 The `adk web` command launches a development UI for testing and debugging
 agents:

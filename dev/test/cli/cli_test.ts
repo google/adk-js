@@ -147,6 +147,13 @@ describe('CLI Entrypoint', () => {
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2a).toBe(true);
     });
+
+    it('should pass a2aAuthToken when --a2a_auth_token is set', async () => {
+      await parse(['web', '--a2a', '--a2a_auth_token', 'tok']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.a2aAuthToken).toBe('tok');
+    });
   });
 
   describe('command: api_server', () => {
@@ -166,6 +173,13 @@ describe('CLI Entrypoint', () => {
 
       const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
       expect(args.a2a).toBe(true);
+    });
+
+    it('should pass a2aAuthToken when --a2a_auth_token is set', async () => {
+      await parse(['api_server', '--a2a', '--a2a_auth_token', 'tok']);
+
+      const args = (AdkApiServer as unknown as Mock).mock.calls[0][0];
+      expect(args.a2aAuthToken).toBe('tok');
     });
   });
 
@@ -264,6 +278,14 @@ describe('CLI Entrypoint', () => {
       );
     });
 
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'cloud_run']);
+
+      expect(
+        (deployToCloudRun as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
+    });
+
     it('should pass args to deployToCloudRun including unknowns', async () => {
       const args = [
         'deploy',
@@ -303,6 +325,24 @@ describe('CLI Entrypoint', () => {
         a2a: true,
       });
     });
+
+    it('should pass a2aAuthToken to deployToCloudRun when --a2a_auth_token is set', async () => {
+      await parse([
+        'deploy',
+        'cloud_run',
+        './my-agent-path',
+        '--project=my-proj',
+        '--region=us-west1',
+        '--a2a',
+        '--a2a_auth_token=tok',
+      ]);
+
+      const args = (deployToCloudRun as Mock).mock.calls[0][0];
+      expect(args).toMatchObject({a2a: true, a2aAuthToken: 'tok'});
+      // A recognised flag must not also be passed through as an unknown one,
+      // which gcloud would reject.
+      expect(args.extraGcloudArgs).toEqual([]);
+    });
   });
 
   describe('command: deploy agent_engine', () => {
@@ -316,6 +356,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
     });
 
     it('should pass args to deployToAgentEngine', async () => {
@@ -352,6 +400,14 @@ describe('CLI Entrypoint', () => {
         a2a: true,
       });
     });
+
+    it('should pass agent_engine_id to deployToAgentEngine when --agent_engine_id is set', async () => {
+      await parse(['deploy', 'agent_engine', '--agent_engine_id', '12345']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentEngineId: '12345',
+      });
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -365,6 +421,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should pass agent_engine_id to deployToAgentEngine when --agent_engine_id is set', async () => {
+      await parse(['deploy', 'reasoning_engine', '--agent_engine_id', '12345']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentEngineId: '12345',
+      });
     });
   });
 });

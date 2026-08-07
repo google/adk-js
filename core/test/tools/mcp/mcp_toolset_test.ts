@@ -25,9 +25,23 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
           {name: 'other-tool', description: 'Another tool', inputSchema: {}},
         ],
       }),
+      listResources: vi.fn().mockResolvedValue({
+        resources: [
+          {uri: 'file:///res1', name: 'res1'},
+          {uri: 'file:///res2', name: 'res2'},
+        ],
+      }),
+      readResource: vi.fn().mockResolvedValue({
+        contents: [
+          {uri: 'file:///res1', mimeType: 'text/plain', text: 'hello'},
+        ],
+      }),
     })),
   };
 });
+
+/** A client method stub that resolves to nothing (connect/close). */
+const noop = () => vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
   return {
@@ -147,6 +161,176 @@ describe('MCPToolset', () => {
       await expect(toolset.getTools()).rejects.toThrow('List tools failed');
       expect(spy).toHaveBeenCalledOnce();
       expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(0);
+    });
+  });
+
+  describe('resources', () => {
+    it('listResources returns the mapped resource names', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      const names = await toolset.listResources();
+
+      expect(names).toEqual(['res1', 'res2']);
+    });
+
+    it('getResourceInfo returns the matching resource', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      const info = await toolset.getResourceInfo('res1');
+
+      expect(info.name).toBe('res1');
+      expect(info.uri).toBe('file:///res1');
+    });
+
+    it('getResourceInfo rejects when the name is unknown', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      await expect(toolset.getResourceInfo('nope')).rejects.toThrow(
+        "Resource with name 'nope' not found.",
+      );
+    });
+
+    it('readResource resolves the URI and returns the contents', async () => {
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      const readResource = vi.fn().mockResolvedValue({
+        contents: [{uri: 'file:///res1', text: 'hello'}],
+      });
+      vi.mocked(Client)
+        .mockImplementationOnce(
+          () =>
+            ({
+              connect: noop(),
+              close: noop(),
+              listResources: vi.fn().mockResolvedValue({
+                resources: [{uri: 'file:///res1', name: 'res1'}],
+              }),
+            }) as unknown as Client,
+        )
+        .mockImplementationOnce(
+          () =>
+            ({
+              connect: noop(),
+              close: noop(),
+              readResource,
+            }) as unknown as Client,
+        );
+
+      const toolset = new MCPToolset(stdioParams);
+      const contents = await toolset.readResource('res1');
+
+      expect(readResource).toHaveBeenCalledWith({uri: 'file:///res1'});
+      expect(contents).toEqual([{uri: 'file:///res1', text: 'hello'}]);
+    });
+
+    it('readResource rejects when the name is unknown', async () => {
+      const toolset = new MCPToolset(stdioParams);
+
+      await expect(toolset.readResource('nope')).rejects.toThrow(
+        "Resource with name 'nope' not found.",
+      );
+    });
+
+    it('readResource rejects when the resolved resource has no URI', async () => {
+      const {Client} =
+        await import('@modelcontextprotocol/sdk/client/index.js');
+      vi.mocked(Client).mockImplementationOnce(
+        () =>
+          ({
+            connect: noop(),
+            close: noop(),
+            listResources: vi.fn().mockResolvedValue({
+              resources: [{uri: '', name: 'res1'}],
+            }),
+          }) as unknown as Client,
+      );
+
+      const toolset = new MCPToolset(stdioParams);
+
+      await expect(toolset.readResource('res1')).rejects.toThrow(
+        "Resource 'res1' has no URI.",
+      );
+    });
+
+    describe('cleanup', () => {
+      it('closes the session after listResources succeeds', async () => {
+        const toolset = new MCPToolset(stdioParams);
+        const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+        await toolset.listResources();
+
+        expect(spy).toHaveBeenCalledOnce();
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          0,
+        );
+      });
+
+      it('closes the session even if the client listResources rejects', async () => {
+        const {Client} =
+          await import('@modelcontextprotocol/sdk/client/index.js');
+        vi.mocked(Client).mockImplementationOnce(
+          () =>
+            ({
+              connect: noop(),
+              close: noop(),
+              listResources: vi.fn().mockRejectedValue(new Error('list boom')),
+            }) as unknown as Client,
+        );
+
+        const toolset = new MCPToolset(stdioParams);
+        const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+        await expect(toolset.listResources()).rejects.toThrow('list boom');
+        expect(spy).toHaveBeenCalledOnce();
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          0,
+        );
+      });
+
+      it('closes both sessions after readResource succeeds', async () => {
+        const toolset = new MCPToolset(stdioParams);
+        const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+        await toolset.readResource('res1');
+
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          0,
+        );
+      });
+
+      it('closes both sessions even if the client readResource rejects', async () => {
+        const {Client} =
+          await import('@modelcontextprotocol/sdk/client/index.js');
+        vi.mocked(Client)
+          .mockImplementationOnce(
+            () =>
+              ({
+                connect: noop(),
+                close: noop(),
+                listResources: vi.fn().mockResolvedValue({
+                  resources: [{uri: 'file:///res1', name: 'res1'}],
+                }),
+              }) as unknown as Client,
+          )
+          .mockImplementationOnce(
+            () =>
+              ({
+                connect: noop(),
+                close: noop(),
+                readResource: vi.fn().mockRejectedValue(new Error('read boom')),
+              }) as unknown as Client,
+          );
+
+        const toolset = new MCPToolset(stdioParams);
+        const spy = vi.spyOn(toolset['mcpSessionManager'], 'closeSession');
+
+        await expect(toolset.readResource('res1')).rejects.toThrow('read boom');
+        expect(spy).toHaveBeenCalledTimes(2);
+        expect(toolset['mcpSessionManager'].getActiveSessions()).toHaveLength(
+          0,
+        );
+      });
     });
   });
 });

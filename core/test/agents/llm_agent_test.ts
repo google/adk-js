@@ -16,18 +16,22 @@ import {
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createSession,
   Event,
+  FunctionTool,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   PluginManager,
   RunAsyncToolRequest,
+  Runner,
   Session,
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 
@@ -786,6 +790,46 @@ describe('LlmAgent Abort Handling', () => {
   });
 });
 
+describe('LlmAgent postprocess empty parts filtering', () => {
+  it('should not yield an event when LLM response has empty parts array', async () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: new MockLlm({
+        content: {role: 'model', parts: []},
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 0,
+          totalTokenCount: 10,
+        },
+        finishReason: 'STOP' as never,
+        partial: false,
+      }),
+    });
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: {
+        id: 'sess_123',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent,
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe('LlmAgent Default Request Processors', () => {
   it('includes AUTH_PREPROCESSOR in default requestProcessors before CONTENT_REQUEST_PROCESSOR', () => {
     const agent = new LlmAgent({
@@ -797,5 +841,221 @@ describe('LlmAgent Default Request Processors', () => {
       CONTENT_REQUEST_PROCESSOR,
     );
     expect(authIndex).toBeLessThan(contentIndex);
+  });
+});
+
+describe('LlmAgent outputSchema with tools', () => {
+  const VERTEX_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+
+  const OUTPUT_SCHEMA: Schema = {
+    type: Type.OBJECT,
+    properties: {answer: {type: Type.STRING}},
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * Records the single request the agent builds so that all three gated sites
+   * can be asserted against one run of the default processor chain.
+   */
+  class CapturingLlm extends BaseLlm {
+    capturedRequest?: LlmRequest;
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedRequest = request;
+      yield {content: {role: 'model', parts: [{text: '{"answer": "42"}'}]}};
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  async function captureRequest(options: {
+    model: string;
+    withTools: boolean;
+  }): Promise<LlmRequest> {
+    const llm = new CapturingLlm({model: options.model});
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: llm,
+      instruction: 'Base instruction',
+      outputSchema: OUTPUT_SCHEMA,
+      tools: options.withTools
+        ? [
+            new FunctionTool({
+              name: 'some_tool',
+              description: 'A test tool',
+              execute: () => 'result',
+            }),
+          ]
+        : [],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: createSession({
+        id: 'sess_123',
+        events: [],
+        appName: 'test-app',
+        userId: 'test-user',
+      }),
+      agent,
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _ of agent.runAsync(invocationContext)) {
+      // Drain the run so that the request is fully built.
+    }
+
+    const request = llm.capturedRequest;
+    if (!request) {
+      expect.fail('the agent never called the model');
+    }
+    return request;
+  }
+
+  it('uses the native response schema on Vertex AI with a Gemini 2.0+ model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeDefined();
+    expect(request.config?.responseMimeType).toBe('application/json');
+    expect(request.toolsDict).not.toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).not.toContain(
+      'set_model_response',
+    );
+  });
+
+  it('uses the set_model_response workaround outside the Vertex AI variant', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it('uses the set_model_response workaround on Vertex AI with a pre-2.0 model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-1.5-pro',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it.each(['true', undefined])(
+    'uses the native response schema without tools when %s',
+    async (vertexEnv) => {
+      vi.stubEnv(VERTEX_ENV_VAR, vertexEnv);
+
+      const request = await captureRequest({
+        model: 'gemini-2.5-flash',
+        withTools: false,
+      });
+
+      expect(request.config?.responseSchema).toBeDefined();
+      expect(request.toolsDict).not.toHaveProperty('set_model_response');
+      expect(request.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+    },
+  );
+
+  it('persists state writes made in processLlmRequest across turns', async () => {
+    class StateProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'state_probe_tool', description: 'test probe'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        const {toolContext} = request;
+        const current = toolContext.state.get<number>('probe_counter') ?? 0;
+        toolContext.state.set('probe_counter', current + 1);
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return Promise.resolve({result: 'ok'});
+      }
+    }
+
+    const tool = new StateProbeTool();
+    const mockLlm = new MockLlm({
+      content: {role: 'model', parts: [{text: 'Done'}]},
+    });
+    const agent = new LlmAgent({
+      name: 'probe_agent',
+      model: mockLlm,
+      tools: [tool],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 1'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn1 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn1?.state?.['probe_counter']).toBe(1);
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 2'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn2 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
   });
 });

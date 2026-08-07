@@ -11,6 +11,7 @@ import {
   getContents,
   getCurrentTurnContents,
   mergeFunctionResponseEvents,
+  removeClientFunctionCallId,
 } from '../../../src/agents/processors/content_processor_utils.js';
 
 describe('getContents', () => {
@@ -1088,5 +1089,119 @@ describe('getContents', () => {
     const contents = getContents([e0], 'my_agent', 'main.agentA.subAgent');
     expect(contents).toHaveLength(1);
     expect(contents[0].parts?.[0].text).toBe('hello');
+  });
+
+  it('should reject substring false positives in getContents (e.g. agent_1.agent vs agent_1.agent_2)', () => {
+    const e0 = createEvent({
+      author: 'user',
+      branch: 'agent_1.agent',
+      content: {
+        role: 'user',
+        parts: [{text: 'event from agent_1.agent'}],
+      },
+    });
+    const e1 = createEvent({
+      author: 'user',
+      branch: 'agent_1.agent_2',
+      content: {
+        role: 'user',
+        parts: [{text: 'event from agent_1.agent_2'}],
+      },
+    });
+
+    const contentsForAgent2 = getContents(
+      [e0, e1],
+      'my_agent',
+      'agent_1.agent_2',
+    );
+    expect(contentsForAgent2).toHaveLength(1);
+    expect(contentsForAgent2[0].parts?.[0].text).toBe(
+      'event from agent_1.agent_2',
+    );
+
+    const contentsForAgent = getContents([e0, e1], 'my_agent', 'agent_1.agent');
+    expect(contentsForAgent).toHaveLength(1);
+    expect(contentsForAgent[0].parts?.[0].text).toBe(
+      'event from agent_1.agent',
+    );
+  });
+
+  it('should handle complex multi-agent tree execution branch hierarchy seamlessly in getContents', () => {
+    const eRoot = createEvent({
+      author: 'user',
+      branch: 'coordinator',
+      content: {role: 'user', parts: [{text: 'start task'}]},
+    });
+    const eResearcher = createEvent({
+      author: 'researcher',
+      branch: 'coordinator.researcher',
+      content: {role: 'model', parts: [{text: 'research data'}]},
+    });
+    const eScraper = createEvent({
+      author: 'scraper',
+      branch: 'coordinator.researcher.scraper',
+      content: {role: 'model', parts: [{text: 'scraped output'}]},
+    });
+    const eWriter = createEvent({
+      author: 'writer',
+      branch: 'coordinator.writer',
+      content: {role: 'model', parts: [{text: 'written draft'}]},
+    });
+
+    const scraperContents = getContents(
+      [eRoot, eResearcher, eScraper, eWriter],
+      'scraper',
+      'coordinator.researcher.scraper',
+    );
+
+    expect(scraperContents).toHaveLength(3);
+    expect(scraperContents[0].parts?.[0].text).toBe('start task');
+    expect(scraperContents[1].parts?.[0].text).toBe('For context:');
+    expect(scraperContents[1].parts?.[1].text).toContain('research data');
+    expect(scraperContents[2].parts?.[0].text).toBe('scraped output');
+  });
+});
+
+describe('removeClientFunctionCallId', () => {
+  it('should remove client generated ID from functionCall', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'adk-test-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBeUndefined();
+  });
+
+  it('should remove client generated ID from functionResponse', () => {
+    const content: Content = {
+      role: 'user',
+      parts: [
+        {functionResponse: {name: 'testTool', response: {}, id: 'adk-test-id'}},
+      ],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionResponse!.id).toBeUndefined();
+  });
+
+  it('should not remove non-client generated ID', () => {
+    const content: Content = {
+      role: 'model',
+      parts: [{functionCall: {name: 'testTool', args: {}, id: 'server-id'}}],
+    };
+    removeClientFunctionCallId(content);
+    expect(content.parts![0].functionCall!.id).toBe('server-id');
+  });
+
+  it('should safely handle null, undefined, or empty content objects without throwing', () => {
+    expect(() =>
+      removeClientFunctionCallId(undefined as unknown as Content),
+    ).not.toThrow();
+    expect(() =>
+      removeClientFunctionCallId(null as unknown as Content),
+    ).not.toThrow();
+    const emptyContent: Content = {};
+    expect(() => removeClientFunctionCallId(emptyContent)).not.toThrow();
+    const noParts: Content = {role: 'user', parts: []};
+    expect(() => removeClientFunctionCallId(noParts)).not.toThrow();
   });
 });

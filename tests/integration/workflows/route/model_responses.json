@@ -1,0 +1,101 @@
+[
+  {
+    "key": "04cfafaecb1a4f23",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is ADK?"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"classify_input\".\n\nBased on this input, decide which category it belongs to: What is ADK?"
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"category\": \"question\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 39,
+        "candidatesTokenCount": 6,
+        "totalTokenCount": 80,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 39
+          }
+        ],
+        "thoughtsTokenCount": 35,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "d1fcb02355443296",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "What is ADK?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[classify_input] said: {\"category\": \"question\"}"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: What is ADK?"
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "ADK most commonly refers to the **Windows Assessment and Deployment Kit**.\n\nIt is a collection of tools from Microsoft designed for:\n\n1.  **Assessment:** Evaluating the performance and quality of Windows systems, components, and software.\n2.  **Deployment:** Customizing, assessing, and deploying Windows operating systems to new computers.\n\nThe ADK is primarily used by OEMs (Original Equipment Manufacturers), IT professionals, and developers to prepare, install, and customize Windows images for large-scale deployments or specific hardware configurations.\n\nKey components often included in the ADK are:\n\n*   **Deployment Tools:** Includes DISM (Deployment Image Servicing and Management) and OSCDImg.\n*   **Windows Preinstallation Environment (WinPE):** A light version of Windows used for installing, deploying, and repairing Windows.\n*   **User State Migration Tool (USMT):** Migrates user files and settings during a deployment.\n*   **Volume Activation Management Tool (VAMT):** Manages Windows and Office activation.\n*   **Performance Toolkit:** Tools like Windows Performance Recorder and Analyzer.\n*   **Application Compatibility Toolkit (ACT):** Helps identify and mitigate application compatibility issues."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 48,
+        "candidatesTokenCount": 245,
+        "totalTokenCount": 798,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 48
+          }
+        ],
+        "thoughtsTokenCount": 505,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

@@ -6,6 +6,8 @@
 
 import {Part} from '@google/genai';
 
+import {logger} from '../utils/logger.js';
+
 import {
   ArtifactVersion,
   BaseArtifactService,
@@ -37,7 +39,7 @@ export class InMemoryArtifactService implements BaseArtifactService {
     artifact,
     customMetadata,
   }: SaveArtifactRequest): Promise<number> {
-    if (!artifact.inlineData && !artifact.text) {
+    if (!artifact.inlineData && !artifact.text && !artifact.fileData) {
       return Promise.reject(
         new Error('Artifact must have either inlineData or text content.'),
       );
@@ -54,6 +56,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
       version,
       customMetadata,
     };
+
+    if (!artifact.inlineData && artifact.text === undefined) {
+      const fileData = artifact.fileData!;
+
+      metadata.mimeType = fileData.mimeType;
+    }
+
     this.artifacts[path].push({part: artifact, metadata});
 
     return Promise.resolve(version);
@@ -77,6 +86,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
       version = versions.length - 1;
     }
 
+    if (!versions[version]) {
+      logger.warn(
+        `[InMemoryArtifactService] loadArtifact: Artifact ${filename} version ${version} not found`,
+      );
+      return Promise.resolve(undefined);
+    }
+
     return Promise.resolve(versions[version].part);
   }
 
@@ -85,17 +101,15 @@ export class InMemoryArtifactService implements BaseArtifactService {
     userId,
     sessionId,
   }: ListArtifactKeysRequest): Promise<string[]> {
-    const sessionPrefix = `${appName}/${userId}/${sessionId}/`;
-    const usernamespacePrefix = `${appName}/${userId}/user/`;
+    const sessionPrefix = artifactPrefix('session', appName, userId, sessionId);
+    const userPrefix = artifactPrefix('user', appName, userId);
     const filenames: string[] = [];
 
     for (const path in this.artifacts) {
       if (path.startsWith(sessionPrefix)) {
-        const filename = path.replace(sessionPrefix, '');
-        filenames.push(filename);
-      } else if (path.startsWith(usernamespacePrefix)) {
-        const filename = path.replace(usernamespacePrefix, '');
-        filenames.push(filename);
+        filenames.push(decodeURIComponent(path.slice(sessionPrefix.length)));
+      } else if (path.startsWith(userPrefix)) {
+        filenames.push(decodeURIComponent(path.slice(userPrefix.length)));
       }
     }
 
@@ -181,13 +195,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
 }
 
 /**
- * Constructs the path to the artifact.
+ * Constructs the storage key for the artifact.
  *
  * @param appName The app name.
  * @param userId The user ID.
  * @param sessionId The session ID.
  * @param filename The filename.
- * @return The path to the artifact.
+ * @return The encoded storage key for the artifact.
  */
 function artifactPath(
   appName: string,
@@ -196,10 +210,14 @@ function artifactPath(
   filename: string,
 ): string {
   if (fileHasUserNamespace(filename)) {
-    return `${appName}/${userId}/user/${filename}`;
+    return `${artifactPrefix('user', appName, userId)}${encodeURIComponent(filename)}`;
   }
 
-  return `${appName}/${userId}/${sessionId}/${filename}`;
+  return `${artifactPrefix('session', appName, userId, sessionId)}${encodeURIComponent(filename)}`;
+}
+
+function artifactPrefix(scope: string, ...parts: string[]): string {
+  return `${[scope, ...parts].map(encodeURIComponent).join('/')}/`;
 }
 
 /**

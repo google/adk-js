@@ -6,6 +6,7 @@
 
 import {Event} from '../../events/event.js';
 import {appendInstructions, LlmRequest} from '../../models/llm_request.js';
+import {canUseOutputSchemaWithTools} from '../../utils/output_schema_utils.js';
 import {injectSessionState} from '../instructions.js';
 import {InvocationContext} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
@@ -26,8 +27,8 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
     const rootAgent = agent.rootAgent;
-    // TODO - b/425992518: unexpected and buggy for performance.
-    // Global instruction should be explicitly scoped.
+    // DEPRECATED: use GlobalInstructionPlugin instead.
+    // TODO: Remove this code block when globalInstruction field is removed.
     // Step 1: Appends global instructions if set by RootAgent.
     if (isLlmAgent(rootAgent) && rootAgent.globalInstruction) {
       const {instruction, requireStateInjection} =
@@ -62,7 +63,11 @@ export class InstructionsLlmRequestProcessor extends BaseLlmRequestProcessor {
       appendInstructions(llmRequest, [instructionWithState]);
     }
 
-    if (agent.outputSchema && agent.tools && agent.tools.length > 0) {
+    if (
+      agent.outputSchema &&
+      agent.tools?.length &&
+      !canUseOutputSchemaWithTools(agent.canonicalModel.model)
+    ) {
       appendInstructions(llmRequest, [
         'To output the final result, you must call the "set_model_response" function with the appropriate values. Do not output anything else.',
       ]);

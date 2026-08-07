@@ -28,23 +28,18 @@ class ToolContextCredentialStore {
     authScheme?: OpenAPIV3.SecuritySchemeObject,
   ): AuthCredential | undefined {
     const key = this.getCredentialKey(authScheme);
-    const state = (this.context as unknown as {state: Record<string, unknown>})
-      .state;
-    if (state) {
-      const serialized = state[key];
-      if (serialized) {
-        return serialized as AuthCredential;
-      }
-    }
-    return undefined;
+    // Read through the State API so we see values persisted from previous
+    // tool calls. `context.state` is a `State` instance, not a plain object;
+    // bracket access would bypass its value/delta store and always miss.
+    return this.context.state.get<AuthCredential>(key);
   }
 
   storeCredential(key: string, credential: AuthCredential) {
-    const state = (this.context as unknown as {state: Record<string, unknown>})
-      .state;
-    if (state) {
-      state[key] = credential;
-    }
+    // Use State.set so the credential is recorded in the state delta and
+    // persisted to the session. A plain assignment (`state[key] = ...`) sets
+    // an own property on the State instance that is never committed, so the
+    // exchanged credential would be re-created on every tool invocation.
+    this.context.state.set(key, credential);
   }
 }
 
@@ -91,23 +86,37 @@ export class ToolAuthHandler {
       credentialKey: this.credentialKey || 'default_openapi_key',
     };
 
-    const credential = this.context.getAuthResponse(authConfig);
-    if (credential) {
-      const exchanger = new AutoAuthCredentialExchanger();
-      const result = await exchanger.exchange({
-        authScheme: this.authScheme,
-        authCredential: credential,
-      });
+    // A credential returned by an auth response was supplied interactively by
+    // the client. Otherwise fall back to the credential the tool was
+    // configured with: schemes such as `apiKey`, `http` and `serviceAccount`
+    // need no user interaction, so requesting one would strand the tool in
+    // `pending` forever.
+    const authResponseCredential = this.context.getAuthResponse(authConfig);
+    const credential = authResponseCredential ?? this.authCredential;
 
-      const key = store.getCredentialKey(this.authScheme);
-      store.storeCredential(key, result.credential);
+    if (!credential) {
+      // No credential to work with, so ask the client for one.
+      this.context.requestCredential(authConfig);
 
-      return {state: 'done', authCredential: result.credential};
+      return {state: 'pending'};
     }
 
-    // If credential is not available, request it
-    this.context.requestCredential(authConfig);
+    const exchanger = new AutoAuthCredentialExchanger();
+    const result = await exchanger.exchange({
+      authScheme: this.authScheme,
+      authCredential: credential,
+    });
 
-    return {state: 'pending'};
+    // Only cache what cannot cheaply be obtained again: an auth response is
+    // readable once, and an exchange costs a round trip. A statically
+    // configured credential that needed no exchange is already available on
+    // every invocation, so persisting it to session state would only copy a
+    // secret into the session store for nothing.
+    if (authResponseCredential || result.wasExchanged) {
+      const key = store.getCredentialKey(this.authScheme);
+      store.storeCredential(key, result.credential);
+    }
+
+    return {state: 'done', authCredential: result.credential};
   }
 }

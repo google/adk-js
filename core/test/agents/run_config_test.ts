@@ -6,6 +6,7 @@
 
 import {describe, expect, it, vi} from 'vitest';
 import {createRunConfig, StreamingMode} from '../../src/agents/run_config.js';
+import {logger} from '../../src/utils/logger.js';
 
 describe('StreamingMode', () => {
   it('has NONE, SSE, and BIDI values', () => {
@@ -50,17 +51,24 @@ describe('createRunConfig', () => {
   });
 
   it('logs a warning when maxLlmCalls is 0', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    createRunConfig({maxLlmCalls: 0});
-    // The warning goes through the logger; restore spy regardless of whether
-    // it is intercepted at the console level.
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const config = createRunConfig({maxLlmCalls: 0});
+    expect(config.maxLlmCalls).toBe(0);
+    expect(warnSpy).toHaveBeenCalledOnce();
     warnSpy.mockRestore();
   });
 
   it('logs a warning when maxLlmCalls is negative', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    createRunConfig({maxLlmCalls: -1});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const config = createRunConfig({maxLlmCalls: -1});
+    expect(config.maxLlmCalls).toBe(-1);
+    expect(warnSpy).toHaveBeenCalledOnce();
     warnSpy.mockRestore();
+  });
+
+  it('uses the default when maxLlmCalls is explicitly undefined', () => {
+    const config = createRunConfig({maxLlmCalls: undefined});
+    expect(config.maxLlmCalls).toBe(500);
   });
 
   it('throws when maxLlmCalls exceeds Number.MAX_SAFE_INTEGER', () => {

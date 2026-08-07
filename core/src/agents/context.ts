@@ -88,9 +88,6 @@ export class Context extends ReadonlyContext {
     }
 
     return this.invocationContext.artifactService.loadArtifact({
-      appName: this.invocationContext.appName,
-      userId: this.invocationContext.userId,
-      sessionId: this.invocationContext.session.id,
       filename,
       version,
     });
@@ -109,9 +106,6 @@ export class Context extends ReadonlyContext {
     }
 
     const version = await this.invocationContext.artifactService.saveArtifact({
-      appName: this.invocationContext.appName,
-      userId: this.invocationContext.userId,
-      sessionId: this.invocationContext.session.id,
       filename,
       artifact,
     });
@@ -152,11 +146,7 @@ export class Context extends ReadonlyContext {
       throw new Error('Artifact service is not initialized.');
     }
 
-    return this.invocationContext.artifactService.listArtifactKeys({
-      appName: this.invocationContext.session.appName,
-      userId: this.invocationContext.session.userId,
-      sessionId: this.invocationContext.session.id,
-    });
+    return this.invocationContext.artifactService.listArtifactKeys();
   }
 
   /**

@@ -5,16 +5,19 @@
  */
 
 import {
+  App,
   BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
+  bearerTokenUserBuilder,
   Event,
   getFunctionCalls,
   getFunctionResponses,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  isApp,
   Logger,
   LogLevel,
   RunConfig,
@@ -40,6 +43,13 @@ import {
 } from '../utils/telemetry_utils.js';
 import {getAgentGraphAsDot} from './agent_graph.js';
 
+/**
+ * Environment variable holding the shared bearer token used to authenticate
+ * the A2A surface, for operators who prefer not to put the secret on the
+ * command line.
+ */
+export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
+
 interface ServerOptions {
   agentsDir?: string;
   host?: string;
@@ -55,6 +65,12 @@ interface ServerOptions {
   logger?: Logger;
   logLevel?: LogLevel;
   a2a?: boolean;
+  /**
+   * Shared bearer token used to authenticate the A2A surface. Falls back to
+   * the `ADK_A2A_AUTH_TOKEN` environment variable. When neither is set and
+   * `a2a` is enabled, the A2A surface is mounted WITHOUT authentication.
+   */
+  a2aAuthToken?: string;
   reloadAgents?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
@@ -75,7 +91,15 @@ export class AdkApiServer {
 
   readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
-  private readonly runnerCache: Record<string, Runner> = {};
+  /**
+   * Caches below are keyed by request path parameters (`appName`, `eventId`,
+   * `sessionId`), so each is created with `Object.create(null)`. On an
+   * ordinary `{}` literal, inherited names such as `toString` make
+   * `key in cache` report a spurious hit and `cache[key]` yield a `Function`
+   * where a `Runner` or trace record is expected, and a key of `__proto__`
+   * aliases `Object.prototype` on write.
+   */
+  private readonly runnerCache: Record<string, Runner> = Object.create(null);
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
@@ -86,11 +110,14 @@ export class AdkApiServer {
     tracerProvider: TracerProvider,
   ) => void;
   private server?: http.Server;
-  private readonly traceDict: Record<string, Record<string, unknown>> = {};
-  private readonly sessionTraceDict: Record<string, string[]> = {};
+  private readonly traceDict: Record<string, Record<string, unknown>> =
+    Object.create(null);
+  private readonly sessionTraceDict: Record<string, string[]> =
+    Object.create(null);
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;
+  private readonly a2aAuthToken?: string;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -124,6 +151,10 @@ export class AdkApiServer {
       });
     this.logger.setLogLevel(options.logLevel ?? LogLevel.INFO);
     this.a2a = options.a2a ?? false;
+    // An exported-but-empty value means "no token"; anything else is handed
+    // to the authenticator, which rejects a token that is not usable.
+    this.a2aAuthToken =
+      options.a2aAuthToken || process.env[A2A_AUTH_TOKEN_ENV_VAR] || undefined;
     this.app = express();
   }
 
@@ -143,10 +174,16 @@ export class AdkApiServer {
 
   private async initA2A() {
     const appNames = await this.agentLoader.listAgents();
+    const authentication = this.a2aAuthToken
+      ? bearerTokenUserBuilder(this.a2aAuthToken)
+      : undefined;
 
     for (const appName of appNames) {
       const agentFile = await this.agentLoader.getAgentFile(appName);
-      const agent = await agentFile.load();
+      const loaded = await agentFile.load();
+      const agent = isApp(loaded) ? loaded.rootAgent : loaded;
+      const adkApp = isApp(loaded) ? loaded : undefined;
+      const runner = await this.getRunner(adkApp ?? agent, appName);
 
       await toA2a(agent, {
         protocol: 'http',
@@ -156,7 +193,14 @@ export class AdkApiServer {
         sessionService: this.sessionService,
         memoryService: this.memoryService,
         artifactService: this.artifactService,
+        runner,
         app: this.app,
+        // `toA2a` fails closed by default. When the operator configured a
+        // shared bearer token the A2A surface is authenticated with it;
+        // otherwise this local development server explicitly opts out and a
+        // loud warning is logged at startup.
+        authentication,
+        allowUnauthenticated: authentication === undefined,
       });
     }
   }
@@ -303,7 +347,8 @@ export class AdkApiServer {
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
           await using agentFile = await this.agentLoader.getAgentFile(appName);
-          const rootAgent = await agentFile.load();
+          const loaded = await agentFile.load();
+          const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];
@@ -972,9 +1017,15 @@ export class AdkApiServer {
     });
   }
 
-  private async getRunner(agent: BaseAgent, appName: string): Promise<Runner> {
+  private async getRunner(
+    agentOrApp: BaseAgent | App,
+    appName: string,
+  ): Promise<Runner> {
     if (!(appName in this.runnerCache)) {
+      const isAppInstance = isApp(agentOrApp);
+      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
       this.runnerCache[appName] = new Runner({
+        app: isAppInstance ? agentOrApp : undefined,
         appName,
         agent,
         memoryService: this.memoryService,
@@ -998,8 +1049,8 @@ export class AdkApiServer {
     await using agentFile = await this.agentLoader.getAgentFile(
       options.appName,
     );
-    const agent = await agentFile.load();
-    const runner = await this.getRunner(agent, options.appName);
+    const loaded = await agentFile.load();
+    const runner = await this.getRunner(loaded, options.appName);
 
     yield* runner.runAsync({
       userId: options.userId,

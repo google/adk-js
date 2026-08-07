@@ -19,7 +19,6 @@ import * as path from 'path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
-import {getTempDir} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
@@ -143,6 +142,14 @@ const A2A_OPTION = new Option(
   '--a2a [boolean]',
   'Optional. Whether to enable A2A for web/api server. Default: false',
 ).default(false);
+const A2A_AUTH_TOKEN_OPTION = new Option(
+  '--a2a_auth_token <string>',
+  'Optional. Shared bearer token used to authenticate the A2A surface. Callers must send "Authorization: Bearer <token>". Can also be set via the ADK_A2A_AUTH_TOKEN environment variable. If unset, the A2A surface is served WITHOUT authentication.',
+);
+const A2A_AUTH_TOKEN_DEPLOY_OPTION = new Option(
+  '--a2a_auth_token <string>',
+  'Optional. Shared bearer token used to authenticate the deployed A2A surface. Callers must send "Authorization: Bearer <token>". It is sent to Cloud Run as the ADK_A2A_AUTH_TOKEN environment variable and is never written into the image. If unset, the deployed A2A surface is served WITHOUT authentication.',
+);
 const RELOAD_AGENTS_OPTION = new Option(
   '--reload_agents [boolean]',
   'Optional. Watch agent files for changes and automatically reload them. Default: false. To see any changes to your agent file, you need to initiate a new agent run.',
@@ -179,6 +186,10 @@ export const REPOSITORY_DEPLOY_OPTION = new Option(
   '--repository [string]',
   'Optional. Artifact Registry repository name to push docker images. Required for agent_engine deploy.',
 );
+export const AGENT_ENGINE_ID_OPTION = new Option(
+  '--agent_engine_id [id]',
+  'Optional. ID of the Agent Engine instance to update if it exists (default: undefined, which means a new instance will be created). If project and region are set, this should be the resource ID or the full resource name (projects/.../locations/.../reasoningEngines/...).',
+);
 
 /**
  * Creates the ADK CLI program.
@@ -214,6 +225,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_OPTION)
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
@@ -232,6 +244,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           reloadAgents: getBoolean(options['reload_agents']),
         });
 
@@ -258,6 +271,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_OPTION)
     .addOption(RELOAD_AGENTS_OPTION)
     .action(async (agentsDir: string, options: Record<string, string>) => {
       const logLevel = getLogLevelFromOptions(options);
@@ -276,6 +290,7 @@ export function createProgram(): Command {
           otelToCloud: options['otel_to_cloud'] ? true : false,
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           reloadAgents: getBoolean(options['reload_agents']),
         });
         await server.start();
@@ -394,8 +409,7 @@ export function createProgram(): Command {
     )
     .option(
       '--temp_folder [string]',
-      'Optional. Temp folder for the generated Cloud Run source files (default: a timestamped folder in the system temp directory).',
-      getTempDir('cloud_run_deploy_src'),
+      'Optional. Temp folder for the generated Cloud Run source files (default: a private directory created in the system temp directory).',
     )
     .addOption(ADK_VERSION_OPTION)
     .addOption(WITH_UI_OPTION)
@@ -408,6 +422,7 @@ export function createProgram(): Command {
     .addOption(BUNDLE_AGENT_FILE)
     .addOption(AGENT_FILE_MODULE_TYPE)
     .addOption(A2A_OPTION)
+    .addOption(A2A_AUTH_TOKEN_DEPLOY_OPTION)
     .action(async (agentPath: string, options: Record<string, string>) => {
       const extraGcloudArgs = [];
       for (const arg of process.argv.slice(5)) {
@@ -438,6 +453,7 @@ export function createProgram(): Command {
           artifactServiceUri: options['artifact_service_uri'],
           agentFileLoadOptions: getAgentFileOptions(options),
           a2a: getBoolean(options['a2a']),
+          a2aAuthToken: options['a2a_auth_token'],
           extraGcloudArgs,
         });
       } catch (error) {
@@ -457,8 +473,7 @@ export function createProgram(): Command {
       .addOption(REPOSITORY_DEPLOY_OPTION)
       .option(
         '--temp_folder [string]',
-        'Optional. Temp folder for the generated source files (default: a timestamped folder in the system temp directory).',
-        getTempDir('agent_engine_deploy_src'),
+        'Optional. Temp folder for the generated source files (default: a private directory created in the system temp directory).',
       )
       .addOption(ADK_VERSION_OPTION)
       .addOption(WITH_UI_OPTION)
@@ -471,6 +486,7 @@ export function createProgram(): Command {
       .addOption(BUNDLE_AGENT_FILE)
       .addOption(AGENT_FILE_MODULE_TYPE)
       .addOption(A2A_OPTION)
+      .addOption(AGENT_ENGINE_ID_OPTION)
       .action(async (agentPath: string, options: Record<string, string>) => {
         try {
           await deployToAgentEngine({
@@ -490,6 +506,7 @@ export function createProgram(): Command {
             artifactServiceUri: options['artifact_service_uri'],
             agentFileLoadOptions: getAgentFileOptions(options),
             a2a: getBoolean(options['a2a']),
+            agentEngineId: options['agent_engine_id'],
           });
         } catch (error) {
           logger.error('Error deploying agent:', (error as Error).message);

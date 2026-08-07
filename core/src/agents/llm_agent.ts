@@ -6,7 +6,11 @@
 
 import {GenerateContentConfig, Schema} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
+import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
+import {AsyncQueue} from '../utils/async_queue.js';
+import {isBaseNode, type BaseNode} from '../workflow/base_node.js';
+import {NodeTool} from '../workflow/nodes/node_tool.js';
 
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
@@ -20,6 +24,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
   isFinalResponse,
+  populateClientFunctionCallId,
 } from '../events/event.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
@@ -33,6 +38,7 @@ import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
 
 import {logger} from '../utils/logger.js';
+import {canUseOutputSchemaWithTools} from '../utils/output_schema_utils.js';
 import {Context} from './context.js';
 
 import {
@@ -52,7 +58,6 @@ import {
   generateRequestConfirmationEvent,
   getLongRunningFunctionCalls,
   handleFunctionCallsAsync,
-  populateClientFunctionCallId,
 } from './functions.js';
 
 import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
@@ -65,7 +70,9 @@ import {CONTENT_REQUEST_PROCESSOR} from './processors/content_request_processor.
 import {ContextCompactorRequestProcessor} from './processors/context_compactor_request_processor.js';
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
+import {INTERACTIONS_REQUEST_PROCESSOR} from './processors/interactions_request_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
+import {REQUEST_INPUT_LLM_REQUEST_PROCESSOR} from './processors/request_input_llm_request_processor.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from './processors/tool_filter_request_processor.js';
 import {ReadonlyContext} from './readonly_context.js';
 import {StreamingMode} from './run_config.js';
@@ -191,7 +198,7 @@ export type AfterToolCallback =
 export type ExamplesUnion = Example[] | BaseExampleProvider;
 
 /** A union of tool types that can be provided to an agent. */
-export type ToolUnion = BaseTool | BaseToolset;
+export type ToolUnion = BaseTool | BaseToolset | BaseNode;
 
 const ADK_AGENT_NAME_LABEL_KEY = 'adk_agent_name';
 
@@ -214,6 +221,8 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    *
    * For example: use globalInstruction to make all agents have a stable
    * identity or personality.
+   *
+   * @deprecated Use GlobalInstructionPlugin instead.
    */
   globalInstruction?: string | InstructionProvider;
 
@@ -254,6 +263,16 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    *   instruction and input
    */
   includeContents?: 'default' | 'none';
+
+  /**
+   * The agent's execution mode when run as a workflow node.
+   *
+   * - `single_turn` (default): the agent runs once against the node input.
+   * - `task`: the agent is given a `finish_task` tool and runs a multi-round
+   *   loop until it calls `finish_task`, whose arguments (conforming to
+   *   `outputSchema`) become the node output. Mirrors Python's `Agent(mode=...)`.
+   */
+  mode?: 'single_turn' | 'task';
 
   /** The input schema when agent is used as a tool. */
   inputSchema?: LlmAgentSchema;
@@ -319,6 +338,11 @@ async function convertToolUnionToTools(
   if (isBaseTool(toolUnion)) {
     return [toolUnion];
   }
+  if (isBaseNode(toolUnion)) {
+    // A node/Workflow passed as a tool is auto-wrapped as a NodeTool so the
+    // model can call it (mirrors Python's Agent(tools=[node/workflow])).
+    return [new NodeTool(toolUnion)];
+  }
   return await toolUnion.getTools(context);
 }
 
@@ -345,21 +369,24 @@ export function isLlmAgent(obj: unknown): obj is LlmAgent {
 /**
  * An agent that uses a large language model to generate responses.
  */
-export class LlmAgent extends BaseAgent {
+export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   /** A unique symbol to identify ADK LLM agent class. */
   readonly [LLM_AGENT_SIGNATURE_SYMBOL] = true;
 
   model?: string | BaseLlm;
   instruction: string | InstructionProvider;
+  /** @deprecated Use GlobalInstructionPlugin instead. */
   globalInstruction: string | InstructionProvider;
   tools: ToolUnion[];
   generateContentConfig?: GenerateContentConfig;
   disallowTransferToParent: boolean;
   disallowTransferToPeers: boolean;
   includeContents: 'default' | 'none';
+  mode?: 'single_turn' | 'task';
   inputSchema?: Schema;
   outputSchema?: Schema;
   outputKey?: string;
+  private _finishTaskTool?: FinishTaskTool;
   beforeModelCallback?: BeforeModelCallback;
   afterModelCallback?: AfterModelCallback;
   beforeToolCallback?: BeforeToolCallback;
@@ -384,6 +411,7 @@ export class LlmAgent extends BaseAgent {
     this.outputSchema = isZodObject(config.outputSchema)
       ? zodObjectToSchema(config.outputSchema)
       : config.outputSchema;
+    this.mode = config.mode;
     this.outputKey = config.outputKey;
     this.beforeModelCallback = config.beforeModelCallback;
     this.afterModelCallback = config.afterModelCallback;
@@ -399,7 +427,9 @@ export class LlmAgent extends BaseAgent {
       IDENTITY_LLM_REQUEST_PROCESSOR,
       INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
+      REQUEST_INPUT_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
+      INTERACTIONS_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
       TOOL_FILTER_REQUEST_PROCESSOR,
     ];
@@ -495,6 +525,17 @@ export class LlmAgent extends BaseAgent {
   }
 
   /**
+   * The `finish_task` tool for this agent (task mode). Lazily created and cached
+   * so its declaration (derived from `outputSchema`) is stable across turns.
+   */
+  get finishTaskTool(): FinishTaskTool {
+    if (!this._finishTaskTool) {
+      this._finishTaskTool = new FinishTaskTool(this.outputSchema);
+    }
+    return this._finishTaskTool;
+  }
+
+  /**
    * The resolved instruction field to construct instruction for this
    * agent.
    *
@@ -520,6 +561,7 @@ export class LlmAgent extends BaseAgent {
    * This method is only for use by Agent Development Kit.
    * @param context The context to retrieve the session state.
    * @returns The resolved globalInstruction field.
+   * @deprecated Use GlobalInstructionPlugin instead.
    */
   async canonicalGlobalInstruction(
     context: ReadonlyContext,
@@ -781,7 +823,15 @@ export class LlmAgent extends BaseAgent {
     // TODO - b/425992518: check if tool preprocessors can be simplified.
     // Run pre-processors for tools.
     const allTools = [...this.tools];
-    if (this.outputSchema && allTools.length > 0) {
+    if (this.mode === 'task') {
+      // Task mode: the agent completes by calling `finish_task` (whose params
+      // mirror the output schema) rather than emitting structured output.
+      allTools.push(this.finishTaskTool);
+    } else if (
+      this.outputSchema &&
+      allTools.length > 0 &&
+      !canUseOutputSchemaWithTools(this.canonicalModel.model)
+    ) {
       const setModelResponseTool = new FunctionTool({
         name: 'set_model_response',
         description:
@@ -796,8 +846,18 @@ export class LlmAgent extends BaseAgent {
       });
       allTools.push(setModelResponseTool);
     }
+    // Collect turn metadata and event actions
+    // TODO - b/425992518: misleading, this is passing metadata.
+    const modelResponseEvent = createEvent({
+      invocationId: invocationContext.invocationId,
+      author: this.name,
+      branch: invocationContext.branch,
+    });
     for (const toolUnion of allTools) {
-      const toolContext = new Context({invocationContext});
+      const toolContext = new Context({
+        invocationContext,
+        eventActions: modelResponseEvent.actions,
+      });
 
       // process all tools from this tool union
       const tools = (
@@ -838,12 +898,6 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // Calls the LLM
     // =========================================================================
-    // TODO - b/425992518: misleading, this is passing metadata.
-    const modelResponseEvent = createEvent({
-      invocationId: invocationContext.invocationId,
-      author: this.name,
-      branch: invocationContext.branch,
-    });
     const span = tracer.startSpan('call_llm');
     const ctx = trace.setSpan(context.active(), span);
     yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
@@ -919,7 +973,7 @@ export class LlmAgent extends BaseAgent {
     // =========================================================================
     // If no model response, skip.
     if (
-      !llmResponse.content &&
+      (!llmResponse.content || llmResponse.content.parts?.length === 0) &&
       !llmResponse.errorCode &&
       !llmResponse.interrupted
     ) {
@@ -967,13 +1021,40 @@ export class LlmAgent extends BaseAgent {
     // Call functions
     // TODO - b/425992518: bloated funciton input, fix.
     // Tool callback passed to get rid of cyclic dependency.
-    const functionResponseEvent = await handleFunctionCallsAsync({
-      invocationContext: invocationContext,
-      functionCallEvent: mergedEvent,
-      toolsDict: llmRequest.toolsDict,
-      beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
-      afterToolCallbacks: this.canonicalAfterToolCallbacks,
-    });
+    // A NodeTool (running a node/workflow) streams the node's intermediate and
+    // interrupt events into `invocationContext.eventQueue`; drain it concurrently
+    // so those events interleave into this agent's output stream. The tool runs
+    // in a self-contained task that captures its result/error and always closes
+    // the queue, so there is a single error path (no unhandled rejection).
+    const eventQueue = new AsyncQueue<Event>();
+    invocationContext.eventQueue = eventQueue;
+    const toolTask = (async (): Promise<{
+      event: Event | null;
+      error?: unknown;
+    }> => {
+      try {
+        const event = await handleFunctionCallsAsync({
+          invocationContext: invocationContext,
+          functionCallEvent: mergedEvent,
+          toolsDict: llmRequest.toolsDict,
+          beforeToolCallbacks: this.canonicalBeforeToolCallbacks,
+          afterToolCallbacks: this.canonicalAfterToolCallbacks,
+        });
+        return {event};
+      } catch (error) {
+        return {event: null, error};
+      } finally {
+        eventQueue.close();
+      }
+    })();
+    for await (const queuedEvent of eventQueue) {
+      yield queuedEvent;
+    }
+    const {event: functionResponseEvent, error: toolError} = await toolTask;
+    invocationContext.eventQueue = undefined;
+    if (toolError) {
+      throw toolError;
+    }
 
     if (!functionResponseEvent || invocationContext.abortSignal?.aborted) {
       return;

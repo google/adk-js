@@ -8,6 +8,7 @@ import {Part} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
   DeleteArtifactRequest,
+  ListArtifactKeysRequest,
   ListVersionsRequest,
   LoadArtifactRequest,
   SaveArtifactRequest,
@@ -88,12 +89,14 @@ describe('ForwardingArtifactService', () => {
       toolContext.loadArtifact.mockResolvedValue(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      await service.loadArtifact({
+      const request: LoadArtifactRequest = {
         appName: 'app',
         userId: 'user',
         sessionId: 'session',
         filename: 'file.txt',
-      });
+      };
+
+      await service.loadArtifact(request);
       expect(toolContext.loadArtifact).toHaveBeenCalledWith(
         'file.txt',
         undefined,
@@ -107,7 +110,13 @@ describe('ForwardingArtifactService', () => {
       toolContext.listArtifacts.mockResolvedValue(['a.txt', 'b.txt']);
       const service = new ForwardingArtifactService(toolContext);
 
-      const result = await service.listArtifactKeys();
+      const request: ListArtifactKeysRequest = {
+        appName: 'app',
+        userId: 'user',
+        sessionId: 'session',
+      };
+
+      const result = await service.listArtifactKeys(request);
       expect(toolContext.listArtifacts).toHaveBeenCalled();
       expect(result).toEqual(['a.txt', 'b.txt']);
     });
@@ -128,21 +137,23 @@ describe('ForwardingArtifactService', () => {
       };
 
       await service.deleteArtifact(request);
-      expect(artifactService.deleteArtifact).toHaveBeenCalledWith(request);
+      expect(artifactService.deleteArtifact).toHaveBeenCalledWith('file.txt');
     });
 
     it('throws when artifactService is undefined', async () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      await expect(
-        service.deleteArtifact({
-          appName: 'app',
-          userId: 'user',
-          sessionId: 'session',
-          filename: 'file.txt',
-        }),
-      ).rejects.toThrow('Artifact service is not initialized.');
+      const request: DeleteArtifactRequest = {
+        appName: 'app',
+        userId: 'user',
+        sessionId: 'session',
+        filename: 'file.txt',
+      };
+
+      await expect(service.deleteArtifact(request)).rejects.toThrow(
+        'Artifact service is not initialized.',
+      );
     });
   });
 
@@ -161,7 +172,7 @@ describe('ForwardingArtifactService', () => {
       };
 
       const result = await service.listVersions(request);
-      expect(artifactService.listVersions).toHaveBeenCalledWith(request);
+      expect(artifactService.listVersions).toHaveBeenCalledWith('file.txt');
       expect(result).toEqual([0, 1, 2]);
     });
 
@@ -169,14 +180,16 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      await expect(
-        service.listVersions({
-          appName: 'app',
-          userId: 'user',
-          sessionId: 'session',
-          filename: 'file.txt',
-        }),
-      ).rejects.toThrow('Artifact service is not initialized.');
+      const request: ListVersionsRequest = {
+        appName: 'app',
+        userId: 'user',
+        sessionId: 'session',
+        filename: 'file.txt',
+      };
+
+      await expect(service.listVersions(request)).rejects.toThrow(
+        'Artifact service is not initialized.',
+      );
     });
   });
 
@@ -197,23 +210,25 @@ describe('ForwardingArtifactService', () => {
 
       const result = await service.listArtifactVersions(request);
       expect(artifactService.listArtifactVersions).toHaveBeenCalledWith(
-        request,
+        'file.txt',
       );
       expect(result).toEqual(versions);
     });
 
-    it('throws when artifactService is undefined', () => {
+    it('throws when artifactService is undefined', async () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      expect(() =>
-        service.listArtifactVersions({
-          appName: 'app',
-          userId: 'user',
-          sessionId: 'session',
-          filename: 'file.txt',
-        }),
-      ).toThrow('Artifact service is not initialized.');
+      const request: ListVersionsRequest = {
+        appName: 'app',
+        userId: 'user',
+        sessionId: 'session',
+        filename: 'file.txt',
+      };
+
+      await expect(service.listArtifactVersions(request)).rejects.toThrow(
+        'Artifact service is not initialized.',
+      );
     });
   });
 
@@ -234,23 +249,28 @@ describe('ForwardingArtifactService', () => {
       };
 
       const result = await service.getArtifactVersion(request);
-      expect(artifactService.getArtifactVersion).toHaveBeenCalledWith(request);
+      expect(artifactService.getArtifactVersion).toHaveBeenCalledWith({
+        filename: 'file.txt',
+        version: 1,
+      });
       expect(result).toEqual(versionMeta);
     });
 
-    it('throws when artifactService is undefined', () => {
+    it('throws when artifactService is undefined', async () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      expect(() =>
-        service.getArtifactVersion({
-          appName: 'app',
-          userId: 'user',
-          sessionId: 'session',
-          filename: 'file.txt',
-          version: 0,
-        }),
-      ).toThrow('Artifact service is not initialized.');
+      const request: LoadArtifactRequest = {
+        appName: 'app',
+        userId: 'user',
+        sessionId: 'session',
+        filename: 'file.txt',
+        version: 0,
+      };
+
+      await expect(service.getArtifactVersion(request)).rejects.toThrow(
+        'Artifact service is not initialized.',
+      );
     });
   });
 });

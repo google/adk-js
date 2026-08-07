@@ -467,16 +467,29 @@ export class DatabaseSessionService extends BaseSessionService {
         }
       }
 
-      const newStorageEvent = txEm.create(StorageEvent, {
+      const existingStorageEvent = await txEm.findOne(StorageEvent, {
         id: trimmedEvent.id,
         appName: session.appName,
         userId: session.userId,
         sessionId: session.id,
-        invocationId: trimmedEvent.invocationId,
-        timestamp: new Date(trimmedEvent.timestamp),
-        eventData: trimmedEvent,
       });
-      txEm.persist(newStorageEvent);
+
+      if (existingStorageEvent) {
+        existingStorageEvent.eventData = trimmedEvent;
+        existingStorageEvent.timestamp = new Date(trimmedEvent.timestamp);
+        txEm.persist(existingStorageEvent);
+      } else {
+        const newStorageEvent = txEm.create(StorageEvent, {
+          id: trimmedEvent.id,
+          appName: session.appName,
+          userId: session.userId,
+          sessionId: session.id,
+          invocationId: trimmedEvent.invocationId,
+          timestamp: new Date(trimmedEvent.timestamp),
+          eventData: trimmedEvent,
+        });
+        txEm.persist(newStorageEvent);
+      }
       await txEm.commit();
 
       // Update session timestamp to match event timestamp
@@ -488,7 +501,13 @@ export class DatabaseSessionService extends BaseSessionService {
         storageSession.state,
       );
       session.state = newMergedState;
-      session.events.push(event);
+
+      const index = session.events.findIndex((e) => e.id === event.id);
+      if (index >= 0) {
+        session.events[index] = event;
+      } else {
+        session.events.push(event);
+      }
       session.lastUpdateTime = storageSession.updateTime.getTime();
     });
 

@@ -54,6 +54,15 @@ export class SkillToolset extends BaseToolset {
       codeExecutor?: BaseCodeExecutor;
       additionalTools?: Array<BaseTool | BaseToolset>;
       registry?: SkillRegistry;
+      /**
+       * Whether to expose the `run_skill_inline_script` tool, which executes
+       * model-provided script content in the configured code executor. This is
+       * disabled by default because arbitrary inline-script execution is a
+       * sensitive capability; opt in explicitly by setting this to `true`.
+       * Execution additionally remains gated behind a human-in-the-loop
+       * confirmation.
+       */
+      allowInlineScripts?: boolean;
     } = {},
   ) {
     super([], 'adk_skill_toolset');
@@ -69,8 +78,13 @@ export class SkillToolset extends BaseToolset {
       new LoadSkillTool(this),
       new LoadSkillResourceTool(this),
       new RunSkillScriptTool(this),
-      new RunSkillInlineScriptTool(this),
     ];
+
+    // Inline-script execution is opt-in: only expose the tool when explicitly
+    // enabled, so agents are secure-by-default.
+    if (options.allowInlineScripts) {
+      this.tools.push(new RunSkillInlineScriptTool(this));
+    }
 
     if (this.registry) {
       this.tools.push(new SearchSkillsTool(this));

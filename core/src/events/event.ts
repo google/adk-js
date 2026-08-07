@@ -8,8 +8,51 @@ import {FunctionCall, FunctionResponse} from '@google/genai';
 
 import {LlmResponse} from '../models/llm_response.js';
 
+import {randomUUID} from '../utils/env_aware_utils.js';
 import {toCamelCase, toSnakeCase} from '../utils/object_notation_utils.js';
 import {createEventActions, EventActions} from './event_actions.js';
+
+/**
+ * A unique symbol identifying ADK Event objects.
+ *
+ * Events are plain objects produced by {@link createEvent} rather than class
+ * instances, so they carry this signature as a brand and `isEvent` checks for
+ * it — mirroring the `Symbol.for('google.adk.*')` guards used across ADK (e.g.
+ * `isBaseTool`, `isBaseAgent`).
+ */
+const EVENT_SIGNATURE_SYMBOL = Symbol.for('google.adk.event');
+
+/**
+ * A single route key emitted by a routing node and matched against graph edge
+ * routes. Mirrors the graph's `RouteValue`.
+ */
+export type RouteKey = string | number | boolean;
+
+/**
+ * The route(s) a routing node emits: a single key fires one branch; an array
+ * fires every branch whose route matches any listed key (multi-route dispatch).
+ */
+export type Route = RouteKey | RouteKey[];
+
+/**
+ * Workflow-node provenance attached to an event.
+ *
+ * Mirrors `google/adk-python` `Event.node_info`. Present only on events emitted
+ * from within a workflow node.
+ */
+export interface NodeInfo {
+  /** The workflow node path that produced this event (e.g. `wf.child.0`). */
+  path?: string;
+
+  /** The node run id this event's output should be attributed to. */
+  outputFor?: string;
+
+  /**
+   * Whether the event's textual content should be promoted to the node's
+   * structured output.
+   */
+  messageAsOutput?: boolean;
+}
 
 /**
  * Represents an event in a conversation between agents and users.
@@ -18,6 +61,15 @@ import {createEventActions, EventActions} from './event_actions.js';
   taken by the agents like function calls, etc.
  */
 export interface Event extends LlmResponse {
+  /**
+   * Signature brand identifying this object as an ADK {@link Event}.
+   *
+   * Set by {@link createEvent} and checked by `isEvent`. Optional because
+   * events are also reconstructed from storage/session payloads, where the
+   * (non-serializable) brand is absent.
+   */
+  readonly [EVENT_SIGNATURE_SYMBOL]?: true;
+
   /**
    * The unique identifier of the event.
    * Do not assign the ID. It will be assigned by the session.
@@ -62,6 +114,41 @@ export interface Event extends LlmResponse {
    * The timestamp of the event.
    */
   timestamp: number;
+
+  /**
+   * Workflow: the structured output produced by the emitting node, if any.
+   *
+   * First-class field mirroring `google/adk-python` `Event.output`. Used by the
+   * workflow engine to carry a node's return value alongside its content.
+   */
+  output?: unknown;
+
+  /**
+   * Workflow: the route key(s) emitted by a routing node, used by the graph to
+   * select the matching outgoing edge(s). A single value fires one branch; an
+   * array fires every branch whose route matches any listed value (multi-route
+   * dispatch). Mirrors Python `Event.route`.
+   */
+  route?: Route;
+
+  /**
+   * Workflow: provenance of the emitting node. Mirrors Python `Event.node_info`.
+   */
+  nodeInfo?: NodeInfo;
+
+  /**
+   * Workflow: scope tag used to isolate multi-agent conversations so peer
+   * scopes don't see each other's events. Mirrors Python
+   * `Event.isolation_scope`.
+   */
+  isolationScope?: string;
+}
+
+/**
+ * Parameters for creating an event with partial fields.
+ */
+export interface CreateEventParams extends Omit<Partial<Event>, 'actions'> {
+  actions?: Partial<EventActions>;
 }
 
 /**
@@ -70,13 +157,14 @@ export interface Event extends LlmResponse {
  * @param params The partial event to create the event from.
  * @returns The event.
  */
-export function createEvent(params: Partial<Event> = {}): Event {
+export function createEvent(params: CreateEventParams = {}): Event {
   return {
     ...params,
+    [EVENT_SIGNATURE_SYMBOL]: true,
     id: params.id || createNewEventId(),
     invocationId: params.invocationId || '',
     author: params.author,
-    actions: params.actions || createEventActions(),
+    actions: createEventActions(params.actions),
     longRunningToolIds: params.longRunningToolIds || [],
     branch: params.branch,
     timestamp: params.timestamp || Date.now(),
@@ -118,6 +206,26 @@ export function getFunctionCalls(event: Event): FunctionCall[] {
   }
 
   return funcCalls;
+}
+
+export const AF_FUNCTION_CALL_ID_PREFIX = 'adk-';
+
+export function generateClientFunctionCallId(): string {
+  return `${AF_FUNCTION_CALL_ID_PREFIX}${randomUUID()}`;
+}
+
+/**
+ * Populates client-side function call IDs.
+ *
+ * It iterates through all function calls in the event and assigns a
+ * unique client-side ID to each one that doesn't already have an ID.
+ */
+export function populateClientFunctionCallId(modelResponseEvent: Event): void {
+  for (const functionCall of getFunctionCalls(modelResponseEvent)) {
+    if (!functionCall.id) {
+      functionCall.id = generateClientFunctionCallId();
+    }
+  }
 }
 
 /**
@@ -166,8 +274,63 @@ export function stringifyContent(event: Event): string {
     .join('');
 }
 
+/**
+ * Estimates the number of tokens in the event based on usage metadata or characters.
+ */
+export function getEventTokens(event: Event): number {
+  if (event.usageMetadata?.promptTokenCount !== undefined) {
+    return event.usageMetadata.promptTokenCount;
+  }
+  // Estimate: 4 chars per token.
+  const contentStr = stringifyContent(event);
+  return Math.ceil(contentStr.length / 4);
+}
+
+/**
+ * Returns whether the event contains any thought parts.
+ */
+export function hasThoughts(event: Event): boolean {
+  return !!event.content?.parts?.some((part) => part.thought === true);
+}
+
+/**
+ * Returns a copy of the event with all thought parts removed.
+ */
+export function pruneThoughts(event: Event): Event {
+  if (!event.content?.parts) {
+    return event;
+  }
+  const prunedParts = event.content.parts.filter(
+    (part) => part.thought !== true,
+  );
+
+  return {
+    ...event,
+    content: {
+      ...event.content,
+      parts: prunedParts,
+    },
+  };
+}
+
 const ASCII_LETTERS_AND_NUMBERS =
   'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/**
+ * Type guard to check if an object is an instance of Event.
+ *
+ * @param obj The object to check.
+ * @returns True if the object matches the Event structure.
+ */
+export function isEvent(obj: unknown): obj is Event {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    EVENT_SIGNATURE_SYMBOL in obj &&
+    (obj as {[EVENT_SIGNATURE_SYMBOL]?: unknown})[EVENT_SIGNATURE_SYMBOL] ===
+      true
+  );
+}
 
 /**
  * Generates a new unique ID for the event.
@@ -202,6 +365,13 @@ const PRESERVE_KEYS_CAMEL_CASE = [
   'customMetadata',
   'content.parts.functionCall.args',
   'content.parts.functionResponse.response',
+  // Workflow: arbitrary node output, emitted route(s), and checkpointed node
+  // state carry user-defined keys that must survive round-trips verbatim (a
+  // node's original input is stashed under `actions.agentState` for HITL
+  // resume, and rehydration reads `output`/`route`/`actions.agentState` back).
+  'output',
+  'route',
+  'actions.agentState',
 ];
 
 /**
@@ -221,6 +391,11 @@ const PRESERVE_KEYS_SNAKE_CASE = [
   'custom_metadata',
   'content.parts.function_call.args',
   'content.parts.function_response.response',
+  // Workflow: arbitrary node output, emitted route(s), and checkpointed node
+  // state (see the camelCase list above).
+  'output',
+  'route',
+  'actions.agent_state',
 ];
 
 /**

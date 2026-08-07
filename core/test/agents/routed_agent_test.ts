@@ -6,9 +6,11 @@
 
 import {
   BaseAgent,
+  BaseAgentConfig,
   Event,
   InvocationContext,
   InvocationContextParams,
+  LlmAgent,
   RoutedAgent,
   Session,
   createEvent,
@@ -474,6 +476,166 @@ describe('RoutedAgent', () => {
 
     expect(result.value?.author).toBe('agent-success');
     expect(routerCalls).toBe(2);
+  });
+
+  describe('clone', () => {
+    // A clone-compatible mock: unlike the top-level `MockAgent` (whose
+    // constructor takes a bare `name`), this accepts a config object, so
+    // `BaseAgent.clone()` can rebuild it via `new ctor(config)`. It yields a
+    // deterministic event so routing can be verified without a model.
+    class CloneableAgent extends BaseAgent {
+      constructor(config: BaseAgentConfig) {
+        super(config);
+      }
+
+      protected async *runAsyncImpl(
+        context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {
+        yield createEvent({
+          invocationId: context.invocationId,
+          author: this.name,
+          branch: context.branch,
+          content: {
+            role: 'model',
+            parts: [{text: `Response from ${this.name}`}],
+          },
+        });
+      }
+
+      protected async *runLiveImpl(
+        _context: InvocationContext,
+      ): AsyncGenerator<Event, void, void> {}
+    }
+
+    it('deep-clones and re-parents array-form routing targets (detached root)', () => {
+      const agentA = new CloneableAgent({name: 'agent-a'});
+      const agentB = new CloneableAgent({name: 'agent-b'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: [agentA, agentB],
+        router: () => 'agent-a',
+      });
+
+      const clone = original.clone();
+
+      expect(clone).not.toBe(original);
+      expect(clone).toBeInstanceOf(RoutedAgent);
+      expect(clone.parentAgent).toBeUndefined();
+      expect(clone.subAgents).toHaveLength(2);
+      clone.subAgents.forEach((sub, i) => {
+        expect(sub).not.toBe(original.subAgents[i]);
+        expect(sub).toBeInstanceOf(CloneableAgent);
+        expect(sub.name).toBe(original.subAgents[i].name);
+        expect(sub.parentAgent).toBe(clone);
+      });
+      expect(clone.subAgents.map((s) => s.name)).toEqual([
+        'agent-a',
+        'agent-b',
+      ]);
+
+      // The originals are left untouched: still parented to the original router.
+      expect(agentA.parentAgent).toBe(original);
+      expect(agentB.parentAgent).toBe(original);
+      expect(original.subAgents).toHaveLength(2);
+      expect(original.subAgents[0]).toBe(agentA);
+      expect(original.subAgents[1]).toBe(agentB);
+    });
+
+    it('preserves record keys and routes to the cloned target for the selected key', async () => {
+      const primary = new CloneableAgent({name: 'primary-agent'});
+      const fallback = new CloneableAgent({name: 'fallback-agent'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: {primary, fallback},
+        router: () => 'primary',
+      });
+
+      const clone = original.clone();
+
+      // The routing map keeps the record keys and maps them to cloned targets.
+      const routingMap = clone['agents'] as Readonly<Record<string, BaseAgent>>;
+      expect(Object.keys(routingMap)).toEqual(['primary', 'fallback']);
+      expect(routingMap['primary'].name).toBe('primary-agent');
+      expect(routingMap['primary']).not.toBe(primary);
+      expect(routingMap['primary'].parentAgent).toBe(clone);
+
+      // Functionally routes to the cloned primary target.
+      const context = createTestContext({agent: clone});
+      const result = await clone['runAsyncImpl'](context).next();
+      expect(result.value?.author).toBe('primary-agent');
+    });
+
+    it('uses an `agents` override verbatim without cloning it', async () => {
+      const target = new CloneableAgent({name: 'target'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: [target],
+        router: () => 'replacement',
+      });
+      const replacement = new CloneableAgent({name: 'replacement'});
+
+      const clone = original.clone({agents: [replacement]});
+
+      expect(clone.subAgents).toHaveLength(1);
+      expect(clone.subAgents[0]).toBe(replacement);
+      expect(replacement.parentAgent).toBe(clone);
+
+      const context = createTestContext({agent: clone});
+      const result = await clone['runAsyncImpl'](context).next();
+      expect(result.value?.author).toBe('replacement');
+    });
+
+    it('applies non-`agents` overrides while still cloning targets', () => {
+      const agentA = new CloneableAgent({name: 'agent-a'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: [agentA],
+        router: () => 'agent-a',
+      });
+
+      const clone = original.clone({name: 'router2'});
+
+      expect(clone.name).toBe('router2');
+      expect(original.name).toBe('router');
+      expect(clone.subAgents).toHaveLength(1);
+      expect(clone.subAgents[0]).not.toBe(agentA);
+      expect(clone.subAgents[0].name).toBe('agent-a');
+      expect(clone.subAgents[0].parentAgent).toBe(clone);
+    });
+
+    it('rejects a `parentAgent` override', () => {
+      const agentA = new CloneableAgent({name: 'agent-a'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: [agentA],
+        router: () => 'agent-a',
+      });
+      const someParent = new CloneableAgent({name: 'some-parent'});
+
+      expect(() => original.clone({parentAgent: someParent})).toThrow(
+        'Cannot update `parentAgent` field in clone.',
+      );
+    });
+
+    it('clones a RoutedAgent whose targets are real LlmAgents (array form)', () => {
+      const target = new LlmAgent({name: 'target'});
+      const original = new RoutedAgent({
+        name: 'router',
+        agents: [target],
+        router: () => 'target',
+      });
+
+      const clone = original.clone();
+
+      expect(clone).not.toBe(original);
+      expect(clone).toBeInstanceOf(RoutedAgent);
+      expect(clone.parentAgent).toBeUndefined();
+      expect(clone.subAgents[0]).toBeInstanceOf(LlmAgent);
+      expect(clone.subAgents[0]).not.toBe(target);
+      expect(clone.subAgents[0].name).toBe('target');
+      expect(clone.subAgents[0].parentAgent).toBe(clone);
+      expect(target.parentAgent).toBe(original);
+    });
   });
 });
 

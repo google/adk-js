@@ -4,29 +4,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createPartFromText} from '@google/genai';
+import {Content, createPartFromText, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
+import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
 } from '../agents/invocation_context.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
+import {App} from '../apps/app.js';
+import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
+import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
+
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
-import {createEvent, Event, getFunctionCalls} from '../events/event.js';
+import {createEvent, Event} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {Session} from '../sessions/session.js';
+import {CompositeSessionKey, Session} from '../sessions/session.js';
 import {
   runAsyncGeneratorWithOtelContext,
   tracer,
@@ -40,14 +45,19 @@ import {isGemini2OrAbove} from '../utils/model_name.js';
  */
 export interface RunnerConfig {
   /**
-   * The application name.
+   * The application object. If provided, `appName`, `agent`, and `plugins` will default from this app.
    */
-  appName: string;
+  app?: App;
 
   /**
-   * The agent to run.
+   * The application name. Required if `app` is not provided.
    */
-  agent: BaseAgent;
+  appName?: string;
+
+  /**
+   * The agent to run. Required if `app` is not provided.
+   */
+  agent?: BaseAgent;
 
   /**
    * An optional list of plugins to apply globally across all agents.
@@ -73,6 +83,11 @@ export interface RunnerConfig {
    * An optional service for managing authentication credentials.
    */
   credentialService?: BaseCredentialService;
+
+  /**
+   * An optional resumability configuration applied to the runner.
+   */
+  resumabilityConfig?: ResumabilityConfig;
 }
 
 /**
@@ -129,6 +144,7 @@ export class Runner {
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
+  readonly resumabilityConfig?: ResumabilityConfig;
 
   /**
    * Creates a new Runner instance.
@@ -136,13 +152,24 @@ export class Runner {
    * @param input The configuration for the runner.
    */
   constructor(input: RunnerConfig) {
-    this.appName = input.appName;
-    this.agent = input.agent;
-    this.pluginManager = new PluginManager(input.plugins ?? []);
+    const appName = input.app?.name ?? input.appName;
+    const agent = input.app?.rootAgent ?? input.agent;
+    if (!agent) {
+      throw new Error(
+        'agent must be provided in runner constructor (or via app.rootAgent)',
+      );
+    }
+    this.appName = appName!;
+    this.agent = agent;
+    const appPlugins = input.app?.plugins ?? [];
+    const configPlugins = input.plugins ?? [];
+    this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
     this.artifactService = input.artifactService;
     this.sessionService = input.sessionService;
     this.memoryService = input.memoryService;
     this.credentialService = input.credentialService;
+    this.resumabilityConfig =
+      input.app?.resumabilityConfig ?? input.resumabilityConfig;
   }
 
   /**
@@ -209,6 +236,9 @@ export class Runner {
     const {userId, sessionId, stateDelta} = params;
     const runConfig = createRunConfig(params.runConfig);
     let newMessage = params.newMessage;
+    if (newMessage && !newMessage.role) {
+      newMessage.role = 'user';
+    }
 
     // =========================================================================
     // Setup the session and invocation context
@@ -233,7 +263,7 @@ export class Runner {
           if (!session) {
             if (!this.appName) {
               throw new Error(
-                `Session lookup failed: appName must be provided in runner constructor`,
+                `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
               );
             }
             throw new Error(`Session not found: ${sessionId}`);
@@ -255,7 +285,14 @@ export class Runner {
           }
 
           const invocationContext = new InvocationContext({
-            artifactService: this.artifactService,
+            artifactService: this.artifactService
+              ? new ScopedArtifactService(
+                  this.artifactService,
+                  this.appName,
+                  userId,
+                  sessionId,
+                )
+              : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
             credentialService: this.credentialService,
@@ -297,7 +334,7 @@ export class Runner {
             // replaces the artifact data with a file name placeholder.
             // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
-              await this.saveArtifacts(
+              newMessage = await this.saveArtifacts(
                 invocationContext.invocationId,
                 session.userId,
                 session.id,
@@ -375,24 +412,34 @@ export class Runner {
                   return;
                 }
 
-                if (!event.partial) {
-                  await this.sessionService.appendEvent({session, event});
-                }
-                // Step 3: Run the on_event callbacks to optionally modify the event.
+                // Step 3: Run the on_event callbacks before persisting so callback
+                // changes are stored in the session and match the streamed event.
                 const modifiedEvent =
                   await this.pluginManager.runOnEventCallback({
                     invocationContext,
                     event,
                   });
+                const outputEvent = modifiedEvent
+                  ? {
+                      ...modifiedEvent,
+                      id: event.id,
+                      invocationId: event.invocationId,
+                      timestamp: event.timestamp,
+                      author: modifiedEvent.author || event.author,
+                      branch: modifiedEvent.branch ?? event.branch,
+                    }
+                  : event;
+                if (!event.partial) {
+                  await this.sessionService.appendEvent({
+                    session,
+                    event: outputEvent,
+                  });
+                }
                 if (params.abortSignal?.aborted) {
                   return;
                 }
 
-                if (modifiedEvent) {
-                  yield modifiedEvent;
-                } else {
-                  yield event;
-                }
+                yield outputEvent;
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
               await this.pluginManager.runAfterRunCallback({invocationContext});
@@ -412,7 +459,7 @@ export class Runner {
 
   /**
    * Saves artifacts from the message parts and replaces the inline data with
-   * a file name placeholder.
+   * a file name placeholder and optional file reference.
    *
    * @param invocationId The current invocation ID.
    * @param userId The user ID of the session.
@@ -424,110 +471,196 @@ export class Runner {
     userId: string,
     sessionId: string,
     message: Content,
-  ): Promise<void> {
+  ): Promise<Content> {
     if (!this.artifactService || !message.parts?.length) {
-      return;
+      return message;
     }
+
+    const sessionKey: CompositeSessionKey = {
+      appName: this.appName,
+      userId,
+      sessionId,
+    };
+    const newParts: Part[] = [];
+    let modified = false;
 
     for (let i = 0; i < message.parts.length; i++) {
       const part = message.parts[i];
       if (!part.inlineData) {
+        newParts.push(part);
         continue;
       }
-      const fileName = `artifact_${invocationId}_${i}`;
-      // TODO - b/425992518: group appname, userId, sessionId as a key.
-      await this.artifactService.saveArtifact({
-        appName: this.appName,
-        userId,
-        sessionId,
-        filename: fileName,
-        artifact: part,
-      });
-      // TODO - b/425992518: potentially buggy if accidentally exposed to LLM.
-      message.parts[i] = createPartFromText(
-        `Uploaded file: ${fileName}. It is saved into artifacts`,
-      );
+
+      try {
+        const inlineData = part.inlineData;
+        const fileName =
+          (inlineData as {displayName?: string}).displayName ||
+          `artifact_${invocationId}_${i}`;
+
+        const version = await this.artifactService.saveArtifact({
+          ...sessionKey,
+          filename: fileName,
+          artifact: part,
+        });
+
+        newParts.push(createPartFromText(`[Uploaded Artifact: "${fileName}"]`));
+
+        try {
+          const artifactVersion = await this.artifactService.getArtifactVersion(
+            {
+              ...sessionKey,
+              filename: fileName,
+              version,
+            },
+          );
+          if (
+            artifactVersion?.canonicalUri &&
+            /^(gs|https?):/i.test(artifactVersion.canonicalUri)
+          ) {
+            newParts.push({
+              fileData: {
+                fileUri: artifactVersion.canonicalUri,
+                mimeType: artifactVersion.mimeType || inlineData.mimeType || '',
+                displayName: fileName,
+              },
+            });
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to resolve artifact version for ${fileName}:`,
+            error,
+          );
+        }
+        modified = true;
+        logger.info(`Successfully saved artifact: ${fileName}`);
+      } catch (error) {
+        logger.error(`Failed to save artifact for part ${i}:`, error);
+        newParts.push(part);
+      }
     }
+
+    if (!modified) {
+      return message;
+    }
+
+    return {
+      ...message,
+      parts: newParts,
+    };
   }
 
   /**
    * Determines the next agent to run to continue the session. This is primarily
    * used for session resumption.
    */
-  // TODO - b/425992518: This is where LRO integration should happen.
-  // Needs clean up before we can generalize it.
+  /**
+   * Determines the next agent to run to continue the session. This is primarily
+   * used for session resumption across tool and LRO boundaries.
+   */
   private determineAgentForResumption(
     session: Session,
     rootAgent: BaseAgent,
   ): BaseAgent {
-    // =========================================================================
-    // Case 1: If the last event is a function response, this returns the
-    // agent that made the original function call.
-    // =========================================================================
-    const event = findEventByLastFunctionResponseId(session.events);
-    if (event && event.author) {
-      return rootAgent.findAgent(event.author) || rootAgent;
-    }
-
-    // =========================================================================
-    // Case 2: Otherwise, find the last agent that emitted a message and is
-    // transferable across the agent tree.
-    // =========================================================================
-    // TODO - b/425992518: Optimize this, not going to work for long sessions.
-    // TODO - b/425992518: The behavior is dynamic, needs better documentation.
-    for (let i = session.events.length - 1; i >= 0; i--) {
-      logger.info('event:', JSON.stringify(session.events[i]));
-      const event = session.events[i];
-      if (event.author === 'user' || !event.author) {
-        continue;
-      }
-
-      if (event.author === rootAgent.name) {
-        return rootAgent;
-      }
-
-      const agent = rootAgent.findSubAgent(event.author!);
-      if (!agent) {
-        logger.warn(
-          `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
-        );
-        continue;
-      }
-      if (this.isRoutableLlmAgent(agent)) {
-        return agent;
-      }
-    }
-    // =========================================================================
-    // Case 3: default to root agent.
-    // =========================================================================
-    return rootAgent;
+    return determineAgentForResumption(
+      session,
+      rootAgent,
+      this.resumabilityConfig,
+    );
   }
 
   /**
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
-   * An agent is transferable if:
-   *  - It is an instance of `LlmAgent`.
-   *  - All its ancestors are also transferable (i.e., they have
-   *    `disallowTransferToParent` set to false).
-   *
    * @param agentToRun The agent to check for transferability.
    * @returns True if the agent can transfer, False otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
-    let agent: BaseAgent | undefined = agentToRun;
-    while (agent) {
-      if (!isLlmAgent(agent)) {
-        return false;
-      }
-      if (agent.disallowTransferToParent) {
-        return false;
-      }
-      agent = agent.parentAgent;
-    }
-    return true;
+    return isRoutableLlmAgent(agentToRun);
   }
   // TODO - b/425992518: Implement runLive and related methods.
+}
+
+/**
+ * Determines the next agent to run to continue the session. This is primarily
+ * used for session resumption across tool and LRO boundaries.
+ */
+export function determineAgentForResumption(
+  session: Session,
+  rootAgent: BaseAgent,
+  resumabilityConfig?: ResumabilityConfig,
+): BaseAgent {
+  // =========================================================================
+  // Case 1: If the last event is a function response and resumability is enabled,
+  // this returns the agent that made the original function call.
+  // =========================================================================
+  const event = findEventByLastFunctionResponseId(session.events);
+  const isResumable = Boolean(resumabilityConfig?.isResumable);
+  if (event && event.author && isResumable) {
+    const resumedAgent = rootAgent.findAgent(event.author);
+    if (resumedAgent) {
+      return resumedAgent;
+    }
+    logger.warn(
+      `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+    );
+  }
+
+  // =========================================================================
+  // Case 2: Otherwise, find the last agent that emitted a message and is
+  // transferable across the agent tree.
+  // =========================================================================
+  // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
+  for (let i = session.events.length - 1; i >= 0; i--) {
+    logger.debug('event:', JSON.stringify(session.events[i]));
+    const event = session.events[i];
+    if (event.author === 'user' || !event.author) {
+      continue;
+    }
+
+    if (event.author === rootAgent.name) {
+      return rootAgent;
+    }
+
+    const agent = rootAgent.findSubAgent(event.author);
+    if (!agent) {
+      logger.warn(
+        `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
+      );
+      continue;
+    }
+    if (isRoutableLlmAgent(agent)) {
+      return agent;
+    }
+  }
+  // =========================================================================
+  // Case 3: default to root agent.
+  // =========================================================================
+  return rootAgent;
+}
+
+/**
+ * Whether the agent to run can transfer to any other agent in the agent tree.
+ *
+ * An agent is transferable if:
+ *  - It is an instance of `LlmAgent`.
+ *  - All its ancestors are also transferable (i.e., they have
+ *    `disallowTransferToParent` set to false).
+ *
+ * @param agentToRun The agent to check for transferability.
+ * @returns True if the agent can transfer, False otherwise.
+ */
+export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
+  let agent: BaseAgent | undefined = agentToRun;
+  while (agent) {
+    if (!isLlmAgent(agent)) {
+      return false;
+    }
+    if (agent.disallowTransferToParent) {
+      return false;
+    }
+    agent = agent.parentAgent;
+  }
+  return true;
 }
 
 /**
@@ -535,36 +668,10 @@ export class Runner {
  * containing a function call with a functionCall.id matching the
  * functionResponse.id from the last event in the session.
  */
-// TODO - b/425992518: a hack that used event log as transaction log. Fix.
-function findEventByLastFunctionResponseId(events: Event[]): Event | null {
-  if (!events.length) {
-    return null;
-  }
-
-  const lastEvent = events[events.length - 1];
-  const functionCallId = lastEvent.content?.parts?.find(
-    (part) => part.functionResponse,
-  )?.functionResponse?.id;
-  if (!functionCallId) {
-    return null;
-  }
-
-  // TODO - b/425992518: inefficient search, fix.
-  for (let i = events.length - 2; i >= 0; i--) {
-    const event = events[i];
-    // Looking for the system long running request euc function call.
-    const functionCalls = getFunctionCalls(event);
-    if (!functionCalls) {
-      continue;
-    }
-
-    for (const functionCall of functionCalls) {
-      if (functionCall.id === functionCallId) {
-        return event;
-      }
-    }
-  }
-  return null;
+export function findEventByLastFunctionResponseId(
+  events: Event[],
+): Event | null {
+  return findMatchingFunctionCall(events) ?? null;
 }
 
 function getAllToolsets(agent: BaseAgent): BaseToolset[] {

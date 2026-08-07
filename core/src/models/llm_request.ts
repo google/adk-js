@@ -46,6 +46,11 @@ export interface LlmRequest {
    * The set of allowed tools, populated by request processors.
    */
   allowedTools?: string[];
+
+  /**
+   * The interaction ID from the previous turn, if any.
+   */
+  previousInteractionId?: string;
 }
 
 /**

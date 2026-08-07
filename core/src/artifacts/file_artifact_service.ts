@@ -28,6 +28,7 @@ const USER_NAMESPACE_PREFIX = 'user:';
  */
 interface FileArtifactVersion extends ArtifactVersion {
   fileName?: string;
+  fileUri?: string;
 }
 
 /**
@@ -76,7 +77,7 @@ export class FileArtifactService implements BaseArtifactService {
     artifact,
     customMetadata,
   }: SaveArtifactRequest): Promise<number> {
-    if (!artifact.inlineData && !artifact.text) {
+    if (!artifact.inlineData && !artifact.text && !artifact.fileData) {
       throw new Error('Artifact must have either inlineData or text content.');
     }
 
@@ -100,6 +101,7 @@ export class FileArtifactService implements BaseArtifactService {
     const contentPath = path.join(versionDir, storedFilename);
 
     let mimeType: string | undefined;
+    let fileUri: string | undefined;
     if (artifact.inlineData) {
       const data = artifact.inlineData.data || '';
       // GenAI SDK Part data is in Base64 format. See https://googleapis.github.io/js-genai/release_docs/interfaces/types.Part.html
@@ -107,6 +109,12 @@ export class FileArtifactService implements BaseArtifactService {
       mimeType = artifact.inlineData.mimeType || 'application/octet-stream';
     } else if (artifact.text !== undefined) {
       await fs.writeFile(contentPath, artifact.text, 'utf-8');
+    } else {
+      fileUri = artifact.fileData!.fileUri;
+      if (!fileUri) {
+        throw new Error('Artifact fileData must have a fileUri.');
+      }
+      mimeType = artifact.fileData!.mimeType;
     }
 
     const canonicalUri = await getCanonicalUri(
@@ -119,6 +127,7 @@ export class FileArtifactService implements BaseArtifactService {
     const metadata: FileArtifactVersion = {
       fileName: filename,
       mimeType,
+      fileUri,
       version: nextVersion,
       canonicalUri,
       customMetadata,
@@ -177,6 +186,12 @@ export class FileArtifactService implements BaseArtifactService {
       );
       const metadataPath = path.join(versionDir, 'metadata.json');
       const metadata = await readMetadata(metadataPath);
+
+      if (metadata.fileUri) {
+        return {
+          fileData: {fileUri: metadata.fileUri, mimeType: metadata.mimeType},
+        };
+      }
 
       const storedFilename = path.basename(artifactDir);
       let contentPath = path.join(versionDir, storedFilename);

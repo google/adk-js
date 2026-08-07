@@ -1,0 +1,125 @@
+[
+  {
+    "key": "fe3c05c052fff445",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Give me a fruit fact"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Give me a fruit fact"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_fruit_agent\".\n\nReturn the name of a random fruit.\n      Return only the name, nothing else."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Apple"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 48,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 129,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 48
+          }
+        ],
+        "thoughtsTokenCount": 80,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "3c06842da841d90e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Give me a fruit fact"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Give me a fruit fact"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_fruit_agent] said: Apple"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Apple"
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"generate_benefit_agent\".\n\nTell me a health benefit about the specified fruit."
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Apples are a good source of dietary fiber, which can help promote healthy digestion and regulate blood sugar levels."
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 56,
+        "candidatesTokenCount": 22,
+        "totalTokenCount": 102,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 56
+          }
+        ],
+        "thoughtsTokenCount": 24,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

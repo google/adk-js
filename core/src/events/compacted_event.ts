@@ -30,6 +30,11 @@ export interface CompactedEvent extends Event {
    * The summarized content of the compacted events.
    */
   compactedContent: string;
+
+  /**
+   * Identifies this compacted event as the persistent context scratchpad.
+   */
+  isScratchpad?: boolean;
 }
 
 /**
@@ -37,6 +42,17 @@ export interface CompactedEvent extends Event {
  */
 export function isCompactedEvent(event: Event): event is CompactedEvent {
   return 'isCompacted' in event && event.isCompacted === true;
+}
+
+/**
+ * Type guard to check if an event is a scratchpad CompactedEvent.
+ */
+export function isScratchpadEvent(
+  event: Event,
+): event is CompactedEvent & {isScratchpad: true} {
+  return (
+    isCompactedEvent(event) && (event as CompactedEvent).isScratchpad === true
+  );
 }
 
 export function createCompactedEvent(
@@ -48,5 +64,6 @@ export function createCompactedEvent(
     startTime: params.startTime!,
     endTime: params.endTime!,
     compactedContent: params.compactedContent!,
+    isScratchpad: params.isScratchpad,
   };
 }

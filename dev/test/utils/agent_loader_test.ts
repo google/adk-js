@@ -4,14 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import esbuild from 'esbuild';
-import {exec} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {promisify} from 'node:util';
-import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  Mock,
+  vi,
+} from 'vitest';
 
+import {App, isApp} from '@google/adk';
 import {
   AgentFile,
   AgentLoader,
@@ -19,10 +28,8 @@ import {
 } from '../../src/utils/agent_loader.js';
 import * as fileUtils from '../../src/utils/file_utils.js';
 
-const execAsync = promisify(exec);
-
 vi.mock('../../src/utils/file_utils.js', () => ({
-  getTempDir: vi.fn(),
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFileExists: vi.fn(),
   isFolderExists: vi.fn(),
@@ -108,20 +115,64 @@ export const agent1 = new FakeAgent('agent1');
 export const agent2 = new FakeAgent('agent2');
 `;
 
+const appJsContent = `
+const {App, BaseAgent} = require('@google/adk');
+
+class FakeAgentForApp extends BaseAgent {
+  constructor(name) {
+    super({ name });
+  }
+}
+const agent = new FakeAgentForApp('agent_for_app');
+exports.app = new App({ name: 'test_app', rootAgent: agent });
+`;
+
+const appDefaultExportContent = `
+import {App, BaseAgent} from '@google/adk';
+
+class FakeAgentForApp extends BaseAgent {
+  constructor(name) {
+    super({ name });
+  }
+}
+const agent = new FakeAgentForApp('agent_for_app_default');
+export default new App({ name: 'test_app_default', rootAgent: agent });
+`;
+
 describe('AgentLoader', () => {
   let tempAgentsDir: string;
   let tempLoaderDir: string;
 
   const compiledPath = (fileName: string) => path.join(tempLoaderDir, fileName);
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     tempAgentsDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-loader-test'),
     );
     tempLoaderDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'agent-loader-output-test'),
     );
-    (fileUtils.getTempDir as Mock).mockImplementation(() => tempLoaderDir);
+    await initNpmProject();
+  }, 60000);
+
+  afterAll(async () => {
+    await fs.rm(tempAgentsDir, {recursive: true, force: true});
+    await fs.rm(tempLoaderDir, {recursive: true, force: true});
+  });
+
+  beforeEach(async () => {
+    (fileUtils.createTempDir as Mock).mockImplementation(async () => {
+      await fs.mkdir(tempLoaderDir, {recursive: true});
+      return tempLoaderDir;
+    });
+    (fileUtils.isFile as Mock).mockImplementation(async (filePath) => {
+      try {
+        const stat = await fs.stat(filePath as string);
+        return stat.isFile();
+      } catch {
+        return false;
+      }
+    });
     (fileUtils.isFileExists as Mock).mockImplementation(() => true);
     (fileUtils.isFolderExists as Mock).mockImplementation(
       async (folderPath) => {
@@ -139,12 +190,35 @@ describe('AgentLoader', () => {
     (fileUtils.tryToFindFileRecursively as Mock).mockImplementation(
       async (_sourceFolder, fileName) => path.join(tempAgentsDir, fileName),
     );
-    await initNpmProject();
   });
 
   afterEach(async () => {
-    await fs.rm(tempAgentsDir, {recursive: true, force: true});
-    await fs.rm(tempLoaderDir, {recursive: true, force: true});
+    try {
+      const files = await fs.readdir(tempAgentsDir);
+      for (const file of files) {
+        if (file !== 'package.json' && file !== 'node_modules') {
+          await fs.rm(path.join(tempAgentsDir, file), {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const files = await fs.readdir(tempLoaderDir);
+      for (const file of files) {
+        await fs.rm(path.join(tempLoaderDir, file), {
+          recursive: true,
+          force: true,
+        });
+      }
+    } catch {
+      // ignore
+    }
+
     vi.clearAllMocks();
   });
 
@@ -154,13 +228,18 @@ describe('AgentLoader', () => {
       JSON.stringify({
         name: 'test-agents',
         version: '1.0.0',
-        dependencies: {
-          '@google/adk': `file:${path.dirname(require.resolve('@google/adk'))}`,
-        },
       }),
     );
 
-    await execAsync('npm install', {cwd: tempAgentsDir});
+    const adkPath = path.resolve(
+      path.dirname(require.resolve('@google/adk')),
+      '..',
+      '..',
+    );
+    const nodeModulesDir = path.join(tempAgentsDir, 'node_modules');
+    const googleDir = path.join(nodeModulesDir, '@google');
+    await fs.mkdir(googleDir, {recursive: true});
+    await fs.symlink(adkPath, path.join(googleDir, 'adk'), 'dir');
   }
 
   describe('AgentFile', () => {
@@ -205,12 +284,32 @@ describe('AgentLoader', () => {
         packages: 'bundle',
         bundle: true,
         minify: true,
-        allowOverwrite: true,
         external: expect.arrayContaining(['onnxruntime-node']),
       });
 
       await agentFile.dispose();
       await expect(fs.access(compiledAgentPath)).rejects.toThrow();
+    });
+
+    it('compiles into a private temp dir without allowing overwrite', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent1.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+
+      const compiledAgentPath = compiledPath('agent1.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAgentPath, agent1JsContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(agentPath);
+      await agentFile.load();
+
+      expect(fileUtils.createTempDir).toHaveBeenCalledWith('adk_agent_loader');
+      expect(
+        (esbuild.build as Mock).mock.calls[0][0].allowOverwrite,
+      ).toBeUndefined();
+
+      await agentFile.dispose();
     });
 
     it('throws if rootAgent is not found', async () => {
@@ -302,6 +401,63 @@ describe('AgentLoader', () => {
       expect(agent.name).toEqual('agentDefault');
       await agentFile.dispose();
       await expect(fs.access(compiledAgentPath)).rejects.toThrow();
+    });
+
+    it('loads an app file and returns the app via load()', async () => {
+      const appPath = path.join(tempAgentsDir, 'app1.js');
+      await fs.writeFile(appPath, appJsContent);
+
+      const compiledAppPath = compiledPath('app1.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAppPath, appJsContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(appPath);
+      const loaded = await agentFile.load();
+
+      expect(isApp(loaded)).toBe(true);
+      expect((loaded as App).name).toBe('test_app');
+      expect((loaded as App).rootAgent.name).toBe('agent_for_app');
+      await agentFile.dispose();
+    });
+
+    it('loads an app via loadApp() and rootAgent via loadAgent()', async () => {
+      const appPath = path.join(tempAgentsDir, 'app_default.js');
+      await fs.writeFile(appPath, appDefaultExportContent);
+
+      const compiledAppPath = compiledPath('app_default.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAppPath, appDefaultExportContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(appPath);
+      const app = await agentFile.loadApp();
+      const agent = await agentFile.loadAgent();
+
+      expect(app.name).toBe('test_app_default');
+      expect(agent.name).toBe('agent_for_app_default');
+      await agentFile.dispose();
+    });
+
+    it('synthesizes an App when loadApp() is called on a BaseAgent file', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent1.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+
+      const compiledAgentPath = compiledPath('agent1.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAgentPath, agent1JsContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(agentPath);
+      const app = await agentFile.loadApp();
+
+      expect(isApp(app)).toBe(true);
+      expect(app.name).toBe('agent1');
+      expect(app.rootAgent.name).toBe('agent1');
+      await agentFile.dispose();
     });
 
     it('loads first agent if multiple agents exported', async () => {
@@ -510,10 +666,10 @@ describe('AgentLoader', () => {
 
   describe('AgentLoader', () => {
     beforeEach(async () => {
-      let loaderOutputDirIndex = 0;
-      (fileUtils.getTempDir as Mock).mockImplementation(() =>
-        path.join(tempLoaderDir, `agent-${loaderOutputDirIndex++}`),
-      );
+      (fileUtils.createTempDir as Mock).mockImplementation(async () => {
+        await fs.mkdir(tempLoaderDir, {recursive: true});
+        return fs.mkdtemp(path.join(tempLoaderDir, 'agent-'));
+      });
 
       await fs.writeFile(
         path.join(tempAgentsDir, 'agent1.js'),
@@ -532,14 +688,13 @@ describe('AgentLoader', () => {
         async (options: {entryPoints: string[]; outfile: string}) => {
           if (options.entryPoints[0].includes('agent1.js')) {
             await fs.writeFile(options.outfile, agent1JsContent);
-          }
-
-          if (options.entryPoints[0].includes('agent2.ts')) {
+          } else if (options.entryPoints[0].includes('agent2.ts')) {
             await fs.writeFile(options.outfile, agent2CjsContentMocked);
-          }
-
-          if (options.entryPoints[0].includes('agent3')) {
+          } else if (options.entryPoints[0].includes('agent3')) {
             await fs.writeFile(options.outfile, agent3JsContent);
+          } else {
+            const content = await fs.readFile(options.entryPoints[0], 'utf8');
+            await fs.writeFile(options.outfile, content);
           }
 
           return Promise.resolve();
@@ -611,6 +766,25 @@ describe('AgentLoader', () => {
       const agents = await loader.listAgents();
 
       expect(agents).not.toContain('bad_agent_dir');
+      await loader.disposeAll();
+    });
+
+    it('discovers app entrypoint files (e.g. app.js) in directories and lists them via listApps() / getAppFile()', async () => {
+      const appDir = path.join(tempAgentsDir, 'my_service');
+      await fs.mkdir(appDir, {recursive: true});
+      await fs.writeFile(path.join(appDir, 'app.js'), appJsContent);
+
+      const loader = new AgentLoader(tempAgentsDir);
+      const apps = await loader.listApps();
+
+      expect(apps).toContain('my_service');
+
+      const appFile = await loader.getAppFile('my_service');
+      const loaded = await appFile.load();
+
+      expect(isApp(loaded)).toBe(true);
+      expect((loaded as App).name).toBe('test_app');
+
       await loader.disposeAll();
     });
 

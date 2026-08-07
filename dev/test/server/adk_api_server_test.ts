@@ -25,8 +25,52 @@ import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
-import {AdkApiServer} from '../../src/server/adk_api_server.js';
+import {
+  A2A_AUTH_TOKEN_ENV_VAR,
+  AdkApiServer,
+} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+
+interface JsonRpcResponse {
+  result?: unknown;
+  error?: {code: number; message: string};
+}
+
+/**
+ * Sends a genuine A2A `message/send` JSON-RPC call, optionally with an
+ * `Authorization` header, and reports the raw HTTP status so authentication
+ * failures can be told apart from agent responses.
+ */
+async function sendA2aMessage(
+  baseUrl: string,
+  authorization?: string,
+): Promise<{status: number; body: JsonRpcResponse}> {
+  const response = await fetch(`${baseUrl}/a2a/testApp/jsonrpc`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authorization ? {Authorization: authorization} : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'a2a-test-request',
+      method: 'message/send',
+      params: {
+        message: {
+          kind: 'message',
+          messageId: 'a2a-test-message',
+          role: 'user',
+          parts: [{kind: 'text', text: 'Hello'}],
+        },
+      },
+    }),
+  });
+
+  return {
+    status: response.status,
+    body: (await response.json()) as JsonRpcResponse,
+  };
+}
 
 /**
  * Http client for testing the AdkWebServer. It makes real http requests to the
@@ -900,6 +944,36 @@ describe('AdkWebServer', () => {
   });
 
   describe('A2A', () => {
+    const A2A_TOKEN = 'test-a2a-token';
+    let a2aServer: AdkApiServer | undefined;
+
+    const startA2aServer = async (a2aAuthToken?: string) => {
+      a2aServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        a2a: true,
+        a2aAuthToken,
+      });
+      await a2aServer.start();
+      return a2aServer.url;
+    };
+
+    beforeEach(() => {
+      vi.stubEnv(A2A_AUTH_TOKEN_ENV_VAR, undefined);
+      // The SDK logs the rejection thrown by the authenticator; keep it out of
+      // the test output.
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(async () => {
+      await a2aServer?.stop();
+      a2aServer = undefined;
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
     it('should return 404 for A2A endpoints when disabled', async () => {
       try {
         await client.get(`/a2a/testApp/${AGENT_CARD_PATH}`);
@@ -908,24 +982,75 @@ describe('AdkWebServer', () => {
       }
     });
 
-    it('should return Agent Card when enabled', async () => {
-      const a2aServer = new AdkApiServer({
-        agentLoader,
-        sessionService,
-        memoryService,
-        artifactService,
-        a2a: true,
-      });
-      await a2aServer.start();
-      const a2aClient = new HttpClient(a2aServer.url);
+    // The agent card route is mounted without a user builder, so it stays
+    // readable whether or not the rest of the surface is authenticated.
+    it.each([undefined, A2A_TOKEN])(
+      'should serve the agent card publicly (auth token: %s)',
+      async (a2aAuthToken) => {
+        const a2aClient = new HttpClient(await startA2aServer(a2aAuthToken));
 
-      const response = await a2aClient.get<AgentCard>(
-        `/a2a/testApp/${AGENT_CARD_PATH}`,
-      );
+        const response = await a2aClient.get<AgentCard>(
+          `/a2a/testApp/${AGENT_CARD_PATH}`,
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testAgent');
+      },
+    );
+
+    it('should run the agent for a call carrying the configured token', async () => {
+      const url = await startA2aServer(A2A_TOKEN);
+
+      const response = await sendA2aMessage(url, `Bearer ${A2A_TOKEN}`);
+
       expect(response.status).toBe(200);
-      expect(response.data?.name).toBe('testAgent');
+      expect(response.body.error).toBeUndefined();
+      expect(response.body.result).toBeDefined();
+    });
 
-      await a2aServer.stop();
+    it('should reject a call with a missing or wrong token', async () => {
+      const url = await startA2aServer(A2A_TOKEN);
+
+      for (const authorization of [undefined, 'Bearer wrong-token']) {
+        const response = await sendA2aMessage(url, authorization);
+
+        // The SDK picks the status; all that matters is that the agent was
+        // not reached.
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(response.body.result).toBeUndefined();
+        expect(response.body.error).toBeDefined();
+      }
+    });
+
+    it(`should honour the ${A2A_AUTH_TOKEN_ENV_VAR} environment variable`, async () => {
+      vi.stubEnv(A2A_AUTH_TOKEN_ENV_VAR, A2A_TOKEN);
+      const url = await startA2aServer();
+
+      expect((await sendA2aMessage(url)).status).toBeGreaterThanOrEqual(400);
+      expect((await sendA2aMessage(url, `Bearer ${A2A_TOKEN}`)).status).toBe(
+        200,
+      );
+    });
+
+    it('should prefer the explicit token over the environment variable', async () => {
+      vi.stubEnv(A2A_AUTH_TOKEN_ENV_VAR, 'env-token');
+      const url = await startA2aServer(A2A_TOKEN);
+
+      expect(
+        (await sendA2aMessage(url, 'Bearer env-token')).status,
+      ).toBeGreaterThanOrEqual(400);
+      expect((await sendA2aMessage(url, `Bearer ${A2A_TOKEN}`)).status).toBe(
+        200,
+      );
+    });
+
+    it('should serve an unauthenticated surface when no token is configured', async () => {
+      const url = await startA2aServer();
+
+      const response = await sendA2aMessage(url);
+
+      expect(response.status).toBe(200);
+      expect(response.body.result).toBeDefined();
     });
   });
 
@@ -1127,6 +1252,35 @@ describe('AdkWebServer', () => {
         expect(address.address).toBe('127.0.0.1');
       } finally {
         await specificServer.stop();
+      }
+    });
+  });
+
+  describe('Internal caches keyed by request input', () => {
+    // `appName` / `eventId` arrive straight off the request path. On a plain
+    // object literal, inherited names such as `toString` make `key in cache`
+    // report a spurious hit and hand back a Function where a Runner or trace
+    // record is expected.
+    const INHERITED_KEYS = ['toString', 'constructor', 'hasOwnProperty'];
+
+    it('builds a real Runner for an app named after an inherited key', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      for (const appName of INHERITED_KEYS) {
+        const runner = await getRunner(TEST_AGENT, appName);
+        expect(runner).toBeInstanceOf(Runner);
+        expect(runner.appName).toBe(appName);
+      }
+    });
+
+    it('returns 404 for a trace id matching an inherited key', async () => {
+      for (const eventId of INHERITED_KEYS) {
+        const response = await fetch(`${server.url}/debug/trace/${eventId}`);
+        expect(response.status).toBe(404);
       }
     });
   });

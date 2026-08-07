@@ -18,10 +18,10 @@ import {
 } from '../../src/utils/streaming_utils.js';
 
 // Mock generateClientFunctionCallId to return a fixed ID for testing
-vi.mock('../../src/agents/functions.js', async () => {
+vi.mock('../../src/events/event.js', async () => {
   const actual = (await vi.importActual(
-    '../../src/agents/functions.js',
-  )) as typeof import('../../src/agents/functions.js');
+    '../../src/events/event.js',
+  )) as typeof import('../../src/events/event.js');
   return {
     ...actual,
     generateClientFunctionCallId: () => 'mocked-fc-id',
@@ -853,10 +853,15 @@ describe('StreamingResponseAggregator', () => {
       }
       expect(results2).toHaveLength(0); // Suppressed early return
 
-      // 3. Call close() and verify metadata is returned and parts array is empty
+      // 3. Call close() and verify the trailing usage metadata is preserved
+      // WITHOUT emitting an empty-parts model content. Emitting
+      // `content: { parts: [] }` here corrupts the session history and makes the
+      // Vertex AI backend reject the next request with HTTP 400 "must include at
+      // least one parts field" (google/adk-js#21, #22); the metadata-only
+      // close() response therefore omits `content` entirely.
       const finalResponse = aggregator.close();
       expect(finalResponse).toBeDefined();
-      expect(finalResponse?.content?.parts).toEqual([]);
+      expect(finalResponse?.content).toBeUndefined();
       expect(finalResponse?.usageMetadata).toEqual({
         promptTokenCount: 15,
         candidatesTokenCount: 25,

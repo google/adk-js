@@ -8,7 +8,7 @@ import {cloneDeep} from 'lodash-es';
 
 import {Event} from '../events/event.js';
 
-import {Session} from './session.js';
+import {CompositeSessionKey, Session} from './session.js';
 import {State} from './state.js';
 
 /**
@@ -38,13 +38,7 @@ export interface CreateSessionRequest {
 /**
  * The parameters for `getSession`.
  */
-export interface GetSessionRequest {
-  /** The name of the application. */
-  appName: string;
-  /** The ID of the user. */
-  userId: string;
-  /** The ID of the session. */
-  sessionId: string;
+export interface GetSessionRequest extends CompositeSessionKey {
   /** The configurations for getting the session. */
   config?: GetSessionConfig;
 }
@@ -70,14 +64,7 @@ export interface ListSessionsRequest {
 /**
  * The parameters for `deleteSession`.
  */
-export interface DeleteSessionRequest {
-  /** The name of the application. */
-  appName: string;
-  /** The ID of the user. */
-  userId: string;
-  /** The ID of the session. */
-  sessionId: string;
-}
+export type DeleteSessionRequest = CompositeSessionKey;
 
 /**
  * The parameters for `appendEvent`.
@@ -186,7 +173,12 @@ export abstract class BaseSessionService {
     event = trimTempDeltaState(event);
 
     this.updateSessionState({session, event});
-    session.events.push(event);
+    const index = session.events.findIndex((e) => e.id === event.id);
+    if (index >= 0) {
+      session.events[index] = event;
+    } else {
+      session.events.push(event);
+    }
 
     return event;
   }
@@ -204,7 +196,17 @@ export abstract class BaseSessionService {
       if (key.startsWith(State.TEMP_PREFIX)) {
         continue;
       }
-      session.state[key] = value;
+      // `session.state` is not always a null-prototype map — a caller can hand
+      // us a session whose state is a plain object literal — and on a plain
+      // object `state['__proto__'] = value` reaches the inherited `__proto__`
+      // setter, which replaces the object's prototype instead of storing the
+      // entry. `defineProperty` always creates an own property.
+      Object.defineProperty(session.state, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
   }
 }
@@ -218,7 +220,10 @@ export function trimTempDeltaState(event: Event): Event {
   }
 
   const stateDelta = event.actions.stateDelta;
-  const filteredStateDelta: Record<string, unknown> = {};
+  // Null-prototype: the caller controls these keys, and copying a `__proto__`
+  // key into a plain object literal invokes the inherited `__proto__` setter,
+  // which drops the entry and re-parents the map. See `trimTempState`.
+  const filteredStateDelta: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(stateDelta)) {
     if (!key.startsWith(State.TEMP_PREFIX)) {
       filteredStateDelta[key] = value;
@@ -231,11 +236,19 @@ export function trimTempDeltaState(event: Event): Event {
 
 /**
  * Removes temporary state keys from the state.
+ *
+ * The result is a null-prototype map. `state` comes straight off the request
+ * body on a dev server (`POST /apps/:appName/users/:userId/sessions/:sessionId`),
+ * and `JSON.parse` makes `__proto__` an own key, so copying it into a plain
+ * object literal would invoke the inherited `__proto__` setter: the entry is
+ * dropped and the new state object is re-parented onto the attacker's object.
+ * `State.get`/`State.has` use the `in` operator, so every key on that object
+ * would then read back as session state.
  */
 export function trimTempState(
   state: Record<string, unknown>,
 ): Record<string, unknown> {
-  const filteredState: Record<string, unknown> = {};
+  const filteredState: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(state)) {
     if (!key.startsWith(State.TEMP_PREFIX)) {
       filteredState[key] = value;

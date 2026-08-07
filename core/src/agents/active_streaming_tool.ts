@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Task} from '../utils/task.js';
 import {LiveRequestQueue} from './live_request_queue.js';
 
 /**
  * The parameters for creating an ActiveStreamingTool.
  */
 export interface ActiveStreamingToolParams {
-  task?: Promise<void>;
+  task?: Task<void> | Promise<void>;
   stream?: LiveRequestQueue;
 }
 
@@ -20,10 +21,8 @@ export interface ActiveStreamingToolParams {
 export class ActiveStreamingTool {
   /**
    * The active task of this streaming tool.
-   * TODO: Replace 'Promise<void>' with a proper Task type if available in this
-   * env.
    */
-  task?: Promise<void>;
+  task?: Task<void>;
 
   /**
    * The active (input) streams of this streaming tool.
@@ -31,7 +30,11 @@ export class ActiveStreamingTool {
   stream?: LiveRequestQueue;
 
   constructor(params: ActiveStreamingToolParams = {}) {
-    this.task = params.task;
+    if (params.task instanceof Promise) {
+      this.task = new Task(() => params.task as Promise<void>);
+    } else {
+      this.task = params.task;
+    }
     this.stream = params.stream;
   }
 }

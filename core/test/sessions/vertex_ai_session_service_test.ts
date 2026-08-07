@@ -7,7 +7,8 @@
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {createEvent, State, VertexAiSessionService} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {ApiError} from '@google/genai';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 // Mock the unreleased nodejs-vertexai package so the import resolves
 vi.mock('nodejs-vertexai', () => ({
@@ -20,7 +21,28 @@ vi.mock('nodejs-vertexai', () => ({
   },
 }));
 
-import {isVertexAiConnectionString} from '@google/adk/sessions/vertex_ai_session_service.js';
+const clientConstructor = vi.hoisted(() => vi.fn());
+
+// The service imports Client from this deep path, so the mock must target it.
+vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+  Client: class {
+    readonly agentEnginesInternal = {sessions: {}};
+
+    constructor(options: {project?: string; location?: string}) {
+      clientConstructor(options);
+    }
+  },
+}));
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  clientConstructor.mockClear();
+});
+
+import {
+  isVertexAiConnectionString,
+  quoteFilterLiteral,
+} from '@google/adk/sessions/vertex_ai_session_service.js';
 import {logger} from '@google/adk/utils/logger.js';
 
 describe('isVertexAiConnectionString', () => {
@@ -33,6 +55,28 @@ describe('isVertexAiConnectionString', () => {
     expect(isVertexAiConnectionString('memory:/')).toBe(false);
     expect(isVertexAiConnectionString('')).toBe(false);
     expect(isVertexAiConnectionString(undefined)).toBe(false);
+  });
+});
+
+describe('quoteFilterLiteral', () => {
+  it('quotes a plain value', () => {
+    expect(quoteFilterLiteral('alice')).toBe('"alice"');
+  });
+
+  it('neutralizes quote injection', () => {
+    // Must not break out of the literal and append an OR predicate that would
+    // return every user's sessions.
+    expect(quoteFilterLiteral('attacker" OR user_id!="')).toBe(
+      '"attacker\\" OR user_id!=\\""',
+    );
+  });
+
+  it('escapes a lone backslash', () => {
+    expect(quoteFilterLiteral('\\')).toBe('"\\\\"');
+  });
+
+  it('quotes an empty string', () => {
+    expect(quoteFilterLiteral('')).toBe('""');
   });
 });
 
@@ -101,9 +145,52 @@ describe('VertexAiSessionService', () => {
   });
 
   it('throws an error if no client and no project/location provided', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+
     expect(() => new VertexAiSessionService({})).toThrow(
-      'Either (Project ID and Location) or an expressModeApiKey is required.',
+      'Project ID and Location are required.',
     );
+    expect(
+      () => new VertexAiSessionService({projectId: 'test-project'}),
+    ).toThrow('Project ID and Location are required.');
+  });
+
+  describe('express mode', () => {
+    beforeEach(() => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
+    });
+
+    it.each([
+      ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
+      ['an API key from the environment', {}],
+      ['an API key and only a project', {projectId: 'test-project'}],
+    ])('throws for %s instead of dropping the key', (_, options) => {
+      expect(() => new VertexAiSessionService(options)).toThrow(
+        'Vertex AI Express Mode',
+      );
+      expect(clientConstructor).not.toHaveBeenCalled();
+    });
+
+    it('keeps using project and location when an API key is also in the environment', () => {
+      new VertexAiSessionService({
+        projectId: 'test-project',
+        location: 'us-central1',
+      });
+
+      expect(clientConstructor).toHaveBeenCalledWith({
+        project: 'test-project',
+        location: 'us-central1',
+      });
+    });
+
+    it('never builds a client when sessions are injected', () => {
+      new VertexAiSessionService({
+        sessions: mockClient as unknown as Sessions,
+      });
+
+      expect(clientConstructor).not.toHaveBeenCalled();
+    });
   });
 
   it('uses agentEngineId if provided', async () => {
@@ -250,6 +337,48 @@ describe('VertexAiSessionService', () => {
       });
 
       expect(session.lastUpdateTime).toBeGreaterThan(0);
+    });
+
+    it('forwards ttl to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        ttl: '7200s',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {ttl: '7200s'},
+      });
+    });
+
+    it('forwards expireTime to the create config', async () => {
+      await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+        expireTime: '2025-10-01T00:00:00Z',
+      });
+
+      expect(mockClient.createInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        userId: 'testUser',
+        config: {expireTime: '2025-10-01T00:00:00Z'},
+      });
+    });
+
+    it('throws when both ttl and expireTime are specified', async () => {
+      await expect(
+        service.createSession({
+          appName: '12345',
+          userId: 'testUser',
+          ttl: '7200s',
+          expireTime: '2025-10-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(
+        "Cannot specify both 'ttl' and 'expireTime' simultaneously.",
+      );
+      expect(mockClient.createInternal).not.toHaveBeenCalled();
     });
   });
 
@@ -402,6 +531,54 @@ describe('VertexAiSessionService', () => {
       expect(session).toBeUndefined();
     });
 
+    it('returns undefined when sessions.get rejects with an ApiError 404', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+      expect(loggerSpy).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it('returns undefined when events.listInternal rejects with an ApiError 404', async () => {
+      mockClient.events.listInternal.mockRejectedValueOnce(
+        new ApiError({message: 'Session not found', status: 404}),
+      );
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session).toBeUndefined();
+    });
+
+    it('throws an ApiError 403 instead of reporting the session as missing', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockRejectedValueOnce(
+        new ApiError({message: 'Permission denied', status: 403}),
+      );
+
+      await expect(
+        service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow('Permission denied');
+      expect(loggerSpy).toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
     it('falls back to empty array if sessionEvents is missing in getSession', async () => {
       mockClient.get.mockResolvedValue({
         name: 'reasoningEngines/12345/sessions/my-session-id',
@@ -514,6 +691,23 @@ describe('VertexAiSessionService', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].id).toBe('test-list-1');
       expect(response.sessions[1].id).toBe('malformed_name');
+    });
+
+    it('escapes double quotes in userId to prevent AIP-160 filter injection', async () => {
+      // A double quote in userId must not break out of the quoted filter
+      // literal and append an `OR user_id!=""` predicate that would return
+      // every user's sessions (cross-user session enumeration).
+      mockClient.listInternal.mockResolvedValue({sessions: []});
+
+      await service.listSessions({
+        appName: '12345',
+        userId: 'attacker" OR user_id!="',
+      });
+
+      expect(mockClient.listInternal).toHaveBeenCalledWith({
+        name: 'reasoningEngines/12345',
+        config: {filter: 'user_id="attacker\\" OR user_id!=\\""'},
+      });
     });
 
     it('lists sessions without filter if userId is missing', async () => {
@@ -819,6 +1013,62 @@ describe('VertexAiSessionService', () => {
       expect(mockClient.delete).toHaveBeenCalledWith({
         name: `reasoningEngines/12345/sessions/delete-session`,
       });
+    });
+
+    it('does not delete a session that belongs to another user', async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/victim-session',
+        userId: 'victimUser',
+        sessionState: {},
+        updateTime: new Date().toISOString(),
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: 'attackerUser',
+          sessionId: 'victim-session',
+        }),
+      ).rejects.toThrow(
+        'Session victim-session does not belong to user attackerUser',
+      );
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it("does not delete another user's session when userId is omitted", async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/victim-session',
+        userId: 'victimUser',
+        sessionState: {},
+        updateTime: new Date().toISOString(),
+      });
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+      await expect(
+        service.deleteSession({
+          appName: '12345',
+          userId: undefined as unknown as string,
+          sessionId: 'victim-session',
+        }),
+      ).rejects.toThrow('does not belong to user');
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
+      loggerSpy.mockRestore();
+    });
+
+    it('does not call delete when the session does not exist', async () => {
+      mockClient.get.mockRejectedValue({code: 5});
+
+      await service.deleteSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'missing-session',
+      });
+
+      expect(mockClient.delete).not.toHaveBeenCalled();
     });
   });
 

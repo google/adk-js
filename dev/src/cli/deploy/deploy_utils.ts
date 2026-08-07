@@ -51,33 +51,90 @@ export interface CreateDockerFileContentOptions {
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
   agentPath: string;
-  tempFolder: string;
+  /**
+   * Directory the generated deployment sources are staged in. When omitted, the
+   * deploy command creates a private temporary directory for the run and
+   * removes it when the deployment finishes.
+   */
+  tempFolder?: string;
   adkVersion: string;
   agentFileLoadOptions?: AgentFileOptions;
+}
+
+// Dockerfile instructions and the generated CMD's shell form have no
+// generic escaping mechanism for interpolated values: a newline breaks out
+// of the current instruction to start a new one, and shell metacharacters in
+// the CMD line are interpreted by /bin/sh at container start. Restricting
+// these values to a plain identifier closes both at once, since none of them
+// (an agent name, a GCP project ID, or a GCP region) legitimately need
+// anything outside this set.
+const SAFE_DOCKERFILE_TOKEN_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+
+function assertSafeDockerfileToken(value: string, label: string): void {
+  if (!SAFE_DOCKERFILE_TOKEN_RE.test(value)) {
+    throw new Error(
+      `Invalid ${label} ${JSON.stringify(value)}: must match ${SAFE_DOCKERFILE_TOKEN_RE} to be safely embedded in the generated Dockerfile.`,
+    );
+  }
+}
+
+// logLevel, allowOrigins, sessionServiceUri and artifactServiceUri are
+// free-form (a service URI can carry credentials, allowOrigins is a
+// comma-separated list) so they can't be restricted to the plain-identifier
+// token above. They only reach the Dockerfile's CMD line, so a newline in
+// any of them still breaks out of that instruction the same way appName
+// does, and once inside the CMD line they're read by /bin/sh at container
+// start, so shell metacharacters must be neutralized too.
+function assertNoDockerfileNewline(value: string, label: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(
+      `Invalid ${label} ${JSON.stringify(value)}: must not contain newline characters to be safely embedded in the generated Dockerfile.`,
+    );
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export function createDockerFileContent(
   options: CreateDockerFileContentOptions,
 ): string {
+  assertSafeDockerfileToken(options.project, 'project');
+  if (options.region) {
+    assertSafeDockerfileToken(options.region, 'region');
+  }
+  if (options.appName) {
+    assertSafeDockerfileToken(options.appName, 'appName');
+  }
+
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
 
   if (options.logLevel) {
-    adkServerOptions.push(`--log_level=${options.logLevel}`);
+    assertNoDockerfileNewline(options.logLevel, 'logLevel');
+    adkServerOptions.push(`--log_level=${shellQuote(options.logLevel)}`);
   }
 
   if (options.allowOrigins) {
-    adkServerOptions.push(`--allow_origins=${options.allowOrigins}`);
+    assertNoDockerfileNewline(options.allowOrigins, 'allowOrigins');
+    adkServerOptions.push(
+      `--allow_origins=${shellQuote(options.allowOrigins)}`,
+    );
   }
 
   if (options.artifactServiceUri) {
+    assertNoDockerfileNewline(options.artifactServiceUri, 'artifactServiceUri');
     adkServerOptions.push(
-      `--artifact_service_uri=${options.artifactServiceUri}`,
+      `--artifact_service_uri=${shellQuote(options.artifactServiceUri)}`,
     );
   }
 
   if (options.sessionServiceUri) {
-    adkServerOptions.push(`--session_service_uri=${options.sessionServiceUri}`);
+    assertNoDockerfileNewline(options.sessionServiceUri, 'sessionServiceUri');
+    adkServerOptions.push(
+      `--session_service_uri=${shellQuote(options.sessionServiceUri)}`,
+    );
   }
 
   if (options.otelToCloud) {

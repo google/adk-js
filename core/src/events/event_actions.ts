@@ -56,6 +56,18 @@ export interface EventActions {
    * call id.
    */
   requestedToolConfirmations: {[key: string]: ToolConfirmation};
+
+  /**
+   * Workflow: a serialized node/agent state snapshot used for resumable
+   * checkpointing. Mirrors Python `EventActions.agent_state`.
+   */
+  agentState?: Record<string, unknown>;
+
+  /**
+   * Workflow: marks that the emitting agent/workflow has reached the end of its
+   * execution for this invocation. Mirrors Python `EventActions.end_of_agent`.
+   */
+  endOfAgent?: boolean;
 }
 
 /**

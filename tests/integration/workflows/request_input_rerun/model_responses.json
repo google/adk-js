@@ -1,0 +1,46 @@
+[
+  {
+    "key": "98b25193a6c2de82",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My order never arrived and support is ignoring me."
+            }
+          ]
+        }
+      ],
+      "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"My order never arrived and support is ignoring me.\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    "
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Subject: We're so sorry – Let's get your order sorted out immediately!\n\nDear Customer,\n\nPlease accept our sincere apologies for the trouble you've experienced with your order not arriving, and even more so for feeling ignored by our support team. That is absolutely not the experience we want you to have, and we understand how frustrating this must be.\n\nWe are truly sorry for this lapse in service.\n\nI want to personally assure you that we are taking this seriously and will get to the bottom of it. To help us locate your order and investigate what went wrong with your previous support requests, could you please provide us with your **order number**?\n\nOnce we have that, I will personally look into your shipment status and review the communication history with support. We will work to resolve this for you as quickly as possible, whether that means arranging a replacement shipment or a full refund, based on your preference.\n\nYou can expect to hear back from us with an update within [mention a realistic timeframe, e.g., 24 business hours] of receiving your order number.\n\nThank you for your patience as we rectify this.\n\nSincerely,\n\n[Your Name/Customer Service Manager]\n[Your Company Name]"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 75,
+        "candidatesTokenCount": 252,
+        "totalTokenCount": 526,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 75
+          }
+        ],
+        "thoughtsTokenCount": 199,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

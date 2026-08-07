@@ -99,6 +99,14 @@ export interface RunConfig {
    * to intercept and execute tools (Client-Side Tool Execution).
    */
   pauseOnToolCalls?: boolean;
+
+  /**
+   * If true, a plain-text user reply (e.g. "yes"/"no") may resolve a pending
+   * `requireConfirmation` tool gate. Off by default so an ordinary chat message
+   * on a web/API surface is never silently reinterpreted as a security
+   * decision; interactive front-ends (e.g. `adk run`) opt in explicitly.
+   */
+  plainTextToolConfirmation?: boolean;
 }
 
 /**
@@ -122,9 +130,9 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     supportCfc: false,
     enableAffectiveDialog: false,
     streamingMode: StreamingMode.NONE,
-    maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls || 500),
     pauseOnToolCalls: false,
     ...params,
+    maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls ?? 500),
   };
 }
 

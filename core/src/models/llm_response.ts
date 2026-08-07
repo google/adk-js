@@ -102,6 +102,11 @@ export interface LlmResponse {
    */
   outputTranscription?: Transcription;
 
+  /**
+   * The interaction ID returned by the model, if any.
+   */
+  interactionId?: string;
+
   /** The model version used to generate the response. */
   modelVersion?: string;
 
