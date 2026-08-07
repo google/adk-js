@@ -29,9 +29,58 @@ describe('redactUriPassword', () => {
     );
   });
 
+  it('masks a password passed as a query parameter', () => {
+    expect(
+      redactUriPassword('postgres://user@db.host/mydb?password=hunter2'),
+    ).toBe('postgres://user@db.host/mydb?password=***');
+  });
+
+  it('masks a query-parameter password with no userinfo at all', () => {
+    expect(redactUriPassword('postgres://db.host/mydb?password=hunter2')).toBe(
+      'postgres://db.host/mydb?password=***',
+    );
+  });
+
+  it('matches secret query parameters case-insensitively', () => {
+    const out = redactUriPassword('mysql://db.host/mydb?PWD=hunter2');
+    expect(out).not.toContain('hunter2');
+    expect(out).toBe('mysql://db.host/mydb?PWD=***');
+  });
+
+  it('masks the userinfo and query passwords together', () => {
+    expect(
+      redactUriPassword('postgres://user:pass@db.host/mydb?password=hunter2'),
+    ).toBe('postgres://user:***@db.host/mydb?password=***');
+  });
+
+  it('keeps non-secret query parameters intact', () => {
+    expect(
+      redactUriPassword(
+        'postgres://db.host/mydb?sslmode=require&password=hunter2&application_name=adk',
+      ),
+    ).toBe(
+      'postgres://db.host/mydb?sslmode=require&password=***&application_name=adk',
+    );
+  });
+
+  it('leaves a URI with no credential anywhere unchanged', () => {
+    expect(redactUriPassword('postgres://db.host/mydb?sslmode=require')).toBe(
+      'postgres://db.host/mydb?sslmode=require',
+    );
+  });
+
   it('does not leak anything after the scheme for unparseable input', () => {
     const out = redactUriPassword('not a url with :hunter2@ inside it');
     expect(out).not.toContain('hunter2');
+  });
+
+  it('says the value was redacted rather than looking empty', () => {
+    expect(redactUriPassword('postgres//db.host/mydb')).toBe(
+      '<unparseable URI, redacted>',
+    );
+    expect(redactUriPassword('postgres://user:pass@ db.host/mydb')).toBe(
+      'postgres://<unparseable URI, redacted>',
+    );
   });
 });
 
