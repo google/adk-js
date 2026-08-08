@@ -5,6 +5,7 @@
  */
 
 import {logger} from '../../utils/logger.js';
+import {redactUriPassword} from '../../utils/redact_uri.js';
 import {OAuth2Auth} from '../auth_credential.js';
 
 import {AuthScheme, OpenIdConnectWithConfig} from '../auth_schemes.js';
@@ -101,7 +102,7 @@ export function parseAuthorizationCode(uri: string): string | undefined {
     const url = new URL(uri);
     return url.searchParams.get('code') || undefined;
   } catch (e) {
-    logger.warn(`Failed to parse authorization URI ${uri}: ${e}`);
+    logger.warn(`Failed to parse authorization URI ${redactUriPassword(uri)}: ${e}`);
     return undefined;
   }
 }

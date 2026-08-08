@@ -4,10 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
+import {parseAuthorizationCode} from '../../src/auth/oauth2/oauth2_utils.js';
 import {getArtifactServiceFromUri} from '../../src/artifacts/registry.js';
 import {getConnectionOptionsFromUri} from '../../src/sessions/db/operations.js';
 import {getSessionServiceFromUri} from '../../src/sessions/registry.js';
+import {logger} from '../../src/utils/logger.js';
 import {redactUriPassword} from '../../src/utils/redact_uri.js';
 
 describe('redactUriPassword', () => {
@@ -110,5 +112,33 @@ describe('connection-URI errors do not leak the password', () => {
     expect(() =>
       getArtifactServiceFromUri('s3://admin:hunter2@bucket/prefix'),
     ).not.toThrow(/hunter2/);
+  });
+
+  it('parseAuthorizationCode does not leak the code on a malformed callback URI', () => {
+    // A malformed authorization-response URI (missing scheme) still carries
+    // a recognizable authorization code in its query string, and previously
+    // this fell through to a log statement that included the raw URI.
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const result = parseAuthorizationCode(
+        'not-a-valid-scheme?code=SECRET_AUTH_CODE&state=xyz',
+      );
+      expect(result).toBeUndefined();
+      const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join(' ');
+      expect(loggedText).not.toContain('SECRET_AUTH_CODE');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('redacts oauth2 query-parameter secrets alongside password forms', () => {
+    expect(
+      redactUriPassword('https://app/callback?code=SECRET&state=xyz'),
+    ).toBe('https://app/callback?code=***&state=xyz');
+    expect(
+      redactUriPassword(
+        'https://app/callback?access_token=SECRET&token_type=Bearer',
+      ),
+    ).toBe('https://app/callback?access_token=***&token_type=Bearer');
   });
 });
