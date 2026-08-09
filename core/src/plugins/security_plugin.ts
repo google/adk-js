@@ -115,8 +115,11 @@ export class SecurityPlugin extends BasePlugin {
   }): Promise<{[key: string]: unknown} | undefined> {
     const toolCallCheckState = this.getToolCallCheckState(toolContext);
 
-    // We only check the tool call policy ONCE, when the tool call is handled
-    // for the first time.
+    // We only evaluate the tool call policy ONCE, when the tool call is handled
+    // for the first time. Every later evaluation of the same function call id
+    // replays the recorded decision, so each stored decision has to be mapped
+    // back to its own outcome. Anything unrecognised is re-evaluated rather
+    // than allowed, so a decision can never be lost by falling through.
     if (!toolCallCheckState) {
       return this.checkToolCallPolicy({
         tool: tool,
@@ -125,8 +128,34 @@ export class SecurityPlugin extends BasePlugin {
       });
     }
 
-    if (toolCallCheckState !== PolicyOutcome.CONFIRM) {
+    if (toolCallCheckState === PolicyOutcome.ALLOW) {
       return;
+    }
+
+    if (toolCallCheckState === PolicyOutcome.DENY) {
+      return {
+        error: 'This tool call is rejected by policy engine.',
+      };
+    }
+
+    if (isToolConfirmation(toolCallCheckState)) {
+      // The confirmation flow already completed for this call. Replay the
+      // user's answer instead of treating the record as an approval.
+      if (!toolCallCheckState.confirmed) {
+        return {
+          error: 'Tool call rejected from confirmation flow.',
+        };
+      }
+      return;
+    }
+
+    if (toolCallCheckState !== PolicyOutcome.CONFIRM) {
+      // Unrecognised record: re-evaluate rather than proceed on it.
+      return this.checkToolCallPolicy({
+        tool: tool,
+        toolArgs: toolArgs,
+        toolContext: toolContext,
+      });
     }
 
     if (!toolContext.toolConfirmation) {
@@ -211,6 +240,13 @@ export class SecurityPlugin extends BasePlugin {
         return;
     }
   }
+}
+
+/** Narrows a recorded check state to a completed {@link ToolConfirmation}. */
+function isToolConfirmation(
+  state: string | ToolConfirmation,
+): state is ToolConfirmation {
+  return typeof state === 'object' && state !== null && 'confirmed' in state;
 }
 
 /**
