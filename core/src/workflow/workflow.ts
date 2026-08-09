@@ -192,6 +192,7 @@ export class Workflow extends BaseNode {
     const rehydrated = reconstructNodeStates(
       ctx.session?.events ?? [],
       ctx.nodePath || undefined,
+      ctx.invocationId,
     );
     this.applyResumeInputs(ctx, rehydrated);
 

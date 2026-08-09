@@ -148,7 +148,11 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     }
     // The credential key doubles as a deterministic interrupt id so the resume
     // response matches across turns.
-    return createAuthRequestEvent(authConfig, authConfig.credentialKey);
+    return createAuthRequestEvent(
+      authConfig,
+      authConfig.credentialKey,
+      ctx.invocationId,
+    );
   }
 
   /**

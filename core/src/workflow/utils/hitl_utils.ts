@@ -34,7 +34,10 @@ export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
  * carries an `adk_request_input` function call and marks the interrupt id as a
  * long-running tool id.
  */
-export function createRequestInputEvent(requestInput: RequestInput): Event {
+export function createRequestInputEvent(
+  requestInput: RequestInput,
+  invocationId?: string,
+): Event {
   const args: Record<string, unknown> = {
     interruptId: requestInput.interruptId,
     payload: requestInput.payload ?? null,
@@ -58,6 +61,7 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
       ],
     },
     longRunningToolIds: [requestInput.interruptId],
+    invocationId,
   });
 }
 
@@ -125,6 +129,7 @@ export function hasAuthCredential(
 export function createAuthRequestEvent(
   authConfig: AuthConfig,
   interruptId: string,
+  invocationId?: string,
 ): Event {
   const authRequest = new AuthHandler(authConfig).generateAuthRequest();
   const args: Record<string, unknown> = {
@@ -146,6 +151,7 @@ export function createAuthRequestEvent(
       ],
     },
     longRunningToolIds: [interruptId],
+    invocationId,
   });
 }
 

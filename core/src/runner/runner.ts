@@ -296,7 +296,9 @@ export class Runner {
             sessionService: this.sessionService,
             memoryService: this.memoryService,
             credentialService: this.credentialService,
-            invocationId: newInvocationContextId(),
+            invocationId:
+              resolveResumedInvocationId(session.events, newMessage) ??
+              newInvocationContextId(),
             agent: this.agent,
             session,
             userContent: newMessage,
@@ -661,6 +663,65 @@ export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     agent = agent.parentAgent;
   }
   return true;
+}
+
+/**
+ * Resolves the invocation that `newMessage` resumes, if any.
+ *
+ * Mirrors `google/adk-python` `runners.py`, which resolves the invocation id
+ * from a resume message before building the invocation context instead of
+ * always minting a new one. Workflow node rehydration is scoped by invocation
+ * id, so this is what lets a genuine resume see the nodes it already ran while
+ * an unrelated new message in the same session cannot.
+ *
+ * Returns `undefined` when the message does not continue anything, in which
+ * case the caller mints a fresh invocation id as before.
+ */
+export function resolveResumedInvocationId(
+  events: Event[],
+  newMessage?: Content,
+): string | undefined {
+  // 1. The message explicitly answers a pending interrupt.
+  const responseIds = new Set<string>();
+  for (const part of newMessage?.parts ?? []) {
+    const id = part.functionResponse?.id;
+    if (id) {
+      responseIds.add(id);
+    }
+  }
+  if (responseIds.size > 0) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      for (const id of event.longRunningToolIds ?? []) {
+        if (responseIds.has(id) && event.invocationId) {
+          return event.invocationId;
+        }
+      }
+    }
+  }
+
+  // 2. An invocation is still waiting on an unresolved interrupt, so a reply
+  //    that carries no function response (a plain-text answer to a single
+  //    pending request) still continues it.
+  const answered = new Set<string>();
+  for (const event of events) {
+    for (const part of event.content?.parts ?? []) {
+      const id = part.functionResponse?.id;
+      if (id) {
+        answered.add(id);
+      }
+    }
+  }
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    for (const id of event.longRunningToolIds ?? []) {
+      if (!answered.has(id) && event.invocationId) {
+        return event.invocationId;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 /**

@@ -153,7 +153,11 @@ function resumeInputsFromPlainText(
   const text = parts.map((p) => p.text).join('');
 
   const pending = new Set<string>();
-  for (const node of reconstructNodeStates(ic.session?.events ?? []).values()) {
+  for (const node of reconstructNodeStates(
+    ic.session?.events ?? [],
+    undefined,
+    ic.invocationId,
+  ).values()) {
     for (const id of node.interruptIds) {
       if (!node.resolvedResponses.has(id)) {
         pending.add(id);

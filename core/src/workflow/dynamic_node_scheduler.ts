@@ -62,9 +62,10 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
 
     // Cross-turn resume: rehydrate this dynamic run from prior session events.
     if (!this.state.runs.has(nodePath)) {
-      const prior = reconstructNodeStatesByPath(ctx.session?.events ?? []).get(
-        nodePath,
-      );
+      const prior = reconstructNodeStatesByPath(
+        ctx.session?.events ?? [],
+        ctx.invocationId,
+      ).get(nodePath);
       if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
         this.state.runs.set(nodePath, {

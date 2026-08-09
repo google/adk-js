@@ -228,6 +228,9 @@ describe('workflow — rerunOnResume', () => {
       author: 'once',
       nodeInfo: {path: 'ff.once'},
       output: 'cached',
+      // Same invocation as createIc(): a resume of this invocation, which is
+      // what fast-forward is for. A different invocation must not be reused.
+      invocationId: 'inv-1',
     });
     const ic = createIc();
     ic.session.events.push(priorEvent);

@@ -21,6 +21,8 @@ import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 function pendingInterruptEvent(id: string): Event {
   const event = createRequestInputEvent(
     new RequestInput({interruptId: id, message: '?'}),
+    // Same invocation as createIc(), i.e. an interrupt this turn resumes.
+    'inv-1',
   );
   event.author = id;
   return event;

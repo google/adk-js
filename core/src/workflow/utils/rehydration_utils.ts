@@ -47,16 +47,25 @@ export interface RehydratedNode {
 export function reconstructNodeStates(
   events: Event[],
   parentPath?: string,
+  invocationId?: string,
 ): Map<string, RehydratedNode> {
   if (parentPath) {
-    return reconstruct(events, (event) =>
-      event.nodeInfo?.path
-        ? directChildName(event.nodeInfo.path, parentPath)
-        : undefined,
+    return reconstruct(
+      events,
+      (event) =>
+        event.nodeInfo?.path
+          ? directChildName(event.nodeInfo.path, parentPath)
+          : undefined,
+      invocationId,
     );
   }
-  return reconstruct(events, (event) =>
-    event.nodeInfo?.path ? nodeNameFromPath(event.nodeInfo.path) : event.author,
+  return reconstruct(
+    events,
+    (event) =>
+      event.nodeInfo?.path
+        ? nodeNameFromPath(event.nodeInfo.path)
+        : event.author,
+    invocationId,
   );
 }
 
@@ -67,14 +76,20 @@ export function reconstructNodeStates(
  */
 export function reconstructNodeStatesByPath(
   events: Event[],
+  invocationId?: string,
 ): Map<string, RehydratedNode> {
-  return reconstruct(events, (event) => event.nodeInfo?.path ?? event.author);
+  return reconstruct(
+    events,
+    (event) => event.nodeInfo?.path ?? event.author,
+    invocationId,
+  );
 }
 
 /** Shared scan that groups node events by the key returned by `keyFor`. */
 function reconstruct(
   events: Event[],
   keyFor: (event: Event) => string | undefined,
+  invocationId?: string,
 ): Map<string, RehydratedNode> {
   const nodes = new Map<string, RehydratedNode>();
   const interruptOwner = new Map<string, string>();
@@ -89,6 +104,10 @@ function reconstruct(
   };
 
   for (const event of events) {
+    if (invocationId && event.invocationId !== invocationId) {
+      continue;
+    }
+
     // 1. User function responses resolving prior interrupts.
     if (event.author === 'user' && event.content?.parts) {
       for (const part of event.content.parts) {

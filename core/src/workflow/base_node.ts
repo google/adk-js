@@ -150,7 +150,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     for await (const item of this.runImpl(ctx, validatedInput)) {
       if (isRequestInput(item)) {
         // HITL: convert a request-for-input into an interrupt event.
-        yield createRequestInputEvent(item);
+        yield createRequestInputEvent(item, ctx.invocationContext.invocationId);
         continue;
       }
       const event = this.toEvent(ctx, item);
