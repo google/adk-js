@@ -61,9 +61,23 @@ interface FileMetadata {
 }
 
 /**
- * Error class for agent file loading.
+ * Signals "this file is not an agent file" (missing, empty, or exporting no
+ * agent), which is normal in a directory that also holds helper modules, so it
+ * is swallowed silently. Any OTHER error means the file *is* an agent that
+ * failed to construct — see {@link AgentLoadFailure}.
  */
 class AgentFileLoadingError extends Error {}
+
+/**
+ * An agent that could not be loaded. Recorded rather than thrown, so one broken
+ * agent cannot take the whole server down with it.
+ */
+export interface AgentLoadFailure {
+  /** The app name the broken file would have been served under. */
+  name: string;
+  filePath: string;
+  error: Error;
+}
 
 /**
  * Options for loading an agent file.
@@ -358,6 +372,7 @@ export class AgentFile {
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
   private readonly preloadedAgents: Record<string, AgentFile> = {};
+  private readonly loadFailures: Record<string, AgentLoadFailure> = {};
   private watcher?: fs.FSWatcher;
 
   constructor(
@@ -431,7 +446,23 @@ export class AgentLoader {
       delete this.preloadedAgents[key];
     }
 
+    for (const key of Object.keys(this.loadFailures)) {
+      delete this.loadFailures[key];
+    }
+
     this.agentsAlreadyPreloaded = false;
+  }
+
+  /**
+   * The agents that failed to load. They are excluded from {@link listAgents},
+   * and {@link getAgentFile} rethrows the original error for one by name.
+   */
+  async listLoadFailures(): Promise<AgentLoadFailure[]> {
+    await this.preloadAgents();
+
+    return Object.values(this.loadFailures).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
   }
 
   async listAgents(): Promise<string[]> {
@@ -461,7 +492,25 @@ export class AgentLoader {
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
-    return this.preloadedAgents[agentName];
+    const agentFile = this.preloadedAgents[agentName];
+    if (agentFile) {
+      return agentFile;
+    }
+
+    // Report the real reason rather than returning undefined and letting the
+    // caller fail later with "cannot read properties of undefined".
+    const failure = this.loadFailures[agentName];
+    if (failure) {
+      throw new Error(
+        `Agent '${agentName}' failed to load from ${failure.filePath}: ${failure.error.message}`,
+        {cause: failure.error},
+      );
+    }
+
+    throw new Error(
+      `Agent '${agentName}' not found in ${this.agentsDirPath}. ` +
+        `Available agents: ${Object.keys(this.preloadedAgents).sort().join(', ') || '(none)'}`,
+    );
   }
 
   async getAppFile(appName: string): Promise<AgentFile> {
@@ -512,10 +561,7 @@ export class AgentLoader {
       await agentFile.load();
       this.preloadedAgents[file.name] = agentFile;
     } catch (e) {
-      if (e instanceof AgentFileLoadingError) {
-        return;
-      }
-      throw e;
+      this.recordLoadFailure(file.name, file.path, e);
     }
   }
 
@@ -534,11 +580,25 @@ export class AgentLoader {
       await agentFile.load();
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {
-      if (e instanceof AgentFileLoadingError) {
-        return;
-      }
-      throw e;
+      this.recordLoadFailure(dir.name, possibleEntryFile.path, e);
     }
+  }
+
+  /**
+   * Propagating here would reject the `Promise.all` in `preloadAgents`, failing
+   * every endpoint that lists or resolves agents — so record instead of throw.
+   */
+  private recordLoadFailure(name: string, filePath: string, e: unknown): void {
+    if (e instanceof AgentFileLoadingError) {
+      return;
+    }
+
+    const error = e instanceof Error ? e : new Error(String(e));
+    this.loadFailures[name] = {name, filePath, error};
+    logger.error(
+      `Failed to load agent '${name}' from ${filePath}: ${error.message}. ` +
+        `Skipping it; the other agents are unaffected.`,
+    );
   }
 }
 

@@ -15,6 +15,9 @@ export type {
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
 export {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
@@ -65,6 +68,15 @@ export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
+export {
+  getPendingUserInputRequests,
+  getUserInputRequests,
+  requiresUserInput,
+} from './agents/user_input_request.js';
+export type {
+  UserInputKind,
+  UserInputRequest,
+} from './agents/user_input_request.js';
 export {createResumabilityConfig} from './apps/resumability_config.js';
 export type {ResumabilityConfig} from './apps/resumability_config.js';
 export type {
@@ -202,7 +214,6 @@ export {PluginManager} from './plugins/plugin_manager.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
-  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   SecurityPlugin,
   getAskUserConfirmationFunctionCalls,
 } from './plugins/security_plugin.js';

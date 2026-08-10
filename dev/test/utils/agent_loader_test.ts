@@ -717,6 +717,70 @@ describe('AgentLoader', () => {
       await agentLoader.disposeAll();
     });
 
+    /**
+     * An agent whose module throws while constructing (a malformed workflow
+     * graph, a bad config) must not stop the other agents from loading —
+     * otherwise a single broken file takes the whole server down with it.
+     */
+    describe('when one agent fails to construct', () => {
+      beforeEach(async () => {
+        await fs.mkdir(path.join(tempAgentsDir, 'broken'), {recursive: true});
+        await fs.writeFile(
+          path.join(tempAgentsDir, 'broken', 'agent.js'),
+          `throw new Error('boom during construction');`,
+        );
+      });
+
+      it('still lists the healthy agents', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        const agents = await loader.listAgents();
+
+        expect(agents).toEqual(['agent1', 'agent2', 'agent3']);
+        await loader.disposeAll();
+      });
+
+      it('still loads a healthy agent', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        const agentFile = await loader.getAgentFile('agent1');
+        const agent = await agentFile.load();
+
+        expect(agent.name).toEqual('agent1');
+        await loader.disposeAll();
+      });
+
+      it('reports the failure against the agent that caused it', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        const failures = await loader.listLoadFailures();
+
+        expect(failures).toHaveLength(1);
+        expect(failures[0].name).toBe('broken');
+        expect(failures[0].filePath).toContain('broken');
+        expect(failures[0].error.message).toContain('boom during construction');
+        await loader.disposeAll();
+      });
+
+      it('rethrows the original error when the broken agent is requested', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        await expect(loader.getAgentFile('broken')).rejects.toThrow(
+          /Agent 'broken' failed to load[\s\S]*boom during construction/,
+        );
+        await loader.disposeAll();
+      });
+
+      it('reports available agents when the name is simply unknown', async () => {
+        const loader = new AgentLoader(tempAgentsDir);
+
+        await expect(loader.getAgentFile('nope')).rejects.toThrow(
+          /Agent 'nope' not found[\s\S]*Available agents: agent1, agent2, agent3/,
+        );
+        await loader.disposeAll();
+      });
+    });
+
     it('disposes all agent files', async () => {
       const agentLoader = new AgentLoader(tempAgentsDir);
       await agentLoader.listAgents();

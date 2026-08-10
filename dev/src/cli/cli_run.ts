@@ -10,12 +10,18 @@ import {
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
+  Event,
+  getPendingUserInputRequests,
+  getUserInputRequests,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  requiresUserInput,
   Runner,
   Session,
+  UserInputKind,
+  UserInputRequest,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -25,6 +31,99 @@ import {AgentFile, AgentFileOptions} from '../utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../utils/file_utils.js';
 
 const dirname = process.cwd();
+
+const HOW_TO_ANSWER: Record<UserInputKind, string> = {
+  input: 'Type your reply at the next prompt to continue.',
+  credential: 'Type the credential at the next prompt to continue.',
+  confirmation: "Reply 'yes' to approve or 'no' to reject.",
+};
+
+/**
+ * Formatting only — detection lives in `getUserInputRequests`. This decides how
+ * the CLI words a pause and how the user is told to answer it.
+ */
+function renderUserInputRequest(request: UserInputRequest): string {
+  const author = request.author ?? 'agent';
+  const lines: string[] = [];
+
+  switch (request.kind) {
+    case 'input':
+      lines.push(`--- [${author}] is waiting for your input ---`);
+      break;
+    case 'credential':
+      lines.push(`--- [${author}] is waiting for a credential ---`);
+      break;
+    case 'confirmation':
+      lines.push(
+        `--- [${author}] is waiting for confirmation ---` +
+          (request.toolName ? `\nTool: ${request.toolName}` : ''),
+      );
+      break;
+    default:
+      break;
+  }
+
+  if (request.message) {
+    lines.push(request.message);
+  }
+  if (request.payload != null) {
+    lines.push(`Payload: ${JSON.stringify(request.payload)}`);
+  }
+  if (request.responseSchema != null) {
+    lines.push(`Expected response: ${JSON.stringify(request.responseSchema)}`);
+  }
+
+  const scheme = request.authConfig?.authScheme as
+    | {type?: string; in?: string; name?: string}
+    | undefined;
+  if (scheme?.type) {
+    const where =
+      scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
+    lines.push(`Auth scheme: ${scheme.type}${where}`);
+  }
+
+  lines.push(HOW_TO_ANSWER[request.kind]);
+
+  return lines.join('\n');
+}
+
+interface PrintEventOptions {
+  /**
+   * Whether to announce the pauses this event raised. Off when replaying a
+   * saved transcript, where a pause shown per event would re-ask questions the
+   * user already answered; the still-open ones are printed once afterwards.
+   */
+  announcePauses?: boolean;
+}
+
+/** Prints one event's text, plus anything the user would otherwise not see. */
+function printEvent(event: Event, options: PrintEventOptions = {}): void {
+  const {announcePauses = true} = options;
+  const author = event.author ?? 'agent';
+
+  const text = (event.content?.parts ?? [])
+    .map((part) => part.text || '')
+    .join('');
+  if (text) {
+    console.log(`[${author}]: ${text}`);
+  }
+
+  // Reported on the event, not as a text part, so text-only printing drops it.
+  if (event.errorCode || event.errorMessage) {
+    const detail = [event.errorCode, event.errorMessage]
+      .filter(Boolean)
+      .join(': ');
+    console.error(`[${author}] error: ${detail}`);
+  }
+
+  if (!announcePauses) {
+    return;
+  }
+
+  for (const request of getUserInputRequests(event)) {
+    console.log(renderUserInputRequest(request));
+  }
+}
 
 interface InputFile {
   state: Record<string, unknown>;
@@ -73,6 +172,7 @@ async function runFromInputFile(
   });
 
   const runner = new Runner(options);
+  let waitingOnUser = false;
 
   for (const query of fileContent.queries) {
     console.log(`[user]: ${query}`);
@@ -86,16 +186,20 @@ async function runFromInputFile(
       runConfig: {plainTextToolConfirmation: true},
     };
 
+    waitingOnUser = false;
     for await (const event of runner.runAsync(runOptions)) {
-      if (event.content && event.content.parts) {
-        const text = event.content.parts
-          .map((part) => part.text || '')
-          .join('');
-        if (text) {
-          console.log(`[${event.author}]: ${text}`);
-        }
-      }
+      printEvent(event);
+      // A scripted run has no prompt to answer at: whatever the pause asked
+      // for has to be the next query in the file.
+      waitingOnUser = requiresUserInput(event) || waitingOnUser;
     }
+  }
+
+  if (waitingOnUser) {
+    console.error(
+      'The run ended while still waiting for user input. ' +
+        'Add the answer as the next query in the input file.',
+    );
   }
 
   return session;
@@ -154,14 +258,7 @@ async function runInteractively(
       // confirmation (opt-in; off by default on non-interactive surfaces).
       runConfig: {plainTextToolConfirmation: true},
     })) {
-      if (event.content && event.content.parts) {
-        const text = event.content.parts
-          .map((part) => part.text || '')
-          .join('');
-        if (text) {
-          console.log(`[${event.author}]: ${text}`);
-        }
-      }
+      printEvent(event);
     }
   }
 }
@@ -248,15 +345,15 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         if (loadedSession) {
           for (const event of loadedSession.events) {
             await sessionService.appendEvent({session, event});
-            const content = event.content;
-            if (content && content.parts?.length) {
-              const text = content.parts
-                .map((part) => part.text || '')
-                .join('');
-              if (text) {
-                console.log(`[${event.author}]: ${text}`);
-              }
-            }
+            printEvent(event, {announcePauses: false});
+          }
+
+          // Only the pauses the transcript never answered are still live, and
+          // they are what the prompt below is waiting on.
+          for (const request of getPendingUserInputRequests(
+            loadedSession.events,
+          )) {
+            console.log(renderUserInputRequest(request));
           }
         }
 

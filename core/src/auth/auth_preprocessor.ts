@@ -5,7 +5,7 @@
  */
 
 import {
-  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   handleFunctionCallsAsync,
 } from '../agents/functions.js';
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -43,7 +43,7 @@ async function storeAuthAndCollectResumeTargets(
       if (
         functionCall.id &&
         authFcIds.has(functionCall.id) &&
-        functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
+        functionCall.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME
       ) {
         const args = camelCaseKeys(functionCall.args) as RequestCredentialArgs;
         const authConfig = args?.authConfig;
@@ -74,7 +74,7 @@ async function storeAuthAndCollectResumeTargets(
       for (const functionCall of eventFunctionCalls) {
         if (
           functionCall.id === fcId &&
-          functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
+          functionCall.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME
         ) {
           const args = camelCaseKeys(
             functionCall.args,
@@ -130,7 +130,7 @@ export class AuthPreprocessor extends BaseLlmRequestProcessor {
     const authResponses: Record<string, unknown> = {};
 
     for (const functionCallResponse of responses) {
-      if (functionCallResponse.name !== REQUEST_EUC_FUNCTION_CALL_NAME) {
+      if (functionCallResponse.name !== REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
         continue;
       }
       if (functionCallResponse.id) {

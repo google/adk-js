@@ -5,6 +5,7 @@
  */
 
 import {z} from 'zod';
+import {REQUEST_INPUT_FUNCTION_CALL_NAME} from '../agents/functions.js';
 import {LongRunningFunctionTool} from './long_running_tool.js';
 
 /**
@@ -12,7 +13,7 @@ import {LongRunningFunctionTool} from './long_running_tool.js';
  * unstructured or structured input.
  */
 export const requestInputTool = new LongRunningFunctionTool({
-  name: 'adk_request_input',
+  name: REQUEST_INPUT_FUNCTION_CALL_NAME,
   description:
     'Presents a custom message to the user and awaits unstructured or structured input.',
   parameters: z.object({

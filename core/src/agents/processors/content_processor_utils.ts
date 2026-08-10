@@ -21,7 +21,7 @@ import {isSegmentPrefix} from '../../utils/branch_trie.js';
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
 } from '../functions.js';
 
 /**
@@ -154,8 +154,8 @@ function isAuthEvent(event: Event): boolean {
   }
   for (const part of event.content.parts) {
     if (
-      part.functionCall?.name === REQUEST_EUC_FUNCTION_CALL_NAME ||
-      part.functionResponse?.name === REQUEST_EUC_FUNCTION_CALL_NAME
+      part.functionCall?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME ||
+      part.functionResponse?.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME
     ) {
       return true;
     }

@@ -36,7 +36,8 @@ export {
   generateClientFunctionCallId,
   populateClientFunctionCallId,
 } from '../events/event.js';
-export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
+export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
+export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
   'adk_request_confirmation';
 
@@ -91,16 +92,16 @@ export function generateAuthEvent(
   for (const [functionCallId, authConfig] of Object.entries(
     functionResponseEvent.actions.requestedAuthConfigs,
   )) {
-    const requestEucFunctionCall: FunctionCall = {
-      name: REQUEST_EUC_FUNCTION_CALL_NAME,
+    const requestCredentialFunctionCall: FunctionCall = {
+      name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
       args: {
         'function_call_id': functionCallId,
         'auth_config': authConfig,
       },
       id: generateClientFunctionCallId(),
     };
-    longRunningToolIds.add(requestEucFunctionCall.id!);
-    parts.push({functionCall: requestEucFunctionCall});
+    longRunningToolIds.add(requestCredentialFunctionCall.id!);
+    parts.push({functionCall: requestCredentialFunctionCall});
   }
 
   return createEvent({

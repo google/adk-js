@@ -64,6 +64,10 @@ export type {
 // --- HITL ---
 export {RequestInput, isRequestInput} from './request_input.js';
 export type {RequestInputParams} from './request_input.js';
+export {
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from './utils/hitl_utils.js';
 
 // --- Retry ---
 export {normalizeRetryExceptions, prepareRetryConfig} from './retry_config.js';
