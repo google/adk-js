@@ -1,7 +1,7 @@
 [
   {
     "key": "0112f342bd840a3d",
-    "contentsKey": "91a17c48ecd973f6",
+    "instructionAgnosticKey": "dba6770d80737da2",
     "request": {
       "contents": [
         {
@@ -13,40 +13,51 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"the ocean\".\n    If feedback is provided, take it into account.\n    The feedback: \n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"the ocean\".\n    If feedback is provided, take it into account.\n    The feedback: \n    ",
+        "labels": {
+          "adk_agent_name": "generate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "The Ocean: A World Beneath the Waves"
+                "text": "\"Beneath the Surface: Unveiling the Ocean's Secrets\""
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 50,
-        "candidatesTokenCount": 8,
-        "totalTokenCount": 105,
+        "promptTokenCount": 48,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 102,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 50
+            "tokenCount": 48
           }
         ],
-        "thoughtsTokenCount": 47,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 15
+          }
+        ],
+        "thoughtsTokenCount": 39
       }
     }
   },
   {
-    "key": "8e50b204b7bff1d4",
-    "contentsKey": "7acf5ddd402e5854",
+    "key": "b4a7114387b0d365",
+    "instructionAgnosticKey": "fbe12ea2ada9d29d",
     "request": {
       "contents": [
         {
@@ -64,7 +75,7 @@
               "text": "For context:"
             },
             {
-              "text": "[generate_headline] said: The Ocean: A World Beneath the Waves"
+              "text": "[generate_headline] said: \"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
           ]
         },
@@ -72,45 +83,76 @@
           "role": "user",
           "parts": [
             {
-              "text": "The Ocean: A World Beneath the Waves"
+              "text": "\"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"evaluate_headline\".\n\nGrade whether the headline is related to technology or software engineering."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "grade": {
+              "type": "STRING",
+              "enum": [
+                "tech-related",
+                "unrelated"
+              ]
+            },
+            "feedback": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "grade",
+            "feedback"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Grade whether the headline is related to technology or software engineering.",
+        "labels": {
+          "adk_agent_name": "evaluate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"grade\": \"unrelated\", \"feedback\": \"The headline 'The Ocean: A World Beneath the Waves' is about marine environments and does not contain any terms or concepts related to technology or software engineering.\"}"
+                "text": "{\"grade\": \"unrelated\", \"feedback\": \"The headline is about ocean exploration and discovery, not technology or software engineering.\"}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 59,
-        "candidatesTokenCount": 43,
-        "totalTokenCount": 259,
+        "promptTokenCount": 66,
+        "candidatesTokenCount": 27,
+        "totalTokenCount": 148,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 59
+            "tokenCount": 66
           }
         ],
-        "thoughtsTokenCount": 157,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 27
+          }
+        ],
+        "thoughtsTokenCount": 55
       }
     }
   },
   {
-    "key": "dcc75bb7f3a48697",
-    "contentsKey": "bda38a51d8deceaf",
+    "key": "35f70f2d232d2a3d",
+    "instructionAgnosticKey": "ac107cad3eb60ad5",
     "request": {
       "contents": [
         {
@@ -122,18 +164,18 @@
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
-              "text": "The Ocean: A World Beneath the Waves"
+              "text": "\"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
           "parts": [
             {
-              "text": "The Ocean: A World Beneath the Waves"
+              "text": "\"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
           ]
         },
@@ -144,45 +186,56 @@
               "text": "For context:"
             },
             {
-              "text": "[evaluate_headline] said: {\"grade\": \"unrelated\", \"feedback\": \"The headline 'The Ocean: A World Beneath the Waves' is about marine environments and does not contain any terms or concepts related to technology or software engineering.\"}"
+              "text": "[evaluate_headline] said: {\"grade\": \"unrelated\", \"feedback\": \"The headline is about ocean exploration and discovery, not technology or software engineering.\"}"
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"the ocean\".\n    If feedback is provided, take it into account.\n    The feedback: {\"grade\":\"unrelated\",\"feedback\":\"The headline 'The Ocean: A World Beneath the Waves' is about marine environments and does not contain any terms or concepts related to technology or software engineering.\"}\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"the ocean\".\n    If feedback is provided, take it into account.\n    The feedback: {\"grade\":\"unrelated\",\"feedback\":\"The headline is about ocean exploration and discovery, not technology or software engineering.\"}\n    ",
+        "labels": {
+          "adk_agent_name": "generate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "Software for the Seas: Coding the Future of Ocean Discovery"
+                "text": "Deep Dive into Code: Software Engineering for Ocean Innovation"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 161,
-        "candidatesTokenCount": 11,
-        "totalTokenCount": 1369,
+        "promptTokenCount": 138,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 1282,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 161
+            "tokenCount": 138
           }
         ],
-        "thoughtsTokenCount": 1197,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 10
+          }
+        ],
+        "thoughtsTokenCount": 1134
       }
     }
   },
   {
-    "key": "f44e965e879a66b9",
-    "contentsKey": "0f69e1bc0619b17b",
+    "key": "b426c322f8f0086d",
+    "instructionAgnosticKey": "ad38f7ee02479dc9",
     "request": {
       "contents": [
         {
@@ -200,7 +253,7 @@
               "text": "For context:"
             },
             {
-              "text": "[generate_headline] said: The Ocean: A World Beneath the Waves"
+              "text": "[generate_headline] said: \"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
           ]
         },
@@ -208,17 +261,17 @@
           "role": "user",
           "parts": [
             {
-              "text": "The Ocean: A World Beneath the Waves"
+              "text": "\"Beneath the Surface: Unveiling the Ocean's Secrets\""
             }
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
-              "text": "{\"grade\": \"unrelated\", \"feedback\": \"The headline 'The Ocean: A World Beneath the Waves' is about marine environments and does not contain any terms or concepts related to technology or software engineering.\"}"
+              "text": "{\"grade\": \"unrelated\", \"feedback\": \"The headline is about ocean exploration and discovery, not technology or software engineering.\"}"
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
@@ -227,7 +280,7 @@
               "text": "For context:"
             },
             {
-              "text": "[generate_headline] said: Software for the Seas: Coding the Future of Ocean Discovery"
+              "text": "[generate_headline] said: Deep Dive into Code: Software Engineering for Ocean Innovation"
             }
           ]
         },
@@ -235,39 +288,70 @@
           "role": "user",
           "parts": [
             {
-              "text": "Software for the Seas: Coding the Future of Ocean Discovery"
+              "text": "Deep Dive into Code: Software Engineering for Ocean Innovation"
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"evaluate_headline\".\n\nGrade whether the headline is related to technology or software engineering."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "grade": {
+              "type": "STRING",
+              "enum": [
+                "tech-related",
+                "unrelated"
+              ]
+            },
+            "feedback": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "grade",
+            "feedback"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Grade whether the headline is related to technology or software engineering.",
+        "labels": {
+          "adk_agent_name": "evaluate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"grade\": \"tech-related\", \"feedback\": \"The headline 'Software for the Seas: Coding the Future of Ocean Discovery' explicitly mentions 'Software' and 'Coding', which are core concepts in technology and software engineering.\"}"
+                "text": "{\"grade\": \"tech-related\", \"feedback\": \"The headline explicitly mentions 'Software Engineering' and 'Code,' directly indicating its relevance to technology and software engineering. The 'Ocean Innovation' part describes the application domain, but the core subject remains software engineering.\"}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 137,
-        "candidatesTokenCount": 47,
-        "totalTokenCount": 395,
+        "promptTokenCount": 123,
+        "candidatesTokenCount": 54,
+        "totalTokenCount": 270,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 137
+            "tokenCount": 123
           }
         ],
-        "thoughtsTokenCount": 211,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 54
+          }
+        ],
+        "thoughtsTokenCount": 93
       }
     }
   }

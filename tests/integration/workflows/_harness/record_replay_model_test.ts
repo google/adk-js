@@ -12,9 +12,10 @@
 
 import type {BaseLlmConnection, LlmRequest, LlmResponse} from '@google/adk';
 import {BaseLlm, LLMRegistry} from '@google/adk';
+import {existsSync, readdirSync, readFileSync} from 'node:fs';
+import path from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {
-  contentsFingerprint,
   drainRecordedCalls,
   fingerprint,
   installRecordReplay,
@@ -46,28 +47,12 @@ function response(answer: string) {
   return {candidates: [{content: {role: 'model', parts: [{text: answer}]}}]};
 }
 
-/** A fixture entry in the current format: both keys, config stored. */
+/** A fixture entry as a record run writes it: both keys, config stored. */
 function recorded(req: LlmRequest, answer: string): RecordedCall {
   return {
     key: fingerprint(req),
     instructionAgnosticKey: instructionAgnosticFingerprint(req),
     request: {contents: req.contents, config: req.config},
-    response: response(answer),
-  };
-}
-
-/**
- * A fixture entry as recorded before the config was fingerprinted: no
- * `instructionAgnosticKey`, and only the system instruction kept of the config.
- */
-function legacyRecorded(req: LlmRequest, answer: string): RecordedCall {
-  return {
-    key: fingerprint(req),
-    contentsKey: contentsFingerprint(req.contents),
-    request: {
-      contents: req.contents,
-      systemInstruction: req.config?.systemInstruction,
-    },
     response: response(answer),
   };
 }
@@ -78,13 +63,20 @@ class StubBackend extends BaseLlm {
     super({model: 'gemini-2.5-flash'});
   }
 
-  override async *generateContentAsync(): AsyncGenerator<LlmResponse, void> {
+  override async *generateContentAsync(
+    _llmRequest?: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void> {
     yield {content: {role: 'model', parts: [{text: this.answer}]}};
   }
 
   override connect(): Promise<BaseLlmConnection> {
     throw new Error('not supported');
   }
+}
+
+/** Reads a sample's fixture off disk, as `runSample` does. */
+function load(file: string): RecordedCall[] {
+  return JSON.parse(readFileSync(file, 'utf8')) as RecordedCall[];
 }
 
 /** Replays (or records) one request through the installed harness model. */
@@ -221,34 +213,26 @@ describe('record/replay matching', () => {
     expect(error).toHaveBeenCalled();
   });
 
-  describe('fixtures recorded before the config was fingerprinted', () => {
-    it('recomputes the fallback key for a fixture recorded without one', async () => {
-      const req = request('legacy fixture', 'old instruction');
-      const legacy = legacyRecorded(req, 'served');
-      delete legacy.contentsKey;
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-      installRecordReplay({mode: 'replay', recordedCalls: [legacy]});
-
-      expect(await replay(request('legacy fixture', 'new instruction'))).toBe(
-        'served',
-      );
+  it('ignores the caller abort signal, which is a handle and not a request', async () => {
+    // It serializes to `{}`, so it discriminates nothing; a fixture that keyed
+    // on it would still match, but would carry a dead field forever.
+    const withSignal = (): LlmRequest =>
+      ({
+        model: 'gemini-2.5-flash',
+        contents: [{role: 'user', parts: [{text: 'question'}]}],
+        config: {
+          systemInstruction: 'instruction',
+          abortSignal: new AbortController().signal,
+        },
+      }) as unknown as LlmRequest;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    installRecordReplay({
+      mode: 'replay',
+      recordedCalls: [recorded(withSignal(), 'answer')],
     });
 
-    it('says which coverage the contents-only match gives up', async () => {
-      // No config was recorded, so the match cannot check one: say so rather
-      // than let a dropped tool look like a pass.
-      const req = request('use a tool', 'old instruction', ['lookup']);
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      installRecordReplay({
-        mode: 'replay',
-        recordedCalls: [legacyRecorded(req, 'served')],
-      });
-
-      expect(await replay(request('use a tool', 'new instruction'))).toBe(
-        'served',
-      );
-      expect(warn.mock.calls[0][0]).toContain('unverified');
-    });
+    expect(await replay(withSignal())).toBe('answer');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   describe('record mode', () => {
@@ -263,6 +247,54 @@ describe('record/replay matching', () => {
 
       expect(await replay(req)).toBe('live answer');
       expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('stores the config the keys were taken over, minus the abort signal', async () => {
+      // The stored request is what a later fingerprint change re-derives keys
+      // from, so it has to be the normalized one, not the raw call.
+      const req = request('record me', 'You are a recorder.', ['lookup']);
+      (req.config as Record<string, unknown>)['abortSignal'] =
+        new AbortController().signal;
+      const [call] = await record('live answer', req);
+
+      expect(call.request.config).toEqual({
+        systemInstruction: 'You are a recorder.',
+        tools: [{functionDeclarations: [{name: 'lookup'}]}],
+      });
+      expect(call.key).toBe(fingerprint(req));
+      expect(call.instructionAgnosticKey).toBe(
+        instructionAgnosticFingerprint(req),
+      );
+    });
+
+    it('snapshots the request before the backend can edit it', async () => {
+      // `Gemini.preprocessRequest` clears `config.labels` on the Gemini API
+      // path, i.e. after the keys are computed. Storing the request as the
+      // backend left it would make it disagree with its own keys.
+      const req = request('record me', 'You are a recorder.');
+      (req.config as Record<string, unknown>)['labels'] = {
+        adk_agent_name: 'recorder',
+      };
+      installRecordReplay({
+        mode: 'record',
+        liveBackend: () =>
+          new (class extends StubBackend {
+            override async *generateContentAsync(
+              llmRequest: LlmRequest,
+            ): AsyncGenerator<LlmResponse, void> {
+              (llmRequest.config as Record<string, unknown>)['labels'] =
+                undefined;
+              yield* super.generateContentAsync();
+            }
+          })('live answer'),
+      });
+      await replay(req);
+      const [call] = drainRecordedCalls();
+
+      expect(
+        (call.request.config as Record<string, unknown>)['labels'],
+      ).toEqual({adk_agent_name: 'recorder'});
+      expect(fingerprint(call.request as unknown as LlmRequest)).toBe(call.key);
     });
 
     it('writes a fallback key that survives a prompt change', async () => {
@@ -301,4 +333,47 @@ describe('record/replay matching', () => {
       expect(warn).not.toHaveBeenCalled();
     });
   });
+});
+
+describe('the checked-in fixtures', () => {
+  const samples = path.join(import.meta.dirname, '..');
+  const fixtures = readdirSync(samples, {withFileTypes: true})
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join(samples, e.name, 'model_responses.json'))
+    .filter((f) => existsSync(f))
+    .sort();
+
+  it('are all present and in the current format', () => {
+    expect(fixtures.length).toBeGreaterThan(0);
+    for (const file of fixtures) {
+      for (const call of load(file)) {
+        expect(Object.keys(call).sort()).toEqual([
+          'instructionAgnosticKey',
+          'key',
+          'request',
+          'response',
+        ]);
+      }
+    }
+  });
+
+  const named: Array<[string, string]> = fixtures.map((f) => [
+    path.basename(path.dirname(f)),
+    f,
+  ]);
+  it.each(named)(
+    'stores in %s the exact request its keys were taken over',
+    (_name, file) => {
+      // The promise the stored request makes: a future fingerprint change can
+      // re-derive keys from it offline, no live model needed. That only holds
+      // while it round-trips to the keys already written beside it.
+      for (const call of load(file)) {
+        const req = call.request as unknown as LlmRequest;
+        expect(fingerprint(req)).toBe(call.key);
+        expect(instructionAgnosticFingerprint(req)).toBe(
+          call.instructionAgnosticKey,
+        );
+      }
+    },
+  );
 });

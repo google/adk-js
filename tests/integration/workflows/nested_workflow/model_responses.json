@@ -1,7 +1,7 @@
 [
   {
     "key": "778e1cce4468601d",
-    "contentsKey": "496a1ff533b8a876",
+    "instructionAgnosticKey": "6f1092c2fdbac9e3",
     "request": {
       "contents": [
         {
@@ -13,40 +13,51 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1955.\n    Return ONLY their name, nothing else.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1955.\n    Return ONLY their name, nothing else.\n    ",
+        "labels": {
+          "adk_agent_name": "find_name"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "text": "Bill Gates"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 54,
+        "promptTokenCount": 52,
         "candidatesTokenCount": 2,
-        "totalTokenCount": 131,
+        "totalTokenCount": 98,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 54
+            "tokenCount": 52
           }
         ],
-        "thoughtsTokenCount": 75,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 44
       }
     }
   },
   {
     "key": "228440ecf0c1e553",
-    "contentsKey": "d14d9ef11f08b5bc",
+    "instructionAgnosticKey": "4969c8b07da28a12",
     "request": {
       "contents": [
         {
@@ -77,40 +88,51 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_bio\".\n\n\n    Write a short, engaging 3-sentence biography for the specified person.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_bio\".\n\n\n    Write a short, engaging 3-sentence biography for the specified person.\n    ",
+        "labels": {
+          "adk_agent_name": "generate_bio"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "Bill Gates co-founded Microsoft, igniting the personal computer revolution and making computing accessible worldwide. His vision transformed industries and everyday life, cementing his legacy as a technology pioneer. Today, he is a leading philanthropist through the Bill & Melinda Gates Foundation, dedicated to global health and poverty eradication."
+                "text": "Bill Gates revolutionized personal computing as the co-founder of Microsoft, turning it into a global software giant that made technology accessible worldwide. His innovative vision and leadership shaped the digital age. Today, he is primarily known for his extensive philanthropic work through the Bill & Melinda Gates Foundation, addressing critical global health and poverty issues."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 55,
-        "candidatesTokenCount": 58,
-        "totalTokenCount": 229,
+        "promptTokenCount": 51,
+        "candidatesTokenCount": 63,
+        "totalTokenCount": 245,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 55
+            "tokenCount": 51
           }
         ],
-        "thoughtsTokenCount": 116,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 63
+          }
+        ],
+        "thoughtsTokenCount": 131
       }
     }
   },
   {
     "key": "e15dc3fa645e73fc",
-    "contentsKey": "496a1ff533b8a876",
+    "instructionAgnosticKey": "78053afc62938740",
     "request": {
       "contents": [
         {
@@ -122,34 +144,45 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1955.\n    Keep the description to 2 sentences.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1955.\n    Keep the description to 2 sentences.\n    ",
+        "labels": {
+          "adk_agent_name": "find_historical_event"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "In 1955, the Soviet Union and its Eastern Bloc allies established the Warsaw Pact, a collective defense treaty. This alliance formally solidified the communist military bloc in Europe, directly confronting NATO and intensifying the Cold War."
+                "text": "In 1955, the Montgomery Bus Boycott began after Rosa Parks' refusal to give up her seat on a bus sparked widespread protest against racial segregation. This pivotal act of civil disobedience, led by Martin Luther King Jr., became a foundational event of the American Civil Rights Movement, demonstrating the power of nonviolent resistance."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 54,
-        "candidatesTokenCount": 45,
-        "totalTokenCount": 727,
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 66,
+        "totalTokenCount": 583,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 54
+            "tokenCount": 52
           }
         ],
-        "thoughtsTokenCount": 628,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 66
+          }
+        ],
+        "thoughtsTokenCount": 465
       }
     }
   }

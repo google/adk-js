@@ -1,7 +1,7 @@
 [
   {
     "key": "5fc04152f12fe2c0",
-    "contentsKey": "0be69852f4278c11",
+    "instructionAgnosticKey": "2fc1b852b548f499",
     "request": {
       "contents": [
         {
@@ -13,40 +13,51 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"quantum computing\".\n    If feedback is provided, take it into account.\n    The feedback: \n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"quantum computing\".\n    If feedback is provided, take it into account.\n    The feedback: \n    ",
+        "labels": {
+          "adk_agent_name": "generate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "Quantum Computing: The Next Frontier in Processing Power"
+                "text": "Quantum Computing: The Next Frontier in Technology"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 50,
-        "candidatesTokenCount": 9,
-        "totalTokenCount": 82,
+        "promptTokenCount": 48,
+        "candidatesTokenCount": 8,
+        "totalTokenCount": 75,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 50
+            "tokenCount": 48
           }
         ],
-        "thoughtsTokenCount": 23,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 19
       }
     }
   },
   {
-    "key": "2a8cac0388159a84",
-    "contentsKey": "a801d268db063d7b",
+    "key": "9da3434b6aa989f8",
+    "instructionAgnosticKey": "163205064812ed4e",
     "request": {
       "contents": [
         {
@@ -64,7 +75,7 @@
               "text": "For context:"
             },
             {
-              "text": "[generate_headline] said: Quantum Computing: The Next Frontier in Processing Power"
+              "text": "[generate_headline] said: Quantum Computing: The Next Frontier in Technology"
             }
           ]
         },
@@ -72,39 +83,72 @@
           "role": "user",
           "parts": [
             {
-              "text": "Quantum Computing: The Next Frontier in Processing Power"
+              "text": "Quantum Computing: The Next Frontier in Technology"
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"evaluate_headline\".\n\n\n    Grade whether the headline is related to technology or software engineering.\n    "
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "grade": {
+              "type": "STRING",
+              "enum": [
+                "tech-related",
+                "unrelated"
+              ],
+              "description": "Decide if the headline is related to technology or software engineering."
+            },
+            "feedback": {
+              "type": "STRING",
+              "description": "If the headline is unrelated to technology, provide feedback on how to make it more tech-focused."
+            }
+          },
+          "required": [
+            "grade",
+            "feedback"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "\n    Grade whether the headline is related to technology or software engineering.\n    ",
+        "labels": {
+          "adk_agent_name": "evaluate_headline"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "text": "{\"grade\": \"tech-related\", \"feedback\": \"\"}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 64,
+        "promptTokenCount": 89,
         "candidatesTokenCount": 12,
-        "totalTokenCount": 184,
+        "totalTokenCount": 286,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 64
+            "tokenCount": 89
           }
         ],
-        "thoughtsTokenCount": 108,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 185
       }
     }
   }

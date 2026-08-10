@@ -1,135 +1,7 @@
 [
   {
-    "key": "e22d71fa47fcc401",
-    "contentsKey": "b4187b3e3b841660",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "oceans"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
-            }
-          ]
-        }
-      ],
-      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "parts": [
-              {
-                "text": "Dive Deep: Unveiling the Ocean's Mysteries."
-              }
-            ],
-            "role": "model"
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 57,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 84,
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 57
-          }
-        ],
-        "thoughtsTokenCount": 15,
-        "serviceTier": "standard"
-      }
-    }
-  },
-  {
-    "key": "4a0fb6899c30134c",
-    "contentsKey": "3ec6e84229e0fc1b",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "space"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
-            }
-          ]
-        }
-      ],
-      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "parts": [
-              {
-                "text": "Space, Oceans, Volcanoes: Unveiling the Universe's Most Extreme Stages."
-              }
-            ],
-            "role": "model"
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 56,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 827,
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 56
-          }
-        ],
-        "thoughtsTokenCount": 753,
-        "serviceTier": "standard"
-      }
-    }
-  },
-  {
     "key": "893fe50fb5617951",
-    "contentsKey": "bd48ff5a2508a558",
+    "instructionAgnosticKey": "b07208311518b7db",
     "request": {
       "contents": [
         {
@@ -160,34 +32,195 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message."
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "**Space, Sea, and Summit: Unveiling the universe's most dramatic frontiers.**"
+                "text": "Deep, Fiery, Infinite: Oceans, Volcanoes, Space."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 58,
-        "candidatesTokenCount": 19,
-        "totalTokenCount": 874,
+        "promptTokenCount": 54,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 958,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 58
+            "tokenCount": 54
           }
         ],
-        "thoughtsTokenCount": 797,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 14
+          }
+        ],
+        "thoughtsTokenCount": 890
+      }
+    }
+  },
+  {
+    "key": "4a0fb6899c30134c",
+    "instructionAgnosticKey": "7da08d4d351e7485",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space, oceans, volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Space, Oceans, Volcanoes: Unearthing the Universe's Wildest Wonders."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 939,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 52
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 18
+          }
+        ],
+        "thoughtsTokenCount": 869
+      }
+    }
+  },
+  {
+    "key": "e22d71fa47fcc401",
+    "instructionAgnosticKey": "5569d5644985d09c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "space, oceans, volcanoes"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "oceans"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "From Earth's fiery heart to the cosmic expanse: Space, Oceans, Volcanoes."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 53,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 1096,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 53
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 18
+          }
+        ],
+        "thoughtsTokenCount": 1025
       }
     }
   }
