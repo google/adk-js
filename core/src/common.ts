@@ -16,7 +16,7 @@ export type {
 export {Context} from './agents/context.js';
 export {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
   findEventByFunctionCallId,
   findMatchingFunctionCall,

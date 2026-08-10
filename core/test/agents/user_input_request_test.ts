@@ -4,12 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  createEventActions,
+  functionsExportedForTestingOnly,
+  InvocationContext,
+  LlmAgent,
+  PluginManager,
+  Session,
+} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {
   getPendingUserInputRequests,
   getUserInputRequests,
   requiresUserInput,
 } from '../../src/agents/user_input_request.js';
+import {AuthConfig} from '../../src/auth/auth_tool.js';
 import {createEvent, Event} from '../../src/events/event.js';
 
 /** An `adk_request_input` interrupt, as raised by a workflow `RequestInput`. */
@@ -98,6 +107,40 @@ describe('getUserInputRequests', () => {
     expect(request.kind).toBe('credential');
     expect(request.interruptId).toBe('weather_api_key');
     expect(request.message).toBe('Please provide your API key.');
+    expect(request.authConfig).toEqual(authConfig);
+  });
+
+  it('summarizes a credential request raised by the agent auth flow', () => {
+    // The agent/tool flow writes snake_case args and no message, unlike the
+    // workflow flow above; build it with the real producer so the two
+    // encodings cannot drift apart from this test.
+    const authConfig = {
+      authScheme: {type: 'apiKey', in: 'header', name: 'X-Api-Key'},
+      credentialKey: 'weather_api_key',
+    } as unknown as AuthConfig;
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
+        requestedAuthConfigs: {'call_1': authConfig},
+      }),
+      content: {role: 'model', parts: []},
+    });
+    const event = functionsExportedForTestingOnly.generateAuthEvent(
+      new InvocationContext({
+        invocationId: 'inv_123',
+        session: {} as Session,
+        agent: new LlmAgent({name: 'fetch_weather', model: 'test_model'}),
+        pluginManager: new PluginManager(),
+      }),
+      functionResponseEvent,
+    )!;
+
+    const [request] = getUserInputRequests(event);
+
+    expect(request.kind).toBe('credential');
+    expect(request.author).toBe('fetch_weather');
+    expect(request.interruptId).toBe(
+      event.content!.parts![0].functionCall!.id!,
+    );
     expect(request.authConfig).toEqual(authConfig);
   });
 

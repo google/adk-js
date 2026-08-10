@@ -11,7 +11,7 @@ import {
   createEvent,
 } from '@google/adk';
 import {Mock, describe, expect, it, vi} from 'vitest';
-import {REQUEST_EUC_FUNCTION_CALL_NAME} from '../../src/agents/functions.js';
+import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../../src/agents/functions.js';
 
 vi.mock('../../src/agents/functions.js', async (importOriginal) => {
   const actual = (await importOriginal()) as {
@@ -135,7 +135,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
                       authConfig: {credentialKey: 'testKey'},
                       functionCallId: 'toolFc1',
@@ -152,7 +152,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },
@@ -209,7 +209,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
                       auth_config: {credentialKey: 'testKey'},
                       function_call_id: 'toolFc1',
@@ -226,7 +226,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },
@@ -283,7 +283,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
                       auth_config: {credential_key: 'testKey'},
                       function_call_id: 'toolFc1',
@@ -300,7 +300,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },
@@ -369,7 +369,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
                       authConfig: {credentialKey: 'testKey'},
                       functionCallId: '_adk_toolset_auth_something',
@@ -386,7 +386,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },
@@ -421,7 +421,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },
@@ -470,7 +470,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionCall: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
                       authConfig: {credentialKey: 'testKey'},
                       functionCallId: 'toolFc1',
@@ -487,7 +487,7 @@ describe('AuthPreprocessor', () => {
                 {
                   functionResponse: {
                     id: 'fc1',
-                    name: REQUEST_EUC_FUNCTION_CALL_NAME,
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     response: {authType: 'apiKey', apiKey: 'test'},
                   },
                 },

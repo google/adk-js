@@ -13,7 +13,7 @@
 
 import {Part} from '@google/genai';
 import {
-  REQUEST_EUC_FUNCTION_CALL_NAME as REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../../agents/functions.js';
 import {
@@ -28,7 +28,7 @@ import {toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
 export {
-  REQUEST_EUC_FUNCTION_CALL_NAME as REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../../agents/functions.js';
 

@@ -16,9 +16,10 @@
 
 import {AuthConfig} from '../auth/auth_tool.js';
 import {Event} from '../events/event.js';
+import {camelCaseKeys} from '../utils/case_utils.js';
 import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from './functions.js';
 
@@ -83,7 +84,7 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
       continue;
     }
 
-    const args = (functionCall.args ?? {}) as Record<string, unknown>;
+    const args = normalizeArgs(functionCall.name, functionCall.args);
     // Every interrupt kind stashes its id somewhere slightly different.
     const interruptId =
       functionCall.id ??
@@ -110,7 +111,7 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
         });
         break;
 
-      case REQUEST_EUC_FUNCTION_CALL_NAME:
+      case REQUEST_CREDENTIAL_FUNCTION_CALL_NAME:
         requests.push({
           ...base,
           kind: 'credential',
@@ -190,6 +191,28 @@ export function getPendingUserInputRequests(
   }
 
   return pending;
+}
+
+/**
+ * The two producers of an `adk_request_credential` call disagree on casing:
+ * the agent/tool auth flow writes snake_case (`functions.ts` `generateAuthEvent`
+ * -> `function_call_id`, `auth_config`) while the workflow auth gate writes
+ * camelCase (`hitl_utils.ts` `createAuthRequestEvent`). Normalize that kind the
+ * same way `auth_preprocessor` does, so both render.
+ *
+ * Only credential args are rewritten: the other kinds carry a caller-supplied
+ * `payload` whose own keys must survive untouched.
+ */
+function normalizeArgs(
+  functionCallName: string,
+  args: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!args) {
+    return {};
+  }
+  return functionCallName === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME
+    ? (camelCaseKeys(args) as Record<string, unknown>)
+    : args;
 }
 
 function asString(value: unknown): string | undefined {
