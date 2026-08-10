@@ -269,7 +269,7 @@ describe('SecurityPlugin', () => {
 
   describe('InMemoryPolicyEngine', () => {
     it('should always return ALLOW', async () => {
-      const engine = new InMemoryPolicyEngine();
+      const engine: BasePolicyEngine = new InMemoryPolicyEngine();
       const result: PolicyCheckResult = await engine.evaluate({
         tool: mockTool,
         toolArgs: {},

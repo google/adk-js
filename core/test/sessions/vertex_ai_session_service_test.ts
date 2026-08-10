@@ -5,7 +5,13 @@
  */
 
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
-import {createEvent, State, VertexAiSessionService} from '@google/adk';
+import {
+  createEvent,
+  isCompactedEvent,
+  State,
+  VertexAiSessionService,
+  type ListSessionsRequest,
+} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -484,7 +490,12 @@ describe('VertexAiSessionService', () => {
 
       expect(session?.events).toHaveLength(1);
       const parsedEvent = session?.events[0];
-      expect(parsedEvent?.isCompacted).toBe(true);
+      // `isCompacted` is declared on `CompactedEvent`, a refinement of `Event`,
+      // so it is only readable after narrowing with the exported type guard
+      // (which checks exactly `isCompacted === true`).
+      expect(parsedEvent !== undefined && isCompactedEvent(parsedEvent)).toBe(
+        true,
+      );
       expect(parsedEvent?.usageMetadata).toEqual({promptTokens: 10});
     });
 
@@ -668,6 +679,11 @@ describe('VertexAiSessionService', () => {
   });
 
   describe('listSessions', () => {
+    // `ListSessionsRequest` declares `userId` as required, but `listSessions`
+    // handles its absence by listing without a `user_id` filter. The cast keeps
+    // the tests that cover that path calling the service with no `userId`.
+    const requestWithoutUserId = {appName: '12345'} as ListSessionsRequest;
+
     it('returns list of sessions parsing name extracts', async () => {
       mockClient.listInternal.mockResolvedValue({
         sessions: [
@@ -711,9 +727,7 @@ describe('VertexAiSessionService', () => {
     });
 
     it('lists sessions without filter if userId is missing', async () => {
-      await service.listSessions({
-        appName: '12345',
-      });
+      await service.listSessions(requestWithoutUserId);
 
       expect(mockClient.listInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -727,9 +741,7 @@ describe('VertexAiSessionService', () => {
         sessions: [{name: 'projects/p/locations/l/sessions/s1', userId: 'u1'}],
       });
 
-      const result = await service.listSessions({
-        appName: '12345',
-      });
+      const result = await service.listSessions(requestWithoutUserId);
 
       expect(result.sessions[0].state).toEqual({});
       expect(result.sessions[0].lastUpdateTime).toBeGreaterThan(0);
@@ -738,9 +750,7 @@ describe('VertexAiSessionService', () => {
     it('returns empty list if no sessions found in listSessions', async () => {
       mockClient.listInternal.mockResolvedValue({}); // No sessions!
 
-      const result = await service.listSessions({
-        appName: '12345',
-      });
+      const result = await service.listSessions(requestWithoutUserId);
 
       expect(result.sessions).toEqual([]);
     });
@@ -757,9 +767,7 @@ describe('VertexAiSessionService', () => {
         ],
       });
 
-      const result = await service.listSessions({
-        appName: '12345',
-      });
+      const result = await service.listSessions(requestWithoutUserId);
 
       expect(result.sessions[0].state).toEqual({foo: 'bar'});
       expect(result.sessions[0].lastUpdateTime).toBe(

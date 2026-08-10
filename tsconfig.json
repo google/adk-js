@@ -7,6 +7,18 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "experimentalDecorators": true
+    "experimentalDecorators": true,
+    // Mirrors the aliases in vitest.config.ts so that a test importing
+    // `@google/adk` type-checks against the same sources it runs against.
+    // Without this, a file mixing `@google/adk` and `../../src/...` imports
+    // gets two distinct identities for the same class. The per-workspace
+    // configs reset this to `{}` so that a published build still resolves
+    // through node_modules.
+    "paths": {
+      "@google/adk": ["./core/src/index.ts"],
+      "@google/adk/*": ["./core/src/*"],
+      "@google/adk-integrations": ["./integrations/src/index.ts"],
+      "@google/adk-integrations/*": ["./integrations/src/*"]
+    }
   }
 }

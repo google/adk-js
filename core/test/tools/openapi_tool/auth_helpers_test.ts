@@ -6,7 +6,10 @@
 
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
-import {AuthCredential} from '../../../src/auth/auth_credential.js';
+import {
+  AuthCredential,
+  AuthCredentialTypes,
+} from '../../../src/auth/auth_credential.js';
 import {
   applyCredential,
   createApiKeyScheme,
@@ -26,7 +29,10 @@ describe('auth_helpers', () => {
     it('should apply API key in header', () => {
       const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const credential: AuthCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret_key',
+      };
       const authScheme: OpenAPIV3.SecuritySchemeObject = {
         type: 'apiKey',
         name: 'X-API-Key',
@@ -42,7 +48,10 @@ describe('auth_helpers', () => {
     it('should apply API key in query', () => {
       const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const credential: AuthCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret_key',
+      };
       const authScheme: OpenAPIV3.SecuritySchemeObject = {
         type: 'apiKey',
         name: 'api_key',
@@ -58,7 +67,10 @@ describe('auth_helpers', () => {
     it('should apply API key in query with existing params', () => {
       const url = 'http://example.com?foo=bar';
       const headers: Record<string, string> = {};
-      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const credential: AuthCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret_key',
+      };
       const authScheme: OpenAPIV3.SecuritySchemeObject = {
         type: 'apiKey',
         name: 'api_key',
@@ -73,7 +85,10 @@ describe('auth_helpers', () => {
     it('should fallback to Authorization header for API key if location is not specified', () => {
       const url = 'http://example.com';
       const headers: Record<string, string> = {};
-      const credential: AuthCredential = {apiKey: 'secret_key'};
+      const credential: AuthCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret_key',
+      };
 
       const result = applyCredential(url, headers, credential);
 
@@ -85,7 +100,9 @@ describe('auth_helpers', () => {
       const url = 'http://example.com';
       const headers: Record<string, string> = {};
       const credential: AuthCredential = {
+        authType: AuthCredentialTypes.HTTP,
         http: {
+          scheme: 'bearer',
           credentials: {
             token: 'my_token',
           },

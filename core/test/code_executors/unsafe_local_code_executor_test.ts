@@ -7,6 +7,7 @@
 import {
   CodeExecutionLanguage,
   ExecuteCodeParams,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   PluginManager,
@@ -311,13 +312,13 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'test.txt',
             content: Buffer.from('hello file content').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
           {
             name: 'subdir/data.json',
             content: '{"key": "value"}',
-            contentEncoding: 'utf8',
+            contentEncoding: FileContentEncoding.UTF8,
             mimeType: 'application/json',
           },
         ],
@@ -341,7 +342,7 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'existing_input.txt',
             content: Buffer.from('hello input').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
         ],
