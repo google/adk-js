@@ -68,19 +68,11 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       );
       if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
-        this.state.runs.set(nodePath, {
-          state: createNodeState({
-            status: NodeStatus.COMPLETED,
-            runId,
-            parentRunId: ctx.runId,
-          }),
-          output: prior.output,
-        });
-        if (options.useAsOutput) {
-          ctx.output = prior.output;
-          ctx.route = prior.route;
-        }
-        return makeFastForwardResult(ctx, prior);
+        return this.completeWithoutRunning(
+          ctx,
+          {nodePath, runId, options},
+          makeFastForwardResult(ctx, prior),
+        );
       }
       // Resume with rerunOnResume=false: a child that interrupted last turn
       // (raised interrupts, produced no output) does NOT re-run its body. It
@@ -90,25 +82,46 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       // raises a brand-new interrupt, and the workflow can never resume.
       const handoff = this.resumeHandoff(ctx, node, prior);
       if (handoff) {
-        this.state.runs.set(nodePath, {
-          state: createNodeState({
-            status: NodeStatus.COMPLETED,
-            runId,
-            parentRunId: ctx.runId,
-          }),
-          output: handoff.output,
-        });
-        if (options.useAsOutput) {
-          ctx.output = handoff.output;
-          ctx.route = handoff.route;
-        }
-        return handoff;
+        return this.completeWithoutRunning(
+          ctx,
+          {nodePath, runId, options},
+          handoff,
+        );
       }
       // Otherwise (waiting/unresolved): resume inputs were already merged into
       // ctx.resumeInputs by the Workflow; fall through to a fresh run.
     }
 
     return this.runFresh(ctx, node, input, name, runId, nodePath, options);
+  }
+
+  /**
+   * Books a dynamic run that completed WITHOUT executing its body — either
+   * fast-forwarded from a cached output or handed the resolved resume value —
+   * and returns `result` for `ctx.runNode()` to give back to the caller.
+   */
+  private completeWithoutRunning(
+    ctx: NodeContext,
+    run: {
+      nodePath: string;
+      runId: string;
+      options: ScheduleDynamicNodeOptions;
+    },
+    result: NodeResult,
+  ): NodeResult {
+    this.state.runs.set(run.nodePath, {
+      state: createNodeState({
+        status: NodeStatus.COMPLETED,
+        runId: run.runId,
+        parentRunId: ctx.runId,
+      }),
+      output: result.output,
+    });
+    if (run.options.useAsOutput) {
+      ctx.output = result.output;
+      ctx.route = result.route;
+    }
+    return result;
   }
 
   /**
