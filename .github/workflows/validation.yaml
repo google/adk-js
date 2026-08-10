@@ -44,6 +44,9 @@ jobs:
       - name: Run type check
         run: npm run ts:check
 
+      - name: Type check samples
+        run: npm run ts:check:samples
+
       - name: Run tests and check code coverage
         run: npm run test:coverage
 

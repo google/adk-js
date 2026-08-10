@@ -24,6 +24,14 @@ npm run sample -- samples/workflows/routes/sequence/agent.ts
 `npm run sample -- <path>` is shorthand for
 `node dev/dist/esm/cli_entrypoint.js run <path>`.
 
+`samples/` is not an npm workspace, so `npm run build` does not compile it. It
+has its own `samples/tsconfig.json` and is type-checked separately, in CI and
+locally:
+
+```bash
+npm run ts:check:samples
+```
+
 The CLI is interactive: type a message and press Enter to send it to the
 workflow; type `exit` to quit. Node events print as `[<node_name>]: <output>`
 and the last line is the workflow's output. A node that emits only `output` (no
