@@ -103,13 +103,27 @@ describe('Phase 5 — HITL (pause / resume)', () => {
   });
 
   it('supports HITL in an imperative dynamicEntry workflow', async () => {
-    const ask = new FunctionNode('ask', (ctx) => {
-      const answer = ctx.resumeInputs['name'];
-      if (answer === undefined) {
-        return new RequestInput({interruptId: 'name', message: 'Your name?'});
-      }
-      return answer;
-    });
+    // Re-entry HITL node: it re-runs on resume and reads the reply itself, so
+    // it declares `rerunOnResume: true`. Under the default the dynamic
+    // scheduler completes such a child with the raw reply as its output
+    // instead of re-running it (the handoff form) — see
+    // `dynamic_resume_test.ts` for both shapes driven through the Runner.
+    //
+    // Note this harness builds a fresh session per `drive()` call, so there
+    // are no prior events to rehydrate from and neither cross-turn branch is
+    // reached here; the flag is what the node means, not what this test
+    // exercises.
+    const ask = new FunctionNode(
+      'ask',
+      (ctx) => {
+        const answer = ctx.resumeInputs['name'];
+        if (answer === undefined) {
+          return new RequestInput({interruptId: 'name', message: 'Your name?'});
+        }
+        return answer;
+      },
+      {rerunOnResume: true},
+    );
     const wf = new Workflow({
       name: 'dyn_hitl',
       dynamicEntry: async (ctx) => {
