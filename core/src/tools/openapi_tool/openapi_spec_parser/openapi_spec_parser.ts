@@ -8,9 +8,6 @@ import {OpenAPIV3} from 'openapi-types';
 import {experimental} from '../../../utils/experimental.js';
 import {ApiParameter, OperationParser} from './operation_parser.js';
 
-/** Matches a `{name}` OpenAPI Server Object variable placeholder. */
-const SERVER_VARIABLE_PATTERN = /\{([^{}]+)\}/g;
-
 const VALID_SCHEMA_TYPES = new Set([
   'array',
   'boolean',
@@ -217,7 +214,7 @@ function sanitizeSchemaTypes(
  * @throws {Error} If a placeholder has no variable declaring a value for it.
  */
 function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
-  return server.url.replace(SERVER_VARIABLE_PATTERN, (_, name: string) => {
+  return server.url.replace(/\{([^{}]+)\}/g, (_, name: string) => {
     const variable = server.variables?.[name];
     const value = variable?.default || variable?.enum?.[0];
     if (!value) {

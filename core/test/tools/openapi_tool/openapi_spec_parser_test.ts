@@ -7,7 +7,6 @@
 import {OpenApiSpecParser} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
-import {prepareRequestParams} from '../../../src/tools/openapi_tool/rest_api_tool.js';
 
 describe('OpenApiSpecParser', () => {
   it('should resolve internal references', () => {
@@ -257,34 +256,17 @@ describe('OpenApiSpecParser', () => {
   });
 
   describe('server URL resolution', () => {
-    function serverSpec(
-      servers?: OpenAPIV3.ServerObject[],
-    ): OpenAPIV3.Document {
-      return {
+    function parseBaseUrl(servers?: OpenAPIV3.ServerObject[]): string {
+      const spec: OpenAPIV3.Document = {
         openapi: '3.0.0',
         info: {title: 'Server API', version: '1.0.0'},
         ...(servers ? {servers} : {}),
         paths: {
-          '/v1/data': {
-            get: {
-              operationId: 'getData',
-              parameters: [
-                {
-                  name: 'region',
-                  in: 'path',
-                  required: true,
-                  schema: {type: 'string'},
-                },
-              ],
-              responses: {},
-            },
-          },
+          '/v1/data': {get: {operationId: 'getData', responses: {}}},
         },
       };
-    }
 
-    function parseBaseUrl(servers?: OpenAPIV3.ServerObject[]): string {
-      const parsed = new OpenApiSpecParser().parse(serverSpec(servers));
+      const parsed = new OpenApiSpecParser().parse(spec);
       expect(parsed.length).toBe(1);
       return parsed[0].endpoint.baseUrl;
     }
@@ -345,26 +327,6 @@ describe('OpenApiSpecParser', () => {
         "Unresolved server URL variable 'tld' in 'https://{region}.api.{tld}'. " +
           'Declare a default under servers[].variables.',
       );
-    });
-
-    it('should keep a path parameter off the resolved server host', () => {
-      const parsed = new OpenApiSpecParser().parse(
-        serverSpec([
-          {
-            url: 'https://{region}.api.example.com',
-            variables: {region: {default: 'us-central1'}},
-          },
-        ]),
-      );
-
-      const result = prepareRequestParams(
-        parsed[0].endpoint,
-        parsed[0].parameters,
-        {region: 'evil.attacker.com/'},
-      );
-
-      expect(new URL(result.url).host).toBe('us-central1.api.example.com');
-      expect(result.url).toBe('https://us-central1.api.example.com/v1/data');
     });
 
     it('should default the base URL to an empty string when the spec has no servers', () => {

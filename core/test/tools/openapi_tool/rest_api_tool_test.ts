@@ -10,6 +10,7 @@ import {
   AuthCredentialTypes,
   Context,
   createRestApiTool,
+  OpenApiSpecParser,
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
@@ -874,6 +875,45 @@ describe('RestApiTool Utilities', () => {
 
         expect(result.url).toBe('https://{region}.api.example.com/v1/data');
         expect(result.url).not.toContain('evil.attacker.com');
+      });
+
+      it('should keep a path parameter off a parsed spec\u2019s resolved host', () => {
+        const spec: OpenAPIV3.Document = {
+          openapi: '3.0.0',
+          info: {title: 'Server API', version: '1.0.0'},
+          servers: [
+            {
+              url: 'https://{region}.api.example.com',
+              variables: {region: {default: 'us-central1'}},
+            },
+          ],
+          paths: {
+            '/v1/data': {
+              get: {
+                operationId: 'getData',
+                parameters: [
+                  {
+                    name: 'region',
+                    in: 'path',
+                    required: true,
+                    schema: {type: 'string'},
+                  },
+                ],
+                responses: {},
+              },
+            },
+          },
+        };
+        const parsed = new OpenApiSpecParser().parse(spec);
+
+        const result = prepareRequestParams(
+          parsed[0].endpoint,
+          parsed[0].parameters,
+          {region: 'evil.attacker.com/'},
+        );
+
+        expect(new URL(result.url).host).toBe('us-central1.api.example.com');
+        expect(result.url).toBe('https://us-central1.api.example.com/v1/data');
       });
 
       it('should encode reserved characters in path parameter values', () => {
