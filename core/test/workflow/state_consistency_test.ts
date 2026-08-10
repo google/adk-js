@@ -141,6 +141,31 @@ describe('workflow state consistency across nodes', () => {
     expect(observed).toBe('oceans');
   });
 
+  it('writes made through update() are visible the same way as set()', async () => {
+    // `update` is State's other write path and is public on `ctx.state`, so it
+    // has to honour both halves of the contract: later nodes read it back, and
+    // it lands on `session.state` for direct readers.
+    let readBack: unknown;
+    let onSession: unknown;
+    const write = new FunctionNode('write', (ctx: NodeContext) => {
+      ctx.state.update({topic: 'oceans'});
+      return 'write';
+    });
+    const peek = new FunctionNode('peek', (ctx: NodeContext) => {
+      readBack = ctx.state.get<string>('topic');
+      onSession = ctx.invocationContext.session.state['topic'];
+      return 'peek';
+    });
+
+    const {state} = await runOnce(
+      new WorkflowAgent({name: 'update_wf', edges: [['START', write, peek]]}),
+    );
+
+    expect(readBack).toBe('oceans');
+    expect(onSession).toBe('oceans');
+    expect(state['topic']).toBe('oceans');
+  });
+
   it('does not leak one invocation\u2019s overlay into another session', async () => {
     // The overlay is keyed by the session's live state object and guarded by
     // invocation id, so a second, unrelated run starts from a clean slate.

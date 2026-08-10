@@ -232,6 +232,20 @@ function invocationOverlay(ic: InvocationContext): Record<string, unknown> {
  * sees `1`. Writes still land in `session.state` as well, so consumers that
  * read it directly — notably `{key}` instruction templating in an agent node —
  * behave exactly as before.
+ *
+ * Two gaps remain. They are mirror images of each other, share the root cause
+ * above, and are both only really fixable at the source (version-stamping keys
+ * as the session services apply a delta), so neither is closed here:
+ *
+ * - Workflow writes still reach an outside reader out of order. `session.state`
+ *   is written through *and* re-applied by the event commit, so an agent
+ *   resolving `{key}` for a key two nodes wrote can observe the stale value
+ *   inside the same window.
+ * - Outside writes no longer reach a workflow reader. Once a node writes `k`,
+ *   every later read of `k` in this invocation is served from the overlay, so a
+ *   tool or callback that writes `k` straight to `session.state` mid-run is
+ *   invisible to those reads for the rest of the invocation. Before the overlay
+ *   they saw it, subject to the rollback race being fixed.
  */
 class NodeStateView extends State {
   constructor(
@@ -253,12 +267,19 @@ class NodeStateView extends State {
     return super.has(key) || key in this.committed;
   }
 
+  // Both of `State`'s write paths (`set` and `update`) keep writing through to
+  // the session, so readers of `session.state` (agent instruction templates,
+  // callbacks, tools) see the write immediately, as they did before the overlay
+  // existed.
+
   override set(key: string, value: unknown): void {
     super.set(key, value);
-    // Keep writing through to the session so readers of `session.state` (agent
-    // instruction templates, callbacks, tools) see the write immediately, as
-    // they did before the overlay existed.
     this.committed[key] = value;
+  }
+
+  override update(delta: Record<string, unknown>): void {
+    super.update(delta);
+    Object.assign(this.committed, delta);
   }
 
   override toRecord(): Record<string, unknown> {
