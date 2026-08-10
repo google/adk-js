@@ -5,14 +5,21 @@
  */
 
 import {
+  ApiParameter,
   AuthCredential,
+  AuthCredentialTypes,
   Context,
   createRestApiTool,
+  OpenApiSpecParser,
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {
+  applyCredential,
+  createApiKeyScheme,
+} from '../../../src/tools/openapi_tool/auth/auth_helpers.js';
 import {
   prepareRequestBody,
   prepareRequestParams,
@@ -743,6 +750,286 @@ describe('RestApiTool Utilities', () => {
 
       expect(result.url).toBe('http://api.example.com/users/123/posts');
       expect(result.headers).toEqual({});
+    });
+
+    describe('path parameter encoding', () => {
+      const usersEndpoint = {
+        baseUrl: 'http://api.example.com',
+        path: '/v1/users/{user_id}',
+        method: 'GET',
+      };
+      const userIdParameters: ApiParameter[] = [
+        {
+          name: 'user_id',
+          originalName: 'user_id',
+          paramLocation: 'path',
+          paramSchema: {},
+          required: true,
+        },
+      ];
+
+      it('should percent-encode path traversal sequences in path parameter values', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: '../../admin/export',
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/..%2F..%2Fadmin%2Fexport',
+        );
+        expect(new URL(result.url).pathname).toBe(
+          '/v1/users/..%2F..%2Fadmin%2Fexport',
+        );
+      });
+
+      it('should not let a path parameter value smuggle query parameters', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'x?role=admin&debug=true',
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/x%3Frole%3Dadmin%26debug%3Dtrue',
+        );
+        expect(new URL(result.url).searchParams.get('role')).toBeNull();
+        expect([...new URL(result.url).searchParams.keys()]).toEqual([]);
+      });
+
+      it('should not attach the credential to a traversed path', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: '../../admin/export',
+        });
+
+        const withKey = applyCredential(
+          result.url,
+          {},
+          {authType: AuthCredentialTypes.API_KEY, apiKey: 'test-api-key'},
+          createApiKeyScheme('key', 'query'),
+        );
+
+        expect(new URL(withKey).pathname).toBe(
+          '/v1/users/..%2F..%2Fadmin%2Fexport',
+        );
+        expect(new URL(withKey).searchParams.get('key')).toBe('test-api-key');
+      });
+
+      it('should merge declared query parameters with an encoded path value', () => {
+        const parameters: ApiParameter[] = [
+          ...userIdParameters,
+          {
+            name: 'q',
+            originalName: 'q',
+            paramLocation: 'query',
+            paramSchema: {},
+            required: false,
+          },
+        ];
+
+        const result = prepareRequestParams(usersEndpoint, parameters, {
+          user_id: 'a/b',
+          q: 'search term',
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/a%2Fb?q=search+term',
+        );
+        expect(new URL(result.url).searchParams.get('q')).toBe('search term');
+      });
+
+      it('should reject a path parameter value that is a relative path segment', () => {
+        expect(() =>
+          prepareRequestParams(usersEndpoint, userIdParameters, {
+            user_id: '..',
+          }),
+        ).toThrow(/relative path segments/);
+      });
+
+      it('should reject a single-dot path parameter value', () => {
+        expect(() =>
+          prepareRequestParams(usersEndpoint, userIdParameters, {
+            user_id: '.',
+          }),
+        ).toThrow(
+          "Invalid value for path parameter 'user_id': relative path " +
+            "segments ('.' and '..') are not allowed.",
+        );
+      });
+
+      it('should not substitute a path parameter into the base URL host', () => {
+        const endpoint = {
+          baseUrl: 'https://{region}.api.example.com',
+          path: '/v1/data',
+          method: 'GET',
+        };
+        const parameters: ApiParameter[] = [
+          {
+            name: 'region',
+            originalName: 'region',
+            paramLocation: 'path',
+            paramSchema: {},
+            required: true,
+          },
+        ];
+
+        const result = prepareRequestParams(endpoint, parameters, {
+          region: 'evil.attacker.com/',
+        });
+
+        expect(result.url).toBe('https://{region}.api.example.com/v1/data');
+        expect(result.url).not.toContain('evil.attacker.com');
+      });
+
+      it('should keep a path parameter off a parsed spec\u2019s resolved host', () => {
+        const spec: OpenAPIV3.Document = {
+          openapi: '3.0.0',
+          info: {title: 'Server API', version: '1.0.0'},
+          servers: [
+            {
+              url: 'https://{region}.api.example.com',
+              variables: {region: {default: 'us-central1'}},
+            },
+          ],
+          paths: {
+            '/v1/data': {
+              get: {
+                operationId: 'getData',
+                parameters: [
+                  {
+                    name: 'region',
+                    in: 'path',
+                    required: true,
+                    schema: {type: 'string'},
+                  },
+                ],
+                responses: {},
+              },
+            },
+          },
+        };
+        const parsed = new OpenApiSpecParser().parse(spec);
+
+        const result = prepareRequestParams(
+          parsed[0].endpoint,
+          parsed[0].parameters,
+          {region: 'evil.attacker.com/'},
+        );
+
+        expect(new URL(result.url).host).toBe('us-central1.api.example.com');
+        expect(result.url).toBe('https://us-central1.api.example.com/v1/data');
+      });
+
+      it('should encode reserved characters in path parameter values', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'a b#c&d=e',
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/a%20b%23c%26d%3De',
+        );
+      });
+
+      it('should not expand dollar patterns from a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'a$&b',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/a%24%26b');
+      });
+
+      it('should encode a space in a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'John Doe',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/John%20Doe');
+      });
+
+      it('should encode non-ASCII characters in a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: 'café',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/caf%C3%A9');
+      });
+
+      it('should round-trip a value made of reserved characters', () => {
+        const value = "a/b?c#d&e=f%g$&h'i";
+
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: value,
+        });
+
+        expect(result.url).toBe(
+          'http://api.example.com/v1/users/' +
+            "a%2Fb%3Fc%23d%26e%3Df%25g%24%26h'i",
+        );
+        const segment = new URL(result.url).pathname.split('/').pop();
+        if (segment === undefined) expect.fail('the URL had no path segment');
+        expect(decodeURIComponent(segment)).toBe(value);
+      });
+
+      it('should stringify non-string path parameter values', () => {
+        expect(
+          prepareRequestParams(usersEndpoint, userIdParameters, {user_id: 123})
+            .url,
+        ).toBe('http://api.example.com/v1/users/123');
+        expect(
+          prepareRequestParams(usersEndpoint, userIdParameters, {user_id: true})
+            .url,
+        ).toBe('http://api.example.com/v1/users/true');
+      });
+
+      it('should substitute every occurrence of a repeated path placeholder', () => {
+        const endpoint = {
+          baseUrl: 'http://api.example.com',
+          path: '/a/{id}/b/{id}',
+          method: 'GET',
+        };
+        const parameters: ApiParameter[] = [
+          {
+            name: 'id',
+            originalName: 'id',
+            paramLocation: 'path',
+            paramSchema: {},
+            required: true,
+          },
+        ];
+
+        const result = prepareRequestParams(endpoint, parameters, {id: '7'});
+
+        expect(result.url).toBe('http://api.example.com/a/7/b/7');
+      });
+
+      it('should leave a path placeholder literal when no argument is supplied', () => {
+        const endpoint = {
+          baseUrl: 'http://api.example.com',
+          path: '/users/{userId}',
+          method: 'GET',
+        };
+
+        const result = prepareRequestParams(endpoint, userIdParameters, {});
+
+        expect(result.url).toBe('http://api.example.com/users/{userId}');
+      });
+
+      it('should not resolve a placeholder from Object.prototype', () => {
+        const endpoint = {
+          baseUrl: 'http://api.example.com',
+          path: '/v1/{constructor}',
+          method: 'GET',
+        };
+
+        const result = prepareRequestParams(endpoint, userIdParameters, {});
+
+        expect(result.url).toBe('http://api.example.com/v1/{constructor}');
+      });
+
+      it('should percent-encode a percent sign in a path parameter value', () => {
+        const result = prepareRequestParams(usersEndpoint, userIdParameters, {
+          user_id: '%2e%2e',
+        });
+
+        expect(result.url).toBe('http://api.example.com/v1/users/%252e%252e');
+        expect(new URL(result.url).pathname).toBe('/v1/users/%252e%252e');
+      });
     });
   });
 

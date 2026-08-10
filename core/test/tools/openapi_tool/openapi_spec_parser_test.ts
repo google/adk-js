@@ -254,4 +254,89 @@ describe('OpenApiSpecParser', () => {
     expect(postOp).toBeDefined();
     expect(postOp?.authScheme?.type).toBe('oauth2');
   });
+
+  describe('server URL resolution', () => {
+    function parseBaseUrl(servers?: OpenAPIV3.ServerObject[]): string {
+      const spec: OpenAPIV3.Document = {
+        openapi: '3.0.0',
+        info: {title: 'Server API', version: '1.0.0'},
+        ...(servers ? {servers} : {}),
+        paths: {
+          '/v1/data': {get: {operationId: 'getData', responses: {}}},
+        },
+      };
+
+      const parsed = new OpenApiSpecParser().parse(spec);
+      expect(parsed.length).toBe(1);
+      return parsed[0].endpoint.baseUrl;
+    }
+
+    it('should resolve server variables from their default values', () => {
+      const baseUrl = parseBaseUrl([
+        {
+          url: 'https://{region}.api.example.com/{version}',
+          variables: {
+            region: {default: 'us-central1'},
+            version: {default: 'v1'},
+          },
+        },
+      ]);
+
+      expect(baseUrl).toBe('https://us-central1.api.example.com/v1');
+    });
+
+    it('should fall back to the first enum entry when the default is empty', () => {
+      const baseUrl = parseBaseUrl([
+        {
+          url: 'https://{region}.api.example.com',
+          variables: {
+            region: {default: '', enum: ['us-central1', 'europe-west1']},
+          },
+        },
+      ]);
+
+      expect(baseUrl).toBe('https://us-central1.api.example.com');
+    });
+
+    it('should throw naming a placeholder that has no declared variable', () => {
+      expect(() =>
+        parseBaseUrl([{url: 'https://{region}.api.example.com'}]),
+      ).toThrow(/region/);
+    });
+
+    it('should throw when a declared variable supplies no default or enum', () => {
+      expect(() =>
+        parseBaseUrl([
+          {
+            url: 'https://{region}.api.example.com',
+            variables: {region: {default: ''}},
+          },
+        ]),
+      ).toThrow(/region/);
+    });
+
+    it('should throw naming the unresolved placeholder when others resolve', () => {
+      expect(() =>
+        parseBaseUrl([
+          {
+            url: 'https://{region}.api.{tld}',
+            variables: {region: {default: 'us'}},
+          },
+        ]),
+      ).toThrow(
+        "Unresolved server URL variable 'tld' in 'https://{region}.api.{tld}'. " +
+          'Declare a default under servers[].variables.',
+      );
+    });
+
+    it('should default the base URL to an empty string when the spec has no servers', () => {
+      expect(parseBaseUrl()).toBe('');
+    });
+
+    it('should use a plain server URL unchanged', () => {
+      expect(parseBaseUrl([{url: 'https://api.example.com'}])).toBe(
+        'https://api.example.com',
+      );
+    });
+  });
 });

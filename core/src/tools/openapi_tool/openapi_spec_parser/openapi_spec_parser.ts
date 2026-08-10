@@ -205,6 +205,29 @@ function sanitizeSchemaTypes(
 }
 
 /**
+ * Resolves OpenAPI Server Object variables (`{name}`) in a server URL from
+ * their declared `default`, falling back to the first `enum` entry.
+ *
+ * A placeholder with no declared variable is a spec error: left in place it
+ * becomes a literal `{name}` in the request host.
+ *
+ * @throws {Error} If a placeholder has no variable declaring a value for it.
+ */
+function resolveServerUrl(server: OpenAPIV3.ServerObject): string {
+  return server.url.replace(/\{([^{}]+)\}/g, (_, name: string) => {
+    const variable = server.variables?.[name];
+    const value = variable?.default || variable?.enum?.[0];
+    if (!value) {
+      throw new Error(
+        `Unresolved server URL variable '${name}' in '${server.url}'. ` +
+          `Declare a default under servers[].variables.`,
+      );
+    }
+    return value;
+  });
+}
+
+/**
  * Collects and parses all operations defined in the OpenAPI spec document.
  */
 function collectOperations(
@@ -213,7 +236,8 @@ function collectOperations(
 ): ParsedOperation[] {
   const preservePropertyNames = options.preservePropertyNames ?? false;
   const operations: ParsedOperation[] = [];
-  const baseUrl = spec.servers?.[0]?.url || '';
+  const server = spec.servers?.[0];
+  const baseUrl = server ? resolveServerUrl(server) : '';
 
   const globalSecurity = spec.security || [];
   let globalSchemeName: string | undefined;
