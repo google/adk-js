@@ -265,28 +265,6 @@ export class AdkApiServer {
       }
     });
 
-    // `/list-apps` omits the agents that failed to load, so an agent can drop
-    // out of the dev UI with no explanation in it. This says why.
-    app.get('/list-app-errors', async (req: Request, res: Response) => {
-      try {
-        const failures = await this.agentLoader.listLoadFailures();
-        res.json(
-          failures.map((failure) => ({
-            name: failure.name,
-            filePath: failure.filePath,
-            error: failure.error.message,
-          })),
-        );
-      } catch (e: unknown) {
-        const error = `Failed to list app errors: ${e}`;
-
-        res.status(500).json({error});
-        this.logger.error(error);
-
-        return;
-      }
-    });
-
     app.get('/debug/trace/:eventId', (req: Request, res: Response) => {
       try {
         const eventId = req.params['eventId'];
