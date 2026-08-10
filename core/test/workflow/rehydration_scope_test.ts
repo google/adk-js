@@ -36,6 +36,27 @@ function nodeEvent(
   });
 }
 
+/**
+ * A node event that paused for a human, shaped like the engine's own: an
+ * `adk_request_input` call whose id is also a long-running tool id (see
+ * `createRequestInputEvent`).
+ */
+function pauseEvent(
+  invocationId: string,
+  path: string,
+  interruptId: string,
+): Event {
+  return nodeEvent(invocationId, path, {
+    content: {
+      role: 'model',
+      parts: [
+        {functionCall: {name: 'adk_request_input', id: interruptId, args: {}}},
+      ],
+    },
+    longRunningToolIds: [interruptId],
+  });
+}
+
 describe('eventsForCurrentRun', () => {
   it('drops a run that already completed', () => {
     const events = [
@@ -51,7 +72,7 @@ describe('eventsForCurrentRun', () => {
     const events = [
       createEvent({author: 'user', invocationId: 'a'}),
       nodeEvent('a', 'wf.n1', {output: 'one'}),
-      nodeEvent('a', 'wf.gate', {longRunningToolIds: ['gate-1']}),
+      pauseEvent('a', 'wf.gate', 'gate-1'),
       createEvent({author: 'user', invocationId: 'b'}),
     ];
     expect(eventsForCurrentRun(events, 'b')).toEqual(events.slice(1));
@@ -61,10 +82,10 @@ describe('eventsForCurrentRun', () => {
     const events = [
       createEvent({author: 'user', invocationId: 'a'}),
       nodeEvent('a', 'wf.n1', {output: 'one'}),
-      nodeEvent('a', 'wf.gate1', {longRunningToolIds: ['g1']}),
+      pauseEvent('a', 'wf.gate1', 'g1'),
       createEvent({author: 'user', invocationId: 'b'}),
       nodeEvent('b', 'wf.n2', {output: 'two'}),
-      nodeEvent('b', 'wf.gate2', {longRunningToolIds: ['g2']}),
+      pauseEvent('b', 'wf.gate2', 'g2'),
       createEvent({author: 'user', invocationId: 'c'}),
     ];
     expect(eventsForCurrentRun(events, 'c')).toEqual(events.slice(1));
@@ -76,7 +97,7 @@ describe('eventsForCurrentRun', () => {
       nodeEvent('a', 'wf.n1', {output: 'stale'}),
       createEvent({author: 'user', invocationId: 'b'}),
       nodeEvent('b', 'wf.n1', {output: 'one'}),
-      nodeEvent('b', 'wf.gate', {longRunningToolIds: ['g1']}),
+      pauseEvent('b', 'wf.gate', 'g1'),
       createEvent({author: 'user', invocationId: 'c'}),
     ];
     // Run `a` finished; only the paused run `b` onward may be rehydrated.
@@ -90,7 +111,50 @@ describe('eventsForCurrentRun', () => {
     const events = [
       createEvent({author: 'user', invocationId: 'a'}),
       nodeEvent('a', 'wf.n1', {output: 'one'}),
-      nodeEvent('', 'wf.gate', {longRunningToolIds: ['gate-1']}),
+      pauseEvent('', 'wf.gate', 'gate-1'),
+      createEvent({author: 'user', invocationId: 'b'}),
+    ];
+    expect(eventsForCurrentRun(events, 'b')).toEqual(events.slice(1));
+  });
+
+  it('drops a completed run that merely used a long-running tool', () => {
+    // `longRunningToolIds` marks any tool declared `isLongRunning`, not only a
+    // HITL pause. A run that called one and then finished is finished, and must
+    // not be kept and fast-forwarded on the next turn.
+    const events = [
+      createEvent({author: 'user', invocationId: 'a'}),
+      nodeEvent('a', 'wf.n1', {
+        output: 'one',
+        longRunningToolIds: ['poll-job-1'],
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'start_job', id: 'poll-job-1'}}],
+        },
+      }),
+      createEvent({author: 'user', invocationId: 'b'}),
+    ];
+    expect(eventsForCurrentRun(events, 'b')).toEqual([events[2]]);
+  });
+
+  it('keeps a run paused on a tool confirmation', () => {
+    const events = [
+      createEvent({author: 'user', invocationId: 'a'}),
+      nodeEvent('a', 'wf.n1', {output: 'one'}),
+      nodeEvent('a', 'wf.act', {
+        longRunningToolIds: ['c1'],
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'adk_request_confirmation',
+                id: 'c1',
+                args: {},
+              },
+            },
+          ],
+        },
+      }),
       createEvent({author: 'user', invocationId: 'b'}),
     ];
     expect(eventsForCurrentRun(events, 'b')).toEqual(events.slice(1));

@@ -13,13 +13,10 @@
  * for deterministic parallel/dynamic replay is a Phase 5b continuation.
  */
 
+import {requiresUserInput} from '../../agents/user_input_request.js';
 import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
 import type {NodeContext, NodeResult} from '../node_context.js';
-import {
-  hasAuthRequestFunctionCall,
-  hasRequestInputFunctionCall,
-} from './hitl_utils.js';
 
 const RESULT_KEY = 'result';
 
@@ -89,7 +86,9 @@ export function eventsForCurrentRun(
       lastInvocationId = event.invocationId;
     }
     if (invocationId === currentInvocationId) {
-      currentStart = Math.min(currentStart, i);
+      if (currentStart === events.length) {
+        currentStart = i;
+      }
       continue;
     }
     if (!event.nodeInfo?.path) {
@@ -112,16 +111,18 @@ export function eventsForCurrentRun(
     boundary = priorRuns[i].start;
   }
 
-  return boundary <= 0 ? events : events.slice(boundary);
+  return events.slice(boundary);
 }
 
-/** Whether an event raised an interrupt (HITL request-input, or auth). */
+/**
+ * Whether an event paused the run for a human: it carries one of the three
+ * `adk_request_*` calls (input, credential, or tool confirmation).
+ *
+ * Deliberately NOT `longRunningToolIds`, which marks any tool declared
+ * `isLongRunning` — a run that merely used one is not waiting on a person.
+ */
 function raisedInterrupt(event: Event): boolean {
-  return (
-    (event.longRunningToolIds?.length ?? 0) > 0 ||
-    hasRequestInputFunctionCall(event) ||
-    hasAuthRequestFunctionCall(event)
-  );
+  return requiresUserInput(event);
 }
 
 /**
