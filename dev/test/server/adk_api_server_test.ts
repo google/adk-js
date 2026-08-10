@@ -224,6 +224,7 @@ describe('AdkWebServer', () => {
   beforeEach(async () => {
     agentLoader = {
       listAgents: () => Promise.resolve(['testApp']),
+      listLoadFailures: () => Promise.resolve([]),
       getAgentFile: () =>
         Promise.resolve({
           load() {
@@ -811,6 +812,57 @@ describe('AdkWebServer', () => {
         expect((e as {response: {status: number}}).response.status).toBe(500);
       } finally {
         agentLoader.listAgents = originalListAgents;
+      }
+    });
+
+    // An agent that throws while constructing is skipped so it cannot take the
+    // rest of the server down, which leaves it missing from `/list-apps` with
+    // no explanation there.
+    it('should report why an app is missing from the list', async () => {
+      const originalListLoadFailures = agentLoader.listLoadFailures;
+      agentLoader.listLoadFailures = () =>
+        Promise.resolve([
+          {
+            name: 'brokenApp',
+            filePath: '/agents/brokenApp/agent.ts',
+            error: new Error('Graph validation failed.'),
+          },
+        ]);
+
+      try {
+        const response = await client.get<unknown[]>('/list-app-errors');
+
+        expect(response.status).toBe(200);
+        expect(response.data).toEqual([
+          {
+            name: 'brokenApp',
+            filePath: '/agents/brokenApp/agent.ts',
+            error: 'Graph validation failed.',
+          },
+        ]);
+      } finally {
+        agentLoader.listLoadFailures = originalListLoadFailures;
+      }
+    });
+
+    it('should return no errors when every app loaded', async () => {
+      const response = await client.get<unknown[]>('/list-app-errors');
+
+      expect(response.status).toBe(200);
+      expect(response.data).toEqual([]);
+    });
+
+    it('should return 500 if listing load failures fails', async () => {
+      const originalListLoadFailures = agentLoader.listLoadFailures;
+      agentLoader.listLoadFailures = () =>
+        Promise.reject(new Error('List failed'));
+
+      try {
+        await client.get('/list-app-errors');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(500);
+      } finally {
+        agentLoader.listLoadFailures = originalListLoadFailures;
       }
     });
   });

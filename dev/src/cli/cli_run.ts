@@ -11,11 +11,13 @@ import {
   BaseMemoryService,
   BaseSessionService,
   Event,
+  getPendingUserInputRequests,
   getUserInputRequests,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  requiresUserInput,
   Runner,
   Session,
   UserInputKind,
@@ -85,8 +87,18 @@ function renderUserInputRequest(request: UserInputRequest): string {
   return lines.join('\n');
 }
 
+interface PrintEventOptions {
+  /**
+   * Whether to announce the pauses this event raised. Off when replaying a
+   * saved transcript, where a pause shown per event would re-ask questions the
+   * user already answered; the still-open ones are printed once afterwards.
+   */
+  announcePauses?: boolean;
+}
+
 /** Prints one event's text, plus anything the user would otherwise not see. */
-function printEvent(event: Event): void {
+function printEvent(event: Event, options: PrintEventOptions = {}): void {
+  const {announcePauses = true} = options;
   const author = event.author ?? 'agent';
 
   const text = (event.content?.parts ?? [])
@@ -102,6 +114,10 @@ function printEvent(event: Event): void {
       .filter(Boolean)
       .join(': ');
     console.error(`[${author}] error: ${detail}`);
+  }
+
+  if (!announcePauses) {
+    return;
   }
 
   for (const request of getUserInputRequests(event)) {
@@ -156,6 +172,7 @@ async function runFromInputFile(
   });
 
   const runner = new Runner(options);
+  let waitingOnUser = false;
 
   for (const query of fileContent.queries) {
     console.log(`[user]: ${query}`);
@@ -169,9 +186,20 @@ async function runFromInputFile(
       runConfig: {plainTextToolConfirmation: true},
     };
 
+    waitingOnUser = false;
     for await (const event of runner.runAsync(runOptions)) {
       printEvent(event);
+      // A scripted run has no prompt to answer at: whatever the pause asked
+      // for has to be the next query in the file.
+      waitingOnUser = requiresUserInput(event) || waitingOnUser;
     }
+  }
+
+  if (waitingOnUser) {
+    console.error(
+      'The run ended while still waiting for user input. ' +
+        'Add the answer as the next query in the input file.',
+    );
   }
 
   return session;
@@ -317,7 +345,15 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         if (loadedSession) {
           for (const event of loadedSession.events) {
             await sessionService.appendEvent({session, event});
-            printEvent(event);
+            printEvent(event, {announcePauses: false});
+          }
+
+          // Only the pauses the transcript never answered are still live, and
+          // they are what the prompt below is waiting on.
+          for (const request of getPendingUserInputRequests(
+            loadedSession.events,
+          )) {
+            console.log(renderUserInputRequest(request));
           }
         }
 

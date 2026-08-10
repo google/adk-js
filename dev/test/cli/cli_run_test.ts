@@ -197,6 +197,83 @@ describe('cli_run', () => {
     expect(readline.createInterface).toHaveBeenCalled();
   });
 
+  /** An `adk_request_input` interrupt, as a saved transcript records it. */
+  const savedInterrupt = (interruptId: string) => ({
+    author: 'step1',
+    content: {
+      parts: [
+        {
+          functionCall: {
+            name: 'adk_request_input',
+            id: interruptId,
+            args: {interruptId, message: 'Enter a number:'},
+          },
+        },
+      ],
+    },
+  });
+
+  /** The user's reply to an interrupt, as a saved transcript records it. */
+  const savedReply = (interruptId: string) => ({
+    author: 'user',
+    content: {
+      parts: [
+        {
+          functionResponse: {
+            id: interruptId,
+            name: 'adk_request_input',
+            response: {result: 21},
+          },
+        },
+      ],
+    },
+  });
+
+  async function replaySavedSession(events: unknown[]): Promise<string> {
+    (loadFileData as Mock).mockResolvedValue({
+      id: 'old-session',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events,
+    });
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      savedSessionFile: 'session.json',
+      sessionService: createMockSessionService(),
+    });
+
+    return (console.log as Mock).mock.calls
+      .map((call) => call.join(' '))
+      .join('\n');
+  }
+
+  it('does not re-announce a pause the saved session already answered', async () => {
+    const output = await replaySavedSession([
+      {author: 'user', content: {parts: [{text: 'start'}]}},
+      savedInterrupt('interrupt-1'),
+      savedReply('interrupt-1'),
+      {author: 'step2', content: {parts: [{text: '42'}]}},
+    ]);
+
+    expect(output).toContain('[user]: start');
+    expect(output).toContain('[step2]: 42');
+    expect(output).not.toContain('is waiting');
+  });
+
+  it('announces a pause the saved session left unanswered', async () => {
+    const output = await replaySavedSession([
+      {author: 'user', content: {parts: [{text: 'start'}]}},
+      savedInterrupt('interrupt-1'),
+      savedReply('interrupt-1'),
+      savedInterrupt('interrupt-2'),
+    ]);
+
+    const announcements = output.match(/is waiting for your input/g) ?? [];
+    expect(announcements).toHaveLength(1);
+    expect(output).toContain('Enter a number:');
+  });
+
   it('should save session when requested', async () => {
     const mockSessionService = createMockSessionService();
     // Run interactively then exit
@@ -378,6 +455,25 @@ describe('cli_run', () => {
         .join('\n');
       expect(errors).toContain(
         '[draft_email] error: SAFETY: Blocked by safety filters.',
+      );
+    });
+
+    it('warns when a scripted run ends still waiting on the user', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['start']});
+      runnerState.events = [savedInterrupt('interrupt-1')];
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: createMockSessionService(),
+      });
+
+      const errors = (console.error as Mock).mock.calls
+        .map((call) => call.join(' '))
+        .join('\n');
+      expect(errors).toContain(
+        'The run ended while still waiting for user input.',
       );
     });
 
