@@ -12,7 +12,10 @@ import {AsyncQueue} from '../utils/async_queue.js';
 import {experimental} from '../utils/experimental.js';
 import {isBaseNode, toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
-import {reconstructNodeStates} from './utils/rehydration_utils.js';
+import {
+  eventsForCurrentRun,
+  reconstructNodeStates,
+} from './utils/rehydration_utils.js';
 import {Workflow, WorkflowConfig} from './workflow.js';
 
 /** Options for a {@link WorkflowAgent}. */
@@ -153,7 +156,10 @@ function resumeInputsFromPlainText(
   const text = parts.map((p) => p.text).join('');
 
   const pending = new Set<string>();
-  for (const node of reconstructNodeStates(ic.session?.events ?? []).values()) {
+  // Scoped to the run still in progress: a pause belonging to a run that
+  // already finished is not resumable, and must not swallow the new message.
+  const events = eventsForCurrentRun(ic.session?.events ?? [], ic.invocationId);
+  for (const node of reconstructNodeStates(events).values()) {
     for (const id of node.interruptIds) {
       if (!node.resolvedResponses.has(id)) {
         pending.add(id);
