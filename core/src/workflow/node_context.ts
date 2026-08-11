@@ -190,9 +190,15 @@ export class NodeContext {
  *
  * `session.state` object identity is stable for the duration of a turn (the
  * session services mutate it in place, and hand out a fresh object per
- * `getSession`), so the WeakMap entry naturally scopes to one turn. The
- * `invocationId` guard covers the case where two invocations share a session
- * object.
+ * `getSession`), so the WeakMap entry naturally scopes to one turn.
+ *
+ * The `invocationId` guard covers *sequential* reuse of one state object: a
+ * later invocation replaces the entry rather than inheriting the earlier one's
+ * writes. It does not let two *live* invocations share a state object — they
+ * would evict each other's entry and fall back to reading committed state.
+ * Nothing does that today: `getSession` hands out a fresh state object per
+ * turn, and a sub-invocation (`AgentTool`) re-fetches the session, so it keys a
+ * different entry.
  */
 const invocationOverlays = new WeakMap<
   Record<string, unknown>,
