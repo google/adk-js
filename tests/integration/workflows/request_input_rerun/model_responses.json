@@ -1,6 +1,7 @@
 [
   {
     "key": "98b25193a6c2de82",
+    "instructionAgnosticKey": "684e2888794c2394",
     "request": {
       "contents": [
         {
@@ -12,34 +13,45 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"My order never arrived and support is ignoring me.\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"My order never arrived and support is ignoring me.\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    ",
+        "labels": {
+          "adk_agent_name": "draft_email"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "Subject: We're so sorry – Let's get your order sorted out immediately!\n\nDear Customer,\n\nPlease accept our sincere apologies for the trouble you've experienced with your order not arriving, and even more so for feeling ignored by our support team. That is absolutely not the experience we want you to have, and we understand how frustrating this must be.\n\nWe are truly sorry for this lapse in service.\n\nI want to personally assure you that we are taking this seriously and will get to the bottom of it. To help us locate your order and investigate what went wrong with your previous support requests, could you please provide us with your **order number**?\n\nOnce we have that, I will personally look into your shipment status and review the communication history with support. We will work to resolve this for you as quickly as possible, whether that means arranging a replacement shipment or a full refund, based on your preference.\n\nYou can expect to hear back from us with an update within [mention a realistic timeframe, e.g., 24 business hours] of receiving your order number.\n\nThank you for your patience as we rectify this.\n\nSincerely,\n\n[Your Name/Customer Service Manager]\n[Your Company Name]"
+                "text": "Subject: We're so sorry about your order and the lack of response - Let's fix this immediately\n\nDear Customer,\n\nPlease accept my sincerest apologies for the frustration and inconvenience you've experienced. It is completely unacceptable that your order has not arrived, and I am truly sorry to hear that you feel ignored by our support team. That is not the level of service we aim to provide, and I understand how disheartening that must be.\n\nI want to assure you that I am personally looking into this right away. To help me investigate your order status and resolve this for you as quickly as possible, could you please provide me with your:\n\n*   **Order Number:**\n*   **Email Address used for the order:**\n*   **(Optional, but helpful) Date of Purchase:**\n\nOnce I have this information, I will immediately:\n1.  Trace your shipment.\n2.  Review all previous support interactions.\n3.  Work directly with our logistics and support teams to find out exactly what happened and why your previous inquiries went unanswered.\n\nYou can expect to hear back from me within [e.g., 4-8 business hours / 24 hours] with a full update and a proposed resolution. My priority is to get this resolved for you quickly and to ensure you receive your order or a full refund, along with a proper explanation.\n\nThank you for your patience as we rectify this. Please feel free to reply directly to this email with the requested details or any further questions you may have.\n\nSincerely,\n\n[Your Name/Customer Service Manager]\n[Your Title]\n[Your Company]"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 75,
-        "candidatesTokenCount": 252,
-        "totalTokenCount": 526,
+        "promptTokenCount": 73,
+        "candidatesTokenCount": 337,
+        "totalTokenCount": 615,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 75
+            "tokenCount": 73
           }
         ],
-        "thoughtsTokenCount": 199,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 337
+          }
+        ],
+        "thoughtsTokenCount": 205
       }
     }
   }

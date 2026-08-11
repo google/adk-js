@@ -1,6 +1,7 @@
 [
   {
-    "key": "58068ee216d63eb1",
+    "key": "5859bea69bb556da",
+    "instructionAgnosticKey": "dd892124f5572b7f",
     "request": {
       "contents": [
         {
@@ -20,12 +21,45 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"intake_agent\".\n\nYou are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output."
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phoneNumber": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phoneNumber"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "functionCall": {
@@ -34,33 +68,38 @@
                     "name": "Jane Doe",
                     "phoneNumber": "555-123-4567"
                   },
-                  "id": "adk-ef58a3ea-f2ab-4ace-af69-c611706d22de"
-                },
-                "thoughtSignature": "CuADARFNMg9GT3TBqfAtQkC299opTrVHTOTgRRnuDS2d1rVWaTYKLXtlnYz5gXaQE+zgORiDxCRxNjVilAn9F9/vHx0bNDsQkVSFbxpgTAC/tRQvaSB+YEnEL8pA5SgJlNVQ9zDurfcHo8idZ4VhskYxUIv/8hpuXk19uBXMhDbJcntpty+CwAmeIEMYsUwel450UuAGkQ4rExcjtJSJQmeN9su5zLE3iGE7rU/hPdxgfQb+BJT2GPXkESnAcdvKumMcUrFYUZPU7+1xsCwsn63mhS/v8AW+nLDmZPjHoC6MWYVqHSv6strcTy4G3fGSQtN0nyU5tcwnTDPqtMpyBIrH0g+qqWS7O5yIvdpwhWK3EWvZzhK144vrJ6ZfxIYazHo5G20JTSTQbCnU9Z8tB8OfhW9dwGZECcGtUi/oun77s5Of7KKQqetekHdoqiNXUw+HzV5TRiehLWj3SVCoFyvv3eK7rIwC4ztn+gXv/dBpWweSzTpcykapbE1AaiSQxJv98FwECBqM7VWJ1pwV6hyrDnlsIij8JPu9FPAgGAruirtmXjhdaOFZf6iOSM7BwyhUN231FRxP0PZJEo6v7eqqmYmWP2ujZMACxySoHbea5J8b0PgTxPlJW4wlg0ILVcDy"
+                  "id": "adk-6453bae6-378a-46c3-bea0-149eda8e2788"
+                }
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 266,
-        "candidatesTokenCount": 32,
-        "totalTokenCount": 409,
+        "promptTokenCount": 216,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 293,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 266
+            "tokenCount": 216
           }
         ],
-        "thoughtsTokenCount": 111,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "thoughtsTokenCount": 58
       }
     }
   },
   {
     "key": "4d654d41f3ce18f9",
+    "instructionAgnosticKey": "8e897ba6e57b4dc7",
     "request": {
       "contents": [
         {
@@ -113,44 +152,69 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders."
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds the patient's lab orders.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "functionCall": {
                   "name": "find_orders",
                   "args": {},
-                  "id": "adk-260437d1-712b-4857-b21d-9a6772944737"
-                },
-                "thoughtSignature": "CpMCARFNMg/GyJi/a3WGeYtBjbQgJGfReCduuU7Aez1tzyYkckkGnDFCpL+2yVS2wzIasyjwXBOFaejPdYWAkOrvUBHH9zB934s32gVjAzBFvasswkRXu7DgS0srvUqgtZQHY0tT81vJERo1xU0fUhV/LPbm2KrQzkgRAWXi8KvT/ERUQt+crjJPoGNWVcshRSjUhA3wC634iL36XWSVJuoRcEmQMXkfFMqBZ6Ngx4+TAL9z0iCKTta2opg8ur/D4VowHrGSU50vQh6Z6iLl13RbvEDpx7EC8uc8MXDWDQzf/Xx1rEoghYni1hkMsH7UdwKYBoSzTfkOkcROA/VKZPir8V3G2pKZ1XstblJvEAAo0nORx3U="
+                  "id": "adk-d98f5307-6330-4235-8fc9-e2f66312d763"
+                }
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 235,
-        "candidatesTokenCount": 10,
-        "totalTokenCount": 296,
+        "promptTokenCount": 212,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 274,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 235
+            "tokenCount": 212
           }
         ],
-        "thoughtsTokenCount": 51,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 59
       }
     }
   },
   {
-    "key": "e21a9474d751f471",
+    "key": "8de2f3f109b60cc4",
+    "instructionAgnosticKey": "9db7eb5a9e2222a1",
     "request": {
       "contents": [
         {
@@ -203,16 +267,15 @@
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
               "functionCall": {
                 "name": "find_orders",
                 "args": {}
-              },
-              "thoughtSignature": "CpMCARFNMg/GyJi/a3WGeYtBjbQgJGfReCduuU7Aez1tzyYkckkGnDFCpL+2yVS2wzIasyjwXBOFaejPdYWAkOrvUBHH9zB934s32gVjAzBFvasswkRXu7DgS0srvUqgtZQHY0tT81vJERo1xU0fUhV/LPbm2KrQzkgRAWXi8KvT/ERUQt+crjJPoGNWVcshRSjUhA3wC634iL36XWSVJuoRcEmQMXkfFMqBZ6Ngx4+TAL9z0iCKTta2opg8ur/D4VowHrGSU50vQh6Z6iLl13RbvEDpx7EC8uc8MXDWDQzf/Xx1rEoghYni1hkMsH7UdwKYBoSzTfkOkcROA/VKZPir8V3G2pKZ1XstblJvEAAo0nORx3U="
+              }
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
@@ -234,39 +297,63 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders."
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds the patient's lab orders.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "functionCall": {
                   "name": "find_orders",
                   "args": {},
-                  "id": "adk-073f219b-5ff5-4610-9234-953a9582fdd3"
-                },
-                "thoughtSignature": "CosCARFNMg/NlEQswaTxIggapo/vt59KmAsMQN9Z5N0Cio6e7eMj315KCbtJXNtGab6bjfatIDZHnE7ARgOCi+DJ9d4atPj1tA5BI2s2Ms2s444m05pEOFFih7v1JAbBd4S+7hrsaJdR4TvKuRX6sgc8PLfXFl7SbKUfSdLRhW3HaEoBQAgKaJlAFSfgZj/9Vmu7oue5i5Pkcfe+vULjoQAT8q6eUbYiLynwUF5AxyR8/c9gcBI1Y4mhWr/TK+n4mxMmXNlrMAV2NAXR6Kf+PwjIvAPLdYxjbMtsODlDYBpuLEP7Ss28PtTYo/DOAR8O8etNTLUxcPyHtRi85+jTPKcQyMGOpUXI1KQLo3SE"
+                  "id": "adk-0edc0e06-18d6-49aa-86b3-8850e2e3f9bf"
+                }
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 270,
-        "candidatesTokenCount": 10,
-        "totalTokenCount": 331,
+        "promptTokenCount": 237,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 281,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 270
+            "tokenCount": 237
           }
         ],
-        "thoughtsTokenCount": 51,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 41
       }
     }
   }

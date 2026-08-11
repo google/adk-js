@@ -1,6 +1,7 @@
 [
   {
-    "key": "57df526204e44e91",
+    "key": "cd00e10c2b9ea2c8",
+    "instructionAgnosticKey": "a6cfda2775c1b821",
     "request": {
       "contents": [
         {
@@ -20,34 +21,63 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"process_request\".\n\nExtract the number of days and the reason from the user's natural language time off request."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "days": {
+              "type": "NUMBER",
+              "description": "Number of days requested."
+            },
+            "reason": {
+              "type": "STRING",
+              "description": "Reason for the time off."
+            }
+          },
+          "required": [
+            "days",
+            "reason"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Extract the number of days and the reason from the user's natural language time off request.",
+        "labels": {
+          "adk_agent_name": "process_request"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"days\":3,\"reason\":\"family trip\"}"
+                "text": "{\"days\": 3, \"reason\": \"family trip\"}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
         "promptTokenCount": 63,
-        "candidatesTokenCount": 10,
-        "totalTokenCount": 134,
+        "candidatesTokenCount": 13,
+        "totalTokenCount": 115,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
             "tokenCount": 63
           }
         ],
-        "thoughtsTokenCount": 61,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13
+          }
+        ],
+        "thoughtsTokenCount": 39
       }
     }
   }

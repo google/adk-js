@@ -1,6 +1,7 @@
 [
   {
-    "key": "c22ca69dcb15fada",
+    "key": "9770890d07d83c14",
+    "instructionAgnosticKey": "5583ad5423f13dc1",
     "request": {
       "contents": [
         {
@@ -31,34 +32,68 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"generate_pydantic_output\".\n\nGenerate a creative topic based on the following input."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "title": {
+              "type": "STRING",
+              "description": "The title of the generated topic."
+            },
+            "description": {
+              "type": "STRING",
+              "description": "A short description of the topic."
+            },
+            "category": {
+              "type": "STRING",
+              "description": "The broad category of the topic."
+            }
+          },
+          "required": [
+            "title",
+            "description",
+            "category"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Generate a creative topic based on the following input.",
+        "labels": {
+          "adk_agent_name": "generate_pydantic_output"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"title\": \"Abyssal Pioneers: Unveiling the Ocean's Deepest Secrets with Autonomous Fleets\", \"description\": \"Explore the next frontier of ocean exploration, focusing on the development and deployment of advanced autonomous underwater vehicles (AUVs) and robotic fleets to map, analyze, and discover the mysteries of the deep sea, from unexplored trenches to hydrothermal vents and their unique ecosystems.\", \"category\": \"Future Technology & Marine Science\"}"
+                "text": "{\n  \"title\": \"Abyssal Archives: Unearthing the Ocean's Hidden History and Future Secrets\",\n  \"description\": \"Explore how cutting-edge ocean exploration technologies are not only discovering new life forms and geological wonders in the deep sea, but also revealing forgotten histories and providing critical insights into the future of Earth's climate and biodiversity.\",\n  \"category\": \"Marine Science & Future Discovery\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 63,
-        "candidatesTokenCount": 89,
-        "totalTokenCount": 393,
+        "promptTokenCount": 71,
+        "candidatesTokenCount": 88,
+        "totalTokenCount": 443,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 63
+            "tokenCount": 71
           }
         ],
-        "thoughtsTokenCount": 241,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 88
+          }
+        ],
+        "thoughtsTokenCount": 284
       }
     }
   }

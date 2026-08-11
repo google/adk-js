@@ -1,6 +1,7 @@
 [
   {
-    "key": "04cfafaecb1a4f23",
+    "key": "e2ef67caafcbd841",
+    "instructionAgnosticKey": "c115d001eab3ef66",
     "request": {
       "contents": [
         {
@@ -12,39 +13,68 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"classify_input\".\n\nBased on this input, decide which category it belongs to: What is ADK?"
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "category": {
+              "type": "STRING",
+              "enum": [
+                "question",
+                "statement",
+                "other"
+              ]
+            }
+          },
+          "required": [
+            "category"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Based on this input, decide which category it belongs to: What is ADK?",
+        "labels": {
+          "adk_agent_name": "classify_input"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "text": "{\"category\": \"question\"}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 39,
+        "promptTokenCount": 29,
         "candidatesTokenCount": 6,
-        "totalTokenCount": 80,
+        "totalTokenCount": 67,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 39
+            "tokenCount": 29
           }
         ],
-        "thoughtsTokenCount": 35,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 6
+          }
+        ],
+        "thoughtsTokenCount": 32
       }
     }
   },
   {
     "key": "d1fcb02355443296",
+    "instructionAgnosticKey": "468125998cc36437",
     "request": {
       "contents": [
         {
@@ -67,34 +97,45 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: What is ADK?"
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: What is ADK?",
+        "labels": {
+          "adk_agent_name": "answer_question"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "ADK most commonly refers to the **Windows Assessment and Deployment Kit**.\n\nIt is a collection of tools from Microsoft designed for:\n\n1.  **Assessment:** Evaluating the performance and quality of Windows systems, components, and software.\n2.  **Deployment:** Customizing, assessing, and deploying Windows operating systems to new computers.\n\nThe ADK is primarily used by OEMs (Original Equipment Manufacturers), IT professionals, and developers to prepare, install, and customize Windows images for large-scale deployments or specific hardware configurations.\n\nKey components often included in the ADK are:\n\n*   **Deployment Tools:** Includes DISM (Deployment Image Servicing and Management) and OSCDImg.\n*   **Windows Preinstallation Environment (WinPE):** A light version of Windows used for installing, deploying, and repairing Windows.\n*   **User State Migration Tool (USMT):** Migrates user files and settings during a deployment.\n*   **Volume Activation Management Tool (VAMT):** Manages Windows and Office activation.\n*   **Performance Toolkit:** Tools like Windows Performance Recorder and Analyzer.\n*   **Application Compatibility Toolkit (ACT):** Helps identify and mitigate application compatibility issues."
+                "text": "\"ADK\" can stand for several different things, depending on the context. Here are the most common interpretations:\n\n1.  **Application Development Kit (ADK):** This is a generic term referring to a set of software development tools that allows for the creation of applications for a certain software package, platform, hardware device, or operating system. It's very similar to an SDK (Software Development Kit) and often includes compilers, debuggers, libraries, APIs, documentation, and sample code.\n2.  **Android Development Kit:** While the official term is usually **Android SDK (Software Development Kit)**, \"ADK\" might sometimes be informally used to refer to the tools and resources for developing applications for the Android platform. There was also a specific \"Android ADK\" (Android Open Accessory Development Kit) for connecting hardware accessories to Android devices.\n3.  **Adirondack Park / Mountains:** Often abbreviated as \"ADK,\" this refers to a large protected area in northeastern New York State, known for its mountains, lakes, and forests. People might use \"ADK\" when talking about hiking, camping, or the region in general.\n4.  **Appliance Development Kit:** In the context of embedded systems or IoT (Internet of Things), an ADK might refer to tools used to develop software for specific smart appliances or connected devices.\n\nTo know exactly what \"ADK\" means in a specific situation, you usually need more context."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 48,
-        "candidatesTokenCount": 245,
-        "totalTokenCount": 798,
+        "promptTokenCount": 45,
+        "candidatesTokenCount": 300,
+        "totalTokenCount": 648,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 48
+            "tokenCount": 45
           }
         ],
-        "thoughtsTokenCount": 505,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 300
+          }
+        ],
+        "thoughtsTokenCount": 303
       }
     }
   }
