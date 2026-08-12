@@ -19,8 +19,10 @@
  *
  * Python binds state values to named function parameters by signature
  * introspection. TypeScript nodes take an explicit `(ctx, input)` pair instead,
- * so you read and write the same session state through `ctx.state` — writes
- * accumulate in the node's state delta and are committed with its events.
+ * so you read and write the same session state through `ctx.state`. A write is
+ * visible to every later node in the same run, and is committed with the
+ * writing node's events — so `attempts` can be incremented by one node and read
+ * back by another, exactly as the snippet does.
  *
  * State-key prefixes control lifetime and scope:
  *   "app:<key>"   shared across all users and sessions of the app
@@ -28,16 +30,11 @@
  *   "temp:<key>"  discarded when the current invocation ends
  *   "<key>"       persists for the lifetime of the session
  *
- * !! Gotcha: do not read-modify-write ONE key from several nodes. !!
- * A node's writes land in `ctx.state` immediately, but they are also replayed
- * from that node's event when the runtime commits it — and that commit lags the
- * graph by an event or two. So a later node that re-reads a key an earlier node
- * also wrote can observe the earlier (already-superseded) value. Keep each
- * state key single-writer, and move evolving values along the edges as node
- * `output`, the way `attempts` travels below.
- *
  * Caution: state is a lightweight key-value store. Do not use it to move large
- * payloads between nodes — use artifacts or a database tool for those.
+ * payloads between nodes — use artifacts or a database tool for those. Passing
+ * a value along an edge as node `output` is also the better choice when only
+ * the next node needs it; reach for state when a value has to outlive the run,
+ * or be read by a tool, a callback, or `{key}` instruction templating.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/data_handling/session_state/agent.ts
@@ -50,18 +47,16 @@ const initStateNode = node(
     ctx.state.set('topic', nodeInput.trim());
     // Scoped key: dropped when this invocation ends, never persisted.
     ctx.state.set('temp:started_at', new Date().toISOString());
-    // The counter travels as node output, not as a re-read state key.
-    return 0;
+    ctx.state.set('attempts', 0);
   },
   {name: 'init_state_node'},
 );
 
 const taskAttemptNode = node(
-  (ctx: NodeContext, attempts: number) => {
-    const next = attempts + 1;
-    // Single writer for this key, so downstream reads are stable.
-    ctx.state.set('attempts', next);
-    return next;
+  (ctx: NodeContext) => {
+    // Reads the value init_state_node wrote earlier in this same run.
+    const attempts = ctx.state.get<number>('attempts') ?? 0;
+    ctx.state.set('attempts', attempts + 1);
   },
   {name: 'task_attempt_node'},
 );

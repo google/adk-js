@@ -160,18 +160,6 @@ differs, all called out again in the affected sample's header comment.
 - **`{Class.field}` and `<Class.field from source_node>` work verbatim** — the
   Python data-selection syntax is supported (see `data_handling/structured_access`).
 
-## A gotcha worth knowing
-
-Found while smoke-testing these ports, and documented in the sample it affects.
-
-- **Keep every session-state key single-writer.** A node's `ctx.state` writes
-  land immediately, but they are also replayed when the runtime commits that
-  node's event — and that commit lags the graph by an event or two. So a node
-  that re-reads a key an _earlier_ node also wrote can observe the earlier,
-  already-superseded value. Move evolving values along the edges as `output`
-  instead of read-modify-writing one key from several nodes
-  (`data_handling/session_state`).
-
 ## See also
 
 The `tests/integration/workflows/*/agent.ts` files are a second, larger set of
