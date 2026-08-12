@@ -237,6 +237,19 @@ describe('CLI Entrypoint', () => {
   });
 
   describe('command: run', () => {
+    it('exits non-zero when the run fails', async () => {
+      (runAgent as Mock).mockRejectedValueOnce(
+        new Error('Agent file /nope/agent.ts does not exists'),
+      );
+      const exit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => undefined) as never);
+
+      await parse(['run', '/nope/agent.ts']);
+
+      expect(exit).toHaveBeenCalledWith(1);
+    });
+
     it('should call runAgent with required args', async () => {
       await parse(['run', 'agent.ts']);
 
