@@ -63,7 +63,7 @@ import {
 
 import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
 import {BaseContextCompactor} from '../context/base_context_compactor.js';
-import {InvocationContext} from './invocation_context.js';
+import {InvocationContext, requireAgent} from './invocation_context.js';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from './processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from './processors/basic_llm_request_processor.js';
 import {CODE_EXECUTION_REQUEST_PROCESSOR} from './processors/code_execution_request_processor.js';
@@ -1181,7 +1181,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     invocationContext: InvocationContext,
     agentName: string,
   ): BaseAgent {
-    const rootAgent = invocationContext.agent.rootAgent;
+    const rootAgent = requireAgent(invocationContext).rootAgent;
     const agentToRun = rootAgent.findAgent(agentName);
     if (!agentToRun) {
       throw new Error(`Agent ${agentName} not found in the agent tree.`);

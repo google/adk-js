@@ -25,7 +25,7 @@ import {LlmRequest} from '../../models/llm_request.js';
 import {LlmResponse} from '../../models/llm_response.js';
 import {State} from '../../sessions/state.js';
 import {base64Decode} from '../../utils/env_aware_utils.js';
-import {InvocationContext} from '../invocation_context.js';
+import {InvocationContext, requireAgent} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {
   BaseLlmRequestProcessor,
@@ -514,7 +514,7 @@ async function postProcessCodeExecutionResult(
 
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: requireAgent(invocationContext).name,
     branch: invocationContext.branch,
     content: resultContent,
     actions: eventActions,

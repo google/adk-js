@@ -22,7 +22,7 @@ export {
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
 } from './agents/functions.js';
-export {InvocationContext} from './agents/invocation_context.js';
+export {InvocationContext, requireAgent} from './agents/invocation_context.js';
 export type {
   InvocationContextParams,
   WorkflowInstructionScope,

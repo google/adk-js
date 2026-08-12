@@ -26,6 +26,7 @@ import {
   tracer,
   traceToolCall,
 } from '../telemetry/tracing.js';
+import {requireAgent} from './invocation_context.js';
 import {
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
@@ -106,7 +107,7 @@ export function generateAuthEvent(
 
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: requireAgent(invocationContext).name,
     branch: invocationContext.branch,
     content: {
       parts: parts,
@@ -159,7 +160,7 @@ export function generateRequestConfirmationEvent({
   }
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: requireAgent(invocationContext).name,
     branch: invocationContext.branch,
     content: {
       parts: parts,
@@ -227,7 +228,7 @@ function buildResponseEvent(
 
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: requireAgent(invocationContext).name,
     content: content,
     actions: toolContext.actions,
     branch: invocationContext.branch,
@@ -454,7 +455,7 @@ export async function handleFunctionCallList({
     // Builds the function response event.
     const functionResponseEvent = createEvent({
       invocationId: invocationContext.invocationId,
-      author: invocationContext.agent.name,
+      author: requireAgent(invocationContext).name,
       content: createUserContent({
         functionResponse: {
           id: toolContext.functionCallId,
