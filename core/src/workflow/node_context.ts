@@ -106,6 +106,10 @@ export class NodeContext {
 
   private readonly _state: State;
   private readonly dynamicRunCounters = new Map<string, number>();
+  /** Run ids this context handed out automatically, per node name. */
+  private readonly autoRunIds = new Map<string, Set<string>>();
+  /** Every run id used for a node name here, automatic or caller-supplied. */
+  private readonly usedRunIds = new Map<string, Set<string>>();
 
   constructor(opts: NodeContextOptions) {
     this.invocationContext = opts.invocationContext;
@@ -169,11 +173,22 @@ export class NodeContext {
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;
+      const used = mapSet(this.usedRunIds, nodeName);
+      if (runId !== undefined) {
+        assertCustomRunId(runId, nodeName, mapSet(this.autoRunIds, nodeName));
+      }
       if (!runId) {
-        const next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
+        // Skip anything a caller already claimed, so the automatic sequence
+        // cannot grow into a custom id and silently dedup against it.
+        let next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
+        while (used.has(String(next))) {
+          next++;
+        }
         this.dynamicRunCounters.set(nodeName, next);
         runId = String(next);
+        mapSet(this.autoRunIds, nodeName).add(runId);
       }
+      used.add(runId);
       return this.scheduler.schedule(this, node, input, {
         ...options,
         nodeName,
@@ -181,6 +196,53 @@ export class NodeContext {
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+}
+
+/** Returns the set stored under `key`, creating it on first use. */
+function mapSet(map: Map<string, Set<string>>, key: string): Set<string> {
+  let set = map.get(key);
+  if (!set) {
+    set = new Set();
+    map.set(key, set);
+  }
+  return set;
+}
+
+/**
+ * Rejects a caller-supplied run id that collides with an automatic one.
+ *
+ * Run ids key the checkpoint lookup that lets a resumed or retried workflow
+ * skip work it already did, so an id that names a run the caller never made is
+ * silently wrong: the scheduler finds the earlier run's checkpoint, returns
+ * *its* output, and the input passed here is dropped without executing.
+ * Nothing downstream can detect that, so it is refused at the call.
+ *
+ * Only collisions with ADK's own numbering are refused. Reusing a custom id
+ * deliberately is a supported way to dedup concurrent calls onto one run, and
+ * `ParallelWorker` keys its fan-out by item index, so neither digits nor
+ * repetition can be banned outright.
+ */
+function assertCustomRunId(
+  runId: string,
+  nodeName: string,
+  autoRunIds: ReadonlySet<string>,
+): void {
+  if (runId.trim() === '') {
+    throw new Error(
+      `Invalid runId for node '${nodeName}': a custom run id cannot be empty. ` +
+        `Omit runId to let ADK number the run automatically.`,
+    );
+  }
+  if (autoRunIds.has(runId)) {
+    throw new Error(
+      `Invalid runId '${runId}' for node '${nodeName}': ADK already numbered ` +
+        `an automatic run of that node '${runId}' in this context, so this ` +
+        `call would resolve to that run's cached output instead of ` +
+        `executing, and the input passed here would be dropped. Automatic ` +
+        `ids are "1", "2", "3" per node; give a custom id a non-numeric ` +
+        `part, e.g. '${nodeName}-${runId}'.`,
+    );
   }
 }
 

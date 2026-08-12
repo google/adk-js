@@ -24,7 +24,14 @@ import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
 export interface RunNodeOptions {
   /** Deterministic tracking name; defaults to `node.name`. */
   nodeName?: string;
-  /** Unique id for this specific run; defaults to `nodeName`. */
+  /**
+   * Unique id for this specific run. Defaults to a per-node sequence — "1",
+   * "2", "3" in call order — which is what a resume matches checkpoints on.
+   *
+   * Supply one only when position is not stable but identity is (a reorderable
+   * collection: key it off the item's own id). It must contain a non-numeric
+   * character so it cannot collide with the automatic sequence.
+   */
   runId?: string;
   /** If true, the child's output replaces the caller's output. */
   useAsOutput?: boolean;
