@@ -49,7 +49,7 @@ const router = node(
 // An agent to execute node B.
 const taskBNode = new LlmAgent({
   name: 'task_B_agent',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   instruction: 'Answer the user in a single short sentence.',
 });
 

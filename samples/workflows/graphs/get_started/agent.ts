@@ -27,7 +27,7 @@ import {z} from 'zod';
 
 const cityGeneratorAgent = new LlmAgent({
   name: 'city_generator_agent',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   instruction: `Return the name of a random city.
       Return only the name, nothing else.`,
 });
@@ -46,7 +46,7 @@ function lookupTimeFunction(_ctx: NodeContext, nodeInput: string): CityTime {
 
 const cityReportAgent = new LlmAgent({
   name: 'city_report_agent',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   // `{CityTime.<field>}` selects a field off THIS node's input. The `CityTime.`
   // prefix is documentation, only the field name after the dot is resolved.
   instruction: `Output the following line:

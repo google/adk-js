@@ -29,7 +29,7 @@ const MAX_FIX_ROUNDS = 3;
 const coderAgent = node(
   new LlmAgent({
     name: 'generator_agent',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-flash-latest',
     instruction:
       'Write TypeScript code for the user request. Output code only.',
   }),
@@ -53,7 +53,7 @@ const compileLintCheck = node(
 const fixerAgent = node(
   new LlmAgent({
     name: 'fixer_agent',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-flash-latest',
     instruction: `Refactor current code {code}.
         Based on compile & lint review: {findings}
         Output code only.`,

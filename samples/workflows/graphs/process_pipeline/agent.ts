@@ -28,7 +28,7 @@ import {
 
 const processMessage = new LlmAgent({
   name: 'process_message',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   instruction: `Classify user message into either "BUG", "CUSTOMER_SUPPORT",
       or "LOGISTICS". If you think a message applies to more than one category,
       reply with a comma separated list of categories.

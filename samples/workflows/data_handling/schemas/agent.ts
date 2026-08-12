@@ -93,7 +93,7 @@ const parseRequest = node(
 
 const flightSearcher = new LlmAgent({
   name: 'flight_searcher',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   mode: 'single_turn',
   instruction:
     'Search for available flights with the search_flights_api tool and report ' +

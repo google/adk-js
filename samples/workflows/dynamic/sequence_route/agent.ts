@@ -29,7 +29,7 @@ type CityTime = z.infer<typeof cityTimeSchema>;
 const cityGeneratorAgent = node(
   new LlmAgent({
     name: 'city_generator_agent',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-flash-latest',
     instruction: 'Return the name of a random city. Return only the name.',
   }),
 );
@@ -46,7 +46,7 @@ const cityTimeFunction = node(
 const cityReportAgent = node(
   new LlmAgent({
     name: 'city_report_agent',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-flash-latest',
     instruction: 'Output the data provided by the previous node as a sentence.',
   }),
   {inputSchema: cityTimeSchema},
