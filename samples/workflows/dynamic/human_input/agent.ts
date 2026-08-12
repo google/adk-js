@@ -21,21 +21,16 @@
  *
  * Important: a parent node that calls `ctx.runNode` must set
  * `rerunOnResume: true`, or it cannot handle an interrupt raised by a child.
+ * The leaf keeps the snippet's `rerun_on_resume=False`: on resume it does not
+ * re-run its body, it completes with the human's reply as its output, and
+ * `ctx.runNode()` hands that back to the caller.
  *
- * !! Two TypeScript differences from the Python snippet. !!
+ * !! One TypeScript difference from the Python snippet. !!
  *
- * 1. `ctx.runNode()` does NOT throw when a child interrupts. It resolves with a
- *    result whose `interruptIds` are populated and whose `output` is still
- *    undefined, so the orchestrator has to check and bail out — otherwise it
- *    decides on an answer the human never gave.
- *
- * 2. The `rerun_on_resume=False` leaf ("complete with the human's reply as my
- *    output") is implemented for STATIC GRAPH nodes only — see
- *    samples/workflows/human_input/get_started, where that handoff is exactly
- *    what makes the two-node pattern work. A dynamic `ctx.runNode` child is
- *    always re-run instead, so the leaf here uses the re-entry form: a stable
- *    `interruptId`, and a `ctx.resumeInputs[id]` lookup that returns the reply
- *    on the second pass.
+ * `ctx.runNode()` does NOT throw when a child interrupts. It resolves with a
+ * result whose `interruptIds` are populated and whose `output` is still
+ * undefined, so the orchestrator has to check and bail out — otherwise it
+ * decides on an answer the human never gave.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/dynamic/human_input/agent.ts
@@ -44,24 +39,16 @@
 
 import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
 
-/** Stable id so the reply can be matched back to this pause on resume. */
-const APPROVAL_INTERRUPT_ID = 'user_approval';
-
-/** Pauses the workflow and waits for user input. */
+/**
+ * Pauses the workflow and waits for user input.
+ *
+ * `rerunOnResume: false` (the default, explicit here to mirror the decorator)
+ * is what makes this a one-liner: the reply is handed to the node as its
+ * output instead of the body running a second time to collect it.
+ */
 const getUserApproval = node(
-  (ctx: NodeContext) => {
-    const reply = ctx.resumeInputs[APPROVAL_INTERRUPT_ID];
-    if (reply === undefined) {
-      // First pass: raise the interrupt and pause.
-      return new RequestInput({
-        interruptId: APPROVAL_INTERRUPT_ID,
-        message: 'Please approve this request (Yes/No)',
-      });
-    }
-    // Second pass: the human's reply becomes this node's output.
-    return reply;
-  },
-  {name: 'get_user_approval', rerunOnResume: true},
+  () => new RequestInput({message: 'Please approve this request (Yes/No)'}),
+  {name: 'get_user_approval', rerunOnResume: false},
 );
 
 /** The orchestrator calling the interactive step. */

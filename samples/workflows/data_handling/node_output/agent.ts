@@ -20,9 +20,14 @@
  *                                       `route`, `content`, or `actions`
  *   3. yield from a generator         — to stream progress alongside the result
  *
- * Caution: a node may emit only ONE event carrying `output` per execution. You
- * can yield as many events as you like, but only one of them may set `output` —
- * the rest should carry `content` (a display message) instead.
+ * Caution: emit `output` from ONE event per execution — but nothing enforces
+ * that here, so getting it wrong is silent. A node may yield any number of
+ * events carrying `output`; each one overwrites the last, and the successor
+ * receives only the final value. The Python page describes two other
+ * behaviours, and neither holds in TypeScript: it says each `yield` "adds to a
+ * list of data objects on the Event", and then cautions that two yields
+ * carrying `Event.output` are "a runtime error". There is no list and no
+ * error — just last-write-wins. Carry progress on `content` instead.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/data_handling/node_output/agent.ts
@@ -43,13 +48,14 @@ const returnEventOutput = node(
   {name: 'return_event_output'},
 );
 
-// 3. A generator: stream progress, then emit the single output event last.
+// 3. A generator: stream progress, then emit the output event last.
 const yieldProgressThenOutput = node(
   async function* (_ctx: NodeContext, nodeInput: string) {
+    // Progress goes on `content`: displayed, and not passed to the successor.
     yield createEvent({
       content: {role: 'model', parts: [{text: 'Working on it...'}]},
     });
-    // Only this event sets `output`, so the one-payload rule holds.
+    // Exactly one event sets `output`, so there is nothing to overwrite it.
     yield createEvent({output: `<<${nodeInput}>>`});
   },
   {name: 'yield_progress_then_output'},

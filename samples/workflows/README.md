@@ -32,6 +32,16 @@ locally:
 npm run ts:check:samples
 ```
 
+CI also executes them, in `tests/integration/docs_samples/`: every sample is
+constructed (a `WorkflowAgent` validates its graph in its constructor), and the
+offline ones are run end-to-end with the model stubbed out, so a stray model
+call in one of them fails too. A new sample directory has to be added to that
+test's offline or model-backed list, or it fails for being uncovered.
+
+```bash
+npx vitest run --project integration tests/integration/docs_samples
+```
+
 The CLI is interactive: type a message and press Enter to send it to the
 workflow; type `exit` to quit. Node events print as `[<node_name>]: <output>`
 and the last line is the workflow's output. A node that emits only `output` (no
@@ -82,15 +92,15 @@ interactively.
 
 ### [`/graphs/data-handling/`](https://adk.dev/graphs/data-handling/) — `data_handling/`
 
-| Sample              | Docs section                                                                                               | Shows                                                        | Key |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | --- |
-| `node_output`       | [Node output](https://adk.dev/graphs/data-handling/#node-output)                                           | Return a value / an `Event` / yield; one `output` per node   | —   |
-| `structured_output` | [Passing structured data](https://adk.dev/graphs/data-handling/#node-output-passing-structured-data)       | A typed object across an edge, validated by schemas          | —   |
-| `routing_output`    | [Routing output](https://adk.dev/graphs/data-handling/#routing-output)                                     | `route` and `output` on one event; `DEFAULT_ROUTE`           | —   |
-| `user_message`      | [User-facing messages](https://adk.dev/graphs/data-handling/#user-facing-messages)                         | A display message vs. data for the next node                 | —   |
-| `session_state`     | [Session state and scopes](https://adk.dev/graphs/data-handling/#session-state-and-state-scopes)           | `ctx.state`, the `app:`/`user:`/`temp:` prefixes             | —   |
-| `schemas`           | [Constrain node data with schemas](https://adk.dev/graphs/data-handling/#constrain-node-data-with-schemas) | `inputSchema` / `outputSchema` on an agent node, plus a tool | ✅  |
-| `structured_access` | [Access structured data in agents](https://adk.dev/graphs/data-handling/#access-structured-data-in-agents) | `{Class.field}` and `<Class.field from source_node>`         | ✅  |
+| Sample              | Docs section                                                                                               | Shows                                                         | Key |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --- |
+| `node_output`       | [Node output](https://adk.dev/graphs/data-handling/#node-output)                                           | Return a value / an `Event` / yield; last `output` event wins | —   |
+| `structured_output` | [Passing structured data](https://adk.dev/graphs/data-handling/#node-output-passing-structured-data)       | A typed object across an edge, validated by schemas           | —   |
+| `routing_output`    | [Routing output](https://adk.dev/graphs/data-handling/#routing-output)                                     | `route` and `output` on one event; `DEFAULT_ROUTE`            | —   |
+| `user_message`      | [User-facing messages](https://adk.dev/graphs/data-handling/#user-facing-messages)                         | A display message vs. data for the next node                  | —   |
+| `session_state`     | [Session state and scopes](https://adk.dev/graphs/data-handling/#session-state-and-state-scopes)           | `ctx.state`, the `app:`/`user:`/`temp:` prefixes              | —   |
+| `schemas`           | [Constrain node data with schemas](https://adk.dev/graphs/data-handling/#constrain-node-data-with-schemas) | `inputSchema` / `outputSchema` on an agent node, plus a tool  | ✅  |
+| `structured_access` | [Access structured data in agents](https://adk.dev/graphs/data-handling/#access-structured-data-in-agents) | `{Class.field}` and `<Class.field from source_node>`          | ✅  |
 
 ### [`/graphs/human-input/`](https://adk.dev/graphs/human-input/) — `human_input/`
 
@@ -102,16 +112,16 @@ interactively.
 
 ### [`/graphs/dynamic/`](https://adk.dev/graphs/dynamic/) — `dynamic/`
 
-| Sample           | Docs section                                                                                           | Shows                                                    | Key |
-| ---------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | --- |
-| `get_started`    | [Get started](https://adk.dev/graphs/dynamic/#get-started)                                             | An orchestrator node driving a child via `ctx.runNode()` | —   |
-| `nodes`          | [Nodes](https://adk.dev/graphs/dynamic/#node) / [Workflows](https://adk.dev/graphs/dynamic/#workflows) | `node()` vs. `new FunctionNode()`                        | —   |
-| `data_handling`  | [Data handling](https://adk.dev/graphs/dynamic/#data-handling)                                         | `editorial_workflow`: agent → function, no state keys    | ✅  |
-| `sequence_route` | [Sequence route](https://adk.dev/graphs/dynamic/#sequence-route)                                       | `city_workflow`: sequential `runNode` calls + schemas    | ✅  |
-| `loop_route`     | [Loop route](https://adk.dev/graphs/dynamic/#loop-route)                                               | A real `while` loop (generate → lint → fix), bounded     | ✅  |
-| `parallel_route` | [Parallel execution routes](https://adk.dev/graphs/dynamic/#parallel-execution-routes)                 | `Promise.all` fan-out (the `asyncio.gather` equivalent)  | —   |
-| `human_input`    | [Human input](https://adk.dev/graphs/dynamic/#human-input)                                             | HITL inside an orchestrator, with re-entry on resume     | —   |
-| `custom_run_ids` | [Custom execution IDs](https://adk.dev/graphs/dynamic/#custom-execution-ids)                           | `ctx.runNode(..., {runId})` for a reorderable collection | —   |
+| Sample           | Docs section                                                                                           | Shows                                                              | Key |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | --- |
+| `get_started`    | [Get started](https://adk.dev/graphs/dynamic/#get-started)                                             | An orchestrator node driving a child via `ctx.runNode()`           | —   |
+| `nodes`          | [Nodes](https://adk.dev/graphs/dynamic/#node) / [Workflows](https://adk.dev/graphs/dynamic/#workflows) | `node()` vs. `new FunctionNode()`                                  | —   |
+| `data_handling`  | [Data handling](https://adk.dev/graphs/dynamic/#data-handling)                                         | `editorial_workflow`: agent → function, no state keys              | ✅  |
+| `sequence_route` | [Sequence route](https://adk.dev/graphs/dynamic/#sequence-route)                                       | `city_workflow`: sequential `runNode` calls + schemas              | ✅  |
+| `loop_route`     | [Loop route](https://adk.dev/graphs/dynamic/#loop-route)                                               | A real `while` loop (generate → lint → fix), bounded               | ✅  |
+| `parallel_route` | [Parallel execution routes](https://adk.dev/graphs/dynamic/#parallel-execution-routes)                 | `Promise.all` fan-out (the `asyncio.gather` equivalent)            | —   |
+| `human_input`    | [Human input](https://adk.dev/graphs/dynamic/#human-input)                                             | HITL inside an orchestrator; the leaf keeps `rerunOnResume: false` | —   |
+| `custom_run_ids` | [Custom execution IDs](https://adk.dev/graphs/dynamic/#custom-execution-ids)                           | `ctx.runNode(..., {runId})` for a reorderable collection           | —   |
 
 ## Python → TypeScript differences
 
@@ -127,9 +137,22 @@ differs, all called out again in the affected sample's header comment.
 - **No signature-based injection.** Python binds `node_input`/state values to
   named parameters by introspection. TypeScript handlers always take
   `(ctx, input)` and read state explicitly via `ctx.state`.
+- **A workflow's input is a `string` only for a text-only turn** — for anything
+  else the entry node is handed the raw `Content`. Every entry node here
+  declares `nodeInput: string` and calls string methods on it directly, so a
+  non-text first turn fails loudly rather than stringifying to
+  `"[object Object]"`; take a `Content` (or `unknown`) if you need to accept
+  one. Values that genuinely are untyped — `ctx.runNode(...).output`, a
+  `ctx.resumeInputs[id]` reply — are coerced explicitly at the point of use.
 - **`ctx.runNode()` resolves to a node _result_,** not the output directly — read
   `.output`. It also does not throw when a child interrupts: check
   `.interruptIds` and bail out (see `dynamic/human_input`).
+- **A second `output` event overwrites the first, silently.** The Python page
+  gives two accounts of emitting `output` more than once from a node — each
+  `yield` "adds to a list of data objects on the Event", and two yields carrying
+  `Event.output` are "a runtime error". Neither is what happens here: there is
+  no list and no error, the last event to set `output` wins, and the successor
+  never sees the rest. Emit it once (see `data_handling/node_output`).
 - **`LlmAgent.inputSchema` is not the node's input contract.** It is only used
   when the agent is exposed as a tool. Inside a graph, put the validating schema
   on the node: `node(agent, {inputSchema})`.
@@ -137,10 +160,9 @@ differs, all called out again in the affected sample's header comment.
 - **`{Class.field}` and `<Class.field from source_node>` work verbatim** — the
   Python data-selection syntax is supported (see `data_handling/structured_access`).
 
-## Two gotchas worth knowing
+## A gotcha worth knowing
 
-Both were found while smoke-testing these ports; each is documented in the
-sample it affects.
+Found while smoke-testing these ports, and documented in the sample it affects.
 
 - **Keep every session-state key single-writer.** A node's `ctx.state` writes
   land immediately, but they are also replayed when the runtime commits that
@@ -149,12 +171,6 @@ sample it affects.
   already-superseded value. Move evolving values along the edges as `output`
   instead of read-modify-writing one key from several nodes
   (`data_handling/session_state`).
-- **The `rerunOnResume: false` HITL handoff is static-graph only.** For a graph
-  node, "do not re-run; complete with the human's reply as my output" is what
-  makes the two-node pattern work (`human_input/get_started`). A dynamic
-  `ctx.runNode` child does not get that treatment — it is re-run — so a dynamic
-  HITL leaf needs the re-entry form: a stable `interruptId` plus a
-  `ctx.resumeInputs[id]` lookup (`dynamic/human_input`).
 
 ## See also
 
