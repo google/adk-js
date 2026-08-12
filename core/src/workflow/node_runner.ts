@@ -99,8 +99,10 @@ export async function executeChildNode({
     });
   }
 
+  const declaredScope =
+    node.isolationScope === true ? `${nodePath}@${runId}` : node.isolationScope;
   const isolationScope =
-    options.overrideIsolationScope ?? parent.isolationScope;
+    options.overrideIsolationScope ?? declaredScope ?? parent.isolationScope;
 
   // The child observes the engine-supplied abort signal when given (a Workflow
   // uses it to cancel siblings on failure), otherwise the parent invocation's.
@@ -109,12 +111,14 @@ export async function executeChildNode({
 
   const childIc =
     branch === parent.invocationContext.branch &&
-    effectiveAbortSignal === parent.invocationContext.abortSignal
+    effectiveAbortSignal === parent.invocationContext.abortSignal &&
+    isolationScope === parent.invocationContext.isolationScope
       ? parent.invocationContext
       : new InvocationContext({
           ...parent.invocationContext,
           branch,
           abortSignal: effectiveAbortSignal,
+          isolationScope,
         });
 
   const child = new NodeContext({

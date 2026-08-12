@@ -65,6 +65,13 @@ export interface BaseNodeConfig {
 
   /** Optional schema validating relevant session state (Zod v3/v4 or genai `Schema`). */
   stateSchema?: SchemaLike;
+
+  /**
+   * Runs this node's subtree in an isolated conversation scope: an agent inside
+   * it sees only session events carrying the same scope, plus untagged ones.
+   * `true` derives a scope per node run; a string is an explicit shared tag.
+   */
+  isolationScope?: string | true;
 }
 
 /**
@@ -94,6 +101,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
   readonly inputSchema?: SchemaLike;
   readonly outputSchema?: SchemaLike;
   readonly stateSchema?: SchemaLike;
+  readonly isolationScope?: string | true;
 
   constructor(config: BaseNodeConfig) {
     if (
@@ -115,6 +123,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     this.inputSchema = config.inputSchema;
     this.outputSchema = config.outputSchema;
     this.stateSchema = config.stateSchema;
+    this.isolationScope = config.isolationScope;
   }
 
   /**
