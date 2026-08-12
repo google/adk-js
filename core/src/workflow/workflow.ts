@@ -111,7 +111,7 @@ interface CompletedTask {
   error?: unknown;
 }
 
-const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.workflow');
+const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow');
 
 /**
  * A graph-based workflow node. `runImpl()` IS the orchestration loop:
