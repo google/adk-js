@@ -39,9 +39,10 @@ function fixturePath(name: string, fixtureDir?: string): string {
   // Sibling-directory layout by default: tests/integration/workflows/<name>/.
   // A caller outside that tree (the docs-page ports) passes its own directory
   // so its fixtures sit next to its own test rather than among these samples.
-  return fixtureDir
-    ? path.join(fixtureDir, `${name.replace(/\//g, '_')}.model_responses.json`)
-    : path.join(HERE, '..', name, 'model_responses.json');
+  return path.join(
+    fixtureDir ?? path.join(HERE, '..', name),
+    'model_responses.json',
+  );
 }
 
 /** Whether a recorded fixture exists for the sample (replay prerequisite). */

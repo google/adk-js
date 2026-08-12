@@ -31,19 +31,19 @@ locally:
 npm run ts:check:samples
 ```
 
-CI also executes them, in `tests/integration/docs_samples/`: every sample is
-constructed (a `WorkflowAgent` validates its graph in its constructor), and the
-offline ones are run end-to-end with the model stubbed out, so a stray model
-call in one of them fails too. The three `dynamic/` samples that call a model
-are run as well, against recorded responses in
-`tests/integration/docs_samples/fixtures/`. A new sample directory has to be
-added to one of that test's three lists — offline, recorded, or model-backed —
-or it fails for being uncovered.
+CI also executes them, in `tests/integration/docs_samples/`, one test directory
+per sample: every sample is constructed (a `WorkflowAgent` validates its graph
+in its constructor), and the offline ones are run end-to-end with the model
+stubbed out, so a stray model call in one of them fails too. The three
+`dynamic/` samples that call a model are run as well, against a
+`model_responses.json` recorded beside their test. A new sample directory has to
+gain a test directory there, or `coverage_test.ts` fails it for being uncovered.
 
-Re-record those fixtures after changing one of those samples (needs a key):
+Re-record one of those fixtures after changing its sample (needs a key):
 
 ```bash
-npm run record:docs-samples
+RECORD_MODEL_RESPONSES=1 npx vitest run --project integration \
+  tests/integration/docs_samples/dynamic_loop_route
 ```
 
 ```bash
