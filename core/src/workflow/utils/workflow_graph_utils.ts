@@ -47,6 +47,11 @@ export interface NodeBuilder {
   match(value: unknown): boolean;
   /** Builds a node from a value this builder previously matched. */
   build(value: NodeLike, options: BuildNodeOptions): BaseNode;
+  /**
+   * Whether this builder handles agents. An agent is already a `BaseNode`, so
+   * it would otherwise be used as-is; see {@link buildInnerNode}.
+   */
+  agentLike?: boolean;
 }
 
 /**
@@ -133,6 +138,17 @@ function buildInnerNode(
     return START;
   }
   if (isBaseNode(nodeLike)) {
+    // An agent is itself a BaseNode, so it would be returned as-is here and
+    // never reach its builder below. It still needs one: the wrapper is what
+    // injects the node input into the prompt, drives task mode, and turns the
+    // agent's reply into node output. adk-python has the same fork and
+    // resolves it the same way, special-casing LlmAgent inside its own
+    // `isinstance(node_like, BaseNode)` branch.
+    for (const builder of NODE_BUILDERS) {
+      if (builder.agentLike && builder.match(nodeLike)) {
+        return builder.build(nodeLike, options);
+      }
+    }
     // TODO(phase-3+): apply property overrides via a clone when options differ.
     return nodeLike;
   }

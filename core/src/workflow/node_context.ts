@@ -148,6 +148,25 @@ export class NodeContext {
     return this.invocationContext.session;
   }
 
+  /**
+   * The invocation context to run a nested agent against.
+   *
+   * The single place where "what a node sees" is translated into "what an
+   * agent sees", so an agent run as a node (`BaseAgent.runImpl`) and one run
+   * directly go through the same seam.
+   *
+   * Today it hands back the node's own invocation context unchanged, which is
+   * what the agent wrapper already did. adk-python returns a copy carrying the
+   * proxy session and the isolation scope (`agents/context.py`
+   * `get_invocation_context`); matching that here means giving the agent the
+   * node's `state` view rather than letting it read through to `session.state`,
+   * which is a behaviour change for every agent and is deliberately not part of
+   * introducing the seam.
+   */
+  getInvocationContext(): InvocationContext {
+    return this.invocationContext;
+  }
+
   /** Streams a single event out through the workflow's event channel. */
   emit(event: Event): void {
     this.channel.push(event);
