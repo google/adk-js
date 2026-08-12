@@ -14,7 +14,11 @@ import {
 import {ToolConfirmation} from '../../tools/tool_confirmation.js';
 import {AsyncQueue} from '../../utils/async_queue.js';
 import {isNodeTool} from '../../workflow/nodes/node_tool.js';
-import {REQUEST_INPUT_FUNCTION_CALL_NAME} from '../../workflow/utils/hitl_utils.js';
+import {
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+  responseSchemasByInterruptId,
+  validateInterruptResponse,
+} from '../../workflow/utils/hitl_utils.js';
 import {unwrapResponse} from '../../workflow/utils/rehydration_utils.js';
 import {handleFunctionCallList} from '../functions.js';
 import {InvocationContext} from '../invocation_context.js';
@@ -134,6 +138,7 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
  * every still-pending interrupt id.
  */
 function collectResumeInputs(events: Event[]): Record<string, unknown> {
+  const responseSchemas = responseSchemasByInterruptId(events);
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (event.author !== 'user') {
@@ -143,7 +148,9 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     let found = false;
     for (const fr of getFunctionResponses(event)) {
       if (fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fr.id) {
-        structured[fr.id] = unwrapResponse(fr.response);
+        const response = unwrapResponse(fr.response);
+        validateInterruptResponse(fr.id, response, responseSchemas.get(fr.id));
+        structured[fr.id] = response;
         found = true;
       }
     }

@@ -12,6 +12,7 @@ import {AuthCredentialTypes} from '../../src/auth/auth_credential.js';
 import {AuthConfig} from '../../src/auth/auth_tool.js';
 import type {Event} from '../../src/events/event.js';
 import {State} from '../../src/sessions/state.js';
+import {toJsonSchema} from '../../src/utils/schema.js';
 import {
   isRequestInput,
   RequestInput,
@@ -24,7 +25,10 @@ import {
   hasRequestInputFunctionCall,
   processAuthResume,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
+  responseSchemasByInterruptId,
+  validateInterruptResponse,
 } from '../../src/workflow/utils/hitl_utils.js';
+import {unwrapResponse} from '../../src/workflow/utils/rehydration_utils.js';
 
 /** Extracts the first function-call args from an event. */
 function firstFunctionCall(event: Event) {
@@ -157,5 +161,77 @@ describe('auth gate', () => {
       authType: 'apiKey',
       apiKey: 'my-key',
     });
+  });
+});
+
+describe('responseSchemasByInterruptId', () => {
+  it('recovers the schema an interrupt declared, keyed by id', () => {
+    const event = createRequestInputEvent(
+      new RequestInput({
+        interruptId: 'i1',
+        responseSchema: z4.object({userResponse: z4.string()}),
+      }),
+    );
+
+    const schemas = responseSchemasByInterruptId([event]);
+
+    expect(schemas.get('i1')).toMatchObject({type: 'object'});
+  });
+
+  it('omits interrupts that declared no schema', () => {
+    const event = createRequestInputEvent(
+      new RequestInput({interruptId: 'i1'}),
+    );
+
+    expect(responseSchemasByInterruptId([event]).has('i1')).toBe(false);
+  });
+});
+
+describe('validateInterruptResponse', () => {
+  const objectSchema = toJsonSchema(z4.object({userResponse: z4.string()}));
+
+  it('accepts a reply matching the declared schema', () => {
+    expect(() =>
+      validateInterruptResponse('i1', {userResponse: 'yes'}, objectSchema),
+    ).not.toThrow();
+  });
+
+  it('rejects a reply in the wrong shape, naming the interrupt', () => {
+    // The `{response: x}` envelope a client reaches for instead of `{result: x}`:
+    // it is not unwrapped, so the whole object arrives as the node's input.
+    expect(() =>
+      validateInterruptResponse('i1', {response: '21'}, objectSchema),
+    ).toThrow(/reply to interrupt 'i1' does not match/i);
+  });
+
+  it('explains how a structured reply is expected to look', () => {
+    expect(() =>
+      validateInterruptResponse('i1', {response: '21'}, objectSchema),
+    ).toThrow(/\{result: <value>\}/);
+  });
+
+  it('passes through when the interrupt declared no schema', () => {
+    expect(() =>
+      validateInterruptResponse('i1', {anything: true}, undefined),
+    ).not.toThrow();
+  });
+
+  it('passes through when the schema cannot be compiled', () => {
+    expect(() =>
+      validateInterruptResponse('i1', 'anything', {
+        $ref: 'https://example.com/unresolvable.json',
+      }),
+    ).not.toThrow();
+  });
+
+  it('checks the unwrapped value, so {result: x} satisfies a bare schema', () => {
+    const stringSchema = toJsonSchema(z4.string());
+    expect(() =>
+      validateInterruptResponse(
+        'i1',
+        unwrapResponse({result: '21'}),
+        stringSchema,
+      ),
+    ).not.toThrow();
   });
 });

@@ -64,3 +64,25 @@ export function toJsonSchema(schema: SchemaLike): Record<string, unknown> {
   }
   return schema as Record<string, unknown>;
 }
+
+/**
+ * Compiles a plain JSON Schema into a validator, for schemas that survive only
+ * in serialized form — a `RequestInput.responseSchema` reaches the resume that
+ * answers it as the JSON Schema recorded on the interrupt event, not as the
+ * original {@link SchemaLike}.
+ *
+ * Returns `undefined` when the schema cannot be compiled (JSON Schema is wider
+ * than Zod can express). Callers treat that as "no contract to check" rather
+ * than failing: refusing data because we could not build the validator would be
+ * worse than the unchecked pass-through this replaces.
+ */
+export function compileJsonSchema(jsonSchema: unknown): z4.ZodType | undefined {
+  if (jsonSchema === null || typeof jsonSchema !== 'object') {
+    return undefined;
+  }
+  try {
+    return z4.fromJSONSchema(jsonSchema as Record<string, unknown>);
+  } catch {
+    return undefined;
+  }
+}

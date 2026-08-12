@@ -30,7 +30,14 @@ export interface RequestInputParams {
   payload?: unknown;
   /** A message to display to the user when requesting input. */
   message?: string;
-  /** The expected schema of the response (Zod v3/v4 or genai `Schema`). */
+  /**
+   * The expected shape of the reply (Zod v3/v4 or genai `Schema`).
+   *
+   * It tells a client what to collect, and a *structured* reply is checked
+   * against it on resume. Nothing coerces a human's answer into the shape: a
+   * plain-text reply is routed to the interrupt as-is and is not checked, so
+   * put an agent node after the pause if you need free text normalized.
+   */
   responseSchema?: SchemaLike;
 }
 
@@ -39,6 +46,15 @@ export interface RequestInputParams {
  * workflow (Human-in-the-Loop). The framework converts it to an interrupt
  * event; the workflow surfaces the interrupt id to the caller, which later
  * resumes by providing `resumeInputs[interruptId]`.
+ *
+ * A client answers in one of two ways:
+ *
+ * - **Plain text.** A text turn is routed to every pending interrupt as-is.
+ *   This is what the interactive CLI and the dev UI send.
+ * - **A `functionResponse`** named `adk_request_input`, carrying the interrupt
+ *   id. Wrap a bare value as `{result: <value>}` — that envelope is unwrapped
+ *   for you. Any other object is delivered to the node unchanged, so it must
+ *   already match {@link RequestInputParams.responseSchema} when one is set.
  *
  * Ported from `google/adk-python` `events/request_input.py`.
  */

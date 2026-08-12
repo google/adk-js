@@ -24,7 +24,7 @@ import {AuthHandler} from '../../auth/auth_handler.js';
 import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event} from '../../events/event.js';
 import {State} from '../../sessions/state.js';
-import {toJsonSchema} from '../../utils/schema.js';
+import {compileJsonSchema, toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
 export {
@@ -62,6 +62,75 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     },
     longRunningToolIds: [requestInput.interruptId],
   });
+}
+
+/**
+ * Collects the `responseSchema` each pending interrupt declared, keyed by
+ * interrupt id, as the JSON Schema recorded on its `adk_request_input` call.
+ *
+ * The original {@link RequestInput} is long gone by the time a reply arrives —
+ * a node with `rerunOnResume: false` never runs its body again — so the
+ * serialized copy on the event is the only surviving record of the contract.
+ */
+export function responseSchemasByInterruptId(
+  events: Event[],
+): Map<string, unknown> {
+  const schemas = new Map<string, unknown>();
+  for (const event of events) {
+    for (const part of event.content?.parts ?? []) {
+      const fc = part.functionCall;
+      if (fc?.name !== REQUEST_INPUT_FUNCTION_CALL_NAME || !fc.id) {
+        continue;
+      }
+      const schema = (fc.args as Record<string, unknown> | undefined)?.[
+        'responseSchema'
+      ];
+      if (schema) {
+        schemas.set(fc.id, schema);
+      }
+    }
+  }
+  return schemas;
+}
+
+/**
+ * Checks a *structured* reply against the `responseSchema` its interrupt
+ * declared, and throws when it does not match.
+ *
+ * Only structured replies are checked. A plain-text reply is routed to every
+ * pending interrupt as-is (the interactive CLI and the dev UI both rely on
+ * that), and holding free text to an object schema would break it.
+ *
+ * Without this, a reply in the wrong shape is simply handed to the next node:
+ * a client that wraps its answer as `{response: x}` instead of `{result: x}`
+ * gets the whole envelope delivered as the node's input, which typically
+ * surfaces far downstream as a stringified `[object Object]`.
+ */
+export function validateInterruptResponse(
+  interruptId: string,
+  value: unknown,
+  jsonSchema: unknown,
+): void {
+  const validator = compileJsonSchema(jsonSchema);
+  if (!validator) {
+    return;
+  }
+  const result = validator.safeParse(value);
+  if (result.success) {
+    return;
+  }
+  const issues = result.error.issues
+    .map((issue) => {
+      const at = issue.path.length ? ` at '${issue.path.join('.')}'` : '';
+      return `${issue.message}${at}`;
+    })
+    .join('; ');
+  throw new Error(
+    `The reply to interrupt '${interruptId}' does not match the ` +
+      `responseSchema it declared: ${issues}. A structured reply must either ` +
+      `match that schema, or wrap a bare value as {result: <value>}; a ` +
+      `plain-text reply is accepted as-is and is not checked.`,
+  );
 }
 
 /** Returns whether an event contains a `request_input` function call. */

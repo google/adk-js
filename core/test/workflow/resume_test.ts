@@ -5,6 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {z} from 'zod/v4';
 import {
   createEvent,
   Event,
@@ -17,7 +18,10 @@ import {InMemorySessionService} from '../../src/sessions/in_memory_session_servi
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
-import {hasRequestInputFunctionCall} from '../../src/workflow/utils/hitl_utils.js';
+import {
+  createRequestInputEvent,
+  hasRequestInputFunctionCall,
+} from '../../src/workflow/utils/hitl_utils.js';
 import {
   isFastForwardable,
   reconstructNodeStates,
@@ -75,6 +79,57 @@ describe('Phase 5b — rehydration utility', () => {
     expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(
       'approved',
     );
+  });
+
+  describe('a reply checked against the schema its interrupt declared', () => {
+    /** An interrupt that asked for `{userResponse: string}`, and a reply to it. */
+    function eventsWithReply(response: Record<string, unknown>): Event[] {
+      const interrupt = createRequestInputEvent(
+        new RequestInput({
+          interruptId: 'gate-1',
+          responseSchema: z.object({userResponse: z.string()}),
+        }),
+      );
+      interrupt.author = 'gate';
+      interrupt.nodeInfo = {path: 'wf.gate'};
+      return [
+        interrupt,
+        createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'gate-1',
+                  name: 'adk_request_input',
+                  response,
+                },
+              },
+            ],
+          },
+        }),
+      ];
+    }
+
+    it('resolves a reply in the declared shape', () => {
+      const states = reconstructNodeStates(
+        eventsWithReply({userResponse: 'yes'}),
+      );
+
+      expect(states.get('gate')?.resolvedResponses.get('gate-1')).toEqual({
+        userResponse: 'yes',
+      });
+    });
+
+    it('rejects the wrong envelope instead of passing it to the next node', () => {
+      // `{response: x}` is not the `{result: x}` envelope, so it is not
+      // unwrapped; before this check it reached the successor whole and
+      // surfaced downstream as a stringified "[object Object]".
+      expect(() =>
+        reconstructNodeStates(eventsWithReply({response: '21'})),
+      ).toThrow(/reply to interrupt 'gate-1' does not match/i);
+    });
   });
 
   it('recovers structured output and interrupt input after a DB serialization round-trip', () => {
