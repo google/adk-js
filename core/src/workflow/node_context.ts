@@ -9,10 +9,10 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import type {BaseNode} from './base_node.js';
-import type {RouteValue} from './graph.js';
+import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
  * The result of running a node: the fields a caller (and the engine's
@@ -197,12 +197,19 @@ export class NodeContext {
    * When a dynamic-node {@link scheduler} is set (inside a Workflow subtree),
    * the call routes through it for dedup/resume; otherwise the child runs
    * directly.
+   *
+   * Takes anything an edge takes — an agent, a tool, a plain function, or an
+   * already-built node — and wraps it the same way the graph does, so
+   * `ctx.runNode(myAgent, input)` works without `node(myAgent)`. Wrap it
+   * yourself when you need the options `node()` carries, such as a schema or a
+   * name that differs from the value's own.
    */
   runNode(
-    node: BaseNode,
+    nodeLike: RunnableNode,
     input?: unknown,
     options?: RunNodeOptions,
   ): Promise<NodeContext | NodeResult> {
+    const node = buildNode(nodeLike);
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;

@@ -87,6 +87,67 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
     });
   });
 
+  describe('ctx.runNode() accepts what edges accept', () => {
+    it('runs a plain function without wrapping it in node()', async () => {
+      function shout(_c: unknown, input: string) {
+        return `${input}!`;
+      }
+      const wf = new Workflow({
+        name: 'bare-function',
+        dynamicEntry: async (ctx, input) =>
+          (await ctx.runNode(shout, input)).output,
+      });
+
+      expect((await driveWorkflow(wf, 'hi')).output).toBe('hi!');
+    });
+
+    it('names the node after the value, as an edge would', async () => {
+      function shout(_c: unknown, input: string) {
+        return `${input}!`;
+      }
+      const wf = new Workflow({
+        name: 'bare-function-events',
+        dynamicEntry: async (ctx, input) =>
+          (await ctx.runNode(shout, input)).output,
+      });
+
+      const {events} = await driveWorkflow(wf, 'hi');
+      expect(events.some((e) => e.author === 'shout')).toBe(true);
+    });
+
+    it('still takes an already-built node', async () => {
+      const built = new FunctionNode(
+        'built',
+        (_c, input: string) => `${input}?`,
+      );
+      const wf = new Workflow({
+        name: 'built-node',
+        dynamicEntry: async (ctx, input) =>
+          (await ctx.runNode(built, input)).output,
+      });
+
+      expect((await driveWorkflow(wf, 'hi')).output).toBe('hi?');
+    });
+
+    it('keeps the automatic run-id sequence across calls', async () => {
+      function step(_c: unknown, input: string) {
+        return input;
+      }
+      const wf = new Workflow({
+        name: 'sequence-ids',
+        dynamicEntry: async (ctx) => {
+          const a = await ctx.runNode(step, 'a');
+          const b = await ctx.runNode(step, 'b');
+          return [a.output, b.output];
+        },
+      });
+
+      const {events, output} = await driveWorkflow(wf);
+      expect(output).toEqual(['a', 'b']);
+      expect(events.filter((e) => e.author === 'step').length).toBe(2);
+    });
+  });
+
   describe('custom run ids', () => {
     /** Runs `child` once automatically, then once with `runId`. */
     function workflowUsing(runId: string) {

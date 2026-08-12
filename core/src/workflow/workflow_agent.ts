@@ -10,13 +10,15 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {experimental} from '../utils/experimental.js';
-import {isBaseNode, toContent} from './base_node.js';
+import {toContent} from './base_node.js';
+import type {RunnableNode} from './graph.js';
 import {NodeContext} from './node_context.js';
 import {
   eventsForCurrentRun,
   reconstructNodeStates,
 } from './utils/rehydration_utils.js';
-import {Workflow, WorkflowConfig} from './workflow.js';
+import {buildNode, isNodeLike} from './utils/workflow_graph_utils.js';
+import {isWorkflow, Workflow, WorkflowConfig} from './workflow.js';
 
 const WORKFLOW_AGENT_SIGNATURE_SYMBOL = Symbol.for(
   'google.adk.workflow.workflowAgent',
@@ -44,10 +46,15 @@ export class WorkflowAgent extends BaseAgent {
   readonly workflow: Workflow;
 
   /**
-   * Wraps an existing {@link Workflow}. The agent's name/description default to
-   * the workflow's; pass `config` to override them.
+   * Wraps an existing {@link Workflow}, or anything an edge accepts — an agent,
+   * a tool, a plain function, or an already-built node — which becomes the one
+   * node of a one-node workflow, so `new WorkflowAgent(myAgent)` works without
+   * spelling out `new Workflow({name, edges: [['START', myAgent]]})`.
+   *
+   * The agent's name/description default to the workflow's (for a bare value,
+   * to the built node's); pass `config` to override them.
    */
-  constructor(workflow: Workflow, config?: WorkflowAgentConfig);
+  constructor(nodeLike: RunnableNode, config?: WorkflowAgentConfig);
   /**
    * Convenience form: pass the {@link Workflow} constructor options directly and
    * the workflow is created internally, so you can write
@@ -57,15 +64,10 @@ export class WorkflowAgent extends BaseAgent {
    */
   constructor(config: WorkflowConfig);
   constructor(
-    workflowOrConfig: Workflow | WorkflowConfig,
+    nodeLikeOrConfig: RunnableNode | WorkflowConfig,
     config: WorkflowAgentConfig = {},
   ) {
-    // A branded BaseNode is an already-built Workflow; anything else is config
-    // to build one from (avoids `instanceof`, per the workflow conventions).
-    // The overload signatures guarantee an instance here is a Workflow.
-    const workflow = isBaseNode(workflowOrConfig)
-      ? (workflowOrConfig as Workflow)
-      : new Workflow(workflowOrConfig);
+    const workflow = toWorkflow(nodeLikeOrConfig);
     super({
       name: config.name ?? workflow.name,
       description: config.description ?? workflow.description,
@@ -156,6 +158,38 @@ export class WorkflowAgent extends BaseAgent {
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     throw new Error('WorkflowAgent does not support live mode.');
   }
+}
+
+/**
+ * Resolves a constructor argument to the {@link Workflow} the agent adapts.
+ *
+ * A workflow is used as it is. Anything else node-like becomes the single node
+ * of a one-node workflow — exactly what `edges: [['START', value]]` spells by
+ * hand — rather than being adapted directly, so
+ * {@link WorkflowAgent.workflow} stays a `Workflow` for every caller that reads
+ * it (the dev UI's graph renderer, for one).
+ *
+ * Everything else is {@link WorkflowConfig} to build a workflow from. The two
+ * cannot be confused: a config is a plain object literal, and no builder
+ * matches one.
+ *
+ * The value is built before it reaches the graph parser, which would build it
+ * anyway, because the built node is what carries the name and description the
+ * workflow — and through it the agent — takes.
+ */
+function toWorkflow(value: RunnableNode | WorkflowConfig): Workflow {
+  if (!isNodeLike(value)) {
+    return new Workflow(value);
+  }
+  if (isWorkflow(value)) {
+    return value;
+  }
+  const built = buildNode(value);
+  return new Workflow({
+    name: built.name,
+    description: built.description,
+    edges: [['START', built]],
+  });
 }
 
 /** Whether `value` is a graph `WorkflowAgent` (brand check, not `instanceof`). */

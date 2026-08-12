@@ -23,6 +23,7 @@ import {
   isGraphWorkflowAgent,
   WorkflowAgent,
 } from '../../src/workflow/workflow_agent.js';
+import {ReplyAgent} from './test_helpers.js';
 
 /** A session event standing in for a node that raised an unresolved interrupt. */
 function pendingInterruptEvent(id: string): Event {
@@ -117,10 +118,47 @@ describe('WorkflowAgent — constructor forms', () => {
   it('still accepts a pre-built Workflow, with optional overrides', () => {
     const workflow = new Workflow({name: 'wf', edges: [['START', step]]});
     expect(new WorkflowAgent(workflow).name).toBe('wf');
+    // The workflow it was handed, not a copy wrapped around it.
     expect(new WorkflowAgent(workflow).workflow).toBe(workflow);
     expect(new WorkflowAgent(workflow, {name: 'override'}).name).toBe(
       'override',
     );
+  });
+});
+
+describe('WorkflowAgent — takes what edges take', () => {
+  it('makes a bare function the one node of a one-node workflow', async () => {
+    function greet() {
+      return 'hello';
+    }
+    const agent = new WorkflowAgent(greet);
+
+    expect(agent.name).toBe('greet');
+    expect(agent.workflow.graph?.nodes.map((n) => n.name)).toEqual([
+      '__START__',
+      'greet',
+    ]);
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+    expect(withOutput.map((e) => e.output)).toEqual(['hello']);
+  });
+
+  it('runs a bare agent, with its reply as the output', async () => {
+    const agent = new WorkflowAgent(new ReplyAgent('reply'));
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+    expect(withOutput.map((e) => e.output)).toEqual(['ok']);
+  });
+
+  it('takes name and description from the value, and lets config win', () => {
+    const built = node(() => 'x', {name: 'built', description: 'from node'});
+
+    expect(new WorkflowAgent(built).name).toBe('built');
+    expect(new WorkflowAgent(built).description).toBe('from node');
+    expect(new WorkflowAgent(built, {name: 'over'}).name).toBe('over');
   });
 });
 

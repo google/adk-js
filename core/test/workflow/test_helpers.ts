@@ -6,7 +6,7 @@
 
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
+import {createEvent, Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
@@ -19,6 +19,35 @@ class TestAgent extends BaseAgent {
   protected async *runAsyncImpl(): AsyncGenerator<Event, void, void> {
     return;
   }
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
+    return;
+  }
+}
+
+/**
+ * An agent that replies with `reply` and leaves `output` unset on its event, so
+ * a node output can only have come from the wrapper `buildNode` puts around an
+ * agent — which is what a caller passing one bare has to still get.
+ */
+export class ReplyAgent extends BaseAgent {
+  constructor(
+    name: string,
+    private readonly reply = 'ok',
+  ) {
+    super({name});
+  }
+
+  protected async *runAsyncImpl(
+    ic: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    yield createEvent({
+      author: this.name,
+      invocationId: ic.invocationId,
+      content: {role: 'model', parts: [{text: this.reply}]},
+    });
+  }
+
   // eslint-disable-next-line require-yield
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     return;

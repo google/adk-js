@@ -9,7 +9,7 @@
  * ("continue"/"done"), with model responses from a JSON fixture.
  */
 
-import {node, Workflow} from '@google/adk';
+import {Workflow} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {RawGenerateContentResponse} from '../../test_case_utils.js';
 import {
@@ -39,7 +39,7 @@ describe('workflow integration — LLM-driven loop', () => {
       dynamicEntry: async (ctx) => {
         let rounds = 0;
         for (;;) {
-          const decision = await ctx.runNode(node(decider), `round ${rounds}`, {
+          const decision = await ctx.runNode(decider, `round ${rounds}`, {
             runId: `d${rounds}`,
           });
           rounds++;
