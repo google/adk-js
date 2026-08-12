@@ -23,7 +23,7 @@ import {
 export async function getConnectionOptionsFromUri(
   uri: string,
 ): Promise<MikroORMOptions> {
-  let driver: unknown | undefined;
+  let driver: unknown;
 
   if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
     const {PostgreSqlDriver} = await import('@mikro-orm/postgresql');

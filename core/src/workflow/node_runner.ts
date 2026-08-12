@@ -138,6 +138,23 @@ export async function executeChildNode({
     runId,
   });
 
+  const pluginManager = child.invocationContext.pluginManager;
+  if (pluginManager?.hasPlugins) {
+    const skipOutput = await pluginManager.runBeforeNodeCallback({
+      node,
+      nodeContext: child,
+      input,
+    });
+    if (skipOutput !== undefined) {
+      child.output = skipOutput;
+      if (options.useAsOutput) {
+        parent.output = child.output;
+        parent.route = child.route;
+      }
+      return child;
+    }
+  }
+
   let succeeded = false;
   while (!succeeded) {
     resetState(child);
@@ -163,6 +180,17 @@ export async function executeChildNode({
       const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
       nodeState.attemptCount += 1;
       await delay(delaySeconds * 1000, effectiveAbortSignal);
+    }
+  }
+
+  if (pluginManager?.hasPlugins) {
+    const replacedOutput = await pluginManager.runAfterNodeCallback({
+      node,
+      nodeContext: child,
+      output: child.output,
+    });
+    if (replacedOutput !== undefined) {
+      child.output = replacedOutput;
     }
   }
 
