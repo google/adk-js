@@ -32,6 +32,7 @@ import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import {version} from '../version.js';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {AdkLogger} from '../utils/logger.js';
@@ -231,6 +232,10 @@ export class AdkApiServer {
         res.status(200).send('OK');
       });
     }
+
+    app.get('/version', (req: Request, res: Response) => {
+      res.status(200).json({version});
+    });
 
     if (this.allowOrigins) {
       app.use(
