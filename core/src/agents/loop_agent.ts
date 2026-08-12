@@ -6,6 +6,7 @@
 
 import {Event} from '../events/event.js';
 
+import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
@@ -46,7 +47,16 @@ export function isLoopAgent(obj: unknown): obj is LoopAgent {
  *
  * When sub-agent generates an event with escalate or max_iterations are
  * reached, the loop agent will stop.
+ *
+ * @deprecated Use `Workflow` instead, which expresses the same ordering as a
+ * graph and adds routing, retries, HITL and resumability. This class will be
+ * removed in a future version. Note that a `Workflow` cannot yet be an
+ * `LlmAgent` sub-agent — wrap it in a `WorkflowAgent` for that.
  */
+@deprecated(
+  'LoopAgent is deprecated in favor of Workflow and will be removed in a' +
+    ' future version. Workflow cannot yet be used as an LlmAgent sub-agent.',
+)
 export class LoopAgent extends BaseAgent<LoopAgentConfig> {
   /**
    * A unique symbol to identify ADK loop agent class.

@@ -6,6 +6,7 @@
 
 import {Event} from '../events/event.js';
 
+import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 
@@ -37,7 +38,16 @@ export function isParallelAgent(obj: unknown): obj is ParallelAgent {
  *
  *  - Running different algorithms simultaneously.
  *  - Generating multiple responses for review by a subsequent evaluation agent.
+ *
+ * @deprecated Use `Workflow` instead, which expresses the same ordering as a
+ * graph and adds routing, retries, HITL and resumability. This class will be
+ * removed in a future version. Note that a `Workflow` cannot yet be an
+ * `LlmAgent` sub-agent — wrap it in a `WorkflowAgent` for that.
  */
+@deprecated(
+  'ParallelAgent is deprecated in favor of Workflow and will be removed in a' +
+    ' future version. Workflow cannot yet be used as an LlmAgent sub-agent.',
+)
 export class ParallelAgent extends BaseAgent {
   /**
    * A unique symbol to identify ADK parallel agent class.
