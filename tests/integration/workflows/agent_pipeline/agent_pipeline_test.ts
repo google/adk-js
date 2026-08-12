@@ -10,7 +10,7 @@
  * orchestration driven imperatively via ctx.runNode.
  */
 
-import {FunctionNode, node, Workflow} from '@google/adk';
+import {FunctionNode, Workflow} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {RawGenerateContentResponse} from '../../test_case_utils.js';
 import {
@@ -64,8 +64,11 @@ describe('workflow integration — multi-agent orchestration (LLM)', () => {
     const wf = new Workflow({
       name: 'coordinator',
       dynamicEntry: async (ctx, input) => {
-        const research = await ctx.runNode(node(researcher), input);
-        const report = await ctx.runNode(node(writer), research.output);
+        // Agents are passed bare. An agent is itself a BaseNode, so this also
+        // pins that ctx.runNode still routes it through its wrapper -- without
+        // that, the agent runs but produces no node output.
+        const research = await ctx.runNode(researcher, input);
+        const report = await ctx.runNode(writer, research.output);
         return {research: research.output, report: report.output};
       },
     });

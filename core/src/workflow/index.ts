@@ -46,6 +46,7 @@ export type {
   NodeLike,
   RouteValue,
   RoutingMap,
+  RunnableNode,
 } from './graph.js';
 
 // --- Execution context & state ---

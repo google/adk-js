@@ -40,6 +40,12 @@ export type NodeLike =
   | 'START';
 
 /**
+ * What `ctx.runNode()` accepts: everything an edge accepts except the `'START'`
+ * sentinel, which marks a graph entry point rather than something runnable.
+ */
+export type RunnableNode = Exclude<NodeLike, 'START'>;
+
+/**
  * A mapping from route values to destination node(s). A value may be a single
  * node or an array of nodes (fan-out).
  *
