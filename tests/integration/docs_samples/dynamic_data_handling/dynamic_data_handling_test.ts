@@ -5,27 +5,37 @@
  */
 
 /**
- * Docs sample: `dynamic/data_handling` —
- * https://adk.dev/graphs/dynamic/#data-handling
+ * Runs the docs sample `samples/workflows/dynamic/data_handling` —
  *
- * What it demonstrates, and what is asserted here, is that an agent node's
- * output reaches a function node directly — no session-state key in between.
- * Run against recorded responses so the assertion is about the plumbing, not
- * the paragraph the model produced.
+ * https://adk.dev/graphs/dynamic/#data-handling An agent node's output reaches
+ * a function node directly, with no session-state key in between. Driven
+ * against the recorded responses beside this test, so the assertion is about
+ * that plumbing rather than the paragraph the model produced.
  */
 
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
-import {finalOutput, outputOf, runRecorded} from '../_shared.js';
+import {rootAgent} from '../../../../samples/workflows/dynamic/data_handling/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
+
+const FIXTURE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 describe('docs sample: dynamic/data_handling', () => {
   it('hands the agent node output straight to the function node', async () => {
-    const events = await runRecorded(
-      'dynamic/data_handling',
-      ['a short paragraph about why graphs beat long prompts'],
-      import.meta.url,
-    );
+    const perTurn = await runSample({
+      name: 'dynamic/data_handling',
+      rootAgent,
+      turns: ['a short paragraph about why graphs beat long prompts'],
+      fixtureDir: FIXTURE_DIR,
+    });
+    const events = allEvents(perTurn);
 
-    const draft = outputOf(events, 'draft_agent');
+    const draft = finalOutput(events.filter((e) => e.author === 'draft_agent'));
     expect(typeof draft).toBe('string');
 
     const formatted = String(finalOutput(events));

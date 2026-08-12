@@ -5,17 +5,30 @@
  */
 
 /**
- * Docs sample: `routes/function_node` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/routes/function_node` — https://adk.dev/graphs/routes/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
- * set: a stray model call throws instead of reaching the network.
+ * The primary node type: a bare return, then an explicit event. It calls no
+ * model, so it runs with the record/replay model on an empty response set: a
+ * stray model call throws instead of reaching the network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/routes/function_node/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: routes/function_node', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('routes/function_node', ['hello world']);
+    const perTurn = await runSample({
+      name: 'routes/function_node',
+      rootAgent,
+      turns: ['hello world'],
+      offline: true,
+    });
+
+    expect(finalOutput(allEvents(perTurn))).toBe('HELLO WORLD IS AWESOME!');
   });
 });

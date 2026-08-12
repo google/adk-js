@@ -5,17 +5,33 @@
  */
 
 /**
- * Docs sample: `data_handling/user_message` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/data_handling/user_message` — https://adk.dev/graphs/data-handling/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
- * set: a stray model call throws instead of reaching the network.
+ * A display message is not what the next node receives; `output` is. It calls
+ * no model, so it runs with the record/replay model on an empty response set:
+ * a stray model call throws instead of reaching the network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/data_handling/user_message/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: data_handling/user_message', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('data_handling/user_message', ['hello world']);
+    const perTurn = await runSample({
+      name: 'data_handling/user_message',
+      rootAgent,
+      turns: ['hello world'],
+      offline: true,
+    });
+
+    // The report node got the sources array, not the "Gathering sources..." text.
+    expect(finalOutput(allEvents(perTurn))).toBe(
+      'Research complete. 3 sources: source-a, source-b, source-c.',
+    );
   });
 });

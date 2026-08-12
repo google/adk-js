@@ -5,17 +5,33 @@
  */
 
 /**
- * Docs sample: `routes/fan_out_join` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/routes/fan_out_join` — https://adk.dev/graphs/routes/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
- * set: a stray model call throws instead of reaching the network.
+ * Parallel paths merged by a `JoinNode` barrier. It calls no model, so it runs
+ * with the record/replay model on an empty response set: a stray model call
+ * throws instead of reaching the network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/routes/fan_out_join/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: routes/fan_out_join', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('routes/fan_out_join', ['hello world']);
+    const perTurn = await runSample({
+      name: 'routes/fan_out_join',
+      rootAgent,
+      turns: ['hello world'],
+      offline: true,
+    });
+
+    // The join hands its successor a record keyed by predecessor node name.
+    expect(finalOutput(allEvents(perTurn))).toBe(
+      'Uppercase: HELLO WORLD\nLength:    11\nReversed:  dlrow olleh',
+    );
   });
 });

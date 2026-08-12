@@ -5,17 +5,31 @@
  */
 
 /**
- * Docs sample: `data_handling/node_output` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/data_handling/node_output` — https://adk.dev/graphs/data-handling/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
- * set: a stray model call throws instead of reaching the network.
+ * A bare return, an explicit event and a generator all reach the next node the
+ * same way. It calls no model, so it runs with the record/replay model on an
+ * empty response set: a stray model call throws instead of reaching the
+ * network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/data_handling/node_output/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: data_handling/node_output', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('data_handling/node_output', ['hello world']);
+    const perTurn = await runSample({
+      name: 'data_handling/node_output',
+      rootAgent,
+      turns: ['hello world'],
+      offline: true,
+    });
+
+    expect(finalOutput(allEvents(perTurn))).toBe('<<HELLO WORLD!>>');
   });
 });

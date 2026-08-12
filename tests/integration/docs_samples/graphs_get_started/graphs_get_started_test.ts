@@ -5,20 +5,22 @@
  */
 
 /**
- * Docs sample: `graphs/get_started` — https://adk.dev/graphs/
+ * Constructs the docs sample `samples/workflows/graphs/get_started` — https://adk.dev/graphs/
  *
- * Calls a live model, so it is constructed but not driven: a `WorkflowAgent`
- * validates its edges in its constructor, which is where a rename or a
- * semantics change in the workflow API turns a sample into a load-time error
- * that still type-checks. Behaviour beyond that is covered by the sibling
+ * Agent -> function -> agent -> function, in sequence. It calls a live model,
+ * so it is built but not driven: a `WorkflowAgent` validates its edges in its
+ * constructor, which is where a rename or a semantics change in the workflow
+ * API turns a sample into a load-time error that still type-checks. The
+ * behaviour it adds beyond that is covered by the sibling
  * `tests/integration/workflows/` set.
  */
 
-import {describe, it} from 'vitest';
-import {loadRootAgent} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/graphs/get_started/agent.js';
 
 describe('docs sample: graphs/get_started', () => {
-  it('builds a valid graph', async () => {
-    await loadRootAgent('graphs/get_started');
+  it('builds a valid graph', () => {
+    // Importing the module already ran the constructor that validates it.
+    expect(rootAgent.name).toBe('root_agent');
   });
 });

@@ -5,17 +5,34 @@
  */
 
 /**
- * Docs sample: `dynamic/custom_run_ids` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/dynamic/custom_run_ids` — https://adk.dev/graphs/dynamic/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
- * set: a stray model call throws instead of reaching the network.
+ * A reorderable collection, keyed by each item's own run id. It calls no
+ * model, so it runs with the record/replay model on an empty response set: a
+ * stray model call throws instead of reaching the network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/dynamic/custom_run_ids/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: dynamic/custom_run_ids', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('dynamic/custom_run_ids', ['hello world']);
+    const perTurn = await runSample({
+      name: 'dynamic/custom_run_ids',
+      rootAgent,
+      turns: ['hello world'],
+      offline: true,
+    });
+
+    expect(finalOutput(allEvents(perTurn))).toBe(
+      'order a91: 2 item(s) shipped\n' +
+        'order b02: 1 item(s) shipped\n' +
+        'order c73: 3 item(s) shipped',
+    );
   });
 });

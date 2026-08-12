@@ -5,31 +5,43 @@
  */
 
 /**
- * Docs sample: `dynamic/loop_route` —
- * https://adk.dev/graphs/dynamic/#loop-route
+ * Runs the docs sample `samples/workflows/dynamic/loop_route` —
  *
- * A `while` loop that keeps calling an agent until a checker is satisfied: the
- * model's answer decides how many times the graph runs. Also the sample most
- * able to pass while demonstrating nothing — given a request the linter accepts
- * first time, the loop never runs — so the assertions require a dirty first
- * pass, a fixer round, and an exit on a clean check rather than on the cap.
+ * https://adk.dev/graphs/dynamic/#loop-route A `while` loop that keeps calling
+ * an agent until a checker is satisfied, so the model's answer decides how
+ * many times the graph runs. It is also the sample most able to pass while
+ * demonstrating nothing — given a request the linter accepts first time, the
+ * loop never runs — so the assertions require a dirty first pass, a fixer
+ * round, and an exit on a clean check rather than on the round cap.
  */
 
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
-import {authors, finalOutput, runRecorded} from '../_shared.js';
+import {rootAgent} from '../../../../samples/workflows/dynamic/loop_route/agent.js';
+import {
+  allEvents,
+  authors,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
+
+const FIXTURE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** Mirrors MAX_FIX_ROUNDS in the sample: 3 rounds means at most 4 checks. */
 const MAX_LINT_CHECKS = 4;
 
 describe('docs sample: dynamic/loop_route', () => {
   it('refines until the checker is satisfied', async () => {
-    const events = await runRecorded(
-      'dynamic/loop_route',
-      [
+    const perTurn = await runSample({
+      name: 'dynamic/loop_route',
+      rootAgent,
+      turns: [
         'a one-line function that adds two numbers, no comments, no type annotations',
       ],
-      import.meta.url,
-    );
+      fixtureDir: FIXTURE_DIR,
+    });
+    const events = allEvents(perTurn);
 
     const lintResults = events
       .filter((e) => e.author === 'lint_reviewer' && e.output !== undefined)
@@ -40,7 +52,7 @@ describe('docs sample: dynamic/loop_route', () => {
     expect(lintResults[0]).not.toBe('');
     expect(authors(events).has('fixer_agent')).toBe(true);
 
-    // Exited because the code came back clean, not because it ran out of rounds.
+    // Exited on a clean check, not by running out of rounds.
     expect(lintResults[lintResults.length - 1]).toBe('');
     expect(lintResults.length).toBeLessThanOrEqual(MAX_LINT_CHECKS);
     expect(String(finalOutput(events))).toBeTruthy();

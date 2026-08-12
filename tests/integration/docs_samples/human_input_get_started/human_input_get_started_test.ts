@@ -5,19 +5,36 @@
  */
 
 /**
- * Docs sample: `human_input/get_started` — https://adk.dev/graphs/
+ * Runs the docs sample `samples/workflows/human_input/get_started` — https://adk.dev/graphs/human-input/
  *
- * Calls no model, so it runs with the record/replay model on an empty response
+ * The two-node pause: `RequestInput`, then the reply feeds the next node. It
+ * calls no model, so it runs with the record/replay model on an empty response
  * set: a stray model call throws instead of reaching the network.
  */
 
-import {describe, it} from 'vitest';
-import {runOffline} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/human_input/get_started/agent.js';
+import {
+  allEvents,
+  finalOutput,
+  runSample,
+} from '../../workflows/_harness/sample_harness.js';
 
 describe('docs sample: human_input/get_started', () => {
   it('runs end to end without a model', async () => {
-    await runOffline('human_input/get_started', ['start', '21'], {
-      pausesOnFirstTurn: true,
+    const perTurn = await runSample({
+      name: 'human_input/get_started',
+      rootAgent,
+      turns: ['start', '21'],
+      offline: true,
     });
+
+    // Turn one pauses for the human; the reply arrives on the next turn.
+    expect(
+      perTurn[0].some((e) => (e.longRunningToolIds?.length ?? 0) > 0),
+    ).toBe(true);
+
+    // step1 does not re-run on resume; it completes with the reply as its output.
+    expect(finalOutput(allEvents(perTurn))).toBe(42);
   });
 });

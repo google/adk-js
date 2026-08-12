@@ -5,20 +5,22 @@
  */
 
 /**
- * Docs sample: `data_handling/structured_access` — https://adk.dev/graphs/
+ * Constructs the docs sample `samples/workflows/data_handling/structured_access` — https://adk.dev/graphs/data-handling/
  *
- * Calls a live model, so it is constructed but not driven: a `WorkflowAgent`
+ * `{Class.field}` and `<Class.field from source_node>` in an instruction. It
+ * calls a live model, so it is built but not driven: a `WorkflowAgent`
  * validates its edges in its constructor, which is where a rename or a
  * semantics change in the workflow API turns a sample into a load-time error
- * that still type-checks. Behaviour beyond that is covered by the sibling
- * `tests/integration/workflows/` set.
+ * that still type-checks. The behaviour it adds beyond that is covered by the
+ * sibling `tests/integration/workflows/` set.
  */
 
-import {describe, it} from 'vitest';
-import {loadRootAgent} from '../_shared.js';
+import {describe, expect, it} from 'vitest';
+import {rootAgent} from '../../../../samples/workflows/data_handling/structured_access/agent.js';
 
 describe('docs sample: data_handling/structured_access', () => {
-  it('builds a valid graph', async () => {
-    await loadRootAgent('data_handling/structured_access');
+  it('builds a valid graph', () => {
+    // Importing the module already ran the constructor that validates it.
+    expect(rootAgent.name).toBe('root_agent');
   });
 });
