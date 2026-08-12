@@ -44,7 +44,9 @@ function getLogLevelFromOptions(options: {
   }
 
   if (typeof options.log_level === 'string') {
-    return LOG_LEVEL_MAP[options.log_level.toLowerCase()] || LogLevel.INFO;
+    // `??`, not `||`: LogLevel.DEBUG is 0, so `||` fell through to INFO and
+    // made `--log_level debug` a silent no-op.
+    return LOG_LEVEL_MAP[options.log_level.toLowerCase()] ?? LogLevel.INFO;
   }
 
   return LogLevel.INFO;
