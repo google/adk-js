@@ -387,6 +387,37 @@ describe('LlmAgent Schema Initialization', () => {
     expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
   });
 
+  it('validates output against a genai outputSchema', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: {
+        type: Type.OBJECT,
+        properties: {bar: {type: Type.NUMBER}},
+        required: ['bar'],
+      },
+    });
+    expect(agent.validateOutput({bar: 1})).toEqual({bar: 1});
+    expect(() => agent.validateOutput({bar: 'no'})).toThrow();
+  });
+
+  it('validates output against a Zod outputSchema, keeping its refinements', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: z4.object({bar: z4.number().refine((n) => n > 10)}),
+    });
+    expect(agent.validateOutput({bar: 11})).toEqual({bar: 11});
+    // The refinement survives only because the original Zod schema is kept;
+    // it has no representation in the converted genai Schema.
+    expect(() => agent.validateOutput({bar: 1})).toThrow();
+  });
+
+  it('keeps the supplied schema alongside the converted genai form', () => {
+    const zodSchema = z4.object({bar: z4.number()});
+    const agent = new LlmAgent({name: 'test', outputSchema: zodSchema});
+    expect(agent.outputSchemaSource).toBe(zodSchema);
+    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
+  });
+
   it('should initialize outputSchema from Zod v3 object', () => {
     const zodSchema = z3.object({
       bar: z3.number(),
@@ -482,6 +513,24 @@ describe('LlmAgent Output Processing', () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
+  });
+
+  it('keeps the parsed object in state when it violates the output schema', async () => {
+    // Well-formed JSON, but `answer` is declared STRING. The violation is
+    // logged rather than thrown, and state keeps the object the model
+    // returned — a consumer of `outputKey` reads the same type either way.
+    const response: LlmResponse = {
+      content: {parts: [{text: JSON.stringify({answer: 42})}]},
+    };
+    agent.model = new MockLlm(response);
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.actions?.stateDelta?.['result']).toEqual({answer: 42});
   });
 });
 
