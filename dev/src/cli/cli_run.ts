@@ -28,9 +28,11 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 
 import {AgentFile, AgentFileOptions} from '../utils/agent_loader.js';
-import {loadFileData, saveToFile} from '../utils/file_utils.js';
-
-const dirname = process.cwd();
+import {
+  getAbsolutePath,
+  loadFileData,
+  saveToFile,
+} from '../utils/file_utils.js';
 
 const HOW_TO_ANSWER: Record<UserInputKind, string> = {
   input: 'Type your reply at the next prompt to continue.',
@@ -157,7 +159,7 @@ async function runFromInputFile(
   options: RunFromInputFileOptions,
 ): Promise<Session | undefined> {
   const fileContent = await loadFileData<InputFile>(
-    path.join(dirname, options.filePath),
+    getAbsolutePath(options.filePath),
   );
   if (!fileContent) {
     return;
@@ -288,7 +290,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       options.sessionService || new InMemorySessionService();
     const memoryService = options.memoryService || new InMemoryMemoryService();
     await using agentFile = new AgentFile(
-      path.join(dirname, options.agentPath),
+      getAbsolutePath(options.agentPath),
       options.agentFileLoadOptions,
     );
     const loaded = await agentFile.load();
@@ -304,7 +306,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     let watcher: fs.FSWatcher | undefined;
 
     if (options.reloadAgents) {
-      const agentFilePath = path.join(dirname, options.agentPath);
+      const agentFilePath = getAbsolutePath(options.agentPath);
       watcher = fs.watch(agentFilePath, async () => {
         try {
           await using reloadedFile = new AgentFile(
@@ -391,8 +393,11 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     if (options.saveSession) {
       const sessionId =
         options.sessionId || (await getUserInput('Session ID to save: '));
+      // Sibling of the agent file, not inside it: joining onto the agent path
+      // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
+      // no mkdir, so the write failed with ENOTDIR.
       const sessionPath = path.join(
-        options.agentPath,
+        path.dirname(options.agentPath),
         `${sessionId}.session.json`,
       );
       const sessionToStore = await sessionService.getSession({
@@ -400,7 +405,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         userId: session.userId,
         sessionId: session.id,
       });
-      await saveToFile(path.join(dirname, sessionPath), sessionToStore);
+      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
 
       console.log('Session saved to', sessionPath);
     }

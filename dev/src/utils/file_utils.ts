@@ -8,6 +8,18 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+/**
+ * Resolves a user-supplied path against the current working directory.
+ *
+ * `path.resolve` rather than `path.join`: joining strips the leading separator
+ * from an absolute path, so `/tmp/x.json` would become `<cwd>/tmp/x.json`.
+ * These paths come from the command line, so an absolute one has to be
+ * honoured as given.
+ */
+export function getAbsolutePath(p: string): string {
+  return path.resolve(process.cwd(), p);
+}
+
 /** Check if the given folder exists. */
 export async function isFolderExists(folderPath: string): Promise<boolean> {
   try {

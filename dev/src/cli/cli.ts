@@ -15,10 +15,10 @@ import {
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
-import * as path from 'path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
+import {getAbsolutePath} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
@@ -48,10 +48,6 @@ function getLogLevelFromOptions(options: {
   }
 
   return LogLevel.INFO;
-}
-
-function getAbsolutePath(p: string): string {
-  return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
 }
 
 function getSessionServiceFromOptions(options: {
