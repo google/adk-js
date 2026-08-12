@@ -62,7 +62,7 @@ describe('getUserInputRequests', () => {
     const [request] = getUserInputRequests(
       requestInputEvent('i1', {
         payload: {draft: 'hello'},
-        responseSchema: {type: 'object'},
+        response_schema: {type: 'object'},
       }),
     );
 
@@ -75,6 +75,16 @@ describe('getUserInputRequests', () => {
       payload: {draft: 'hello'},
       responseSchema: {type: 'object'},
     });
+  });
+
+  it('reads the schema from a session that recorded it as `responseSchema`', () => {
+    // The spelling adk-js wrote before it aligned with adk-python's
+    // `response_schema`; sessions holding it must still resume and render.
+    const [request] = getUserInputRequests(
+      requestInputEvent('i1', {responseSchema: {type: 'object'}}),
+    );
+
+    expect(request.responseSchema).toEqual({type: 'object'});
   });
 
   it('summarizes a request for a credential', () => {

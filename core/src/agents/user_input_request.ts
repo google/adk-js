@@ -107,7 +107,11 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
           kind: 'input',
           message: asString(args['message']),
           payload: args['payload'] ?? undefined,
-          responseSchema: args['responseSchema'] ?? undefined,
+          // `response_schema` is the wire spelling (see `RESPONSE_SCHEMA_ARG`
+          // in `workflow/utils/hitl_utils`); `responseSchema` is what older
+          // adk-js sessions recorded.
+          responseSchema:
+            args['response_schema'] ?? args['responseSchema'] ?? undefined,
         });
         break;
 

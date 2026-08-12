@@ -33,6 +33,20 @@ export {
 } from '../../agents/functions.js';
 
 /**
+ * The arg key the declared JSON Schema travels under on an `adk_request_input`
+ * call. Snake_case among camelCase neighbours because that is the cross-
+ * language wire format: `adk-python`'s `create_request_input_event` dumps the
+ * request by alias (`interruptId`, `payload`, `message`) and then sets
+ * `response_schema` explicitly, and clients read that spelling — the dev UI
+ * builds the reply form from `args.response_schema`, so emitting
+ * `responseSchema` leaves the user typing free text at a structured prompt.
+ */
+const RESPONSE_SCHEMA_ARG = 'response_schema';
+
+/** The pre-alignment spelling, still found in sessions written by older runs. */
+const LEGACY_RESPONSE_SCHEMA_ARG = 'responseSchema';
+
+/**
  * Creates an interrupt {@link Event} from a {@link RequestInput}. The event
  * carries an `adk_request_input` function call and marks the interrupt id as a
  * long-running tool id.
@@ -42,7 +56,7 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     interruptId: requestInput.interruptId,
     payload: requestInput.payload ?? null,
     message: requestInput.message ?? null,
-    responseSchema: requestInput.responseSchema
+    [RESPONSE_SCHEMA_ARG]: requestInput.responseSchema
       ? toJsonSchema(requestInput.responseSchema)
       : null,
   };
@@ -65,6 +79,16 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
 }
 
 /**
+ * Reads the JSON Schema off an `adk_request_input` call's args, under either
+ * spelling (see {@link RESPONSE_SCHEMA_ARG}).
+ */
+function readResponseSchemaArg(
+  args: Record<string, unknown> | undefined,
+): unknown {
+  return args?.[RESPONSE_SCHEMA_ARG] ?? args?.[LEGACY_RESPONSE_SCHEMA_ARG];
+}
+
+/**
  * Collects the `responseSchema` each pending interrupt declared, keyed by
  * interrupt id, as the JSON Schema recorded on its `adk_request_input` call.
  *
@@ -82,9 +106,9 @@ export function responseSchemasByInterruptId(
       if (fc?.name !== REQUEST_INPUT_FUNCTION_CALL_NAME || !fc.id) {
         continue;
       }
-      const schema = (fc.args as Record<string, unknown> | undefined)?.[
-        'responseSchema'
-      ];
+      const schema = readResponseSchemaArg(
+        fc.args as Record<string, unknown> | undefined,
+      );
       if (schema) {
         schemas.set(fc.id, schema);
       }
@@ -101,16 +125,25 @@ export function responseSchemasByInterruptId(
  * pending interrupt as-is (the interactive CLI and the dev UI both rely on
  * that), and holding free text to an object schema would break it.
  *
- * Without this, a reply in the wrong shape is simply handed to the next node:
- * a client that wraps its answer as `{response: x}` instead of `{result: x}`
- * gets the whole envelope delivered as the node's input, which typically
- * surfaces far downstream as a stringified `[object Object]`.
+ * A reply that unwraps to a bare scalar counts as plain text and is exempt for
+ * the same reason: `{result: <text>}` is the envelope a client sends when it
+ * has only a chat box to offer, so checking it would reject the very answer
+ * the plain-text path accepts — permanently, since the reply is recorded in
+ * the session and re-checked on every later turn.
+ *
+ * What remains checked is the case this exists for: a reply in the wrong
+ * *shape*. A client that wraps its answer as `{response: x}` instead of
+ * `{result: x}` gets the whole envelope delivered as the node's input, which
+ * typically surfaces far downstream as a stringified `[object Object]`.
  */
 export function validateInterruptResponse(
   interruptId: string,
   value: unknown,
   jsonSchema: unknown,
 ): void {
+  if (typeof value !== 'object' || value === null) {
+    return;
+  }
   const validator = compileJsonSchema(jsonSchema);
   if (!validator) {
     return;

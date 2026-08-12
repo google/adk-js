@@ -122,6 +122,20 @@ describe('Phase 5b — rehydration utility', () => {
       });
     });
 
+    it('resolves a free-text reply wrapped as {result: …}', () => {
+      // What a client sends when all it can offer is a chat box. The node
+      // receives the text as-is, exactly as on the plain-text path; refusing
+      // it would also brick the session, since the recorded reply is
+      // re-checked on every later turn.
+      const states = reconstructNodeStates(
+        eventsWithReply({result: 'museum and lunch'}),
+      );
+
+      expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(
+        'museum and lunch',
+      );
+    });
+
     it('rejects the wrong envelope instead of passing it to the next node', () => {
       // `{response: x}` is not the `{result: x}` envelope, so it is not
       // unwrapped; before this check it reached the successor whole and

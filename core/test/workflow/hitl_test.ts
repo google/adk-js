@@ -85,7 +85,7 @@ describe('createRequestInputEvent', () => {
       interruptId: 'i1',
       message: 'pick',
       payload: {x: 1},
-      responseSchema: null,
+      response_schema: null,
     });
     expect(event.longRunningToolIds).toEqual(['i1']);
     expect(hasRequestInputFunctionCall(event)).toBe(true);
@@ -100,7 +100,7 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
   it('converts a Zod v3 responseSchema to a JSON schema', () => {
@@ -111,7 +111,7 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
   it('converts a genai Schema responseSchema to a JSON schema', () => {
@@ -126,10 +126,29 @@ describe('createRequestInputEvent', () => {
     >;
     // Emitted in the same JSON Schema dialect as a Zod responseSchema, so a
     // client reading this field does not have to handle two type spellings.
-    expect(args.responseSchema).toEqual({
+    expect(args['response_schema']).toEqual({
       type: 'object',
       properties: {answer: {type: 'string'}},
     });
+  });
+
+  it('names the schema arg the way clients read it', () => {
+    // Snake_case among camelCase neighbours, matching adk-python's
+    // `create_request_input_event`. The dev UI builds its reply form from
+    // `args.response_schema`; under any other spelling it silently falls back
+    // to a chat box, and the user answers a structured prompt with free text.
+    const args = firstFunctionCall(
+      createRequestInputEvent(
+        new RequestInput({responseSchema: z4.object({answer: z4.string()})}),
+      ),
+    )?.args as Record<string, unknown>;
+
+    expect(Object.keys(args)).toEqual([
+      'interruptId',
+      'payload',
+      'message',
+      'response_schema',
+    ]);
   });
 });
 
@@ -190,6 +209,30 @@ describe('responseSchemasByInterruptId', () => {
 
     expect(responseSchemasByInterruptId([event]).has('i1')).toBe(false);
   });
+
+  it('recovers a schema recorded under the older `responseSchema` key', () => {
+    // A session written before the key aligned with adk-python still has to
+    // resume, schema check included.
+    const event: Event = {
+      ...createRequestInputEvent(new RequestInput({interruptId: 'i1'})),
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              name: REQUEST_INPUT_FUNCTION_CALL_NAME,
+              id: 'i1',
+              args: {interruptId: 'i1', responseSchema: {type: 'object'}},
+            },
+          },
+        ],
+      },
+    };
+
+    expect(responseSchemasByInterruptId([event]).get('i1')).toEqual({
+      type: 'object',
+    });
+  });
 });
 
 describe('validateInterruptResponse', () => {
@@ -226,6 +269,20 @@ describe('validateInterruptResponse', () => {
       validateInterruptResponse('i1', 'anything', {
         $ref: 'https://example.com/unresolvable.json',
       }),
+    ).not.toThrow();
+  });
+
+  it('lets a bare-text reply through an object schema, as plain text does', () => {
+    // `{result: <text>}` is what a client with only a chat box sends — the dev
+    // UI does exactly this when it cannot render a form. Rejecting it would
+    // refuse the same answer the plain-text path accepts, and would keep
+    // refusing it: the reply stays in the session and is re-checked forever.
+    expect(() =>
+      validateInterruptResponse(
+        'i1',
+        unwrapResponse({result: 'the museum and the lunch'}),
+        objectSchema,
+      ),
     ).not.toThrow();
   });
 
