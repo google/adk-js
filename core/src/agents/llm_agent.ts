@@ -1148,7 +1148,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
-    // Yields the function response event.
     yield functionResponseEvent;
 
     // If model instruct to transfer to an agent, run the transferred agent.
@@ -1219,7 +1218,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       llmRequest.config.labels[ADK_AGENT_NAME_LABEL_KEY] = this.name;
     }
 
-    // Calls the LLM.
     const llm = this.canonicalModel;
     if (invocationContext.runConfig?.supportCfc) {
       // TODO - b/425992518: Implement CFC call path
@@ -1397,7 +1395,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           }
 
           if (modelResponseEvent.actions) {
-            // We are yielding an Event
             yield createEvent({
               invocationId: invocationContext.invocationId,
               author: this.name,

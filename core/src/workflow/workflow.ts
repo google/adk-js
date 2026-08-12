@@ -224,10 +224,8 @@ export class Workflow extends BaseNode {
     loop.rehydrated = rehydrated;
     loop.abortSignal = abortController.signal;
 
-    // --- SETUP ---
     this.seedStartTriggers(loop, nodeInput);
 
-    // --- LOOP ---
     await this.runLoop(loop, ctx, abortController);
 
     if (loop.errorShutDown) {
@@ -240,7 +238,6 @@ export class Workflow extends BaseNode {
       loop.interruptIds.add(id);
     }
 
-    // --- FINALIZE ---
     this.finalize(loop, ctx);
   }
 
