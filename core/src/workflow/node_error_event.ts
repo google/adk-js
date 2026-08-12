@@ -25,6 +25,22 @@ export function isNodeErrorEvent(event: Event): event is NodeErrorEvent {
   return 'isNodeError' in event && event.isNodeError === true;
 }
 
+const reportedInvocationIds = new WeakMap<object, string>();
+
+export function claimNodeErrorReport(
+  error: unknown,
+  invocationId: string,
+): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return true;
+  }
+  if (reportedInvocationIds.get(error) === invocationId) {
+    return false;
+  }
+  reportedInvocationIds.set(error, invocationId);
+  return true;
+}
+
 export function createNodeErrorEvent(
   params: CreateNodeErrorEventParams,
 ): NodeErrorEvent {
@@ -44,7 +60,7 @@ function errorCodeOf(error: unknown): string {
   if (typeof code === 'string' || typeof code === 'number') {
     return String(code);
   }
-  return errorName(error);
+  return 'UNKNOWN_ERROR';
 }
 
 function errorMessageOf(error: unknown): string {

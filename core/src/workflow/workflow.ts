@@ -17,7 +17,10 @@ import {
   RouteValue,
 } from './graph.js';
 import {NodeContext, NodeResult} from './node_context.js';
-import {createNodeErrorEvent} from './node_error_event.js';
+import {
+  claimNodeErrorReport,
+  createNodeErrorEvent,
+} from './node_error_event.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -317,6 +320,9 @@ export class Workflow extends BaseNode {
     error: unknown,
   ): void {
     if (isInvocationAbortedError(error) || loop.abortSignal?.aborted) {
+      return;
+    }
+    if (!claimNodeErrorReport(error, ctx.invocationId)) {
       return;
     }
     ctx.emit(

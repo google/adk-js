@@ -57,6 +57,25 @@ async function driveExpectingFailure(
   return {events, errorEvents: events.filter(isNodeErrorEvent), thrown};
 }
 
+function icWithId(invocationId: string): InvocationContext {
+  return new InvocationContext({
+    invocationId,
+    session: createSession({
+      id: 's1',
+      appName: 'app',
+      userId: 'u',
+      lastUpdateTime: Date.now(),
+    }),
+    agent: new WorkflowAgent(
+      new Workflow({
+        name: 'wf',
+        edges: [['START', new FunctionNode('n', () => null)]],
+      }),
+    ),
+    pluginManager: new PluginManager(),
+  });
+}
+
 function throwingNode(name: string, error: Error): FunctionNode {
   return new FunctionNode(name, async () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -81,7 +100,7 @@ describe('NodeErrorEvent — a failed node leaves a record', () => {
     expect(error.author).toBe('boom');
     expect(error.errorMessage).toBe('kaboom');
     expect(error.errorType).toBe('Error');
-    expect(error.errorCode).toBe('Error');
+    expect(error.errorCode).toBe('UNKNOWN_ERROR');
     expect(error.attemptCount).toBe(1);
     expect(thrown).toBe(kaboom);
   });
@@ -112,6 +131,87 @@ describe('NodeErrorEvent — a failed node leaves a record', () => {
 
     expect(errorEvents[0].errorCode).toBe('ECONNREFUSED');
     expect(errorEvents[0].errorType).toBe('TypeError');
+  });
+
+  it('falls back to a generic errorCode rather than repeating errorType', async () => {
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [['START', throwingNode('boom', new RangeError('out of range'))]],
+    });
+
+    const {errorEvents} = await driveExpectingFailure(wf, 'x');
+
+    expect(errorEvents[0].errorType).toBe('RangeError');
+    expect(errorEvents[0].errorCode).toBe('UNKNOWN_ERROR');
+  });
+});
+
+describe('NodeErrorEvent — a failure is recorded once, where it happened', () => {
+  it('reports a nested failure only at the node that threw', async () => {
+    const kaboom = new Error('kaboom');
+    const inner = new Workflow({
+      name: 'inner',
+      edges: [['START', throwingNode('leaf', kaboom)]],
+    });
+    const outer = new Workflow({name: 'outer', edges: [['START', inner]]});
+
+    const {errorEvents, thrown} = await driveExpectingFailure(outer, 'x');
+
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0].nodeInfo?.path).toBe('outer.inner.leaf');
+    expect(errorEvents[0].author).toBe('leaf');
+    expect(thrown).toBe(kaboom);
+  });
+
+  it('does not multiply the record by nesting depth', async () => {
+    const kaboom = new Error('kaboom');
+    const l3 = new Workflow({
+      name: 'l3',
+      edges: [['START', throwingNode('leaf', kaboom)]],
+    });
+    const l2 = new Workflow({name: 'l2', edges: [['START', l3]]});
+    const l1 = new Workflow({name: 'l1', edges: [['START', l2]]});
+
+    const {errorEvents} = await driveExpectingFailure(l1, 'x');
+
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0].nodeInfo?.path).toBe('l1.l2.l3.leaf');
+  });
+
+  it("reports an inner workflow's own failure at the parent, since no node threw", async () => {
+    const inner = new Workflow({
+      name: 'inner',
+      edges: [
+        [
+          'START',
+          [
+            new FunctionNode('a', async () => 'one'),
+            new FunctionNode('b', async () => 'two'),
+          ],
+        ],
+      ],
+    });
+    const outer = new Workflow({name: 'outer', edges: [['START', inner]]});
+
+    const {errorEvents} = await driveExpectingFailure(outer, 'x');
+
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0].nodeInfo?.path).toBe('outer.inner');
+    expect(errorEvents[0].errorMessage).toContain('multiple terminal nodes');
+  });
+
+  it('records the same error instance again in a different invocation', async () => {
+    const shared = new Error('shared');
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [['START', throwingNode('boom', shared)]],
+    });
+
+    const first = await driveExpectingFailure(wf, 'x', icWithId('inv-a'));
+    const second = await driveExpectingFailure(wf, 'x', icWithId('inv-b'));
+
+    expect(first.errorEvents).toHaveLength(1);
+    expect(second.errorEvents).toHaveLength(1);
   });
 });
 
@@ -244,7 +344,7 @@ describe('NodeErrorEvent — retries and timeouts', () => {
     expect(isNodeTimeoutError(thrown)).toBe(true);
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0].errorType).toBe('NodeTimeoutError');
-    expect(errorEvents[0].errorCode).toBe('NodeTimeoutError');
+    expect(errorEvents[0].errorCode).toBe('UNKNOWN_ERROR');
     expect(errorEvents[0].errorMessage).toContain('timed out');
     expect(errorEvents[0].nodeInfo?.path).toBe('wf.slow');
   });
