@@ -13,7 +13,14 @@
  * node as its input — no session-state writes needed.
  *
  * A bare return value is boxed into an `Event` carrying that `output` for you,
- * so both forms below are equivalent.
+ * so both forms below hand the next node the same thing.
+ *
+ * They do NOT render the same, though: boxing a bare return also gives the
+ * event display `content`, so `my_function_node` prints a `[my_function_node]:`
+ * line, while `add_suffix` sets `output` only and prints nothing. A node that
+ * emits no display content is invisible in the CLI — expected, and worth
+ * recognising now, because most routers later on look "skipped" for the same
+ * reason.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/routes/function_node/agent.ts
