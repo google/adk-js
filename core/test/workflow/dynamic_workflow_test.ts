@@ -136,9 +136,6 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
       const wf = new Workflow({
         name: 'sequence-ids',
         dynamicEntry: async (ctx) => {
-          // A node is built per call, but the run-id counter is keyed by node
-          // name, so the two calls are runs "1" and "2" of one node rather
-          // than run "1" of two nodes.
           const a = await ctx.runNode(step, 'a');
           const b = await ctx.runNode(step, 'b');
           return [a.output, b.output];

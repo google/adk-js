@@ -64,9 +64,6 @@ describe('workflow integration — multi-agent orchestration (LLM)', () => {
     const wf = new Workflow({
       name: 'coordinator',
       dynamicEntry: async (ctx, input) => {
-        // Agents are passed bare. An agent is itself a BaseNode, so this also
-        // pins that ctx.runNode still routes it through its wrapper -- without
-        // that, the agent runs but produces no node output.
         const research = await ctx.runNode(researcher, input);
         const report = await ctx.runNode(writer, research.output);
         return {research: research.output, report: report.output};

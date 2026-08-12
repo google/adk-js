@@ -195,8 +195,6 @@ export class NodeContext {
     input?: unknown,
     options?: RunNodeOptions,
   ): Promise<NodeContext | NodeResult> {
-    // Same builder edges use: an existing node passes through, an agent still
-    // gets its wrapper, a bare function or tool becomes a node.
     const node = buildNode(nodeLike);
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
