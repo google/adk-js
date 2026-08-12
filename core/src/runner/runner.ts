@@ -39,7 +39,7 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
-import {BaseNode} from '../workflow/base_node.js';
+import type {RunnableNode} from '../workflow/graph.js';
 import {asRootAgent} from '../workflow/workflow_agent.js';
 
 /**
@@ -59,11 +59,13 @@ export interface RunnerConfig {
   /**
    * The agent or workflow to run. Required if `app` is not provided.
    *
-   * A bare {@link BaseNode} — a `Workflow`, most usefully — is accepted as the
-   * root and adapted internally, so a graph does not have to be wrapped by hand
-   * to be run. Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
+   * A bare node — a `Workflow`, most usefully — is accepted as the root and
+   * adapted internally, so a graph does not have to be wrapped by hand to be
+   * run. The accepted set is the same one an edge and `WorkflowAgent` take, so
+   * `{agent: node}` and `{agent: new WorkflowAgent(node)}` mean the same thing.
+   * Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
    */
-  agent?: BaseAgent | BaseNode;
+  agent?: RunnableNode;
 
   /**
    * An optional list of plugins to apply globally across all agents.

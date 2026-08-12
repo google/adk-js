@@ -65,18 +65,27 @@ describe('Runner with a workflow as its root', () => {
     expect(runner.agent).toBe(agent);
   });
 
-  it('refuses a node that is not a workflow', () => {
-    // A lone node has no conversational entry point, so there is nothing to
-    // run it as — better to say so than to wrap it into something that stalls.
-    const lone = new FunctionNode('lonely', () => 'x');
+  it('runs a lone node as a one-node workflow', async () => {
+    // Same set `WorkflowAgent` accepts: the node becomes the single node of a
+    // one-node workflow, so `{agent: node}` and `{agent: new
+    // WorkflowAgent(node)}` are the same request spelled two ways.
+    const lone = new FunctionNode('lonely', (_ctx, input) => `saw:${input}`);
 
+    const {events} = await runToCompletion(lone);
+
+    expect(events.flatMap((e) => e.content?.parts ?? [])).toContainEqual(
+      expect.objectContaining({text: 'saw:go'}),
+    );
+  });
+
+  it('refuses a value that is not node-like', () => {
     expect(
       () =>
         new Runner({
           appName: 'app',
-          agent: lone,
+          agent: {name: 'fake'} as never,
           sessionService: new InMemorySessionService(),
         }),
-    ).toThrow(/only an agent or a Workflow can be one/);
+    ).toThrow(/expected a BaseAgent, a Workflow, or a node-like value/);
   });
 });

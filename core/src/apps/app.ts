@@ -6,8 +6,8 @@
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
-import {BaseNode} from '../workflow/base_node.js';
-import {asRootAgent, isRootAgentLike} from '../workflow/workflow_agent.js';
+import type {RunnableNode} from '../workflow/graph.js';
+import {asRootAgent} from '../workflow/workflow_agent.js';
 import {ResumabilityConfig} from './resumability_config.js';
 
 const VALID_APP_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -52,10 +52,11 @@ export function isApp(obj: unknown): obj is App {
 export interface AppOptions {
   name: string;
   /**
-   * The root of the application. A bare `Workflow` is accepted and adapted,
-   * so a graph does not have to be wrapped by hand to be an app root.
+   * The root of the application. A bare node — a `Workflow`, most usefully —
+   * is accepted and adapted, so a graph does not have to be wrapped by hand to
+   * be an app root. Accepts the same set a `Runner` does.
    */
-  rootAgent: BaseAgent | BaseNode;
+  rootAgent: RunnableNode;
   plugins?: BasePlugin[];
   resumabilityConfig?: ResumabilityConfig;
 }
@@ -87,18 +88,10 @@ export class App {
       throw new Error('rootAgent must be provided.');
     }
 
-    if (!isRootAgentLike(options.rootAgent)) {
-      throw new TypeError(
-        `rootAgent must be a BaseAgent or a Workflow, got ${
-          (options.rootAgent as {constructor?: {name?: string}})?.constructor
-            ?.name ?? typeof options.rootAgent
-        }`,
-      );
-    }
-
     this.name = options.name;
     // Normalized once, here, so everything downstream of an App still receives
-    // an agent.
+    // an agent. `asRootAgent` is also what validates the root, so an App
+    // accepts exactly what a `Runner` does rather than its own narrower set.
     this.rootAgent = asRootAgent(options.rootAgent);
     this.plugins = options.plugins ?? [];
     this.resumabilityConfig = options.resumabilityConfig;

@@ -9,10 +9,10 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import type {BaseNode} from './base_node.js';
-import type {RouteValue} from './graph.js';
+import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
  * The result of running a node: the fields a caller (and the engine's
@@ -155,13 +155,27 @@ export class NodeContext {
    * agent sees", so an agent run as a node (`BaseAgent.runImpl`) and one run
    * directly go through the same seam.
    *
-   * Today it hands back the node's own invocation context unchanged, which is
-   * what the agent wrapper already did. adk-python returns a copy carrying the
-   * proxy session and the isolation scope (`agents/context.py`
-   * `get_invocation_context`); matching that here means giving the agent the
-   * node's `state` view rather than letting it read through to `session.state`,
-   * which is a behaviour change for every agent and is deliberately not part of
-   * introducing the seam.
+   * It hands back the node's own invocation context unchanged, and that is the
+   * intended behaviour rather than a placeholder.
+   *
+   * adk-python's counterpart (`agents/context.py` `get_invocation_context`) is
+   * documented as returning "a copy with the proxy session", which reads as
+   * though the agent is handed a different view of state. It is not: that
+   * `Context.session` returns `self._invocation_context.session`, so the copy
+   * substitutes the same object, and `Context._state` is built directly over
+   * `session.state`. A Python agent run as a node reads session state exactly
+   * as a TypeScript one does.
+   *
+   * The other thing that copy carries — the isolation scope — is already
+   * applied by the time this runs: the node runner builds the child invocation
+   * context with the node's scope, so it is present on the object returned.
+   *
+   * That leaves the node's own `state` view, which layers this node's pending
+   * delta over an invocation-wide overlay. Nodes read through it; an agent
+   * reads `session.state`. The two agree because every write through the view
+   * is also written through to the session — see `NodeStateView` below — and
+   * the agent-node cases in `core/test/workflow/state_consistency_test.ts` pin
+   * that.
    */
   getInvocationContext(): InvocationContext {
     return this.invocationContext;
@@ -183,12 +197,19 @@ export class NodeContext {
    * When a dynamic-node {@link scheduler} is set (inside a Workflow subtree),
    * the call routes through it for dedup/resume; otherwise the child runs
    * directly.
+   *
+   * Takes anything an edge takes — an agent, a tool, a plain function, or an
+   * already-built node — and wraps it the same way the graph does, so
+   * `ctx.runNode(myAgent, input)` works without `node(myAgent)`. Wrap it
+   * yourself when you need the options `node()` carries, such as a schema or a
+   * name that differs from the value's own.
    */
   runNode(
-    node: BaseNode,
+    nodeLike: RunnableNode,
     input?: unknown,
     options?: RunNodeOptions,
   ): Promise<NodeContext | NodeResult> {
+    const node = buildNode(nodeLike);
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;

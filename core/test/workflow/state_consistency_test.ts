@@ -5,6 +5,8 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {BaseAgent} from '../../src/agents/base_agent.js';
+import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {LlmAgent} from '../../src/agents/llm_agent.js';
 import {Event} from '../../src/events/event.js';
 import {BaseLlm} from '../../src/models/base_llm.js';
@@ -38,6 +40,34 @@ class MockLlm extends BaseLlm {
 
   async connect(_request: LlmRequest): Promise<BaseLlmConnection> {
     throw new Error('not implemented');
+  }
+}
+
+/**
+ * A non-LLM agent node that records `session.state['attempts']` as it runs,
+ * reading twice across a tick so a mid-run rollback would be visible.
+ */
+class StateReaderAgent extends BaseAgent {
+  constructor(
+    config: {name: string},
+    private readonly reads: Array<number | undefined>,
+  ) {
+    super(config);
+  }
+
+  // eslint-disable-next-line require-yield
+  protected async *runAsyncImpl(
+    ctx: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    this.reads.push(ctx.session.state['attempts'] as number | undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    this.reads.push(ctx.session.state['attempts'] as number | undefined);
+    return;
+  }
+
+  // eslint-disable-next-line require-yield
+  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
+    return;
   }
 }
 
@@ -238,6 +268,65 @@ describe('workflow state consistency across nodes', () => {
     expect(readBack).toEqual({result: 'done'});
     expect(onSession).toEqual({result: 'done'});
     expect(state['summary']).toEqual({result: 'done'});
+  });
+
+  it('an agent node reads what the preceding nodes wrote', async () => {
+    // Nodes read state through `NodeContext.state`, which layers a pending
+    // delta over an invocation-wide overlay; an agent reads `session.state`
+    // instead. The two only agree because every write through the view is also
+    // written through to the session, so this pins that they do.
+    const reads: Array<number | undefined> = [];
+    const a = new FunctionNode('a', (ctx: NodeContext) => {
+      ctx.state.set('attempts', 0);
+      return 'a';
+    });
+    const b = new FunctionNode('b', (ctx: NodeContext) => {
+      ctx.state.set('attempts', (ctx.state.get<number>('attempts') ?? -1) + 1);
+      return 'b';
+    });
+    const reader = new StateReaderAgent({name: 'reader'}, reads);
+
+    const {state} = await runOnce(
+      new WorkflowAgent({
+        name: 'agent_reads_wf',
+        edges: [['START', a, b, reader]],
+      }),
+    );
+
+    // Both reads straddle a tick, so a delta re-applied by the runner's event
+    // commit mid-run would show up as a rollback here.
+    expect(reads).toEqual([1, 1]);
+    expect(state['attempts']).toBe(1);
+  });
+
+  it('an agent node reads the surviving write after parallel writers', async () => {
+    const reads: Array<number | undefined> = [];
+    const slow = new FunctionNode('slow', async (ctx: NodeContext) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      ctx.state.set('attempts', 10);
+      return 'slow';
+    });
+    const quick = new FunctionNode('quick', (ctx: NodeContext) => {
+      ctx.state.set('attempts', 20);
+      return 'quick';
+    });
+    const join = new FunctionNode('join', () => 'join');
+    const reader = new StateReaderAgent({name: 'reader'}, reads);
+
+    const {state} = await runOnce(
+      new WorkflowAgent({
+        name: 'parallel_writers_wf',
+        edges: [
+          ['START', slow, join],
+          ['START', quick, join],
+          [join, reader],
+        ],
+      }),
+    );
+
+    // Which branch wins is the workflow's business; that the agent and the
+    // committed session agree on it is not.
+    expect(reads[reads.length - 1]).toBe(state['attempts']);
   });
 
   it('serves a second invocation over the same session from committed state', () => {

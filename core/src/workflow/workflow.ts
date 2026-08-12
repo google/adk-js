@@ -37,6 +37,15 @@ import {
 } from './utils/rehydration_utils.js';
 
 /**
+ * A unique symbol branding {@link Workflow} instances.
+ *
+ * `isWorkflow` matches on this brand rather than `instanceof` so a workflow
+ * built by another copy of adk-js in the same runtime is still recognised —
+ * mirroring the `Symbol.for('google.adk.*')` brands used across ADK.
+ */
+const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.workflow');
+
+/**
  * An imperative workflow entry point. Receives the workflow's node context and
  * input, drives execution via `ctx.runNode(...)`, and returns the workflow
  * output. Mutually exclusive with `edges`.
@@ -110,8 +119,6 @@ interface CompletedTask {
   childCtx?: NodeContext | NodeResult;
   error?: unknown;
 }
-
-const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow');
 
 /**
  * A graph-based workflow node. `runImpl()` IS the orchestration loop:
@@ -673,6 +680,21 @@ export class Workflow extends BaseNode {
 }
 
 /**
+ * Type guard for {@link Workflow}.
+ *
+ * Matches on the {@link WORKFLOW_SIGNATURE_SYMBOL} brand rather than
+ * `instanceof` so it stays correct across package copies (see the brand's doc).
+ */
+export function isWorkflow(value: unknown): value is Workflow {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    WORKFLOW_SIGNATURE_SYMBOL in value &&
+    value[WORKFLOW_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * Creates the workflow-scoped {@link AbortController} that cancels in-flight
  * nodes when the workflow shuts down on error. It is chained to the invocation's
  * own abort signal (if any) so an invocation-level cancel still propagates to
@@ -696,21 +718,4 @@ function createWorkflowAbort(parentSignal?: AbortSignal): {
     controller,
     dispose: () => parentSignal.removeEventListener('abort', onParentAbort),
   };
-}
-
-/**
- * Type guard for {@link Workflow}.
- *
- * Matches on the brand rather than `instanceof`, so a workflow stays
- * recognisable across a package boundary — two copies of adk-js in one runtime
- * would fail an `instanceof` check between them. Mirrors `isBaseNode`,
- * `isBaseAgent` and `isGraphWorkflowAgent`.
- */
-export function isWorkflow(value: unknown): value is Workflow {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    WORKFLOW_SIGNATURE_SYMBOL in value &&
-    value[WORKFLOW_SIGNATURE_SYMBOL] === true
-  );
 }

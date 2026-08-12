@@ -97,7 +97,7 @@ describe('App', () => {
           name: 'test_app',
           rootAgent: {name: 'fake'} as unknown as BaseAgent,
         }),
-    ).toThrow(/rootAgent must be a BaseAgent or a Workflow/);
+    ).toThrow(/expected a BaseAgent, a Workflow, or a node-like value/);
   });
 
   it('accepts a bare Workflow as the root and adapts it', () => {
