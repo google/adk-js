@@ -344,6 +344,26 @@ describe('AgentGraph — graph WorkflowAgent', () => {
     );
   });
 
+  it('cannot be handed two separate edges with the same endpoints', () => {
+    const classify = node(noopHandler, {name: 'classify'});
+    const send = node(noopHandler, {name: 'send'});
+
+    // The renderer emits one DOT statement per `Edge` into a `strict` graph, so
+    // two edges sharing endpoints would be merged by graphviz and lose a label.
+    // Core forbids that shape, so a routing map with two routes to one node
+    // never reaches the renderer at all.
+    expect(
+      () =>
+        new Workflow({
+          name: 'router',
+          edges: [
+            ['START', classify],
+            [classify, {yes: send, no: send}],
+          ],
+        }),
+    ).toThrow(/Duplicate edge found: from=classify, to=send/);
+  });
+
   it('renders a nested workflow as a recursive cluster', async () => {
     const inner = new Workflow({
       name: 'inner',
@@ -369,6 +389,29 @@ describe('AgentGraph — graph WorkflowAgent', () => {
     expect(nodeBlock(dot, 'outer.inner.step')).toContain('label = "⚙️ step"');
     expect(dot).toContain('"outer.pre" -> "outer.inner.__START__"');
     expect(dot).toContain('"outer.inner.step" -> "outer.post"');
+  });
+
+  it('anchors an edge out of a workflow that ends in another workflow', async () => {
+    const leaf = new Workflow({
+      name: 'leaf',
+      edges: [['START', node(noopHandler, {name: 'deep'})]],
+    });
+    const middle = new Workflow({
+      name: 'middle',
+      edges: [['START', node(noopHandler, {name: 'mid'}), leaf]],
+    });
+    const outer = new Workflow({
+      name: 'outer',
+      edges: [['START', middle, node(noopHandler, {name: 'post'})]],
+    });
+
+    const dot = await renderDot(new WorkflowAgent(outer));
+
+    // The tail is the real leaf node, not the `outer.middle.leaf` cluster id,
+    // which no drawn node carries.
+    expect(dot).toContain('"outer.middle.leaf.deep" -> "outer.post"');
+    expect(dot).not.toContain('"outer.middle.leaf" -> "outer.post"');
+    expect(dot).not.toContain('"outer.middle" -> "outer.post"');
   });
 
   it('shape-codes agent, tool, join and parallel-worker nodes', async () => {
@@ -502,6 +545,23 @@ describe('AgentGraph — workflow execution highlights', () => {
     expect(getWorkflowHighlights(events, events[2])).toEqual([
       ['wf.one', 'wf.two'],
     ]);
+  });
+
+  it('highlights a parallel-worker box for an event from one of its items', async () => {
+    const fanout = node(noopHandler, {name: 'fanout', parallelWorker: true});
+    const parallel = new Workflow({
+      name: 'wf',
+      edges: [['START', fanout]],
+    });
+    // A `ParallelWorker` item runs at `<node path>.<inner name>@<index>`, so the
+    // event path sits one level below the box that is actually drawn.
+    const events = [nodeEvent('inv-1', 'wf.fanout.fanout@0')];
+
+    const highlights = getWorkflowHighlights(events, events[0]);
+    expect(highlights).toEqual([['wf.fanout.fanout', '']]);
+
+    const dot = await renderDot(new WorkflowAgent(parallel), highlights!);
+    expect(nodeBlock(dot, 'wf.fanout')).toContain('fillcolor = "#0F5223"');
   });
 
   it('returns undefined for an event that no workflow node produced', () => {

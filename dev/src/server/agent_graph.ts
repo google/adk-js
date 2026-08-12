@@ -306,13 +306,13 @@ function drawWorkflowNode(
     return;
   }
 
+  const {icon, shape} = classifyWorkflowNode(node);
   cluster.addNode(
     new Node(id, {
-      label: getWorkflowNodeCaption(node),
-      ...workflowNodeStyle(
-        getWorkflowNodeShape(node),
-        isHighlightedNode(id, highlightsPairs),
-      ),
+      label: `${icon} ${node.name}`,
+      // Prefix, not exact: a `ParallelWorker` item runs at
+      // `<node path>.<inner name>@<i>`, so its events land below the drawn box.
+      ...workflowNodeStyle(shape, isHighlightedWithin(id, highlightsPairs)),
     }),
   );
 }
@@ -323,6 +323,10 @@ function drawWorkflowEdges(
   path: string,
   highlightsPairs: Array<[string, string]>,
 ) {
+  // No grouping by endpoint pair is needed before emitting into the `strict`
+  // root graph: `validateDuplicateEdges` rejects a second edge with the same
+  // `from`/`to` at construction, so two routes to one node arrive as a single
+  // multi-route `Edge` and are joined by `getRouteLabels`.
   for (const edge of graph.edges) {
     const from = workflowNodeId(edge.fromNode, path);
     const to = workflowNodeId(edge.toNode, path);
@@ -364,8 +368,10 @@ function workflowExitAnchorId(node: BaseNode, path: string): string {
       nestedGraph.terminalNodeNames.has(n.name),
     );
 
+    // Recurse: a terminal node can itself be a nested workflow, and its id is a
+    // cluster id that no drawn node carries.
     return terminal
-      ? workflowNodeId(terminal, id)
+      ? workflowExitAnchorId(terminal, id)
       : workflowEntryAnchorId(node, path);
   }
 
@@ -373,7 +379,7 @@ function workflowExitAnchorId(node: BaseNode, path: string): string {
 }
 
 function getRouteLabels(route: RouteValue | RouteValue[] | null): string[] {
-  if (route === null || route === undefined) {
+  if (route == null) {
     return [];
   }
 
@@ -397,18 +403,15 @@ function workflowNodeStyle(
   };
 }
 
-function isHighlightedNode(
-  name: string,
-  highlightsPairs: Array<[string, string]>,
-): boolean {
-  return (highlightsPairs ?? []).some((pair) => pair.includes(name));
-}
-
+/**
+ * Whether an event highlights `path` itself or anything running below it.
+ * Sibling names differ at every level, so the `.` guard cannot over-match.
+ */
 function isHighlightedWithin(
   path: string,
   highlightsPairs: Array<[string, string]>,
 ): boolean {
-  return (highlightsPairs ?? []).some((pair) =>
+  return highlightsPairs.some((pair) =>
     pair.some((name) => name === path || name.startsWith(`${path}.`)),
   );
 }
@@ -418,7 +421,7 @@ function isHighlightedEdge(
   toName: string,
   highlightsPairs: Array<[string, string]>,
 ): boolean {
-  return (highlightsPairs ?? []).some(
+  return highlightsPairs.some(
     ([from, to]) => from === fromName && to === toName,
   );
 }
@@ -445,44 +448,29 @@ function getNodeField(node: BaseNode, field: string): unknown {
   return (node as unknown as Record<string, unknown>)[field];
 }
 
-function getWorkflowNodeCaption(node: BaseNode): string {
+/**
+ * Detects what a node is, structurally — the dev server loads the user's agent
+ * module, which may resolve its own copy of `@google/adk`, so `instanceof` is
+ * not available. Caption and shape come from one pass so they cannot drift.
+ */
+function classifyWorkflowNode(node: BaseNode): {icon: string; shape: string} {
   if (isBaseAgent(getNodeField(node, 'agent'))) {
-    return `🤖 ${node.name}`;
+    return {icon: '🤖', shape: 'ellipse'};
   }
 
   if (isBaseTool(getNodeField(node, 'tool'))) {
-    return `🔧 ${node.name}`;
+    return {icon: '🔧', shape: 'box'};
   }
 
   if ('maxParallelWorkers' in node) {
-    return `🧵 ${node.name}`;
+    return {icon: '🧵', shape: 'box3d'};
   }
 
   if (node.requiresAllPredecessors) {
-    return `🔗 ${node.name}`;
+    return {icon: '🔗', shape: 'hexagon'};
   }
 
-  if (typeof getNodeField(node, 'handler') === 'function') {
-    return `⚙️ ${node.name}`;
-  }
-
-  return node.name;
-}
-
-function getWorkflowNodeShape(node: BaseNode): string {
-  if (isBaseAgent(getNodeField(node, 'agent'))) {
-    return 'ellipse';
-  }
-
-  if ('maxParallelWorkers' in node) {
-    return 'box3d';
-  }
-
-  if (node.requiresAllPredecessors) {
-    return 'hexagon';
-  }
-
-  return 'box';
+  return {icon: '⚙️', shape: 'box'};
 }
 
 export function getWorkflowHighlights(
