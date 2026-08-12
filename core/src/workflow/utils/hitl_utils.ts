@@ -43,9 +43,6 @@ export {
  */
 const RESPONSE_SCHEMA_ARG = 'response_schema';
 
-/** The pre-alignment spelling, still found in sessions written by older runs. */
-const LEGACY_RESPONSE_SCHEMA_ARG = 'responseSchema';
-
 /**
  * Creates an interrupt {@link Event} from a {@link RequestInput}. The event
  * carries an `adk_request_input` function call and marks the interrupt id as a
@@ -79,16 +76,6 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
 }
 
 /**
- * Reads the JSON Schema off an `adk_request_input` call's args, under either
- * spelling (see {@link RESPONSE_SCHEMA_ARG}).
- */
-function readResponseSchemaArg(
-  args: Record<string, unknown> | undefined,
-): unknown {
-  return args?.[RESPONSE_SCHEMA_ARG] ?? args?.[LEGACY_RESPONSE_SCHEMA_ARG];
-}
-
-/**
  * Collects the `responseSchema` each pending interrupt declared, keyed by
  * interrupt id, as the JSON Schema recorded on its `adk_request_input` call.
  *
@@ -106,9 +93,9 @@ export function responseSchemasByInterruptId(
       if (fc?.name !== REQUEST_INPUT_FUNCTION_CALL_NAME || !fc.id) {
         continue;
       }
-      const schema = readResponseSchemaArg(
-        fc.args as Record<string, unknown> | undefined,
-      );
+      const schema = (fc.args as Record<string, unknown> | undefined)?.[
+        RESPONSE_SCHEMA_ARG
+      ];
       if (schema) {
         schemas.set(fc.id, schema);
       }

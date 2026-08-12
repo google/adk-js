@@ -209,30 +209,6 @@ describe('responseSchemasByInterruptId', () => {
 
     expect(responseSchemasByInterruptId([event]).has('i1')).toBe(false);
   });
-
-  it('recovers a schema recorded under the older `responseSchema` key', () => {
-    // A session written before the key aligned with adk-python still has to
-    // resume, schema check included.
-    const event: Event = {
-      ...createRequestInputEvent(new RequestInput({interruptId: 'i1'})),
-      content: {
-        role: 'model',
-        parts: [
-          {
-            functionCall: {
-              name: REQUEST_INPUT_FUNCTION_CALL_NAME,
-              id: 'i1',
-              args: {interruptId: 'i1', responseSchema: {type: 'object'}},
-            },
-          },
-        ],
-      },
-    };
-
-    expect(responseSchemasByInterruptId([event]).get('i1')).toEqual({
-      type: 'object',
-    });
-  });
 });
 
 describe('validateInterruptResponse', () => {
