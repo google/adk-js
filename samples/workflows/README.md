@@ -31,16 +31,19 @@ locally:
 npm run ts:check:samples
 ```
 
-CI also executes them, in `tests/integration/workflows/docs_*/`, one directory
-per sample alongside the other workflow integration tests. Each holds a
-vendored copy of the sample's `agent.ts` — keep the two in sync when you change
-one — so a test is self-contained, exactly like the neighbouring
-`route/`, `sequence/` and `dynamic_nodes/` directories.
+CI also executes them, in `tests/integration/workflows/docs_*/`, alongside the
+other workflow integration tests. Each holds a vendored copy of the sample's
+`agent.ts` — keep the two in sync when you change one — so a test is
+self-contained, exactly like the neighbouring `route/`, `sequence/` and
+`dynamic_nodes/` directories.
 
-Every sample is constructed, which is itself a check (a `WorkflowAgent`
-validates its graph in its constructor). The ones that call no model are run
-end-to-end with the model stubbed out, so a stray model call fails too, and the
-three `dynamic/` samples that do call a model run against a
+Not every sample has one. A sample whose behaviour `core_workflows/` already
+covers as a primitive — a linear chain, `DEFAULT_ROUTE`, a `JoinNode` barrier,
+a `ctx.runNode` orchestrator, session state, a nested workflow, the two-node
+HITL handoff — is not duplicated here. The rest are: samples that are
+constructed only (a `WorkflowAgent` validates its graph in its constructor),
+samples run end-to-end with the model stubbed out so a stray model call fails,
+and the three `dynamic/` samples that call a model and run against a
 `model_responses.json` recorded beside their test.
 
 ```bash
