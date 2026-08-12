@@ -31,23 +31,29 @@ locally:
 npm run ts:check:samples
 ```
 
-CI also executes them, in `tests/integration/docs_samples/`, one test directory
-per sample: every sample is constructed (a `WorkflowAgent` validates its graph
-in its constructor), and the offline ones are run end-to-end with the model
-stubbed out, so a stray model call in one of them fails too. The three
-`dynamic/` samples that call a model are run as well, against a
-`model_responses.json` recorded beside their test. A new sample directory has to
-gain a test directory there, or `coverage_test.ts` fails it for being uncovered.
+CI also executes them, in `tests/integration/workflows/docs_*/`, one directory
+per sample alongside the other workflow integration tests. Each holds a
+vendored copy of the sample's `agent.ts` — keep the two in sync when you change
+one — so a test is self-contained, exactly like the neighbouring
+`route/`, `sequence/` and `dynamic_nodes/` directories.
 
-Re-record one of those fixtures after changing its sample (needs a key):
+Every sample is constructed, which is itself a check (a `WorkflowAgent`
+validates its graph in its constructor). The ones that call no model are run
+end-to-end with the model stubbed out, so a stray model call fails too, and the
+three `dynamic/` samples that do call a model run against a
+`model_responses.json` recorded beside their test.
+
+```bash
+npx vitest run --project integration tests/integration/workflows
+```
+
+Re-record a fixture after changing its sample (needs a key), the same way as
+the other workflow samples — `npm run record:samples` re-records all of them,
+so point vitest at the one directory instead:
 
 ```bash
 RECORD_MODEL_RESPONSES=1 npx vitest run --project integration \
-  tests/integration/docs_samples/dynamic_loop_route
-```
-
-```bash
-npx vitest run --project integration tests/integration/docs_samples
+  tests/integration/workflows/docs_dynamic_loop_route
 ```
 
 The CLI is interactive: type a message and press Enter to send it to the
