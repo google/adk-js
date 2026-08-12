@@ -133,10 +133,6 @@ describe('createRequestInputEvent', () => {
   });
 
   it('names the schema arg the way clients read it', () => {
-    // Snake_case among camelCase neighbours, matching adk-python's
-    // `create_request_input_event`. The dev UI builds its reply form from
-    // `args.response_schema`; under any other spelling it silently falls back
-    // to a chat box, and the user answers a structured prompt with free text.
     const args = firstFunctionCall(
       createRequestInputEvent(
         new RequestInput({responseSchema: z4.object({answer: z4.string()})}),
@@ -249,10 +245,6 @@ describe('validateInterruptResponse', () => {
   });
 
   it('lets a bare-text reply through an object schema, as plain text does', () => {
-    // `{result: <text>}` is what a client with only a chat box sends — the dev
-    // UI does exactly this when it cannot render a form. Rejecting it would
-    // refuse the same answer the plain-text path accepts, and would keep
-    // refusing it: the reply stays in the session and is re-checked forever.
     expect(() =>
       validateInterruptResponse(
         'i1',

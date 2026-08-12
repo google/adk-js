@@ -107,8 +107,6 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
           kind: 'input',
           message: asString(args['message']),
           payload: args['payload'] ?? undefined,
-          // Snake_case on the wire, unlike its neighbours; see
-          // `RESPONSE_SCHEMA_ARG` in `workflow/utils/hitl_utils`.
           responseSchema: args['response_schema'] ?? undefined,
         });
         break;
