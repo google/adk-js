@@ -74,10 +74,17 @@ describe('createAgent', () => {
     vi.clearAllMocks();
     (isCancel as unknown as Mock).mockReturnValue(false);
     (listFiles as Mock).mockResolvedValue(['file1', 'file2']);
+    // `createAgent` prefers these over `gcloud config`, so a machine with
+    // either one exported takes a different path through the code than the one
+    // under test. Clear them: what this suite asserts has to come from its own
+    // mocks, not from the environment that happens to be running it.
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe('Non-interactive Mode (forceYes: true)', () => {
@@ -222,6 +229,35 @@ describe('createAgent', () => {
         expect.stringContaining('.env'),
         expect.stringContaining('GOOGLE_CLOUD_PROJECT=gcloud-project'),
       );
+    });
+
+    it('should prefer the environment over gcloud defaults', async () => {
+      // The precedence the test above depends on NOT being in play. It is real
+      // behaviour, so pin it here rather than leave it to whatever the machine
+      // running the suite happens to export.
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'env-region');
+
+      (select as Mock).mockResolvedValueOnce('gemini-2.5-flash');
+      (select as Mock).mockResolvedValueOnce('ts');
+      (select as Mock).mockResolvedValueOnce('vertex'); // Backend
+
+      (execSync as Mock).mockImplementation((cmd: string) => {
+        if (cmd.includes('project')) return 'gcloud-project\n';
+        if (cmd.includes('region')) return 'gcloud-region\n';
+        return '';
+      });
+
+      (text as Mock).mockResolvedValueOnce('env-project');
+      (text as Mock).mockResolvedValueOnce('env-region');
+
+      await createAgent(getFreshOptions());
+
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({initialValue: 'env-project'}),
+      );
+      // `gcloud config` is not consulted at all when the env supplies both.
+      expect(execSync).not.toHaveBeenCalled();
     });
 
     it('should exit without writing files if project prompt is cancelled', async () => {
