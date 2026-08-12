@@ -48,6 +48,7 @@ export function removeClientFunctionCallId(content: Content): void {
  * @param events: A list of all session events.
  * @param agentName: The name of the agent.
  * @param currentBranch: The current branch of the agent.
+ * @param currentIsolationScope: The isolation scope of the current node, if any.
  *
  * @returns A list of processed contents.
  */
@@ -55,6 +56,7 @@ export function getContents(
   events: Event[],
   agentName: string,
   currentBranch?: string,
+  currentIsolationScope?: string,
 ): Content[] {
   const filteredEvents: Event[] = [];
 
@@ -77,6 +79,10 @@ export function getContents(
       event.branch &&
       !isSegmentPrefix(currentBranch, event.branch)
     ) {
+      continue;
+    }
+
+    if (isOutsideIsolationScope(event, currentIsolationScope)) {
       continue;
     }
 
@@ -129,16 +135,43 @@ export function getCurrentTurnContents(
   events: Event[],
   agentName: string,
   currentBranch?: string,
+  currentIsolationScope?: string,
 ): Content[] {
   // Find the latest event that starts the current turn and process from there.
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    if (isOutsideIsolationScope(event, currentIsolationScope)) {
+      continue;
+    }
     if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
-      return getContents(events.slice(i), agentName, currentBranch);
+      return getContents(
+        events.slice(i),
+        agentName,
+        currentBranch,
+        currentIsolationScope,
+      );
     }
   }
 
   return [];
+}
+
+/**
+ * Whether an event belongs to a different isolation scope than the one asking
+ * for it, and so must be withheld.
+ *
+ * A tagged event is visible only within its own scope; an untagged event is
+ * shared history and visible everywhere. So an isolated node sees the ambient
+ * conversation plus its own turns, while its peers never see those turns.
+ */
+function isOutsideIsolationScope(
+  event: Event,
+  currentIsolationScope?: string,
+): boolean {
+  return (
+    event.isolationScope !== undefined &&
+    event.isolationScope !== currentIsolationScope
+  );
 }
 
 /**

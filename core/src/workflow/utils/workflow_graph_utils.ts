@@ -24,6 +24,8 @@ export interface BuildNodeOptions {
   outputSchema?: SchemaLike;
   stateSchema?: SchemaLike;
   authConfig?: AuthConfig;
+  /** Runs the node's subtree in an isolated conversation scope. */
+  isolationScope?: string | true;
   /** If true, wrap the built node in a parallel worker. */
   parallelWorker?: boolean;
   /** Concurrency limit for the parallel worker (requires `parallelWorker`). */
