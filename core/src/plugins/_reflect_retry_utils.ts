@@ -25,6 +25,9 @@ export type PerItemFailuresCounter = Map<string, number>;
 
 /**
  * Response containing tool failure details and retry guidance.
+ *
+ * Field names use snake_case to match the model-facing reflection payload schema
+ * and maintain parity with ADK Python.
  */
 export interface ToolFailureResponse {
   response_type: string;
@@ -32,6 +35,7 @@ export interface ToolFailureResponse {
   error_details: string;
   retry_count: number;
   reflection_guidance: string;
+  [key: string]: unknown;
 }
 
 /**

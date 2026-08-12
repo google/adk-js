@@ -13,7 +13,7 @@ import {
 } from '../../src/plugins/_reflect_retry_utils.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {ReflectAndRetryToolPlugin} from '../../src/plugins/reflect_retry_tool_plugin.js';
-import {BaseTool} from '../../src/tools/base_tool.js';
+import {BaseTool, RunAsyncToolRequest} from '../../src/tools/base_tool.js';
 
 class MockWeatherTool extends BaseTool {
   callCount = 0;
@@ -25,9 +25,9 @@ class MockWeatherTool extends BaseTool {
     });
   }
 
-  override async runAsync(
-    args: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  override async runAsync({
+    args,
+  }: RunAsyncToolRequest): Promise<Record<string, unknown>> {
     this.callCount++;
     if (!args['city'] || typeof args['city'] !== 'string') {
       throw new Error(
@@ -52,9 +52,9 @@ class MockFlightTool extends BaseTool {
     });
   }
 
-  override async runAsync(
-    args: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  override async runAsync({
+    args,
+  }: RunAsyncToolRequest): Promise<Record<string, unknown>> {
     this.callCount++;
     if (!args['destination']) {
       throw new Error("Parameter 'destination' is required.");
@@ -104,7 +104,10 @@ describe('ReflectAndRetryToolPlugin Integration Flow', () => {
     let toolResult: Record<string, unknown> | undefined;
 
     try {
-      toolResult = await weatherTool.runAsync(invalidArgs);
+      toolResult = (await weatherTool.runAsync({
+        args: invalidArgs,
+        toolContext,
+      })) as Record<string, unknown>;
     } catch (err) {
       toolResult = await pluginManager.runOnToolErrorCallback({
         tool: weatherTool,
@@ -127,7 +130,10 @@ describe('ReflectAndRetryToolPlugin Integration Flow', () => {
 
     // Turn 2: LLM reflects on the guidance, fixes arguments to {"city": "New York"}
     const correctedArgs = {city: 'New York'};
-    const successResult = await weatherTool.runAsync(correctedArgs);
+    const successResult = (await weatherTool.runAsync({
+      args: correctedArgs,
+      toolContext,
+    })) as Record<string, unknown>;
 
     // afterToolCallback notifies plugin of success -> resets failure count
     await pluginManager.runAfterToolCallback({
@@ -186,7 +192,10 @@ describe('ReflectAndRetryToolPlugin Integration Flow', () => {
     expect(flightErr2!['retry_count']).toBe(2);
 
     // Weather tool succeeds and resets
-    const weatherOk = await weatherTool.runAsync({city: 'Tokyo'});
+    const weatherOk = (await weatherTool.runAsync({
+      args: {city: 'Tokyo'},
+      toolContext,
+    })) as Record<string, unknown>;
     await pluginManager.runAfterToolCallback({
       tool: weatherTool,
       toolArgs: {city: 'Tokyo'},

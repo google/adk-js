@@ -105,19 +105,6 @@ describe('ReflectAndRetryToolPlugin', () => {
       expect(plugin.scope).toBe(TrackingScope.GLOBAL);
     });
 
-    it('should initialize with positional arguments', () => {
-      const plugin = new ReflectAndRetryToolPlugin(
-        'positional_plugin',
-        2,
-        false,
-        TrackingScope.GLOBAL,
-      );
-      expect(plugin.name).toBe('positional_plugin');
-      expect(plugin.maxRetries).toBe(2);
-      expect(plugin.throwExceptionIfRetryExceeded).toBe(false);
-      expect(plugin.scope).toBe(TrackingScope.GLOBAL);
-    });
-
     it('should throw error for negative maxRetries', () => {
       expect(() => new ReflectAndRetryToolPlugin({maxRetries: -1})).toThrow(
         'maxRetries must be a non-negative integer.',

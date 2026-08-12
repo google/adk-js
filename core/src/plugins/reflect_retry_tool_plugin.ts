@@ -92,49 +92,20 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
   /**
    * Initializes the {@link ReflectAndRetryToolPlugin}.
    *
-   * @param optionsOrName - Configuration options or plugin name.
-   * @param maxRetries - Optional max retries if positional arguments are used.
-   * @param throwExceptionIfRetryExceeded - Optional flag if positional arguments are used.
-   * @param trackingScope - Optional tracking scope if positional arguments are used.
+   * @param options - Configuration options for the plugin.
    */
-  constructor(
-    optionsOrName?: ReflectAndRetryToolPluginOptions | string,
-    maxRetries?: number,
-    throwExceptionIfRetryExceeded?: boolean,
-    trackingScope?: TrackingScope,
-  ) {
-    let name = 'reflect_retry_tool_plugin';
-    let retries = 3;
-    let throwEx = true;
-    let scope = TrackingScope.INVOCATION;
+  constructor(options: ReflectAndRetryToolPluginOptions = {}) {
+    super(options.name ?? 'reflect_retry_tool_plugin');
 
-    if (typeof optionsOrName === 'string') {
-      name = optionsOrName;
-      if (maxRetries !== undefined) retries = maxRetries;
-      if (throwExceptionIfRetryExceeded !== undefined)
-        throwEx = throwExceptionIfRetryExceeded;
-      if (trackingScope !== undefined) scope = trackingScope;
-    } else if (optionsOrName && typeof optionsOrName === 'object') {
-      if (optionsOrName.name !== undefined) name = optionsOrName.name;
-      if (optionsOrName.maxRetries !== undefined)
-        retries = optionsOrName.maxRetries;
-      if (optionsOrName.throwExceptionIfRetryExceeded !== undefined) {
-        throwEx = optionsOrName.throwExceptionIfRetryExceeded;
-      }
-      if (optionsOrName.trackingScope !== undefined) {
-        scope = optionsOrName.trackingScope;
-      }
-    }
-
-    super(name);
-
+    const retries = options.maxRetries ?? 3;
     if (retries < 0) {
       throw new Error('maxRetries must be a non-negative integer.');
     }
 
     this.maxRetries = retries;
-    this.throwExceptionIfRetryExceeded = throwEx;
-    this.scope = scope;
+    this.throwExceptionIfRetryExceeded =
+      options.throwExceptionIfRetryExceeded ?? true;
+    this.scope = options.trackingScope ?? TrackingScope.INVOCATION;
     this.tracker = new ScopedFailureTracker();
   }
 
@@ -191,16 +162,8 @@ export class ReflectAndRetryToolPlugin extends BasePlugin {
    * @param params - Tool execution context and result.
    * @returns The extracted error if any, or undefined if no error was detected.
    */
-  async extractErrorFromResult({
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    tool,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    toolArgs,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    toolContext,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    result,
-  }: {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async extractErrorFromResult(params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
@@ -373,7 +336,7 @@ Formulate a new plan based on your analysis and try a corrected or different app
       reflection_guidance: reflectionMessage,
     };
 
-    return response as unknown as Record<string, unknown>;
+    return response;
   }
 
   /**
@@ -417,6 +380,6 @@ ${argsSummary}
       reflection_guidance: reflectionMessage,
     };
 
-    return response as unknown as Record<string, unknown>;
+    return response;
   }
 }

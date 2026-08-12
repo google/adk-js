@@ -64,57 +64,23 @@ export class ReflectAndRetryModelPlugin extends BasePlugin {
   /**
    * Initializes the {@link ReflectAndRetryModelPlugin}.
    *
-   * @param optionsOrName - Configuration options or plugin name.
-   * @param maxRetries - Optional max retries if positional arguments are used.
-   * @param throwExceptionIfRetryExceeded - Optional flag if positional arguments are used.
-   * @param trackingScope - Optional tracking scope if positional arguments are used.
-   * @param onModelErrors - Optional list of finish reasons to treat as errors.
+   * @param options - Configuration options for the plugin.
    */
-  constructor(
-    optionsOrName?: ReflectAndRetryModelPluginOptions | string,
-    maxRetries?: number,
-    throwExceptionIfRetryExceeded?: boolean,
-    trackingScope?: TrackingScope,
-    onModelErrors?: FinishReason[],
-  ) {
-    let name = 'reflect_retry_model_plugin';
-    let retries = 3;
-    let throwEx = true;
-    let scope = TrackingScope.INVOCATION;
-    let modelErrors: FinishReason[] = [FinishReason.MALFORMED_FUNCTION_CALL];
+  constructor(options: ReflectAndRetryModelPluginOptions = {}) {
+    super(options.name ?? 'reflect_retry_model_plugin');
 
-    if (typeof optionsOrName === 'string') {
-      name = optionsOrName;
-      if (maxRetries !== undefined) retries = maxRetries;
-      if (throwExceptionIfRetryExceeded !== undefined)
-        throwEx = throwExceptionIfRetryExceeded;
-      if (trackingScope !== undefined) scope = trackingScope;
-      if (onModelErrors !== undefined) modelErrors = onModelErrors;
-    } else if (optionsOrName && typeof optionsOrName === 'object') {
-      if (optionsOrName.name !== undefined) name = optionsOrName.name;
-      if (optionsOrName.maxRetries !== undefined)
-        retries = optionsOrName.maxRetries;
-      if (optionsOrName.throwExceptionIfRetryExceeded !== undefined) {
-        throwEx = optionsOrName.throwExceptionIfRetryExceeded;
-      }
-      if (optionsOrName.trackingScope !== undefined) {
-        scope = optionsOrName.trackingScope;
-      }
-      if (optionsOrName.onModelErrors !== undefined) {
-        modelErrors = optionsOrName.onModelErrors;
-      }
-    }
-
-    super(name);
-
+    const retries = options.maxRetries ?? 3;
     if (retries < 0) {
       throw new Error('maxRetries must be a non-negative integer.');
     }
 
     this.maxRetries = retries;
-    this.throwExceptionIfRetryExceeded = throwEx;
-    this.scope = scope;
-    this.onModelErrors = modelErrors;
+    this.throwExceptionIfRetryExceeded =
+      options.throwExceptionIfRetryExceeded ?? true;
+    this.scope = options.trackingScope ?? TrackingScope.INVOCATION;
+    this.onModelErrors = options.onModelErrors ?? [
+      FinishReason.MALFORMED_FUNCTION_CALL,
+    ];
     this.tracker = new ScopedFailureTracker();
   }
 
