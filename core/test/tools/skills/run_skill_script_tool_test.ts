@@ -11,6 +11,7 @@ import {
   Context,
   ExecuteCodeParams,
   File,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   RunSkillScriptTool,
@@ -206,12 +207,12 @@ describe('RunSkillScriptTool', () => {
 
   it('calls materializeFiles with output files from executor', async () => {
     const mockExecutor = new MockCodeExecutor();
-    const testFile = {
+    const testFile: File = {
       name: 'output.txt',
       content: 'hello',
-      contentEncoding: 'utf8',
+      contentEncoding: FileContentEncoding.UTF8,
       mimeType: 'text/plain',
-    } as File;
+    };
     mockExecutor.mockResult = {
       stdout: '',
       stderr: '',

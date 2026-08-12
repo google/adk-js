@@ -151,7 +151,20 @@ export class InMemorySessionService extends BaseSessionService {
     page,
     order,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
-    if (!this.sessions[appName] || !this.sessions[appName][userId]) {
+    const appSessions = this.sessions[appName];
+    // An omitted `userId` lists every user's sessions, the same as the
+    // filter-less branches in `VertexAiSessionService` and
+    // `DatabaseSessionService`.
+    const sessionsByUser =
+      appSessions === undefined
+        ? []
+        : userId === undefined
+          ? Object.values(appSessions)
+          : appSessions[userId]
+            ? [appSessions[userId]]
+            : [];
+
+    if (sessionsByUser.length === 0) {
       if (limit !== undefined) {
         const effectiveOffset =
           page !== undefined ? (page - 1) * limit : (offset ?? 0);
@@ -178,8 +191,8 @@ export class InMemorySessionService extends BaseSessionService {
       });
     }
 
-    const all: Session[] = Object.values(this.sessions[appName][userId]).map(
-      (session) =>
+    const all: Session[] = sessionsByUser.flatMap((sessionsById) =>
+      Object.values(sessionsById).map((session) =>
         createSession({
           id: session.id,
           appName: session.appName,
@@ -188,6 +201,7 @@ export class InMemorySessionService extends BaseSessionService {
           events: [],
           lastUpdateTime: session.lastUpdateTime,
         }),
+      ),
     );
 
     if (order === 'asc') {

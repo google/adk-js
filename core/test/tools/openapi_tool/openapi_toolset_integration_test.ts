@@ -52,11 +52,11 @@ describe('OpenAPIToolset Integration', () => {
     expect(getProfileTool).toBeTruthy();
 
     const mockResponse = {status: 'success', data: {confirmed: true}};
-    vi.mocked(globalThis.fetch).mockResolvedValue({
-      ok: true,
-      headers: {get: () => 'application/json'},
-      json: async () => mockResponse,
-    });
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), {
+        headers: {'content-type': 'application/json'},
+      }),
+    );
 
     // Mock context
     const mockContext = {
@@ -87,11 +87,11 @@ describe('OpenAPIToolset Integration', () => {
     const tools = await toolset.getTools();
     const getProfileTool = tools.find((t) => t.name === 'get_profile');
 
-    vi.mocked(globalThis.fetch).mockResolvedValue({
-      ok: true,
-      headers: {get: () => 'text/plain'},
-      text: async () => 'plain text response',
-    });
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response('plain text response', {
+        headers: {'content-type': 'text/plain'},
+      }),
+    );
 
     const mockContext = {
       getAuthResponse: vi.fn().mockReturnValue(undefined),

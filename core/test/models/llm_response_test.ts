@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {FinishReason, GenerateContentResponse} from '@google/genai';
+import {
+  BlockedReason,
+  FinishReason,
+  GenerateContentResponse,
+} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {createLlmResponse} from '../../src/models/llm_response.js';
 
@@ -143,7 +147,7 @@ describe('createLlmResponse', () => {
     it('returns blockReason as errorCode', () => {
       const response = makeResponse({
         promptFeedback: {
-          blockReason: 'SAFETY',
+          blockReason: BlockedReason.SAFETY,
           blockReasonMessage: 'blocked by safety',
         },
       });
@@ -154,7 +158,7 @@ describe('createLlmResponse', () => {
     it('returns blockReasonMessage as errorMessage', () => {
       const response = makeResponse({
         promptFeedback: {
-          blockReason: 'OTHER',
+          blockReason: BlockedReason.OTHER,
           blockReasonMessage: 'other reason',
         },
       });
@@ -165,7 +169,10 @@ describe('createLlmResponse', () => {
     it('includes usageMetadata in the prompt feedback response', () => {
       const usageMetadata = {totalTokenCount: 5};
       const response = makeResponse({
-        promptFeedback: {blockReason: 'SAFETY', blockReasonMessage: ''},
+        promptFeedback: {
+          blockReason: BlockedReason.SAFETY,
+          blockReasonMessage: '',
+        },
         usageMetadata,
       });
       const result = createLlmResponse(response);
@@ -174,7 +181,10 @@ describe('createLlmResponse', () => {
 
     it('does not set content', () => {
       const response = makeResponse({
-        promptFeedback: {blockReason: 'SAFETY', blockReasonMessage: ''},
+        promptFeedback: {
+          blockReason: BlockedReason.SAFETY,
+          blockReasonMessage: '',
+        },
       });
       const result = createLlmResponse(response);
       expect(result.content).toBeUndefined();

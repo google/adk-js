@@ -138,7 +138,7 @@ describe('workflow integration — mid-graph HITL resume', () => {
 
 describe('workflow integration — multi-trigger fan-in with JoinNode', () => {
   it('joins three parallel branches produced from START', async () => {
-    const mk = (name: string): FunctionNode =>
+    const mk = (name: string) =>
       new FunctionNode(name, (_c, i: string) => `${name}:${i}`);
     const join = new JoinNode({name: 'join'});
     const wf = new Workflow({
@@ -155,7 +155,7 @@ describe('workflow integration — multi-trigger fan-in with JoinNode', () => {
 
 describe('workflow integration — parallel branches emit independent events', () => {
   it('streams events from all parallel branches', async () => {
-    const mk = (name: string): FunctionNode =>
+    const mk = (name: string) =>
       new FunctionNode(name, (_c, i: string) => `${name}(${i})`);
     const join = new JoinNode({name: 'join'});
     const wf = new Workflow({

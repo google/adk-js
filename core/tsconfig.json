@@ -2,7 +2,10 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist/types"
+    "outDir": "dist/types",
+    // Reset the root config's test-only path aliases: a published build must
+    // resolve @google/adk through node_modules, not the sibling sources.
+    "paths": {}
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

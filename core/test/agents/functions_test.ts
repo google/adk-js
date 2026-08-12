@@ -709,7 +709,6 @@ describe('getLongRunningFunctionCalls', () => {
         isLongRunning: false,
       }),
     };
-    // @ts-expect-error ts will argue about toolsDict because getLongRunningFunctionCalls is improted from the source and BaseTool is imported from '@google/adk'.
     const result = getLongRunningFunctionCalls(functionCalls, toolsDict);
     expect(result.has('call-1')).toBe(true);
     expect(result.has('call-2')).toBe(false);
