@@ -5,28 +5,15 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Dynamic workflows: get started
  * https://adk.dev/graphs/dynamic/#get-started
- *
- *   @node(name="hello_node")
- *   def my_node(node_input: Any):
- *       return "Hello World"
- *
- *   @node(rerun_on_resume=True)
- *   async def my_workflow(ctx: Context, node_input: str) -> str:
- *       result = await ctx.run_node(my_node, node_input="hello")
- *       return result
- *
- *   root_agent = Workflow(name="root_agent", edges=[("START", my_workflow)])
  *
  * A dynamic workflow drops the static edge graph and orchestrates in plain
  * code: an outer node calls `ctx.runNode(child, input)` to execute children in
  * whatever order your loops and conditionals dictate.
  *
- * TypeScript differences from Python:
- *   - There is no `@node` decorator. `node(fn, options)` is the factory form.
- *   - `ctx.runNode()` resolves to a node RESULT, so read `.output` (Python
- *     returns the output directly).
+ * Two things to know going in:
+ *   - `ctx.runNode()` resolves to a node RESULT, so read `.output`.
  *   - An orchestrator that calls `ctx.runNode` must set `rerunOnResume: true`,
  *     so its body re-runs on resume and already-finished children are replayed
  *     from their checkpoints rather than executed again.

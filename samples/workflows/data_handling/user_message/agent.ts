@@ -5,19 +5,15 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * User-facing messages
  * https://adk.dev/graphs/data-handling/#user-facing-messages
  *
- *   async def user_message(node_input: str):
- *     yield Event(message="Beginning research process...")
- *
- * `message` is for the human, `output` is for the next node. TypeScript events
- * have no `message` field: a user-facing message is the event's `content`, which
- * the runtime renders but the graph does NOT forward as node input.
+ * A message for the human is the event's `content`: the runtime renders it, and
+ * the graph does NOT forward it as node input. `content` is for the user,
+ * `output` is for the next node.
  *
  * Because the first node below emits content only, the next node's input is
- * `undefined` — exactly the Python behaviour of a node that yields a message
- * and no output.
+ * `undefined`.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/data_handling/user_message/agent.ts
@@ -25,7 +21,7 @@
 
 import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
 
-/** Emits a user-facing message (Python's `Event(message=...)`). */
+/** Emits a user-facing message: `content`, with no `output`. */
 const message = (text: string) =>
   createEvent({content: {role: 'model', parts: [{text}]}});
 

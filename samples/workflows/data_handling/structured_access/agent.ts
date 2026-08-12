@@ -5,17 +5,10 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Access structured data in agents
  * https://adk.dev/graphs/data-handling/#access-structured-data-in-agents
  *
- *   instruction="""
- *       Return a sentence in the following format:
- *       It is <CityTime.time_info from lookup_time_function> in
- *       <CityTime.city from lookup_time_function> right now.
- *   """
- *
- * adk-js supports Python's data-selection syntax verbatim in agent
- * instructions:
+ * Two data-selection forms are available inside an agent instruction:
  *
  *   {Class.field}                    reads a field off THIS node's input
  *   <Class.field from source_node>   reads a field off a named predecessor's

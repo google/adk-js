@@ -5,20 +5,11 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Constrain node data with schemas
  * https://adk.dev/graphs/data-handling/#constrain-node-data-with-schemas
  *
- *   flight_searcher = Agent(
- *       name="flight_searcher",
- *       instruction="Search for available flights.",
- *       input_schema=FlightSearchInput,
- *       output_schema=FlightSearchOutput,
- *       tools=[search_flights_api],
- *       mode="single_turn",
- *   )
- *
- * Schemas constrain what a node accepts and produces. Python uses pydantic
- * `BaseModel`s; TypeScript uses Zod objects (a genai `Schema` also works).
+ * Schemas constrain what a node accepts and produces. Use a Zod object, or a
+ * genai `Schema`.
  *
  * Where the schema goes:
  *   - `LlmAgent.outputSchema` forces the model to answer in that shape.

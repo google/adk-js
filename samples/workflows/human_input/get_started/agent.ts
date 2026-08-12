@@ -5,22 +5,13 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Human input: get started
  * https://adk.dev/graphs/human-input/#get-started
- *
- *   def step1():                              # Human input step
- *     yield RequestInput(message="Enter a number:")
- *
- *   def step2(node_input):
- *     return node_input * 2
- *
- *   root_agent = Workflow(name="root_agent", edges=[('START', step1, step2)])
  *
  * `step1` pauses the workflow until the user replies; the reply is then handed
  * to the next node as its input. This is the default `rerunOnResume: false`
  * handoff: the interrupted node does NOT re-run — it completes with the user's
- * reply as its output. (For the re-entry variant, where the paused node itself
- * re-runs and receives the reply, see samples/workflows/dynamic/human_input.)
+ * reply as its output.
  *
  * A HITL node needs no model, which makes the pause fully deterministic.
  *

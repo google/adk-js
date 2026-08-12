@@ -5,7 +5,7 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Graph workflows: get started
  * https://adk.dev/graphs/#get-started
  *
  * A sequential graph workflow that alternates between AI reasoning and plain
@@ -32,7 +32,7 @@ const cityGeneratorAgent = new LlmAgent({
       Return only the name, nothing else.`,
 });
 
-/** Python: `class CityTime(BaseModel)`. */
+/** The structured payload handed from the lookup node to the report agent. */
 const cityTimeSchema = z.object({
   timeInfo: z.string().describe('Time information.'),
   city: z.string().describe('City name.'),
@@ -47,17 +47,15 @@ function lookupTimeFunction(_ctx: NodeContext, nodeInput: string): CityTime {
 const cityReportAgent = new LlmAgent({
   name: 'city_report_agent',
   model: 'gemini-2.5-flash',
-  // `{CityTime.<field>}` selects a field off THIS node's input. adk-js supports
-  // Python's data-selection syntax verbatim; the `CityTime.` prefix is
-  // documentation, only the field name after the dot is resolved.
+  // `{CityTime.<field>}` selects a field off THIS node's input. The `CityTime.`
+  // prefix is documentation, only the field name after the dot is resolved.
   instruction: `Output the following line:
     It is {CityTime.timeInfo} in {CityTime.city} right now.`,
 });
 
 function completedMessageFunction(_ctx: NodeContext, nodeInput: string) {
-  // Python's `Event(message=...)`. TypeScript events have no `message` field —
-  // a user-facing message is the event's `content` (and, unlike `output`, it is
-  // not handed to the next node).
+  // A user-facing message is the event's `content` which, unlike `output`, is
+  // not handed to the next node.
   return createEvent({
     content: {
       role: 'model',
@@ -76,8 +74,7 @@ export const rootAgent = new WorkflowAgent({
         name: 'lookup_time_function',
         outputSchema: cityTimeSchema,
       }),
-      // Python declares `input_schema=CityTime` on the Agent. In a graph the
-      // validating schema belongs to the node wrapping the agent — an
+      // The validating schema belongs to the node wrapping the agent — an
       // `LlmAgent.inputSchema` is only used when the agent is exposed as a tool.
       node(cityReportAgent, {inputSchema: cityTimeSchema}),
       node(completedMessageFunction, {name: 'completed_message_function'}),

@@ -5,11 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Node output: passing structured data
  * https://adk.dev/graphs/data-handling/#node-output-passing-structured-data
- *
- *   def my_function_node_3():
- *       yield Event(output={"city_name": "Paris", "city_time": "10:10 AM"})
  *
  * `output` is not limited to text — any serializable value flows to the next
  * node, which receives it as a typed object. Attaching an `outputSchema` to the

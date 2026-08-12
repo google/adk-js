@@ -5,24 +5,13 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Session state and state scopes
  * https://adk.dev/graphs/data-handling/#session-state-and-state-scopes
  *
- *   async def init_state_node(attempts: int = 0):
- *     yield Event(state={"attempts": attempts})
- *
- *   async def task_attempt_node(node_input: Content, attempts: int):
- *     yield Event(state={"attempts": attempts + 1})
- *
- *   async def read_state_node(ctx: Context):
- *     print(f"attempts state: {ctx.state}")   # attempts state: attempts: 1
- *
- * Python binds state values to named function parameters by signature
- * introspection. TypeScript nodes take an explicit `(ctx, input)` pair instead,
- * so you read and write the same session state through `ctx.state`. A write is
- * visible to every later node in the same run, and is committed with the
- * writing node's events — so `attempts` can be incremented by one node and read
- * back by another, exactly as the snippet does.
+ * A node takes an explicit `(ctx, input)` pair and reads and writes session
+ * state through `ctx.state`. A write is visible to every later node in the same
+ * run, and is committed with the writing node's events — so `attempts` below is
+ * initialized by one node, incremented by a second and read back by a third.
  *
  * State-key prefixes control lifetime and scope:
  *   "app:<key>"   shared across all users and sessions of the app

@@ -5,22 +5,13 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Parallel execution routes
  * https://adk.dev/graphs/dynamic/#parallel-execution-routes
  *
- *   @node(rerun_on_resume=True)
- *   async def parallel_supervisor(ctx, node_input: list[Any], real_node):
- *       tasks = []
- *       for item in node_input:
- *           # ctx.run_node returns a future. Append instead of awaiting.
- *           tasks.append(ctx.run_node(real_node, item))
- *       results = await asyncio.gather(*tasks)
- *       return results
- *
  * `ctx.runNode()` returns a promise, so starting every child before awaiting any
- * of them runs them concurrently — `Promise.all` is the `asyncio.gather`
- * equivalent. Run ids are assigned in CALL order, so kick the children off in a
- * synchronous loop to keep them deterministic across a resume.
+ * of them runs them concurrently, and `Promise.all` gathers the results. Run
+ * ids are assigned in CALL order, so kick the children off in a synchronous
+ * loop to keep them deterministic across a resume.
  *
  * Resuming parallel nodes: on resume only the failed or interrupted workers
  * re-execute; children that already completed are replayed from their

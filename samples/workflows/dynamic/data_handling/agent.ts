@@ -5,22 +5,15 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Data handling in a dynamic workflow
  * https://adk.dev/graphs/dynamic/#data-handling
- *
- *   @node(rerun_on_resume=True)
- *   async def editorial_workflow(ctx: Context, user_request: str):
- *       raw_draft = await ctx.run_node(draft_agent, user_request)
- *       formatted_text = await ctx.run_node(format_function_node, raw_draft)
- *       return formatted_text
  *
  * Passing data in a dynamic workflow is simpler than in a graph: `ctx.runNode()`
  * hands you the child's result directly, so there are no session-state keys to
- * read and write just to move a value one step downstream.
+ * read and write just to move a value one step downstream. It resolves to a
+ * node result, so read `.output`.
  *
- * In TypeScript `ctx.runNode()` resolves to a node result — read `.output`.
- *
- * REQUIRES an API key (draft_agent calls a live model). Set GEMINI_API_KEY:
+ * REQUIRES an API key (the draft agent calls a live model). Set GEMINI_API_KEY:
  *   npm run sample -- samples/workflows/dynamic/data_handling/agent.ts
  * Try "a short paragraph about why graphs beat long prompts".
  */

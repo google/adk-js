@@ -5,29 +5,21 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Node output
  * https://adk.dev/graphs/data-handling/#node-output
- *
- *   def my_function_node(node_input: str):
- *       output_value = node_input.upper()
- *       return Event(output=output_value)   # "THE RESULT"
  *
  * A node hands data to its successor through the event's `output` field. Three
  * equivalent ways to produce it:
  *
- *   1. return a bare value            — boxed into `Event(output=value)` for you
+ *   1. return a bare value            — boxed into an event's `output` for you
  *   2. return `createEvent({output})` — the explicit form, when you also need
  *                                       `route`, `content`, or `actions`
  *   3. yield from a generator         — to stream progress alongside the result
  *
- * Caution: emit `output` from ONE event per execution — but nothing enforces
- * that here, so getting it wrong is silent. A node may yield any number of
- * events carrying `output`; each one overwrites the last, and the successor
- * receives only the final value. The Python page describes two other
- * behaviours, and neither holds in TypeScript: it says each `yield` "adds to a
- * list of data objects on the Event", and then cautions that two yields
- * carrying `Event.output` are "a runtime error". There is no list and no
- * error — just last-write-wins. Carry progress on `content` instead.
+ * Caution: emit `output` from ONE event per execution. Nothing enforces that,
+ * so getting it wrong is silent — a node may yield any number of events
+ * carrying `output`, each overwrites the last, and the successor receives only
+ * the final value. Carry progress on `content` instead.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/data_handling/node_output/agent.ts

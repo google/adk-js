@@ -5,21 +5,13 @@
  */
 
 /**
- * TypeScript port of the Python snippets in
- * https://adk.dev/graphs/dynamic/#node and
+ * Nodes, and the workflows that compose them
+ * https://adk.dev/graphs/dynamic/#node
  * https://adk.dev/graphs/dynamic/#workflows
  *
- *   @node(name="hello_node")
- *   def my_function_node(node_input: Any):
- *       return "Hello World"
+ * The two ways to build a node:
  *
- *   # ...the same thing without the decorator:
- *   success_node = FunctionNode(my_function_node, name="hello",
- *                               rerun_on_resume=True)
- *
- * The two ways to build a node, and how an orchestrator composes them.
- *
- *   node(fn, options)                     the factory — Python's `@node`
+ *   node(fn, options)                     the factory form
  *   new FunctionNode(name, fn, config)    the explicit constructor
  *
  * Reach for the explicit constructor when you are wrapping a function from
@@ -37,7 +29,7 @@ function myFunctionNode(_ctx: NodeContext, nodeInput: unknown): string {
   return `Hello ${nodeInput ?? 'World'}`;
 }
 
-// Form 1 — the `node()` factory (Python's `@node(name="hello_node")`).
+// Form 1 — the `node()` factory.
 const helloNode = node(myFunctionNode, {name: 'hello_node'});
 
 // Form 2 — the explicit constructor, same function, different configuration.

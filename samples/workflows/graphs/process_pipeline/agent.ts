@@ -5,7 +5,7 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Build processes with graphs
  * https://adk.dev/graphs/#build-processes-with-graphs
  *
  * A prompt-based agent turned into a graph: one agent classifies the message,
@@ -35,8 +35,8 @@ const processMessage = new LlmAgent({
       Reply with the categories only, nothing else.`,
 });
 
-// Python: `return Event(route=routes)`. A route array fires EVERY branch whose
-// route key matches one of the listed values (multi-route dispatch).
+// A route ARRAY fires every branch whose route key matches one of the listed
+// values (multi-route dispatch), rather than just the first match.
 const router = node(
   (_ctx: NodeContext, nodeInput: string) =>
     createEvent({
@@ -48,7 +48,7 @@ const router = node(
   {name: 'router'},
 );
 
-/** Emits a user-facing message (Python's `Event(message=...)`). */
+/** Emits a user-facing message: `content`, with no `output`. */
 const message = (text: string) =>
   createEvent({content: {role: 'model', parts: [{text}]}});
 

@@ -5,14 +5,14 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Route branches and conditional execution
  * https://adk.dev/graphs/routes/#route-branches-and-conditional-execution
  *
  * Branching is a node that emits a `route`, plus an edge row mapping each route
  * value to the node that handles it. A branch target can be anything node-like:
  * `task_B_node` here is an `LlmAgent`, `task_C_node` a plain function.
  *
- * The docs snippet leaves `task_A_node` and `condition()` undefined; this port
+ * The docs page leaves `task_A_node` and `condition()` undefined; this sample
  * defines them (the condition is "the input mentions a number").
  *
  * REQUIRES an API key when the RUN_TASK_B branch is taken (it calls a live

@@ -5,10 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Custom execution IDs
  * https://adk.dev/graphs/dynamic/#custom-execution-ids
- *
- *   task = ctx.run_node(process_order, order, run_id=f"order-{order.order_id}")
  *
  * ADK gives every child execution a deterministic id derived from the parent id
  * and a per-node-name counter ("1", "2", "3", ...). Those ids are how a resumed

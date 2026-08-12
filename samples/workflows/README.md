@@ -1,16 +1,15 @@
 # Graph workflow samples
 
-Runnable TypeScript ports of the **Python** code snippets in the ADK
-[Graph Workflows docs](https://adk.dev/graphs/). One directory per snippet,
-grouped by the docs page it comes from, so a sample directory maps 1:1 to a
-section anchor on adk.dev.
+Runnable TypeScript workflows for each section of the ADK
+[Graph Workflows docs](https://adk.dev/graphs/). One directory per section,
+grouped by the page it belongs to, so a sample directory maps 1:1 to a section
+anchor on adk.dev.
 
-Each directory exports a `rootAgent` that runs with the ADK CLI. The docs
-snippets are fragments — they reference helpers they never define (`condition()`,
-`task_A_node`, …) — so each port fills those in with the smallest plausible
-implementation and says so in its header comment. Everything else follows the
-Python source as closely as the TypeScript API allows; where the two genuinely
-differ, the file comments say why.
+Each directory exports a `rootAgent` that runs with the ADK CLI. The code on
+the docs pages is written to illustrate one idea at a time, so it leaves
+helpers undefined (`condition()`, `task_A_node`, …); each sample fills those in
+with the smallest plausible implementation and says so in its header comment,
+which also links the section it covers.
 
 ## Running
 
@@ -119,24 +118,24 @@ interactively.
 | `data_handling`  | [Data handling](https://adk.dev/graphs/dynamic/#data-handling)                                         | `editorial_workflow`: agent → function, no state keys              | ✅  |
 | `sequence_route` | [Sequence route](https://adk.dev/graphs/dynamic/#sequence-route)                                       | `city_workflow`: sequential `runNode` calls + schemas              | ✅  |
 | `loop_route`     | [Loop route](https://adk.dev/graphs/dynamic/#loop-route)                                               | A real `while` loop (generate → lint → fix), bounded               | ✅  |
-| `parallel_route` | [Parallel execution routes](https://adk.dev/graphs/dynamic/#parallel-execution-routes)                 | `Promise.all` fan-out (the `asyncio.gather` equivalent)            | —   |
+| `parallel_route` | [Parallel execution routes](https://adk.dev/graphs/dynamic/#parallel-execution-routes)                 | `Promise.all` fan-out over a list of items                         | —   |
 | `human_input`    | [Human input](https://adk.dev/graphs/dynamic/#human-input)                                             | HITL inside an orchestrator; the leaf keeps `rerunOnResume: false` | —   |
 | `custom_run_ids` | [Custom execution IDs](https://adk.dev/graphs/dynamic/#custom-execution-ids)                           | `ctx.runNode(..., {runId})` for a reorderable collection           | —   |
 
-## Python → TypeScript differences
+## Worth knowing
 
-The ports are faithful in structure; these are the places where the API itself
-differs, all called out again in the affected sample's header comment.
+Behaviour that is easy to get wrong, each called out again in the affected
+sample's header comment.
 
-- **No `@node` decorator.** `node(fn, options)` is the factory form; the
+- **Two ways to build a node.** `node(fn, options)` is the factory form; the
   explicit `new FunctionNode(name, fn, config)` constructor is also public.
-- **No `Event.message`.** Python's `Event(message=...)` becomes an event with
-  `content` — rendered to the user, and NOT passed to the next node.
-- **No `Event(state=...)`.** Write through `ctx.state`; the accumulated delta is
-  attached to the node's events.
-- **No signature-based injection.** Python binds `node_input`/state values to
-  named parameters by introspection. TypeScript handlers always take
-  `(ctx, input)` and read state explicitly via `ctx.state`.
+- **A user-facing message is the event's `content`,** which the runtime renders
+  and the graph does NOT pass to the next node. Data for the next node goes in
+  `output`.
+- **State is written through `ctx.state`,** not returned; the accumulated delta
+  is attached to the node's events.
+- **A handler always takes `(ctx, input)`** and reads state explicitly through
+  `ctx.state`. Nothing is injected by parameter name.
 - **A workflow's input is a `string` only for a text-only turn** — for anything
   else the entry node is handed the raw `Content`. Every entry node here
   declares `nodeInput: string` and calls string methods on it directly, so a
@@ -147,24 +146,21 @@ differs, all called out again in the affected sample's header comment.
 - **`ctx.runNode()` resolves to a node _result_,** not the output directly — read
   `.output`. It also does not throw when a child interrupts: check
   `.interruptIds` and bail out (see `dynamic/human_input`).
-- **A second `output` event overwrites the first, silently.** The Python page
-  gives two accounts of emitting `output` more than once from a node — each
-  `yield` "adds to a list of data objects on the Event", and two yields carrying
-  `Event.output` are "a runtime error". Neither is what happens here: there is
-  no list and no error, the last event to set `output` wins, and the successor
-  never sees the rest. Emit it once (see `data_handling/node_output`).
+- **A second `output` event overwrites the first, silently.** A node may emit
+  any number of events carrying `output`; nothing throws, the last one wins,
+  and the successor never sees the rest. Emit it once
+  (see `data_handling/node_output`).
 - **`LlmAgent.inputSchema` is not the node's input contract.** It is only used
   when the agent is exposed as a tool. Inside a graph, put the validating schema
   on the node: `node(agent, {inputSchema})`.
-- **Schemas are Zod objects** (or a genai `Schema`) rather than pydantic models.
-- **`{Class.field}` and `<Class.field from source_node>` work verbatim** — the
-  Python data-selection syntax is supported (see `data_handling/structured_access`).
+- **Schemas are Zod objects,** or a genai `Schema`.
+- **`{Class.field}` and `<Class.field from source_node>`** select a field off
+  this node's input, or off a named predecessor's output, inside an agent
+  instruction (see `data_handling/structured_access`).
 
 ## See also
 
 The `tests/integration/workflows/*/agent.ts` files are a second, larger set of
-workflow examples — TypeScript ports of Python's
-[`contributing/samples/workflows`](https://github.com/google/adk-python/tree/main/contributing/samples/workflows),
-each paired with a record/replay integration test. They cover surface these
-docs snippets do not: retries, parallel workers, auth (API key and OAuth),
-node-as-tool, `task` mode, and multi-trigger nodes.
+workflow examples, each paired with a record/replay integration test. They
+cover surface these docs sections do not: retries, parallel workers, auth (API
+key and OAuth), node-as-tool, `task` mode, and multi-trigger nodes.

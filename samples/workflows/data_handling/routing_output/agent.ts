@@ -5,11 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Routing output
  * https://adk.dev/graphs/data-handling/#routing-output
- *
- *   def router(node_input: str):
- *       return Event(route="BUG")
  *
  * `route` is the event field that drives conditional edge dispatch — it is
  * independent of `output`, so a router can select a branch AND forward a payload

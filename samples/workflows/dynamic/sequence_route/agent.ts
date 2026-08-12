@@ -5,16 +5,9 @@
  */
 
 /**
- * TypeScript port of the Python snippets in
- * https://adk.dev/graphs/dynamic/#data-handling (the `CityTime` variant) and
+ * Sequence route
  * https://adk.dev/graphs/dynamic/#sequence-route
- *
- *   @node # workflow node
- *   async def city_workflow(ctx: Context):
- *       city = await ctx.run_node(city_generator_agent)
- *       city_time = await ctx.run_node(city_time_function, city)
- *       report_text = await ctx.run_node(city_report_agent, city_time)
- *       return report_text
+ * https://adk.dev/graphs/dynamic/#data-handling (the `CityTime` variant)
  *
  * A sequential route in a dynamic workflow is just awaiting `ctx.runNode()`
  * calls one after another — each finishes before the next starts. Schemas work
