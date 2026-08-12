@@ -389,6 +389,7 @@ export {
   isNodeState,
   isNodeTimeoutError,
   isRequestInput,
+  isWorkflow,
   node,
   normalizeRetryExceptions,
   prepareRetryConfig,

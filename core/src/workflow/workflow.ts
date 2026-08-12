@@ -111,6 +111,8 @@ interface CompletedTask {
   error?: unknown;
 }
 
+const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.workflow');
+
 /**
  * A graph-based workflow node. `runImpl()` IS the orchestration loop:
  * SETUP (seed START triggers) → LOOP (schedule ready nodes, handle
@@ -122,6 +124,9 @@ interface CompletedTask {
  */
 @experimental
 export class Workflow extends BaseNode {
+  /** Brand identifying this object as a {@link Workflow} (see `isWorkflow`). */
+  readonly [WORKFLOW_SIGNATURE_SYMBOL] = true;
+
   readonly graph?: Graph;
   readonly dynamicEntry?: DynamicEntry;
   readonly maxConcurrency?: number;
@@ -691,4 +696,21 @@ function createWorkflowAbort(parentSignal?: AbortSignal): {
     controller,
     dispose: () => parentSignal.removeEventListener('abort', onParentAbort),
   };
+}
+
+/**
+ * Type guard for {@link Workflow}.
+ *
+ * Matches on the brand rather than `instanceof`, so a workflow stays
+ * recognisable across a package boundary — two copies of adk-js in one runtime
+ * would fail an `instanceof` check between them. Mirrors `isBaseNode`,
+ * `isBaseAgent` and `isGraphWorkflowAgent`.
+ */
+export function isWorkflow(value: unknown): value is Workflow {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    WORKFLOW_SIGNATURE_SYMBOL in value &&
+    value[WORKFLOW_SIGNATURE_SYMBOL] === true
+  );
 }

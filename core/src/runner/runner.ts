@@ -7,7 +7,7 @@
 import {Content, createPartFromText, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
@@ -40,7 +40,7 @@ import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
 import {BaseNode, isBaseNode} from '../workflow/base_node.js';
-import {Workflow} from '../workflow/workflow.js';
+import {isWorkflow} from '../workflow/workflow.js';
 import {WorkflowAgent} from '../workflow/workflow_agent.js';
 
 /**
@@ -156,10 +156,10 @@ export function isRunner(obj: unknown): obj is Runner {
  * is *not* an agent, leaving agents on the classic path.
  */
 function asRootAgent(root: BaseAgent | BaseNode): BaseAgent {
-  if (root instanceof BaseAgent) {
+  if (isBaseAgent(root)) {
     return root;
   }
-  if (root instanceof Workflow) {
+  if (isWorkflow(root)) {
     return new WorkflowAgent(root);
   }
   // A node that is neither an agent nor a workflow has no conversational entry
