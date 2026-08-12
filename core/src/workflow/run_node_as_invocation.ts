@@ -5,15 +5,25 @@
  */
 
 import {Content} from '@google/genai';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {BaseNode, toContent} from './base_node.js';
+import type {RunnableNode} from './graph.js';
 import {NodeContext} from './node_context.js';
 import {
   eventsForCurrentRun,
   reconstructNodeStates,
 } from './utils/rehydration_utils.js';
+import {buildNode, isNodeLike} from './utils/workflow_graph_utils.js';
+import {isWorkflow, Workflow} from './workflow.js';
+
+/**
+ * What can be run as the root of an invocation: an agent, or a `Workflow` the
+ * runner drives as a node. See {@link isRunnableRoot}.
+ */
+export type RunnableRoot = BaseAgent | Workflow;
 
 /** Options for {@link runNodeAsInvocation}. */
 export interface RunNodeAsInvocationOptions {
@@ -34,10 +44,9 @@ export interface RunNodeAsInvocationOptions {
  * input from the user's message, and pump the channel.
  *
  * adk-python does the same work in `Runner._run_node_async`, over
- * `ic._event_queue` rather than a local queue. It lives as a free function here
- * because two callers need it: the runner, for a `Workflow` handed to it
- * directly, and `WorkflowAgent`, which is now only a thin agent-shaped wrapper
- * around this.
+ * `ic._event_queue` rather than a local queue. It lives as a free function
+ * rather than a method because the runner is not its only caller: anything that
+ * has to run a node as a whole invocation goes through here.
  */
 export async function* runNodeAsInvocation(
   node: BaseNode,
@@ -175,4 +184,66 @@ function extractNodeInput(content?: Content): unknown {
     return parts.map((p) => p.text).join('');
   }
   return content;
+}
+
+/**
+ * Whether a value is already a root, and so is worth handing to
+ * {@link asRunnableRoot}.
+ *
+ * An agent always is. A `Workflow` is because the runner drives it as a node
+ * rather than running it through `runAsync`.
+ *
+ * Used where a root is *discovered* rather than passed — the agent loader
+ * sifting a module's exports — so a workflow export is found the same way an
+ * agent export is.
+ *
+ * Deliberately narrower than what {@link asRunnableRoot} accepts: a passed root
+ * is a statement of intent, while a discovered one is a guess, and every module
+ * exports functions that are not meant to be the app.
+ */
+export function isRunnableRoot(value: unknown): value is RunnableRoot {
+  return isBaseAgent(value) || isWorkflow(value);
+}
+
+/**
+ * Normalizes whatever was handed in as a root into a {@link RunnableRoot}.
+ *
+ * An agent and a workflow are both roots already and pass through as
+ * themselves. Anything else node-like — a tool, a plain function, an
+ * already-built node — becomes the single node of a one-node workflow, exactly
+ * what `edges: [['START', value]]` spells by hand, so `{agent: node}` and
+ * `{agent: new Workflow({edges: [['START', node]]})}` are the same request
+ * spelled two ways.
+ *
+ * The value is built before it reaches the graph parser, which would build it
+ * anyway, because the built node is what carries the name and description the
+ * wrapping workflow takes.
+ *
+ * @throws if `root` is not something an edge would accept.
+ */
+export function asRunnableRoot(root: RunnableNode): RunnableRoot {
+  if (isRunnableRoot(root)) {
+    return root;
+  }
+  // Guard the untyped callers (the agent loader reads whatever a module
+  // exports). Widened to `unknown` because the guard is for values the type
+  // already excludes.
+  const value: unknown = root;
+  if (!isNodeLike(value) || value === 'START') {
+    const described =
+      value === 'START'
+        ? "the 'START' sentinel"
+        : ((value as {constructor?: {name?: string}})?.constructor?.name ??
+          typeof value);
+    throw new TypeError(
+      `Cannot use ${described} as a root: expected a BaseAgent, a Workflow, ` +
+        'or a node-like value (a node, a tool, or a function).',
+    );
+  }
+  const built = buildNode(value);
+  return new Workflow({
+    name: built.name,
+    description: built.description,
+    edges: [['START', built]],
+  });
 }

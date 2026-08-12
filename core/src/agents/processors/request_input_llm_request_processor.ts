@@ -176,7 +176,7 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
   }
 
   // Plain-text fallback: map the latest plain-text user turn to pending
-  // interrupts (mirrors WorkflowAgent's interactive resume).
+  // interrupts (mirrors a workflow root's interactive resume).
   const pending = pendingInterruptIds(events, responseSchemas);
   if (pending.size === 0) {
     return {};

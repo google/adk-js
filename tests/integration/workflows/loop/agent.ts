@@ -15,13 +15,7 @@
  * Enter a topic, e.g. "the ocean" (loops until the headline is tech-related).
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const feedbackSchema = z.object({
@@ -70,7 +64,7 @@ const routeHeadline = node(
   {name: 'route_headline'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     ['START', processInput, generateHeadline, evaluateHeadline, routeHeadline],

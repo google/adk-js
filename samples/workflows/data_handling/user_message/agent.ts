@@ -19,7 +19,7 @@
  *   npm run sample -- samples/workflows/data_handling/user_message/agent.ts
  */
 
-import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {createEvent, node, NodeContext, Workflow} from '@google/adk';
 
 /** Emits a user-facing message: `content`, with no `output`. */
 const message = (text: string) =>
@@ -49,7 +49,7 @@ const report = node(
   {name: 'report'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'user_message_workflow',
   edges: [['START', userMessage, research, report]],
 });

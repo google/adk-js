@@ -20,13 +20,7 @@
  * Try "hello there" (workflow B) or "HELLO THERE" (workflow C).
  */
 
-import {
-  createEvent,
-  node,
-  NodeContext,
-  Workflow,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, node, NodeContext, Workflow} from '@google/adk';
 
 const taskA1 = node(
   (_ctx: NodeContext, nodeInput: string) => nodeInput.trim(),
@@ -76,7 +70,7 @@ const workflowC = new Workflow({
   ],
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'parent_workflow',
   edges: [
     ['START', taskA1, router],

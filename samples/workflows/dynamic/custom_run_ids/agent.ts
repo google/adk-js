@@ -25,7 +25,7 @@
  *   npm run sample -- samples/workflows/dynamic/custom_run_ids/agent.ts
  */
 
-import {node, NodeContext, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, Workflow} from '@google/adk';
 
 interface Order {
   orderId: string;
@@ -64,7 +64,7 @@ const processAllOrders = node(
   {name: 'process_all_orders', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', processAllOrders]],
 });

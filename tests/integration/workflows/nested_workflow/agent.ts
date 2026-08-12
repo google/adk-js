@@ -23,7 +23,6 @@ import {
   node,
   NodeContext,
   Workflow,
-  WorkflowAgent,
 } from '@google/adk';
 
 const processInput = node(
@@ -91,7 +90,7 @@ const aggregateResults = node(
   {name: 'aggregate_results'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

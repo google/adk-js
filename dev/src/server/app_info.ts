@@ -13,7 +13,6 @@ import {
   Graph as WorkflowGraph,
   isBaseAgent,
   isBaseTool,
-  isGraphWorkflowAgent,
   isLlmAgent,
 } from '@google/adk';
 
@@ -88,16 +87,11 @@ function isWorkflowGraph(value: unknown): value is WorkflowGraph {
 }
 
 /**
- * The {@link Workflow} a target holds, if any: either a `WorkflowAgent`'s
- * adapted workflow or a workflow used directly as a node. Mirrors
- * `agent_graph.ts`'s `asWorkflow` so the JSON tree and the DOT agree on what
- * counts as a workflow.
+ * The {@link Workflow} a target is, if it is one — as a root or as a node of an
+ * enclosing graph. Mirrors `agent_graph.ts`'s `asWorkflow` so the JSON tree and
+ * the DOT agree on what counts as a workflow.
  */
 function asWorkflow(target: GraphTarget): Workflow | undefined {
-  if (isGraphWorkflowAgent(target)) {
-    return target.workflow;
-  }
-
   const isWorkflowShaped =
     isWorkflowGraph(getField(target, 'graph')) ||
     typeof getField(target, 'dynamicEntry') === 'function';

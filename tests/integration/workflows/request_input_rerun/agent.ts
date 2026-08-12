@@ -24,7 +24,7 @@ import {
   node,
   NodeContext,
   RequestInput,
-  WorkflowAgent,
+  Workflow,
 } from '@google/adk';
 
 /** Emits a plain display message (Python `Event(message=...)`). */
@@ -88,7 +88,7 @@ const sendEmail = node(() => message('Draft approved and sent successfully.'), {
   name: 'send_email',
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'request_input_rerun',
   edges: [
     ['START', processInput, draftEmail, humanReview],

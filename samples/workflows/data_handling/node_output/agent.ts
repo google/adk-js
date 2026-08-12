@@ -25,7 +25,7 @@
  *   npm run sample -- samples/workflows/data_handling/node_output/agent.ts
  */
 
-import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {createEvent, node, NodeContext, Workflow} from '@google/adk';
 
 // 1. A bare return value.
 const returnRawValue = node(
@@ -53,7 +53,7 @@ const yieldProgressThenOutput = node(
   {name: 'yield_progress_then_output'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'node_output_workflow',
   edges: [
     ['START', returnRawValue, returnEventOutput, yieldProgressThenOutput],

@@ -15,13 +15,7 @@
  *   npm run sample -- samples/workflows/node_output/agent.ts
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const topicDetails = z.object({
@@ -59,7 +53,7 @@ const consumePydanticOutput = node(
   {name: 'consume_pydantic_output'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

@@ -40,10 +40,12 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
-import {BaseNode} from '../workflow/base_node.js';
 import type {RunnableNode} from '../workflow/graph.js';
-import {runNodeAsInvocation} from '../workflow/run_node_as_invocation.js';
-import {asRootAgent, isRootAgentLike} from '../workflow/workflow_agent.js';
+import {
+  asRunnableRoot,
+  RunnableRoot,
+  runNodeAsInvocation,
+} from '../workflow/run_node_as_invocation.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -63,10 +65,10 @@ export interface RunnerConfig {
    * The agent or workflow to run. Required if `app` is not provided.
    *
    * A bare node — a `Workflow`, most usefully — is accepted as the root and
-   * adapted internally, so a graph does not have to be wrapped by hand to be
-   * run. The accepted set is the same one an edge and `WorkflowAgent` take, so
-   * `{agent: node}` and `{agent: new WorkflowAgent(node)}` mean the same thing.
-   * Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
+   * driven directly, so a graph does not have to be wrapped by hand to be run.
+   * The accepted set is the one an edge takes: any other node-like value
+   * becomes the single node of a one-node workflow. Mirrors adk-python, whose
+   * `Runner.agent` is typed `BaseNode`.
    */
   agent?: RunnableNode;
 
@@ -153,7 +155,7 @@ export class Runner {
    * The root being run: an agent, or a bare node (a `Workflow`) that the
    * runner drives directly.
    */
-  readonly agent: BaseAgent | BaseNode;
+  readonly agent: RunnableRoot;
   readonly pluginManager: PluginManager;
   readonly artifactService?: BaseArtifactService;
   readonly sessionService: BaseSessionService;
@@ -175,9 +177,9 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    // A workflow is kept as itself rather than wrapped: the runner can drive a
+    // A workflow is kept as itself rather than wrapped: the runner drives a
     // node directly (see `runRoot`), so there is no agent to manufacture.
-    this.agent = isRootAgentLike(agent) ? agent : asRootAgent(agent);
+    this.agent = asRunnableRoot(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
@@ -482,8 +484,7 @@ export class Runner {
    * Runs whatever this runner was given as its root.
    *
    * An agent is run through `runAsync`, as always. A bare node — a `Workflow`
-   * handed to the runner directly — is driven by {@link runNodeAsInvocation},
-   * which is the same bridge `WorkflowAgent` wraps.
+   * handed to the runner directly — is driven by {@link runNodeAsInvocation}.
    *
    * Only the execution differs. Everything around it (the run callbacks, event
    * persistence, cancellation) is shared, so the node path cannot drift from
@@ -693,7 +694,7 @@ export function determineAgentForResumption(
  * `nodeInfo.path` is stamped on everything a node emits (`node_runner.ts`).
  * When the node emits an event of its own — a function node's output, or a HITL
  * interrupt, which carries no author at all — the node name is stamped as the
- * author. Nodes are not in the agent tree and never will be: a `WorkflowAgent`
+ * author. Nodes are not in the agent tree and never will be: a workflow
  * keeps its structure in `edges`, so its `subAgents` is empty. Looking such an
  * author up could only ever miss, so the miss is not worth warning about — it
  * fired on the happy path of every human-in-the-loop resume.

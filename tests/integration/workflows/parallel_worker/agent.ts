@@ -17,13 +17,7 @@
  * Enter a topic, e.g. "databases".
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {Type} from '@google/genai';
 import {z} from 'zod';
 
@@ -84,7 +78,7 @@ const aggregate = node(
   {name: 'aggregate'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

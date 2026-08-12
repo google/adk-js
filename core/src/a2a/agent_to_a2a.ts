@@ -13,7 +13,6 @@ import {
   UserBuilder,
 } from '@a2a-js/sdk/server/express';
 import express from 'express';
-import {BaseAgent} from '../agents/base_agent.js';
 import {StreamingMode} from '../agents/run_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
@@ -21,6 +20,7 @@ import {Runner} from '../runner/runner.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {logger} from '../utils/logger.js';
+import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
 import {getA2AAgentCard, resolveAgentCard} from './agent_card.js';
 import {A2AAgentExecutor} from './agent_executor.js';
 
@@ -135,7 +135,7 @@ function resolveA2aUserBuilder(options: ToA2aOptions): UserBuilder {
  * @returns An Express application
  */
 export async function toA2a(
-  agent: BaseAgent,
+  agent: RunnableRoot,
   options: ToA2aOptions = {},
 ): Promise<express.Application> {
   // Fail closed before doing any work: the A2A surface must be authenticated

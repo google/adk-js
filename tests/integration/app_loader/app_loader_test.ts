@@ -6,12 +6,12 @@
 
 import {
   App,
-  BaseAgent,
   Event,
   InMemorySessionService,
   isApp,
   isBaseAgent,
-  isGraphWorkflowAgent,
+  isWorkflow,
+  RunnableRoot,
   Runner,
 } from '@google/adk';
 import {exec, spawn} from 'node:child_process';
@@ -26,7 +26,7 @@ const execAsync = promisify(exec);
 const dirname = process.cwd();
 const TEST_EXECUTION_TIMEOUT = 60000;
 
-async function runToCompletion(agent: BaseAgent): Promise<Event[]> {
+async function runToCompletion(agent: RunnableRoot): Promise<Event[]> {
   const sessionService = new InMemorySessionService();
   const session = await sessionService.createSession({
     appName: 'app_loader',
@@ -175,15 +175,15 @@ describe('AgentLoader discovery and loading integration', () => {
    * an `instanceof` check would silently fail.
    */
   it(
-    'should adapt a compiled Workflow export into a runnable root agent',
+    'should load a compiled Workflow export as the root, unwrapped',
     async () => {
       const agentFile = await loader.getAgentFile('service_graph');
       const rootAgent = await agentFile.loadAgent();
 
-      expect(isBaseAgent(rootAgent)).toBe(true);
-      // Still a WorkflowAgent, which is what the dev server's graph renderer
-      // and the a2a card match on.
-      expect(isGraphWorkflowAgent(rootAgent)).toBe(true);
+      // Held as the workflow it is, not dressed as an agent: `isWorkflow` is
+      // what the dev server's graph renderer and the a2a card match on.
+      expect(isBaseAgent(rootAgent)).toBe(false);
+      expect(isWorkflow(rootAgent)).toBe(true);
       expect(rootAgent.name).toBe('graph_workflow');
       expect(rootAgent.description).toBe(
         'Normalizes the question, then answers it.',

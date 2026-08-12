@@ -17,7 +17,7 @@
  *   npm run sample -- samples/workflows/data_handling/structured_output/agent.ts
  */
 
-import {createEvent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {createEvent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const cityInfoSchema = z.object({
@@ -42,7 +42,7 @@ const consumeStructuredOutput = node(
   {name: 'consume_structured_output', inputSchema: cityInfoSchema},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'structured_output_workflow',
   edges: [['START', emitStructuredOutput, consumeStructuredOutput]],
 });

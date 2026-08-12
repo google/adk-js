@@ -22,7 +22,7 @@
  *   npm run sample -- samples/workflows/dynamic/get_started/agent.ts
  */
 
-import {node, NodeContext, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, Workflow} from '@google/adk';
 
 const myNode = node(() => 'Hello World', {name: 'hello_node'});
 
@@ -35,7 +35,7 @@ const myWorkflow = node(
   {name: 'my_workflow', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', myWorkflow]],
 });

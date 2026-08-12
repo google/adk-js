@@ -51,7 +51,7 @@ export function isLoopAgent(obj: unknown): obj is LoopAgent {
  * @deprecated Use `Workflow` instead, which expresses the same ordering as a
  * graph and adds routing, retries, HITL and resumability. This class will be
  * removed in a future version. Note that a `Workflow` cannot yet be an
- * `LlmAgent` sub-agent — wrap it in a `WorkflowAgent` for that.
+ * `LlmAgent` sub-agent.
  */
 @deprecated(
   'LoopAgent is deprecated in favor of Workflow and will be removed in a' +

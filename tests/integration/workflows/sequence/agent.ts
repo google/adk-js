@@ -16,7 +16,7 @@
  *   npm run sample -- samples/workflows/sequence/agent.ts
  */
 
-import {LlmAgent, WorkflowAgent} from '@google/adk';
+import {LlmAgent, Workflow} from '@google/adk';
 
 const generateFruitAgent = new LlmAgent({
   name: 'generate_fruit_agent',
@@ -31,7 +31,7 @@ const generateBenefitAgent = new LlmAgent({
   instruction: 'Tell me a health benefit about the specified fruit.',
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', generateFruitAgent, generateBenefitAgent]],
 });

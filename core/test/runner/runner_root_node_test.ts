@@ -13,7 +13,6 @@ import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 async function runToCompletion(
   root: ConstructorParameters<typeof Runner>[0]['agent'],
@@ -80,7 +79,7 @@ describe('Runner with a workflow as its root', () => {
   });
 
   it('leaves an explicitly wrapped workflow alone', async () => {
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'explicit',
       edges: [['START', node(() => 'done', {name: 'step'})]],
     });
@@ -95,9 +94,9 @@ describe('Runner with a workflow as its root', () => {
   });
 
   it('runs a lone node as a one-node workflow', async () => {
-    // Same set `WorkflowAgent` accepts: the node becomes the single node of a
-    // one-node workflow, so `{agent: node}` and `{agent: new
-    // WorkflowAgent(node)}` are the same request spelled two ways.
+    // Same set an edge accepts: the node becomes the single node of a one-node
+    // workflow, so `{agent: node}` and `{agent: new Workflow({edges: [['START',
+    // node]]})}` are the same request spelled two ways.
     const lone = new FunctionNode('lonely', (_ctx, input) => `saw:${input}`);
 
     const {events} = await runToCompletion(lone);
@@ -112,7 +111,9 @@ describe('Runner with a workflow as its root', () => {
       () =>
         new Runner({
           appName: 'app',
-          agent: {name: 'fake'} as never,
+          // Rejected by the type system too; the cast is what lets the runtime
+          // guard be exercised.
+          agent: {name: 'fake'} as unknown as Workflow,
           sessionService: new InMemorySessionService(),
         }),
     ).toThrow(/expected a BaseAgent, a Workflow, or a node-like value/);

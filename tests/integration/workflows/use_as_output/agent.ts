@@ -16,7 +16,7 @@
  * Paste some text to summarize.
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 const summarizer = node(
   new LlmAgent({
@@ -41,7 +41,7 @@ const finalize = node(
   },
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', orchestrate, finalize]],
 });

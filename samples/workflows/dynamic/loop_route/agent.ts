@@ -25,7 +25,7 @@
  * empty, and the loop exits before the fixer ever runs.
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 /** Safety bound on the refine loop. */
 const MAX_FIX_ROUNDS = 3;
@@ -84,7 +84,7 @@ const codeWorkflow = node(
   {name: 'code_workflow', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', codeWorkflow]],
 });

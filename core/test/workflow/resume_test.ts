@@ -27,7 +27,6 @@ import {
   reconstructNodeStates,
 } from '../../src/workflow/utils/rehydration_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 describe('Phase 5b — rehydration utility', () => {
   it('reconstructs completed outputs and unresolved interrupts', () => {
@@ -288,7 +287,7 @@ describe('Phase 5b — HITL resume via the Runner', () => {
       edges: [['START', a, gate, c]],
     });
 
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',

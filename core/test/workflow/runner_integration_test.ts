@@ -12,13 +12,12 @@ import {DEFAULT_ROUTE} from '../../src/workflow/graph.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 async function runViaRunner(
   workflow: Workflow,
   text: string,
 ): Promise<Event[]> {
-  const agent = new WorkflowAgent(workflow);
+  const agent = workflow;
   const sessionService = new InMemorySessionService();
   const session = await sessionService.createSession({
     appName: 'test_app',
@@ -37,7 +36,7 @@ async function runViaRunner(
   return events;
 }
 
-describe('Phase 8 — WorkflowAgent via the real Runner', () => {
+describe('Phase 8 — Workflow via the real Runner', () => {
   it('runs a single-node workflow end-to-end', async () => {
     const wf = new Workflow({
       name: 'greet_wf',

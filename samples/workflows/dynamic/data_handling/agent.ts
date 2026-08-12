@@ -18,7 +18,7 @@
  * Try "a short paragraph about why graphs beat long prompts".
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 const draftAgent = new LlmAgent({
   name: 'draft_agent',
@@ -53,7 +53,7 @@ const editorialWorkflow = node(
   {name: 'editorial_workflow', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', editorialWorkflow]],
 });

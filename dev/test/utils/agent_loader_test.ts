@@ -253,7 +253,7 @@ describe('AgentLoader', () => {
   describe('AgentFile', () => {
     it('loads an agent file whose root is a bare Workflow', async () => {
       // A graph is a node, not an agent. The loader adapts it, so a sample can
-      // export a Workflow directly rather than wrapping it in a WorkflowAgent.
+      // export a Workflow directly rather than wrapping it in a Workflow.
       const agentPath = path.join(tempAgentsDir, 'graph_root.js');
       await fs.writeFile(agentPath, workflowRootJsContent);
 

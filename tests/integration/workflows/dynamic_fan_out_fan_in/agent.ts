@@ -17,13 +17,7 @@
  * Enter a comma-separated list of topics, e.g. "space, oceans, volcanoes".
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 // Worker agent to generate a headline for a single topic.
 const generator = new LlmAgent({
@@ -74,7 +68,7 @@ const orchestrator = node(
   {name: 'orchestrator', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'dynamic_fan_out_fan_in',
   edges: [['START', orchestrator]],
 });

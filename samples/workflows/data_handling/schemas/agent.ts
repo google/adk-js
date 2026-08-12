@@ -24,13 +24,7 @@
  * Try "SFO to CDG on 2026-03-15 for 2 people".
  */
 
-import {
-  FunctionTool,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {FunctionTool, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const flightSearchInputSchema = z.object({
@@ -112,7 +106,7 @@ const renderResults = node(
   {name: 'render_results', inputSchema: flightSearchOutputSchema},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'flight_workflow',
   edges: [
     [

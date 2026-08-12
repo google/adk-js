@@ -29,7 +29,7 @@ import {
   node,
   NodeContext,
   RequestInput,
-  WorkflowAgent,
+  Workflow,
 } from '@google/adk';
 import {z} from 'zod';
 
@@ -115,7 +115,7 @@ function normalizeDecision(input: TimeOffDecision | string): TimeOffDecision {
   return input;
 }
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'request_input_advanced',
   edges: [['START', processRequest, evaluateRequest, processDecision]],
 });

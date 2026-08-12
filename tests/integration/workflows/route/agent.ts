@@ -18,13 +18,7 @@
  * Try "What is ADK?" (question) or "ADK is great." (statement).
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const inputCategorySchema = z.object({
@@ -80,7 +74,7 @@ const handleOther = node(
   {name: 'handle_other'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     ['START', processInput, classifyInput, routeOnCategory],

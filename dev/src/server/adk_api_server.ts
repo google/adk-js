@@ -6,7 +6,6 @@
 
 import {
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -21,6 +20,7 @@ import {
   Logger,
   LogLevel,
   RunConfig,
+  RunnableRoot,
   Runner,
   StreamingMode,
   toA2a,
@@ -1157,7 +1157,7 @@ export class AdkApiServer {
   }
 
   private async getRunner(
-    agentOrApp: BaseAgent | App,
+    agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
     if (!(appName in this.runnerCache)) {
