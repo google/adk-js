@@ -5,13 +5,8 @@
  */
 
 /**
- * Entry point for `@google/adk/tools/mcp`.
- *
- * Everything here is also re-exported from `@google/adk`, so importing it from
- * the root keeps working. This subpath exists so that an application using MCP
- * can pull in the MCP tools — and only the MCP tools — without evaluating the
- * whole ADK barrel, and so that the `@modelcontextprotocol/sdk` optional peer
- * dependency has an obvious, documented home.
+ * `@google/adk/tools/mcp` subpath: the MCP tools only, without the full ADK
+ * barrel. Also re-exported from `@google/adk`.
  */
 
 export * from './load_mcp_resource_tool.js';

@@ -5,13 +5,8 @@
  */
 
 /**
- * Entry point for `@google/adk/a2a`.
- *
- * Everything here is also re-exported from `@google/adk`, so importing it from
- * the root keeps working. This subpath exists so that an application serving
- * or calling A2A can pull in the A2A surface — and only the A2A surface —
- * without evaluating the whole ADK barrel, and so that the `express` optional
- * peer dependency needed by {@link toA2a} has an obvious, documented home.
+ * `@google/adk/a2a` subpath: the A2A surface only, without the full ADK barrel.
+ * Also re-exported from `@google/adk`.
  */
 
 export {AGENT_CARD_PATH, RemoteA2AAgent} from './a2a_remote_agent.js';

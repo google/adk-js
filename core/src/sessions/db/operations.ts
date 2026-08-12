@@ -14,14 +14,7 @@ import {
   StorageMetadata,
 } from './schema.js';
 
-/**
- * Describes the driver package backing a connection-string scheme.
- *
- * The five SQL drivers are optional peer dependencies: a `DatabaseSessionService`
- * talks to exactly one database, so installing `@google/adk` must not download
- * MariaDB, MSSQL, MySQL, PostgreSQL *and* SQLite clients (one of which compiles
- * native code) on the chance that one of them is wanted.
- */
+/** Describes the optional driver peer backing a connection-string scheme. */
 function driverPeer(packageName: string, scheme: string) {
   return {
     packageName,

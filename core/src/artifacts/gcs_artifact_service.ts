@@ -35,16 +35,8 @@ export class GcsArtifactService implements BaseArtifactService {
   }
 
   /**
-   * Resolves the GCS bucket handle, loading `@google-cloud/storage` on first
-   * use.
-   *
-   * The client is an optional peer dependency — it is one of the heaviest
-   * packages in the tree and only this service needs it — so it cannot be
-   * imported at module load without making the whole ADK entry point
-   * unloadable for the applications that store artifacts elsewhere. The
-   * constructor never performed I/O, so deferring it changes nothing an
-   * existing caller could observe beyond the point at which a missing client
-   * is reported.
+   * Resolves the GCS bucket handle, loading the `@google-cloud/storage`
+   * optional peer on first use.
    */
   private getBucket(): Promise<Bucket> {
     this.bucketPromise ??= loadOptionalPeer(

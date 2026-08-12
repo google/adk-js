@@ -29,14 +29,7 @@ async function getGcpProjectId(): Promise<string | undefined> {
   }
 }
 
-/**
- * Builds the Cloud Trace span processor, loading its exporter on demand.
- *
- * The two Cloud exporters are optional peer dependencies: they are only
- * reachable from {@link getGcpExporters}, so an application that exports
- * telemetry somewhere else — or nowhere at all — should not have to download
- * them. Each is loaded only when its signal is actually enabled.
- */
+/** Builds the Cloud Trace span processor, loading its exporter on demand. */
 async function createCloudTraceProcessor(
   projectId: string,
 ): Promise<BatchSpanProcessor> {
