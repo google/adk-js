@@ -18,8 +18,8 @@ import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
 import type {NodeContext, NodeResult} from '../node_context.js';
 import {
+  interruptResponseMismatch,
   responseSchemasByInterruptId,
-  validateInterruptResponse,
 } from './hitl_utils.js';
 
 const RESULT_KEY = 'result';
@@ -173,6 +173,7 @@ function reconstruct(
   const nodes = new Map<string, RehydratedNode>();
   const interruptOwner = new Map<string, string>();
   const responseSchemas = responseSchemasByInterruptId(events);
+  const newestUserTurn = lastUserEvent(events);
 
   const getNode = (name: string): RehydratedNode => {
     let node = nodes.get(name);
@@ -191,11 +192,21 @@ function reconstruct(
         if (fr?.id && interruptOwner.has(fr.id)) {
           const owner = interruptOwner.get(fr.id)!;
           const response = unwrapResponse(fr.response);
-          validateInterruptResponse(
+          const mismatch = interruptResponseMismatch(
             fr.id,
             response,
             responseSchemas.get(fr.id),
           );
+          if (mismatch) {
+            // Loud for the reply that just arrived, silent for the same reply
+            // on every replay after it: a rejected reply leaves its interrupt
+            // unresolved, so the run pauses there again and the next answer —
+            // structured or plain text — still gets through.
+            if (event === newestUserTurn) {
+              throw new Error(mismatch);
+            }
+            continue;
+          }
           getNode(owner).resolvedResponses.set(fr.id, response);
         }
       }
@@ -229,6 +240,20 @@ function reconstruct(
   }
 
   return nodes;
+}
+
+/**
+ * The most recent user event, i.e. the turn currently being processed: the
+ * runner appends the incoming message before the agent runs, so a reply found
+ * there is one the caller can still do something about.
+ */
+function lastUserEvent(events: Event[]): Event | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].author === 'user') {
+      return events[i];
+    }
+  }
+  return undefined;
 }
 
 /**
