@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {context, trace} from '@opentelemetry/api';
 import {Event} from '../events/event.js';
+import {tracer, traceWorkflowInvocation} from '../telemetry/tracing.js';
 import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
@@ -173,10 +175,18 @@ export class Workflow extends BaseNode {
       abort.controller.signal,
     );
 
+    const span = tracer.startSpan(`invoke_workflow ${this.name}`);
     try {
-      await this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+      await context.with(trace.setSpan(context.active(), span), async () => {
+        traceWorkflowInvocation({
+          workflowName: this.name,
+          nodePath: ctx.nodePath,
+        });
+        await this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+      });
     } finally {
       abort.dispose();
+      span.end();
     }
   }
 

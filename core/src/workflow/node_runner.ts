@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {context, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
+import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
@@ -150,67 +152,161 @@ export async function executeChildNode({
     });
 
   const pluginManager = child.invocationContext.pluginManager;
-  if (pluginManager?.hasPlugins) {
-    const skipOutput = await pluginManager.runBeforeNodeCallback({
-      node,
-      nodeContext: child,
-      input,
-    });
-    if (skipOutput !== undefined) {
-      child.output = skipOutput;
+  const span = tracer.startSpan(`execute_node ${nodeName}`);
+
+  return context.with(trace.setSpan(context.active(), span), async () => {
+    try {
+      if (pluginManager?.hasPlugins) {
+        const skipOutput = await pluginManager.runBeforeNodeCallback({
+          node,
+          nodeContext: child,
+          input,
+        });
+        if (skipOutput !== undefined) {
+          child.output = skipOutput;
+          // A skipped node still fills its slot in the trace, so record it as
+          // completed rather than leaving an attribute-less span behind.
+          traceNodeExecution({
+            nodePath,
+            runId,
+            attempt: nodeState.attemptCount,
+            status: 'completed',
+            interruptCount: child.interruptIds.length,
+          });
+          if (options.useAsOutput) {
+            parent.output = child.output;
+            parent.route = child.route;
+          }
+          return child;
+        }
+      }
+
+      let succeeded = false;
+      while (!succeeded) {
+        resetState(child);
+        child.attemptCount = nodeState.attemptCount;
+        try {
+          await runAttempt({
+            node,
+            child,
+            input,
+            nodeName,
+            branch,
+            isolationScope,
+            nodePath,
+            runId,
+            attempt: nodeState.attemptCount,
+          });
+          succeeded = true;
+        } catch (err) {
+          // Cancellation is terminal: an aborted invocation (or a sibling
+          // failure that cancelled this node) is never retried.
+          if (isInvocationAbortedError(err)) {
+            throw err;
+          }
+          // Check retry eligibility with the attempt that just failed, compute
+          // its backoff delay, THEN advance the counter (matches Python
+          // semantics).
+          const retryConfig = node.preparedRetryConfig;
+          if (
+            !retryConfig ||
+            !shouldRetryNode({error: err, retryConfig, nodeState})
+          ) {
+            throw err;
+          }
+          const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
+          nodeState.attemptCount += 1;
+          await delay(delaySeconds * 1000, effectiveAbortSignal);
+        }
+      }
+
+      traceNodeExecution({
+        nodePath,
+        runId,
+        attempt: nodeState.attemptCount,
+        status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
+        interruptCount: child.interruptIds.length,
+      });
+
+      if (pluginManager?.hasPlugins) {
+        const replacedOutput = await pluginManager.runAfterNodeCallback({
+          node,
+          nodeContext: child,
+          output: child.output,
+        });
+        if (replacedOutput !== undefined) {
+          child.output = replacedOutput;
+        }
+      }
+
       if (options.useAsOutput) {
         parent.output = child.output;
         parent.route = child.route;
       }
+
       return child;
-    }
-  }
-
-  let succeeded = false;
-  while (!succeeded) {
-    resetState(child);
-    child.attemptCount = nodeState.attemptCount;
-    try {
-      await runOnce({node, child, input, nodeName, branch, isolationScope});
-      succeeded = true;
     } catch (err) {
-      // Cancellation is terminal: an aborted invocation (or a sibling failure
-      // that cancelled this node) is never retried.
-      if (isInvocationAbortedError(err)) {
-        throw err;
-      }
-      // Check retry eligibility with the attempt that just failed, compute its
-      // backoff delay, THEN advance the counter (matches Python semantics).
-      const retryConfig = node.preparedRetryConfig;
-      if (
-        !retryConfig ||
-        !shouldRetryNode({error: err, retryConfig, nodeState})
-      ) {
-        throw err;
-      }
-      const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
-      nodeState.attemptCount += 1;
-      await delay(delaySeconds * 1000, effectiveAbortSignal);
+      traceNodeExecution({
+        nodePath,
+        runId,
+        attempt: nodeState.attemptCount,
+        status: 'failed',
+        interruptCount: child.interruptIds.length,
+      });
+      span.setStatus({code: SpanStatusCode.ERROR, message: errorMessage(err)});
+      throw err;
+    } finally {
+      span.end();
     }
-  }
+  });
+}
 
-  if (pluginManager?.hasPlugins) {
-    const replacedOutput = await pluginManager.runAfterNodeCallback({
-      node,
-      nodeContext: child,
-      output: child.output,
-    });
-    if (replacedOutput !== undefined) {
-      child.output = replacedOutput;
-    }
-  }
+interface RunAttemptParams extends RunOnceParams {
+  nodePath: string;
+  runId: string;
+  attempt: number;
+}
 
-  if (options.useAsOutput) {
-    parent.output = child.output;
-    parent.route = child.route;
+async function runAttempt(params: RunAttemptParams): Promise<void> {
+  const {node, nodePath, runId, attempt} = params;
+  if (!node.preparedRetryConfig) {
+    return runOnce(params);
   }
+  return tracer.startActiveSpan(
+    `execute_node_attempt ${params.nodeName}`,
+    async (span) => {
+      try {
+        await runOnce(params);
+        traceNodeExecution({
+          nodePath,
+          runId,
+          attempt,
+          status:
+            params.child.interruptIds.length > 0 ? 'waiting' : 'completed',
+          interruptCount: params.child.interruptIds.length,
+        });
+      } catch (err) {
+        traceNodeExecution({
+          nodePath,
+          runId,
+          attempt,
+          status: 'failed',
+          interruptCount: params.child.interruptIds.length,
+        });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: errorMessage(err),
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
 
-  return child;
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
