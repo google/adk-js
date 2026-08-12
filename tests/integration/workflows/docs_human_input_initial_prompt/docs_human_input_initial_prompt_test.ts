@@ -25,7 +25,6 @@ describe('docs sample: human_input/initial_prompt', () => {
       offline: true,
     });
 
-    // Turn one pauses for the human; the reply arrives on the next turn.
     expect(
       perTurn[0].some((e) => (e.longRunningToolIds?.length ?? 0) > 0),
     ).toBe(true);

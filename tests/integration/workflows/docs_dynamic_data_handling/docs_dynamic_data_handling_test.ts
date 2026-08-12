@@ -5,12 +5,12 @@
  */
 
 /**
- * Runs the docs sample `samples/workflows/dynamic/data_handling` —
+ * Runs the docs sample `samples/workflows/dynamic/data_handling` — https://adk.dev/graphs/dynamic/#data-handling
  *
- * https://adk.dev/graphs/dynamic/#data-handling An agent node's output reaches
- * a function node directly, with no session-state key in between. Driven
- * against the recorded responses beside this test, so the assertion is about
- * that plumbing rather than the paragraph the model produced.
+ * An agent node's output reaches a function node directly, with no session-
+ * state key in between. Driven against the recorded responses beside this
+ * test, so the assertion is about that plumbing rather than the paragraph the
+ * model produced.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -33,7 +33,6 @@ describe('docs sample: dynamic/data_handling', () => {
     const lines = formatted.split('\n').filter(Boolean);
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.every((line) => line.startsWith('| '))).toBe(true);
-    // The formatter ran on the draft, rather than on something else.
     expect(formatted).toContain(String(draft).split('\n')[0].trim());
   });
 });

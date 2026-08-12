@@ -25,7 +25,6 @@ describe('docs sample: routes/loop_escalation', () => {
       offline: true,
     });
 
-    // Two refine passes, then the router picks the terminal branch.
     expect(finalOutput(allEvents(perTurn))).toMatch(
       /^Approved after 3 bullets:/,
     );

@@ -25,7 +25,6 @@ describe('docs sample: data_handling/user_message', () => {
       offline: true,
     });
 
-    // The report node got the sources array, not the "Gathering sources..." text.
     expect(finalOutput(allEvents(perTurn))).toBe(
       'Research complete. 3 sources: source-a, source-b, source-c.',
     );

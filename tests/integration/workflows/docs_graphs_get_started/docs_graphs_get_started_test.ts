@@ -20,7 +20,6 @@ import {rootAgent} from './agent.js';
 
 describe('docs sample: graphs/get_started', () => {
   it('builds a valid graph', () => {
-    // Importing the module already ran the constructor that validates it.
     expect(rootAgent.name).toBe('root_agent');
   });
 });

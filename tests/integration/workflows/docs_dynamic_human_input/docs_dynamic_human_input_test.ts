@@ -25,12 +25,10 @@ describe('docs sample: dynamic/human_input', () => {
       offline: true,
     });
 
-    // Turn one pauses for the human; the reply arrives on the next turn.
     expect(
       perTurn[0].some((e) => (e.longRunningToolIds?.length ?? 0) > 0),
     ).toBe(true);
 
-    // The orchestrator waited for the human instead of deciding on its own.
     expect(finalOutput(allEvents(perTurn))).toBe('Approved');
   });
 });

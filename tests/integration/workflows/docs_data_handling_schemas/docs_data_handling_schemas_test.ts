@@ -20,7 +20,6 @@ import {rootAgent} from './agent.js';
 
 describe('docs sample: data_handling/schemas', () => {
   it('builds a valid graph', () => {
-    // Importing the module already ran the constructor that validates it.
     expect(rootAgent.name).toBe('flight_workflow');
   });
 });

@@ -5,11 +5,10 @@
  */
 
 /**
- * Runs the docs sample `samples/workflows/dynamic/sequence_route` —
+ * Runs the docs sample `samples/workflows/dynamic/sequence_route` — https://adk.dev/graphs/dynamic/#sequence-route
  *
- * https://adk.dev/graphs/dynamic/#sequence-route Three sequential
- * `ctx.runNode()` calls: the city the first node invents has to survive the
- * lookup and reach the report, in that order.
+ * Three sequential `ctx.runNode()` calls: the city the first node invents has
+ * to survive the lookup and reach the report, in that order.
  */
 
 import {Event} from '@google/adk';
@@ -37,7 +36,6 @@ describe('docs sample: dynamic/sequence_route', () => {
     expect(cityTime?.city).toBeTruthy();
     expect(cityTime?.timeInfo).toBe('10:10 AM');
 
-    // The city the generator invented is the one reported at the end.
     expect(String(finalOutput(events))).toContain(cityTime.city!);
 
     expect(indexOfAuthor(events, 'city_generator_agent')).toBeLessThan(

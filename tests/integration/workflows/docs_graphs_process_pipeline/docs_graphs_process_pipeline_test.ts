@@ -20,7 +20,6 @@ import {rootAgent} from './agent.js';
 
 describe('docs sample: graphs/process_pipeline', () => {
   it('builds a valid graph', () => {
-    // Importing the module already ran the constructor that validates it.
     expect(rootAgent.name).toBe('routing_workflow');
   });
 });
