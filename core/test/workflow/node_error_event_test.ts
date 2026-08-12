@@ -66,12 +66,10 @@ function icWithId(invocationId: string): InvocationContext {
       userId: 'u',
       lastUpdateTime: Date.now(),
     }),
-    agent: new WorkflowAgent(
-      new Workflow({
-        name: 'wf',
-        edges: [['START', new FunctionNode('n', () => null)]],
-      }),
-    ),
+    agent: new WorkflowAgent({
+      name: 'wf',
+      edges: [['START', new FunctionNode('n', () => null)]],
+    }),
     pluginManager: new PluginManager(),
   });
 }
@@ -218,12 +216,10 @@ describe('NodeErrorEvent — a failure is recorded once, where it happened', () 
 describe('NodeErrorEvent — delivery ordering through WorkflowAgent', () => {
   it('reaches the caller BEFORE the rejection surfaces', async () => {
     const kaboom = new Error('kaboom');
-    const agent = new WorkflowAgent(
-      new Workflow({
-        name: 'wf',
-        edges: [['START', throwingNode('boom', kaboom)]],
-      }),
-    );
+    const agent = new WorkflowAgent({
+      name: 'wf',
+      edges: [['START', throwingNode('boom', kaboom)]],
+    });
     const ic = new InvocationContext({
       invocationId: 'inv-1',
       session: createSession({
