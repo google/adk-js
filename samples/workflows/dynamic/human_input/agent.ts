@@ -5,27 +5,14 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Human input in a dynamic workflow
  * https://adk.dev/graphs/dynamic/#human-input
- *
- *   @node(rerun_on_resume=False)
- *   async def get_user_approval(ctx: Context, node_input: Any):
- *       yield RequestInput(message="Please approve this request (Yes/No)")
- *
- *   @node(rerun_on_resume=True)
- *   async def handle_process(ctx: Context, node_input: Any):
- *       user_response = await ctx.run_node(get_user_approval)
- *       if user_response.lower() == "yes":
- *           return "Approved"
- *       return "Denied"
  *
  * Important: a parent node that calls `ctx.runNode` must set
  * `rerunOnResume: true`, or it cannot handle an interrupt raised by a child.
- * The leaf keeps the snippet's `rerun_on_resume=False`: on resume it does not
- * re-run its body, it completes with the human's reply as its output, and
- * `ctx.runNode()` hands that back to the caller.
- *
- * !! One TypeScript difference from the Python snippet. !!
+ * The leaf keeps `rerunOnResume: false`: on resume it does not re-run its body,
+ * it completes with the human's reply as its output, and `ctx.runNode()` hands
+ * that back to the caller.
  *
  * `ctx.runNode()` does NOT throw when a child interrupts. It resolves with a
  * result whose `interruptIds` are populated and whose `output` is still
@@ -42,9 +29,9 @@ import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
 /**
  * Pauses the workflow and waits for user input.
  *
- * `rerunOnResume: false` (the default, explicit here to mirror the decorator)
- * is what makes this a one-liner: the reply is handed to the node as its
- * output instead of the body running a second time to collect it.
+ * `rerunOnResume: false` (the default, spelled out here because it is the
+ * point) is what makes this a one-liner: the reply is handed to the node as
+ * its output instead of the body running a second time to collect it.
  */
 const getUserApproval = node(
   () => new RequestInput({message: 'Please approve this request (Yes/No)'}),

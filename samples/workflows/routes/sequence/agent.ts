@@ -5,14 +5,14 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Route sequences
  * https://adk.dev/graphs/routes/#route-sequences
- *
- *   edges=[("START", task_A_node)]                              # single node
- *   edges=[("START", task_A_node, task_B_node, task_C_node)]    # 3 in order
  *
  * A sequential route runs each node once, in the listed order. Each node's
  * return value is delivered to the next node as its input.
+ *
+ *   edges: [['START', taskANode]]                        // a single node
+ *   edges: [['START', taskANode, taskBNode, taskCNode]]  // three, in order
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/routes/sequence/agent.ts

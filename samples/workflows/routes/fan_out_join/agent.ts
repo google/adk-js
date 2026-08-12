@@ -5,16 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Parallel tasks: fan out and join paths
  * https://adk.dev/graphs/routes/#parallel-tasks-fan-out-and-join-paths
- *
- *   my_join_node = JoinNode(name="my_join_node")
- *   edges=[
- *       ("START", parallel_task_A, my_join_node),
- *       ("START", parallel_task_B, my_join_node),
- *       ("START", parallel_task_C, my_join_node),
- *       (my_join_node, final_task_D),
- *   ]
  *
  * A `JoinNode` is a fan-in barrier: it waits for EVERY predecessor to finish and
  * then hands the next node an object keyed by predecessor node name.
@@ -58,8 +50,8 @@ const finalTaskD = node(
 
 export const rootAgent = new WorkflowAgent({
   name: 'fan_out_workflow',
-  // One edge row per parallel path, exactly as in the Python snippet. The
-  // equivalent TypeScript shorthand nests the parallel nodes in an array:
+  // One edge row per parallel path. The equivalent shorthand nests the
+  // parallel nodes in an array:
   //   [['START', [parallelTaskA, parallelTaskB, parallelTaskC], myJoinNode,
   //     finalTaskD]]
   edges: [

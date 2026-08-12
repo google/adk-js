@@ -5,14 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Request input with a message and payload
  * https://adk.dev/graphs/human-input/#request-input-with-a-message-and-payload
- *
- *   yield RequestInput(
- *       message=message,
- *       payload=node_input,
- *       response_schema=UserFeedback,
- *   )
  *
  * `RequestInput` takes three configuration options:
  *   message         text shown to the user explaining what is being asked

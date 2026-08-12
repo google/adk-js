@@ -5,7 +5,7 @@
  */
 
 /**
- * TypeScript port of
+ * Loop and escalation exit
  * https://adk.dev/graphs/routes/#loop-and-escalation-exit
  *
  * A loop is a BACK-EDGE in the graph: a downstream node routes back to an
@@ -18,9 +18,9 @@
  *                             +----------------------------------+
  *                                        router --DONE--> finalize
  *
- * The docs page shows the generic router snippet for this section; this port
+ * The docs page shows only the generic router for this section; this sample
  * adds the back-edge that actually makes it a loop, and keeps the exit
- * condition deterministic so the sample terminates.
+ * condition deterministic so it terminates.
  *
  * Note: a graph cycle is NOT capped by the framework. Make sure your exit
  * condition always becomes true (here the draft gains a bullet each pass), or

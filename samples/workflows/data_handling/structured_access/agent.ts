@@ -5,17 +5,10 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Access structured data in agents
  * https://adk.dev/graphs/data-handling/#access-structured-data-in-agents
  *
- *   instruction="""
- *       Return a sentence in the following format:
- *       It is <CityTime.time_info from lookup_time_function> in
- *       <CityTime.city from lookup_time_function> right now.
- *   """
- *
- * adk-js supports Python's data-selection syntax verbatim in agent
- * instructions:
+ * Two data-selection forms are available inside an agent instruction:
  *
  *   {Class.field}                    reads a field off THIS node's input
  *   <Class.field from source_node>   reads a field off a named predecessor's
@@ -40,7 +33,7 @@ type CityTime = z.infer<typeof cityTimeSchema>;
 
 const cityGeneratorAgent = new LlmAgent({
   name: 'city_generator_agent',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   instruction: 'Return the name of a random city. Return only the name.',
 });
 
@@ -55,7 +48,7 @@ const lookupTimeFunction = node(
 
 const cityReportAgent = new LlmAgent({
   name: 'city_report_agent',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
 
   // Data selection based on class and parameter — reads this node's own input:
   // instruction: `Return a sentence in the following format:

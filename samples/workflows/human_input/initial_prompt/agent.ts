@@ -5,19 +5,14 @@
  */
 
 /**
- * TypeScript port of the Python `initial_prompt` snippet in
+ * A human-input node as the FIRST step of a workflow
  * https://adk.dev/graphs/human-input/#tool-confirmation-approval-prompts-in-llm-agents
  *
- *   async def initial_prompt(ctx: Context):
- *      yield RequestInput(message=input_message, response_schema=str)
+ * Instead of guessing what the user wants, the graph opens by asking, pauses,
+ * and then routes the reply into the rest of the process.
  *
- * A HITL node as the FIRST step of a workflow: instead of guessing what the
- * user wants, the graph opens by asking, pauses, and then routes the reply into
- * the rest of the process.
- *
- * `response_schema=str` becomes `responseSchema: z.string()` — a plain text
- * reply. Nothing coerces the human's answer into that shape; the schema tells a
- * client what to collect.
+ * `responseSchema: z.string()` asks for a plain text reply. Nothing coerces the
+ * human's answer into that shape; the schema tells a client what to collect.
  *
  * (The same docs section also covers tool-confirmation, an LlmAgent-level
  * mechanism rather than a graph node: set `requireConfirmation: true` on a

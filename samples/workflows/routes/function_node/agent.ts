@@ -5,16 +5,15 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Nodes
  * https://adk.dev/graphs/routes/#nodes
  *
  * The simplest node type: a plain function wrapped as a FunctionNode. It takes
  * text in, returns text out, and the framework hands that value to the next
  * node as its input — no session-state writes needed.
  *
- * Python returns `Event(output=...)` explicitly; in TypeScript a bare return
- * value is boxed into an `Event` with that `output` for you, so both forms
- * below are equivalent.
+ * A bare return value is boxed into an `Event` carrying that `output` for you,
+ * so both forms below are equivalent.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/routes/function_node/agent.ts
@@ -28,7 +27,7 @@ import {
   type FunctionNodeHandler,
 } from '@google/adk';
 
-/** Python: `return Event(output=node_input.upper())`. */
+/** A bare return value: boxed into an event's `output` for you. */
 const myFunctionNode: FunctionNodeHandler<string, string> = (
   _ctx: NodeContext,
   nodeInput: string,

@@ -5,20 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Loop route
  * https://adk.dev/graphs/dynamic/#loop-route
- *
- *   @node # workflow node
- *   async def code_workflow(ctx: Context, user_request: str):
- *     code = await ctx.run_node(coder_agent, user_request)
- *     check_resp = await ctx.run_node(compile_lint_check, code)
- *
- *     while check_resp.findings:
- *       yield Event(state={"code": code, "findings": check_resp.findings})
- *       code = await ctx.run_node(fixer_agent, {"code": code, "findings": ...})
- *       check_resp = await ctx.run_node(compile_lint_check, code)
- *
- *     return code
  *
  * This is where dynamic workflows earn their keep: the iteration is an ordinary
  * `while` loop, not a back-edge you have to reason about. Values live in local
@@ -41,8 +29,9 @@ const MAX_FIX_ROUNDS = 3;
 const coderAgent = node(
   new LlmAgent({
     name: 'generator_agent',
-    model: 'gemini-2.5-flash',
-    instruction: 'Write python code for the user request. Output code only.',
+    model: 'gemini-flash-latest',
+    instruction:
+      'Write TypeScript code for the user request. Output code only.',
   }),
 );
 
@@ -50,10 +39,10 @@ const coderAgent = node(
 const compileLintCheck = node(
   (_ctx: NodeContext, code: string) => {
     const findings: string[] = [];
-    if (!/"""/.test(code)) {
-      findings.push('every function needs a docstring');
+    if (!/\/\*\*/.test(code)) {
+      findings.push('every function needs a JSDoc comment');
     }
-    if (!/->/.test(code)) {
+    if (!/\)\s*:\s*\w/.test(code)) {
       findings.push('add return type annotations');
     }
     return {findings: findings.join('; ')};
@@ -64,7 +53,7 @@ const compileLintCheck = node(
 const fixerAgent = node(
   new LlmAgent({
     name: 'fixer_agent',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-flash-latest',
     instruction: `Refactor current code {code}.
         Based on compile & lint review: {findings}
         Output code only.`,

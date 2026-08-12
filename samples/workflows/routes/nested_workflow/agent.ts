@@ -5,16 +5,8 @@
  */
 
 /**
- * TypeScript port of the Python snippet in
+ * Nested workflows
  * https://adk.dev/graphs/routes/#nested-workflows
- *
- *   root_agent = Workflow(
- *       name="parent_workflow",
- *       edges=[
- *          ("START", task_A1, router),
- *          (router, {"RUN_WORKFLOW_B": workflow_B, "RUN_WORKFLOW_C": workflow_C}),
- *       ],
- *   )
  *
  * A `Workflow` is itself a node, so it can be dropped straight into another
  * workflow's edges to encapsulate a reusable sub-process.
