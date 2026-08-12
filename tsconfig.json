@@ -26,5 +26,11 @@
   // the preceding build step, so CI and a fresh clone check different files.
   // The three workspace configs set their own `exclude`, so this does not
   // reach them.
-  "exclude": ["node_modules", "**/dist"]
+  //
+  // `samples` is excluded because the `paths` above are wrong for it: a sample
+  // is a consumer of the published package, not part of the build, so it has
+  // to resolve `@google/adk` through `node_modules` the way a user's project
+  // does. It is type-checked by `npm run ts:check:samples`, against
+  // `samples/tsconfig.json`, which resets `paths` for exactly that reason.
+  "exclude": ["node_modules", "**/dist", "samples"]
 }
