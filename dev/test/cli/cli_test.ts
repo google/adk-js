@@ -102,6 +102,18 @@ describe('CLI Entrypoint', () => {
       expect(instance.start).toHaveBeenCalled();
     });
 
+    it('honours --log_level debug', async () => {
+      // LogLevel.DEBUG is 0, so the previous `|| LogLevel.INFO` fallback
+      // discarded it and the flag did nothing.
+      await parse(['web', '--log_level', 'debug']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+    });
+
+    it('falls back to INFO for an unrecognised --log_level', async () => {
+      await parse(['web', '--log_level', 'not-a-level']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.INFO);
+    });
+
     it('should pass options to AdkApiServer', async () => {
       await parse([
         'web',
