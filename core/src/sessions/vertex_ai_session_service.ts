@@ -7,6 +7,7 @@
 import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
+  EventActions as ApiEventActions,
   AppendAgentEngineSessionEventConfig,
   AppendAgentEngineSessionEventRequestParameters,
   EventMetadata,
@@ -456,10 +457,10 @@ export class VertexAiSessionService extends BaseSessionService {
 
     const config = partialCopy<AppendAgentEngineSessionEventConfig>(event, [
       'content',
-      'actions',
       'errorCode',
       'errorMessage',
     ]);
+    config.actions = toApiActions(event.actions);
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
@@ -564,6 +565,25 @@ function applyWorkflowMetadata(
   if (metadata.endOfAgent !== undefined) {
     event.actions.endOfAgent = metadata.endOfAgent;
   }
+}
+
+/**
+ * Renames `transferToAgent` to the `transferAgent` the Agent Engine sessions
+ * API actually defines, mirroring what `_fromApiEvent` reads back and what
+ * adk-python writes. Returns a new object: `partialCopy` is shallow, so
+ * rewriting the event's own `actions` in place would mutate the caller's event.
+ */
+function toApiActions(
+  actions: EventActions | undefined,
+): ApiEventActions | undefined {
+  if (!actions) {
+    return undefined;
+  }
+  const {transferToAgent, ...rest} = actions;
+  return {
+    ...rest,
+    ...(transferToAgent !== undefined ? {transferAgent: transferToAgent} : {}),
+  } as ApiEventActions;
 }
 
 interface ExtendedEventActions extends EventActions {
