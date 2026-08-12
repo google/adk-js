@@ -135,18 +135,20 @@ export async function executeChildNode({
   });
 
   const pluginManager = child.invocationContext.pluginManager;
-  const skipOutput = await pluginManager?.runBeforeNodeCallback({
-    node,
-    nodeContext: child,
-    input,
-  });
-  if (skipOutput !== undefined) {
-    child.output = skipOutput;
-    if (options.useAsOutput) {
-      parent.output = child.output;
-      parent.route = child.route;
+  if (pluginManager?.hasPlugins) {
+    const skipOutput = await pluginManager.runBeforeNodeCallback({
+      node,
+      nodeContext: child,
+      input,
+    });
+    if (skipOutput !== undefined) {
+      child.output = skipOutput;
+      if (options.useAsOutput) {
+        parent.output = child.output;
+        parent.route = child.route;
+      }
+      return child;
     }
-    return child;
   }
 
   let succeeded = false;
@@ -177,13 +179,15 @@ export async function executeChildNode({
     }
   }
 
-  const replacedOutput = await pluginManager?.runAfterNodeCallback({
-    node,
-    nodeContext: child,
-    output: child.output,
-  });
-  if (replacedOutput !== undefined) {
-    child.output = replacedOutput;
+  if (pluginManager?.hasPlugins) {
+    const replacedOutput = await pluginManager.runAfterNodeCallback({
+      node,
+      nodeContext: child,
+      output: child.output,
+    });
+    if (replacedOutput !== undefined) {
+      child.output = replacedOutput;
+    }
   }
 
   if (options.useAsOutput) {

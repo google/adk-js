@@ -35,6 +35,12 @@ import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
  */
 export class PluginManager {
   private readonly plugins: Set<BasePlugin> = new Set();
+
+  /** Whether any plugin is registered. */
+  get hasPlugins(): boolean {
+    return this.plugins.size > 0;
+  }
+
   /**
    * Initializes the plugin service.
    *
