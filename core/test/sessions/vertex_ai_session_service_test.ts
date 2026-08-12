@@ -1286,6 +1286,95 @@ describe('VertexAiSessionService', () => {
         }),
       );
     });
+
+    describe('agent transfer action', () => {
+      const transferSession = () =>
+        ({
+          id: 'transfer-session',
+          appName: '12345',
+          userId: 'testUser',
+          events: [],
+          lastUpdateTime: Date.now(),
+        }) as unknown as Session;
+
+      it('sends the transfer under the name the API defines', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        expect(sent.config.actions.transferAgent).toBe('billing_agent');
+        expect(sent.config.actions.transferToAgent).toBeUndefined();
+      });
+
+      it('round-trips the transfer when rawEvent is absent', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        mockClient.events.listInternal.mockResolvedValue({
+          sessionEvents: [
+            {
+              name: 'reasoningEngines/12345/sessions/transfer-session/events/e1',
+              author: sent.author,
+              invocationId: sent.invocationId,
+              timestamp: sent.timestamp,
+              content: sent.config.content,
+              actions: sent.config.actions,
+              eventMetadata: sent.config.eventMetadata,
+            },
+          ],
+        });
+
+        const session = await service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'transfer-session',
+        });
+
+        expect(session!.events[0].actions.transferToAgent).toBe(
+          'billing_agent',
+        );
+      });
+
+      it('does not mutate the caller event', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        expect(event.actions.transferToAgent).toBe('billing_agent');
+        expect('transferAgent' in event.actions).toBe(false);
+      });
+
+      it('adds no transfer key when the event has none', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'agent',
+          invocationId: 'inv-1',
+          content: {role: 'model', parts: [{text: 'hi'}]},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        expect('transferAgent' in sent.config.actions).toBe(false);
+      });
+    });
   });
 
   describe('workflow event fields', () => {
