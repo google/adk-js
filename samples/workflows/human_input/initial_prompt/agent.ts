@@ -56,13 +56,13 @@ const initialPrompt = node(
 // Receives the user's reply as its input and kicks off the real work.
 const buildItinerary = node(
   (_ctx: NodeContext, nodeInput: string) => {
-    const [city = 'your city'] = String(nodeInput).split(',');
+    const [city = 'your city'] = nodeInput.split(',');
     return (
       `Personalized itinerary for ${city.trim()}:\n` +
       '  1. Morning walk through the old town\n' +
       '  2. Lunch at a neighbourhood favourite\n' +
       '  3. An afternoon activity matched to your hobby\n\n' +
-      `(based on: ${String(nodeInput).trim()})`
+      `(based on: ${nodeInput.trim()})`
     );
   },
   {name: 'build_itinerary'},

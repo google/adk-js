@@ -85,13 +85,10 @@ const searchFlightsApi = new FunctionTool({
 // expects. In a real app this would itself be an extraction agent.
 const parseRequest = node(
   (_ctx: NodeContext, nodeInput: string): FlightSearchInput => {
-    const codes =
-      String(nodeInput)
-        .toUpperCase()
-        .match(/\b[A-Z]{3}\b/g) ?? [];
-    const date = String(nodeInput).match(/\d{4}-\d{2}-\d{2}/)?.[0];
+    const codes = nodeInput.toUpperCase().match(/\b[A-Z]{3}\b/g) ?? [];
+    const date = nodeInput.match(/\d{4}-\d{2}-\d{2}/)?.[0];
     const passengers = Number(
-      String(nodeInput).match(/(\d+)\s*(people|pax|passengers?)/i)?.[1],
+      nodeInput.match(/(\d+)\s*(people|pax|passengers?)/i)?.[1],
     );
     return {
       origin: codes[0] ?? 'SFO',

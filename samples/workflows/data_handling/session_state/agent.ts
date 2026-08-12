@@ -47,7 +47,7 @@ import {node, NodeContext, WorkflowAgent} from '@google/adk';
 
 const initStateNode = node(
   (ctx: NodeContext, nodeInput: string) => {
-    ctx.state.set('topic', String(nodeInput).trim());
+    ctx.state.set('topic', nodeInput.trim());
     // Scoped key: dropped when this invocation ends, never persisted.
     ctx.state.set('temp:started_at', new Date().toISOString());
     // The counter travels as node output, not as a re-read state key.

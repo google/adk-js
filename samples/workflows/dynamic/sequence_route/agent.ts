@@ -45,7 +45,7 @@ const cityGeneratorAgent = node(
 const cityTimeFunction = node(
   (_ctx: NodeContext, city: string): CityTime => ({
     timeInfo: '10:10 AM',
-    city: String(city).trim(),
+    city: city.trim(),
   }),
   {name: 'city_time_function', outputSchema: cityTimeSchema},
 );

@@ -37,7 +37,7 @@ import {
 } from '@google/adk';
 
 const taskA1 = node(
-  (_ctx: NodeContext, nodeInput: string) => String(nodeInput).trim(),
+  (_ctx: NodeContext, nodeInput: string) => nodeInput.trim(),
   {name: 'task_A1'},
 );
 

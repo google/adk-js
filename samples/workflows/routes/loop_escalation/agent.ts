@@ -42,8 +42,8 @@ const REQUIRED_BULLETS = 3;
 
 const seedDraft = node(
   (_ctx: NodeContext, topic: string): Draft => ({
-    topic: String(topic).trim(),
-    bullets: [`${String(topic).trim()} — point 1`],
+    topic: topic.trim(),
+    bullets: [`${topic.trim()} — point 1`],
   }),
   {name: 'seed_draft'},
 );

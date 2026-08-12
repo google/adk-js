@@ -50,7 +50,7 @@ const userFeedbackSchema = z.object({
 // Stands in for the agent node that composes the base itinerary.
 const buildItinerary = node(
   (_ctx: NodeContext, city: string): ActivitiesList => {
-    const place = String(city).trim() || 'your city';
+    const place = city.trim() || 'your city';
     return {
       itinerary: [
         {name: 'Morning walk', description: `A stroll through old ${place}.`},

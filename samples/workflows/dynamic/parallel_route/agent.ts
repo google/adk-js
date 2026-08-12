@@ -52,7 +52,7 @@ const realNode = node(
 
 const parallelSupervisor = node(
   async (ctx: NodeContext, nodeInput: string) => {
-    const items = String(nodeInput)
+    const items = nodeInput
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
