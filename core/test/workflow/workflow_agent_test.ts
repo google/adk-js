@@ -116,3 +116,144 @@ describe('WorkflowAgent — constructor forms', () => {
     );
   });
 });
+
+/** Runs an agent to completion and returns every event it yielded. */
+async function runAgent(agent: WorkflowAgent): Promise<Event[]> {
+  const ic = new InvocationContext({
+    invocationId: 'inv-1',
+    session: createSession({
+      id: 's1',
+      appName: 'app',
+      userId: 'u',
+      lastUpdateTime: Date.now(),
+    }),
+    agent,
+    userContent: {role: 'user', parts: [{text: 'go'}]},
+    pluginManager: new PluginManager(),
+  });
+  const events: Event[] = [];
+  for await (const event of agent.runAsync(ic)) {
+    events.push(event);
+  }
+  return events;
+}
+
+describe('WorkflowAgent — the workflow output reaches the caller once', () => {
+  it('does not repeat the terminal node’s output', async () => {
+    const agent = new WorkflowAgent({
+      name: 'wf',
+      edges: [['START', node(() => 'result', {name: 'only'})]],
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    // The terminal node already emitted its output on the way past; announcing
+    // it again would make one node output arrive as two data events.
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].author).toBe('only');
+    expect(withOutput[0].output).toBe('result');
+  });
+
+  it('announces a dynamicEntry’s return value, which no node emitted', async () => {
+    const agent = new WorkflowAgent({
+      name: 'dyn',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const child = await ctx.runNode(
+          node(() => 2, {name: 'double'}),
+          null,
+        );
+        // Derived from the child rather than returned verbatim, so nothing on
+        // the channel carries it.
+        return (child.output as number) * 21;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput.map((e) => e.output)).toEqual([2, 42]);
+    expect(withOutput[1].author).toBe('dyn');
+  });
+
+  it('re-announces the result when a later node emitted after it', async () => {
+    const agent = new WorkflowAgent({
+      name: 'later',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const result = await ctx.runNode(
+          node(() => 'headline', {name: 'make'}),
+          null,
+        );
+        // A scoring pass runs after the value that becomes the result, so the
+        // result is no longer the last output on the stream.
+        await ctx.runNode(
+          node(() => ({score: 9}), {name: 'grade'}),
+          null,
+        );
+        return result.output;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    // Without the trailing event, a consumer taking the last output would read
+    // the score instead of the headline.
+    expect(withOutput.map((e) => e.output)).toEqual([
+      'headline',
+      {score: 9},
+      'headline',
+    ]);
+    expect(withOutput[2].author).toBe('later');
+  });
+
+  it('does not repeat a dynamicEntry’s value when a child already emitted it', async () => {
+    const agent = new WorkflowAgent({
+      name: 'passthrough',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const child = await ctx.runNode(
+          node(() => 'x', {name: 'inner'}),
+          null,
+        );
+        return child.output;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].author).toBe('inner');
+  });
+
+  it('announces a terminal node’s output that was set without emitting', async () => {
+    const agent = new WorkflowAgent({
+      name: 'assigns',
+      edges: [
+        [
+          'START',
+          node(
+            (ctx: NodeContext) => {
+              // Assigning rather than returning: nothing is yielded, so no
+              // event carries this value out.
+              ctx.output = 'assigned';
+            },
+            {name: 'quiet'},
+          ),
+        ],
+      ],
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].output).toBe('assigned');
+    expect(withOutput[0].author).toBe('assigns');
+  });
+});
