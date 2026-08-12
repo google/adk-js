@@ -18,6 +18,10 @@ import {
 } from './utils/rehydration_utils.js';
 import {Workflow, WorkflowConfig} from './workflow.js';
 
+const WORKFLOW_AGENT_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.workflow.workflowAgent',
+);
+
 /** Options for a {@link WorkflowAgent}. */
 export interface WorkflowAgentConfig {
   name?: string;
@@ -35,6 +39,8 @@ export interface WorkflowAgentConfig {
  */
 @experimental
 export class WorkflowAgent extends BaseAgent {
+  readonly [WORKFLOW_AGENT_SIGNATURE_SYMBOL] = true;
+
   readonly workflow: Workflow;
 
   /**
@@ -150,6 +156,15 @@ export class WorkflowAgent extends BaseAgent {
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     throw new Error('WorkflowAgent does not support live mode.');
   }
+}
+
+export function isGraphWorkflowAgent(value: unknown): value is WorkflowAgent {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    WORKFLOW_AGENT_SIGNATURE_SYMBOL in value &&
+    value[WORKFLOW_AGENT_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**

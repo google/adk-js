@@ -383,6 +383,7 @@ export {
   createNodeErrorEvent,
   createNodeState,
   createSubBranch,
+  isGraphWorkflowAgent,
   isNodeErrorEvent,
   isNodeSchemaValidationError,
   isNodeState,

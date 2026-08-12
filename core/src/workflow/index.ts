@@ -14,7 +14,7 @@
 // --- Core graph / workflow ---
 export {Workflow} from './workflow.js';
 export type {DynamicEntry, WorkflowConfig} from './workflow.js';
-export {WorkflowAgent} from './workflow_agent.js';
+export {WorkflowAgent, isGraphWorkflowAgent} from './workflow_agent.js';
 export type {WorkflowAgentConfig} from './workflow_agent.js';
 
 // --- Nodes ---
