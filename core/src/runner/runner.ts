@@ -600,9 +600,11 @@ export function determineAgentForResumption(
     if (resumedAgent) {
       return resumedAgent;
     }
-    logger.warn(
-      `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
-    );
+    if (!isWorkflowNodeEvent(event)) {
+      logger.warn(
+        `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+      );
+    }
   }
 
   // =========================================================================
@@ -623,9 +625,11 @@ export function determineAgentForResumption(
 
     const agent = rootAgent.findSubAgent(event.author);
     if (!agent) {
-      logger.warn(
-        `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
-      );
+      if (!isWorkflowNodeEvent(event)) {
+        logger.warn(
+          `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
+        );
+      }
       continue;
     }
     if (isRoutableLlmAgent(agent)) {
@@ -636,6 +640,26 @@ export function determineAgentForResumption(
   // Case 3: default to root agent.
   // =========================================================================
   return rootAgent;
+}
+
+/**
+ * Whether the event was emitted by a graph-workflow node, and so may be
+ * authored by a node name rather than an agent name.
+ *
+ * `nodeInfo.path` is stamped on everything a node emits (`node_runner.ts`).
+ * When the node emits an event of its own — a function node's output, or a HITL
+ * interrupt, which carries no author at all — the node name is stamped as the
+ * author. Nodes are not in the agent tree and never will be: a `WorkflowAgent`
+ * keeps its structure in `edges`, so its `subAgents` is empty. Looking such an
+ * author up could only ever miss, so the miss is not worth warning about — it
+ * fired on the happy path of every human-in-the-loop resume.
+ *
+ * Only the warning is suppressed, never the lookup: a node that wraps an agent
+ * (`LLMAgentWrapper`) yields the agent's own events, so the author is a real
+ * agent name that must still resolve.
+ */
+function isWorkflowNodeEvent(event: Event): boolean {
+  return Boolean(event.nodeInfo?.path);
 }
 
 /**
