@@ -384,6 +384,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error running agent:', (error as Error).message);
+        process.exit(1);
       }
     });
 

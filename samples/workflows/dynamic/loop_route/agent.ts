@@ -18,7 +18,11 @@
  *
  * REQUIRES an API key (two agents call a live model). Set GEMINI_API_KEY:
  *   npm run sample -- samples/workflows/dynamic/loop_route/agent.ts
- * Try "a function that returns the nth fibonacci number".
+ * Try "a one-line function that adds two numbers, no comments, no type
+ * annotations" — asking for code the linter will reject is what makes the loop
+ * run. A plainly-worded request ("a function that returns the nth fibonacci
+ * number") comes back documented and annotated on the first try, `findings` is
+ * empty, and the loop exits before the fixer ever runs.
  */
 
 import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
