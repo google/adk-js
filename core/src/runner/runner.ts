@@ -7,11 +7,12 @@
 import {Content, createPartFromText, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
+  requireAgent,
 } from '../agents/invocation_context.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
@@ -39,8 +40,10 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {BaseNode} from '../workflow/base_node.js';
 import type {RunnableNode} from '../workflow/graph.js';
-import {asRootAgent} from '../workflow/workflow_agent.js';
+import {runNodeAsInvocation} from '../workflow/run_node_as_invocation.js';
+import {asRootAgent, isRootAgentLike} from '../workflow/workflow_agent.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -146,7 +149,11 @@ export function isRunner(obj: unknown): obj is Runner {
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
-  readonly agent: BaseAgent;
+  /**
+   * The root being run: an agent, or a bare node (a `Workflow`) that the
+   * runner drives directly.
+   */
+  readonly agent: BaseAgent | BaseNode;
   readonly pluginManager: PluginManager;
   readonly artifactService?: BaseArtifactService;
   readonly sessionService: BaseSessionService;
@@ -168,7 +175,9 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    this.agent = asRootAgent(agent);
+    // A workflow is kept as itself rather than wrapped: the runner can drive a
+    // node directly (see `runRoot`), so there is no agent to manufacture.
+    this.agent = isRootAgentLike(agent) ? agent : asRootAgent(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
@@ -305,7 +314,7 @@ export class Runner {
             memoryService: this.memoryService,
             credentialService: this.credentialService,
             invocationId: newInvocationContextId(),
-            agent: this.agent,
+            agent: isBaseAgent(this.agent) ? this.agent : undefined,
             session,
             userContent: newMessage,
             runConfig,
@@ -373,10 +382,14 @@ export class Runner {
           // =========================================================================
           // Determine which agent should handle the workflow resumption.
           // =========================================================================
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            this.agent,
-          );
+          // Only meaningful for an agent root: this resolves an event author
+          // against the agent tree, and a node subtree is not in that tree.
+          if (isBaseAgent(this.agent)) {
+            invocationContext.agent = this.determineAgentForResumption(
+              session,
+              this.agent,
+            );
+          }
 
           // =========================================================================
           // Run the agent with the plugins (aka hooks to apply in the lifecycle)
@@ -413,9 +426,7 @@ export class Runner {
               yield earlyExitEvent;
             } else {
               // Step 2: Otherwise continue with normal execution
-              for await (const event of invocationContext.agent.runAsync(
-                invocationContext,
-              )) {
+              for await (const event of this.runRoot(invocationContext)) {
                 if (params.abortSignal?.aborted) {
                   return;
                 }
@@ -460,9 +471,34 @@ export class Runner {
       );
     } finally {
       span.end();
-      const toolsets = getAllToolsets(this.agent);
+      const toolsets = isBaseAgent(this.agent)
+        ? getAllToolsets(this.agent)
+        : [];
       await Promise.allSettled(toolsets.map((t) => t.close()));
     }
+  }
+
+  /**
+   * Runs whatever this runner was given as its root.
+   *
+   * An agent is run through `runAsync`, as always. A bare node — a `Workflow`
+   * handed to the runner directly — is driven by {@link runNodeAsInvocation},
+   * which is the same bridge `WorkflowAgent` wraps.
+   *
+   * Only the execution differs. Everything around it (the run callbacks, event
+   * persistence, cancellation) is shared, so the node path cannot drift from
+   * the agent path on the things that are not about execution. adk-python has
+   * two separate loops here and a TODO noting its node one lacks tracing and
+   * plugins; there is nothing to lack if there is only one loop.
+   */
+  private async *runRoot(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    if (isBaseAgent(this.agent)) {
+      yield* requireAgent(invocationContext).runAsync(invocationContext);
+      return;
+    }
+    yield* runNodeAsInvocation(this.agent, invocationContext);
   }
 
   /**

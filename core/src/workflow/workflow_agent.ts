@@ -4,19 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {createEvent, Event} from '../events/event.js';
-import {AsyncQueue} from '../utils/async_queue.js';
+import {Event} from '../events/event.js';
 import {experimental} from '../utils/experimental.js';
-import {toContent} from './base_node.js';
 import type {RunnableNode} from './graph.js';
-import {NodeContext} from './node_context.js';
-import {
-  eventsForCurrentRun,
-  reconstructNodeStates,
-} from './utils/rehydration_utils.js';
+import {runNodeAsInvocation} from './run_node_as_invocation.js';
 import {buildNode, isNodeLike} from './utils/workflow_graph_utils.js';
 import {isWorkflow, Workflow, WorkflowConfig} from './workflow.js';
 
@@ -78,80 +71,10 @@ export class WorkflowAgent extends BaseAgent {
   protected async *runAsyncImpl(
     ic: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
-    const channel = new AsyncQueue<Event>();
-    const root = new NodeContext({
-      invocationContext: ic,
-      channel,
-      nodePath: '',
-      runId: this.name,
-      // Interactive resume: if the workflow is paused on an interrupt and the
-      // user replies with plain text (not a structured function response), feed
-      // that text to the pending interrupt(s). Structured function responses are
-      // still resolved by the workflow's own rehydration.
-      resumeInputs: resumeInputsFromPlainText(ic),
-    });
-
-    const input = extractWorkflowInput(ic.userContent);
-
-    let interrupted = false;
-    const settle = (async () => {
-      try {
-        const wfCtx = await root.runNode(this.workflow, input, {
-          useAsOutput: true,
-        });
-        interrupted = wfCtx.interruptIds.length > 0;
-        channel.close();
-      } catch (err) {
-        channel.fail(err);
-      }
-    })();
-
-    // The last output handed to the caller, tracked so the workflow's own
-    // output is not delivered twice.
-    let lastOutput: unknown;
-    let sawOutput = false;
-
-    try {
-      for await (const event of channel) {
-        if (event.output !== undefined) {
-          lastOutput = event.output;
-          sawOutput = true;
-        }
-        yield event;
-      }
-      await settle;
-    } finally {
-      // Ensure a single exit path if the consumer stops early (breaks its
-      // for-await, or the Runner cancels the invocation): close the channel so
-      // the workflow's producer stops pushing into a queue nobody drains, and
-      // await `settle` so its cleanup runs and errors surface. Idempotent on the
-      // normal path (the channel is already closed and `settle` resolved).
-      channel.close();
-      await settle;
-    }
-
-    // The contract this keeps is that the workflow's output is the last output
-    // on the stream, so a consumer can read the result by taking the last one.
-    // When the terminal node already put it there — the ordinary case — saying
-    // it again would deliver one node output as two data events. When it did
-    // not, the value still has to be announced: a `dynamicEntry` can return
-    // something it computed rather than a child's value, a node can set
-    // `ctx.output` without emitting, and a later branch can emit after the
-    // node that produced the result.
-    //
-    // Deciding after the drain, rather than when the workflow settles, is what
-    // makes this exact: by then every node event has been seen, whereas
-    // `root.output` is only assigned once the whole workflow has finished.
-    const alreadyLast = sawOutput && Object.is(lastOutput, root.output);
-    if (!interrupted && root.output !== undefined && !alreadyLast) {
-      yield createEvent({
-        author: this.name,
-        invocationId: ic.invocationId,
-        branch: ic.branch,
-        content: toContent(root.output),
-        output: root.output,
-      });
-    }
+    // The whole of this agent's behaviour. Kept here only so a workflow can be
+    // used where a `BaseAgent` is required; the runner now calls
+    // `runNodeAsInvocation` directly for a workflow handed to it.
+    yield* runNodeAsInvocation(this.workflow, ic, {author: this.name});
   }
 
   // eslint-disable-next-line require-yield -- runLiveImpl must be an AsyncGenerator per BaseAgent, but live mode is unsupported so it only throws
@@ -200,64 +123,6 @@ export function isGraphWorkflowAgent(value: unknown): value is WorkflowAgent {
     WORKFLOW_AGENT_SIGNATURE_SYMBOL in value &&
     value[WORKFLOW_AGENT_SIGNATURE_SYMBOL] === true
   );
-}
-
-/**
- * When the workflow is paused on exactly one unresolved interrupt and the
- * incoming message is plain text (not a structured function response), maps that
- * text to the single pending interrupt id so an interactive client (e.g. `adk
- * run`) can resume a HITL/auth pause by simply typing a reply.
- *
- * If more than one interrupt is pending, a plain-text reply is ambiguous — it
- * would be broadcast to every pause and at least one node would resume with data
- * the user never gave it — so it is ignored here. Addressing a specific pause in
- * a multi-interrupt workflow requires structured function responses (resolved by
- * the workflow's own rehydration).
- */
-function resumeInputsFromPlainText(
-  ic: InvocationContext,
-): Record<string, unknown> {
-  const parts = ic.userContent?.parts ?? [];
-  const isPlainText =
-    parts.length > 0 && parts.every((p) => typeof p.text === 'string');
-  if (!isPlainText) {
-    return {};
-  }
-  const text = parts.map((p) => p.text).join('');
-
-  const pending = new Set<string>();
-  // Scoped to the run still in progress: a pause belonging to a run that
-  // already finished is not resumable, and must not swallow the new message.
-  const events = eventsForCurrentRun(ic.session?.events ?? [], ic.invocationId);
-  for (const node of reconstructNodeStates(events).values()) {
-    for (const id of node.interruptIds) {
-      if (!node.resolvedResponses.has(id)) {
-        pending.add(id);
-      }
-    }
-  }
-
-  // Only the unambiguous single-pause case is resumable by plain text.
-  if (pending.size !== 1) {
-    return {};
-  }
-  const [id] = pending;
-  return {[id]: text};
-}
-
-/**
- * Derives the workflow input from the user message: plain text when the content
- * is text-only, otherwise the raw `Content` (nodes coerce as needed).
- */
-function extractWorkflowInput(content?: Content): unknown {
-  if (!content) {
-    return undefined;
-  }
-  const parts = content.parts ?? [];
-  if (parts.length > 0 && parts.every((p) => typeof p.text === 'string')) {
-    return parts.map((p) => p.text).join('');
-  }
-  return content;
 }
 
 /**

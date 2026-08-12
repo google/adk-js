@@ -5,10 +5,12 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
 import {Runner} from '../../src/runner/runner.js';
 import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {node} from '../../src/workflow/node.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
@@ -42,12 +44,39 @@ describe('Runner with a workflow as its root', () => {
 
     const {events, runner} = await runToCompletion(workflow);
 
-    // Wrapped internally, so the rest of the runner keeps seeing an agent.
-    expect(runner.agent).toBeInstanceOf(WorkflowAgent);
-    expect(runner.agent.name).toBe('wf');
+    // Driven as a node, not adapted into an agent: the runner holds the very
+    // workflow it was given.
+    expect(runner.agent).toBe(workflow);
     expect(events.map((e) => e.output).filter((o) => o !== undefined)).toEqual([
       'saw:go',
     ]);
+  });
+
+  it('leaves the invocation without an agent when the root is a node', async () => {
+    // There is no agent at this level, and saying so is what removes the need
+    // to manufacture one. Nodes deeper in the graph that are agents get their
+    // own contexts.
+    let seen: InvocationContext | undefined;
+    const workflow = new Workflow({
+      name: 'wf',
+      edges: [
+        [
+          'START',
+          node(
+            (ctx: NodeContext) => {
+              seen = ctx.invocationContext;
+              return 'done';
+            },
+            {name: 'step'},
+          ),
+        ],
+      ],
+    });
+
+    await runToCompletion(workflow);
+
+    expect(seen).toBeDefined();
+    expect(seen!.agent).toBeUndefined();
   });
 
   it('leaves an explicitly wrapped workflow alone', async () => {
