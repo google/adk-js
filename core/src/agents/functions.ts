@@ -341,7 +341,7 @@ export async function handleFunctionCallList({
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.
     let functionResponse = null;
-    let functionResponseError: string | unknown | undefined;
+    let functionResponseError: unknown;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
