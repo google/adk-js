@@ -41,7 +41,7 @@ import {
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-import {getAgentGraphAsDot} from './agent_graph.js';
+import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
 
 /**
  * Environment variable holding the shared bearer token used to authenticate
@@ -349,6 +349,16 @@ export class AdkApiServer {
           await using agentFile = await this.agentLoader.getAgentFile(appName);
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+
+          const workflowHighlights = getWorkflowHighlights(
+            sessionEvents,
+            event,
+          );
+          if (workflowHighlights) {
+            return res.send({
+              dotSrc: await getAgentGraphAsDot(rootAgent, workflowHighlights),
+            });
+          }
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];

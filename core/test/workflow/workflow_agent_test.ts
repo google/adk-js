@@ -6,6 +6,10 @@
 
 import {describe, expect, it} from 'vitest';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {LlmAgent} from '../../src/agents/llm_agent.js';
+import {LoopAgent} from '../../src/agents/loop_agent.js';
+import {ParallelAgent} from '../../src/agents/parallel_agent.js';
+import {SequentialAgent} from '../../src/agents/sequential_agent.js';
 import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
@@ -15,7 +19,10 @@ import {NodeContext} from '../../src/workflow/node_context.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {createRequestInputEvent} from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {
+  isGraphWorkflowAgent,
+  WorkflowAgent,
+} from '../../src/workflow/workflow_agent.js';
 
 /** A session event standing in for a node that raised an unresolved interrupt. */
 function pendingInterruptEvent(id: string): Event {
@@ -255,5 +262,62 @@ describe('WorkflowAgent — the workflow output reaches the caller once', () => 
     expect(withOutput).toHaveLength(1);
     expect(withOutput[0].output).toBe('assigned');
     expect(withOutput[0].author).toBe('assigns');
+  });
+});
+
+describe('isGraphWorkflowAgent', () => {
+  const step = node(() => 'done', {name: 'step'});
+
+  it('recognises a graph WorkflowAgent', () => {
+    const agent = new WorkflowAgent(
+      new Workflow({name: 'wf', edges: [['START', step]]}),
+    );
+    expect(isGraphWorkflowAgent(agent)).toBe(true);
+  });
+
+  it('recognises a branded agent from another package copy', () => {
+    const fromOtherCopy = {
+      [Symbol.for('google.adk.workflow.workflowAgent')]: true,
+    };
+    expect(isGraphWorkflowAgent(fromOtherCopy)).toBe(true);
+  });
+
+  it('rejects the v1 workflow agents and a plain LlmAgent', () => {
+    expect(
+      isGraphWorkflowAgent(
+        new SequentialAgent({
+          name: 'seq',
+          subAgents: [new LlmAgent({name: 'sub_seq'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isGraphWorkflowAgent(
+        new ParallelAgent({
+          name: 'par',
+          subAgents: [new LlmAgent({name: 'sub_par'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isGraphWorkflowAgent(
+        new LoopAgent({
+          name: 'loop',
+          subAgents: [new LlmAgent({name: 'sub_loop'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(isGraphWorkflowAgent(new LlmAgent({name: 'llm'}))).toBe(false);
+  });
+
+  it('rejects the wrapped workflow itself and non-objects', () => {
+    expect(
+      isGraphWorkflowAgent(
+        new Workflow({name: 'wf', edges: [['START', step]]}),
+      ),
+    ).toBe(false);
+    expect(isGraphWorkflowAgent(undefined)).toBe(false);
+    expect(isGraphWorkflowAgent(null)).toBe(false);
+    expect(isGraphWorkflowAgent('wf')).toBe(false);
   });
 });
