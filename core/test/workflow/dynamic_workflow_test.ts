@@ -87,6 +87,67 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
     });
   });
 
+  describe('custom run ids', () => {
+    /** Runs `child` once automatically, then once with `runId`. */
+    function workflowUsing(runId: string) {
+      const child = new FunctionNode('child', (_c, item) => `handled ${item}`);
+      return new Workflow({
+        name: 'run-ids',
+        dynamicEntry: async (ctx) => {
+          const auto = await ctx.runNode(child, 'auto');
+          const custom = await ctx.runNode(child, 'custom', {runId});
+          return {auto: auto.output, custom: custom.output};
+        },
+      });
+    }
+
+    it.each(['order-a91', '42', '007'])(
+      'accepts the non-colliding id %s',
+      async (id) => {
+        // Digits are fine in themselves -- ParallelWorker keys its fan-out by
+        // item index. Only an id ADK already handed out is refused.
+        expect((await driveWorkflow(workflowUsing(id))).output).toEqual({
+          auto: 'handled auto',
+          custom: 'handled custom',
+        });
+      },
+    );
+
+    it('rejects an id ADK already used for an automatic run', async () => {
+      // The auto run above took '1'. Before this check, passing '1' here
+      // resolved to that run's cached output -- returning 'handled auto' and
+      // dropping this call's input without executing.
+      await expect(driveWorkflow(workflowUsing('1'))).rejects.toThrow(
+        /Invalid runId '1' for node 'child'[\s\S]*'child-1'/,
+      );
+    });
+
+    it('rejects an empty id rather than silently auto-numbering it', async () => {
+      await expect(driveWorkflow(workflowUsing('   '))).rejects.toThrow(
+        /cannot be empty/,
+      );
+    });
+
+    it('numbers around a custom id claimed first, instead of deduping onto it', async () => {
+      const child = new FunctionNode('child', (_c, item) => `handled ${item}`);
+      const wf = new Workflow({
+        name: 'run-ids-reverse',
+        dynamicEntry: async (ctx) => {
+          // Custom '1' first, so the automatic sequence would otherwise walk
+          // straight into it on its first call.
+          const custom = await ctx.runNode(child, 'custom', {runId: '1'});
+          const auto = await ctx.runNode(child, 'auto');
+          return {custom: custom.output, auto: auto.output};
+        },
+      });
+
+      expect((await driveWorkflow(wf)).output).toEqual({
+        custom: 'handled custom',
+        auto: 'handled auto',
+      });
+    });
+  });
+
   it('supports the node-as-tool pattern (a node calls a sub-node)', async () => {
     const adder = new FunctionNode(
       'adder',
