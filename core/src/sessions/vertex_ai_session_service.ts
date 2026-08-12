@@ -18,7 +18,7 @@ import {isCompactedEvent} from '../events/compacted_event.js';
 import {experimental} from '../utils/experimental.js';
 
 import {AuthConfig} from '../auth/auth_tool.js';
-import {Event} from '../events/event.js';
+import {Event, NodeInfo, Route} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
@@ -43,6 +43,8 @@ import {createSession, Session} from './session.js';
 const DEFAULT_MAX_ATTEMPTS = 30;
 const GRPC_NOT_FOUND = 5;
 const HTTP_NOT_FOUND = 404;
+
+const WORKFLOW_CUSTOM_METADATA_KEY = '_workflow';
 
 /**
  * Checks if the given URI is a Vertex AI session service URI.
@@ -431,6 +433,10 @@ export class VertexAiSessionService extends BaseSessionService {
     if (event.usageMetadata) {
       customMetadata._usage_metadata = event.usageMetadata;
     }
+    const workflowMetadata = toWorkflowMetadata(event);
+    if (workflowMetadata) {
+      customMetadata[WORKFLOW_CUSTOM_METADATA_KEY] = workflowMetadata;
+    }
 
     const config = partialCopy<AppendAgentEngineSessionEventConfig>(event, [
       'content',
@@ -469,7 +475,9 @@ export class VertexAiSessionService extends BaseSessionService {
       await this.sessions.events.append(params);
     } catch (error) {
       logger.warn(
-        'Failed to append event with rawEvent, falling back...',
+        'Failed to append event with rawEvent; retrying without it. The event ' +
+          'will be reconstructed from its structured fields and ' +
+          'customMetadata on read.',
         error,
       );
       delete config.rawEvent;
@@ -483,6 +491,62 @@ export class VertexAiSessionService extends BaseSessionService {
     }
 
     return event;
+  }
+}
+
+interface WorkflowEventMetadata {
+  output?: unknown;
+  route?: Route;
+  nodeInfo?: NodeInfo;
+  isolationScope?: string;
+  agentState?: Record<string, unknown>;
+  endOfAgent?: boolean;
+}
+
+function toWorkflowMetadata(event: Event): WorkflowEventMetadata | undefined {
+  const metadata: WorkflowEventMetadata = {};
+  if (event.output !== undefined) {
+    metadata.output = event.output;
+  }
+  if (event.route !== undefined) {
+    metadata.route = event.route;
+  }
+  if (event.nodeInfo !== undefined) {
+    metadata.nodeInfo = event.nodeInfo;
+  }
+  if (event.isolationScope !== undefined) {
+    metadata.isolationScope = event.isolationScope;
+  }
+  if (event.actions?.agentState !== undefined) {
+    metadata.agentState = event.actions.agentState;
+  }
+  if (event.actions?.endOfAgent !== undefined) {
+    metadata.endOfAgent = event.actions.endOfAgent;
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function applyWorkflowMetadata(
+  event: Event,
+  metadata: WorkflowEventMetadata,
+): void {
+  if (metadata.output !== undefined) {
+    event.output = metadata.output;
+  }
+  if (metadata.route !== undefined) {
+    event.route = metadata.route;
+  }
+  if (metadata.nodeInfo !== undefined) {
+    event.nodeInfo = metadata.nodeInfo;
+  }
+  if (metadata.isolationScope !== undefined) {
+    event.isolationScope = metadata.isolationScope;
+  }
+  if (metadata.agentState !== undefined) {
+    event.actions.agentState = metadata.agentState;
+  }
+  if (metadata.endOfAgent !== undefined) {
+    event.actions.endOfAgent = metadata.endOfAgent;
   }
 }
 
@@ -527,8 +591,10 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     compactedContent: string;
   } | null = null;
   let usageMetadataData = null;
+  let workflowData: WorkflowEventMetadata | undefined;
 
   if (customMetadata) {
+    customMetadata = {...customMetadata};
     if (customMetadata._compaction) {
       compactionData = customMetadata._compaction as {
         startTime: number;
@@ -540,6 +606,12 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     if (customMetadata._usage_metadata) {
       usageMetadataData = customMetadata._usage_metadata;
       delete customMetadata._usage_metadata;
+    }
+    if (customMetadata[WORKFLOW_CUSTOM_METADATA_KEY]) {
+      workflowData = customMetadata[
+        WORKFLOW_CUSTOM_METADATA_KEY
+      ] as WorkflowEventMetadata;
+      delete customMetadata[WORKFLOW_CUSTOM_METADATA_KEY];
     }
     if (Object.keys(customMetadata).length === 0) {
       customMetadata = undefined;
@@ -589,6 +661,10 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     event.startTime = compactionData.startTime;
     event.endTime = compactionData.endTime;
     event.compactedContent = compactionData.compactedContent;
+  }
+
+  if (workflowData) {
+    applyWorkflowMetadata(event, workflowData);
   }
 
   return event;

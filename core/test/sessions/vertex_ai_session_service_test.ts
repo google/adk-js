@@ -14,6 +14,10 @@ import {
 import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  isFastForwardable,
+  reconstructNodeStates,
+} from '../../src/workflow/utils/rehydration_utils.js';
 
 // Mock the unreleased nodejs-vertexai package so the import resolves
 vi.mock('nodejs-vertexai', () => ({
@@ -1252,6 +1256,202 @@ describe('VertexAiSessionService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('workflow event fields', () => {
+    const appendSession = () =>
+      ({
+        id: 'wf-session',
+        appName: '12345',
+        userId: 'testUser',
+        events: [],
+        lastUpdateTime: Date.now(),
+      }) as unknown as Session;
+
+    const readBackWithoutRawEvent = async () => {
+      const sent = mockClient.events.append.mock.calls.at(-1)![0];
+      const apiEvent = {
+        name: 'reasoningEngines/12345/sessions/wf-session/events/e1',
+        author: sent.author,
+        invocationId: sent.invocationId,
+        timestamp: sent.timestamp,
+        content: sent.config.content,
+        actions: sent.config.actions,
+        eventMetadata: sent.config.eventMetadata,
+      };
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [apiEvent],
+      });
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'wf-session',
+      });
+      return {apiEvent, event: session!.events[0]};
+    };
+
+    it('writes workflow fields into customMetadata', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: {score: 7},
+        route: 'approved',
+        nodeInfo: {path: 'wf.reviewer', messageAsOutput: true},
+        isolationScope: 'wf:evt_1',
+        actions: {agentState: {input: 'draft'}, endOfAgent: true},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+
+      expect(mockClient.events.append).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            eventMetadata: expect.objectContaining({
+              customMetadata: expect.objectContaining({
+                _workflow: {
+                  output: {score: 7},
+                  route: 'approved',
+                  nodeInfo: {path: 'wf.reviewer', messageAsOutput: true},
+                  isolationScope: 'wf:evt_1',
+                  agentState: {input: 'draft'},
+                  endOfAgent: true,
+                },
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('writes no workflow metadata for a plain event', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'agent',
+        invocationId: 'inv-1',
+        content: {role: 'model', parts: [{text: 'hi'}]},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+
+      const sent = mockClient.events.append.mock.calls.at(-1)![0];
+      expect(sent.config.eventMetadata.customMetadata).toBeUndefined();
+    });
+
+    it('restores workflow fields when rawEvent is absent', async () => {
+      const original = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: {score: 7},
+        route: 'approved',
+        nodeInfo: {path: 'wf.reviewer', outputFor: '1'},
+        isolationScope: 'wf:evt_1',
+        actions: {agentState: {input: 'draft'}, endOfAgent: true},
+      });
+
+      await service.appendEvent({session: appendSession(), event: original});
+      const {event} = await readBackWithoutRawEvent();
+
+      expect(event.output).toEqual({score: 7});
+      expect(event.route).toBe('approved');
+      expect(event.nodeInfo).toEqual({path: 'wf.reviewer', outputFor: '1'});
+      expect(event.isolationScope).toBe('wf:evt_1');
+      expect(event.actions.agentState).toEqual({input: 'draft'});
+      expect(event.actions.endOfAgent).toBe(true);
+    });
+
+    it('round-trips a falsy output rather than dropping it', async () => {
+      for (const output of [false, 0, '', null]) {
+        mockClient.events.append.mockClear();
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'gate',
+          invocationId: 'inv-1',
+          nodeInfo: {path: 'wf.gate'},
+          output,
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+        const {event: readBack} = await readBackWithoutRawEvent();
+
+        expect(readBack.output).toBe(output);
+      }
+    });
+
+    it('keeps the workflow key out of user-visible customMetadata', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: 'done',
+        nodeInfo: {path: 'wf.reviewer'},
+        customMetadata: {tenant: 'acme'},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+      const {apiEvent, event: readBack} = await readBackWithoutRawEvent();
+
+      expect(readBack.customMetadata).toEqual({tenant: 'acme'});
+      expect(readBack.output).toBe('done');
+      expect(
+        (apiEvent.eventMetadata.customMetadata as Record<string, unknown>)
+          ._workflow,
+      ).toBeDefined();
+    });
+
+    it('lets a resumed workflow rehydrate from reconstructed events', async () => {
+      const completed = createEvent({
+        timestamp: 1620000000000,
+        author: 'fetch',
+        invocationId: 'inv-1',
+        nodeInfo: {path: 'wf.fetch'},
+        output: 'A(x)',
+      });
+      const paused = createEvent({
+        timestamp: 1620000001000,
+        author: 'gate',
+        invocationId: 'inv-1',
+        nodeInfo: {path: 'wf.gate'},
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'adk_request_input', id: 'gate-1'}}],
+        },
+        longRunningToolIds: ['gate-1'],
+        actions: {agentState: {input: 'A(x)'}},
+      });
+
+      const apiEvents = [];
+      for (const event of [completed, paused]) {
+        mockClient.events.append.mockClear();
+        await service.appendEvent({session: appendSession(), event});
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        apiEvents.push({
+          name: `reasoningEngines/12345/sessions/wf-session/events/${apiEvents.length}`,
+          author: sent.author,
+          invocationId: sent.invocationId,
+          timestamp: sent.timestamp,
+          content: sent.config.content,
+          actions: sent.config.actions,
+          eventMetadata: sent.config.eventMetadata,
+        });
+      }
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: apiEvents,
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'wf-session',
+      });
+
+      const states = reconstructNodeStates(session!.events, 'wf');
+      expect(states.get('fetch')?.output).toBe('A(x)');
+      expect(isFastForwardable(states.get('fetch')!)).toBe(true);
+      expect([...states.get('gate')!.interruptIds]).toEqual(['gate-1']);
+      expect(states.get('gate')?.input).toBe('A(x)');
     });
   });
 });
