@@ -162,7 +162,20 @@ function buildInnerNode(
   );
 }
 
-/** The {@link BuildNodeOptions} keys that name a property of `BaseNode`. */
+/**
+ * The {@link BuildNodeOptions} keys that name a property of `BaseNode`.
+ *
+ * Every key of `BuildNodeOptions` is either listed here or excluded for a
+ * reason, because a key that is neither is silently dropped — the fault this
+ * function exists to remove. `satisfies` checks the entries that are listed,
+ * not that the list is complete, so a new overridable `BaseNode` property must
+ * be added here by hand.
+ *
+ * Excluded: `parallelWorker` and `maxParallelWorkers`, which describe the
+ * wrapper {@link buildNode} puts *around* the node rather than the node itself;
+ * and `authConfig`, which is not a `BaseNode` property (see
+ * {@link NODE_DECLARED_KEYS}).
+ */
 const OVERRIDABLE_KEYS = [
   'name',
   'description',
@@ -172,7 +185,22 @@ const OVERRIDABLE_KEYS = [
   'inputSchema',
   'outputSchema',
   'stateSchema',
+  'isolationScope',
 ] as const satisfies ReadonlyArray<keyof BuildNodeOptions & keyof BaseNode>;
+
+/**
+ * {@link BuildNodeOptions} keys that no `BaseNode` declares but a concrete node
+ * class does, applied only to a node that declares the property.
+ *
+ * `authConfig` is the only one: the function builder forwards it to
+ * `FunctionNode`, which reads `this.authConfig` on every run to gate on
+ * credentials, while the tool and agent builders ignore it. Guarding on the
+ * property keeps this path consistent with a fresh build — the option reaches
+ * the node that consumes it and no other.
+ */
+const NODE_DECLARED_KEYS = ['authConfig'] as const satisfies ReadonlyArray<
+  Exclude<keyof BuildNodeOptions, keyof BaseNode>
+>;
 
 /**
  * Returns a copy of `node` with the given node properties replaced, or `node`
@@ -189,6 +217,14 @@ const OVERRIDABLE_KEYS = [
  * `preparedRetryConfig` is derived from `retryConfig` at construction, so it is
  * recomputed rather than copied — otherwise overriding the retry policy would
  * appear to work while the node kept retrying on the old one.
+ *
+ * **The copy is shallow**, so any mutable value a node holds stays shared with
+ * the original. No node class does today — `FunctionNode`, `Workflow`,
+ * `ParallelWorker` and `LLMAgentWrapper` hold only their config and immutable
+ * per-run maps keyed by context — but a subclass that keeps, say, a mutable
+ * array would hand both graphs the same one. That case needs a real clone seam
+ * rather than a wider copy here: `BaseAgent.clone` rebuilds through the
+ * concrete constructor so state is re-derived instead of shared (see #534).
  */
 function cloneWithOverrides(
   node: BaseNode,
@@ -197,6 +233,11 @@ function cloneWithOverrides(
   const overrides: Record<string, unknown> = {};
   for (const key of OVERRIDABLE_KEYS) {
     if (options[key] !== undefined) {
+      overrides[key] = options[key];
+    }
+  }
+  for (const key of NODE_DECLARED_KEYS) {
+    if (options[key] !== undefined && key in node) {
       overrides[key] = options[key];
     }
   }

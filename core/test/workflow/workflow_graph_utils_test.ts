@@ -5,7 +5,10 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {AuthCredentialTypes} from '../../src/auth/auth_credential.js';
+import {AuthConfig} from '../../src/auth/auth_tool.js';
 import {BaseNode, START} from '../../src/workflow/base_node.js';
+import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {
   buildNode,
@@ -126,11 +129,52 @@ describe('buildNode — overriding an already-built node', () => {
     expect(() => buildNode(original, {name: '   '})).toThrow();
   });
 
+  it('applies an isolationScope override', () => {
+    const original = new FnNode('n', (_c, i) => i);
+    const built = buildNode(original, {isolationScope: true});
+
+    // The node runner derives the child scope from this property, so dropping
+    // it would silently run the subtree in the parent's scope.
+    expect(built.isolationScope).toBe(true);
+    expect(original.isolationScope).toBeUndefined();
+  });
+
+  it('applies an authConfig override to a node that declares one', () => {
+    const authConfig: AuthConfig = {
+      credentialKey: 'k',
+      authScheme: {type: 'apiKey', name: 'k', in: 'header'},
+      rawAuthCredential: {authType: AuthCredentialTypes.API_KEY},
+    };
+    const original = new FunctionNode('n', () => 'ran');
+    const built = buildNode(original, {authConfig});
+
+    // FunctionNode reads `authConfig` on every run to gate on credentials.
+    expect((built as FunctionNode).authConfig).toBe(authConfig);
+    expect(original.authConfig).toBeUndefined();
+  });
+
+  it('does not graft authConfig onto a node that has no use for it', () => {
+    const original = new FnNode('n', (_c, i) => i);
+    const built = buildNode(original, {
+      timeout: 5,
+      authConfig: {
+        credentialKey: 'k',
+        authScheme: {type: 'apiKey', name: 'k', in: 'header'},
+      },
+    });
+
+    // Same as a fresh build: only the node type that reads the option gets it.
+    expect('authConfig' in built).toBe(false);
+  });
+
   it('overrides the inner node when wrapping in a parallel worker', () => {
     const original = new FnNode('inner', (_c, i) => i);
     const built = buildNode(original, {parallelWorker: true, timeout: 3});
 
     expect(built).toBeInstanceOf(ParallelWorker);
+    // `inner` is private, hence the cast: without this the test passes even if
+    // the overrides never reach the wrapped node.
+    expect((built as unknown as {inner: BaseNode}).inner.timeout).toBe(3);
     expect(original.timeout).toBeUndefined();
   });
 });
