@@ -235,7 +235,7 @@ export class PluginManager {
     node: BaseNode;
     nodeContext: NodeContext;
     input: unknown;
-  }): Promise<unknown | undefined> {
+  }): Promise<unknown> {
     return this.runCallbacks(
       this.plugins,
       (plugin: BasePlugin) =>
@@ -255,7 +255,7 @@ export class PluginManager {
     node: BaseNode;
     nodeContext: NodeContext;
     output: unknown;
-  }): Promise<unknown | undefined> {
+  }): Promise<unknown> {
     return this.runCallbacks(
       this.plugins,
       (plugin: BasePlugin) =>
