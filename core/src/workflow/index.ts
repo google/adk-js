@@ -84,3 +84,8 @@ export {
   isNodeSchemaValidationError,
   isNodeTimeoutError,
 } from './errors.js';
+export {createNodeErrorEvent, isNodeErrorEvent} from './node_error_event.js';
+export type {
+  CreateNodeErrorEventParams,
+  NodeErrorEvent,
+} from './node_error_event.js';

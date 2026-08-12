@@ -9,6 +9,7 @@ import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
 import {DynamicNodeScheduler} from './dynamic_node_scheduler.js';
+import {isInvocationAbortedError} from './errors.js';
 import {
   createGraphFromEdgeItems,
   EdgeItem,
@@ -16,6 +17,7 @@ import {
   RouteValue,
 } from './graph.js';
 import {NodeContext, NodeResult} from './node_context.js';
+import {createNodeErrorEvent} from './node_error_event.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -298,6 +300,7 @@ export class Workflow extends BaseNode {
         if (nodeState) {
           nodeState.status = NodeStatus.FAILED;
         }
+        this.reportNodeError(loop, ctx, result.name, result.error);
         loop.errorShutDown = true;
         await this.cleanupPending(loop, abortController);
         throw result.error;
@@ -305,6 +308,30 @@ export class Workflow extends BaseNode {
 
       await this.handleCompletion(loop, result.name, result.childCtx!);
     }
+  }
+
+  private reportNodeError(
+    loop: LoopState,
+    ctx: NodeContext,
+    nodeName: string,
+    error: unknown,
+  ): void {
+    if (isInvocationAbortedError(error) || loop.abortSignal?.aborted) {
+      return;
+    }
+    ctx.emit(
+      createNodeErrorEvent({
+        error,
+        attemptCount: loop.nodes.get(nodeName)?.attemptCount ?? 1,
+        author: nodeName,
+        invocationId: ctx.invocationId,
+        nodeInfo: {
+          path: ctx.nodePath ? `${ctx.nodePath}.${nodeName}` : nodeName,
+        },
+        branch: ctx.branch,
+        isolationScope: ctx.isolationScope,
+      }),
+    );
   }
 
   // --- Scheduling ---
@@ -435,6 +462,7 @@ export class Workflow extends BaseNode {
       node,
       input: nodeInput,
       abortSignal: loop.abortSignal,
+      nodeState,
       options: {
         runId,
         useSubBranch: trigger.useSubBranch,
