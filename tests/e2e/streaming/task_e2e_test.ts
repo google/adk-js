@@ -39,7 +39,6 @@ describe('ActiveStreamingTool E2E Simulation', () => {
     expect(nextItem).toBeDefined();
     expect(nextItem?.content?.parts?.[0]?.text).toBe('data');
 
-    // Cancel it
     activeTool.task?.cancel();
     await task.promise;
 

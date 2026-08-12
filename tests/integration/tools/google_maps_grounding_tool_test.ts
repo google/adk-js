@@ -75,12 +75,10 @@ describe('GoogleMapsGroundingTool Integration', () => {
 
     const {run} = await createRunner(agent);
 
-    // Run the agent
     for await (const _event of run('Find info about X')) {
       // Consume events
     }
 
-    // Verify the request captured by the spy model
     expect(spyModel.spyClient.models.lastRequest).toBeDefined();
     expect(spyModel.spyClient.models.lastRequest!.config?.tools).toHaveLength(
       1,
