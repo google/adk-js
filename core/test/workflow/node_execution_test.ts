@@ -291,17 +291,29 @@ describe('output schema validation (Zod v3 / Zod v4 / genai Schema)', () => {
     await expect(driveNode(node)).rejects.toThrow();
   });
 
-  it('accepts a genai Schema and leaves the value unvalidated', async () => {
+  it('validates output against a genai Schema', async () => {
+    const node = new FnNode('n', () => ({count: 3}), {
+      outputSchema: {
+        type: Type.OBJECT,
+        properties: {count: {type: Type.NUMBER}},
+        required: ['count'],
+      },
+    });
+    const {output} = await driveNode(node);
+    expect(output).toEqual({count: 3});
+  });
+
+  it('rejects output that fails a genai Schema', async () => {
     const node = new FnNode('n', () => ({anything: 'goes'}), {
       outputSchema: {
         type: Type.OBJECT,
         properties: {count: {type: Type.NUMBER}},
+        // `required` is what makes this prove enforcement: an object schema
+        // without it accepts any object, since Zod keeps unknown keys.
+        required: ['count'],
       },
     });
-    // A genai Schema is a declaration, not a runtime validator, so the value
-    // passes through untouched even though it does not match the schema.
-    const {output} = await driveNode(node);
-    expect(output).toEqual({anything: 'goes'});
+    await expect(driveNode(node)).rejects.toThrow();
   });
 });
 

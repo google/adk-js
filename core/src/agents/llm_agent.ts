@@ -46,6 +46,7 @@ import {
   traceCallLlm,
   tracer,
 } from '../telemetry/tracing.js';
+import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {BaseAgent, BaseAgentConfig} from './base_agent.js';
 import {
@@ -385,6 +386,20 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   mode?: 'single_turn' | 'task';
   inputSchema?: Schema;
   outputSchema?: Schema;
+  /**
+   * The input schema exactly as it was supplied, before conversion into the
+   * genai dialect.
+   *
+   * `inputSchema` is normalized to a genai `Schema` because that is what the
+   * model API and function declarations require, but that conversion is lossy:
+   * a Zod refinement, transform, or custom error message has no genai
+   * equivalent. Validation therefore uses the original, falling back to the
+   * converted form when the schema was given in the genai dialect to begin
+   * with.
+   */
+  readonly inputSchemaSource?: SchemaLike;
+  /** The output schema as supplied — see {@link inputSchemaSource}. */
+  readonly outputSchemaSource?: SchemaLike;
   outputKey?: string;
   private _finishTaskTool?: FinishTaskTool;
   beforeModelCallback?: BeforeModelCallback;
@@ -405,6 +420,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     this.disallowTransferToParent = config.disallowTransferToParent ?? false;
     this.disallowTransferToPeers = config.disallowTransferToPeers ?? false;
     this.includeContents = config.includeContents ?? 'default';
+    this.inputSchemaSource = config.inputSchema;
+    this.outputSchemaSource = config.outputSchema;
     this.inputSchema = isZodObject(config.inputSchema)
       ? zodObjectToSchema(config.inputSchema)
       : config.inputSchema;
@@ -697,15 +714,47 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       if (!resultStr.trim()) {
         return;
       }
-      // TODO - b/425992518: Use a proper Schema validation utility.
-      // Should use output schema to validate the JSON.
+      let parsed: unknown;
       try {
-        result = JSON.parse(resultStr);
+        parsed = JSON.parse(resultStr);
       } catch (e) {
+        // A model can return malformed JSON. Log and keep the raw text so the
+        // failure is visible without dropping the response, exactly as this
+        // path already behaved.
         logger.error(`Error parsing output for agent ${this.name}`, e);
+        event.actions.stateDelta[this.outputKey] = resultStr;
+        return;
+      }
+      try {
+        result = this.validateOutput(parsed);
+      } catch (e) {
+        // Well-formed JSON that violates the schema. Report it, but still
+        // write the parsed value: `outputKey` has always held the object the
+        // model returned, and substituting the raw string on failure would
+        // change the type a consumer reads. Rejecting outright is defensible,
+        // but is a separate behaviour change.
+        logger.error(
+          `Output for agent ${this.name} does not satisfy its output schema`,
+          e,
+        );
+        result = parsed;
       }
     }
     event.actions.stateDelta[this.outputKey] = result;
+  }
+
+  /**
+   * Validates a value against this agent's output schema, in whichever dialect
+   * it was declared, and returns the parsed value.
+   *
+   * Prefers the schema as supplied ({@link outputSchemaSource}) over the genai
+   * form derived from it, since the conversion drops constraints Zod can
+   * express and genai cannot.
+   *
+   * @throws if the value does not satisfy the schema.
+   */
+  validateOutput(value: unknown): unknown {
+    return parseWithSchema(this.outputSchemaSource ?? this.outputSchema, value);
   }
 
   protected async *runAsyncImpl(

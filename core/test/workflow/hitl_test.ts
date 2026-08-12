@@ -114,7 +114,7 @@ describe('createRequestInputEvent', () => {
     expect(args.responseSchema).toMatchObject({type: 'object'});
   });
 
-  it('passes a genai Schema responseSchema through as-is', () => {
+  it('converts a genai Schema responseSchema to a JSON schema', () => {
     const schema: Schema = {
       type: Type.OBJECT,
       properties: {answer: {type: Type.STRING}},
@@ -124,7 +124,12 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toEqual(schema);
+    // Emitted in the same JSON Schema dialect as a Zod responseSchema, so a
+    // client reading this field does not have to handle two type spellings.
+    expect(args.responseSchema).toEqual({
+      type: 'object',
+      properties: {answer: {type: 'string'}},
+    });
   });
 });
 
