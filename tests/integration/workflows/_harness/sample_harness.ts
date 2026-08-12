@@ -35,13 +35,18 @@ export function isRecording(): boolean {
   return process.env['RECORD_MODEL_RESPONSES'] === '1';
 }
 
-function fixturePath(name: string): string {
-  return path.join(HERE, '..', name, 'model_responses.json');
+function fixturePath(name: string, fixtureDir?: string): string {
+  // Sibling-directory layout by default: tests/integration/workflows/<name>/.
+  // A caller outside that tree (the docs-page ports) passes its own directory
+  // so its fixtures sit next to its own test rather than among these samples.
+  return fixtureDir
+    ? path.join(fixtureDir, `${name.replace(/\//g, '_')}.model_responses.json`)
+    : path.join(HERE, '..', name, 'model_responses.json');
 }
 
 /** Whether a recorded fixture exists for the sample (replay prerequisite). */
-export function fixtureExists(name: string): boolean {
-  return existsSync(fixturePath(name));
+export function fixtureExists(name: string, fixtureDir?: string): boolean {
+  return existsSync(fixturePath(name, fixtureDir));
 }
 
 /**
@@ -81,6 +86,12 @@ export interface SampleSpec {
    * still throws (surfacing an unexpected dependency on the model).
    */
   offline?: boolean;
+  /**
+   * Directory holding the fixture. Defaults to the sample's sibling directory
+   * under `tests/integration/workflows/`; set it to keep fixtures beside a test
+   * that lives elsewhere.
+   */
+  fixtureDir?: string;
 }
 
 function toContent(turn: SampleTurn): Content {
@@ -97,7 +108,7 @@ export async function runSample(spec: SampleSpec): Promise<Event[][]> {
   // Offline samples call no model: always replay with an empty response set
   // (a stray model call then throws), and never require or write a fixture.
   const recording = spec.offline ? false : isRecording();
-  const file = fixturePath(spec.name);
+  const file = fixturePath(spec.name, spec.fixtureDir);
 
   if (recording) {
     loadSamplesEnv();

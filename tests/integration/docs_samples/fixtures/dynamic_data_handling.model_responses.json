@@ -1,0 +1,61 @@
+[
+  {
+    "key": "98c75643e4e4230a",
+    "instructionAgnosticKey": "210f35468e4cb61d",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a short paragraph about why graphs beat long prompts"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a short paragraph about why graphs beat long prompts"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"draft_agent\".\n\nWrite a short draft for the user request.",
+        "labels": {
+          "adk_agent_name": "draft_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "While long prompts attempt to force complex reasoning into a single wall of text, graph-based architectures structure tasks into modular, deterministic workflows. Massive prompts often suffer from context degradation, instruction drift, and high token costs. In contrast, graphs break execution down into discrete nodes with explicit conditional logic, loops, and targeted tool calls. This node-based approach delivers superior maintainability, better token efficiency, and predictable control—allowing developers to easily debug individual steps rather than wrestling with the unpredictability of a monolithic prompt.",
+                "thoughtSignature": "Eu4PCusPARFNMg/VLJZ2ULubg6uyy1GG4zYourtRyZglh9kvjz2v6Ey5htrs9krec3OrU4lh3iTuRdnKzwfwwcBFEvQxivci5t6krgBKoyviXRDoh/UWRPoQUUa7quQAl9iS6DnUr2cBkLtm/Z6O0ZUii0YuKAqRLaAcRFsDtfzyXHjvkBm5ni7Pqe6mEzDb4bUo7Y6kjAGPcW4Fy1OJ/KCcla2xcVjYhnENXoevVWmTwAmlzz5/lPZ8shjB82lGpEsW5lWaCa/cOeqfLWRsiiXfrcECVafwE7Np/Zlvx4qFOUXVxGeVSONWPth/hVSALTQud/+BkI4KucUv9ri10Fik+ztGMHQ6Xv/REEOOWnoNAuqcR3S+mmDCR5ZuYjf6cWMeTUlq5jNlziUHl1Y7ZH5Q35pQjPxK+4c8SAfCukJataX8gXuaVvCUVMKUsLY5dWqSg0CDlFYyhpyBe3imxRiScrg/x7DiyUqkn8k7NsC2YbGAanxuEdIe3xDWskNphMIex72+iEfdPss2NEf5f4jl2tBcQswmbgC2KvGTy8cAtOo2tGdM9tQvfSbwqqoODsX0ej6WNQpQ2lPhjnxMi3E0j5vJXa+bo0b1b+C9UfmFiYrhxmGXIauk7+FShlwO5VG9Dzpm6hAx9C6Uz4KDZBrsFy9bHz7c+SG+ighMS5pMKCZH1NidMp2ojSnh0EleAThWGtQVUECDF6LRV+IXJNhdbIAEobFkEApbUFXTm/BfLfSZBt92RZMz1wdDu/0L0nbEqVkqDwTKMEFt7e67LgzSL+NHZUeU5y23cI6STpZWy44rJbWpLZaGRycGB5uEuLaukW3+S3BGUtJSGq7u4eIIwBLHgmY9aiL0GMgAqybWLbwA5b+p9/LvIAHmyT0gbIB/yf8YYNx1/XSpjrwB9+MRuBHS1Wedc4bqVRGrwSlt57gN0vNg/YgOI+Rf/ppnodN9IVFviCtJPQz3s5TwHgIeAjYub66NoofvMV1AXlWdkLESAkriAEj4FPtAykRCLM/sQo+017pieIGAIdLX5boZqWue87EQPeAS6D2e+d4ibOj5CQF/jtv+5BZReEt3gmj7U11k/6uoaG+R9Th8WmKXFrhuiRE0pv2GGPoKL1CUxmnglo9m4tVgmEsr6lP17m3ZqxpNJJpIz3BalSDXAx1s2rpNt/Xd65XNIR0RTnUNBO7S3ofYfFZ5m8R4vk2mMELBVJ8jPuC0OCb740DJOcnZSRd04qzpGzrhMfe1Ij2/6LdtbzTfY+Y7kM9HpZeyLEmkE6yNSJd3eZ5qcWjo4EUL/1YohrEtcgaIzGSs9/J+Sj1us1UucKNNdu8Z/X1GdHdlEx53WUG3hYjkjwrF6vg3DjzaxDxwlFu6GxB3cqbUWkgybUw0ZH97VRgbBuxWs317gT7Wo4mcZfcmRFAi3JbP4R/XgGmDgxPAL45zicPKSTaJrix4MmnCICcbhMb7G1hC51tiOA0TDdKbywz3amQ3QBDI747aS1rgFyTrZCWeRqKW6uC5WSKnCtdmucffVZkz2gJEF0dGQ7JJAcTb8V0RKx76SLZY9rYkCeGeIEBX29xnzrsjYwbYFGaFw8EfAnVrhlUIrrEsroYwOV32lzKOSX3s8scpwXiZwIenR0TP1O1F/N10ATtB2BkVCygTcrgvssjMNv8iehzUxRdrYQz/nnUuSJztKlRwu2VsmHPOjTXwZiR30fbX9yWTKwXcYaOaoH6/uCXB6MkgTq8qf/KAWP4Sbkb7QPCUXhfceOT4NQHg7mP1R7bZuCwW+QR63ogJI28iALZ7SP2rOlX8zKxMPYCvsdMRccASPJ76F9vwMPZJhHUycdW2Wkoyt/wnv5JMlvIpyHJklApvS8rY2Wj8GpcnVzGIwrAR+jOV1G+6i0uHWcVy8U56SXliIrg/j407k1IKj9DJc8UxSngo4lOsPYcyXogLunYsOmyBJgWbEceoO1DHLV66qYPFVRI6niJ5KIB38oxeQWFayWCJD1QHdPXSLWZ1ZTJX5ISp28q+Rtp+Lp1uN4h5jJqLcFNsqv83/J/6J6obIi1nGigBhOtJXrYP6rhRzDmuE/Gr06TJz4fItyIV1Ok7HBgWuAS/+atlo7yfAbyDwmjTeeOqo31dgFqsC7gTDLTJXvv0DYff3F1209Xhrs5YGJqiOXqAnbix0oHfwdh/cQKjU61gy4xgs3xNXVnEZERIknvk4sDczUYTM6Zfg7NL5td0yFyv9BbtKn/ZuO0zc8lhXAjyKrCXQZxLcyN379eM81dt36TSzNIojS0IdOk37gtZSiMSYGQdLPyyD/+Vt4v9cih4OnPCvWiSHlj3zMhuLLUy8YS0mVJn/SqxYEx2tH2TGUbGCb6pQgi8eNUE0iOvzosWBVGFgnxxtZgNG8E5qskbsUYi2jS2aNIUTvaeJ740J95QyrE4yaoxhe/iUncW6Q9MqW27gtrbX34ukX9MdvV/aUNdlScIuYn3NTf2j4P7B0ZJ+9zmtwpQtFyfG0O79TDHgj2c4jPCjq7K/bwEFB2pUqTb7mpLSCfjBF83BKUFxFggXWFQ+CuPVWBfeuR0A6Jlhj+fWxfHU3vYMu3ikD/Wz9YtyFDuV09TJE++3lMzHsF1hvcZuo65u4PQ/2qs3bt0NGG4icQfAvGZPLy0n3UEfUL6zSdtMoHUNBrtpC67Dzd16A1d0TU7E8PpnW4H2NZFAUY="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 45,
+        "candidatesTokenCount": 102,
+        "totalTokenCount": 548,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 45
+          }
+        ],
+        "thoughtsTokenCount": 401,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

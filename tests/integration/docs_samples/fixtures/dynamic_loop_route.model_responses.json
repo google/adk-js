@@ -1,0 +1,150 @@
+[
+  {
+    "key": "fabd98dd9b19355c",
+    "instructionAgnosticKey": "78cae453cb9cf2c9",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a one-line function that adds two numbers, no comments, no type annotations"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a one-line function that adds two numbers, no comments, no type annotations"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator_agent\".\n\nWrite TypeScript code for the user request. Output code only.",
+        "labels": {
+          "adk_agent_name": "generator_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "const add = (a, b) => a + b;",
+                "thoughtSignature": "EpQHCpEHARFNMg90QtWhjeHElcjpb7OXdph5ahf/dl9DqYMVTeQYrrN4+7R37YEZDtp7Vlq9ZYIrSseo9H7Te+7WspJTQewjaS1TPuk4rFdoeQ+VcHY1N3KrIUF6EwkHv6cK2Y5XkO8TMVLLFDKjqAsWZmU9dKh/LeYAgRi1WN+9eKTqZuwWXm69ZdiiIWdlTNNBG2+gOBMEQZwN8joF8UOt2FpKbLnkvUJRtWA1hDWWYvtgrypseANJ8T50g+HfqlzvE20+Bq6Ax9MLbgferAIaFdeC/ui4IZS2n15UlPtU3Sm9J2yWeuBagLKk562UOdhSjvewgTjO1mRDOtVBM1RzvEQfqqdzb+aWE4bDAjqEREQIwQXdWQjelvL7zgnLncfb8G2xNrWExSeET7Ga2lR8YGDRfKHlG/Pu8J+JfwvcCCd8DNJ5dgz+Y8m4eTMa7CekAySA1y7ZYpTVusgPaGlC5IsV01ySY/1Z8Hy8rYdEyGBq9JMsefOh2xp0K8bAbBdqqNkzIVz7KWNIlb9K/u73+8e1lr19X3I+lOSqjtXrBiwI0ZDSSiiT19qMphnGy25OPRxxjKJ+09N28K4n8wjBbRACtr+8mkSLQxTG7IaA7+sWxWrvrm1QQAY+fM6snjwcSzFBQN7pF9rj6ntaAT/8v5/WpXCGqoIuLBaLm17WI5zjSQs33M7rNwbRVtqfGXMx5FhKB71nf/1K4GfV/Mi9YIdRTMMQKXLQeodYl2FQss/ZFWhlpS5RayBS/ZGlrIb9igq150hkae9uuDbeyJpaWjatTEonxEyMIykGbAL6ovUMj9J+N0eDhrMld4G9cLqwjI0eKJ9S8pOIAU4Pxd/ntavM07ZigBdvqiQI1+C74HCzFRKMjb0vAjDlVz+NX0dY27p5ruaPimxi+dm4RV8P5KCLPLISqYPK80RMvxP3snBCmZtd1v02wcEXwFxHttE6o/QJAMYcPIPL2bSXP0i8C5VmFOGGbHS1hL3gpUQZX8im1NA1gwKqEDh3+p5olR/eYilCtDuxj752wpKDKgIZFQnc1h5FL8o1f6F04GWA/KH58X8qyhSb4ogmK3rBQgqqqakMuxOcah53W85t5z3Nip2ajkgPR4juhNKGbN09Ijr5MAwnNyq/AStAPIjuVRit1MSSLEzmoExUcrYhhYSFib4RJwRh4PDCkC8BFSi+cZMVt1lugqhTcp2/OmULQ28/2INQWQ=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 62,
+        "candidatesTokenCount": 13,
+        "totalTokenCount": 313,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 62
+          }
+        ],
+        "thoughtsTokenCount": 238,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "1d2af2690c9ca96f",
+    "instructionAgnosticKey": "b8707fc30b0f2550",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a one-line function that adds two numbers, no comments, no type annotations"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "a one-line function that adds two numbers, no comments, no type annotations"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generator_agent] said: const add = (a, b) => a + b;"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "{\"code\":\"const add = (a, b) => a + b;\",\"findings\":\"every function needs a JSDoc comment; add return type annotations\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[lint_reviewer] said: {\"findings\":\"every function needs a JSDoc comment; add return type annotations\"}"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"fixer_agent\".\n\nRefactor current code const add = (a, b) => a + b;.\n        Based on compile & lint review: every function needs a JSDoc comment; add return type annotations\n        Output code only.",
+        "labels": {
+          "adk_agent_name": "fixer_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "/**\n * Adds two numbers.\n *\n * @param a - The first number.\n * @param b - The second number.\n * @returns The sum of a and b.\n */\nconst add = (a: number, b: number): number => a + b;",
+                "thoughtSignature": "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"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 182,
+        "candidatesTokenCount": 60,
+        "totalTokenCount": 955,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 182
+          }
+        ],
+        "thoughtsTokenCount": 713,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]

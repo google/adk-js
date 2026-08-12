@@ -19,10 +19,19 @@
  * response set — so an accidental model call in an "offline" sample throws
  * rather than silently reaching the network.
  *
- * The model-backed samples are constructed only. Driving them would mean
- * checking in a fixture per sample, and the behaviour they add over the
- * sibling `tests/integration/workflows/` set is prompt wording, not graph
- * shape.
+ * The three `dynamic/` samples that call a model are also run, against a
+ * recorded fixture, because what they demonstrate is orchestration the offline
+ * set cannot cover: a value handed from an agent node to a function node, a
+ * sequence of `ctx.runNode()` calls, and a `while` loop that keeps calling an
+ * agent until a checker is satisfied. Each assertion checks that behaviour, not
+ * the wording the model happened to produce.
+ *
+ * The remaining model-backed samples are constructed only. Driving them would
+ * mean a fixture per sample for behaviour the sibling
+ * `tests/integration/workflows/` set already covers.
+ *
+ * Re-record after changing one of them:
+ *   npm run record:docs-samples
  */
 
 import {Event} from '@google/adk';
@@ -32,6 +41,7 @@ import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
 import {
   allEvents,
+  authors,
   finalOutput,
   runSample,
 } from '../workflows/_harness/sample_harness.js';
@@ -89,13 +99,99 @@ const OFFLINE: Record<string, OfflineSample> = {
 const MODEL_BACKED = [
   'data_handling/schemas',
   'data_handling/structured_access',
-  'dynamic/data_handling',
-  'dynamic/loop_route',
-  'dynamic/sequence_route',
   'graphs/get_started',
   'graphs/process_pipeline',
   'routes/branches',
 ];
+
+/** A model-backed sample driven end-to-end against a recorded fixture. */
+interface RecordedSample {
+  turns: string[];
+  /** Asserts the orchestration the sample exists to demonstrate. */
+  check(events: Event[]): void;
+}
+
+const FIXTURE_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures',
+);
+
+const RECORDED: Record<string, RecordedSample> = {
+  // An agent node's output reaches a function node with no session-state hop:
+  // every line of the answer comes back prefixed by the formatter.
+  'dynamic/data_handling': {
+    turns: ['a short paragraph about why graphs beat long prompts'],
+    check(events) {
+      const draft = outputOf(events, 'draft_agent');
+      expect(typeof draft).toBe('string');
+
+      const formatted = String(finalOutput(events));
+      const lines = formatted.split('\n').filter(Boolean);
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.every((line) => line.startsWith('| '))).toBe(true);
+      // The formatter ran on the draft, rather than on something else.
+      expect(formatted).toContain(String(draft).split('\n')[0].trim());
+    },
+  },
+
+  // Three sequential ctx.runNode() calls: the city the first node invents has
+  // to survive the lookup and reach the report.
+  'dynamic/sequence_route': {
+    turns: ['go'],
+    check(events) {
+      const cityTime = outputOf(events, 'city_time_function') as {
+        city?: string;
+        timeInfo?: string;
+      };
+      expect(cityTime?.city).toBeTruthy();
+      expect(cityTime?.timeInfo).toBe('10:10 AM');
+
+      // Same city end to end, and the ordering that makes it sequential.
+      const report = String(finalOutput(events));
+      expect(report).toContain(cityTime.city!);
+      expect(indexOfAuthor(events, 'city_generator_agent')).toBeLessThan(
+        indexOfAuthor(events, 'city_time_function'),
+      );
+      expect(indexOfAuthor(events, 'city_time_function')).toBeLessThan(
+        indexOfAuthor(events, 'city_report_agent'),
+      );
+    },
+  },
+
+  // The refine loop: the lint checker rejects the first draft, the fixer runs,
+  // and the loop exits on a clean check rather than on the round cap.
+  'dynamic/loop_route': {
+    turns: [
+      'a one-line function that adds two numbers, no comments, no type annotations',
+    ],
+    check(events) {
+      const lintResults = events
+        .filter((e) => e.author === 'lint_reviewer' && e.output !== undefined)
+        .map((e) => (e.output as {findings: string}).findings);
+
+      // At least one round: a first draft the checker rejected.
+      expect(lintResults.length).toBeGreaterThan(1);
+      expect(lintResults[0]).not.toBe('');
+      expect(authors(events).has('fixer_agent')).toBe(true);
+
+      // It exited because the code came back clean, not because it ran out of
+      // rounds (MAX_FIX_ROUNDS is 3, so at most 4 checks).
+      expect(lintResults[lintResults.length - 1]).toBe('');
+      expect(lintResults.length).toBeLessThanOrEqual(4);
+      expect(String(finalOutput(events))).toBeTruthy();
+    },
+  },
+};
+
+/** The output of the last event authored by `author`. */
+function outputOf(events: Event[], author: string): unknown {
+  return finalOutput(events.filter((e) => e.author === author));
+}
+
+/** Index of the first event authored by `author` (-1 when absent). */
+function indexOfAuthor(events: Event[], author: string): number {
+  return events.findIndex((e) => e.author === author);
+}
 
 /** Every `<category>/<name>` directory holding an `agent.ts`, from disk. */
 function discoverSamples(): string[] {
@@ -128,7 +224,11 @@ describe('workflow docs samples', () => {
   // Guards the two lists above: a sample added to samples/workflows/ has to be
   // classified here, rather than silently gaining no coverage.
   it('covers every sample on disk', () => {
-    const registered = [...Object.keys(OFFLINE), ...MODEL_BACKED].sort();
+    const registered = [
+      ...Object.keys(OFFLINE),
+      ...Object.keys(RECORDED),
+      ...MODEL_BACKED,
+    ].sort();
     expect(registered).toEqual(discoverSamples());
   });
 
@@ -137,6 +237,22 @@ describe('workflow docs samples', () => {
       // A WorkflowAgent validates its edges in its constructor, so importing
       // the module is the assertion.
       expect(await loadRootAgent(sample)).toBeDefined();
+    });
+  });
+
+  describe.each(Object.entries(RECORDED))('%s (recorded)', (sample, spec) => {
+    it('runs against its recorded model responses', async () => {
+      const rootAgent = await loadRootAgent(sample);
+      expect(rootAgent).toBeDefined();
+
+      const perTurn = await runSample({
+        name: sample,
+        rootAgent: rootAgent as Parameters<typeof runSample>[0]['rootAgent'],
+        turns: spec.turns,
+        fixtureDir: FIXTURE_DIR,
+      });
+
+      spec.check(allEvents(perTurn));
     });
   });
 

@@ -33,7 +33,8 @@
     "test:e2e": "vitest --project e2e",
     "test:cross-language": "vitest --project cross-language",
     "test:coverage": "vitest run --project unit:core --project unit:dev --project integration --project e2e --coverage",
-    "prepare": "husky"
+    "prepare": "husky",
+    "record:docs-samples": "RECORD_MODEL_RESPONSES=1 vitest run --project integration tests/integration/docs_samples"
   },
   "workspaces": [
     "core",

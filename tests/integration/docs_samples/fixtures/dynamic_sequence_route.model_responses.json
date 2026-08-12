@@ -1,0 +1,134 @@
+[
+  {
+    "key": "0c18f982f725ed51",
+    "instructionAgnosticKey": "ad2966f4c61734dc",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"city_generator_agent\".\n\nReturn the name of a random city. Return only the name.",
+        "labels": {
+          "adk_agent_name": "city_generator_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Reykjavik",
+                "thoughtSignature": "Ep0FCpoFARFNMg9ULWk1ktsFoLa4UnDiRIfF08XcuMD+VCj7pjK3fUzZBPnPAJTTUyJrwCOv1SOUzUDoreQ/xnBhD4krM3/EE2AMetBd1Zcxnlaaq4KSwHUREkt7AZhUtyckUpBYomEfcjW5hfCB2tU27Wgn38lqB9eRMZ4c9bEPZGRQpG2CReg2FQPT/oe1g2ZV5N3En6bmdM4g47hUSA020qRHcK3ILdMrUiUBag3LOsDDHwcFbsx3eH0xarJnatURck6TidFtAKO18zEqCt9fypdjYL0pAMsFmAW0Ow0vt6/UsebW1AAFcLQwdQAJaUIq6ponuuZvw/sD1IME6aGwJQ1zpFwNARXCCR+xxsii9ey8KQsDP3MAFtKjZeELkK1qQeLSE3KjwbmwEtHpXq6QAcne6uqmy/iXiSnR1/ybM6vPmJIplXaqIOwfJDP2+37lA6LIC9gsjEOMV1goIX0w0RaizlBbvPSkXSZBrGbaVXtlydxJugSWT0Bv/omrdIEBs04huT/fQatBmikReZLnHmQ/Uh+s53QEgkr7BqCyqwdlgCwxcADHesm59WpIr8Gz/DafsAU9LQNYA0Yo1Evabeu4oWFCm/zAwUJcQzcjWBR+PLntvRm7dpRyZDp44tzMl8HeD1D5uewg0A9AkcX/tSsYoP107JO5OZ5ZeHZMnaK9SPC5LYbyUFb58EtS1z1N1LOP3TUDssNMwcthQwWiph0NStLtJUpCSziaat1n9CZI5rRw3nURbpxdstVJPiC+zLVHDmnIzvwKgiPxv1+qWKDLYwvoQuEmrif1j1eYCsOAMXRTAhis4LqFayMagDyHISLjAj36AHxVOGiRsogCj7pTpJ42Dmkjar/6P8zBFNzjDgGnQvZ0Usvd+6Q5"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 33,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 206,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 33
+          }
+        ],
+        "thoughtsTokenCount": 170,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "c9f3233ca757d860",
+    "instructionAgnosticKey": "90c046fc4277243e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[city_generator_agent] said: Reykjavik"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "{\"timeInfo\":\"10:10 AM\",\"city\":\"Reykjavik\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[city_time_function] said: {\"timeInfo\":\"10:10 AM\",\"city\":\"Reykjavik\"}"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"city_report_agent\".\n\nOutput the data provided by the previous node as a sentence.",
+        "labels": {
+          "adk_agent_name": "city_report_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "The current time in Reykjavik is 10:10 AM.",
+                "thoughtSignature": "EpQGCpEGARFNMg+CC7EPtI1qf7fnmHcH46b/dfHELuSG6tcFfcl8YcUWug1J9RiCYeyRKxZb5XYHG9j/olvjjlv9k+IBM7+9qaL5qRoZJexQNShdfq/nD0s0JqAQe8g2RkN2wJEIvxu8XmC/aLclSJHqJ005tuKfEmxD2dnIyIAq1OTB9Be7LS296SHc8taLfZ6IV8oF5yWfAG5CxNISub2e7Cq+qf2uF1tyhhAPCY3YjXLmZEydErJHitIkddQcJSt0W1AECJbSmiPEkEG2gl3kEJo8jkQF1SI84JGeycVR+AZk6zy5RYZn2n/TNzRX6qmlC/gtjLC1iMkMfCvr/HkLHGiec18b/0sA/DIlClKDrhp87LTCXe02/c2sr+5xQirq3incbqTWnTAkXkyfChkIaQwkZY5sNlvjhDGHDW9r9lyZUnRfYCun/rK9djP+DKr1sYFWC72xa5JfmufyAvB6NhBNjdFTXKiK7lK9zvjhFHIoCq5V4G9VgBYHkgOQjAbjZ+9ABWeW7Cq2aKBxOxHcCrMh7iiZ/5UeFsa4NI0urWcya2tqJ05C8syiEJxdGkDeGOiIULA5i3uPSXh+S0oe9w9m0zEtMdDS7077lzM4C7XFgMIVxPC/8EmTV/tGrm0bbWXAmkTBPmR4kNqeZI8H1Y7EeeuZoRmGf2YxKSEYpi0OqQCjCS7MnvE6W44rT6pZMAqBGHYwqRv+z76A5fFERI4h/WbQpCdnzDQfd5hp1ZEQBJfWKusrvtWlsQ/Msm2xDU5oHqe6OmYepvmH9OVxEmEaFPuw81aFRp1Ls0S2x4tGFNF99ia8DIPWF9nWnLcEkv2uLc3SDKUr8sTVYlqGlWmFzH3HEn7bthg5/UMvKlz7k3JVOXARZXgXeArr6FVJTfDLVzjaUXAkouN6V8Qp7J33tuSNZE0j4qLoAjv8tr6A9BUEaLdgG3prJ9ZdDc1Bx5oCGbwih87eEUETRbkr8+U1gl+kHZHdWvaNTk/CkcBWQuRcYlCzs4hPnwxm3kgfjODNqWzHGuCqwKp1USvA2a2Q8No="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 94,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 332,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 94
+          }
+        ],
+        "thoughtsTokenCount": 224,
+        "serviceTier": "standard"
+      }
+    }
+  }
+]
