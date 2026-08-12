@@ -9,7 +9,7 @@ import {SchemaLike} from '../../utils/schema.js';
 import {BaseNode, isBaseNode, START} from '../base_node.js';
 import {NodeLike} from '../graph.js';
 import {NODE_BUILDERS, PARALLEL_WORKER_FACTORY} from '../node_builders.js';
-import {RetryConfig} from '../retry_config.js';
+import {prepareRetryConfig, RetryConfig} from '../retry_config.js';
 
 /**
  * Property overrides applied when building a node from a {@link NodeLike}.
@@ -149,8 +149,7 @@ function buildInnerNode(
         return builder.build(nodeLike, options);
       }
     }
-    // TODO(phase-3+): apply property overrides via a clone when options differ.
-    return nodeLike;
+    return cloneWithOverrides(nodeLike, options);
   }
   for (const builder of NODE_BUILDERS) {
     if (builder.match(nodeLike)) {
@@ -161,4 +160,70 @@ function buildInnerNode(
     `build_node: unsupported node-like value of type ${typeof nodeLike}. ` +
       'Import the node module that handles it (e.g. via the workflow barrel).',
   );
+}
+
+/** The {@link BuildNodeOptions} keys that name a property of `BaseNode`. */
+const OVERRIDABLE_KEYS = [
+  'name',
+  'description',
+  'rerunOnResume',
+  'retryConfig',
+  'timeout',
+  'inputSchema',
+  'outputSchema',
+  'stateSchema',
+] as const satisfies ReadonlyArray<keyof BuildNodeOptions & keyof BaseNode>;
+
+/**
+ * Returns a copy of `node` with the given node properties replaced, or `node`
+ * itself when nothing is being overridden.
+ *
+ * A node that was built before it reached the graph — `node(existingNode,
+ * {timeout: 5})`, or a `Workflow` reused in two graphs with different retry
+ * policies — cannot have its properties assigned in place: nodes are shared,
+ * and mutating one would reach through to every graph holding it. adk-python
+ * copies instead (`model_copy(update=...)`); this is the same move.
+ *
+ * The copy keeps the node's prototype, so its behaviour and its class are
+ * unchanged, and carries over own properties including the `BaseNode` brand.
+ * `preparedRetryConfig` is derived from `retryConfig` at construction, so it is
+ * recomputed rather than copied — otherwise overriding the retry policy would
+ * appear to work while the node kept retrying on the old one.
+ */
+function cloneWithOverrides(
+  node: BaseNode,
+  options: BuildNodeOptions,
+): BaseNode {
+  const overrides: Record<string, unknown> = {};
+  for (const key of OVERRIDABLE_KEYS) {
+    if (options[key] !== undefined) {
+      overrides[key] = options[key];
+    }
+  }
+  if (Object.keys(overrides).length === 0) {
+    // Identity matters: callers compare the node they passed in against the one
+    // the graph holds.
+    return node;
+  }
+
+  if (typeof overrides['name'] === 'string') {
+    const name = overrides['name'].trim();
+    if (!name) {
+      throw new Error('Node name must be a non-empty string.');
+    }
+    overrides['name'] = name;
+  }
+
+  const clone = Object.create(
+    Object.getPrototypeOf(node) as object,
+  ) as BaseNode;
+  Object.assign(clone, node, overrides);
+  if ('retryConfig' in overrides) {
+    Object.assign(clone, {
+      preparedRetryConfig: options.retryConfig
+        ? prepareRetryConfig(options.retryConfig)
+        : undefined,
+    });
+  }
+  return clone;
 }
