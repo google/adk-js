@@ -13,7 +13,11 @@ import {
   Session as VertexAiSession,
   SessionEvent as VertexAiSessionEvent,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
-import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
+import {
+  Content,
+  GenerateContentResponseUsageMetadata,
+  GroundingMetadata,
+} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {experimental} from '../utils/experimental.js';
 
@@ -44,6 +48,18 @@ const DEFAULT_MAX_ATTEMPTS = 30;
 const GRPC_NOT_FOUND = 5;
 const HTTP_NOT_FOUND = 404;
 
+/**
+ * `eventMetadata.customMetadata` key carrying the workflow fields of an
+ * {@link Event} that the Agent Engine sessions API does not model: a node's
+ * `output`, `route`, `nodeInfo` and `isolationScope`, plus the
+ * `agentState`/`endOfAgent` actions. It is the same escape hatch this service
+ * already uses for `_compaction` and `_usage_metadata`.
+ *
+ * Workflow resume is driven entirely by these fields — `reconstructNodeStates`
+ * groups prior events by `nodeInfo.path` and replays their `output`/`route`,
+ * and a paused node recovers its input from `actions.agentState` — so an event
+ * rebuilt without them makes a resumed run re-execute completed nodes.
+ */
 const WORKFLOW_CUSTOM_METADATA_KEY = '_workflow';
 
 /**
@@ -651,6 +667,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
       | string[]
+      | undefined,
+    groundingMetadata: eventMetadata['groundingMetadata'] as
+      | GroundingMetadata
       | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,

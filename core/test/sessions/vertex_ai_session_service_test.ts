@@ -502,6 +502,35 @@ describe('VertexAiSessionService', () => {
       expect(parsedEvent?.usageMetadata).toEqual({promptTokens: 10});
     });
 
+    it('restores groundingMetadata when rawEvent is absent', async () => {
+      const groundingMetadata = {
+        webSearchQueries: ['adk js sessions'],
+        groundingChunks: [
+          {web: {uri: 'https://example.com', title: 'Example'}},
+        ],
+      };
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'projects/p/locations/l/sessions/s/events/e1',
+            invocationId: 'inv-1',
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'grounded'}]},
+            timestamp: '2026-04-09T13:00:00Z',
+            eventMetadata: {groundingMetadata},
+          },
+        ],
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session?.events[0].groundingMetadata).toEqual(groundingMetadata);
+    });
+
     it('slices events based on numRecentEvents', async () => {
       mockClient.events.listInternal.mockResolvedValue({
         sessionEvents: [
@@ -1269,9 +1298,18 @@ describe('VertexAiSessionService', () => {
         lastUpdateTime: Date.now(),
       }) as unknown as Session;
 
+    /**
+     * Replays an API event the way the real service sees it: the request is
+     * serialized on the wire, so anything that survives only by object
+     * identity (a `Date`, `Map` or `Set` inside `output`) must not survive
+     * here either.
+     */
+    const overTheWire = <T>(value: T): T =>
+      JSON.parse(JSON.stringify(value)) as T;
+
     const readBackWithoutRawEvent = async () => {
       const sent = mockClient.events.append.mock.calls.at(-1)![0];
-      const apiEvent = {
+      const apiEvent = overTheWire({
         name: 'reasoningEngines/12345/sessions/wf-session/events/e1',
         author: sent.author,
         invocationId: sent.invocationId,
@@ -1279,7 +1317,7 @@ describe('VertexAiSessionService', () => {
         content: sent.config.content,
         actions: sent.config.actions,
         eventMetadata: sent.config.eventMetadata,
-      };
+      });
       mockClient.events.listInternal.mockResolvedValue({
         sessionEvents: [apiEvent],
       });
@@ -1427,15 +1465,17 @@ describe('VertexAiSessionService', () => {
         mockClient.events.append.mockClear();
         await service.appendEvent({session: appendSession(), event});
         const sent = mockClient.events.append.mock.calls.at(-1)![0];
-        apiEvents.push({
-          name: `reasoningEngines/12345/sessions/wf-session/events/${apiEvents.length}`,
-          author: sent.author,
-          invocationId: sent.invocationId,
-          timestamp: sent.timestamp,
-          content: sent.config.content,
-          actions: sent.config.actions,
-          eventMetadata: sent.config.eventMetadata,
-        });
+        apiEvents.push(
+          overTheWire({
+            name: `reasoningEngines/12345/sessions/wf-session/events/${apiEvents.length}`,
+            author: sent.author,
+            invocationId: sent.invocationId,
+            timestamp: sent.timestamp,
+            content: sent.config.content,
+            actions: sent.config.actions,
+            eventMetadata: sent.config.eventMetadata,
+          }),
+        );
       }
       mockClient.events.listInternal.mockResolvedValue({
         sessionEvents: apiEvents,
