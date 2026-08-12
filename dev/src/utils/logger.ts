@@ -30,16 +30,6 @@ export interface AdkLoggerOptions {
 }
 
 /**
- * The most permissive name in the level map below. `LogLevel` numbers grow with
- * severity, the inverse of winston's npm levels, so winston emits a record when
- * its number is at or below the configured one and `error` is the largest.
- * winston is left pass-through on purpose: every method gates on
- * `this.logLevel` before it reaches winston, so a lower value here would
- * double-gate and drop records the class already decided to emit.
- */
-const WINSTON_PASSTHROUGH_LEVEL = 'error';
-
-/**
  * Logger implementation for the ADK CLI.
  */
 export class AdkLogger implements Logger {
@@ -77,7 +67,11 @@ export class AdkLogger implements Logger {
         'warn': LogLevel.WARN,
         'error': LogLevel.ERROR,
       },
-      level: WINSTON_PASSTHROUGH_LEVEL,
+      // `levels` above inverts winston's npm ordering, so `error` (3) is the
+      // most permissive and leaves winston pass-through. Every method already
+      // gates on `this.logLevel`; a lower value here would double-gate and
+      // drop records.
+      level: 'error',
       format: winston.format.combine(...formats),
       transports: [new winston.transports.Console()],
     });
