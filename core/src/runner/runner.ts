@@ -7,7 +7,7 @@
 import {Content, createPartFromText, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
-import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
+import {BaseAgent} from '../agents/base_agent.js';
 import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
@@ -39,9 +39,8 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
-import {BaseNode, isBaseNode} from '../workflow/base_node.js';
-import {isWorkflow} from '../workflow/workflow.js';
-import {WorkflowAgent} from '../workflow/workflow_agent.js';
+import {BaseNode} from '../workflow/base_node.js';
+import {asRootAgent} from '../workflow/workflow_agent.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -142,36 +141,6 @@ export function isRunner(obj: unknown): obj is Runner {
  * }
  * ```
  */
-/**
- * Normalizes whatever was handed in as the root into a `BaseAgent`.
- *
- * An agent is already a node (`BaseAgent extends BaseNode`), so the interesting
- * case is the other direction: a bare node — in practice a `Workflow` — has no
- * `runAsync`, and the runner drives agents. `WorkflowAgent` is the existing
- * bridge between the two, so a bare workflow is wrapped rather than the runner
- * growing a second execution path.
- *
- * adk-python reaches the same place from the other side: its runner stores a
- * `BaseNode` and branches to the node runtime only when the root is a node that
- * is *not* an agent, leaving agents on the classic path.
- */
-function asRootAgent(root: BaseAgent | BaseNode): BaseAgent {
-  if (isBaseAgent(root)) {
-    return root;
-  }
-  if (isWorkflow(root)) {
-    return new WorkflowAgent(root);
-  }
-  // A node that is neither an agent nor a workflow has no conversational entry
-  // point — no user message to consume, no events to stream back — so there is
-  // nothing meaningful to run it as.
-  const name = isBaseNode(root) ? root.name : String(root);
-  throw new Error(
-    `Runner cannot run node "${name}": only an agent or a Workflow can be a ` +
-      'root. Put the node in a Workflow, or expose it through an agent.',
-  );
-}
-
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;

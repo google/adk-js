@@ -77,6 +77,6 @@ describe('Runner with a workflow as its root', () => {
           agent: lone,
           sessionService: new InMemorySessionService(),
         }),
-    ).toThrow(/only an agent or a Workflow can be a root/);
+    ).toThrow(/only an agent or a Workflow can be one/);
   });
 });

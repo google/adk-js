@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
+import {BaseAgent} from '../agents/base_agent.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
+import {BaseNode} from '../workflow/base_node.js';
+import {asRootAgent, isRootAgentLike} from '../workflow/workflow_agent.js';
 import {ResumabilityConfig} from './resumability_config.js';
 
 const VALID_APP_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -49,7 +51,11 @@ export function isApp(obj: unknown): obj is App {
  */
 export interface AppOptions {
   name: string;
-  rootAgent: BaseAgent;
+  /**
+   * The root of the application. A bare `Workflow` is accepted and adapted,
+   * so a graph does not have to be wrapped by hand to be an app root.
+   */
+  rootAgent: BaseAgent | BaseNode;
   plugins?: BasePlugin[];
   resumabilityConfig?: ResumabilityConfig;
 }
@@ -81,9 +87,9 @@ export class App {
       throw new Error('rootAgent must be provided.');
     }
 
-    if (!isBaseAgent(options.rootAgent)) {
+    if (!isRootAgentLike(options.rootAgent)) {
       throw new TypeError(
-        `rootAgent must be a BaseAgent instance, got ${
+        `rootAgent must be a BaseAgent or a Workflow, got ${
           (options.rootAgent as {constructor?: {name?: string}})?.constructor
             ?.name ?? typeof options.rootAgent
         }`,
@@ -91,7 +97,9 @@ export class App {
     }
 
     this.name = options.name;
-    this.rootAgent = options.rootAgent;
+    // Normalized once, here, so everything downstream of an App still receives
+    // an agent.
+    this.rootAgent = asRootAgent(options.rootAgent);
     this.plugins = options.plugins ?? [];
     this.resumabilityConfig = options.resumabilityConfig;
   }

@@ -5,18 +5,18 @@
  */
 
 import {Content} from '@google/genai';
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {experimental} from '../utils/experimental.js';
-import {isBaseNode, toContent} from './base_node.js';
+import {BaseNode, isBaseNode, toContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 import {
   eventsForCurrentRun,
   reconstructNodeStates,
 } from './utils/rehydration_utils.js';
-import {Workflow, WorkflowConfig} from './workflow.js';
+import {isWorkflow, Workflow, WorkflowConfig} from './workflow.js';
 
 const WORKFLOW_AGENT_SIGNATURE_SYMBOL = Symbol.for(
   'google.adk.workflow.workflowAgent',
@@ -224,4 +224,49 @@ function extractWorkflowInput(content?: Content): unknown {
     return parts.map((p) => p.text).join('');
   }
   return content;
+}
+
+/**
+ * Normalizes whatever was handed in as a root into a `BaseAgent`.
+ *
+ * An agent is already a node (`BaseAgent extends BaseNode`), so the interesting
+ * case is the other direction: a bare node — in practice a `Workflow` — has no
+ * `runAsync`, and the things that consume a root (the runner, an `App`, the
+ * agent loader) all drive agents. `WorkflowAgent` is the existing bridge, so a
+ * workflow is wrapped here rather than each consumer growing its own second
+ * execution path.
+ *
+ * adk-python reaches the same place from the other side: its runner stores a
+ * `BaseNode` and branches to the node runtime only when the root is a node that
+ * is *not* an agent, leaving agents on the classic path.
+ *
+ * @throws if `root` is a node with no conversational entry point.
+ */
+export function asRootAgent(root: BaseAgent | BaseNode): BaseAgent {
+  if (isBaseAgent(root)) {
+    return root;
+  }
+  if (isWorkflow(root)) {
+    return new WorkflowAgent(root);
+  }
+  // A node that is neither an agent nor a workflow has no conversational entry
+  // point — no user message to consume, no events to stream back — so there is
+  // nothing meaningful to run it as.
+  const name = isBaseNode(root) ? root.name : String(root);
+  throw new Error(
+    `Cannot use node "${name}" as a root: only an agent or a Workflow can be ` +
+      'one. Put the node in a Workflow, or expose it through an agent.',
+  );
+}
+
+/**
+ * Whether a value can be a root, and so is worth handing to
+ * {@link asRootAgent}.
+ *
+ * Used where roots are *discovered* rather than passed — the agent loader
+ * sifting a module's exports — so that a `Workflow` export is found the same
+ * way an agent export is.
+ */
+export function isRootAgentLike(value: unknown): value is BaseAgent | Workflow {
+  return isBaseAgent(value) || isWorkflow(value);
 }
