@@ -39,6 +39,9 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {BaseNode, isBaseNode} from '../workflow/base_node.js';
+import {Workflow} from '../workflow/workflow.js';
+import {WorkflowAgent} from '../workflow/workflow_agent.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -55,9 +58,13 @@ export interface RunnerConfig {
   appName?: string;
 
   /**
-   * The agent to run. Required if `app` is not provided.
+   * The agent or workflow to run. Required if `app` is not provided.
+   *
+   * A bare {@link BaseNode} — a `Workflow`, most usefully — is accepted as the
+   * root and adapted internally, so a graph does not have to be wrapped by hand
+   * to be run. Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
    */
-  agent?: BaseAgent;
+  agent?: BaseAgent | BaseNode;
 
   /**
    * An optional list of plugins to apply globally across all agents.
@@ -135,6 +142,36 @@ export function isRunner(obj: unknown): obj is Runner {
  * }
  * ```
  */
+/**
+ * Normalizes whatever was handed in as the root into a `BaseAgent`.
+ *
+ * An agent is already a node (`BaseAgent extends BaseNode`), so the interesting
+ * case is the other direction: a bare node — in practice a `Workflow` — has no
+ * `runAsync`, and the runner drives agents. `WorkflowAgent` is the existing
+ * bridge between the two, so a bare workflow is wrapped rather than the runner
+ * growing a second execution path.
+ *
+ * adk-python reaches the same place from the other side: its runner stores a
+ * `BaseNode` and branches to the node runtime only when the root is a node that
+ * is *not* an agent, leaving agents on the classic path.
+ */
+function asRootAgent(root: BaseAgent | BaseNode): BaseAgent {
+  if (root instanceof BaseAgent) {
+    return root;
+  }
+  if (root instanceof Workflow) {
+    return new WorkflowAgent(root);
+  }
+  // A node that is neither an agent nor a workflow has no conversational entry
+  // point — no user message to consume, no events to stream back — so there is
+  // nothing meaningful to run it as.
+  const name = isBaseNode(root) ? root.name : String(root);
+  throw new Error(
+    `Runner cannot run node "${name}": only an agent or a Workflow can be a ` +
+      'root. Put the node in a Workflow, or expose it through an agent.',
+  );
+}
+
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
@@ -160,7 +197,7 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    this.agent = agent;
+    this.agent = asRootAgent(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
