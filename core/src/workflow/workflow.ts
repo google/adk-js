@@ -37,6 +37,15 @@ import {
 } from './utils/rehydration_utils.js';
 
 /**
+ * A unique symbol branding {@link Workflow} instances.
+ *
+ * `isWorkflow` matches on this brand rather than `instanceof` so a workflow
+ * built by another copy of adk-js in the same runtime is still recognised —
+ * mirroring the `Symbol.for('google.adk.*')` brands used across ADK.
+ */
+const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.workflow');
+
+/**
  * An imperative workflow entry point. Receives the workflow's node context and
  * input, drives execution via `ctx.runNode(...)`, and returns the workflow
  * output. Mutually exclusive with `edges`.
@@ -122,6 +131,9 @@ interface CompletedTask {
  */
 @experimental
 export class Workflow extends BaseNode {
+  /** Brand identifying this object as a {@link Workflow} (see `isWorkflow`). */
+  readonly [WORKFLOW_SIGNATURE_SYMBOL] = true;
+
   readonly graph?: Graph;
   readonly dynamicEntry?: DynamicEntry;
   readonly maxConcurrency?: number;
@@ -665,6 +677,21 @@ export class Workflow extends BaseNode {
     loop.pending.clear();
     await Promise.allSettled(outstanding);
   }
+}
+
+/**
+ * Type guard for {@link Workflow}.
+ *
+ * Matches on the {@link WORKFLOW_SIGNATURE_SYMBOL} brand rather than
+ * `instanceof` so it stays correct across package copies (see the brand's doc).
+ */
+export function isWorkflow(value: unknown): value is Workflow {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    WORKFLOW_SIGNATURE_SYMBOL in value &&
+    value[WORKFLOW_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**
