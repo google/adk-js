@@ -1020,11 +1020,28 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Builds the merged model response event
     // =========================================================================
+    // A response with NO content that carries usageMetadata is the stream
+    // aggregator's end-of-turn usage report, not an absent model response. In
+    // SSE streaming, close() reports a turn's token counts this way whenever the
+    // turn's parts were already yielded (i.e. any turn ending in a tool call),
+    // so skipping it loses that turn's usage entirely -- silently, because
+    // downstream "no usage reported" and "zero tokens used" are the same value.
+    //
+    // Deliberately narrow: this covers `content === undefined` ONLY. A response
+    // with an empty PARTS ARRAY stays suppressed, because emitting one puts
+    // `content: {parts: []}` into session history and Vertex then rejects the
+    // NEXT request with HTTP 400 (#21, #22). A content-less event carries no
+    // such content, and buildContents() skips events without `content.role`, so
+    // it never enters history at all.
+    const isUsageOnlyReport =
+      !llmResponse.content && !!llmResponse.usageMetadata;
+
     // If no model response, skip.
     if (
       (!llmResponse.content || llmResponse.content.parts?.length === 0) &&
       !llmResponse.errorCode &&
-      !llmResponse.interrupted
+      !llmResponse.interrupted &&
+      !isUsageOnlyReport
     ) {
       return;
     }
