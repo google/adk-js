@@ -6,6 +6,7 @@
 
 import type {BaseAgent} from '../agents/base_agent.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {logger} from '../utils/logger.js';
 import {BaseNode} from './base_node.js';
 import {parseEdgeItems} from './utils/graph_parser.js';
 import {validateGraph} from './utils/graph_validation.js';
@@ -142,6 +143,10 @@ export class Graph {
   /**
    * Determines the next nodes to transition to PENDING based on the route(s)
    * emitted by a completed node. Ported from Python `get_next_pending_nodes`.
+   *
+   * Logs at debug when the node emitted a route, has conditional outgoing
+   * edges, and none of them (nor a `DEFAULT_ROUTE` edge) matched — the branch
+   * stops there, which is easy to mistake for a bug. Behaviour is unchanged.
    */
   getNextPendingNodes(
     nodeName: string,
@@ -150,6 +155,9 @@ export class Graph {
     const nextPending: string[] = [];
     let matchedSpecificRoute = false;
     let defaultRouteNode: string | undefined;
+    // Routes this node's conditional edges are keyed to, used only for the
+    // unmatched-route warning below.
+    const availableRoutes: string[] = [];
 
     for (const edge of this.edges) {
       if (edge.fromNode.name !== nodeName) {
@@ -174,6 +182,7 @@ export class Graph {
       const edgeRoutes = new Set<string>(
         (Array.isArray(edge.route) ? edge.route : [edge.route]).map(String),
       );
+      availableRoutes.push(...edgeRoutes);
 
       let edgeMatched = false;
       if (Array.isArray(routesToMatch)) {
@@ -190,6 +199,46 @@ export class Graph {
 
     if (!matchedSpecificRoute && defaultRouteNode) {
       nextPending.push(defaultRouteNode);
+    }
+
+    if (nextPending.length === 0 && availableRoutes.length > 0) {
+      const emitted =
+        routesToMatch === null || routesToMatch === undefined
+          ? []
+          : Array.isArray(routesToMatch)
+            ? routesToMatch
+            : [routesToMatch];
+
+      // A bare `false` against a `true` edge is the conditional-continue
+      // idiom, where stopping IS the intent. Compared as a string, like every
+      // other route match in this function, so `false` and `'false'` behave
+      // alike; and only when a `true` edge exists, so `false` against an
+      // unrelated route set is still reported.
+      const isConditionalContinue =
+        availableRoutes.includes('true') &&
+        emitted.length > 0 &&
+        emitted.every((r) => String(r) === 'false');
+
+      if (emitted.length > 0 && !isConditionalContinue) {
+        // Behaviour is unchanged, and still matches adk-python
+        // (`_get_next_pending_nodes` returns an empty list here): the branch
+        // simply stops.
+        //
+        // Logged at debug rather than warn: routing back on one value and
+        // letting the other fall through is how the loop samples exit, so at
+        // warn a correct graph would complain on every successful run. This
+        // exists for the case it was written for — a run that produced nothing
+        // and gave no clue why — which is exactly when debug logging goes on.
+        const shown = emitted.map((r) => JSON.stringify(r)).join(', ');
+        const known = [...new Set(availableRoutes)]
+          .map((r) => JSON.stringify(r))
+          .join(', ');
+        logger.debug(
+          `Node '${nodeName}' emitted route ${shown}, which matches no ` +
+            `outgoing edge, so this branch stops here. Edges from this node ` +
+            `are keyed to: ${known}.`,
+        );
+      }
     }
 
     return nextPending;

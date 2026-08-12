@@ -78,4 +78,9 @@ export type {
 } from './retry_config.js';
 
 // --- Errors ---
-export {NodeTimeoutError} from './errors.js';
+export {
+  NodeSchemaValidationError,
+  NodeTimeoutError,
+  isNodeSchemaValidationError,
+  isNodeTimeoutError,
+} from './errors.js';

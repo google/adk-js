@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {describe, expect, it} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {logger} from '../../src/utils/logger.js';
 import {
   createGraphFromEdgeItems,
   DEFAULT_ROUTE,
@@ -30,6 +31,10 @@ describe('isEdge', () => {
 });
 
 describe('Graph.getNextPendingNodes', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('fires all unconditional edges', () => {
     const [a, b, c] = [n('a'), n('b'), n('c')];
     const graph = new Graph([new Edge(a, b), new Edge(a, c)]);
@@ -44,7 +49,62 @@ describe('Graph.getNextPendingNodes', () => {
     const graph = new Graph([new Edge(a, b, 'x'), new Edge(a, c, 'y')]);
     expect(graph.getNextPendingNodes('a', 'x')).toEqual(['b']);
     expect(graph.getNextPendingNodes('a', 'y')).toEqual(['c']);
+  });
+
+  it('logs, without changing behaviour, when the route matches no edge', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b, c] = [n('a'), n('b'), n('c')];
+    const graph = new Graph([new Edge(a, b, 'x'), new Edge(a, c, 'y')]);
+
+    // Behaviour is unchanged and still matches adk-python: the branch stops.
     expect(graph.getNextPendingNodes('a', 'z')).toEqual([]);
+
+    // ...but silence here is indistinguishable from a typo'd route key.
+    expect(debug).toHaveBeenCalledOnce();
+    const message = String(debug.mock.calls[0][0]);
+    expect(message).toContain("Node 'a'");
+    expect(message).toContain('"z"');
+    expect(message).toContain('"x"');
+    expect(message).toContain('"y"');
+  });
+
+  it('logs when no entry of an emitted route array matches', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b] = [n('a'), n('b')];
+    const graph = new Graph([new Edge(a, b, 'x')]);
+    expect(graph.getNextPendingNodes('a', ['y', 'z'])).toEqual([]);
+    expect(debug).toHaveBeenCalledOnce();
+  });
+
+  it('does not log when a DEFAULT_ROUTE edge catches the route', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b, d] = [n('a'), n('b'), n('d')];
+    const graph = new Graph([
+      new Edge(a, b, 'x'),
+      new Edge(a, d, DEFAULT_ROUTE),
+    ]);
+    expect(graph.getNextPendingNodes('a', 'nope')).toEqual(['d']);
+    expect(debug).not.toHaveBeenCalled();
+  });
+
+  it('does not log for a node with no conditional edges', () => {
+    // A terminal node emitting a route is not a routing mistake: there are no
+    // route-keyed edges for it to have missed.
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b] = [n('a'), n('b')];
+    const graph = new Graph([new Edge(a, b)]);
+    expect(graph.getNextPendingNodes('b', 'anything')).toEqual([]);
+    expect(debug).not.toHaveBeenCalled();
+  });
+
+  it('does not log when no route was emitted at all', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b] = [n('a'), n('b')];
+    const graph = new Graph([new Edge(a, b, 'x')]);
+    expect(graph.getNextPendingNodes('a', null)).toEqual([]);
+    expect(graph.getNextPendingNodes('a', undefined)).toEqual([]);
+    expect(graph.getNextPendingNodes('a', [])).toEqual([]);
+    expect(debug).not.toHaveBeenCalled();
   });
 
   it('matches numeric routes by string value (emitted number or string)', () => {
@@ -62,7 +122,30 @@ describe('Graph.getNextPendingNodes', () => {
     const graph = new Graph([new Edge(a, b, true)]);
     expect(graph.getNextPendingNodes('a', true)).toEqual(['b']);
     expect(graph.getNextPendingNodes('a', 'true')).toEqual(['b']);
+    // The conditional-continue idiom: an edge for `true` and nothing for
+    // `false`, where emitting `false` is meant to stop. Exempt from the
+    // unmatched-route log for that reason.
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     expect(graph.getNextPendingNodes('a', false)).toEqual([]);
+    expect(debug).not.toHaveBeenCalled();
+  });
+
+  it('logs a bare false when no true edge exists', () => {
+    // The exemption is for the conditional-continue idiom specifically. With
+    // the edges keyed to 'x', emitting `false` is a mistake like any other.
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b] = [n('a'), n('b')];
+    const graph = new Graph([new Edge(a, b, 'x')]);
+    expect(graph.getNextPendingNodes('a', false)).toEqual([]);
+    expect(debug).toHaveBeenCalledOnce();
+  });
+
+  it('exempts the string "false" exactly as the boolean', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const [a, b] = [n('a'), n('b')];
+    const graph = new Graph([new Edge(a, b, true)]);
+    expect(graph.getNextPendingNodes('a', 'false')).toEqual([]);
+    expect(debug).not.toHaveBeenCalled();
   });
 
   it('matches an edge with a list of routes', () => {
