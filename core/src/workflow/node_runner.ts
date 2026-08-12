@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {context, SpanStatusCode, trace} from '@opentelemetry/api';
+import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {Event} from '../events/event.js';
 import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
+import {formatError} from '../utils/error_utils.js';
 import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
@@ -86,19 +87,55 @@ export interface ExecuteChildNodeParams {
  * duplicate observable events across retries should emit only after their
  * fallible work has succeeded.
  */
-export async function executeChildNode({
-  parent,
-  node,
-  input,
-  options = {},
-  abortSignal,
-  nodeState: callerNodeState,
-}: ExecuteChildNodeParams): Promise<NodeContext> {
+export function executeChildNode(
+  params: ExecuteChildNodeParams,
+): Promise<NodeContext> {
+  const {parent, node, options = {}} = params;
   const nodeName = options.nodeName ?? node.name;
-  const runId = options.runId ?? nodeName;
   const nodePath =
     options.overrideNodePath ??
     (parent.nodePath ? `${parent.nodePath}.${nodeName}` : nodeName);
+
+  // The span is started here, synchronously, rather than inside `runChildNode`:
+  // its parent must be whatever span was active when the workflow SCHEDULED
+  // this node. Nodes are raced concurrently in `Workflow.runLoop`, so a parent
+  // captured any later would nest concurrent siblings inside whichever task
+  // happened to resolve first.
+  const span = tracer.startSpan(`execute_node ${nodeName}`);
+
+  // Deliberately not `async`, and the callback is deliberately not `async`
+  // either: `context.with` hands the inner promise straight back, so the child
+  // settles on exactly the same microtask it did before tracing existed. Async
+  // wrappers here would each add promise-adoption ticks, which is enough to
+  // change how concurrently scheduled nodes interleave — an observability
+  // change must not move execution around.
+  return context.with(trace.setSpan(context.active(), span), () =>
+    runChildNode({params, nodeName, nodePath, span}),
+  );
+}
+
+interface RunChildNodeParams {
+  params: ExecuteChildNodeParams;
+  nodeName: string;
+  nodePath: string;
+  span: Span;
+}
+
+/** The body of {@link executeChildNode}, running under its `execute_node` span. */
+async function runChildNode({
+  params: {
+    parent,
+    node,
+    input,
+    options = {},
+    abortSignal,
+    nodeState: callerNodeState,
+  },
+  nodeName,
+  nodePath,
+  span,
+}: RunChildNodeParams): Promise<NodeContext> {
+  const runId = options.runId ?? nodeName;
 
   let branch = parent.branch;
   if (options.overrideBranch !== undefined) {
@@ -152,113 +189,110 @@ export async function executeChildNode({
     });
 
   const pluginManager = child.invocationContext.pluginManager;
-  const span = tracer.startSpan(`execute_node ${nodeName}`);
 
-  return context.with(trace.setSpan(context.active(), span), async () => {
-    try {
-      if (pluginManager?.hasPlugins) {
-        const skipOutput = await pluginManager.runBeforeNodeCallback({
-          node,
-          nodeContext: child,
-          input,
-        });
-        if (skipOutput !== undefined) {
-          child.output = skipOutput;
-          // A skipped node still fills its slot in the trace, so record it as
-          // completed rather than leaving an attribute-less span behind.
-          traceNodeExecution({
-            nodePath,
-            runId,
-            attempt: nodeState.attemptCount,
-            status: 'completed',
-            interruptCount: child.interruptIds.length,
-          });
-          if (options.useAsOutput) {
-            parent.output = child.output;
-            parent.route = child.route;
-          }
-          return child;
-        }
-      }
-
-      let succeeded = false;
-      while (!succeeded) {
-        resetState(child);
-        child.attemptCount = nodeState.attemptCount;
-        try {
-          await runAttempt({
-            node,
-            child,
-            input,
-            nodeName,
-            branch,
-            isolationScope,
-            nodePath,
-            runId,
-            attempt: nodeState.attemptCount,
-          });
-          succeeded = true;
-        } catch (err) {
-          // Cancellation is terminal: an aborted invocation (or a sibling
-          // failure that cancelled this node) is never retried.
-          if (isInvocationAbortedError(err)) {
-            throw err;
-          }
-          // Check retry eligibility with the attempt that just failed, compute
-          // its backoff delay, THEN advance the counter (matches Python
-          // semantics).
-          const retryConfig = node.preparedRetryConfig;
-          if (
-            !retryConfig ||
-            !shouldRetryNode({error: err, retryConfig, nodeState})
-          ) {
-            throw err;
-          }
-          const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
-          nodeState.attemptCount += 1;
-          await delay(delaySeconds * 1000, effectiveAbortSignal);
-        }
-      }
-
-      traceNodeExecution({
-        nodePath,
-        runId,
-        attempt: nodeState.attemptCount,
-        status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
-        interruptCount: child.interruptIds.length,
+  try {
+    if (pluginManager?.hasPlugins) {
+      const skipOutput = await pluginManager.runBeforeNodeCallback({
+        node,
+        nodeContext: child,
+        input,
       });
-
-      if (pluginManager?.hasPlugins) {
-        const replacedOutput = await pluginManager.runAfterNodeCallback({
-          node,
-          nodeContext: child,
-          output: child.output,
+      if (skipOutput !== undefined) {
+        child.output = skipOutput;
+        // A skipped node still fills its slot in the trace, so record it as
+        // completed rather than leaving an attribute-less span behind.
+        traceNodeExecution({
+          nodePath,
+          runId,
+          attempt: nodeState.attemptCount,
+          status: 'completed',
+          interruptCount: child.interruptIds.length,
         });
-        if (replacedOutput !== undefined) {
-          child.output = replacedOutput;
+        if (options.useAsOutput) {
+          parent.output = child.output;
+          parent.route = child.route;
         }
+        return child;
       }
-
-      if (options.useAsOutput) {
-        parent.output = child.output;
-        parent.route = child.route;
-      }
-
-      return child;
-    } catch (err) {
-      traceNodeExecution({
-        nodePath,
-        runId,
-        attempt: nodeState.attemptCount,
-        status: 'failed',
-        interruptCount: child.interruptIds.length,
-      });
-      span.setStatus({code: SpanStatusCode.ERROR, message: errorMessage(err)});
-      throw err;
-    } finally {
-      span.end();
     }
-  });
+
+    let succeeded = false;
+    while (!succeeded) {
+      resetState(child);
+      child.attemptCount = nodeState.attemptCount;
+      try {
+        await runAttempt({
+          node,
+          child,
+          input,
+          nodeName,
+          branch,
+          isolationScope,
+          nodePath,
+          runId,
+          attempt: nodeState.attemptCount,
+        });
+        succeeded = true;
+      } catch (err) {
+        // Cancellation is terminal: an aborted invocation (or a sibling
+        // failure that cancelled this node) is never retried.
+        if (isInvocationAbortedError(err)) {
+          throw err;
+        }
+        // Check retry eligibility with the attempt that just failed, compute
+        // its backoff delay, THEN advance the counter (matches Python
+        // semantics).
+        const retryConfig = node.preparedRetryConfig;
+        if (
+          !retryConfig ||
+          !shouldRetryNode({error: err, retryConfig, nodeState})
+        ) {
+          throw err;
+        }
+        const delaySeconds = getRetryDelaySeconds({retryConfig, nodeState});
+        nodeState.attemptCount += 1;
+        await delay(delaySeconds * 1000, effectiveAbortSignal);
+      }
+    }
+
+    traceNodeExecution({
+      nodePath,
+      runId,
+      attempt: nodeState.attemptCount,
+      status: child.interruptIds.length > 0 ? 'waiting' : 'completed',
+      interruptCount: child.interruptIds.length,
+    });
+
+    if (pluginManager?.hasPlugins) {
+      const replacedOutput = await pluginManager.runAfterNodeCallback({
+        node,
+        nodeContext: child,
+        output: child.output,
+      });
+      if (replacedOutput !== undefined) {
+        child.output = replacedOutput;
+      }
+    }
+
+    if (options.useAsOutput) {
+      parent.output = child.output;
+      parent.route = child.route;
+    }
+
+    return child;
+  } catch (err) {
+    traceNodeExecution({
+      nodePath,
+      runId,
+      attempt: nodeState.attemptCount,
+      status: 'failed',
+      interruptCount: child.interruptIds.length,
+    });
+    span.setStatus({code: SpanStatusCode.ERROR, message: formatError(err)});
+    throw err;
+  } finally {
+    span.end();
+  }
 }
 
 interface RunAttemptParams extends RunOnceParams {
@@ -267,7 +301,11 @@ interface RunAttemptParams extends RunOnceParams {
   attempt: number;
 }
 
-async function runAttempt(params: RunAttemptParams): Promise<void> {
+/**
+ * Not `async`: a node without a retry config must reach `runOnce` and settle on
+ * exactly the microtask it would have without tracing (see `executeChildNode`).
+ */
+function runAttempt(params: RunAttemptParams): Promise<void> {
   const {node, nodePath, runId, attempt} = params;
   if (!node.preparedRetryConfig) {
     return runOnce(params);
@@ -295,7 +333,7 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
         });
         span.setStatus({
           code: SpanStatusCode.ERROR,
-          message: errorMessage(err),
+          message: formatError(err),
         });
         throw err;
       } finally {
@@ -303,10 +341,6 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
       }
     },
   );
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**

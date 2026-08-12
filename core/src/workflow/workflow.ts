@@ -177,12 +177,15 @@ export class Workflow extends BaseNode {
 
     const span = tracer.startSpan(`invoke_workflow ${this.name}`);
     try {
-      await context.with(trace.setSpan(context.active(), span), async () => {
+      // Sync callback returning the promise, not `async () => await …`: the
+      // wrapper must not insert microtask hops around the orchestration loop
+      // (see the note in `executeChildNode`).
+      await context.with(trace.setSpan(context.active(), span), () => {
         traceWorkflowInvocation({
           workflowName: this.name,
           nodePath: ctx.nodePath,
         });
-        await this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+        return this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
       });
     } finally {
       abort.dispose();

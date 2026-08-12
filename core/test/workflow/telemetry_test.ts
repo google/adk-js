@@ -53,10 +53,6 @@ function expectChildOf(child: ReadableSpan, parent: ReadableSpan): void {
   expect(child.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
 }
 
-function micros([seconds, nanos]: [number, number]): number {
-  return seconds * 1e6 + nanos / 1e3;
-}
-
 describe('workflow telemetry — span tree', () => {
   it('nests every node span under the workflow span in a sequential graph', async () => {
     const a = new FnNode('step_a', (_c, input) => `${input}->A`);
@@ -96,14 +92,19 @@ describe('workflow telemetry — span tree', () => {
     const leftStarted = new Promise<void>((r) => (startLeft = r));
     const rightStarted = new Promise<void>((r) => (startRight = r));
 
-    const left = new FnNode('left', async () => {
+    // Each node runs a dynamic child while its sibling is also in flight, so
+    // the inner spans below can only land on the right parent if each node's
+    // context binding survives being interleaved with the other's.
+    const left = new FnNode('left', async (ctx) => {
       startLeft();
       await rightStarted;
+      await ctx.runNode(new FnNode('inner_left', () => 'l'), 'x');
       return 'L';
     });
-    const right = new FnNode('right', async () => {
+    const right = new FnNode('right', async (ctx) => {
       startRight();
       await leftStarted;
+      await ctx.runNode(new FnNode('inner_right', () => 'r'), 'x');
       return 'R';
     });
     const join = new FnNode('join', (_c, input) => input);
@@ -118,9 +119,10 @@ describe('workflow telemetry — span tree', () => {
     const leftSpan = onlySpan('execute_node left');
     const rightSpan = onlySpan('execute_node right');
 
-    expect(micros(leftSpan.startTime)).toBeLessThan(micros(rightSpan.endTime));
-    expect(micros(rightSpan.startTime)).toBeLessThan(micros(leftSpan.endTime));
-
+    // Overlap is guaranteed structurally, not asserted on timestamps: neither
+    // node can return until the other has started, so the run only completes
+    // if both were in flight at once. OTel HrTime is too coarse to compare
+    // sub-millisecond span intervals reliably.
     expectChildOf(leftSpan, wfSpan);
     expectChildOf(rightSpan, wfSpan);
     expect(leftSpan.parentSpanContext?.spanId).not.toBe(
@@ -129,6 +131,12 @@ describe('workflow telemetry — span tree', () => {
     expect(rightSpan.parentSpanContext?.spanId).not.toBe(
       leftSpan.spanContext().spanId,
     );
+
+    // The point of binding the context per node: work started inside one node
+    // nests under that node, never under whichever sibling happens to be
+    // running alongside it.
+    expectChildOf(onlySpan('execute_node inner_left'), leftSpan);
+    expectChildOf(onlySpan('execute_node inner_right'), rightSpan);
   });
 
   it('emits one attempt span per try for a retried node', async () => {
