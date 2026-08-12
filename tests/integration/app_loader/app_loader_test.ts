@@ -77,6 +77,16 @@ describe('AgentLoader discovery and loading integration', () => {
 
   beforeAll(async () => {
     await execAsync('npm install', {cwd: projectPath});
+    const fakePkgDir = path.join(projectPath, 'node_modules', 'fake_pkg');
+    await fs.mkdir(fakePkgDir, {recursive: true});
+    await fs.writeFile(
+      path.join(fakePkgDir, 'agent.js'),
+      `const {BaseAgent} = require('@google/adk');
+class FakePkgAgent extends BaseAgent {
+  constructor() { super({ name: 'fake_pkg_agent' }); }
+}
+exports.rootAgent = new FakePkgAgent();`,
+    );
     loader = new AgentLoader(projectPath);
     await loader.preloadAgents();
   }, HOOK_TIMEOUT);
@@ -95,6 +105,9 @@ describe('AgentLoader discovery and loading integration', () => {
       expect(agentsAndApps).toContain('service_beta');
       expect(agentsAndApps).toContain('standalone_agent');
       expect(agentsAndApps).toContain('standalone_app');
+      expect(agentsAndApps).not.toContain('.hidden');
+      expect(agentsAndApps).not.toContain('fake_pkg');
+      expect(agentsAndApps).not.toContain('node_modules');
     },
     TEST_EXECUTION_TIMEOUT,
   );
