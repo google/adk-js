@@ -158,6 +158,7 @@ export class WorkflowAgent extends BaseAgent {
   }
 }
 
+/** Whether `value` is a graph `WorkflowAgent` (brand check, not `instanceof`). */
 export function isGraphWorkflowAgent(value: unknown): value is WorkflowAgent {
   return (
     typeof value === 'object' &&
