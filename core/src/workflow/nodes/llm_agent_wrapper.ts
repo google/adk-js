@@ -138,7 +138,14 @@ export class LLMAgentWrapper extends BaseNode {
         event.output = output;
         event.nodeInfo = {...(event.nodeInfo ?? {}), messageAsOutput: true};
         if (agent.outputKey && output !== undefined) {
-          ctx.actions.stateDelta[agent.outputKey] = output;
+          // Route the write through `ctx.state` so it lands in the invocation
+          // overlay and on `session.state` right away — a downstream node
+          // reading `outputKey` runs before this event is committed, and used
+          // to see `undefined`. Also stamp it on the event being emitted:
+          // unlike `FunctionNode`, this node never drains `ctx.actions` onto an
+          // event, so the event delta is what actually gets committed.
+          ctx.state.set(agent.outputKey, output);
+          event.actions.stateDelta[agent.outputKey] = output;
         }
         yield event;
         return;
