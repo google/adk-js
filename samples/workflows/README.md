@@ -69,6 +69,26 @@ request). Just type your reply on the next turn — a plain-text reply is routed
 to the pending interrupt, so you can approve, reject, or supply a value
 interactively.
 
+Answering from your own client rather than the CLI, over `/run`, there are two
+shapes and the difference matters:
+
+```jsonc
+// Plain text: routed to every pending interrupt, never schema-checked.
+{"role": "user", "parts": [{"text": "21"}]}
+
+// Structured: name the interrupt, and wrap a bare value as {result: <value>}.
+{"role": "user", "parts": [{"functionResponse": {
+  "id": "<interruptId>", "name": "adk_request_input",
+  "response": {"result": "21"}}}]}
+```
+
+`{result: …}` is the only envelope that gets unwrapped. Any other object is
+handed to the next node exactly as sent — which is what makes a structured
+reply carrying an object (`{userResponse: …}` in `payload_and_schema`) work. If
+the interrupt declared a `responseSchema`, a structured reply is checked
+against it and a mismatch fails loudly; if it declared none, whatever you send
+is what the next node receives.
+
 ## Samples
 
 ### [`/graphs/`](https://adk.dev/graphs/) — `graphs/`

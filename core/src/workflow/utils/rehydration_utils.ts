@@ -17,6 +17,10 @@ import {requiresUserInput} from '../../agents/user_input_request.js';
 import {Event} from '../../events/event.js';
 import {RouteValue} from '../graph.js';
 import type {NodeContext, NodeResult} from '../node_context.js';
+import {
+  responseSchemasByInterruptId,
+  validateInterruptResponse,
+} from './hitl_utils.js';
 
 const RESULT_KEY = 'result';
 
@@ -168,6 +172,7 @@ function reconstruct(
 ): Map<string, RehydratedNode> {
   const nodes = new Map<string, RehydratedNode>();
   const interruptOwner = new Map<string, string>();
+  const responseSchemas = responseSchemasByInterruptId(events);
 
   const getNode = (name: string): RehydratedNode => {
     let node = nodes.get(name);
@@ -185,10 +190,13 @@ function reconstruct(
         const fr = part.functionResponse;
         if (fr?.id && interruptOwner.has(fr.id)) {
           const owner = interruptOwner.get(fr.id)!;
-          getNode(owner).resolvedResponses.set(
+          const response = unwrapResponse(fr.response);
+          validateInterruptResponse(
             fr.id,
-            unwrapResponse(fr.response),
+            response,
+            responseSchemas.get(fr.id),
           );
+          getNode(owner).resolvedResponses.set(fr.id, response);
         }
       }
       continue;
