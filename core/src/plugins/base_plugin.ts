@@ -14,6 +14,8 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {experimental} from '../utils/experimental.js';
+import type {BaseNode} from '../workflow/base_node.js';
+import type {NodeContext} from '../workflow/node_context.js';
 
 /**
  * Trigger for context compaction.
@@ -234,6 +236,47 @@ export abstract class BasePlugin {
     agent: BaseAgent;
     callbackContext: Context;
   }): Promise<Content | undefined> {
+    return;
+  }
+
+  /**
+   * Callback executed before a workflow node runs.
+   *
+   * @param params.node The node that is about to run.
+   * @param params.nodeContext The node's execution context.
+   * @param params.input The input the node is about to receive.
+   * @returns An optional value. If anything other than `undefined` is returned,
+   *     the node's body is skipped and the returned value becomes its output,
+   *     which is how a plugin implements a node-level cache or a stub.
+   *     Returning `undefined` lets the node run normally.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async beforeNodeCallback(params: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    input: unknown;
+  }): Promise<unknown | undefined> {
+    return;
+  }
+
+  /**
+   * Callback executed after a workflow node has run.
+   *
+   * Not called for a node whose body was skipped by `beforeNodeCallback`, and
+   * not called when the node throws.
+   *
+   * @param params.node The node that has just run.
+   * @param params.nodeContext The node's execution context.
+   * @param params.output The output the node produced.
+   * @returns An optional value replacing the node's output. Returning
+   *     `undefined` keeps the original.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async afterNodeCallback(params: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    output: unknown;
+  }): Promise<unknown | undefined> {
     return;
   }
 
