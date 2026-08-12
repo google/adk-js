@@ -25,7 +25,6 @@ import {
   saveToFile,
 } from '../../src/utils/file_utils.js';
 
-// Mock dependencies
 vi.mock('@clack/prompts', () => ({
   isCancel: vi.fn(),
   select: vi.fn(),

@@ -116,7 +116,6 @@ describe('GoogleLlm', () => {
 
     expect(liveOptions).toBeDefined();
     expect(liveOptions.headers).toBeDefined();
-    // Verify user headers are NOT included in live options
     expect(liveOptions.headers!['x-custom-header']).toBeUndefined();
     expect(liveOptions.headers!['x-goog-api-client']).toContain('google-adk/');
     expect(liveOptions.apiVersion).toBeDefined();

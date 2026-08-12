@@ -27,7 +27,6 @@ import {
 vi.hoisted(() => {
   vi.resetModules();
 });
-// Mock OpenTelemetry API
 vi.mock('@opentelemetry/api');
 
 describe('Telemetry Tracing Functions', () => {
