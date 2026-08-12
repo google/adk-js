@@ -155,13 +155,27 @@ export class NodeContext {
    * agent sees", so an agent run as a node (`BaseAgent.runImpl`) and one run
    * directly go through the same seam.
    *
-   * Today it hands back the node's own invocation context unchanged, which is
-   * what the agent wrapper already did. adk-python returns a copy carrying the
-   * proxy session and the isolation scope (`agents/context.py`
-   * `get_invocation_context`); matching that here means giving the agent the
-   * node's `state` view rather than letting it read through to `session.state`,
-   * which is a behaviour change for every agent and is deliberately not part of
-   * introducing the seam.
+   * It hands back the node's own invocation context unchanged, and that is the
+   * intended behaviour rather than a placeholder.
+   *
+   * adk-python's counterpart (`agents/context.py` `get_invocation_context`) is
+   * documented as returning "a copy with the proxy session", which reads as
+   * though the agent is handed a different view of state. It is not: that
+   * `Context.session` returns `self._invocation_context.session`, so the copy
+   * substitutes the same object, and `Context._state` is built directly over
+   * `session.state`. A Python agent run as a node reads session state exactly
+   * as a TypeScript one does.
+   *
+   * The other thing that copy carries — the isolation scope — is already
+   * applied by the time this runs: the node runner builds the child invocation
+   * context with the node's scope, so it is present on the object returned.
+   *
+   * That leaves the node's own `state` view, which layers this node's pending
+   * delta over an invocation-wide overlay. Nodes read through it; an agent
+   * reads `session.state`. The two agree because every write through the view
+   * is also written through to the session — see `NodeStateView` below — and
+   * the agent-node cases in `core/test/workflow/state_consistency_test.ts` pin
+   * that.
    */
   getInvocationContext(): InvocationContext {
     return this.invocationContext;
