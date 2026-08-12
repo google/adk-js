@@ -89,9 +89,12 @@ export async function loadFileData<T>(
   try {
     return JSON.parse(await fs.readFile(filePath, {encoding: 'utf-8'})) as T;
   } catch (e) {
-    console.error(`Failed to read or parse file ${filePath}:`, e);
-
-    throw e;
+    // Carry the path in the message and let the caller report it. Logging here
+    // as well as throwing printed every failure twice.
+    throw new Error(
+      `Failed to read or parse file ${filePath}: ${(e as Error).message}`,
+      {cause: e},
+    );
   }
 }
 

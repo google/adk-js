@@ -282,134 +282,129 @@ export interface RunAgentOptions {
   reloadAgents?: boolean;
 }
 export async function runAgent(options: RunAgentOptions): Promise<void> {
-  try {
-    const userId = 'test_user';
-    const artifactService =
-      options.artifactService || new InMemoryArtifactService();
-    const sessionService =
-      options.sessionService || new InMemorySessionService();
-    const memoryService = options.memoryService || new InMemoryMemoryService();
-    await using agentFile = new AgentFile(
-      getAbsolutePath(options.agentPath),
-      options.agentFileLoadOptions,
-    );
-    const loaded = await agentFile.load();
-    const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
-    const app = isApp(loaded) ? loaded : undefined;
+  const userId = 'test_user';
+  const artifactService =
+    options.artifactService || new InMemoryArtifactService();
+  const sessionService = options.sessionService || new InMemorySessionService();
+  const memoryService = options.memoryService || new InMemoryMemoryService();
+  await using agentFile = new AgentFile(
+    getAbsolutePath(options.agentPath),
+    options.agentFileLoadOptions,
+  );
+  const loaded = await agentFile.load();
+  const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+  const app = isApp(loaded) ? loaded : undefined;
 
-    let session = await sessionService.createSession({
-      appName: app?.name ?? rootAgent.name,
-      userId,
-    });
+  let session = await sessionService.createSession({
+    appName: app?.name ?? rootAgent.name,
+    userId,
+  });
 
-    const reloadSubscribers: Array<(agent: BaseAgent) => void> = [];
-    let watcher: fs.FSWatcher | undefined;
+  const reloadSubscribers: Array<(agent: BaseAgent) => void> = [];
+  let watcher: fs.FSWatcher | undefined;
 
-    if (options.reloadAgents) {
-      const agentFilePath = getAbsolutePath(options.agentPath);
-      watcher = fs.watch(agentFilePath, async () => {
-        try {
-          await using reloadedFile = new AgentFile(
-            agentFilePath,
-            options.agentFileLoadOptions,
-          );
-          const reloaded = await reloadedFile.load();
-          const newAgent = isApp(reloaded) ? reloaded.rootAgent : reloaded;
-          for (const subscriber of reloadSubscribers) {
-            subscriber(newAgent);
-          }
-        } catch (err) {
-          console.warn('Failed to reload agent:', (err as Error).message);
-        }
-      });
-    }
-
-    const onAgentFileReloaded = (subscribe: (agent: BaseAgent) => void) => {
-      reloadSubscribers.push(subscribe);
-    };
-
-    try {
-      if (options.inputFile) {
-        session =
-          (await runFromInputFile({
-            appName: app?.name ?? rootAgent.name,
-            userId,
-            agent: rootAgent,
-            artifactService,
-            sessionService,
-            memoryService,
-            filePath: options.inputFile,
-          })) || session;
-      } else if (options.savedSessionFile) {
-        const loadedSession = await loadFileData<Session>(
-          options.savedSessionFile,
+  if (options.reloadAgents) {
+    const agentFilePath = getAbsolutePath(options.agentPath);
+    watcher = fs.watch(agentFilePath, async () => {
+      try {
+        await using reloadedFile = new AgentFile(
+          agentFilePath,
+          options.agentFileLoadOptions,
         );
-        if (loadedSession) {
-          for (const event of loadedSession.events) {
-            await sessionService.appendEvent({session, event});
-            printEvent(event, {announcePauses: false});
-          }
-
-          // Only the pauses the transcript never answered are still live, and
-          // they are what the prompt below is waiting on.
-          for (const request of getPendingUserInputRequests(
-            loadedSession.events,
-          )) {
-            console.log(renderUserInputRequest(request));
-          }
+        const reloaded = await reloadedFile.load();
+        const newAgent = isApp(reloaded) ? reloaded.rootAgent : reloaded;
+        for (const subscriber of reloadSubscribers) {
+          subscriber(newAgent);
         }
-
-        await runInteractively({
-          rootAgent,
-          app,
-          artifactService,
-          sessionService,
-          memoryService,
-          session,
-          onAgentFileReloaded: options.reloadAgents
-            ? onAgentFileReloaded
-            : undefined,
-        });
-      } else {
-        console.log(
-          `Running ${app ? `app ${app.name}` : `agent ${rootAgent.name}`}, type exit to exit.`,
-        );
-        await runInteractively({
-          rootAgent,
-          app,
-          artifactService,
-          sessionService,
-          memoryService,
-          session,
-          onAgentFileReloaded: options.reloadAgents
-            ? onAgentFileReloaded
-            : undefined,
-        });
+      } catch (err) {
+        console.warn('Failed to reload agent:', (err as Error).message);
       }
-    } finally {
-      watcher?.close();
-    }
+    });
+  }
 
-    if (options.saveSession) {
-      const sessionId =
-        options.sessionId || (await getUserInput('Session ID to save: '));
-      // Sibling of the agent file, not inside it: joining onto the agent path
-      // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
-      // no mkdir, so the write failed with ENOTDIR.
-      const sessionPath = path.join(
-        path.dirname(options.agentPath),
-        `${sessionId}.session.json`,
+  const onAgentFileReloaded = (subscribe: (agent: BaseAgent) => void) => {
+    reloadSubscribers.push(subscribe);
+  };
+
+  try {
+    if (options.inputFile) {
+      session =
+        (await runFromInputFile({
+          appName: app?.name ?? rootAgent.name,
+          userId,
+          agent: rootAgent,
+          artifactService,
+          sessionService,
+          memoryService,
+          filePath: options.inputFile,
+        })) || session;
+    } else if (options.savedSessionFile) {
+      const loadedSession = await loadFileData<Session>(
+        options.savedSessionFile,
       );
-      const sessionToStore = await sessionService.getSession({
-        appName: session.appName,
-        userId: session.userId,
-        sessionId: session.id,
-      });
-      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+      if (loadedSession) {
+        for (const event of loadedSession.events) {
+          await sessionService.appendEvent({session, event});
+          printEvent(event, {announcePauses: false});
+        }
 
-      console.log('Session saved to', sessionPath);
+        // Only the pauses the transcript never answered are still live, and
+        // they are what the prompt below is waiting on.
+        for (const request of getPendingUserInputRequests(
+          loadedSession.events,
+        )) {
+          console.log(renderUserInputRequest(request));
+        }
+      }
+
+      await runInteractively({
+        rootAgent,
+        app,
+        artifactService,
+        sessionService,
+        memoryService,
+        session,
+        onAgentFileReloaded: options.reloadAgents
+          ? onAgentFileReloaded
+          : undefined,
+      });
+    } else {
+      console.log(
+        `Running ${app ? `app ${app.name}` : `agent ${rootAgent.name}`}, type exit to exit.`,
+      );
+      await runInteractively({
+        rootAgent,
+        app,
+        artifactService,
+        sessionService,
+        memoryService,
+        session,
+        onAgentFileReloaded: options.reloadAgents
+          ? onAgentFileReloaded
+          : undefined,
+      });
     }
-  } catch (e) {
-    console.log(e);
+  } finally {
+    watcher?.close();
+  }
+
+  if (options.saveSession) {
+    const sessionId =
+      options.sessionId || (await getUserInput('Session ID to save: '));
+    // Sibling of the agent file, not inside it: joining onto the agent path
+    // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
+    // no mkdir, so the write failed with ENOTDIR.
+    const sessionPath = path.join(
+      path.dirname(options.agentPath),
+      `${sessionId}.session.json`,
+    );
+    const sessionToStore = await sessionService.getSession({
+      appName: session.appName,
+      userId: session.userId,
+      sessionId: session.id,
+    });
+    await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+
+    console.log('Session saved to', sessionPath);
   }
 }
