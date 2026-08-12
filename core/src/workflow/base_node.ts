@@ -7,6 +7,7 @@
 import {Content, createModelContent, PartListUnion} from '@google/genai';
 import {createEvent, Event, isEvent} from '../events/event.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
+import {NodeSchemaValidationError} from './errors.js';
 import type {NodeContext} from './node_context.js';
 import {isRequestInput} from './request_input.js';
 import {
@@ -178,7 +179,15 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     if (isContent(input)) {
       return input;
     }
-    return parseWithSchema(this.inputSchema, input);
+    try {
+      return parseWithSchema(this.inputSchema, input);
+    } catch (e) {
+      throw new NodeSchemaValidationError({
+        nodeName: this.name,
+        direction: 'input',
+        cause: e,
+      });
+    }
   }
 
   /**
@@ -190,7 +199,15 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     if (isContent(output)) {
       return output;
     }
-    return parseWithSchema(this.outputSchema, output);
+    try {
+      return parseWithSchema(this.outputSchema, output);
+    } catch (e) {
+      throw new NodeSchemaValidationError({
+        nodeName: this.name,
+        direction: 'output',
+        cause: e,
+      });
+    }
   }
 
   /**
