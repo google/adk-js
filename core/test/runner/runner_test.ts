@@ -21,6 +21,7 @@ import {
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {logger} from '../../src/utils/logger.js';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -502,6 +503,83 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  describe('graph-workflow node events', () => {
+    /** A session holding one event authored by a workflow node. */
+    async function sessionWithNodeEvent(sessionId: string) {
+      const session = await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId,
+      });
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          invocationId: 'inv1',
+          // A node is authored by its own name and stamped with a node path.
+          // It is not in the agent tree, and never can be.
+          author: 'step1',
+          nodeInfo: {path: 'root_agent.step1'},
+          content: {role: 'model', parts: [{text: 'Enter a number:'}]},
+        }),
+      });
+      return session;
+    }
+
+    it('does not warn about a node that is not in the agent tree', async () => {
+      // Every HITL resume replays node events, so this fired on the happy
+      // path of any workflow that pauses for input.
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+      determineAgentForResumption(
+        await sessionWithNodeEvent('session_workflow_node'),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('still resolves to the root agent', async () => {
+      const result = determineAgentForResumption(
+        await sessionWithNodeEvent('session_workflow_node_2'),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(result.name).toBe('root_agent');
+    });
+
+    it('still warns about a genuinely unknown agent', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const session = await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: 'session_unknown_agent',
+      });
+      // No node path: this really is an agent nobody can find.
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          invocationId: 'inv1',
+          author: 'ghost_agent',
+          content: {role: 'model', parts: [{text: 'boo'}]},
+        }),
+      });
+
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Event from an unknown agent: ghost_agent'),
+      );
+      warn.mockRestore();
+    });
   });
 });
 

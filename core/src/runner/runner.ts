@@ -617,6 +617,17 @@ export function determineAgentForResumption(
       continue;
     }
 
+    // A graph-workflow node is not an agent. Its events are authored by the
+    // node name and stamped with a node path, and nodes never appear in the
+    // agent tree — a WorkflowAgent keeps its structure in `edges`, so its
+    // `subAgents` is empty. The lookup below therefore always missed, warning
+    // about every node of every workflow, including on the happy path of an
+    // ordinary human-in-the-loop resume. Nodes are not transfer targets
+    // either, so skipping them leaves the resolved agent unchanged.
+    if (event.nodeInfo?.path) {
+      continue;
+    }
+
     if (event.author === rootAgent.name) {
       return rootAgent;
     }
