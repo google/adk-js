@@ -14,7 +14,7 @@ import {
   NodeTimeoutError,
 } from './errors.js';
 import {NodeContext} from './node_context.js';
-import {createNodeState} from './node_state.js';
+import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
 import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
 
@@ -65,6 +65,7 @@ export interface ExecuteChildNodeParams {
    * fails). Defaults to the parent invocation's abort signal.
    */
   abortSignal?: AbortSignal;
+  nodeState?: NodeState;
 }
 
 /**
@@ -89,6 +90,7 @@ export async function executeChildNode({
   input,
   options = {},
   abortSignal,
+  nodeState: callerNodeState,
 }: ExecuteChildNodeParams): Promise<NodeContext> {
   const nodeName = options.nodeName ?? node.name;
   const runId = options.runId ?? nodeName;
@@ -139,11 +141,13 @@ export async function executeChildNode({
   // Propagate the dynamic scheduler down; a nested Workflow overrides it.
   child.scheduler = parent.scheduler;
 
-  const nodeState = createNodeState({
-    status: NodeStatus.RUNNING,
-    input,
-    runId,
-  });
+  const nodeState =
+    callerNodeState ??
+    createNodeState({
+      status: NodeStatus.RUNNING,
+      input,
+      runId,
+    });
 
   const pluginManager = child.invocationContext.pluginManager;
   if (pluginManager?.hasPlugins) {

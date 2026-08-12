@@ -23,7 +23,7 @@ const DEFAULT_JITTER = 1.0;
  * Resolves the runtime name of a thrown value for exception-name matching.
  * Mirrors Python's `type(exception).__name__`.
  */
-function errorName(error: unknown): string {
+export function errorName(error: unknown): string {
   if (error instanceof Error) {
     // `name` is set by well-behaved Error subclasses; fall back to the
     // constructor name for plain `throw new Error()` cases.
