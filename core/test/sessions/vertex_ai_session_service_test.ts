@@ -1358,9 +1358,7 @@ describe('VertexAiSessionService', () => {
         await service.appendEvent({session: transferSession(), event});
 
         expect(event.actions.transferToAgent).toBe('billing_agent');
-        expect(
-          (event.actions as Record<string, unknown>)['transferAgent'],
-        ).toBeUndefined();
+        expect('transferAgent' in event.actions).toBe(false);
       });
 
       it('adds no transfer key when the event has none', async () => {
