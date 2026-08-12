@@ -1007,9 +1007,6 @@ describe('A2A Remote Agent', () => {
     expect(gotEvents[1].content?.parts).toEqual([{text: '2', thought: false}]);
     expect(gotEvents[1].partial).toBe(true);
 
-    // Last one should be full aggregate for that atifact id IF it was aggregated
-    // Wait, let's verify A2ARemoteAgent agg logic on line 207-224
-    // append=false, lastChunk=true calls aggregations.delete and yields adkEvent
     expect(gotEvents[2].content?.parts).toEqual([{text: '3', thought: false}]);
     expect(gotEvents[2].partial).toBe(false);
   });
