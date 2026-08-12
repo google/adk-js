@@ -205,15 +205,18 @@ describe('cli_run', () => {
     );
   });
 
-  it('should handle missing input file', async () => {
-    (loadFileData as Mock).mockResolvedValue(null);
-    const mockSessionService = createMockSessionService();
+  it('propagates an unreadable --replay file instead of swallowing it', async () => {
+    (loadFileData as Mock).mockRejectedValue(
+      new Error('Failed to read or parse file input.json: ENOENT'),
+    );
 
-    await runAgent({
-      agentPath: 'agent.ts',
-      inputFile: 'input.json',
-      sessionService: mockSessionService,
-    });
+    await expect(
+      runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: createMockSessionService(),
+      }),
+    ).rejects.toThrow(/Failed to read or parse file input\.json/);
     expect(loadFileData).toHaveBeenCalled();
   });
 

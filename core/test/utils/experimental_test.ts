@@ -57,6 +57,14 @@ describe('experimental decorator', () => {
       expect(warnCalls).toHaveLength(0);
     });
 
+    it('keeps the class name, which the warning itself reports', () => {
+      @experimental
+      class NamedClass {}
+
+      expect(NamedClass.name).toBe('NamedClass');
+      expect(new NamedClass().constructor.name).toBe('NamedClass');
+    });
+
     it('preserves constructor arguments and behavior', () => {
       @experimental
       class ArgClass {
