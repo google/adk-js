@@ -44,7 +44,9 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
 }));
 
-vi.mock('../../src/utils/file_utils.js', () => ({
+// Only the I/O is faked; getAbsolutePath is the real resolver under test.
+vi.mock('../../src/utils/file_utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/utils/file_utils.js')>()),
   createFolder: vi.fn(),
   isFolderExists: vi.fn(),
   listFiles: vi.fn(),

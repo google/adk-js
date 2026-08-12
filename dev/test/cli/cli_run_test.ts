@@ -5,6 +5,7 @@
  */
 
 import {BaseAgent, BaseSessionService, Runner} from '@google/adk';
+import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {runAgent} from '../../src/cli/cli_run.js';
@@ -16,7 +17,9 @@ vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
 }));
 
-vi.mock('../../src/utils/file_utils.js', () => ({
+// Only the I/O is faked; getAbsolutePath is the real resolver under test.
+vi.mock('../../src/utils/file_utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/utils/file_utils.js')>()),
   loadFileData: vi.fn(),
   saveToFile: vi.fn(),
 }));
@@ -162,6 +165,46 @@ describe('cli_run', () => {
     expect(mockSessionService.createSession).toHaveBeenCalled();
   });
 
+  it('honours an absolute --replay path instead of rebasing it on cwd', async () => {
+    // `path.join(cwd, '/abs/input.json')` silently strips the leading
+    // separator and looks for `<cwd>/abs/input.json`, which does not exist.
+    const absolute = path.resolve(path.sep, 'tmp', 'replay', 'input.json');
+    (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['Hello']});
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      inputFile: absolute,
+      sessionService: createMockSessionService(),
+    });
+
+    expect(loadFileData).toHaveBeenCalledWith(absolute);
+  });
+
+  it('honours an absolute agent path', async () => {
+    const absolute = path.resolve(path.sep, 'tmp', 'agents', 'agent.ts');
+
+    await runAgent({
+      agentPath: absolute,
+      sessionService: createMockSessionService(),
+    });
+
+    expect(AgentFile).toHaveBeenCalledWith(absolute, undefined);
+  });
+
+  it('resolves a relative path against the working directory', async () => {
+    (loadFileData as Mock).mockResolvedValue({state: {}, queries: ['Hello']});
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      inputFile: 'input.json',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(loadFileData).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'input.json'),
+    );
+  });
+
   it('should handle missing input file', async () => {
     (loadFileData as Mock).mockResolvedValue(null);
     const mockSessionService = createMockSessionService();
@@ -286,6 +329,23 @@ describe('cli_run', () => {
 
     expect(saveToFile).toHaveBeenCalledWith(
       expect.stringContaining('my-session.session.json'),
+      expect.anything(),
+    );
+  });
+
+  it('saves the session beside the agent file, not inside it', async () => {
+    // Joining onto the agent path itself produced
+    // `<cwd>/agents/agent.ts/my-session.session.json`; saveToFile does no
+    // mkdir and agent.ts is a file, so the write failed with ENOTDIR.
+    await runAgent({
+      agentPath: path.join('agents', 'agent.ts'),
+      saveSession: true,
+      sessionId: 'my-session',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'agents', 'my-session.session.json'),
       expect.anything(),
     );
   });
