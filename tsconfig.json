@@ -20,5 +20,11 @@
       "@google/adk-integrations": ["./integrations/src/index.ts"],
       "@google/adk-integrations/*": ["./integrations/src/*"]
     }
-  }
+  },
+  // gts' `exclude` resolves relative to gts itself, so it excludes nothing
+  // here. Without this, the check picks up every `*/dist/**/*.d.ts` emitted by
+  // the preceding build step, so CI and a fresh clone check different files.
+  // The three workspace configs set their own `exclude`, so this does not
+  // reach them.
+  "exclude": ["node_modules", "**/dist"]
 }

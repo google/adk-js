@@ -69,9 +69,10 @@ export class InMemoryPolicyEngine implements BasePolicyEngine {
   /**
    * Always returns {@link PolicyOutcome.ALLOW} for every tool call.
    *
+   * @param _context - The tool and its arguments; ignored.
    * @returns A promise resolving to an ALLOW result.
    */
-  async evaluate(): Promise<PolicyCheckResult> {
+  async evaluate(_context: ToolCallPolicyContext): Promise<PolicyCheckResult> {
     // Default permissive implementation
     return Promise.resolve({
       outcome: PolicyOutcome.ALLOW,

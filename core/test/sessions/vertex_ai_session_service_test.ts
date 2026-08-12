@@ -10,7 +10,6 @@ import {
   isCompactedEvent,
   State,
   VertexAiSessionService,
-  type ListSessionsRequest,
 } from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
@@ -679,11 +678,6 @@ describe('VertexAiSessionService', () => {
   });
 
   describe('listSessions', () => {
-    // `ListSessionsRequest` declares `userId` as required, but `listSessions`
-    // handles its absence by listing without a `user_id` filter. The cast keeps
-    // the tests that cover that path calling the service with no `userId`.
-    const requestWithoutUserId = {appName: '12345'} as ListSessionsRequest;
-
     it('returns list of sessions parsing name extracts', async () => {
       mockClient.listInternal.mockResolvedValue({
         sessions: [
@@ -727,7 +721,9 @@ describe('VertexAiSessionService', () => {
     });
 
     it('lists sessions without filter if userId is missing', async () => {
-      await service.listSessions(requestWithoutUserId);
+      await service.listSessions({
+        appName: '12345',
+      });
 
       expect(mockClient.listInternal).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -741,7 +737,9 @@ describe('VertexAiSessionService', () => {
         sessions: [{name: 'projects/p/locations/l/sessions/s1', userId: 'u1'}],
       });
 
-      const result = await service.listSessions(requestWithoutUserId);
+      const result = await service.listSessions({
+        appName: '12345',
+      });
 
       expect(result.sessions[0].state).toEqual({});
       expect(result.sessions[0].lastUpdateTime).toBeGreaterThan(0);
@@ -750,7 +748,9 @@ describe('VertexAiSessionService', () => {
     it('returns empty list if no sessions found in listSessions', async () => {
       mockClient.listInternal.mockResolvedValue({}); // No sessions!
 
-      const result = await service.listSessions(requestWithoutUserId);
+      const result = await service.listSessions({
+        appName: '12345',
+      });
 
       expect(result.sessions).toEqual([]);
     });
@@ -767,7 +767,9 @@ describe('VertexAiSessionService', () => {
         ],
       });
 
-      const result = await service.listSessions(requestWithoutUserId);
+      const result = await service.listSessions({
+        appName: '12345',
+      });
 
       expect(result.sessions[0].state).toEqual({foo: 'bar'});
       expect(result.sessions[0].lastUpdateTime).toBe(

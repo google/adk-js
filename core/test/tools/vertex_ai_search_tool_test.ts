@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {GenerateContentConfig} from '@google/genai';
 import {afterEach, describe, expect, it} from 'vitest';
 import {Context} from '../../src/agents/context.js';
 import {LlmRequest} from '../../src/models/llm_request.js';
@@ -40,6 +41,13 @@ function invalidParams(
   params: LooseVertexAiSearchToolParams,
 ): VertexAiSearchToolParams {
   return params as unknown as VertexAiSearchToolParams;
+}
+
+function makeLlmRequest(
+  model: string,
+  config?: GenerateContentConfig,
+): LlmRequest {
+  return {model, contents: [], toolsDict: {}, liveConnectConfig: {}, config};
 }
 
 describe('VertexAiSearchTool', () => {
@@ -93,12 +101,7 @@ describe('VertexAiSearchTool', () => {
       filter: 'f',
       maxResults: 10,
     });
-    const llmRequest: LlmRequest = {
-      model: 'gemini-2.0-flash',
-      contents: [],
-      toolsDict: {},
-      liveConnectConfig: {},
-    };
+    const llmRequest = makeLlmRequest('gemini-2.0-flash');
     const toolContext = {} as Context;
 
     await tool.processLlmRequest({toolContext, llmRequest});
@@ -118,15 +121,9 @@ describe('VertexAiSearchTool', () => {
 
   it('should throw error for Gemini 1.x if other tools are present and bypass is false', async () => {
     const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-    const llmRequest: LlmRequest = {
-      model: 'gemini-1.5-pro',
-      contents: [],
-      toolsDict: {},
-      liveConnectConfig: {},
-      config: {
-        tools: [{functionDeclarations: []}],
-      },
-    };
+    const llmRequest = makeLlmRequest('gemini-1.5-pro', {
+      tools: [{functionDeclarations: []}],
+    });
     const toolContext = {} as Context;
 
     await expect(
@@ -141,15 +138,9 @@ describe('VertexAiSearchTool', () => {
       dataStoreId: 'ds',
       bypassMultiToolsLimit: true,
     });
-    const llmRequest: LlmRequest = {
-      model: 'gemini-1.5-pro',
-      contents: [],
-      toolsDict: {},
-      liveConnectConfig: {},
-      config: {
-        tools: [{functionDeclarations: []}],
-      },
-    };
+    const llmRequest = makeLlmRequest('gemini-1.5-pro', {
+      tools: [{functionDeclarations: []}],
+    });
     const toolContext = {} as Context;
 
     await tool.processLlmRequest({toolContext, llmRequest});
@@ -159,12 +150,7 @@ describe('VertexAiSearchTool', () => {
 
   it('should throw error for non-Gemini model', async () => {
     const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-    const llmRequest: LlmRequest = {
-      model: 'claude-3',
-      contents: [],
-      toolsDict: {},
-      liveConnectConfig: {},
-    };
+    const llmRequest = makeLlmRequest('claude-3');
     const toolContext = {} as Context;
 
     await expect(
@@ -188,12 +174,7 @@ describe('VertexAiSearchTool', () => {
     it('should bypass model check if ADK_DISABLE_GEMINI_MODEL_ID_CHECK is true', async () => {
       process.env.ADK_DISABLE_GEMINI_MODEL_ID_CHECK = 'true';
       const tool = new VertexAiSearchTool({dataStoreId: 'ds'});
-      const llmRequest: LlmRequest = {
-        model: 'claude-3',
-        contents: [],
-        toolsDict: {},
-        liveConnectConfig: {},
-      };
+      const llmRequest = makeLlmRequest('claude-3');
       const toolContext = {} as Context;
 
       await tool.processLlmRequest({toolContext, llmRequest});
