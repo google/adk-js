@@ -22,9 +22,14 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "browser": "./dist/web/index_web.js",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./dist/web/*": {
+      "types": "./dist/types/*",
+      "default": "./dist/web/*"
     }
   },
   "scripts": {
