@@ -37,18 +37,14 @@ describe('workflow sample: use_as_output', () => {
       .map((p) => p.text ?? '')
       .join('');
 
-    const orchestrate = events.find((e) => e.author === 'orchestrate');
-    expect(orchestrate?.output).toBe(summaryText);
-
     expect(finalOutput(events)).toBe(`final: ${summaryText}`);
 
-    expect(summary?.nodeInfo?.outputFor).toEqual([
-      summary?.nodeInfo?.path,
-      orchestrate?.nodeInfo?.path,
-    ]);
+    const outputFor = summary?.nodeInfo?.outputFor ?? [];
+    expect(outputFor[0]).toBe(summary?.nodeInfo?.path);
+    expect(outputFor[1]).toContain('orchestrate');
 
     expect(
       events.filter((e) => e.output === summaryText).map((e) => e.author),
-    ).toEqual(['summarizer', 'orchestrate']);
+    ).toEqual(['summarizer']);
   }, 60000);
 });

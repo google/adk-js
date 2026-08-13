@@ -65,7 +65,7 @@ describe('workflow sample: request_input_advanced (structured HITL)', () => {
     );
   }, 120000);
 
-  it.skip('renders the decision from a structured resume', async () => {
+  it('renders the decision from a structured resume', async () => {
     const perTurn = await runSample({
       name: 'request_input_advanced',
       rootAgent,

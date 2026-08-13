@@ -47,7 +47,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "{\n  \"days\": 1,\n  \"reason\": \"sick\"\n}"
+                "text": "{\"days\": 1, \"reason\": \"sick day\"}"
               }
             ]
           },
@@ -56,8 +56,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 42,
-        "candidatesTokenCount": 19,
-        "totalTokenCount": 103,
+        "candidatesTokenCount": 13,
+        "totalTokenCount": 96,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -68,10 +68,10 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 19
+            "tokenCount": 13
           }
         ],
-        "thoughtsTokenCount": 42
+        "thoughtsTokenCount": 41
       }
     }
   },
@@ -123,7 +123,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "{\n  \"days\": 2,\n  \"reason\": \"sick\"\n}"
+                "text": "{\"days\": 2, \"reason\": \"sick\"}"
               }
             ]
           },
@@ -132,8 +132,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 42,
-        "candidatesTokenCount": 19,
-        "totalTokenCount": 109,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 94,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -144,10 +144,86 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 19
+            "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 48
+        "thoughtsTokenCount": 40
+      }
+    }
+  },
+  {
+    "key": "b51e345498e7b9f5",
+    "instructionAgnosticKey": "96eabf2989d95490",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "2 sick days"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "days": {
+              "type": "INTEGER",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "Number of days requested."
+            },
+            "reason": {
+              "type": "STRING",
+              "description": "Reason for the time off."
+            }
+          },
+          "required": [
+            "days",
+            "reason"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Extract the number of days and the reason from the user's natural language time off request.",
+        "labels": {
+          "adk_agent_name": "process_request"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\"days\": 2, \"reason\": \"sick\"}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 42,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 118,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 42
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 64
       }
     }
   }

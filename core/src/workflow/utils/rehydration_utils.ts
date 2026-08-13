@@ -440,7 +440,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Unwraps a `{result: value}` FunctionResponse envelope to the bare value. */
+/**
+ * Unwraps a `{result: value}` FunctionResponse envelope to the bare value.
+ *
+ * Every string value is JSON-parsed when it parses, because the envelope does
+ * not say whether the text is structured: a client answering a `RequestInput`
+ * that declared a `responseSchema` sends the object as text (the web frontend
+ * wraps whatever the user submitted as `{result: text}`), and the node expects
+ * the object back. Text that is not JSON — "approve", "shorter" — is returned
+ * as-is, and so a plain answer that happens to be valid JSON is converted too:
+ * "42" comes back as a number, "true" as a boolean. That is deliberate parity
+ * with Python's `_unwrap_response`, and harmless downstream —
+ * {@link interruptResponseMismatch} exempts scalars from the schema check.
+ */
 export function unwrapResponse(response: unknown): unknown {
   if (
     response &&
@@ -449,7 +461,16 @@ export function unwrapResponse(response: unknown): unknown {
     Object.keys(response).length === 1 &&
     RESULT_KEY in response
   ) {
-    return (response as Record<string, unknown>)[RESULT_KEY];
+    const value = (response as Record<string, unknown>)[RESULT_KEY];
+    return typeof value === 'string' ? parseJsonIfPossible(value) : value;
   }
   return response;
+}
+
+function parseJsonIfPossible(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }

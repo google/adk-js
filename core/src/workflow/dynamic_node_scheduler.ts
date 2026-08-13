@@ -68,8 +68,12 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       const prior = reconstructNodeStatesByPath(
         eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
       ).get(nodePath);
-      if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+      if (prior && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
+        // `rerunOnResume` is deliberately not consulted, as in the static twin
+        // (`Workflow.scheduleNode`): it says what to do with an interrupt the
+        // node is still waiting on, and `isFastForwardable` has already ruled
+        // a waiting node out. Consulted here it would replay the whole run.
         return this.completeWithoutRunning(
           ctx,
           {nodePath, runId, options},

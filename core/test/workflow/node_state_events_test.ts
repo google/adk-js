@@ -10,11 +10,14 @@
  * reads through `ctx.state`.
  */
 
+import {Content} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {createEvent, Event} from '../../src/events/event.js';
+import {InMemoryRunner} from '../../src/runner/in_memory_runner.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
+import {RequestInput} from '../../src/workflow/request_input.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {createIc} from './test_helpers.js';
 
@@ -81,5 +84,96 @@ describe('node state writes and the event stream', () => {
 
     expect(deltas(events)).toEqual([{seen: 'X'}]);
     expect(output).toBe('read:X');
+  });
+});
+
+describe('resume value unwrapping', () => {
+  it('parses a structured reply sent as text', async () => {
+    const ask = node(
+      (ctx: NodeContext) => {
+        const answer = ctx.resumeInputs['ask'];
+        return answer ?? new RequestInput({interruptId: 'ask', message: '?'});
+      },
+      {name: 'ask', rerunOnResume: true},
+    );
+    const wf = new Workflow({name: 'wf', edges: [['START', ask]]});
+    const runner = new InMemoryRunner({agent: wf, appName: 'app'});
+    const session = await runner.sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+    });
+    const drain = async (message: Content): Promise<Event[]> => {
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'u',
+        sessionId: session.id,
+        newMessage: message,
+      })) {
+        events.push(event);
+      }
+      return events;
+    };
+
+    await drain({role: 'user', parts: [{text: 'go'}]});
+    const turn2 = await drain({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: 'ask',
+            name: 'adk_request_input',
+            response: {result: '{"approved": true, "days": 2}'},
+          },
+        },
+      ],
+    });
+
+    expect(turn2.find((e) => e.output !== undefined)?.output).toEqual({
+      approved: true,
+      days: 2,
+    });
+  });
+
+  it('leaves a plain-text reply alone', async () => {
+    const ask = node(
+      (ctx: NodeContext) => {
+        const answer = ctx.resumeInputs['ask'];
+        return answer ?? new RequestInput({interruptId: 'ask', message: '?'});
+      },
+      {name: 'ask', rerunOnResume: true},
+    );
+    const wf = new Workflow({name: 'wf2', edges: [['START', ask]]});
+    const runner = new InMemoryRunner({agent: wf, appName: 'app2'});
+    const session = await runner.sessionService.createSession({
+      appName: 'app2',
+      userId: 'u',
+    });
+    const drain = async (message: Content): Promise<Event[]> => {
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: 'u',
+        sessionId: session.id,
+        newMessage: message,
+      })) {
+        events.push(event);
+      }
+      return events;
+    };
+
+    await drain({role: 'user', parts: [{text: 'go'}]});
+    const turn2 = await drain({
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            id: 'ask',
+            name: 'adk_request_input',
+            response: {result: 'approve'},
+          },
+        },
+      ],
+    });
+
+    expect(turn2.find((e) => e.output !== undefined)?.output).toBe('approve');
   });
 });

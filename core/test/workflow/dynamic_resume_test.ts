@@ -112,6 +112,85 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
     expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
   });
 
+  it('replays a completed rerun-on-resume child instead of running it again', async () => {
+    // `rerunOnResume` says what to do with an interrupt the child is still
+    // waiting on, not that a run which already produced its output should
+    // happen again. The static graph replays such a node (`resume_loopback_
+    // test.ts`); a child reached through `ctx.runNode()` must agree.
+    let stepRuns = 0;
+    let askRuns = 0;
+
+    const step = new FunctionNode(
+      'step',
+      (_c, input) => {
+        stepRuns++;
+        return `step(${input})`;
+      },
+      {rerunOnResume: true},
+    );
+    const ask = new FunctionNode(
+      'ask',
+      (ctx: NodeContext) => {
+        askRuns++;
+        const answer = ctx.resumeInputs['confirm'];
+        return answer === undefined
+          ? new RequestInput({interruptId: 'confirm', message: 'confirm?'})
+          : `confirmed:${answer}`;
+      },
+      {rerunOnResume: true},
+    );
+
+    const wf = new Workflow({
+      name: 'dyn_replay_wf',
+      dynamicEntry: async (ctx, input) => {
+        const s = await ctx.runNode(step, input);
+        const a = await ctx.runNode(ask);
+        return {step: s.output, ask: a.output};
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'test_app', agent: wf, sessionService});
+
+    await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'x'}]},
+      }),
+    );
+    expect(stepRuns).toBe(1);
+
+    const turn2 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'confirm',
+                name: 'adk_request_input',
+                response: {result: 'yes'},
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    // Completed last turn, so it is replayed from its cached output even
+    // though it asked to rerun on resume.
+    expect(stepRuns).toBe(1);
+    expect(askRuns).toBe(2);
+    expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
+  });
+
   it('hands the resume value to a rerunOnResume=false child without re-running it', async () => {
     let askRuns = 0;
 
