@@ -18,7 +18,7 @@ import {
 } from '../../src/workflow/run_node_as_invocation.js';
 import {createRequestInputEvent} from '../../src/workflow/utils/hitl_utils.js';
 import {isWorkflow, Workflow} from '../../src/workflow/workflow.js';
-import {ReplyAgent} from './test_helpers.js';
+import {PlainReplyAgent} from './test_helpers.js';
 
 /** A session event standing in for a node that raised an unresolved interrupt. */
 function pendingInterruptEvent(id: string): Event {
@@ -126,7 +126,7 @@ describe('asRunnableRoot — takes what edges take', () => {
   });
 
   it('passes an agent through as itself, with nothing wrapped around it', () => {
-    const agent = new ReplyAgent('reply');
+    const agent = new PlainReplyAgent('reply');
 
     expect(asRunnableRoot(agent)).toBe(agent);
   });

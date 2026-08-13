@@ -47,11 +47,6 @@ export interface NodeBuilder {
   match(value: unknown): boolean;
   /** Builds a node from a value this builder previously matched. */
   build(value: NodeLike, options: BuildNodeOptions): BaseNode;
-  /**
-   * Whether this builder handles agents. An agent is already a `BaseNode`, so
-   * it would otherwise be used as-is; see {@link buildInnerNode}.
-   */
-  agentLike?: boolean;
 }
 
 /**
@@ -95,9 +90,9 @@ export function isNodeLike(value: unknown): value is NodeLike {
  * Converts a {@link NodeLike} into a concrete {@link BaseNode}.
  *
  * Handles the `'START'` sentinel and existing {@link BaseNode} instances
- * directly; every other value is delegated to the registered
- * {@link NodeBuilder}s (function → `FunctionNode`, tool → `ToolNode`, agent →
- * `LLMAgentWrapper`, …).
+ * directly — an agent is one, so it goes into the graph as itself; every other
+ * value is delegated to the registered {@link NodeBuilder}s (function →
+ * `FunctionNode`, tool → `ToolNode`).
  */
 export function buildNode(
   nodeLike: NodeLike,
@@ -138,17 +133,6 @@ function buildInnerNode(
     return START;
   }
   if (isBaseNode(nodeLike)) {
-    // An agent is itself a BaseNode, so it would be returned as-is here and
-    // never reach its builder below. It still needs one: the wrapper is what
-    // injects the node input into the prompt, drives task mode, and turns the
-    // agent's reply into node output. adk-python has the same fork and
-    // resolves it the same way, special-casing LlmAgent inside its own
-    // `isinstance(node_like, BaseNode)` branch.
-    for (const builder of NODE_BUILDERS) {
-      if (builder.agentLike && builder.match(nodeLike)) {
-        return builder.build(nodeLike, options);
-      }
-    }
     return cloneWithOverrides(nodeLike, options);
   }
   for (const builder of NODE_BUILDERS) {
@@ -219,12 +203,15 @@ const NODE_DECLARED_KEYS = ['authConfig'] as const satisfies ReadonlyArray<
  * appear to work while the node kept retrying on the old one.
  *
  * **The copy is shallow**, so any mutable value a node holds stays shared with
- * the original. No node class does today — `FunctionNode`, `Workflow`,
- * `ParallelWorker` and `LLMAgentWrapper` hold only their config and immutable
- * per-run maps keyed by context — but a subclass that keeps, say, a mutable
- * array would hand both graphs the same one. That case needs a real clone seam
- * rather than a wider copy here: `BaseAgent.clone` rebuilds through the
- * concrete constructor so state is re-derived instead of shared (see #534).
+ * the original. `FunctionNode`, `Workflow` and `ParallelWorker` hold only their
+ * config and immutable per-run maps keyed by context, so nothing is shared that
+ * matters. An agent does hold mutable lists (`tools`, `subAgents`), and shares
+ * them with its copy — which is why this stays a copy of last resort, taken
+ * only when an override is actually given. `BaseAgent.clone` is the real clone
+ * seam (#534), but it detaches the agent from its parent, and a graph node that
+ * silently left the agent tree could no longer be a `transfer_to_agent` target.
+ * adk-python hits the same problem and patches around it, re-assigning
+ * `parent_agent` onto the clone.
  */
 function cloneWithOverrides(
   node: BaseNode,

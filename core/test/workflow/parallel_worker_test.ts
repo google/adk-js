@@ -9,7 +9,7 @@ import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {buildNode} from '../../src/workflow/utils/workflow_graph_utils.js';
-import {createIc, driveNode, ReplyAgent} from './test_helpers.js';
+import {createIc, driveNode, replyAgent} from './test_helpers.js';
 
 describe('ParallelWorker', () => {
   it('maps a list input through the inner node, preserving order', async () => {
@@ -142,7 +142,7 @@ describe('ParallelWorker takes what edges take', () => {
   });
 
   it('maps a bare agent across the list, with its reply as each output', async () => {
-    const worker = new ParallelWorker(new ReplyAgent('reply'));
+    const worker = new ParallelWorker(replyAgent('reply'));
     const {output} = await driveNode(worker, [1, 2]);
     expect(output).toEqual(['ok', 'ok']);
   });

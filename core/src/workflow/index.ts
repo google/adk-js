@@ -36,8 +36,6 @@ export type {
   FunctionNodeResult,
 } from './nodes/function_node.js';
 export {JoinNode} from './nodes/join_node.js';
-export {LLMAgentWrapper} from './nodes/llm_agent_wrapper.js';
-export type {LLMAgentWrapperConfig} from './nodes/llm_agent_wrapper.js';
 export {NodeTool} from './nodes/node_tool.js';
 export {ParallelWorker} from './nodes/parallel_worker.js';
 export type {ParallelWorkerConfig} from './nodes/parallel_worker.js';
