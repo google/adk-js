@@ -4,11 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {context, trace} from '@opentelemetry/api';
 import {Event} from '../events/event.js';
+import {tracer, traceWorkflowInvocation} from '../telemetry/tracing.js';
 import {experimental} from '../utils/experimental.js';
 import {BaseNode, BaseNodeConfig} from './base_node.js';
 import {commonPrefixOf} from './branch_path.js';
 import {DynamicNodeScheduler} from './dynamic_node_scheduler.js';
+import {isInvocationAbortedError} from './errors.js';
 import {
   createGraphFromEdgeItems,
   EdgeItem,
@@ -16,6 +19,10 @@ import {
   RouteValue,
 } from './graph.js';
 import {NodeContext, NodeResult} from './node_context.js';
+import {
+  claimNodeErrorReport,
+  createNodeErrorEvent,
+} from './node_error_event.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
@@ -27,7 +34,17 @@ import {
   makeFastForwardResult,
   reconstructNodeStates,
   RehydratedNode,
+  resolvedInterruptResponses,
 } from './utils/rehydration_utils.js';
+
+/**
+ * A unique symbol branding {@link Workflow} instances.
+ *
+ * `isWorkflow` matches on this brand rather than `instanceof` so a workflow
+ * built by another copy of adk-js in the same runtime is still recognised —
+ * mirroring the `Symbol.for('google.adk.*')` brands used across ADK.
+ */
+const WORKFLOW_SIGNATURE_SYMBOL = Symbol.for('google.adk.workflow.workflow');
 
 /**
  * An imperative workflow entry point. Receives the workflow's node context and
@@ -115,6 +132,9 @@ interface CompletedTask {
  */
 @experimental
 export class Workflow extends BaseNode {
+  /** Brand identifying this object as a {@link Workflow} (see `isWorkflow`). */
+  readonly [WORKFLOW_SIGNATURE_SYMBOL] = true;
+
   readonly graph?: Graph;
   readonly dynamicEntry?: DynamicEntry;
   readonly maxConcurrency?: number;
@@ -168,10 +188,21 @@ export class Workflow extends BaseNode {
       abort.controller.signal,
     );
 
+    const span = tracer.startSpan(`invoke_workflow ${this.name}`);
     try {
-      await this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+      // Sync callback returning the promise, not `async () => await …`: the
+      // wrapper must not insert microtask hops around the orchestration loop
+      // (see the note in `executeChildNode`).
+      await context.with(trace.setSpan(context.active(), span), () => {
+        traceWorkflowInvocation({
+          workflowName: this.name,
+          nodePath: ctx.nodePath,
+        });
+        return this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
+      });
     } finally {
       abort.dispose();
+      span.end();
     }
   }
 
@@ -191,11 +222,15 @@ export class Workflow extends BaseNode {
     // in progress (so a run that already completed is not replayed), and to
     // this workflow's own direct children (by path) so nested workflows with
     // same-named nodes don't collide.
+    const runEvents = eventsForCurrentRun(
+      ctx.session?.events ?? [],
+      ctx.invocationId,
+    );
     const rehydrated = reconstructNodeStates(
-      eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
+      runEvents,
       ctx.nodePath || undefined,
     );
-    this.applyResumeInputs(ctx, rehydrated);
+    this.applyResumeInputs(ctx, runEvents);
 
     if (this.dynamicEntry) {
       await this.runDynamicEntry(ctx, nodeInput, dynamicState);
@@ -249,15 +284,17 @@ export class Workflow extends BaseNode {
    * Merges resolved interrupt responses from prior session events into
    * `ctx.resumeInputs`, so waiting nodes (which read `ctx.resumeInputs[id]`)
    * resume with the user's response. Shared by child contexts via propagation.
+   *
+   * Taken from the events rather than from `rehydrated`, because that view is
+   * scoped to this workflow's direct children: an interrupt raised deeper — by
+   * a `ctx.runNode` child, or inside a nested workflow — is keyed out of it,
+   * and its answer would never reach the node waiting on it.
    */
-  private applyResumeInputs(
-    ctx: NodeContext,
-    rehydrated: Map<string, RehydratedNode>,
-  ): void {
-    for (const node of rehydrated.values()) {
-      for (const [interruptId, response] of node.resolvedResponses) {
-        ctx.resumeInputs[interruptId] = response;
-      }
+  private applyResumeInputs(ctx: NodeContext, runEvents: Event[]): void {
+    for (const [interruptId, response] of resolvedInterruptResponses(
+      runEvents,
+    )) {
+      ctx.resumeInputs[interruptId] = response;
     }
   }
 
@@ -298,6 +335,7 @@ export class Workflow extends BaseNode {
         if (nodeState) {
           nodeState.status = NodeStatus.FAILED;
         }
+        this.reportNodeError(loop, ctx, result.name, result.error);
         loop.errorShutDown = true;
         await this.cleanupPending(loop, abortController);
         throw result.error;
@@ -305,6 +343,33 @@ export class Workflow extends BaseNode {
 
       await this.handleCompletion(loop, result.name, result.childCtx!);
     }
+  }
+
+  private reportNodeError(
+    loop: LoopState,
+    ctx: NodeContext,
+    nodeName: string,
+    error: unknown,
+  ): void {
+    if (isInvocationAbortedError(error) || loop.abortSignal?.aborted) {
+      return;
+    }
+    if (!claimNodeErrorReport(error, ctx.invocationId)) {
+      return;
+    }
+    ctx.emit(
+      createNodeErrorEvent({
+        error,
+        attemptCount: loop.nodes.get(nodeName)?.attemptCount ?? 1,
+        author: nodeName,
+        invocationId: ctx.invocationId,
+        nodeInfo: {
+          path: ctx.nodePath ? `${ctx.nodePath}.${nodeName}` : nodeName,
+        },
+        branch: ctx.branch,
+        isolationScope: ctx.isolationScope,
+      }),
+    );
   }
 
   // --- Scheduling ---
@@ -435,6 +500,7 @@ export class Workflow extends BaseNode {
       node,
       input: nodeInput,
       abortSignal: loop.abortSignal,
+      nodeState,
       options: {
         runId,
         useSubBranch: trigger.useSubBranch,
@@ -618,6 +684,23 @@ export class Workflow extends BaseNode {
     loop.pending.clear();
     await Promise.allSettled(outstanding);
   }
+}
+
+/**
+ * Type guard for {@link Workflow}.
+ *
+ * Matches on the `google.adk.workflow.workflow` brand rather than `instanceof`
+ * so it stays correct across package copies — two copies of adk-js in one
+ * runtime would fail an `instanceof` check between them. Named rather than
+ * `{@link}`ed because the brand itself is internal, and this guard is public.
+ */
+export function isWorkflow(value: unknown): value is Workflow {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    WORKFLOW_SIGNATURE_SYMBOL in value &&
+    value[WORKFLOW_SIGNATURE_SYMBOL] === true
+  );
 }
 
 /**

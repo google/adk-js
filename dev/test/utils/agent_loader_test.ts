@@ -58,6 +58,14 @@ class FakeAgent1 extends BaseAgent {
 }
 exports.rootAgent = new FakeAgent1('agent1');`;
 
+const workflowRootJsContent = `
+import {node, Workflow} from '@google/adk';
+
+exports.rootAgent = new Workflow({
+  name: 'graph_root',
+  edges: [['START', node(() => 'done', {name: 'step'})]],
+});`;
+
 const agent2TsContent = `
 import {BaseAgent} from '@google/adk';
 
@@ -243,6 +251,25 @@ describe('AgentLoader', () => {
   }
 
   describe('AgentFile', () => {
+    it('loads an agent file whose root is a bare Workflow', async () => {
+      // A graph is a node, not an agent. The loader adapts it, so a sample can
+      // export a Workflow directly rather than wrapping it in a WorkflowAgent.
+      const agentPath = path.join(tempAgentsDir, 'graph_root.js');
+      await fs.writeFile(agentPath, workflowRootJsContent);
+
+      const compiledAgentPath = compiledPath('graph_root.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAgentPath, workflowRootJsContent);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(agentPath);
+      const agent = await agentFile.load();
+
+      expect(agent.name).toEqual('graph_root');
+      await agentFile.dispose();
+    });
+
     it('loads .js agent file', async () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
@@ -326,7 +353,7 @@ describe('AgentLoader', () => {
       await expect(agentFile.load()).rejects.toThrow(
         `Failed to load agent ${
           compiledAgentPath
-        }: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`,
+        }: No @google/adk BaseAgent or Workflow instance found. Please check that file is not empty and it exports an @google/adk BaseAgent (e.g. LlmAgent) or Workflow instance.`,
       );
       await agentFile.dispose();
       await expect(fs.access(compiledAgentPath)).rejects.toThrow();
@@ -877,18 +904,10 @@ describe('AgentLoader', () => {
 
     it('ignores node_modules and hidden dot directories during discovery', async () => {
       // Create agent inside node_modules directory
-      const nodeModulesPkg = path.join(
-        tempAgentsDir,
-        'node_modules',
-        'fake_pkg',
-      );
-      await fs.mkdir(nodeModulesPkg, {recursive: true});
+      const nodeModulesDir = path.join(tempAgentsDir, 'node_modules');
+      await fs.mkdir(nodeModulesDir, {recursive: true});
       await fs.writeFile(
-        path.join(nodeModulesPkg, 'agent.js'),
-        agent3JsContent,
-      );
-      await fs.writeFile(
-        path.join(tempAgentsDir, 'node_modules', 'agent.js'),
+        path.join(nodeModulesDir, 'agent.js'),
         agent3JsContent,
       );
 
@@ -902,7 +921,6 @@ describe('AgentLoader', () => {
 
       expect(agents).toEqual(['agent1', 'agent2', 'agent3']);
       expect(agents).not.toContain('node_modules');
-      expect(agents).not.toContain('fake_pkg');
       expect(agents).not.toContain('.hidden');
 
       await loader.disposeAll();

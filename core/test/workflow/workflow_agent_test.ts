@@ -6,6 +6,10 @@
 
 import {describe, expect, it} from 'vitest';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {LlmAgent} from '../../src/agents/llm_agent.js';
+import {LoopAgent} from '../../src/agents/loop_agent.js';
+import {ParallelAgent} from '../../src/agents/parallel_agent.js';
+import {SequentialAgent} from '../../src/agents/sequential_agent.js';
 import {Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
@@ -15,7 +19,11 @@ import {NodeContext} from '../../src/workflow/node_context.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {createRequestInputEvent} from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {
+  isGraphWorkflowAgent,
+  WorkflowAgent,
+} from '../../src/workflow/workflow_agent.js';
+import {ReplyAgent} from './test_helpers.js';
 
 /** A session event standing in for a node that raised an unresolved interrupt. */
 function pendingInterruptEvent(id: string): Event {
@@ -110,9 +118,244 @@ describe('WorkflowAgent — constructor forms', () => {
   it('still accepts a pre-built Workflow, with optional overrides', () => {
     const workflow = new Workflow({name: 'wf', edges: [['START', step]]});
     expect(new WorkflowAgent(workflow).name).toBe('wf');
+    // The workflow it was handed, not a copy wrapped around it.
     expect(new WorkflowAgent(workflow).workflow).toBe(workflow);
     expect(new WorkflowAgent(workflow, {name: 'override'}).name).toBe(
       'override',
     );
+  });
+});
+
+describe('WorkflowAgent — takes what edges take', () => {
+  it('makes a bare function the one node of a one-node workflow', async () => {
+    function greet() {
+      return 'hello';
+    }
+    const agent = new WorkflowAgent(greet);
+
+    expect(agent.name).toBe('greet');
+    expect(agent.workflow.graph?.nodes.map((n) => n.name)).toEqual([
+      '__START__',
+      'greet',
+    ]);
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+    expect(withOutput.map((e) => e.output)).toEqual(['hello']);
+  });
+
+  it('runs a bare agent, with its reply as the output', async () => {
+    const agent = new WorkflowAgent(new ReplyAgent('reply'));
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+    expect(withOutput.map((e) => e.output)).toEqual(['ok']);
+  });
+
+  it('takes name and description from the value, and lets config win', () => {
+    const built = node(() => 'x', {name: 'built', description: 'from node'});
+
+    expect(new WorkflowAgent(built).name).toBe('built');
+    expect(new WorkflowAgent(built).description).toBe('from node');
+    expect(new WorkflowAgent(built, {name: 'over'}).name).toBe('over');
+  });
+});
+
+/** Runs an agent to completion and returns every event it yielded. */
+async function runAgent(agent: WorkflowAgent): Promise<Event[]> {
+  const ic = new InvocationContext({
+    invocationId: 'inv-1',
+    session: createSession({
+      id: 's1',
+      appName: 'app',
+      userId: 'u',
+      lastUpdateTime: Date.now(),
+    }),
+    agent,
+    userContent: {role: 'user', parts: [{text: 'go'}]},
+    pluginManager: new PluginManager(),
+  });
+  const events: Event[] = [];
+  for await (const event of agent.runAsync(ic)) {
+    events.push(event);
+  }
+  return events;
+}
+
+describe('WorkflowAgent — the workflow output reaches the caller once', () => {
+  it('does not repeat the terminal node’s output', async () => {
+    const agent = new WorkflowAgent({
+      name: 'wf',
+      edges: [['START', node(() => 'result', {name: 'only'})]],
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    // The terminal node already emitted its output on the way past; announcing
+    // it again would make one node output arrive as two data events.
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].author).toBe('only');
+    expect(withOutput[0].output).toBe('result');
+  });
+
+  it('announces a dynamicEntry’s return value, which no node emitted', async () => {
+    const agent = new WorkflowAgent({
+      name: 'dyn',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const child = await ctx.runNode(
+          node(() => 2, {name: 'double'}),
+          null,
+        );
+        // Derived from the child rather than returned verbatim, so nothing on
+        // the channel carries it.
+        return (child.output as number) * 21;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput.map((e) => e.output)).toEqual([2, 42]);
+    expect(withOutput[1].author).toBe('dyn');
+  });
+
+  it('re-announces the result when a later node emitted after it', async () => {
+    const agent = new WorkflowAgent({
+      name: 'later',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const result = await ctx.runNode(
+          node(() => 'headline', {name: 'make'}),
+          null,
+        );
+        // A scoring pass runs after the value that becomes the result, so the
+        // result is no longer the last output on the stream.
+        await ctx.runNode(
+          node(() => ({score: 9}), {name: 'grade'}),
+          null,
+        );
+        return result.output;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    // Without the trailing event, a consumer taking the last output would read
+    // the score instead of the headline.
+    expect(withOutput.map((e) => e.output)).toEqual([
+      'headline',
+      {score: 9},
+      'headline',
+    ]);
+    expect(withOutput[2].author).toBe('later');
+  });
+
+  it('does not repeat a dynamicEntry’s value when a child already emitted it', async () => {
+    const agent = new WorkflowAgent({
+      name: 'passthrough',
+      dynamicEntry: async (ctx: NodeContext) => {
+        const child = await ctx.runNode(
+          node(() => 'x', {name: 'inner'}),
+          null,
+        );
+        return child.output;
+      },
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].author).toBe('inner');
+  });
+
+  it('announces a terminal node’s output that was set without emitting', async () => {
+    const agent = new WorkflowAgent({
+      name: 'assigns',
+      edges: [
+        [
+          'START',
+          node(
+            (ctx: NodeContext) => {
+              // Assigning rather than returning: nothing is yielded, so no
+              // event carries this value out.
+              ctx.output = 'assigned';
+            },
+            {name: 'quiet'},
+          ),
+        ],
+      ],
+    });
+
+    const withOutput = (await runAgent(agent)).filter(
+      (e) => e.output !== undefined,
+    );
+
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].output).toBe('assigned');
+    expect(withOutput[0].author).toBe('assigns');
+  });
+});
+
+describe('isGraphWorkflowAgent', () => {
+  const step = node(() => 'done', {name: 'step'});
+
+  it('recognises a graph WorkflowAgent', () => {
+    const agent = new WorkflowAgent(
+      new Workflow({name: 'wf', edges: [['START', step]]}),
+    );
+    expect(isGraphWorkflowAgent(agent)).toBe(true);
+  });
+
+  it('recognises a branded agent from another package copy', () => {
+    const fromOtherCopy = {
+      [Symbol.for('google.adk.workflow.workflowAgent')]: true,
+    };
+    expect(isGraphWorkflowAgent(fromOtherCopy)).toBe(true);
+  });
+
+  it('rejects the v1 workflow agents and a plain LlmAgent', () => {
+    expect(
+      isGraphWorkflowAgent(
+        new SequentialAgent({
+          name: 'seq',
+          subAgents: [new LlmAgent({name: 'sub_seq'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isGraphWorkflowAgent(
+        new ParallelAgent({
+          name: 'par',
+          subAgents: [new LlmAgent({name: 'sub_par'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isGraphWorkflowAgent(
+        new LoopAgent({
+          name: 'loop',
+          subAgents: [new LlmAgent({name: 'sub_loop'})],
+        }),
+      ),
+    ).toBe(false);
+    expect(isGraphWorkflowAgent(new LlmAgent({name: 'llm'}))).toBe(false);
+  });
+
+  it('rejects the wrapped workflow itself and non-objects', () => {
+    expect(
+      isGraphWorkflowAgent(
+        new Workflow({name: 'wf', edges: [['START', step]]}),
+      ),
+    ).toBe(false);
+    expect(isGraphWorkflowAgent(undefined)).toBe(false);
+    expect(isGraphWorkflowAgent(null)).toBe(false);
+    expect(isGraphWorkflowAgent('wf')).toBe(false);
   });
 });

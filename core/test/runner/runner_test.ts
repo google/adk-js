@@ -21,6 +21,7 @@ import {
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {logger} from '../../src/utils/logger.js';
 
 const TEST_APP_ID = 'test_app_id';
 const TEST_USER_ID = 'test_user_id';
@@ -502,6 +503,184 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  describe('graph-workflow node events', () => {
+    /** A session holding the given events. */
+    async function sessionWith(sessionId: string, events: Event[]) {
+      const session = await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId,
+      });
+      for (const event of events) {
+        await sessionService.appendEvent({session, event});
+      }
+      return session;
+    }
+
+    /**
+     * An event from a node that is not an agent: authored by the node's own
+     * name, stamped with a node path. It is not in the agent tree, and never
+     * can be.
+     */
+    function nodeEvent(author: string, text: string) {
+      return createEvent({
+        invocationId: 'inv1',
+        author,
+        nodeInfo: {path: `root_agent.${author}`},
+        content: {role: 'model', parts: [{text}]},
+      });
+    }
+
+    it('does not warn about a node that is not in the agent tree', async () => {
+      // Every HITL resume replays node events, so this fired on the happy
+      // path of any workflow that pauses for input.
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+      determineAgentForResumption(
+        await sessionWith('session_workflow_node', [
+          nodeEvent('step1', 'Enter a number:'),
+        ]),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('does not warn when a resumed function call came from a node', async () => {
+      // A HITL interrupt event carries no author, so the workflow engine
+      // stamps the node name on it. Replying to it with a structured resume
+      // sends Case 1 looking for an agent named after the node.
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const interrupt = createEvent({
+        invocationId: 'inv1',
+        author: 'gate',
+        nodeInfo: {path: 'root_agent.gate'},
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'interrupt_1',
+                name: 'adk_request_input',
+                args: {},
+              },
+            },
+          ],
+        },
+      });
+      const reply = createEvent({
+        invocationId: 'inv2',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'interrupt_1',
+                name: 'adk_request_input',
+                response: {value: 21},
+              },
+            },
+          ],
+        },
+      });
+
+      const result = determineAgentForResumption(
+        await sessionWith('session_workflow_interrupt', [interrupt, reply]),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).not.toHaveBeenCalled();
+      expect(result.name).toBe('root_agent');
+      warn.mockRestore();
+    });
+
+    it('still resolves an agent that a node wrapped', async () => {
+      // The LLMAgentWrapper shape: the node yields the agent's own events, so
+      // the author is a real agent even though the event carries a node path.
+      // Suppressing the warning must not cost us the lookup.
+      const result = determineAgentForResumption(
+        await sessionWith('session_workflow_wrapped_agent', [
+          nodeEvent('sub_agent1', 'Sub agent response'),
+        ]),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(result.name).toBe('sub_agent1');
+    });
+
+    it('still warns about a genuinely unknown agent', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      // No node path: this really is an agent nobody can find.
+      const session = await sessionWith('session_unknown_agent', [
+        createEvent({
+          invocationId: 'inv1',
+          author: 'ghost_agent',
+          content: {role: 'model', parts: [{text: 'boo'}]},
+        }),
+      ]);
+
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Event from an unknown agent: ghost_agent'),
+      );
+      warn.mockRestore();
+    });
+
+    it('still warns about a resumed function call from an unknown agent', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const callEvent = createEvent({
+        invocationId: 'inv1',
+        author: 'ghost_agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'call_1', name: 'test_func', args: {}}}],
+        },
+      });
+      const responseEvent = createEvent({
+        invocationId: 'inv2',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_1',
+                name: 'test_func',
+                response: {},
+              },
+            },
+          ],
+        },
+      });
+
+      determineAgentForResumption(
+        await sessionWith('session_unknown_function_response', [
+          callEvent,
+          responseEvent,
+        ]),
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Function response from an unknown agent: ghost_agent',
+        ),
+      );
+      warn.mockRestore();
+    });
   });
 });
 

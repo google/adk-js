@@ -119,3 +119,51 @@ export function isInvocationAbortedError(
 ): e is InvocationAbortedError {
   return e instanceof Error && e.name === 'InvocationAbortedError';
 }
+
+/**
+ * Raised when a node's input or output fails its declared schema.
+ *
+ * The underlying validation error (a `ZodError`, typically) carries the field
+ * path but not the node it came from, which leaves a failure in a large graph
+ * effectively unattributed. This wrapper names the node and which side of it
+ * failed, and keeps the original error on `cause` for the full detail.
+ */
+export class NodeSchemaValidationError extends Error {
+  readonly nodeName: string;
+  /** Which side of the node failed: its `inputSchema` or its `outputSchema`. */
+  readonly direction: 'input' | 'output';
+
+  /**
+   * @param options.nodeName The name of the node that failed validation.
+   * @param options.direction Whether the input or the output failed.
+   * @param options.cause The underlying validation error.
+   */
+  constructor(options: {
+    nodeName: string;
+    direction: 'input' | 'output';
+    cause: unknown;
+  }) {
+    const schemaName =
+      options.direction === 'input' ? 'inputSchema' : 'outputSchema';
+    const detail =
+      options.cause instanceof Error
+        ? options.cause.message
+        : String(options.cause);
+    super(
+      `Node '${options.nodeName}' ${options.direction} does not match its ` +
+        `${schemaName}: ${detail}`,
+      {cause: options.cause},
+    );
+    this.name = 'NodeSchemaValidationError';
+    this.nodeName = options.nodeName;
+    this.direction = options.direction;
+    Object.setPrototypeOf(this, NodeSchemaValidationError.prototype);
+  }
+}
+
+/** Type guard for {@link NodeSchemaValidationError} (name-based; see above). */
+export function isNodeSchemaValidationError(
+  e: unknown,
+): e is NodeSchemaValidationError {
+  return e instanceof Error && e.name === 'NodeSchemaValidationError';
+}

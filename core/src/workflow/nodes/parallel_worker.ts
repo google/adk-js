@@ -5,7 +5,9 @@
  */
 
 import {BaseNode} from '../base_node.js';
+import {RunnableNode} from '../graph.js';
 import {NodeContext} from '../node_context.js';
+import {buildNode} from '../utils/workflow_graph_utils.js';
 
 /**
  * Default concurrency when `maxParallelWorkers` is not set. Bounded so a
@@ -33,10 +35,18 @@ export interface ParallelWorkerConfig {
  * `ctx.runNode(inner, item, {useSubBranch: true})`; the node's output is the
  * ordered list of the children's outputs.
  *
+ * The wrapped value is anything an edge accepts — an agent, a tool, a plain
+ * function, or an already-built node — and is built the same way, so
+ * `new ParallelWorker(myAgent)` works without `node(myAgent)`. It is built when
+ * the worker is constructed, not per item, so every item runs the one inner
+ * node — which is also where the worker's own name comes from.
+ *
  * Notes:
  * - **retry/timeout live on the inner node.** `retryConfig`/`timeout` passed to
  *   `buildNode` apply to the wrapped node (per item); the ParallelWorker itself
- *   carries neither, so the two levels don't compose.
+ *   carries neither, so the two levels don't compose. Wrapping the value
+ *   yourself — `new ParallelWorker(node(myAgent, {timeout: 5}))` — is how those
+ *   options are set.
  * - **All-or-nothing.** If any item throws, the first error is rethrown and the
  *   already-computed sibling outputs are discarded. Make individual items
  *   failure-tolerant if partial results matter.
@@ -48,15 +58,16 @@ export class ParallelWorker extends BaseNode {
   readonly maxParallelWorkers?: number;
   private readonly inner: BaseNode;
 
-  constructor(inner: BaseNode, config: ParallelWorkerConfig = {}) {
-    super({name: inner.name, rerunOnResume: true});
+  constructor(inner: RunnableNode, config: ParallelWorkerConfig = {}) {
+    const built = buildNode(inner);
+    super({name: built.name, rerunOnResume: true});
     if (
       config.maxParallelWorkers !== undefined &&
       config.maxParallelWorkers < 1
     ) {
       throw new Error('maxParallelWorkers must be greater than or equal to 1.');
     }
-    this.inner = inner;
+    this.inner = built;
     this.maxParallelWorkers = config.maxParallelWorkers;
   }
 

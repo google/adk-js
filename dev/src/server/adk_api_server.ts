@@ -32,6 +32,7 @@ import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import {version} from '../version.js';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {AdkLogger} from '../utils/logger.js';
@@ -41,7 +42,7 @@ import {
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-import {getAgentGraphAsDot} from './agent_graph.js';
+import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
 
 /**
  * Environment variable holding the shared bearer token used to authenticate
@@ -232,6 +233,10 @@ export class AdkApiServer {
       });
     }
 
+    app.get('/version', (req: Request, res: Response) => {
+      res.status(200).json({version});
+    });
+
     if (this.allowOrigins) {
       app.use(
         cors({
@@ -349,6 +354,16 @@ export class AdkApiServer {
           await using agentFile = await this.agentLoader.getAgentFile(appName);
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
+
+          const workflowHighlights = getWorkflowHighlights(
+            sessionEvents,
+            event,
+          );
+          if (workflowHighlights) {
+            return res.send({
+              dotSrc: await getAgentGraphAsDot(rootAgent, workflowHighlights),
+            });
+          }
 
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];

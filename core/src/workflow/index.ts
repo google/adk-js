@@ -12,9 +12,14 @@
  */
 
 // --- Core graph / workflow ---
-export {Workflow} from './workflow.js';
+export {Workflow, isWorkflow} from './workflow.js';
 export type {DynamicEntry, WorkflowConfig} from './workflow.js';
-export {WorkflowAgent} from './workflow_agent.js';
+export {
+  WorkflowAgent,
+  asRootAgent,
+  isGraphWorkflowAgent,
+  isRootAgentLike,
+} from './workflow_agent.js';
 export type {WorkflowAgentConfig} from './workflow_agent.js';
 
 // --- Nodes ---
@@ -46,6 +51,7 @@ export type {
   NodeLike,
   RouteValue,
   RoutingMap,
+  RunnableNode,
 } from './graph.js';
 
 // --- Execution context & state ---
@@ -78,4 +84,14 @@ export type {
 } from './retry_config.js';
 
 // --- Errors ---
-export {NodeTimeoutError} from './errors.js';
+export {
+  NodeSchemaValidationError,
+  NodeTimeoutError,
+  isNodeSchemaValidationError,
+  isNodeTimeoutError,
+} from './errors.js';
+export {createNodeErrorEvent, isNodeErrorEvent} from './node_error_event.js';
+export type {
+  CreateNodeErrorEventParams,
+  NodeErrorEvent,
+} from './node_error_event.js';

@@ -106,6 +106,19 @@ describe('file_utils', () => {
     await expect(loadFileData(testPath)).rejects.toThrow('read error');
   });
 
+  it('loadFileData names the file it could not read, and reports once', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    fsPromises.readFile.mockRejectedValue(new Error('ENOENT'));
+
+    await expect(loadFileData(testPath)).rejects.toThrow(
+      new RegExp(`Failed to read or parse file ${testPath}: ENOENT`),
+    );
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it('saveToFile writes string data as-is', async () => {
     fsPromises.writeFile.mockResolvedValue(undefined);
     await expect(saveToFile(testPath, testContent)).resolves.toBeUndefined();

@@ -62,7 +62,7 @@ describe('getUserInputRequests', () => {
     const [request] = getUserInputRequests(
       requestInputEvent('i1', {
         payload: {draft: 'hello'},
-        responseSchema: {type: 'object'},
+        response_schema: {type: 'object'},
       }),
     );
 

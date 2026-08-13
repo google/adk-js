@@ -11,9 +11,12 @@
  * A `JoinNode` is a fan-in barrier: it waits for EVERY predecessor to finish and
  * then hands the next node an object keyed by predecessor node name.
  *
- * Caution: a JoinNode proceeds only once all upstream nodes have produced an
- * output. If one fails to produce output the join is stuck and the workflow
- * stops — give any node feeding a join a failsafe output (or a `retryConfig`).
+ * Caution: the barrier waits for every predecessor to COMPLETE, not to produce
+ * an output. A predecessor that finishes without one still releases the join,
+ * and arrives in the record as its name mapped to `undefined` — so reading a
+ * field off it throws somewhere downstream, far from the node that skipped it.
+ * Give anything feeding a join an output of its own, and a `retryConfig` if it
+ * can fail; treat a missing one as a bug rather than as a pause.
  *
  * Run (offline, no API key):
  *   npm run sample -- samples/workflows/routes/fan_out_join/agent.ts

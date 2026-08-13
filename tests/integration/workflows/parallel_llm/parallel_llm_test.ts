@@ -35,9 +35,7 @@ describe('workflow integration — ParallelWorker over an LLM agent', () => {
     const produce = node((): string[] => ['alpha', 'beta', 'gamma'], {
       name: 'produce',
     });
-    const worker = new ParallelWorker(node(classifier) as never, {
-      maxParallelWorkers: 1,
-    });
+    const worker = new ParallelWorker(classifier, {maxParallelWorkers: 1});
 
     const wf = new Workflow({
       name: 'parallel_llm',

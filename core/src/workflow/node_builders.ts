@@ -42,6 +42,7 @@ const TOOL_BUILDER: NodeBuilder = {
  * so the tool builder wins for those.
  */
 const AGENT_BUILDER: NodeBuilder = {
+  agentLike: true,
   match: (value) =>
     !isBaseTool(value) && (isBaseAgent(value) || isAgentLike(value)),
   build: (value, options) => new LLMAgentWrapper(value as BaseAgent, options),

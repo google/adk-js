@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, BaseAgent, isApp, isBaseAgent} from '@google/adk';
+import {App, asRootAgent, BaseAgent, isApp, isRootAgentLike} from '@google/adk';
 import esbuild from 'esbuild';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -274,20 +274,22 @@ export class AgentFile {
         return this.app!;
       }
 
-      if (isBaseAgent(jsModule.rootAgent)) {
-        return (this.agent = jsModule.rootAgent);
+      // A bare `Workflow` counts as a root: it is adapted by `asRootAgent`,
+      // so a sample can export a graph directly instead of wrapping it.
+      if (isRootAgentLike(jsModule.rootAgent)) {
+        return (this.agent = asRootAgent(jsModule.rootAgent));
       }
 
       const defaultAgent = [jsModule.default, jsModule.default?.default].find(
-        isBaseAgent,
+        isRootAgentLike,
       );
       if (defaultAgent) {
-        return (this.agent = defaultAgent);
+        return (this.agent = asRootAgent(defaultAgent));
       }
 
-      const rootAgents = Object.values(jsModule).filter(
-        isBaseAgent,
-      ) as BaseAgent[];
+      const rootAgents = Object.values(jsModule)
+        .filter(isRootAgentLike)
+        .map(asRootAgent);
 
       if (rootAgents.length > 1) {
         console.warn(
@@ -304,7 +306,7 @@ export class AgentFile {
     throw new AgentFileLoadingError(
       `Failed to load agent ${
         filePath
-      }: No @google/adk BaseAgent class instance found. Please check that file is not empty and it has export of @google/adk BaseAgent class (e.g. LlmAgent) instance.`,
+      }: No @google/adk BaseAgent or Workflow instance found. Please check that file is not empty and it exports an @google/adk BaseAgent (e.g. LlmAgent) or Workflow instance.`,
     );
   }
 
@@ -366,8 +368,8 @@ export class AgentFile {
  * - agents_dir/{agentOrAppName}/agent.[js | ts | mjs | cjs]
  * - agents_dir/{agentOrAppName}/app.[js | ts | mjs | cjs]
  *
- * Agent/App file should have export of the rootAgent as instance of BaseAgent or
- * app/rootApp as instance of App.
+ * Agent/App file should have export of the rootAgent as instance of BaseAgent
+ * (or a Workflow, which is adapted into one) or app/rootApp as instance of App.
  */
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;

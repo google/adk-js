@@ -94,7 +94,7 @@ function getBoolean(option?: string | boolean): boolean {
 
 const AGENT_DIR_ARGUMENT = new Argument(
   '[agents_dir]',
-  'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)',
+  'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent) or a Workflow',
 ).default(process.cwd());
 const HOST_OPTION = new Option(
   '-h, --host <string>',

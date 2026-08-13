@@ -18,8 +18,10 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  node,
   Runner,
   Session,
+  WorkflowAgent,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -30,6 +32,7 @@ import {
   AdkApiServer,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
   result?: unknown;
@@ -250,6 +253,16 @@ describe('AdkWebServer', () => {
 
   afterEach(async () => {
     await server.stop();
+  });
+
+  describe('Version', () => {
+    it('reports the ADK version the server is running', async () => {
+      const response = await client.get<{version: string}>('/version');
+
+      expect(response.status).toBe(200);
+      expect(response.data?.version).toBe(version);
+      expect(response.data?.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
   });
 
   describe('Sessions', () => {
@@ -913,6 +926,64 @@ describe('AdkWebServer', () => {
         expect(response.data!.dotSrc).toContain('testAgent');
         expect(response.data!.dotSrc).toContain('foo');
       } finally {
+        sessionService.getSession = originalGetSession;
+      }
+    });
+
+    it('should highlight the workflow node that produced the event', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      const originalGetSession = sessionService.getSession;
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () =>
+            Promise.resolve(
+              new WorkflowAgent({
+                name: 'wf',
+                edges: [
+                  [
+                    'START',
+                    node(async () => 'a', {name: 'one'}),
+                    node(async () => 'b', {name: 'two'}),
+                  ],
+                ],
+              }),
+            ),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+      sessionService.getSession = async () =>
+        createSession({
+          id: 'workflowSession',
+          appName: 'testApp',
+          userId: 'testUser',
+          events: [
+            createEvent({
+              id: 'wfEvent1',
+              author: 'one',
+              invocationId: 'inv-1',
+              nodeInfo: {path: 'wf.one'},
+            }),
+            createEvent({
+              id: 'wfEvent2',
+              author: 'two',
+              invocationId: 'inv-1',
+              nodeInfo: {path: 'wf.two'},
+            }),
+          ],
+        });
+
+      try {
+        const response = await client.get<{dotSrc: string}>(
+          '/apps/testApp/users/testUser/sessions/workflowSession/events/wfEvent2/graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data!.dotSrc).toContain('"wf.one" -> "wf.two"');
+        expect(response.data!.dotSrc).toContain('#69CB87');
+        expect(response.data!.dotSrc).toContain('#0F5223');
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
         sessionService.getSession = originalGetSession;
       }
     });

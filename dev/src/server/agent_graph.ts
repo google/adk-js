@@ -5,22 +5,41 @@
  */
 import {
   BaseAgent,
+  BaseNode,
   BaseTool,
+  DEFAULT_ROUTE,
+  Event,
+  RouteValue,
+  Workflow,
+  Graph as WorkflowGraph,
   isAgentTool,
   isBaseAgent,
   isBaseTool,
   isFunctionTool,
+  isGraphWorkflowAgent,
   isLlmAgent,
   isLoopAgent,
   isParallelAgent,
   isSequentialAgent,
 } from '@google/adk';
-import {Digraph, Edge, Node, RootGraph, Subgraph, toDot} from 'ts-graphviz';
+import {
+  Digraph,
+  Edge,
+  Node,
+  NodeAttributesObject,
+  RootGraph,
+  Subgraph,
+  toDot,
+} from 'ts-graphviz';
 
 const DARK_GREEN = '#0F5223';
 const LIGHT_GREEN = '#69CB87';
 const LIGHT_GRAY = '#cccccc';
 const WHITE = '#ffffff';
+
+const WORKFLOW_START_NODE_NAME = '__START__';
+
+const DEFAULT_ROUTE_LABEL = 'default';
 
 export async function buildGraph(
   graph: RootGraph | Subgraph,
@@ -28,6 +47,17 @@ export async function buildGraph(
   highlightsPairs: Array<[string, string]>,
   parentAgent?: BaseAgent,
 ) {
+  if (isGraphWorkflowAgent(rootAgent)) {
+    drawWorkflowCluster(
+      graph,
+      rootAgent.workflow,
+      rootAgent.workflow.name,
+      highlightsPairs,
+    );
+
+    return;
+  }
+
   async function buildCluster(
     subgraph: Subgraph,
     agent: BaseAgent,
@@ -211,6 +241,277 @@ export async function buildGraph(
       drawEdge(rootAgent.name, getNodeName(tool));
     }
   }
+}
+
+function drawWorkflowCluster(
+  container: RootGraph | Subgraph,
+  workflow: Workflow,
+  path: string,
+  highlightsPairs: Array<[string, string]>,
+) {
+  const cluster = new Subgraph(`cluster_${path}`, {
+    label: `🧩 ${workflow.name}`,
+    style: 'rounded',
+    bgcolor: WHITE,
+    fontcolor: LIGHT_GRAY,
+  });
+  container.addSubgraph(cluster);
+
+  const graph = workflow.graph;
+  if (!graph) {
+    cluster.addNode(
+      new Node(path, {
+        label: `⚡ ${workflow.name} (dynamic)`,
+        ...workflowNodeStyle('box', isHighlightedWithin(path, highlightsPairs)),
+      }),
+    );
+
+    return;
+  }
+
+  for (const node of graph.nodes) {
+    drawWorkflowNode(cluster, node, path, highlightsPairs);
+  }
+
+  drawWorkflowEdges(cluster, graph, path, highlightsPairs);
+}
+
+function drawWorkflowNode(
+  cluster: Subgraph,
+  node: BaseNode,
+  path: string,
+  highlightsPairs: Array<[string, string]>,
+) {
+  const id = workflowNodeId(node, path);
+
+  if (node.name === WORKFLOW_START_NODE_NAME) {
+    cluster.addNode(
+      new Node(id, {
+        label: '',
+        shape: 'point',
+        width: 0.15,
+        style: 'filled',
+        color: LIGHT_GRAY,
+        fillcolor: LIGHT_GRAY,
+      }),
+    );
+
+    return;
+  }
+
+  const nested = asWorkflow(node);
+  if (nested) {
+    drawWorkflowCluster(cluster, nested, id, highlightsPairs);
+
+    return;
+  }
+
+  const {icon, shape} = classifyWorkflowNode(node);
+  cluster.addNode(
+    new Node(id, {
+      label: `${icon} ${node.name}`,
+      // Prefix, not exact: a `ParallelWorker` item runs at
+      // `<node path>.<inner name>@<i>`, so its events land below the drawn box.
+      ...workflowNodeStyle(shape, isHighlightedWithin(id, highlightsPairs)),
+    }),
+  );
+}
+
+function drawWorkflowEdges(
+  cluster: Subgraph,
+  graph: WorkflowGraph,
+  path: string,
+  highlightsPairs: Array<[string, string]>,
+) {
+  // No grouping by endpoint pair is needed before emitting into the `strict`
+  // root graph: `validateDuplicateEdges` rejects a second edge with the same
+  // `from`/`to` at construction, so two routes to one node arrive as a single
+  // multi-route `Edge` and are joined by `getRouteLabels`.
+  for (const edge of graph.edges) {
+    const from = workflowNodeId(edge.fromNode, path);
+    const to = workflowNodeId(edge.toNode, path);
+    const tail = workflowExitAnchorId(edge.fromNode, path);
+    const head = workflowEntryAnchorId(edge.toNode, path);
+    const routes = getRouteLabels(edge.route);
+    const highlighted = isHighlightedEdge(from, to, highlightsPairs);
+    const color = highlighted ? LIGHT_GREEN : LIGHT_GRAY;
+    cluster.addEdge(
+      new Edge([new Node(tail), new Node(head)], {
+        color,
+        fontcolor: color,
+        ...(routes.length > 0 ? {label: routes.join(', ')} : {}),
+      }),
+    );
+  }
+}
+
+function workflowNodeId(node: BaseNode, path: string): string {
+  return `${path}.${node.name}`;
+}
+
+function workflowEntryAnchorId(node: BaseNode, path: string): string {
+  const id = workflowNodeId(node, path);
+  const nested = asWorkflow(node);
+  if (nested?.graph) {
+    return `${id}.${WORKFLOW_START_NODE_NAME}`;
+  }
+
+  return id;
+}
+
+function workflowExitAnchorId(node: BaseNode, path: string): string {
+  const nested = asWorkflow(node);
+  const nestedGraph = nested?.graph;
+  if (nestedGraph) {
+    const id = workflowNodeId(node, path);
+    const terminal = nestedGraph.nodes.find((n) =>
+      nestedGraph.terminalNodeNames.has(n.name),
+    );
+
+    // Recurse: a terminal node can itself be a nested workflow, and its id is a
+    // cluster id that no drawn node carries.
+    return terminal
+      ? workflowExitAnchorId(terminal, id)
+      : workflowEntryAnchorId(node, path);
+  }
+
+  return workflowNodeId(node, path);
+}
+
+function getRouteLabels(route: RouteValue | RouteValue[] | null): string[] {
+  if (route == null) {
+    return [];
+  }
+
+  const routes = Array.isArray(route) ? route : [route];
+
+  return routes.map((value) =>
+    value === DEFAULT_ROUTE ? DEFAULT_ROUTE_LABEL : String(value),
+  );
+}
+
+function workflowNodeStyle(
+  shape: string,
+  highlighted: boolean,
+): NodeAttributesObject {
+  return {
+    shape,
+    style: highlighted ? 'filled,rounded' : 'rounded',
+    fillcolor: highlighted ? DARK_GREEN : WHITE,
+    color: highlighted ? DARK_GREEN : LIGHT_GRAY,
+    fontcolor: LIGHT_GRAY,
+  };
+}
+
+/**
+ * Whether an event highlights `path` itself or anything running below it.
+ * Sibling names differ at every level, so the `.` guard cannot over-match.
+ */
+function isHighlightedWithin(
+  path: string,
+  highlightsPairs: Array<[string, string]>,
+): boolean {
+  return highlightsPairs.some((pair) =>
+    pair.some((name) => name === path || name.startsWith(`${path}.`)),
+  );
+}
+
+function isHighlightedEdge(
+  fromName: string,
+  toName: string,
+  highlightsPairs: Array<[string, string]>,
+): boolean {
+  return highlightsPairs.some(
+    ([from, to]) => from === fromName && to === toName,
+  );
+}
+
+function asWorkflow(node: BaseNode): Workflow | undefined {
+  const graph = getNodeField(node, 'graph');
+  const isWorkflow =
+    isWorkflowGraph(graph) ||
+    typeof getNodeField(node, 'dynamicEntry') === 'function';
+
+  return isWorkflow ? (node as Workflow) : undefined;
+}
+
+function isWorkflowGraph(value: unknown): value is WorkflowGraph {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as WorkflowGraph).nodes) &&
+    Array.isArray((value as WorkflowGraph).edges)
+  );
+}
+
+function getNodeField(node: BaseNode, field: string): unknown {
+  return (node as unknown as Record<string, unknown>)[field];
+}
+
+/**
+ * Detects what a node is, structurally — the dev server loads the user's agent
+ * module, which may resolve its own copy of `@google/adk`, so `instanceof` is
+ * not available. Caption and shape come from one pass so they cannot drift.
+ */
+function classifyWorkflowNode(node: BaseNode): {icon: string; shape: string} {
+  if (isBaseAgent(getNodeField(node, 'agent'))) {
+    return {icon: '🤖', shape: 'ellipse'};
+  }
+
+  if (isBaseTool(getNodeField(node, 'tool'))) {
+    return {icon: '🔧', shape: 'box'};
+  }
+
+  if ('maxParallelWorkers' in node) {
+    return {icon: '🧵', shape: 'box3d'};
+  }
+
+  if (node.requiresAllPredecessors) {
+    return {icon: '🔗', shape: 'hexagon'};
+  }
+
+  return {icon: '⚙️', shape: 'box'};
+}
+
+export function getWorkflowHighlights(
+  sessionEvents: Event[],
+  event: Event,
+): Array<[string, string]> | undefined {
+  const path = event.nodeInfo?.path;
+  if (!path) {
+    return undefined;
+  }
+
+  const nodeId = toWorkflowNodeId(path);
+  const index = sessionEvents.findIndex((e) => e.id === event.id);
+
+  for (let i = index - 1; i >= 0; i--) {
+    const previous = sessionEvents[i];
+    if (previous.invocationId !== event.invocationId) {
+      break;
+    }
+
+    const previousPath = previous.nodeInfo?.path;
+    if (!previousPath) {
+      continue;
+    }
+
+    const previousId = toWorkflowNodeId(previousPath);
+    if (previousId === nodeId) {
+      continue;
+    }
+
+    return [[previousId, nodeId]];
+  }
+
+  return [[nodeId, '']];
+}
+
+function toWorkflowNodeId(path: string): string {
+  return path
+    .split('.')
+    .map((segment) => segment.split('@')[0])
+    .join('.');
 }
 
 function getNodeName(toolOrAgent: BaseAgent | BaseTool): string {

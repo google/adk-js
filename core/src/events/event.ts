@@ -44,8 +44,19 @@ export interface NodeInfo {
   /** The workflow node path that produced this event (e.g. `wf.child.0`). */
   path?: string;
 
-  /** The node run id this event's output should be attributed to. */
-  outputFor?: string;
+  /**
+   * The node paths this event's output serves as the output for: the emitting
+   * node first, then any ancestor that delegated its own output to it.
+   *
+   * A node that runs a child with `useAsOutput` takes the child's output as its
+   * own, so one event is the result for several nodes at once. Recording that
+   * on the event is what lets a resumed run tell which nodes already produced a
+   * result, instead of re-running an ancestor whose output only ever existed on
+   * a descendant's event.
+   *
+   * Mirrors adk-python's `node_info.output_for`, which is likewise a list.
+   */
+  outputFor?: string[];
 
   /**
    * Whether the event's textual content should be promoted to the node's
