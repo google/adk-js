@@ -6,6 +6,8 @@
 
 import {
   BaseAgent,
+  BaseSessionService,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   PluginManager,
@@ -36,6 +38,7 @@ class MockRootAgent extends BaseAgent {
 function createMockInvocationContext(
   agent: BaseAgent,
   events: ReturnType<typeof createEvent>[] = [],
+  sessionService?: BaseSessionService,
 ): InvocationContext {
   return new InvocationContext({
     invocationId: 'test-invocation',
@@ -46,6 +49,7 @@ function createMockInvocationContext(
       appName: 'test-app',
       userId: 'test-user',
     }),
+    sessionService,
     pluginManager: new PluginManager([]),
   });
 }
@@ -241,6 +245,95 @@ describe('RequestConfirmationLlmRequestProcessor', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toBe(fakeResponseEvent);
+  });
+
+  it('should stage the tool response in the session without writing it', async () => {
+    // The content builder runs behind this processor in the same step and
+    // reads `session.events`, so the response has to be there. Writing it
+    // through the session service is the runner's job: it appends every event
+    // it is yielded, and a backend that does not dedupe by event id — Vertex
+    // posts to Agent Engine unconditionally — would store this one twice.
+    const {handleFunctionCallList} =
+      await import('../../../src/agents/functions.js');
+    const mockFunctionCallList = vi.mocked(handleFunctionCallList);
+
+    const fakeResponseEvent = createEvent({
+      invocationId: 'test-invocation',
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionResponse: {
+              id: 'original-fc-4',
+              name: 'my_tool',
+              response: {result: 'ok'},
+            },
+          },
+        ],
+      },
+    });
+    mockFunctionCallList.mockResolvedValueOnce(fakeResponseEvent);
+
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-2.5-flash',
+    });
+    vi.spyOn(agent, 'canonicalTools').mockResolvedValue([]);
+
+    const systemFunctionCallEvent = createEvent({
+      invocationId: 'test-invocation',
+      author: 'test_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc-confirm-4',
+              name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+              args: {
+                originalFunctionCall: {
+                  id: 'original-fc-4',
+                  name: 'my_tool',
+                  args: {param: 'value'},
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const userConfirmationEvent = createEvent({
+      invocationId: 'test-invocation',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-confirm-4',
+              name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+              response: {confirmed: true, hint: ''},
+            },
+          },
+        ],
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const appendEvent = vi.spyOn(sessionService, 'appendEvent');
+    const invocationContext = createMockInvocationContext(
+      agent,
+      [systemFunctionCallEvent, userConfirmationEvent],
+      sessionService,
+    );
+
+    const events = await collectEvents(invocationContext);
+
+    expect(events).toEqual([fakeResponseEvent]);
+    expect(invocationContext.session.events.at(-1)).toBe(fakeResponseEvent);
+    expect(appendEvent).not.toHaveBeenCalled();
   });
 
   it('should yield no events when handleFunctionCallList returns null', async () => {

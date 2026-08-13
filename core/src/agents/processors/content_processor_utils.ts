@@ -185,7 +185,7 @@ export function getCurrentTurnContents(
     }
     if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
       return getContents(
-        events.slice(i),
+        events.slice(turnStart(events, i)),
         agentName,
         currentBranch,
         currentIsolationScope,
@@ -194,6 +194,38 @@ export function getCurrentTurnContents(
   }
 
   return [];
+}
+
+/**
+ * Widens the turn window back over a function call the turn answers.
+ *
+ * A tool that paused for confirmation is called in one turn and answered in the
+ * next, so the response falls inside the turn while the call that earned it
+ * sits before it. Left split, the model is shown a result for a call it cannot
+ * see — it re-issues the call, and the confirmation never resolves.
+ */
+function turnStart(events: Event[], anchor: number): number {
+  const answered = new Set<string>();
+  for (const event of events.slice(anchor)) {
+    for (const part of event.content?.parts ?? []) {
+      if (part.functionResponse?.id) {
+        answered.add(part.functionResponse.id);
+      }
+    }
+  }
+  if (answered.size === 0) {
+    return anchor;
+  }
+  let start = anchor;
+  for (let i = anchor - 1; i >= 0; i--) {
+    const answersACall = (events[i].content?.parts ?? []).some((p) =>
+      p.functionCall?.id ? answered.has(p.functionCall.id) : false,
+    );
+    if (answersACall) {
+      start = i;
+    }
+  }
+  return start;
 }
 
 /**
