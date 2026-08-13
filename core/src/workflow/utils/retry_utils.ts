@@ -103,14 +103,14 @@ export function getRetryDelaySeconds({
   const attemptForCalc = Math.max(0, attemptCount - 1);
 
   let delay = initialDelay * Math.pow(backoffFactor, attemptForCalc);
-  delay = Math.min(delay, maxDelay);
 
   if (jitter > 0.0) {
+    delay = Math.min(delay, maxDelay / (1.0 + jitter));
     // random.uniform(-jitter*delay, jitter*delay)
     const span = jitter * delay;
     const randomOffset = -span + randomFn() * (2 * span);
     delay = Math.max(0.0, delay + randomOffset);
   }
 
-  return delay;
+  return Math.min(delay, maxDelay);
 }
