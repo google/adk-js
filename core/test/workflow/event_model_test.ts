@@ -18,7 +18,11 @@ describe('Phase 0 — workflow event-model extensions', () => {
       author: 'node_a',
       output: {value: 42},
       route: 'question',
-      nodeInfo: {path: 'wf.node_a', outputFor: 'run_1', messageAsOutput: true},
+      nodeInfo: {
+        path: 'wf.node_a',
+        outputFor: ['wf.node_a'],
+        messageAsOutput: true,
+      },
       isolationScope: 'wf:evt_123',
       actions: {agentState: {status: 3}, endOfAgent: true},
     });
@@ -36,7 +40,11 @@ describe('Phase 0 — workflow event-model extensions', () => {
       author: 'node_a',
       output: {value: 42},
       route: 'question',
-      nodeInfo: {path: 'wf.node_a', outputFor: 'run_1', messageAsOutput: true},
+      nodeInfo: {
+        path: 'wf.node_a',
+        outputFor: ['wf.node_a'],
+        messageAsOutput: true,
+      },
       isolationScope: 'wf:evt_123',
       actions: {agentState: {status: 3}, endOfAgent: true},
     });
@@ -44,9 +52,9 @@ describe('Phase 0 — workflow event-model extensions', () => {
     const snake = transformToSnakeCaseEvent(ev);
     // Verify Python-compatible key names on the wire.
     expect(snake['node_info']).toBeDefined();
-    expect((snake['node_info'] as Record<string, unknown>)['output_for']).toBe(
-      'run_1',
-    );
+    expect(
+      (snake['node_info'] as Record<string, unknown>)['output_for'],
+    ).toEqual(['wf.node_a']);
     expect(
       (snake['node_info'] as Record<string, unknown>)['message_as_output'],
     ).toBe(true);
@@ -57,7 +65,7 @@ describe('Phase 0 — workflow event-model extensions', () => {
 
     const back = transformToCamelCaseEvent(snake);
     expect(back.nodeInfo?.path).toBe('wf.node_a');
-    expect(back.nodeInfo?.outputFor).toBe('run_1');
+    expect(back.nodeInfo?.outputFor).toEqual(['wf.node_a']);
     expect(back.nodeInfo?.messageAsOutput).toBe(true);
     expect(back.isolationScope).toBe('wf:evt_123');
     expect(back.route).toBe('question');

@@ -67,6 +67,14 @@ export class NodeContext {
   readonly channel: AsyncQueue<Event>;
   readonly nodePath: string;
   readonly runId: string;
+
+  /**
+   * Node paths whose output this node's output also becomes: its parent's if
+   * the parent ran it with `useAsOutput`, plus whatever the parent was standing
+   * in for. Stamped onto every output event as `nodeInfo.outputFor`, so a
+   * resumed run can tell that an ancestor already has a result.
+   */
+  outputForAncestors: readonly string[] = [];
   readonly actions: EventActions;
   resumeInputs: Record<string, unknown>;
   isolationScope?: string;
