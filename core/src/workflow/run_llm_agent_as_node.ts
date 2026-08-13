@@ -47,18 +47,22 @@ export async function* runLlmAgentAsNode(
   ctx: NodeContext,
   nodeInput: unknown,
 ): AsyncGenerator<Event, void, void> {
-  if (agent.mode !== 'task' && !agent.includeContentsExplicit) {
+  const isTaskMode = agent.mode === 'task';
+
+  if (!isTaskMode && !agent.includeContentsExplicit) {
     agent.includeContents = 'none';
   }
 
-  await appendNodeInputAsUserTurn(ctx, nodeInput);
+  if (!isTaskMode) {
+    await appendNodeInputAsUserTurn(ctx, nodeInput);
+  }
 
   const agentIc = withWorkflowInstructionScope(ctx.getInvocationContext(), {
     input: nodeInput,
     outputsByNode: collectPredecessorOutputs(ctx),
   });
 
-  if (agent.mode === 'task') {
+  if (isTaskMode) {
     yield* runTaskMode(ctx, agentIc, agent);
     return;
   }
@@ -103,6 +107,10 @@ async function appendNodeInputAsUserTurn(
  * successful function response, promote the call's arguments to the node output
  * (and to `outputKey` state, if set). Mirrors adk-python's
  * `run_llm_agent_as_node` task branch.
+ *
+ * A turn that ends without `finish_task` — the agent asked the user something —
+ * is the task still in progress, so the node returns with no output and
+ * `waitForOutput` holds the graph there until the next turn.
  */
 async function* runTaskMode(
   ctx: NodeContext,
@@ -136,11 +144,6 @@ async function* runTaskMode(
 
     yield event;
   }
-
-  throw new Error(
-    `Task-mode agent '${agent.name}' ended without calling finish_task; ` +
-      'no output was produced.',
-  );
 }
 
 /**
