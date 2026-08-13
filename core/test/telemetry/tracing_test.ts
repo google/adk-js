@@ -288,5 +288,46 @@ describe('Telemetry Tracing Functions', () => {
         expect.anything(),
       );
     });
+
+    it('should not serialize credential-bearing httpOptions fields', () => {
+      // Arrange
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const httpOptions = {
+        baseUrl: 'https://example.test',
+        headers: {Authorization: 'Bearer sentinel-secret-token'},
+        extraBody: {apiKey: 'sentinel-secret-token'},
+      };
+      const llmRequest = {
+        ...mockLlmRequest,
+        config: {temperature: 0.1, httpOptions},
+      };
+
+      // Act
+      traceCallLlm({
+        invocationContext: mockInvocationContext,
+        eventId: 'test-event-id',
+        llmRequest,
+        llmResponse: mockLlmResponse,
+      });
+
+      // Assert
+      const serialized: string =
+        mockSpan.setAttributes.mock.calls[0][0]['gcp.vertex.agent.llm_request'];
+      expect(serialized).not.toContain('sentinel-secret-token');
+      expect(serialized).not.toContain('Authorization');
+
+      const traced = JSON.parse(serialized);
+      expect(traced.config.httpOptions).toEqual({
+        baseUrl: 'https://example.test',
+      });
+      expect(traced.config.temperature).toBe(0.1);
+
+      // The config the SDK will actually send must be untouched.
+      expect(llmRequest.config.httpOptions).toBe(httpOptions);
+      expect(httpOptions.headers).toEqual({
+        Authorization: 'Bearer sentinel-secret-token',
+      });
+      expect(httpOptions.extraBody).toEqual({apiKey: 'sentinel-secret-token'});
+    });
   });
 });
