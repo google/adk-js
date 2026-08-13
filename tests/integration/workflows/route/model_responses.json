@@ -54,7 +54,7 @@
       "usageMetadata": {
         "promptTokenCount": 25,
         "candidatesTokenCount": 6,
-        "totalTokenCount": 63,
+        "totalTokenCount": 60,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -68,23 +68,15 @@
             "tokenCount": 6
           }
         ],
-        "thoughtsTokenCount": 32
+        "thoughtsTokenCount": 29
       }
     }
   },
   {
-    "key": "f2b4cd3df00d7860",
-    "instructionAgnosticKey": "91bb24ccd3a5ed98",
+    "key": "100505b197e7cc8d",
+    "instructionAgnosticKey": "1c7399c7e32aa748",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "who are you"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -119,14 +111,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 41,
+        "promptTokenCount": 38,
         "candidatesTokenCount": 11,
-        "totalTokenCount": 85,
+        "totalTokenCount": 83,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 41
+            "tokenCount": 38
           }
         ],
         "candidatesTokensDetails": [
@@ -135,7 +127,7 @@
             "tokenCount": 11
           }
         ],
-        "thoughtsTokenCount": 33
+        "thoughtsTokenCount": 34
       }
     }
   }

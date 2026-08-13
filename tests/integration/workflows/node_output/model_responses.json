@@ -1,28 +1,9 @@
 [
   {
-    "key": "e2e6a68125810d7f",
-    "instructionAgnosticKey": "c59e48dcc910513c",
+    "key": "ccda84296ec48f98",
+    "instructionAgnosticKey": "cf6f22ff16664446",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "go"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[generate_string_output] said: Processed input: go"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -69,7 +50,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "{\n  \"title\": \"Just Go: Embracing the Journey of Action and Discovery\",\n  \"description\": \"A deep dive into the philosophy of taking the first step, overcoming inertia, and finding liberation in the act of beginning, whether it's a new project, a personal goal, or an adventure.\",\n  \"category\": \"Personal Growth\"\n}"
+                "text": "{\n  \"title\": \"The Impetus of Motion: Exploring the Forces That Drive Us Forward\",\n  \"description\": \"This topic delves into the various internal and external catalysts that initiate action, progress, and change in individuals, societies, and nature. From the first spark of an idea to the momentum of a movement, we investigate what truly makes things 'go'.\",\n  \"category\": \"Philosophy & Psychology\"\n}"
               }
             ]
           },
@@ -77,23 +58,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 68,
-        "candidatesTokenCount": 76,
-        "totalTokenCount": 676,
+        "promptTokenCount": 50,
+        "candidatesTokenCount": 89,
+        "totalTokenCount": 349,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 68
+            "tokenCount": 50
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 76
+            "tokenCount": 89
           }
         ],
-        "thoughtsTokenCount": 532
+        "thoughtsTokenCount": 210
       }
     }
   }

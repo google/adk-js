@@ -385,6 +385,16 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   disallowTransferToParent: boolean;
   disallowTransferToPeers: boolean;
   includeContents: 'default' | 'none';
+
+  /**
+   * Whether {@link includeContents} was set by the caller rather than defaulted.
+   *
+   * A workflow node runs its agent for a single turn on the input the graph
+   * handed it, so the agent must not also read the surrounding conversation —
+   * unless the author asked for it. Mirrors Python checking
+   * `'include_contents' in agent.model_fields_set`.
+   */
+  readonly includeContentsExplicit: boolean;
   mode?: 'single_turn' | 'task';
   inputSchema?: Schema;
   outputSchema?: Schema;
@@ -422,6 +432,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     this.disallowTransferToParent = config.disallowTransferToParent ?? false;
     this.disallowTransferToPeers = config.disallowTransferToPeers ?? false;
     this.includeContents = config.includeContents ?? 'default';
+    this.includeContentsExplicit = config.includeContents !== undefined;
     this.inputSchemaSource = config.inputSchema;
     this.outputSchemaSource = config.outputSchema;
     this.inputSchema = isZodObject(config.inputSchema)

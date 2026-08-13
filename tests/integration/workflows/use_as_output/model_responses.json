@@ -1,17 +1,9 @@
 [
   {
-    "key": "4d165d7296a857c7",
-    "instructionAgnosticKey": "6dd9a37e6d1e4f74",
+    "key": "0e7b07a014bc9a1e",
+    "instructionAgnosticKey": "4da46c316b797362",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "go"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -35,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "The provided text is too short and does not contain enough information to summarize."
+                "text": "The text is the word \"go,\" which typically functions as an imperative to start or proceed."
               }
             ]
           },
@@ -43,23 +35,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 25,
-        "candidatesTokenCount": 15,
-        "totalTokenCount": 68,
+        "promptTokenCount": 24,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 448,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 25
+            "tokenCount": 24
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 15
+            "tokenCount": 19
           }
         ],
-        "thoughtsTokenCount": 28
+        "thoughtsTokenCount": 405
       }
     }
   }

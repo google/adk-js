@@ -10,12 +10,11 @@
  * TypeScript note: Python's `read_state_via_param` reads a state value by
  * automatic parameter-name injection. `FunctionNode` in TypeScript has a fixed
  * `(ctx, input)` signature, so the value is read explicitly via `ctx.state`.
- * See the gap report.
  *
  * Run (offline):  npm run sample -- tests/integration/workflows/state/agent.ts
  */
 
-import {node, NodeContext, Workflow} from '@google/adk';
+import {createEvent, Event, node, NodeContext, Workflow} from '@google/adk';
 
 function processInitialInput(ctx: NodeContext, nodeInput: string): string {
   // Set initial input in state via direct dictionary modification.
@@ -23,8 +22,10 @@ function processInitialInput(ctx: NodeContext, nodeInput: string): string {
   return nodeInput;
 }
 
-function updateStateViaEvent(ctx: NodeContext, nodeInput: string): void {
-  ctx.state.set('uppercased_text', nodeInput.toUpperCase());
+function updateStateViaEvent(_ctx: NodeContext, nodeInput: string): Event {
+  return createEvent({
+    actions: {stateDelta: {uppercased_text: nodeInput.toUpperCase()}},
+  });
 }
 
 function readStateViaCtx(ctx: NodeContext): string {

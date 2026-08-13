@@ -68,7 +68,7 @@
                     "phone_number": "555-1234",
                     "name": "Jane Doe"
                   },
-                  "id": "adk-18e2b23f-d850-491f-b7ac-349573590968"
+                  "id": "adk-12954685-17c9-4aeb-b1ee-077ec784040d"
                 }
               }
             ]
@@ -79,7 +79,7 @@
       "usageMetadata": {
         "promptTokenCount": 206,
         "candidatesTokenCount": 17,
-        "totalTokenCount": 272,
+        "totalTokenCount": 309,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -93,53 +93,15 @@
             "tokenCount": 17
           }
         ],
-        "thoughtsTokenCount": 49
+        "thoughtsTokenCount": 86
       }
     }
   },
   {
-    "key": "1a51e880b664a1a9",
-    "instructionAgnosticKey": "e041756c62222956",
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "I am Jane Doe, my phone number is 555-1234"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "I am Jane Doe, my phone number is 555-1234"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[intake_agent] called tool `finish_task` with parameters: {\"phone_number\":\"555-1234\",\"name\":\"Jane Doe\"}"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[intake_agent] tool `finish_task` returned result: {\"result\":\"Task completed.\"}"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -183,7 +145,7 @@
                 "functionCall": {
                   "name": "find_orders",
                   "args": {},
-                  "id": "adk-979e2633-064e-4077-91df-8433807d7dcc"
+                  "id": "adk-a616820b-74f2-45aa-821e-1a2af5b30eb9"
                 }
               }
             ]
@@ -192,14 +154,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 182,
+        "promptTokenCount": 83,
         "candidatesTokenCount": 3,
-        "totalTokenCount": 251,
+        "totalTokenCount": 129,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 182
+            "tokenCount": 83
           }
         ],
         "candidatesTokensDetails": [
@@ -208,7 +170,7 @@
             "tokenCount": 3
           }
         ],
-        "thoughtsTokenCount": 66
+        "thoughtsTokenCount": 43
       }
     }
   }

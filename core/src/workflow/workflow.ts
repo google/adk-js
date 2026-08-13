@@ -32,7 +32,7 @@ import {
   eventsForCurrentRun,
   isFastForwardable,
   makeFastForwardResult,
-  reconstructNodeStates,
+  reconstructNodeRuns,
   RehydratedNode,
   resolvedInterruptResponses,
 } from './utils/rehydration_utils.js';
@@ -101,7 +101,10 @@ class LoopState {
   readonly pending = new Map<string, Promise<CompletedTask>>();
   readonly interruptIds = new Set<string>();
   /** Per-node state reconstructed from prior session events (resume). */
-  rehydrated: Map<string, RehydratedNode> = new Map();
+  rehydrated: Map<string, RehydratedNode[]> = new Map();
+
+  /** Nodes already activated in this turn, so a repeat activation is visible. */
+  activated: Set<string> = new Set();
   errorShutDown = false;
   /**
    * Workflow-scoped abort signal handed to each scheduled node so a failure can
@@ -226,7 +229,7 @@ export class Workflow extends BaseNode {
       ctx.session?.events ?? [],
       ctx.invocationId,
     );
-    const rehydrated = reconstructNodeStates(
+    const rehydrated = reconstructNodeRuns(
       runEvents,
       ctx.nodePath || undefined,
     );
@@ -431,10 +434,12 @@ export class Workflow extends BaseNode {
   ): void {
     const node = this.getStaticNode(nodeName);
     const nodeState = loop.nodes.get(nodeName)!;
+    const repeatActivation = loop.activated.has(nodeName);
+    loop.activated.add(nodeName);
 
     // Resume: fast-forward a node that already completed in a prior run
     // (cached output, all interrupts resolved), unless it must rerun on resume.
-    const prior = loop.rehydrated.get(nodeName);
+    const prior = loop.rehydrated.get(nodeName)?.shift();
     if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
       loop.pending.set(
         nodeName,
@@ -498,6 +503,7 @@ export class Workflow extends BaseNode {
       input: nodeInput,
       abortSignal: loop.abortSignal,
       nodeState,
+      resumeInputs: repeatActivation ? {} : undefined,
       options: {
         runId,
         useSubBranch: trigger.useSubBranch,

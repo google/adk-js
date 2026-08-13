@@ -47,6 +47,10 @@ export async function* runLlmAgentAsNode(
   ctx: NodeContext,
   nodeInput: unknown,
 ): AsyncGenerator<Event, void, void> {
+  if (agent.mode !== 'task' && !agent.includeContentsExplicit) {
+    agent.includeContents = 'none';
+  }
+
   await appendNodeInputAsUserTurn(ctx, nodeInput);
 
   const agentIc = withWorkflowInstructionScope(ctx.getInvocationContext(), {

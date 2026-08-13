@@ -35,7 +35,6 @@ const processInput = node(
       throw new Error('Invalid year format.');
     }
     ctx.state.set('year', match[0]);
-    yield createEvent({});
   },
   {name: 'process_input'},
 );

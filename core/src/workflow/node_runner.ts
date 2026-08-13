@@ -69,6 +69,13 @@ export interface ExecuteChildNodeParams {
    */
   abortSignal?: AbortSignal;
   nodeState?: NodeState;
+  /**
+   * Resume responses this run may consume, overriding the parent's. The
+   * workflow loop passes an empty map for a run that is not the one recovered
+   * from the previous turn, so a node re-triggered later in a resumed turn
+   * starts clean instead of re-reading a response it already answered.
+   */
+  resumeInputs?: Record<string, unknown>;
 }
 
 /**
@@ -130,6 +137,7 @@ async function runChildNode({
     options = {},
     abortSignal,
     nodeState: callerNodeState,
+    resumeInputs,
   },
   nodeName,
   nodePath,
@@ -174,7 +182,7 @@ async function runChildNode({
     channel: parent.channel,
     nodePath,
     runId,
-    resumeInputs: parent.resumeInputs,
+    resumeInputs: resumeInputs ?? parent.resumeInputs,
     isolationScope,
   });
   // Propagate the dynamic scheduler down; a nested Workflow overrides it.

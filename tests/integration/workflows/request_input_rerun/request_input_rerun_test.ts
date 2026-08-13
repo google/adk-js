@@ -49,7 +49,7 @@ describe('workflow sample: request_input_rerun (HITL)', () => {
     expect(joinedText(turn2)).toContain('Draft rejected.');
   }, 120000);
 
-  it.skip('re-runs the review node to revise, then approves', async () => {
+  it('re-runs the review node to revise, then approves', async () => {
     const perTurn = await runSample({
       name: 'request_input_rerun',
       rootAgent,

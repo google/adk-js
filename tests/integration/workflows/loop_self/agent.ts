@@ -42,7 +42,6 @@ const validateInput = node(
       throw new Error('Invalid input.');
     } else {
       ctx.state.set('target_number', parsedNumber);
-      yield createEvent({});
     }
   },
   {name: 'validate_input'},
