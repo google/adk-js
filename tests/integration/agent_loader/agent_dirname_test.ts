@@ -13,7 +13,8 @@ import {sendInput} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
-const TEST_EXECUTION_TIMEOUT = 40000;
+const TEST_EXECUTION_TIMEOUT = 60000;
+const HOOK_TIMEOUT = 120000;
 
 describe.each(['__dirname', '__filename', 'import_meta_url'])(
   'Agent with %s',
@@ -26,7 +27,7 @@ describe.each(['__dirname', '__filename', 'import_meta_url'])(
 
     beforeAll(async () => {
       await execAsync('npm install', {cwd: projectPath});
-    }, TEST_EXECUTION_TIMEOUT);
+    }, HOOK_TIMEOUT);
 
     it(
       'should run agent and load params from file nearby via package.json script',
@@ -56,6 +57,6 @@ describe.each(['__dirname', '__filename', 'import_meta_url'])(
       await fs
         .unlink(path.join(projectPath, 'package-lock.json'))
         .catch(() => {});
-    }, TEST_EXECUTION_TIMEOUT);
+    }, HOOK_TIMEOUT);
   },
 );

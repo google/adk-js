@@ -25,6 +25,7 @@ import {sendInput} from '../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 const TEST_EXECUTION_TIMEOUT = 60000;
+const HOOK_TIMEOUT = 120000;
 
 async function runToCompletion(agent: RunnableRoot): Promise<Event[]> {
   const sessionService = new InMemorySessionService();
@@ -62,7 +63,7 @@ describe('App loader CLI integration', () => {
 
       beforeAll(async () => {
         await execAsync('npm install', {cwd: projectPath});
-      }, TEST_EXECUTION_TIMEOUT);
+      }, HOOK_TIMEOUT);
 
       it(
         'should run app via package.json start script and get responses',
@@ -95,7 +96,7 @@ describe('App loader CLI integration', () => {
         await fs
           .unlink(path.join(projectPath, 'package-lock.json'))
           .catch(() => {});
-      }, TEST_EXECUTION_TIMEOUT);
+      }, HOOK_TIMEOUT);
     },
   );
 });
@@ -109,8 +110,17 @@ describe('AgentLoader discovery and loading integration', () => {
 
   beforeAll(async () => {
     await execAsync('npm install', {cwd: projectPath});
+    await fs.writeFile(
+      path.join(projectPath, 'node_modules', 'agent.js'),
+      `const {BaseAgent} = require('@google/adk');
+class NodeModulesAgent extends BaseAgent {
+  constructor() { super({ name: 'node_modules_agent' }); }
+}
+exports.rootAgent = new NodeModulesAgent();`,
+    );
     loader = new AgentLoader(projectPath);
-  }, TEST_EXECUTION_TIMEOUT);
+    await loader.preloadAgents();
+  }, HOOK_TIMEOUT);
 
   it(
     'should discover apps vs agents across directories and standalone files',
@@ -130,6 +140,8 @@ describe('AgentLoader discovery and loading integration', () => {
       expect(agentsAndApps).toContain('service_graph');
       expect(agentsAndApps).toContain('standalone_agent');
       expect(agentsAndApps).toContain('standalone_app');
+      expect(agentsAndApps).not.toContain('.hidden');
+      expect(agentsAndApps).not.toContain('node_modules');
       expect(await loader.listLoadFailures()).toEqual([]);
     },
     TEST_EXECUTION_TIMEOUT,
@@ -242,5 +254,5 @@ describe('AgentLoader discovery and loading integration', () => {
     await fs
       .unlink(path.join(projectPath, 'package-lock.json'))
       .catch(() => {});
-  }, TEST_EXECUTION_TIMEOUT);
+  }, HOOK_TIMEOUT);
 });
