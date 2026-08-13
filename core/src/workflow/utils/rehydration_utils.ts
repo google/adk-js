@@ -165,6 +165,60 @@ export function reconstructNodeStatesByPath(
   return reconstruct(events, (event) => event.nodeInfo?.path ?? event.author);
 }
 
+/**
+ * Every interrupt raised in `events` that now has an accepted reply, as
+ * interrupt id -> value.
+ *
+ * Flat and unscoped, unlike {@link reconstructNodeStates}: interrupt ids are
+ * unique, and a reply has to reach whoever raised it however deep that sits. A
+ * dynamic (`ctx.runNode`) child or a nested workflow's leaf is keyed out of the
+ * per-parent view, so a scoped map silently drops its answer and the run pauses
+ * on the same question forever.
+ *
+ * A reply that does not match the schema its interrupt declared resolves
+ * nothing. It throws while it is the turn being processed, so the client hears
+ * about it once, and is skipped on every replay after that (see
+ * {@link interruptResponseMismatch}).
+ */
+export function resolvedInterruptResponses(
+  events: Event[],
+): Map<string, unknown> {
+  const responseSchemas = responseSchemasByInterruptId(events);
+  const newestUserTurn = lastUserEvent(events);
+  const raised = new Set<string>();
+  const resolved = new Map<string, unknown>();
+
+  for (const event of events) {
+    if (event.author === 'user' && event.content?.parts) {
+      for (const part of event.content.parts) {
+        const fr = part.functionResponse;
+        if (!fr?.id || !raised.has(fr.id)) {
+          continue;
+        }
+        const response = unwrapResponse(fr.response);
+        const mismatch = interruptResponseMismatch(
+          fr.id,
+          response,
+          responseSchemas.get(fr.id),
+        );
+        if (mismatch) {
+          if (event === newestUserTurn) {
+            throw new Error(mismatch);
+          }
+          continue;
+        }
+        resolved.set(fr.id, response);
+      }
+      continue;
+    }
+    for (const id of event.longRunningToolIds ?? []) {
+      raised.add(id);
+    }
+  }
+
+  return resolved;
+}
+
 /** Shared scan that groups node events by the key returned by `keyFor`. */
 function reconstruct(
   events: Event[],
@@ -172,8 +226,7 @@ function reconstruct(
 ): Map<string, RehydratedNode> {
   const nodes = new Map<string, RehydratedNode>();
   const interruptOwner = new Map<string, string>();
-  const responseSchemas = responseSchemasByInterruptId(events);
-  const newestUserTurn = lastUserEvent(events);
+  const resolved = resolvedInterruptResponses(events);
 
   const getNode = (name: string): RehydratedNode => {
     let node = nodes.get(name);
@@ -185,29 +238,15 @@ function reconstruct(
   };
 
   for (const event of events) {
-    // 1. User function responses resolving prior interrupts.
+    // 1. User function responses resolving prior interrupts. A reply the
+    //    schema check refused is absent from `resolved`, leaving its interrupt
+    //    unresolved so the run pauses there again.
     if (event.author === 'user' && event.content?.parts) {
       for (const part of event.content.parts) {
         const fr = part.functionResponse;
-        if (fr?.id && interruptOwner.has(fr.id)) {
+        if (fr?.id && interruptOwner.has(fr.id) && resolved.has(fr.id)) {
           const owner = interruptOwner.get(fr.id)!;
-          const response = unwrapResponse(fr.response);
-          const mismatch = interruptResponseMismatch(
-            fr.id,
-            response,
-            responseSchemas.get(fr.id),
-          );
-          if (mismatch) {
-            // Loud for the reply that just arrived, silent for the same reply
-            // on every replay after it: a rejected reply leaves its interrupt
-            // unresolved, so the run pauses there again and the next answer —
-            // structured or plain text — still gets through.
-            if (event === newestUserTurn) {
-              throw new Error(mismatch);
-            }
-            continue;
-          }
-          getNode(owner).resolvedResponses.set(fr.id, response);
+          getNode(owner).resolvedResponses.set(fr.id, resolved.get(fr.id));
         }
       }
       continue;
