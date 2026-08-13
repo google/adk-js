@@ -28,6 +28,16 @@
           "type": "generic"
         }
       ]
+    },
+    "integrations": {
+      "changelog-path": "CHANGELOG.md",
+      "component": "integrations",
+      "extra-files": [
+        {
+          "path": "src/version.ts",
+          "type": "generic"
+        }
+      ]
     }
   },
   "plugins": [
@@ -38,7 +48,7 @@
     {
       "type": "linked-versions",
       "groupName": "adk",
-      "components": ["main", "adk", "devtools"]
+      "components": ["main", "adk", "devtools", "integrations"]
     }
   ],
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
