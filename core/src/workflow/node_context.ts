@@ -75,6 +75,15 @@ export class NodeContext {
    * resumed run can tell that an ancestor already has a result.
    */
   outputForAncestors: readonly string[] = [];
+
+  /**
+   * Whether this node handed its output to a child run with `useAsOutput`.
+   *
+   * The child already emitted that value as its own result, so an event from
+   * this node repeating it would put the same text in the stream twice. The
+   * node still reports the output — only the duplicate event is suppressed.
+   */
+  outputDelegated = false;
   readonly actions: EventActions;
   resumeInputs: Record<string, unknown>;
   isolationScope?: string;

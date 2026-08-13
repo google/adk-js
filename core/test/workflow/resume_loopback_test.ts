@@ -163,6 +163,37 @@ describe('workflow resume — routing back through an already-run node', () => {
     expect(turn3.some((e) => e.output === 'sent')).toBe(true);
   });
 
+  it('replays a completed rerun-on-resume node instead of running it again', async () => {
+    let ran = 0;
+    const once = node(
+      () => {
+        ran++;
+        return `ran ${ran}`;
+      },
+      {name: 'once', rerunOnResume: true},
+    );
+    const gate = node(
+      (ctx: NodeContext, value: string) => {
+        const answer = ctx.resumeInputs['gate'];
+        return answer
+          ? `${value}/${answer}`
+          : new RequestInput({interruptId: 'gate', message: 'ok?'});
+      },
+      {name: 'gate', rerunOnResume: true},
+    );
+    const wf = new Workflow({
+      name: 'replay',
+      edges: [['START', once, gate]],
+    });
+    const run = await driver(wf);
+
+    await run.run(text('go'));
+    const turn2 = await run.run(reply('gate', 'yes'));
+
+    expect(ran).toBe(1);
+    expect(turn2.some((e) => e.output === 'ran 1/yes')).toBe(true);
+  });
+
   it('replays a routing node from its recorded route instead of re-running it', async () => {
     let routed = 0;
     const gate = node(

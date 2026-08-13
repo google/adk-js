@@ -294,6 +294,7 @@ async function runChildNode({
     if (options.useAsOutput) {
       parent.output = child.output;
       parent.route = child.route;
+      parent.outputDelegated = true;
     }
 
     return child;
@@ -423,6 +424,14 @@ async function runOnce({
     enrichEvent({event, child, nodeName, branch, isolationScope});
     if (event.output !== undefined) {
       child.output = event.output;
+      if (child.outputDelegated) {
+        const stateDelta = event.actions?.stateDelta;
+        if (!stateDelta || Object.keys(stateDelta).length === 0) {
+          return;
+        }
+        event.output = undefined;
+        event.content = undefined;
+      }
     }
     if (event.route !== undefined) {
       child.route = event.route;

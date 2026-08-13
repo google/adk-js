@@ -265,9 +265,41 @@ describe('interruptResponseMismatch', () => {
     expect(
       interruptResponseMismatch(
         'i1',
-        unwrapResponse({result: '21'}),
+        // Not '21': that would unwrap to a number and pass as a scalar rather
+        // than as the string this asserts about.
+        unwrapResponse({result: 'twenty-one'}),
         stringSchema,
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('unwrapResponse', () => {
+  it('parses a structured reply the frontend sent as text', () => {
+    expect(unwrapResponse({result: '{"userResponse":"yes"}'})).toEqual({
+      userResponse: 'yes',
+    });
+  });
+
+  it('leaves text that is not JSON alone', () => {
+    expect(unwrapResponse({result: 'approve'})).toBe('approve');
+  });
+
+  it('parses any string that is JSON, scalars included', () => {
+    // The envelope does not say whether the text is structured, so a plain
+    // answer that happens to be valid JSON is converted too. Python's
+    // `_unwrap_response` does the same, and the schema check exempts scalars.
+    expect(unwrapResponse({result: '42'})).toBe(42);
+    expect(unwrapResponse({result: 'true'})).toBe(true);
+  });
+
+  it('passes a value that is not a {result: x} envelope through', () => {
+    expect(unwrapResponse({userResponse: 'yes'})).toEqual({
+      userResponse: 'yes',
+    });
+    expect(unwrapResponse({result: 'a', hint: 'b'})).toEqual({
+      result: 'a',
+      hint: 'b',
+    });
   });
 });

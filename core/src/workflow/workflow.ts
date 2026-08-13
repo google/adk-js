@@ -438,9 +438,12 @@ export class Workflow extends BaseNode {
     loop.activated.add(nodeName);
 
     // Resume: fast-forward a node that already completed in a prior run
-    // (cached output, all interrupts resolved), unless it must rerun on resume.
+    // (cached output, all interrupts resolved). `rerunOnResume` governs an
+    // interrupt the node is still waiting on, not a run that already produced
+    // its result, and `isFastForwardable` excludes a waiting node — so the flag
+    // is not consulted here. Python reaches its cached-result case first too.
     const prior = loop.rehydrated.get(nodeName)?.shift();
-    if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
+    if (prior && isFastForwardable(prior)) {
       loop.pending.set(
         nodeName,
         Promise.resolve({

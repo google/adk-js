@@ -68,7 +68,7 @@
                     "phone_number": "555-1234",
                     "name": "Jane Doe"
                   },
-                  "id": "adk-12954685-17c9-4aeb-b1ee-077ec784040d"
+                  "id": "adk-90346567-f3ed-4865-b210-871b9d3f2a64"
                 }
               }
             ]
@@ -79,7 +79,7 @@
       "usageMetadata": {
         "promptTokenCount": 206,
         "candidatesTokenCount": 17,
-        "totalTokenCount": 309,
+        "totalTokenCount": 268,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -93,7 +93,7 @@
             "tokenCount": 17
           }
         ],
-        "thoughtsTokenCount": 86
+        "thoughtsTokenCount": 45
       }
     }
   },
@@ -145,7 +145,7 @@
                 "functionCall": {
                   "name": "find_orders",
                   "args": {},
-                  "id": "adk-a616820b-74f2-45aa-821e-1a2af5b30eb9"
+                  "id": "adk-6324f509-f68b-4129-8ecc-e0986fe6f234"
                 }
               }
             ]
@@ -156,7 +156,7 @@
       "usageMetadata": {
         "promptTokenCount": 83,
         "candidatesTokenCount": 3,
-        "totalTokenCount": 129,
+        "totalTokenCount": 120,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -170,7 +170,84 @@
             "tokenCount": 3
           }
         ],
-        "thoughtsTokenCount": 43
+        "thoughtsTokenCount": 34
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-281d2bf5-fc1e-422a-b80e-84ed27aeab92"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 120,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 34
       }
     }
   }
