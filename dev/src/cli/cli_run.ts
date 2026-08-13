@@ -76,7 +76,8 @@ function renderUserInputRequest(request: UserInputRequest): string {
   }
 
   const scheme = request.authConfig?.authScheme as
-    {type?: string; in?: string; name?: string} | undefined;
+    | {type?: string; in?: string; name?: string}
+    | undefined;
   if (scheme?.type) {
     const where =
       scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
