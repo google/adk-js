@@ -56,11 +56,11 @@ function downloadFile(url, dest) {
       }
 
       if (response.statusCode !== 200) {
-        reject(
-          new Error(
-            `Failed to get '${url}' (status code: ${response.statusCode})`,
-          ),
+        const err = new Error(
+          `Failed to get '${url}' (status code: ${response.statusCode})`,
         );
+        err.retryable = false;
+        reject(err);
         return;
       }
 
@@ -76,9 +76,37 @@ function downloadFile(url, dest) {
     });
 
     request.on('error', (err) => {
+      err.retryable = true;
       unlink(dest, () => reject(err));
     });
   });
+}
+
+const DOWNLOAD_ATTEMPTS = 3;
+const DOWNLOAD_RETRY_DELAY_MS = 2000;
+
+async function downloadFileWithRetry(url, dest) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await downloadFile(url, dest);
+    } catch (err) {
+      if (err.retryable === false || attempt >= DOWNLOAD_ATTEMPTS) {
+        throw new Error(
+          `Failed to download ADK Web assets: ${err.message}. The build needs ` +
+            `${url}; retry, or place the zip at ${zipCachePath} to build ` +
+            `offline.`,
+          {cause: err},
+        );
+      }
+      console.warn(
+        `[ADK Build] Download failed (attempt ${attempt}/${DOWNLOAD_ATTEMPTS}): ` +
+          `${err.message}. Retrying...`,
+      );
+      await new Promise((r) =>
+        setTimeout(r, DOWNLOAD_RETRY_DELAY_MS * attempt),
+      );
+    }
+  }
 }
 
 function unzipFile(zipPath, destDir) {
@@ -113,7 +141,7 @@ async function ensureBrowserAssets() {
       }
       const url = `https://github.com/google/adk-web/releases/download/${ADK_WEB_VERSION}/adk-web-browser.zip`;
       const tempZipPath = `${zipCachePath}.tmp`;
-      await downloadFile(url, tempZipPath);
+      await downloadFileWithRetry(url, tempZipPath);
       await rename(tempZipPath, zipCachePath);
       console.log(
         `[ADK Build] Downloaded and cached ADK Web ${ADK_WEB_VERSION}.`,
