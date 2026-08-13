@@ -1,17 +1,9 @@
 [
   {
-    "key": "075ada6d0639573f",
-    "instructionAgnosticKey": "fe44a59739a4f475",
+    "key": "d178e94a7f7fb768",
+    "instructionAgnosticKey": "05741fd6f32cccb3",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "1 sick day"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -55,7 +47,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "{\"days\": 1, \"reason\": \"sick\"}"
+                "text": "{\n  \"days\": 1,\n  \"reason\": \"sick\"\n}"
               }
             ]
           },
@@ -63,39 +55,31 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 45,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 108,
+        "promptTokenCount": 42,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 103,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 45
+            "tokenCount": 42
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 12
+            "tokenCount": 19
           }
         ],
-        "thoughtsTokenCount": 51
+        "thoughtsTokenCount": 42
       }
     }
   },
   {
-    "key": "e05c319f8df062fe",
-    "instructionAgnosticKey": "ec90e37d89e9eb1d",
+    "key": "b51e345498e7b9f5",
+    "instructionAgnosticKey": "96eabf2989d95490",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "2 sick days"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -139,7 +123,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "{\"days\": 2, \"reason\": \"sick days\"}"
+                "text": "{\n  \"days\": 2,\n  \"reason\": \"sick\"\n}"
               }
             ]
           },
@@ -147,23 +131,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 45,
-        "candidatesTokenCount": 13,
+        "promptTokenCount": 42,
+        "candidatesTokenCount": 19,
         "totalTokenCount": 109,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 45
+            "tokenCount": 42
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 13
+            "tokenCount": 19
           }
         ],
-        "thoughtsTokenCount": 51
+        "thoughtsTokenCount": 48
       }
     }
   }

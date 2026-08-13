@@ -49,7 +49,7 @@ describe('workflow sample: request_input (HITL)', () => {
     expect(isPaused(turn2)).toBe(false);
   }, 120000);
 
-  it.skip('revises on feedback, then sends on approval', async () => {
+  it('revises on feedback, then sends on approval', async () => {
     const perTurn = await runSample({
       name: 'request_input',
       rootAgent,

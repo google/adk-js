@@ -70,7 +70,7 @@
                   "args": {
                     "user_id": "c123"
                   },
-                  "id": "adk-e49b8903-4128-4665-bf17-af8f9b73509e"
+                  "id": "adk-2333f4a6-613b-4285-983b-64b2ca0323ee"
                 }
               }
             ]
@@ -81,7 +81,7 @@
       "usageMetadata": {
         "promptTokenCount": 162,
         "candidatesTokenCount": 12,
-        "totalTokenCount": 263,
+        "totalTokenCount": 274,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -95,7 +95,7 @@
             "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 89
+        "thoughtsTokenCount": 100
       }
     }
   },
@@ -197,7 +197,7 @@
                   "args": {
                     "tier": "Verified VIP Member"
                   },
-                  "id": "adk-f6ee1e8a-2716-4b6f-9a4e-0dc93a9450fb"
+                  "id": "adk-165d46f5-4f95-4095-8396-10cebd7089b8"
                 }
               }
             ]
@@ -208,7 +208,7 @@
       "usageMetadata": {
         "promptTokenCount": 190,
         "candidatesTokenCount": 7,
-        "totalTokenCount": 269,
+        "totalTokenCount": 256,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -222,7 +222,7 @@
             "tokenCount": 7
           }
         ],
-        "thoughtsTokenCount": 72
+        "thoughtsTokenCount": 59
       }
     }
   },
@@ -356,7 +356,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Your discount for user c123, who is a Verified VIP Member, is 20% off."
+                "text": "Your membership tier is Verified VIP Member, and you receive a 20% discount."
               }
             ]
           },
@@ -365,8 +365,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 233,
-        "candidatesTokenCount": 23,
-        "totalTokenCount": 371,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 396,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -377,10 +377,10 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 23
+            "tokenCount": 18
           }
         ],
-        "thoughtsTokenCount": 115
+        "thoughtsTokenCount": 145
       }
     }
   }

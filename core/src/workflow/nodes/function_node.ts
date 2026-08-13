@@ -121,6 +121,8 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
       // Plain value or Promise of a value.
       yield await (result as Promise<FunctionNodeResult<TOutput>>);
     }
+
+    yield undefined;
   }
 
   /**
@@ -182,6 +184,27 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
     return Object.keys(delta).length > 0 ? delta : undefined;
   }
 
+  /**
+   * Writes an emitted event's state delta into the node's own state view, and
+   * records it as already attached so {@link pendingStateDelta} does not emit a
+   * second event carrying the same keys.
+   */
+  private applyEmittedState(
+    ctx: NodeContext,
+    delta: Record<string, unknown> | undefined,
+  ): void {
+    if (!delta || Object.keys(delta).length === 0) {
+      return;
+    }
+    ctx.state.update(delta);
+    const shadow = this.attachedStateByCtx.get(ctx);
+    if (shadow) {
+      for (const [key, value] of Object.entries(delta)) {
+        shadow.set(key, value);
+      }
+    }
+  }
+
   protected override toEvent(ctx: NodeContext, data: unknown): Event | null {
     const stateDelta = this.pendingStateDelta(ctx);
 
@@ -206,6 +229,7 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
         // node's accumulated context state.
         event.actions.stateDelta = {...stateDelta, ...event.actions.stateDelta};
       }
+      this.applyEmittedState(ctx, event.actions.stateDelta);
       return event;
     }
 

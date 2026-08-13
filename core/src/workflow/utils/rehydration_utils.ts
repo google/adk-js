@@ -219,22 +219,102 @@ export function resolvedInterruptResponses(
   return resolved;
 }
 
+/**
+ * Reconstructs each node's prior runs in order, rather than merging them into
+ * one record per node.
+ *
+ * A node the graph routes back to runs more than once, and a pause can fall
+ * between two of its runs — the revise loop in the request-input samples pauses
+ * on `request_human_review@1`, resumes, and pauses again on `@2`. Merged into a
+ * single record those two runs are indistinguishable, and the resumed turn
+ * replays the first run's answer forever. `google/adk-python` avoids this by
+ * keying its recovered executions on `name@run_id`; TypeScript node paths carry
+ * no run id for static graph nodes, so the runs are recovered positionally
+ * instead: the Nth activation in the resumed turn matches the Nth prior run.
+ *
+ * A run is closed once it has produced an output, a route, or an interrupt, so
+ * the next event for that node opens the next run. Events a run emits before
+ * that (messages, state deltas) accumulate into the run in progress.
+ */
+export function reconstructNodeRuns(
+  events: Event[],
+  parentPath?: string,
+): Map<string, RehydratedNode[]> {
+  return reconstructRuns(events, keyFn(parentPath));
+}
+
+function keyFn(parentPath?: string): (event: Event) => string | undefined {
+  if (parentPath) {
+    return (event) =>
+      event.nodeInfo?.path
+        ? directChildName(event.nodeInfo.path, parentPath)
+        : undefined;
+  }
+  return (event) =>
+    event.nodeInfo?.path ? nodeNameFromPath(event.nodeInfo.path) : event.author;
+}
+
+/** Whether a run has reached a terminal result, so the next event is a new run. */
+function isRunClosed(node: RehydratedNode): boolean {
+  return (
+    node.output !== undefined ||
+    node.route !== undefined ||
+    node.interruptIds.size > 0
+  );
+}
+
 /** Shared scan that groups node events by the key returned by `keyFor`. */
 function reconstruct(
   events: Event[],
   keyFor: (event: Event) => string | undefined,
 ): Map<string, RehydratedNode> {
-  const nodes = new Map<string, RehydratedNode>();
-  const interruptOwner = new Map<string, string>();
+  const merged = new Map<string, RehydratedNode>();
+  for (const [key, runs] of reconstructRuns(events, keyFor)) {
+    const node: RehydratedNode = {
+      interruptIds: new Set(),
+      resolvedResponses: new Map(),
+    };
+    for (const run of runs) {
+      if (run.output !== undefined) {
+        node.output = run.output;
+        node.branch = run.branch;
+      }
+      if (run.route !== undefined) node.route = run.route;
+      if (run.input !== undefined) node.input = run.input;
+      for (const id of run.interruptIds) node.interruptIds.add(id);
+      for (const [id, value] of run.resolvedResponses) {
+        node.resolvedResponses.set(id, value);
+      }
+    }
+    merged.set(key, node);
+  }
+  return merged;
+}
+
+function reconstructRuns(
+  events: Event[],
+  keyFor: (event: Event) => string | undefined,
+): Map<string, RehydratedNode[]> {
+  const nodes = new Map<string, RehydratedNode[]>();
+  const interruptOwner = new Map<string, RehydratedNode>();
   const resolved = resolvedInterruptResponses(events);
 
-  const getNode = (name: string): RehydratedNode => {
-    let node = nodes.get(name);
-    if (!node) {
-      node = {interruptIds: new Set(), resolvedResponses: new Map()};
-      nodes.set(name, node);
+  const currentRun = (name: string): RehydratedNode => {
+    let runs = nodes.get(name);
+    if (!runs) {
+      runs = [];
+      nodes.set(name, runs);
     }
-    return node;
+    const open = runs[runs.length - 1];
+    if (open && !isRunClosed(open)) {
+      return open;
+    }
+    const run: RehydratedNode = {
+      interruptIds: new Set(),
+      resolvedResponses: new Map(),
+    };
+    runs.push(run);
+    return run;
   };
 
   for (const event of events) {
@@ -245,8 +325,9 @@ function reconstruct(
       for (const part of event.content.parts) {
         const fr = part.functionResponse;
         if (fr?.id && interruptOwner.has(fr.id) && resolved.has(fr.id)) {
-          const owner = interruptOwner.get(fr.id)!;
-          getNode(owner).resolvedResponses.set(fr.id, resolved.get(fr.id));
+          interruptOwner
+            .get(fr.id)!
+            .resolvedResponses.set(fr.id, resolved.get(fr.id));
         }
       }
       continue;
@@ -257,7 +338,7 @@ function reconstruct(
     if (!key) {
       continue;
     }
-    const node = getNode(key);
+    const node = currentRun(key);
     if (event.output !== undefined) {
       node.output = event.output;
       node.branch = event.branch;
@@ -267,7 +348,7 @@ function reconstruct(
     }
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);
-      interruptOwner.set(id, key);
+      interruptOwner.set(id, node);
     }
     // Capture the node's original input, stashed on the interrupt event, so a
     // resumed waiting node re-runs with it (not the resume message). Guard the
@@ -296,11 +377,12 @@ function lastUserEvent(events: Event[]): Event | undefined {
 }
 
 /**
- * Whether a rehydrated node can be fast-forwarded on resume: it produced an
- * output and all of its raised interrupts have been resolved.
+ * Whether a rehydrated node can be fast-forwarded on resume: it produced a
+ * result — an output or a route — and all of its raised interrupts have been
+ * resolved.
  */
 export function isFastForwardable(node: RehydratedNode): boolean {
-  if (node.output === undefined) {
+  if (node.output === undefined && node.route === undefined) {
     return false;
   }
   for (const id of node.interruptIds) {

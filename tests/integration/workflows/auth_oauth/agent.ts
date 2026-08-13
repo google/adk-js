@@ -24,7 +24,7 @@
  * TypeScript note: Python reads the credential via `ctx.get_auth_response(cfg)`.
  * `NodeContext` has no such helper; the framework stores the exchanged
  * credential at `temp:<credentialKey>` in state (see `AuthHandler`), which the
- * node reads instead. Same as `auth_api_key`; see the gap report.
+ * node reads instead. Same as `auth_api_key`.
  *
  * Sample queries:
  *   - "start"

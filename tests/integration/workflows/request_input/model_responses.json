@@ -27,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Subject: Re: Your recent inquiry regarding your phone\n\nDear Valued Customer,\n\nThank you for reaching out to us. I'm very sorry to hear that your phone has broken. I understand how frustrating and inconvenient this can be, and we're here to help.\n\nTo assist you best, could you please provide a few more details about what happened? Specifically, it would be helpful if you could tell us:\n\n*   **What is the model of your phone?** (e.g., iPhone 12, Samsung Galaxy S23, etc.)\n*   **What exactly happened to it?** (e.g., screen cracked, stopped turning on, dropped in water, etc.)\n*   **When did this occur?**\n*   **Have you tried any troubleshooting steps already?**\n\nOnce we have a better understanding of the situation, we can guide you through the next steps, which may include troubleshooting, repair options, warranty information, or potential replacement options.\n\nPlease reply to this email with the details, or if you prefer to speak with someone directly, you can call our support team at [Your Support Phone Number] during business hours.\n\nWe look forward to helping you resolve this as quickly as possible.\n\nSincerely,\n\n[Your Name/Support Team Name]\n[Your Company Name]\n[Your Company Website (Optional)]"
+                "text": "Subject: We're Sorry to Hear About Your Phone - How Can We Help?\n\nDear Valued Customer,\n\nThank you for reaching out to us. We're very sorry to hear that your phone broke, and we understand how frustrating that can be.\n\nTo help us assist you best, could you please provide a few more details about what happened? Specifically, it would be helpful if you could tell us:\n\n*   **What is the model of your phone?** (e.g., [Your Company Phone Model X, or specific manufacturer/model])\n*   **When did the incident occur?**\n*   **Could you describe how the phone broke?** (e.g., fell, stopped working suddenly, screen cracked, etc.)\n*   **Is the phone still under warranty?**\n\nOnce we have a better understanding of the situation, we can guide you through the next steps, whether it's troubleshooting, repair options, or warranty claims.\n\nPlease reply to this email with the requested information, or if you prefer to speak with someone directly, you can contact our support team at [Your Support Phone Number] during our business hours, or visit our support page at [Link to Your Company's Support Page/Returns/Warranty Info].\n\nWe look forward to helping you resolve this issue as quickly as possible.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
               }
             ]
           },
@@ -36,8 +36,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 58,
-        "candidatesTokenCount": 282,
-        "totalTokenCount": 580,
+        "candidatesTokenCount": 288,
+        "totalTokenCount": 578,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -48,10 +48,10 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 282
+            "tokenCount": 288
           }
         ],
-        "thoughtsTokenCount": 240
+        "thoughtsTokenCount": 232
       }
     }
   },
@@ -83,7 +83,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Subject: Regarding Your Phone Issue - We're Here to Help!\n\nDear [Customer Name],\n\nThank you for reaching out to us. We're very sorry to hear that your phone has broken, and we understand how frustrating this can be.\n\nTo help us best assist you, could you please provide a few more details?\n\n*   **What is the make and model of your phone?** (e.g., iPhone 15, Samsung Galaxy S23)\n*   **When did the phone break, and what happened?** (e.g., dropped it, screen stopped working, won't turn on, water damage)\n*   **When and where did you purchase the phone?** (This helps us check warranty status.)\n\nOnce we have this information, we can better advise you on the next steps, whether it's troubleshooting, warranty service, repair options, or a replacement.\n\nPlease reply to this email with the details, or feel free to call us directly at [Your Company Phone Number] if you'd prefer to discuss it over the phone. Our support team is available [Hours of Operation, e.g., Monday-Friday, 9 AM - 5 PM EST].\n\nWe look forward to helping you resolve this as quickly as possible.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
+                "text": "Subject: Regarding Your Recent Issue: \"Phone Broke\"\n\nDear Customer,\n\nThank you for reaching out to us. We're sorry to hear that your phone has broken. We understand how frustrating it can be when your device isn't working as it should.\n\nTo help us understand the situation better and assist you most effectively, could you please provide us with a few more details?\n\n*   **What is the model of your phone?** (e.g., iPhone 13, Samsung Galaxy S22, Google Pixel 7)\n*   **What exactly happened?** (e.g., dropped it, stopped turning on, screen cracked, water damage, stopped charging)\n*   **When did this occur?**\n*   **Is your phone still under warranty or did you purchase any extended protection plans?**\n\nOnce we have a little more information, we can guide you through the best next steps, which might include troubleshooting tips, repair options, or warranty information.\n\nPlease reply to this email with the details, or if you prefer, you can call our support team directly at [Your Support Phone Number] during our business hours [Your Business Hours].\n\nWe look forward to helping you resolve this as quickly as possible.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
               }
             ]
           },
@@ -92,8 +92,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 58,
-        "candidatesTokenCount": 279,
-        "totalTokenCount": 546,
+        "candidatesTokenCount": 270,
+        "totalTokenCount": 417,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -104,10 +104,130 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 279
+            "tokenCount": 270
           }
         ],
-        "thoughtsTokenCount": 209
+        "thoughtsTokenCount": 89
+      }
+    }
+  },
+  {
+    "key": "2bb5ba2af14c8a1f",
+    "instructionAgnosticKey": "7d399be2c6c4129c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "phone broke"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"phone broke\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    ",
+        "labels": {
+          "adk_agent_name": "draft_email"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Subject: Re: Your recent inquiry regarding your phone\n\nDear Valued Customer,\n\nThank you for reaching out to us. We're very sorry to hear that your phone is broken, and we understand how frustrating that can be.\n\nTo help us understand the situation better and assist you as quickly as possible, could you please provide a few more details about what happened?\n\nFor example, it would be helpful to know:\n*   **What specific model of phone do you have?** (e.g., iPhone 13, Samsung Galaxy S22, etc.)\n*   **When did this happen?**\n*   **What exactly happened to your phone?** (e.g., dropped it, water damage, stopped turning on, screen cracked, etc.)\n*   **Is your phone still under warranty?** (If you know)\n\nOnce we have a little more information, we'll be able to guide you through the best next steps, whether it's troubleshooting, repair options, or warranty claims.\n\nPlease reply to this email with the details, or feel free to call our customer support line directly at [Your Company Phone Number] if you'd prefer to speak with someone. Our team is available [Operating Hours, e.g., Monday-Friday, 9 AM - 5 PM EST].\n\nWe look forward to hearing from you and helping to resolve this issue.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 302,
+        "totalTokenCount": 523,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 58
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 302
+          }
+        ],
+        "thoughtsTokenCount": 163
+      }
+    }
+  },
+  {
+    "key": "99358c323abda287",
+    "instructionAgnosticKey": "d6946d766b636b24",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "phone broke"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Subject: Re: Your recent inquiry regarding your phone\n\nDear Valued Customer,\n\nThank you for reaching out to us. We're very sorry to hear that your phone is broken, and we understand how frustrating that can be.\n\nTo help us understand the situation better and assist you as quickly as possible, could you please provide a few more details about what happened?\n\nFor example, it would be helpful to know:\n*   **What specific model of phone do you have?** (e.g., iPhone 13, Samsung Galaxy S22, etc.)\n*   **When did this happen?**\n*   **What exactly happened to your phone?** (e.g., dropped it, water damage, stopped turning on, screen cracked, etc.)\n*   **Is your phone still under warranty?** (If you know)\n\nOnce we have a little more information, we'll be able to guide you through the best next steps, whether it's troubleshooting, repair options, or warranty claims.\n\nPlease reply to this email with the details, or feel free to call our customer support line directly at [Your Company Phone Number] if you'd prefer to speak with someone. Our team is available [Operating Hours, e.g., Monday-Friday, 9 AM - 5 PM EST].\n\nWe look forward to hearing from you and helping to resolve this issue.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"id\":\"d64324ed-d979-487b-827b-a4dae8222932\",\"name\":\"adk_request_input\",\"response\":{\"result\":\"shorter\"}}}]}\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"shorter\"\n    ",
+        "labels": {
+          "adk_agent_name": "draft_email"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Okay, I will revise the previous email to make it shorter, as requested by the manager's feedback.\n\nHere's the revised, shorter draft:\n\nSubject: Re: Your phone issue\n\nDear Valued Customer,\n\nThank you for contacting us. We're sorry to hear your phone is broken.\n\nTo help us assist you, please provide more details:\n*   **What is your phone model?**\n*   **What happened to it?** (e.g., dropped, not turning on, cracked screen)\n*   **Is it under warranty?**\n\nOnce we have this information, we can guide you on the best next steps.\n\nPlease reply to this email or call us at [Your Company Phone Number].\n\nSincerely,\n\nThe [Your Company Name] Support Team"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 444,
+        "candidatesTokenCount": 166,
+        "totalTokenCount": 757,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 444
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 166
+          }
+        ],
+        "thoughtsTokenCount": 147
       }
     }
   }

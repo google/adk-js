@@ -1,17 +1,9 @@
 [
   {
-    "key": "9a4363ea0fe135a2",
-    "instructionAgnosticKey": "b2a784f7e90793f2",
+    "key": "344ca7d27432abea",
+    "instructionAgnosticKey": "b7d8b17b7ea4d757",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "go"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -35,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Grape"
+                "text": "Apple"
               }
             ]
           },
@@ -43,63 +35,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 37,
-        "candidatesTokenCount": 2,
-        "totalTokenCount": 63,
+        "promptTokenCount": 36,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 59,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 37
+            "tokenCount": 36
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 2
+            "tokenCount": 1
           }
         ],
-        "thoughtsTokenCount": 24
+        "thoughtsTokenCount": 22
       }
     }
   },
   {
-    "key": "774281fdd2b8ca86",
-    "instructionAgnosticKey": "8312b27786d22e92",
+    "key": "b87634a049ca625e",
+    "instructionAgnosticKey": "76f05d0d271c04a2",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "go"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "go"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[generate_fruit_agent] said: Grape"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "Grape"
+              "text": "Apple"
             }
           ]
         }
@@ -118,7 +83,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Grapes are rich in antioxidants, particularly resveratrol, which can help protect your heart and blood vessels."
+                "text": "Eating an apple can help promote good digestion due to its high fiber content."
               }
             ]
           },
@@ -126,23 +91,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 44,
-        "candidatesTokenCount": 20,
-        "totalTokenCount": 90,
+        "promptTokenCount": 28,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 64,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 44
+            "tokenCount": 28
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 20
+            "tokenCount": 15
           }
         ],
-        "thoughtsTokenCount": 26
+        "thoughtsTokenCount": 21
       }
     }
   }

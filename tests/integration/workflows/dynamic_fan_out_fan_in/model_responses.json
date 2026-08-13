@@ -1,25 +1,9 @@
 [
   {
-    "key": "f9bb8dcf0415f757",
-    "instructionAgnosticKey": "c5961d15bc449f56",
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "AI, Cloud Computing, Quantum Computing"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "AI"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -46,7 +30,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "AI, Cloud, Quantum: The Ultimate Tech Trifecta."
+                "text": "Triple Threat: Handling 3 Topics, One Swift Stroke."
               }
             ]
           },
@@ -54,14 +38,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 54,
+        "promptTokenCount": 46,
         "candidatesTokenCount": 12,
-        "totalTokenCount": 430,
+        "totalTokenCount": 90,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 54
+            "tokenCount": 46
           }
         ],
         "candidatesTokensDetails": [
@@ -70,31 +54,15 @@
             "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 364
+        "thoughtsTokenCount": 32
       }
     }
   },
   {
-    "key": "7faf7d4e0cbe2a36",
-    "instructionAgnosticKey": "4a31d3b714eb27f2",
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "AI, Cloud Computing, Quantum Computing"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "Cloud Computing"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -121,7 +89,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "AI, Cloud, Quantum: The Tech Trinity Forging Our Future."
+                "text": "Triple Threat: Parallel Processing Engaged."
               }
             ]
           },
@@ -129,47 +97,31 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 55,
-        "candidatesTokenCount": 14,
-        "totalTokenCount": 985,
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 8,
+        "totalTokenCount": 811,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 55
+            "tokenCount": 46
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 14
+            "tokenCount": 8
           }
         ],
-        "thoughtsTokenCount": 916
+        "thoughtsTokenCount": 757
       }
     }
   },
   {
-    "key": "2105595e08af2b48",
-    "instructionAgnosticKey": "3be2874c299f0acb",
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
     "request": {
       "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "AI, Cloud Computing, Quantum Computing"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "Quantum Computing"
-            }
-          ]
-        },
         {
           "role": "user",
           "parts": [
@@ -196,7 +148,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "AI, Cloud, Quantum: Forging the Future of Computing."
+                "text": "**3-Way Flow: Parallel Processing Unleashed!**"
               }
             ]
           },
@@ -204,23 +156,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 55,
-        "candidatesTokenCount": 13,
-        "totalTokenCount": 1296,
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 893,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 55
+            "tokenCount": 46
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 13
+            "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 1228
+        "thoughtsTokenCount": 835
       }
     }
   }
