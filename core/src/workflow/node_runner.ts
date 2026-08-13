@@ -487,7 +487,8 @@ async function runOnce({
   // timeout (and any external abort). On the deadline (or abort) the engine
   // stops consuming events, closes the generator so its `finally` runs, and
   // aborts `child.abortSignal` so a cooperative body can cancel its in-flight
-  // work; the run rejects with NodeTimeoutError. Mirrors Python's
+  // work; the run rejects with NodeTimeoutError for a fired deadline and
+  // InvocationAbortedError for any other abort. Mirrors Python's
   // `asyncio.wait_for`.
   const timeoutSeconds = node.timeout;
   const controller = new AbortController();
@@ -497,8 +498,12 @@ async function runOnce({
   } else {
     parentSignal?.addEventListener('abort', onParentAbort, {once: true});
   }
+  let deadlineFired = false;
   const timer = setTimeout(
-    () => controller.abort(),
+    () => {
+      deadlineFired = true;
+      controller.abort();
+    },
     (timeoutSeconds ?? 0) * 1000,
   );
   child.abortSignal = controller.signal;
@@ -507,7 +512,13 @@ async function runOnce({
   // reused across iterations so we don't leak a listener per step.
   const aborted = new Promise<never>((_, reject) => {
     const fail = () =>
-      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds ?? 0}));
+      reject(
+        deadlineFired
+          ? new NodeTimeoutError({nodeName, timeout: timeoutSeconds ?? 0})
+          : new InvocationAbortedError(
+              `Invocation aborted while running node '${nodeName}'.`,
+            ),
+      );
     if (controller.signal.aborted) {
       fail();
     } else {
