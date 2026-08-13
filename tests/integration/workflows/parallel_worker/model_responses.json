@@ -1,14 +1,14 @@
 [
   {
-    "key": "cd9270015161d3d2",
-    "instructionAgnosticKey": "4264aed4e3cdf2d9",
+    "key": "92014c360cbc0a50",
+    "instructionAgnosticKey": "0c04e22ff5342701",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "databases"
+              "text": "flower"
             }
           ]
         }
@@ -21,7 +21,7 @@
           }
         },
         "responseMimeType": "application/json",
-        "systemInstruction": "Given the specific topic \"databases\", generate a list of 3 related topics.",
+        "systemInstruction": "Given the specific topic \"flower\", generate a list of 3 related topics.",
         "labels": {
           "adk_agent_name": "find_related_topics"
         }
@@ -31,41 +31,47 @@
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "[\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+                "text": "[\n  \"Botany\",\n  \"Gardening\",\n  \"Pollination\"\n]"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
         "promptTokenCount": 19,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 185,
+        "candidatesTokenCount": 21,
+        "totalTokenCount": 133,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
             "tokenCount": 19
           }
         ],
-        "thoughtsTokenCount": 154,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 21
+          }
+        ],
+        "thoughtsTokenCount": 93
       }
     }
   },
   {
-    "key": "e3bca3321aba963d",
-    "instructionAgnosticKey": "6e24d936094013e3",
+    "key": "57f651819556f230",
+    "instructionAgnosticKey": "5851154691d9ee9f",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "databases"
+              "text": "flower"
             }
           ]
         },
@@ -76,7 +82,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+              "text": "[find_related_topics] said: [\n  \"Botany\",\n  \"Gardening\",\n  \"Pollination\"\n]"
             }
           ]
         },
@@ -84,24 +90,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "SQL"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[make_upper_case] said: SQL"
-            },
-            {
-              "text": "[make_upper_case] said: NOSQL"
-            },
-            {
-              "text": "[make_upper_case] said: DATA WAREHOUSING"
+              "text": "BOTANY"
             }
           ]
         }
@@ -123,7 +112,7 @@
           ]
         },
         "responseMimeType": "application/json",
-        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
         "labels": {
           "adk_agent_name": "explain_topic"
         }
@@ -133,41 +122,47 @@
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\n  \"topic\": \"SQL\",\n  \"explanation\": \"SQL (Structured Query Language) is the standard language used for managing and manipulating relational databases. It is fundamental to interacting with, defining, and querying data stored in many types of databases.\"\n}"
+                "text": "{\n  \"topic\": \"BOTANY\",\n  \"explanation\": \"Botany is the scientific study of plants, and flowers are the reproductive structures of many plant species. Therefore, the study of flowers, their structure, function, classification, and evolution, is a core component of botany.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 83,
-        "candidatesTokenCount": 54,
-        "totalTokenCount": 171,
+        "promptTokenCount": 57,
+        "candidatesTokenCount": 62,
+        "totalTokenCount": 153,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 83
+            "tokenCount": 57
           }
         ],
-        "thoughtsTokenCount": 34,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 62
+          }
+        ],
+        "thoughtsTokenCount": 34
       }
     }
   },
   {
-    "key": "3b2b3199b7187a30",
-    "instructionAgnosticKey": "3691cf3130333b0a",
+    "key": "74227dc97594ce04",
+    "instructionAgnosticKey": "77607772828009d0",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "databases"
+              "text": "flower"
             }
           ]
         },
@@ -178,7 +173,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+              "text": "[find_related_topics] said: [\n  \"Botany\",\n  \"Gardening\",\n  \"Pollination\"\n]"
             }
           ]
         },
@@ -186,24 +181,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "NOSQL"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[make_upper_case] said: SQL"
-            },
-            {
-              "text": "[make_upper_case] said: NOSQL"
-            },
-            {
-              "text": "[make_upper_case] said: DATA WAREHOUSING"
+              "text": "GARDENING"
             }
           ]
         }
@@ -225,7 +203,7 @@
           ]
         },
         "responseMimeType": "application/json",
-        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
         "labels": {
           "adk_agent_name": "explain_topic"
         }
@@ -235,41 +213,47 @@
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"topic\": \"NOSQL\", \"explanation\": \"NoSQL (originally referring to 'non-SQL' or 'not only SQL') is a category of databases that provides a mechanism for storage and retrieval of data that is modeled in means other than the tabular relations used in traditional relational databases (which typically use SQL). While traditional databases are primarily relational, NoSQL databases encompass a wide variety of database technologies developed in response to the demands of modern web applications, big data, and real-time data processing. They are often chosen for their flexibility, scalability, and performance with specific data models, such as document, key-value, wide-column, or graph stores, making them a direct alternative or complement to SQL databases within the broader domain of 'databases'.\"}"
+                "text": "{\n  \"topic\": \"GARDENING\",\n  \"explanation\": \"Gardening is the practice of cultivating and caring for plants, including flowers. Flowers are a primary focus in many gardens, grown for their aesthetic beauty, fragrance, or for purposes like cutting or attracting pollinators. Therefore, gardening is the activity directly involving the planting, growing, and maintenance of flowers.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 84,
-        "candidatesTokenCount": 154,
-        "totalTokenCount": 309,
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 78,
+        "totalTokenCount": 172,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 84
+            "tokenCount": 58
           }
         ],
-        "thoughtsTokenCount": 71,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 78
+          }
+        ],
+        "thoughtsTokenCount": 36
       }
     }
   },
   {
-    "key": "e1c11a98f2b06d10",
-    "instructionAgnosticKey": "a577040a3abddd36",
+    "key": "077708ea225d7754",
+    "instructionAgnosticKey": "98824ea692e191ff",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "databases"
+              "text": "flower"
             }
           ]
         },
@@ -280,7 +264,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+              "text": "[find_related_topics] said: [\n  \"Botany\",\n  \"Gardening\",\n  \"Pollination\"\n]"
             }
           ]
         },
@@ -288,24 +272,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "For context:"
-            },
-            {
-              "text": "[make_upper_case] said: SQL"
-            },
-            {
-              "text": "[make_upper_case] said: NOSQL"
-            },
-            {
-              "text": "[make_upper_case] said: DATA WAREHOUSING"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "DATA WAREHOUSING"
+              "text": "POLLINATION"
             }
           ]
         }
@@ -327,7 +294,7 @@
           ]
         },
         "responseMimeType": "application/json",
-        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
         "labels": {
           "adk_agent_name": "explain_topic"
         }
@@ -337,28 +304,34 @@
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"topic\":\"DATA WAREHOUSING\",\"explanation\":\"DATA WAREHOUSING is a specialized type of database system designed for analytical processing rather than transactional operations. While databases focus on storing and retrieving current data for day-to-day operations, data warehouses consolidate and store historical data from multiple operational databases to support business intelligence activities, reporting, and data analysis. They are structured differently, often using star or snowflake schemas, to optimize for complex queries and aggregations across large datasets, making them a crucial application and extension of database technology.\"}"
+                "text": "{\n  \"topic\": \"POLLINATION\",\n  \"explanation\": \"Pollination is a vital process directly involving flowers. It is the transfer of pollen, typically from the anther to the stigma of a flower, which enables fertilization and the production of seeds and fruits. Flowers are the reproductive organs of many plants, specifically evolved to attract pollinators (like insects or birds) or to facilitate wind pollination, making them central to the entire pollination mechanism.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 87,
-        "candidatesTokenCount": 108,
-        "totalTokenCount": 345,
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 94,
+        "totalTokenCount": 191,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 87
+            "tokenCount": 58
           }
         ],
-        "thoughtsTokenCount": 150,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 94
+          }
+        ],
+        "thoughtsTokenCount": 39
       }
     }
   }

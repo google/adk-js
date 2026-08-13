@@ -13,7 +13,7 @@
  * calls the live model and writes that fixture.
  */
 
-import {Event, InMemoryRunner, RunConfig, RunnableRoot} from '@google/adk';
+import {App, Event, InMemoryRunner, RunConfig, RunnableRoot} from '@google/adk';
 import {Content} from '@google/genai';
 import {existsSync, readFileSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
@@ -62,8 +62,15 @@ function loadSamplesEnv(): void {
   }
 }
 
-/** A single user turn: plain text or a full `Content` (e.g. function response). */
-export type SampleTurn = string | Content;
+/**
+ * A single user turn: plain text, a full `Content` (e.g. a function response),
+ * or a function that builds one from the turns already run — which is how a
+ * HITL sample answers an interrupt whose id the framework generated.
+ */
+export type SampleTurn =
+  | string
+  | Content
+  | ((previousTurns: Event[][]) => string | Content);
 
 /** Specification of a sample run. */
 export interface SampleSpec {
@@ -71,6 +78,12 @@ export interface SampleSpec {
   name: string;
   /** The real `rootAgent` imported from the sample module. */
   rootAgent: RunnableRoot;
+  /**
+   * The sample's `App`, for samples that ship one (e.g. because they need
+   * `ResumabilityConfig`). When set it is what the runner is built from, so the
+   * sample is exercised exactly as its module declares it.
+   */
+  app?: App;
   /** User turns to send, in order (one session, so later turns resume). */
   turns: SampleTurn[];
   /** Optional run config (e.g. `plainTextToolConfirmation` for HITL samples). */
@@ -83,10 +96,11 @@ export interface SampleSpec {
   offline?: boolean;
 }
 
-function toContent(turn: SampleTurn): Content {
-  return typeof turn === 'string'
-    ? {role: 'user', parts: [{text: turn}]}
-    : turn;
+function toContent(turn: SampleTurn, previousTurns: Event[][]): Content {
+  const resolved = typeof turn === 'function' ? turn(previousTurns) : turn;
+  return typeof resolved === 'string'
+    ? {role: 'user', parts: [{text: resolved}]}
+    : resolved;
 }
 
 /**
@@ -120,12 +134,12 @@ export async function runSample(spec: SampleSpec): Promise<Event[][]> {
   });
 
   try {
-    const runner = new InMemoryRunner({
-      agent: spec.rootAgent,
-      appName: spec.rootAgent.name,
-    });
+    const appName = spec.app?.name ?? spec.rootAgent.name;
+    const runner = spec.app
+      ? new InMemoryRunner({app: spec.app})
+      : new InMemoryRunner({agent: spec.rootAgent, appName});
     const session = await runner.sessionService.createSession({
-      appName: spec.rootAgent.name,
+      appName,
       userId: 'u1',
     });
 
@@ -135,7 +149,7 @@ export async function runSample(spec: SampleSpec): Promise<Event[][]> {
       for await (const event of runner.runAsync({
         userId: 'u1',
         sessionId: session.id,
-        newMessage: toContent(turn),
+        newMessage: toContent(turn, perTurn),
         runConfig: spec.runConfig,
       })) {
         events.push(event);
@@ -144,13 +158,31 @@ export async function runSample(spec: SampleSpec): Promise<Event[][]> {
     }
 
     if (recording) {
-      const calls = drainRecordedCalls();
-      writeFileSync(file, JSON.stringify(calls, null, 2) + '\n');
+      appendFixture(file, drainRecordedCalls());
     }
     return perTurn;
   } finally {
     restoreRecordReplay();
   }
+}
+
+/**
+ * Fixtures this process has already truncated. A sample with several scenarios
+ * calls `runSample` once per `it()` against one fixture file, so only the first
+ * write of a record run replaces it; the rest append. Without this the last
+ * scenario's calls would be the only ones recorded and every other scenario
+ * would miss on replay.
+ */
+const truncatedFixtures = new Set<string>();
+
+function appendFixture(file: string, calls: RecordedCall[]): void {
+  let existing: RecordedCall[] = [];
+  if (truncatedFixtures.has(file) && existsSync(file)) {
+    existing = JSON.parse(readFileSync(file, 'utf8')) as RecordedCall[];
+  }
+  truncatedFixtures.add(file);
+  const merged = [...existing, ...calls];
+  writeFileSync(file, JSON.stringify(merged, null, 2) + '\n');
 }
 
 /** Flattens per-turn events into one list. */

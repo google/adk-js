@@ -3,18 +3,15 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/agent_in_workflow/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Agent in a workflow: a `task`-mode `LlmAgent` (`intake_agent`) chats to collect
  * a structured identity and completes via `finish_task`; a function node routes
  * on the result (retry the intake, or proceed); and a second `LlmAgent`
- * (`generate_instruction`) uses a `require_confirmation` tool. Faithful port of
- * Python `contributing/samples/workflows/agent_in_workflow`.
+ * (`generate_instruction`) uses a `require_confirmation` tool. One-to-one port
+ * of Python `contributing/samples/workflows/agent_in_workflow/agent.py`.
  *
  * REQUIRES an API key. Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/agent_in_workflow/agent.ts
+ *   npm run sample -- tests/integration/workflows/agent_in_workflow/agent.ts
  * Provide a name + phone (use "Jane Doe" to pass the identity check). The
  * `find_orders` tool pauses for confirmation before running.
  */
@@ -32,13 +29,13 @@ import {z} from 'zod';
 
 const patientIdentity = z.object({
   name: z.string().describe("The patient's full name."),
-  phoneNumber: z.string().describe("The patient's phone number."),
+  phone_number: z.string().describe("The patient's phone number."),
 });
 type PatientIdentity = z.infer<typeof patientIdentity>;
 
-/** Emits a plain display message (Python `Event(message=...)`). */
+/** Python's `Event(message=...)` content shape (role `user`). */
 const message = (text: string) =>
-  createEvent({content: {role: 'model', parts: [{text}]}});
+  createEvent({content: {role: 'user', parts: [{text}]}});
 
 // A task-mode agent: it chats to gather the identity and calls finish_task with
 // the structured result, which becomes this node's output.
@@ -61,7 +58,7 @@ const checkIdentity = node(
       return createEvent({
         route: 'retry',
         content: {
-          role: 'model',
+          role: 'user',
           parts: [
             {
               text: `Could not find matching records for ${identity.name}. Let's try again.`,
@@ -78,7 +75,7 @@ const checkIdentity = node(
 // A tool that requires confirmation before it runs (HITL).
 const findOrders = new FunctionTool({
   name: 'find_orders',
-  description: "Finds the patient's lab orders.",
+  description: 'Finds orders for the patient.',
   execute: () => ['CBC (Complete Blood Count)', 'Lipid Panel'],
   requireConfirmation: true,
 });
@@ -86,9 +83,10 @@ const findOrders = new FunctionTool({
 const generateInstruction = new LlmAgent({
   name: 'generate_instruction',
   model: 'gemini-2.5-flash',
-  instruction: `You MUST call the find_orders tool to get the patient's actual
-orders. Do not invent orders. After the tool returns, list the orders found and
-then generate a concise instruction about how to prepare based on those orders.`,
+  instruction: `
+Use the find_orders tool to get the patient's orders.
+List the orders found, and then generate a concise instruction about how to prepare based on those orders.
+`,
   tools: [findOrders],
 });
 
@@ -96,14 +94,6 @@ export const rootAgent = new Workflow({
   name: 'task_in_workflow',
   edges: [
     ['START', intakeAgent, checkIdentity],
-    [
-      checkIdentity,
-      {
-        retry: intakeAgent,
-        // generate_instruction re-runs on resume so its tool-confirmation can
-        // resolve after the user approves the find_orders call.
-        [DEFAULT_ROUTE]: node(generateInstruction, {rerunOnResume: true}),
-      },
-    ],
+    [checkIdentity, {retry: intakeAgent, [DEFAULT_ROUTE]: generateInstruction}],
   ],
 });

@@ -1,20 +1,20 @@
 [
   {
-    "key": "98b25193a6c2de82",
-    "instructionAgnosticKey": "684e2888794c2394",
+    "key": "2bb5ba2af14c8a1f",
+    "instructionAgnosticKey": "7d399be2c6c4129c",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "My order never arrived and support is ignoring me."
+              "text": "phone broke"
             }
           ]
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"My order never arrived and support is ignoring me.\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"phone broke\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    ",
         "labels": {
           "adk_agent_name": "draft_email"
         }
@@ -27,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Subject: We're so sorry about your order and the lack of response - Let's fix this immediately\n\nDear Customer,\n\nPlease accept my sincerest apologies for the frustration and inconvenience you've experienced. It is completely unacceptable that your order has not arrived, and I am truly sorry to hear that you feel ignored by our support team. That is not the level of service we aim to provide, and I understand how disheartening that must be.\n\nI want to assure you that I am personally looking into this right away. To help me investigate your order status and resolve this for you as quickly as possible, could you please provide me with your:\n\n*   **Order Number:**\n*   **Email Address used for the order:**\n*   **(Optional, but helpful) Date of Purchase:**\n\nOnce I have this information, I will immediately:\n1.  Trace your shipment.\n2.  Review all previous support interactions.\n3.  Work directly with our logistics and support teams to find out exactly what happened and why your previous inquiries went unanswered.\n\nYou can expect to hear back from me within [e.g., 4-8 business hours / 24 hours] with a full update and a proposed resolution. My priority is to get this resolved for you quickly and to ensure you receive your order or a full refund, along with a proper explanation.\n\nThank you for your patience as we rectify this. Please feel free to reply directly to this email with the requested details or any further questions you may have.\n\nSincerely,\n\n[Your Name/Customer Service Manager]\n[Your Title]\n[Your Company]"
+                "text": "Subject: Regarding Your Recent Report - Phone Issue\n\nDear [Customer Name],\n\nThank you for reaching out to us. We're very sorry to hear that your phone is broken, and we understand how frustrating that can be.\n\nTo help us understand the situation better and assist you as quickly as possible, could you please provide us with a few more details? Specifically, it would be very helpful if you could tell us:\n\n1.  **What model of phone is it?** (e.g., iPhone 13, Samsung Galaxy S22, etc.)\n2.  **When did you purchase the phone?** (An approximate date is fine if you don't have the exact one)\n3.  **Can you describe what happened when it broke?** (e.g., dropped it, stopped working suddenly, screen cracked, won't turn on, water damage, etc.)\n4.  **Do you have any warranty or protection plans associated with the device?**\n\nOnce we have this information, we'll be able to guide you through the next steps, which may include troubleshooting, repair options, or potential replacement under warranty.\n\nPlease reply to this email with the details requested. Alternatively, if you prefer to speak with someone, you can call our support team at [Your Phone Number] during our business hours of [Business Hours, e.g., Monday-Friday, 9 AM - 5 PM EST].\n\nWe look forward to helping you resolve this issue promptly.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
               }
             ]
           },
@@ -35,23 +35,79 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 73,
-        "candidatesTokenCount": 337,
-        "totalTokenCount": 615,
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 323,
+        "totalTokenCount": 796,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 73
+            "tokenCount": 58
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 337
+            "tokenCount": 323
           }
         ],
-        "thoughtsTokenCount": 205
+        "thoughtsTokenCount": 415
+      }
+    }
+  },
+  {
+    "key": "2bb5ba2af14c8a1f",
+    "instructionAgnosticKey": "7d399be2c6c4129c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "phone broke"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"draft_email\".\n\n\n    Please write a polite, helpful response email to the following customer complaint: \"phone broke\"\n\n    If there is any feedback from the manager to revise the draft, please incorporate it: \"\"\n    ",
+        "labels": {
+          "adk_agent_name": "draft_email"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Subject: Regarding Your Recent Phone Issue - How Can We Help?\n\nDear Valued Customer,\n\nThank you for reaching out to us. We're very sorry to hear that your phone has broken, and we understand how frustrating and disruptive this can be. Please accept our sincerest apologies for the inconvenience this has caused.\n\nTo help us assist you best and find the quickest resolution, could you please provide us with a few more details? Specifically, it would be very helpful if you could tell us:\n\n*   What is the **model of your phone**?\n*   When did you **purchase it**? (This helps us check warranty status)\n*   Could you please describe **what happened** and **what exactly is broken or not working**? (e.g., screen cracked, not turning on, water damage, etc.)\n\nOnce we have this information, we can better advise you on the next steps, which may include troubleshooting, repair options, or exploring warranty coverage.\n\nIn the meantime, you can also visit our support page for common issues and warranty information here: [Link to Your Company's Support/Warranty Page]\n\nWe are committed to helping you get this resolved as quickly as possible. Please reply to this email with the details requested, or if you prefer to speak with someone directly, you can contact our support team at [Your Phone Number] or start a live chat on our website at [Link to Live Chat].\n\nThank you for your patience as we work to assist you.\n\nSincerely,\n\nThe [Your Company Name] Support Team"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 322,
+        "totalTokenCount": 1284,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 58
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 322
+          }
+        ],
+        "thoughtsTokenCount": 904
       }
     }
   }

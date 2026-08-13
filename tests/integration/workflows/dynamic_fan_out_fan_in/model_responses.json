@@ -1,14 +1,14 @@
 [
   {
-    "key": "893fe50fb5617951",
-    "instructionAgnosticKey": "b07208311518b7db",
+    "key": "f9bb8dcf0415f757",
+    "instructionAgnosticKey": "c5961d15bc449f56",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "space, oceans, volcanoes"
+              "text": "AI, Cloud Computing, Quantum Computing"
             }
           ]
         },
@@ -16,7 +16,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "volcanoes"
+              "text": "AI"
             }
           ]
         },
@@ -46,7 +46,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Deep, Fiery, Infinite: Oceans, Volcanoes, Space."
+                "text": "AI, Cloud, Quantum: The Ultimate Tech Trifecta."
               }
             ]
           },
@@ -55,8 +55,8 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 54,
-        "candidatesTokenCount": 14,
-        "totalTokenCount": 958,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 430,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -67,23 +67,98 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 364
+      }
+    }
+  },
+  {
+    "key": "7faf7d4e0cbe2a36",
+    "instructionAgnosticKey": "4a31d3b714eb27f2",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "AI, Cloud Computing, Quantum Computing"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Cloud Computing"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "AI, Cloud, Quantum: The Tech Trinity Forging Our Future."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 55,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 985,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 55
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
             "tokenCount": 14
           }
         ],
-        "thoughtsTokenCount": 890
+        "thoughtsTokenCount": 916
       }
     }
   },
   {
-    "key": "4a0fb6899c30134c",
-    "instructionAgnosticKey": "7da08d4d351e7485",
+    "key": "2105595e08af2b48",
+    "instructionAgnosticKey": "3be2874c299f0acb",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "space, oceans, volcanoes"
+              "text": "AI, Cloud Computing, Quantum Computing"
             }
           ]
         },
@@ -91,7 +166,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "space"
+              "text": "Quantum Computing"
             }
           ]
         },
@@ -121,7 +196,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Space, Oceans, Volcanoes: Unearthing the Universe's Wildest Wonders."
+                "text": "AI, Cloud, Quantum: Forging the Future of Computing."
               }
             ]
           },
@@ -129,98 +204,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 52,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 939,
+        "promptTokenCount": 55,
+        "candidatesTokenCount": 13,
+        "totalTokenCount": 1296,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 52
+            "tokenCount": 55
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 18
+            "tokenCount": 13
           }
         ],
-        "thoughtsTokenCount": 869
-      }
-    }
-  },
-  {
-    "key": "e22d71fa47fcc401",
-    "instructionAgnosticKey": "5569d5644985d09c",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "space, oceans, volcanoes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "oceans"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
-            }
-          ]
-        }
-      ],
-      "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
-        "labels": {
-          "adk_agent_name": "generator"
-        }
-      }
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "role": "model",
-            "parts": [
-              {
-                "text": "From Earth's fiery heart to the cosmic expanse: Space, Oceans, Volcanoes."
-              }
-            ]
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 53,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 1096,
-        "trafficType": "ON_DEMAND",
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 53
-          }
-        ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 18
-          }
-        ],
-        "thoughtsTokenCount": 1025
+        "thoughtsTokenCount": 1228
       }
     }
   }

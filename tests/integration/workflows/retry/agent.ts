@@ -3,30 +3,38 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/retry/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Retry: a mock task fails randomly (~70%) and is retried per its RetryConfig,
- * using `ctx.attemptCount`. Faithful port of Python
- * `contributing/samples/workflows/retry`.
+ * using `ctx.attemptCount`. One-to-one port of Python
+ * `contributing/samples/workflows/retry/agent.py`.
  *
- * Run (offline):  npm run sample -- samples/workflows/retry/agent.ts
+ * Run (offline):
+ *   npm run sample -- tests/integration/workflows/retry/agent.ts
  */
 
 import {createEvent, node, NodeContext, Workflow} from '@google/adk';
+
+/**
+ * Stands in for Python's `urllib.error.HTTPError`, so the failure event carries
+ * the same `errorCode`/`errorMessage` the Python sample produces.
+ */
+function httpError(code: number, msg: string): Error {
+  const error = new Error(`HTTP Error ${code}: ${msg}`);
+  error.name = 'HTTPError';
+  return error;
+}
 
 const getWeather = node(
   async function* (ctx: NodeContext) {
     yield createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [{text: `Getting weather... attempt ${ctx.attemptCount}`}],
       },
     });
     if (Math.random() < 0.7) {
       // 70% chance of failure
-      throw new Error('HTTP 500: Internal Server Error');
+      throw httpError(500, 'Internal Server Error');
     }
     yield 'sunny';
   },
@@ -36,7 +44,7 @@ const getWeather = node(
 const reportWeather = node(
   async function* (_c: NodeContext, weather: string) {
     yield createEvent({
-      content: {role: 'model', parts: [{text: `The weather is ${weather}`}]},
+      content: {role: 'user', parts: [{text: `The weather is ${weather}`}]},
     });
   },
   {name: 'report_weather'},

@@ -3,15 +3,12 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/fan_out_fan_in/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Fan-out / fan-in: run three functions in parallel on the same input, join
- * their outputs, and aggregate. Faithful port of Python
- * `contributing/samples/workflows/fan_out_fan_in`.
+ * their outputs, and aggregate. One-to-one port of Python
+ * `contributing/samples/workflows/fan_out_fan_in/agent.py`.
  *
- * Run (offline):  npm run sample -- samples/workflows/fan_out_fan_in/agent.ts
+ * Run (offline):  npm run sample -- tests/integration/workflows/fan_out_fan_in/agent.ts
  */
 
 import {createEvent, JoinNode, node, NodeContext, Workflow} from '@google/adk';
@@ -33,7 +30,7 @@ const aggregate = node(
   async function* (_c: NodeContext, results: Record<string, unknown>) {
     yield createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [
           {
             text:

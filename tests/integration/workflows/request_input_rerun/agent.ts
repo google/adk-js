@@ -3,18 +3,15 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/request_input_rerun/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Human-in-the-loop (single-node, rerun-on-resume). An LlmAgent drafts a reply;
  * one `human_review` node both raises the RequestInput and, because it is marked
  * `rerunOnResume: true`, RE-RUNS on resume to consume the reply (via
- * `ctx.resumeInputs`) and route. Faithful port of Python
- * `contributing/samples/workflows/request_input_rerun`.
+ * `ctx.resumeInputs`) and route. One-to-one port of Python
+ * `contributing/samples/workflows/request_input_rerun/agent.py`.
  *
  * REQUIRES an API key (draft_email calls a live model). Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/request_input_rerun/agent.ts
+ *   npm run sample -- tests/integration/workflows/request_input_rerun/agent.ts
  * Turn 1: type a complaint. Turn 2: type "approve", "reject", or feedback text.
  */
 
@@ -27,9 +24,9 @@ import {
   Workflow,
 } from '@google/adk';
 
-/** Emits a plain display message (Python `Event(message=...)`). */
+/** Python's `Event(message=...)` content shape (role `user`). */
 const message = (text: string) =>
-  createEvent({content: {role: 'model', parts: [{text}]}});
+  createEvent({content: {role: 'user', parts: [{text}]}});
 
 // Takes the initial customer complaint and seeds it into workflow state.
 const processInput = node(
@@ -65,13 +62,10 @@ const humanReview = node(
       });
     }
 
-    // Normalize the reply (case/whitespace) before matching, so "Approve" or
-    // "approve " don't fall through to the revise branch.
-    const reply = String(resumeInput).trim().toLowerCase();
-    if (reply === 'reject') {
+    if (resumeInput === 'reject') {
       return createEvent({route: 'rejected'});
     }
-    if (reply === 'approve') {
+    if (resumeInput === 'approve') {
       return createEvent({route: 'approved'});
     }
     ctx.state.set('feedback', resumeInput);

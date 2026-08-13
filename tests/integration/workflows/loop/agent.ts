@@ -3,15 +3,13 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/loop/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Loop: generate a headline, grade it, and route back until it is tech-related.
- * Faithful port of Python `contributing/samples/workflows/loop`.
+ * One-to-one port of Python
+ * `contributing/samples/workflows/loop/agent.py`.
  *
  * Requires an API key. Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/loop/agent.ts
+ *   npm run sample -- tests/integration/workflows/loop/agent.ts
  * Enter a topic, e.g. "the ocean" (loops until the headline is tech-related).
  */
 

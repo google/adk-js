@@ -3,17 +3,14 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/dynamic_fan_out_fan_in/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Dynamic fan-out / fan-in: an orchestrator node splits a comma-separated input
  * into topics, fans out a worker LlmAgent per topic via `ctx.runNode()`, waits
- * for all of them, and aggregates the results into a table. Faithful port of
- * Python `contributing/samples/workflows/dynamic_fan_out_fan_in`.
+ * for all of them, and aggregates the results into a table. One-to-one port of
+ * Python `contributing/samples/workflows/dynamic_fan_out_fan_in/agent.py`.
  *
  * Requires an API key (calls a live model). Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/dynamic_fan_out_fan_in/agent.ts
+ *   npm run sample -- tests/integration/workflows/dynamic_fan_out_fan_in/agent.ts
  * Enter a comma-separated list of topics, e.g. "space, oceans, volcanoes".
  */
 
@@ -26,7 +23,6 @@ const generator = new LlmAgent({
   instruction:
     'Write a catchy one-line headline about the topic provided in the user message.',
 });
-const generatorNode = node(generator);
 
 const orchestrator = node(
   async function* (ctx: NodeContext, nodeInput: string) {
@@ -37,17 +33,14 @@ const orchestrator = node(
       .filter((t) => t.length > 0);
     yield createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [{text: `Processing ${topics.length} topics in parallel.`}],
       },
     });
 
     // Fan-out: schedule a dynamic node for each topic.
-    const tasks = topics.map((topic, i) =>
-      ctx.runNode(generatorNode, topic, {
-        useSubBranch: true,
-        runId: `gen-${i}`,
-      }),
+    const tasks = topics.map((topic) =>
+      ctx.runNode(generator, topic, {useSubBranch: true}),
     );
 
     // Wait for all tasks to complete.
@@ -62,7 +55,7 @@ const orchestrator = node(
     });
 
     yield createEvent({
-      content: {role: 'model', parts: [{text: aggregated}]},
+      content: {role: 'user', parts: [{text: aggregated}]},
     });
   },
   {name: 'orchestrator', rerunOnResume: true},

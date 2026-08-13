@@ -1,14 +1,14 @@
 [
   {
-    "key": "8069171463b0c7a3",
-    "instructionAgnosticKey": "28b9e67bda5ca5eb",
+    "key": "4d165d7296a857c7",
+    "instructionAgnosticKey": "6dd9a37e6d1e4f74",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "The quick brown fox jumps over the lazy dog, repeatedly, all day."
+              "text": "go"
             }
           ]
         },
@@ -16,7 +16,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "The quick brown fox jumps over the lazy dog, repeatedly, all day."
+              "text": "go"
             }
           ]
         }
@@ -35,7 +35,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "The quick brown fox repeatedly jumps over the lazy dog throughout the day."
+                "text": "The provided text is too short and does not contain enough information to summarize."
               }
             ]
           },
@@ -43,23 +43,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 53,
-        "candidatesTokenCount": 14,
-        "totalTokenCount": 96,
+        "promptTokenCount": 25,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 68,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 53
+            "tokenCount": 25
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 14
+            "tokenCount": 15
           }
         ],
-        "thoughtsTokenCount": 29
+        "thoughtsTokenCount": 28
       }
     }
   }

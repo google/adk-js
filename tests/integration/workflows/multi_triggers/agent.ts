@@ -3,14 +3,12 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/multi_triggers/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Multi-triggers: a node with several predecessors runs once per incoming
- * trigger. Faithful port of Python `contributing/samples/workflows/multi_triggers`.
+ * trigger. One-to-one port of Python
+ * `contributing/samples/workflows/multi_triggers/agent.py`.
  *
- * Run (offline):  npm run sample -- samples/workflows/multi_triggers/agent.ts
+ * Run (offline):  npm run sample -- tests/integration/workflows/multi_triggers/agent.ts
  */
 
 import {createEvent, node, NodeContext, Workflow} from '@google/adk';
@@ -31,7 +29,7 @@ const sendMessage = node(
   async function* (_c: NodeContext, nodeInput: unknown) {
     yield createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [{text: `Triggered for input: ${nodeInput}`}],
       },
     });

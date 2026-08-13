@@ -3,15 +3,12 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/auth_api_key/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Auth API Key: a FunctionNode with API-key authentication. The `fetch_weather`
  * node declares an `authConfig`, so the framework pauses the workflow and
  * requests a credential before running it; once supplied, the node runs with the
- * credential available in session state. Faithful port of Python
- * `contributing/samples/workflows/auth_api_key`.
+ * credential available in session state. One-to-one port of Python
+ * `contributing/samples/workflows/auth_api_key/agent.py`.
  *
  * The node is `rerunOnResume: true` so that, on resume, it re-runs its body
  * (storing the provided credential and fetching), rather than short-circuiting.
@@ -20,7 +17,7 @@
  * There is no such helper here; the framework stores the credential at
  * `temp:<credentialKey>` in state (see AuthHandler), which the node reads.
  *
- * Run:  npm run sample -- samples/workflows/auth_api_key/agent.ts
+ * Run:  npm run sample -- tests/integration/workflows/auth_api_key/agent.ts
  * Turn 1: any message -> the workflow requests an API key.
  * Turn 2: type any API key value; the node runs and echoes it back (masked).
  */
@@ -53,7 +50,7 @@ interface Weather {
   city: string;
   temperature: string;
   condition: string;
-  apiKeyUsed: string;
+  api_key_used: string;
 }
 
 // Fetches weather data using the authenticated API key.
@@ -70,7 +67,7 @@ const fetchWeather = node(
       city: 'San Francisco',
       temperature: '18C',
       condition: 'Sunny',
-      apiKeyUsed: masked,
+      api_key_used: masked,
     };
   },
   {name: 'fetch_weather', authConfig, rerunOnResume: true},
@@ -81,12 +78,12 @@ const summarize = node(
   (_ctx: NodeContext, weather: Weather) =>
     createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [
           {
             text:
               `Weather for ${weather.city}: ${weather.temperature}, ` +
-              `${weather.condition}. (Authenticated with key: ${weather.apiKeyUsed})`,
+              `${weather.condition}. (Authenticated with key: ${weather.api_key_used})`,
           },
         ],
       },

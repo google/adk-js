@@ -3,22 +3,19 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/request_input/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Human-in-the-loop (two-node pattern). An LlmAgent drafts a reply to a customer
  * complaint; `request_human_review` pauses the workflow (RequestInput) and, on
  * resume, its successor `handle_human_review` receives the human's reply as its
  * input and routes on it (approve / reject / feedback-to-revise). Faithful port
- * of Python `contributing/samples/workflows/request_input`.
+ * of Python `contributing/samples/workflows/request_input/agent.py`.
  *
  * The two-node split relies on `rerun_on_resume=false` semantics: the node that
  * raised the interrupt does NOT re-run on resume; instead it completes with the
  * resume value as its output, which feeds the next node.
  *
  * REQUIRES an API key (draft_email calls a live model). Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/request_input/agent.ts
+ *   npm run sample -- tests/integration/workflows/request_input/agent.ts
  * Turn 1: type a complaint. Turn 2: type "approve", "reject", or feedback text.
  */
 
@@ -31,9 +28,9 @@ import {
   Workflow,
 } from '@google/adk';
 
-/** Emits a plain display message (Python `Event(message=...)`). */
+/** Python's `Event(message=...)` content shape (role `user`). */
 const message = (text: string) =>
-  createEvent({content: {role: 'model', parts: [{text}]}});
+  createEvent({content: {role: 'user', parts: [{text}]}});
 
 // Takes the initial customer complaint and seeds it into workflow state.
 const processInput = node(
@@ -71,13 +68,10 @@ const requestHumanReview = node(
 // Receives the human's reply (the resume value) as its input and routes on it.
 const handleHumanReview = node(
   (ctx: NodeContext, nodeInput: string) => {
-    // Normalize the reply (case/whitespace) before matching, so "Approve" or
-    // "approve " don't fall through to the revise branch.
-    const reply = String(nodeInput).trim().toLowerCase();
-    if (reply === 'reject') {
+    if (nodeInput === 'reject') {
       return createEvent({route: 'rejected'});
     }
-    if (reply === 'approve') {
+    if (nodeInput === 'approve') {
       return createEvent({route: 'approved'});
     }
     ctx.state.set('feedback', nodeInput);

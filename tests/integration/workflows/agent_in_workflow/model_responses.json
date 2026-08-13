@@ -1,14 +1,14 @@
 [
   {
-    "key": "5859bea69bb556da",
-    "instructionAgnosticKey": "dd892124f5572b7f",
+    "key": "4fa8f397250ab824",
+    "instructionAgnosticKey": "3a761bc70a4b684e",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+              "text": "I am Jane Doe, my phone number is 555-1234"
             }
           ]
         },
@@ -16,7 +16,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+              "text": "I am Jane Doe, my phone number is 555-1234"
             }
           ]
         }
@@ -36,14 +36,14 @@
                       "type": "STRING",
                       "description": "The patient's full name."
                     },
-                    "phoneNumber": {
+                    "phone_number": {
                       "type": "STRING",
                       "description": "The patient's phone number."
                     }
                   },
                   "required": [
                     "name",
-                    "phoneNumber"
+                    "phone_number"
                   ]
                 }
               }
@@ -65,10 +65,10 @@
                 "functionCall": {
                   "name": "finish_task",
                   "args": {
-                    "name": "Jane Doe",
-                    "phoneNumber": "555-123-4567"
+                    "phone_number": "555-1234",
+                    "name": "Jane Doe"
                   },
-                  "id": "adk-6453bae6-378a-46c3-bea0-149eda8e2788"
+                  "id": "adk-18e2b23f-d850-491f-b7ac-349573590968"
                 }
               }
             ]
@@ -77,36 +77,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 216,
-        "candidatesTokenCount": 19,
-        "totalTokenCount": 293,
+        "promptTokenCount": 206,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 272,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 216
+            "tokenCount": 206
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 19
+            "tokenCount": 17
           }
         ],
-        "thoughtsTokenCount": 58
+        "thoughtsTokenCount": 49
       }
     }
   },
   {
-    "key": "4d654d41f3ce18f9",
-    "instructionAgnosticKey": "8e897ba6e57b4dc7",
+    "key": "1a51e880b664a1a9",
+    "instructionAgnosticKey": "e041756c62222956",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+              "text": "I am Jane Doe, my phone number is 555-1234"
             }
           ]
         },
@@ -114,7 +114,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
+              "text": "I am Jane Doe, my phone number is 555-1234"
             }
           ]
         },
@@ -125,7 +125,7 @@
               "text": "For context:"
             },
             {
-              "text": "[intake_agent] called tool `finish_task` with parameters: {\"name\":\"Jane Doe\",\"phoneNumber\":\"555-123-4567\"}"
+              "text": "[intake_agent] called tool `finish_task` with parameters: {\"phone_number\":\"555-1234\",\"name\":\"Jane Doe\"}"
             }
           ]
         },
@@ -153,13 +153,13 @@
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders.",
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
         "tools": [
           {
             "functionDeclarations": [
               {
                 "name": "find_orders",
-                "description": "Finds the patient's lab orders.",
+                "description": "Finds orders for the patient.",
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {}
@@ -183,7 +183,7 @@
                 "functionCall": {
                   "name": "find_orders",
                   "args": {},
-                  "id": "adk-d98f5307-6330-4235-8fc9-e2f66312d763"
+                  "id": "adk-979e2633-064e-4077-91df-8433807d7dcc"
                 }
               }
             ]
@@ -192,14 +192,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 212,
+        "promptTokenCount": 182,
         "candidatesTokenCount": 3,
-        "totalTokenCount": 274,
+        "totalTokenCount": 251,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 212
+            "tokenCount": 182
           }
         ],
         "candidatesTokensDetails": [
@@ -208,152 +208,7 @@
             "tokenCount": 3
           }
         ],
-        "thoughtsTokenCount": 59
-      }
-    }
-  },
-  {
-    "key": "8de2f3f109b60cc4",
-    "instructionAgnosticKey": "9db7eb5a9e2222a1",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "My full name is Jane Doe and my phone number is 555-123-4567."
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[intake_agent] called tool `finish_task` with parameters: {\"name\":\"Jane Doe\",\"phoneNumber\":\"555-123-4567\"}"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[intake_agent] tool `finish_task` returned result: {\"result\":\"Task completed.\"}"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
-            }
-          ]
-        },
-        {
-          "role": "model",
-          "parts": [
-            {
-              "functionCall": {
-                "name": "find_orders",
-                "args": {}
-              }
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "yes"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
-            }
-          ]
-        }
-      ],
-      "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\nYou MUST call the find_orders tool to get the patient's actual\norders. Do not invent orders. After the tool returns, list the orders found and\nthen generate a concise instruction about how to prepare based on those orders.",
-        "tools": [
-          {
-            "functionDeclarations": [
-              {
-                "name": "find_orders",
-                "description": "Finds the patient's lab orders.",
-                "parameters": {
-                  "type": "OBJECT",
-                  "properties": {}
-                }
-              }
-            ]
-          }
-        ],
-        "labels": {
-          "adk_agent_name": "generate_instruction"
-        }
-      }
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "role": "model",
-            "parts": [
-              {
-                "functionCall": {
-                  "name": "find_orders",
-                  "args": {},
-                  "id": "adk-0edc0e06-18d6-49aa-86b3-8850e2e3f9bf"
-                }
-              }
-            ]
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 237,
-        "candidatesTokenCount": 3,
-        "totalTokenCount": 281,
-        "trafficType": "ON_DEMAND",
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 237
-          }
-        ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 3
-          }
-        ],
-        "thoughtsTokenCount": 41
+        "thoughtsTokenCount": 66
       }
     }
   }

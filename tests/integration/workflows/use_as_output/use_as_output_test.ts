@@ -5,8 +5,10 @@
  */
 
 /**
- * Runs the real `use_as_output` sample: an orchestrator runs a summarizer
- * sub-node with `useAsOutput`, then a finalize node wraps that output.
+ * Runs the real `use_as_output` sample: an orchestrator node delegates to a
+ * summarizer with `useAsOutput`, so the child's result becomes the node's
+ * output. Turn mirrors the Python golden
+ * `contributing/samples/workflows/use_as_output/tests/go.json`.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -19,22 +21,34 @@ import {
 import {rootAgent} from './agent.js';
 
 describe('workflow sample: use_as_output', () => {
-  it('promotes the sub-node result and wraps it in the final node', async () => {
+  it("promotes the child's result to the delegating node's output", async () => {
     const perTurn = await runSample({
       name: 'use_as_output',
       rootAgent,
-      turns: [
-        'The quick brown fox jumps over the lazy dog, repeatedly, all day.',
-      ],
+      turns: ['go'],
     });
     const events = allEvents(perTurn);
 
-    // The summarizer sub-node ran (reached via ctx.runNode with useAsOutput).
     expect(authors(events).has('summarizer')).toBe(true);
 
-    // The finalize node wrapped the promoted summary as the workflow output.
-    const output = finalOutput(events);
-    expect(typeof output).toBe('string');
-    expect(output as string).toMatch(/^final: /);
-  });
+    const summary = events.find((e) => e.author === 'summarizer');
+    expect(summary?.nodeInfo?.messageAsOutput).toBe(true);
+    const summaryText = (summary?.content?.parts ?? [])
+      .map((p) => p.text ?? '')
+      .join('');
+
+    const orchestrate = events.find((e) => e.author === 'orchestrate');
+    expect(orchestrate?.output).toBe(summaryText);
+
+    expect(finalOutput(events)).toBe(`final: ${summaryText}`);
+
+    expect(summary?.nodeInfo?.outputFor).toEqual([
+      summary?.nodeInfo?.path,
+      orchestrate?.nodeInfo?.path,
+    ]);
+
+    expect(
+      events.filter((e) => e.output === summaryText).map((e) => e.author),
+    ).toEqual(['summarizer', 'orchestrate']);
+  }, 60000);
 });

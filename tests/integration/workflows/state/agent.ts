@@ -3,16 +3,16 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/state/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
- * State: several ways to read/write shared workflow state. Faithful port of
- * Python `contributing/samples/workflows/state`. (Python's final node reads a
- * state value by automatic parameter injection; TypeScript reads it explicitly
- * via `ctx.state`.)
+ * State: several ways to read/write shared workflow state. One-to-one port of
+ * Python `contributing/samples/workflows/state/agent.py`.
  *
- * Run (offline):  npm run sample -- samples/workflows/state/agent.ts
+ * TypeScript note: Python's `read_state_via_param` reads a state value by
+ * automatic parameter-name injection. `FunctionNode` in TypeScript has a fixed
+ * `(ctx, input)` signature, so the value is read explicitly via `ctx.state`.
+ * See the gap report.
+ *
+ * Run (offline):  npm run sample -- tests/integration/workflows/state/agent.ts
  */
 
 import {node, NodeContext, Workflow} from '@google/adk';
@@ -24,7 +24,6 @@ function processInitialInput(ctx: NodeContext, nodeInput: string): string {
 }
 
 function updateStateViaEvent(ctx: NodeContext, nodeInput: string): void {
-  // Implicitly update the shared workflow state (Python yields Event(state=)).
   ctx.state.set('uppercased_text', nodeInput.toUpperCase());
 }
 

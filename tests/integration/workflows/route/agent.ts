@@ -3,18 +3,15 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/route/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Route: an LlmAgent classifies the input into a category, a routing node emits
  * that category as the route, and the matching branch (an LlmAgent, or a
- * function for the fallback) handles it. Faithful port of Python
- * `contributing/samples/workflows/route`.
+ * function for the fallback) handles it. One-to-one port of Python
+ * `contributing/samples/workflows/route/agent.py`.
  *
  * REQUIRES an API key (classification and answers call a live model). Set
  * GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/route/agent.ts
+ *   npm run sample -- tests/integration/workflows/route/agent.ts
  * Try "What is ADK?" (question) or "ADK is great." (statement).
  */
 
@@ -65,7 +62,7 @@ const handleOther = node(
   () =>
     createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [
           {text: 'Sorry I can only answer questions or comment on statements.'},
         ],

@@ -3,17 +3,14 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/parallel_worker/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Parallel worker: an LlmAgent generates related topics, each is uppercased and
  * explained by a parallel worker (a function and an agent with
- * `parallelWorker: true`), then results are aggregated. Faithful port of Python
- * `contributing/samples/workflows/parallel_worker`.
+ * `parallelWorker: true`), then results are aggregated. One-to-one port of
+ * Python `contributing/samples/workflows/parallel_worker/agent.py`.
  *
  * Requires an API key. Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/parallel_worker/agent.ts
+ *   npm run sample -- tests/integration/workflows/parallel_worker/agent.ts
  * Enter a topic, e.g. "databases".
  */
 
@@ -45,7 +42,7 @@ const makeUpperCase = node(
   function* (_c: NodeContext, nodeInput: string) {
     yield nodeInput.toUpperCase();
   },
-  {name: 'make_upper_case', parallelWorker: true, maxParallelWorkers: 2},
+  {name: 'make_upper_case', parallelWorker: true},
 );
 
 const explainTopic = node(
@@ -53,19 +50,17 @@ const explainTopic = node(
     name: 'explain_topic',
     model: 'gemini-2.5-flash',
     instruction:
-      'Explain how the following topic relates to the original topic: "{topic}".',
+      'Explain how the following topic relates the the original topic: "{topic}".',
     outputSchema: z.object({topic: z.string(), explanation: z.string()}),
   }),
-  // Bound concurrency (at most 2 live model calls at once), demonstrating the
-  // `maxParallelWorkers` field the README advertises.
-  {parallelWorker: true, maxParallelWorkers: 2},
+  {parallelWorker: true},
 );
 
 const aggregate = node(
   (_c: NodeContext, nodeInput: TopicExplanation[]) =>
     createEvent({
       content: {
-        role: 'model',
+        role: 'user',
         parts: [
           {
             text: nodeInput
