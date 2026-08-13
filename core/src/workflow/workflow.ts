@@ -34,6 +34,7 @@ import {
   makeFastForwardResult,
   reconstructNodeStates,
   RehydratedNode,
+  resolvedInterruptResponses,
 } from './utils/rehydration_utils.js';
 
 /**
@@ -221,11 +222,15 @@ export class Workflow extends BaseNode {
     // in progress (so a run that already completed is not replayed), and to
     // this workflow's own direct children (by path) so nested workflows with
     // same-named nodes don't collide.
+    const runEvents = eventsForCurrentRun(
+      ctx.session?.events ?? [],
+      ctx.invocationId,
+    );
     const rehydrated = reconstructNodeStates(
-      eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
+      runEvents,
       ctx.nodePath || undefined,
     );
-    this.applyResumeInputs(ctx, rehydrated);
+    this.applyResumeInputs(ctx, runEvents);
 
     if (this.dynamicEntry) {
       await this.runDynamicEntry(ctx, nodeInput, dynamicState);
@@ -279,15 +284,17 @@ export class Workflow extends BaseNode {
    * Merges resolved interrupt responses from prior session events into
    * `ctx.resumeInputs`, so waiting nodes (which read `ctx.resumeInputs[id]`)
    * resume with the user's response. Shared by child contexts via propagation.
+   *
+   * Taken from the events rather than from `rehydrated`, because that view is
+   * scoped to this workflow's direct children: an interrupt raised deeper — by
+   * a `ctx.runNode` child, or inside a nested workflow — is keyed out of it,
+   * and its answer would never reach the node waiting on it.
    */
-  private applyResumeInputs(
-    ctx: NodeContext,
-    rehydrated: Map<string, RehydratedNode>,
-  ): void {
-    for (const node of rehydrated.values()) {
-      for (const [interruptId, response] of node.resolvedResponses) {
-        ctx.resumeInputs[interruptId] = response;
-      }
+  private applyResumeInputs(ctx: NodeContext, runEvents: Event[]): void {
+    for (const [interruptId, response] of resolvedInterruptResponses(
+      runEvents,
+    )) {
+      ctx.resumeInputs[interruptId] = response;
     }
   }
 

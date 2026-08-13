@@ -122,6 +122,16 @@ describe('Phase 5b — rehydration utility', () => {
       });
     });
 
+    it('resolves a free-text reply wrapped as {result: …}', () => {
+      const states = reconstructNodeStates(
+        eventsWithReply({result: 'museum and lunch'}),
+      );
+
+      expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(
+        'museum and lunch',
+      );
+    });
+
     it('rejects the wrong envelope instead of passing it to the next node', () => {
       // `{response: x}` is not the `{result: x}` envelope, so it is not
       // unwrapped; before this check it reached the successor whole and
@@ -129,6 +139,62 @@ describe('Phase 5b — rehydration utility', () => {
       expect(() =>
         reconstructNodeStates(eventsWithReply({response: '21'})),
       ).toThrow(/reply to interrupt 'gate-1' does not match/i);
+    });
+
+    describe('after a rejected reply', () => {
+      /** A rejected reply, followed by whatever the user tried next. */
+      function eventsWithRetry(retry: Event): Event[] {
+        return [...eventsWithReply({response: '21'}), retry];
+      }
+
+      it('stops rejecting once the turn that carried it has passed', () => {
+        // The reply stays in the session for good. Re-throwing on every replay
+        // is what used to make one malformed answer end the session.
+        const retry = createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'museum and lunch'}]},
+        });
+
+        expect(() =>
+          reconstructNodeStates(eventsWithRetry(retry)),
+        ).not.toThrow();
+      });
+
+      it('leaves the interrupt unresolved, so the next answer still lands', () => {
+        const retry = createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'museum and lunch'}]},
+        });
+
+        const gate = reconstructNodeStates(eventsWithRetry(retry)).get('gate');
+
+        expect(gate?.interruptIds.has('gate-1')).toBe(true);
+        expect(gate?.resolvedResponses.has('gate-1')).toBe(false);
+      });
+
+      it('accepts a corrected structured reply for the same interrupt', () => {
+        const retry = createEvent({
+          author: 'user',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'gate-1',
+                  name: 'adk_request_input',
+                  response: {userResponse: 'museum and lunch'},
+                },
+              },
+            ],
+          },
+        });
+
+        const states = reconstructNodeStates(eventsWithRetry(retry));
+
+        expect(states.get('gate')?.resolvedResponses.get('gate-1')).toEqual({
+          userResponse: 'museum and lunch',
+        });
+      });
     });
   });
 

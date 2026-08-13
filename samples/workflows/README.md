@@ -85,9 +85,15 @@ shapes and the difference matters:
 `{result: …}` is the only envelope that gets unwrapped. Any other object is
 handed to the next node exactly as sent — which is what makes a structured
 reply carrying an object (`{userResponse: …}` in `payload_and_schema`) work. If
-the interrupt declared a `responseSchema`, a structured reply is checked
-against it and a mismatch fails loudly; if it declared none, whatever you send
-is what the next node receives.
+the interrupt declared a `responseSchema`, a reply carrying an _object_ is
+checked against it and a mismatch fails loudly — the interrupt stays open, so
+your next reply answers it; a bare value inside `{result: …}` counts as plain
+text and is not checked; if the interrupt declared none, whatever you send is
+what the next node receives.
+
+The schema itself travels on the interrupt as
+`functionCall.args.response_schema` (snake_case, matching adk-python), which is
+what the dev UI reads to render a form for the reply.
 
 ## Samples
 

@@ -23,10 +23,10 @@ import {
   getRequestInputInterruptIds,
   hasAuthCredential,
   hasRequestInputFunctionCall,
+  interruptResponseMismatch,
   processAuthResume,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
   responseSchemasByInterruptId,
-  validateInterruptResponse,
 } from '../../src/workflow/utils/hitl_utils.js';
 import {unwrapResponse} from '../../src/workflow/utils/rehydration_utils.js';
 
@@ -85,7 +85,7 @@ describe('createRequestInputEvent', () => {
       interruptId: 'i1',
       message: 'pick',
       payload: {x: 1},
-      responseSchema: null,
+      response_schema: null,
     });
     expect(event.longRunningToolIds).toEqual(['i1']);
     expect(hasRequestInputFunctionCall(event)).toBe(true);
@@ -100,7 +100,7 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
   it('converts a Zod v3 responseSchema to a JSON schema', () => {
@@ -111,7 +111,7 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
   it('converts a genai Schema responseSchema to a JSON schema', () => {
@@ -126,10 +126,25 @@ describe('createRequestInputEvent', () => {
     >;
     // Emitted in the same JSON Schema dialect as a Zod responseSchema, so a
     // client reading this field does not have to handle two type spellings.
-    expect(args.responseSchema).toEqual({
+    expect(args['response_schema']).toEqual({
       type: 'object',
       properties: {answer: {type: 'string'}},
     });
+  });
+
+  it('names the schema arg the way clients read it', () => {
+    const args = firstFunctionCall(
+      createRequestInputEvent(
+        new RequestInput({responseSchema: z4.object({answer: z4.string()})}),
+      ),
+    )?.args as Record<string, unknown>;
+
+    expect(Object.keys(args)).toEqual([
+      'interruptId',
+      'payload',
+      'message',
+      'response_schema',
+    ]);
   });
 });
 
@@ -192,51 +207,67 @@ describe('responseSchemasByInterruptId', () => {
   });
 });
 
-describe('validateInterruptResponse', () => {
+describe('interruptResponseMismatch', () => {
   const objectSchema = toJsonSchema(z4.object({userResponse: z4.string()}));
 
   it('accepts a reply matching the declared schema', () => {
-    expect(() =>
-      validateInterruptResponse('i1', {userResponse: 'yes'}, objectSchema),
-    ).not.toThrow();
+    expect(
+      interruptResponseMismatch('i1', {userResponse: 'yes'}, objectSchema),
+    ).toBeUndefined();
   });
 
-  it('rejects a reply in the wrong shape, naming the interrupt', () => {
+  it('reports a reply in the wrong shape, naming the interrupt', () => {
     // The `{response: x}` envelope a client reaches for instead of `{result: x}`:
     // it is not unwrapped, so the whole object arrives as the node's input.
-    expect(() =>
-      validateInterruptResponse('i1', {response: '21'}, objectSchema),
-    ).toThrow(/reply to interrupt 'i1' does not match/i);
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/reply to interrupt 'i1' does not match/i);
   });
 
   it('explains how a structured reply is expected to look', () => {
-    expect(() =>
-      validateInterruptResponse('i1', {response: '21'}, objectSchema),
-    ).toThrow(/\{result: <value>\}/);
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/\{result: <value>\}/);
+  });
+
+  it('says the interrupt can be answered again', () => {
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/still waiting/i);
   });
 
   it('passes through when the interrupt declared no schema', () => {
-    expect(() =>
-      validateInterruptResponse('i1', {anything: true}, undefined),
-    ).not.toThrow();
+    expect(
+      interruptResponseMismatch('i1', {anything: true}, undefined),
+    ).toBeUndefined();
   });
 
   it('passes through when the schema cannot be compiled', () => {
-    expect(() =>
-      validateInterruptResponse('i1', 'anything', {
+    expect(
+      interruptResponseMismatch('i1', 'anything', {
         $ref: 'https://example.com/unresolvable.json',
       }),
-    ).not.toThrow();
+    ).toBeUndefined();
+  });
+
+  it('lets a bare-text reply through an object schema, as plain text does', () => {
+    expect(
+      interruptResponseMismatch(
+        'i1',
+        unwrapResponse({result: 'the museum and the lunch'}),
+        objectSchema,
+      ),
+    ).toBeUndefined();
   });
 
   it('checks the unwrapped value, so {result: x} satisfies a bare schema', () => {
     const stringSchema = toJsonSchema(z4.string());
-    expect(() =>
-      validateInterruptResponse(
+    expect(
+      interruptResponseMismatch(
         'i1',
         unwrapResponse({result: '21'}),
         stringSchema,
       ),
-    ).not.toThrow();
+    ).toBeUndefined();
   });
 });

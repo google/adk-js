@@ -15,9 +15,9 @@ import {ToolConfirmation} from '../../tools/tool_confirmation.js';
 import {AsyncQueue} from '../../utils/async_queue.js';
 import {isNodeTool} from '../../workflow/nodes/node_tool.js';
 import {
+  interruptResponseMismatch,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
   responseSchemasByInterruptId,
-  validateInterruptResponse,
 } from '../../workflow/utils/hitl_utils.js';
 import {unwrapResponse} from '../../workflow/utils/rehydration_utils.js';
 import {handleFunctionCallList} from '../functions.js';
@@ -136,9 +136,14 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
  * Collects resume inputs from the session: structured `adk_request_input`
  * function responses take precedence; otherwise a plain-text reply is mapped to
  * every still-pending interrupt id.
+ *
+ * A reply that does not match its interrupt's schema is rejected loudly while
+ * it is the turn being processed, and skipped on later turns — it never
+ * resolved its interrupt, so the pause is still open for the next answer.
  */
 function collectResumeInputs(events: Event[]): Record<string, unknown> {
   const responseSchemas = responseSchemasByInterruptId(events);
+  let isCurrentTurn = true;
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (event.author !== 'user') {
@@ -149,7 +154,17 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     for (const fr of getFunctionResponses(event)) {
       if (fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fr.id) {
         const response = unwrapResponse(fr.response);
-        validateInterruptResponse(fr.id, response, responseSchemas.get(fr.id));
+        const mismatch = interruptResponseMismatch(
+          fr.id,
+          response,
+          responseSchemas.get(fr.id),
+        );
+        if (mismatch) {
+          if (isCurrentTurn) {
+            throw new Error(mismatch);
+          }
+          continue;
+        }
         structured[fr.id] = response;
         found = true;
       }
@@ -157,11 +172,12 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     if (found) {
       return structured;
     }
+    isCurrentTurn = false;
   }
 
   // Plain-text fallback: map the latest plain-text user turn to pending
   // interrupts (mirrors WorkflowAgent's interactive resume).
-  const pending = pendingInterruptIds(events);
+  const pending = pendingInterruptIds(events, responseSchemas);
   if (pending.size === 0) {
     return {};
   }
@@ -180,15 +196,31 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
   return inputs;
 }
 
-/** Interrupt ids raised via `adk_request_input` that have no user response. */
-function pendingInterruptIds(events: Event[]): Set<string> {
+/**
+ * Interrupt ids raised via `adk_request_input` that have no user response.
+ *
+ * A reply rejected by its schema does not count as one: it was never handed to
+ * the waiting node, so the interrupt is still owed an answer.
+ */
+function pendingInterruptIds(
+  events: Event[],
+  responseSchemas: Map<string, unknown>,
+): Set<string> {
   const answered = new Set<string>();
   for (const event of events) {
     if (event.author !== 'user') {
       continue;
     }
     for (const fr of getFunctionResponses(event)) {
-      if (fr.id) {
+      if (!fr.id) {
+        continue;
+      }
+      const mismatch = interruptResponseMismatch(
+        fr.id,
+        unwrapResponse(fr.response),
+        responseSchemas.get(fr.id),
+      );
+      if (!mismatch) {
         answered.add(fr.id);
       }
     }

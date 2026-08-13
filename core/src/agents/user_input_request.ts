@@ -107,7 +107,7 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
           kind: 'input',
           message: asString(args['message']),
           payload: args['payload'] ?? undefined,
-          responseSchema: args['responseSchema'] ?? undefined,
+          responseSchema: args['response_schema'] ?? undefined,
         });
         break;
 

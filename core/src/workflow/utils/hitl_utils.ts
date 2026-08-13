@@ -33,6 +33,17 @@ export {
 } from '../../agents/functions.js';
 
 /**
+ * The arg key the declared JSON Schema travels under on an `adk_request_input`
+ * call. Snake_case among camelCase neighbours because that is the cross-
+ * language wire format: `adk-python`'s `create_request_input_event` dumps the
+ * request by alias (`interruptId`, `payload`, `message`) and then sets
+ * `response_schema` explicitly, and clients read that spelling — the dev UI
+ * builds the reply form from `args.response_schema`, so emitting
+ * `responseSchema` leaves the user typing free text at a structured prompt.
+ */
+const RESPONSE_SCHEMA_ARG = 'response_schema';
+
+/**
  * Creates an interrupt {@link Event} from a {@link RequestInput}. The event
  * carries an `adk_request_input` function call and marks the interrupt id as a
  * long-running tool id.
@@ -42,7 +53,7 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     interruptId: requestInput.interruptId,
     payload: requestInput.payload ?? null,
     message: requestInput.message ?? null,
-    responseSchema: requestInput.responseSchema
+    [RESPONSE_SCHEMA_ARG]: requestInput.responseSchema
       ? toJsonSchema(requestInput.responseSchema)
       : null,
   };
@@ -83,7 +94,7 @@ export function responseSchemasByInterruptId(
         continue;
       }
       const schema = (fc.args as Record<string, unknown> | undefined)?.[
-        'responseSchema'
+        RESPONSE_SCHEMA_ARG
       ];
       if (schema) {
         schemas.set(fc.id, schema);
@@ -95,29 +106,43 @@ export function responseSchemasByInterruptId(
 
 /**
  * Checks a *structured* reply against the `responseSchema` its interrupt
- * declared, and throws when it does not match.
+ * declared, and describes the mismatch when there is one. Returns `undefined`
+ * when the reply is acceptable.
+ *
+ * Reporting rather than throwing is what lets a caller be loud about the reply
+ * that just arrived and quiet about the same reply on every later replay: a
+ * rejected reply stays in the session forever, so a checker that threw on
+ * sight would end the session rather than the turn.
  *
  * Only structured replies are checked. A plain-text reply is routed to every
  * pending interrupt as-is (the interactive CLI and the dev UI both rely on
  * that), and holding free text to an object schema would break it.
  *
- * Without this, a reply in the wrong shape is simply handed to the next node:
- * a client that wraps its answer as `{response: x}` instead of `{result: x}`
- * gets the whole envelope delivered as the node's input, which typically
- * surfaces far downstream as a stringified `[object Object]`.
+ * A reply that unwraps to a bare scalar counts as plain text and is exempt for
+ * the same reason: `{result: <text>}` is the envelope a client sends when it
+ * has only a chat box to offer, so checking it would reject the very answer
+ * the plain-text path accepts.
+ *
+ * What remains checked is the case this exists for: a reply in the wrong
+ * *shape*. A client that wraps its answer as `{response: x}` instead of
+ * `{result: x}` gets the whole envelope delivered as the node's input, which
+ * typically surfaces far downstream as a stringified `[object Object]`.
  */
-export function validateInterruptResponse(
+export function interruptResponseMismatch(
   interruptId: string,
   value: unknown,
   jsonSchema: unknown,
-): void {
+): string | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
   const validator = compileJsonSchema(jsonSchema);
   if (!validator) {
-    return;
+    return undefined;
   }
   const result = validator.safeParse(value);
   if (result.success) {
-    return;
+    return undefined;
   }
   const issues = result.error.issues
     .map((issue) => {
@@ -125,11 +150,12 @@ export function validateInterruptResponse(
       return `${issue.message}${at}`;
     })
     .join('; ');
-  throw new Error(
+  return (
     `The reply to interrupt '${interruptId}' does not match the ` +
-      `responseSchema it declared: ${issues}. A structured reply must either ` +
-      `match that schema, or wrap a bare value as {result: <value>}; a ` +
-      `plain-text reply is accepted as-is and is not checked.`,
+    `responseSchema it declared: ${issues}. A structured reply must either ` +
+    `match that schema, or wrap a bare value as {result: <value>}; a ` +
+    `plain-text reply is accepted as-is and is not checked. The interrupt is ` +
+    `still waiting, so you can answer it again.`
   );
 }
 

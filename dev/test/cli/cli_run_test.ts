@@ -414,7 +414,7 @@ describe('cli_run', () => {
                   interruptId: 'interrupt-1',
                   message: 'Enter a number:',
                   payload: {draft: 'hi'},
-                  responseSchema: {type: 'object'},
+                  response_schema: {type: 'object'},
                 },
               },
             },
