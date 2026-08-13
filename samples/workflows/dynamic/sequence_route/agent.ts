@@ -26,13 +26,11 @@ const cityTimeSchema = z.object({
 });
 type CityTime = z.infer<typeof cityTimeSchema>;
 
-const cityGeneratorAgent = node(
-  new LlmAgent({
-    name: 'city_generator_agent',
-    model: 'gemini-flash-latest',
-    instruction: 'Return the name of a random city. Return only the name.',
-  }),
-);
+const cityGeneratorAgent = new LlmAgent({
+  name: 'city_generator_agent',
+  model: 'gemini-flash-latest',
+  instruction: 'Return the name of a random city. Return only the name.',
+});
 
 /** Simulates returning the current time in a specified city. */
 const cityTimeFunction = node(

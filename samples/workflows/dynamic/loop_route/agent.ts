@@ -30,14 +30,11 @@ import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
 /** Safety bound on the refine loop. */
 const MAX_FIX_ROUNDS = 3;
 
-const coderAgent = node(
-  new LlmAgent({
-    name: 'generator_agent',
-    model: 'gemini-flash-latest',
-    instruction:
-      'Write TypeScript code for the user request. Output code only.',
-  }),
-);
+const coderAgent = new LlmAgent({
+  name: 'generator_agent',
+  model: 'gemini-flash-latest',
+  instruction: 'Write TypeScript code for the user request. Output code only.',
+});
 
 /** Simulates a compile / lint pass. Empty findings means "clean". */
 const compileLintCheck = node(
@@ -54,15 +51,13 @@ const compileLintCheck = node(
   {name: 'lint_reviewer'},
 );
 
-const fixerAgent = node(
-  new LlmAgent({
-    name: 'fixer_agent',
-    model: 'gemini-flash-latest',
-    instruction: `Refactor current code {code}.
-        Based on compile & lint review: {findings}
-        Output code only.`,
-  }),
-);
+const fixerAgent = new LlmAgent({
+  name: 'fixer_agent',
+  model: 'gemini-flash-latest',
+  instruction: `Refactor current code {code}.
+      Based on compile & lint review: {findings}
+      Output code only.`,
+});
 
 const codeWorkflow = node(
   async (ctx: NodeContext, userRequest: string) => {

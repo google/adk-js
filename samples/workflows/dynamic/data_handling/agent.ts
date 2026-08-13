@@ -20,13 +20,11 @@
 
 import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
 
-const draftAgent = node(
-  new LlmAgent({
-    name: 'draft_agent',
-    model: 'gemini-flash-latest',
-    instruction: 'Write a short draft for the user request.',
-  }),
-);
+const draftAgent = new LlmAgent({
+  name: 'draft_agent',
+  model: 'gemini-flash-latest',
+  instruction: 'Write a short draft for the user request.',
+});
 
 const formatFunctionNode = node(
   (_ctx: NodeContext, rawDraft: string) =>
