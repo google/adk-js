@@ -1,8 +1,8 @@
 {
-  "name": "workflow-root-test",
+  "name": "app-workflow-test",
   "version": "1.0.0",
   "scripts": {
-    "start": "npx @google/adk-devtools run graph/agent.ts"
+    "start": "npx @google/adk-devtools run app.ts"
   },
   "devDependencies": {
     "@google/adk-devtools": "file:../../../../dev",

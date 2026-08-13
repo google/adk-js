@@ -12,16 +12,18 @@ const normalize = node(
 );
 
 const answer = node(
-  (_ctx: NodeContext, question: string) => `graph handled: ${question}`,
+  (_ctx: NodeContext, question: string) =>
+    `Hello from a bare Workflow root: ${question}`,
   {name: 'answer'},
 );
 
 /**
- * A graph exported as the root, with no `WorkflowAgent` around it. Function
- * nodes rather than an `LlmAgent`, so the run needs no model.
+ * An entrypoint that exports a graph as the root, with no `WorkflowAgent` and no
+ * `App` around it. Function nodes rather than an `LlmAgent`, so the run needs no
+ * model and no recorded response.
  */
 export const rootAgent = new Workflow({
-  name: 'workflow_root_graph',
+  name: 'workflow_app_integration',
   description: 'Normalizes the question, then answers it.',
   edges: [['START', normalize, answer]],
 });
