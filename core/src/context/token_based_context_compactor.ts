@@ -100,7 +100,6 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Extract raw events to compact.
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
     const compactedEventPresent = activeEvents.find(isCompactedEvent);
 
@@ -120,7 +119,6 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
-    // Append the new compacted event to the session history.
     invocationContext.session.events.push(compactedEvent);
   }
 }

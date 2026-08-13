@@ -102,7 +102,6 @@ describe('VertexAiMemoryBankService Integration', () => {
       }),
     });
 
-    // Define a mock memory session
     const memorySession = await runner.sessionService.createSession({
       appName: 'test_memory_app',
       userId: 'test_user',
@@ -115,10 +114,8 @@ describe('VertexAiMemoryBankService Integration', () => {
       }),
     });
 
-    // Add the session context to memory
     await runner.memoryService!.addSessionToMemory(memorySession);
 
-    // Verify that generateInternal was called
     expect(mockMemories.generateInternal).toHaveBeenCalled();
 
     const session = await runner.sessionService.createSession({
@@ -151,7 +148,6 @@ describe('VertexAiMemoryBankService Integration', () => {
     expect(memoryLoaded).toBe(true);
     expect(finalResponse).toContain('Your favorite color is green.');
 
-    // Verify that retrieveInternal was called by the tool
     expect(mockMemories.retrieveInternal).toHaveBeenCalledWith(
       expect.objectContaining({
         similaritySearchParams: {

@@ -12,7 +12,6 @@ import {
 } from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credential_exchanger_registry.js';
 
-// Mock credential exchanger for testing
 class MockCredentialExchanger implements BaseCredentialExchanger {
   async exchange({
     authCredential,
@@ -55,7 +54,6 @@ describe('CredentialExchangerRegistry', () => {
     const mockExchangerOpenIdConnect = new MockCredentialExchanger();
     const mockExchangerServiceAccount = new MockCredentialExchanger();
 
-    // Register each credential type
     registry.register(AuthCredentialTypes.API_KEY, mockExchangerApiKey);
     registry.register(AuthCredentialTypes.OAUTH2, mockExchangerOauth2);
     registry.register(

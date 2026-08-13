@@ -32,7 +32,6 @@ type A2AStreamEventData =
   | TaskStatusUpdateEvent
   | TaskArtifactUpdateEvent;
 
-// Mock @a2a-js/sdk/client
 vi.mock('@a2a-js/sdk/client', () => {
   const DefaultAgentCardResolver = vi.fn().mockImplementation(() => ({
     resolve: vi.fn(),

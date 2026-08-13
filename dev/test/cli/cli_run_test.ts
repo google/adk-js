@@ -12,7 +12,6 @@ import {runAgent} from '../../src/cli/cli_run.js';
 import {AgentFile} from '../../src/utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../../src/utils/file_utils.js';
 
-// Mock dependencies
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
 }));

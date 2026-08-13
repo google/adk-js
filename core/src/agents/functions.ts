@@ -465,7 +465,6 @@ export async function handleFunctionCallList({
       functionResponse = normalizeCallbackResponse(functionResponse);
     }
 
-    // Builds the function response event.
     const functionResponseEvent = createEvent({
       invocationId: invocationContext.invocationId,
       author: toolEventAuthor(invocationContext),
