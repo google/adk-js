@@ -61,6 +61,11 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       // Deduplicate concurrent calls: await the in-flight task.
       return existing.task;
     }
+    if (existing?.result) {
+      // Already settled this turn without executing its body. Re-running it
+      // here would discard the recorded run and duplicate its side effects.
+      return this.handBack(ctx, existing.result, options);
+    }
 
     // Cross-turn resume: rehydrate this dynamic run from the events of the run
     // still in progress (a run that already completed must not be replayed).
@@ -122,8 +127,21 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
         parentRunId: ctx.runId,
       }),
       output: result.output,
+      result,
     });
-    if (run.options.useAsOutput) {
+    return this.handBack(ctx, result, run.options);
+  }
+
+  /**
+   * Applies a settled result to the caller's context and returns it, so a first
+   * call and a repeat call for the same path are indistinguishable.
+   */
+  private handBack(
+    ctx: NodeContext,
+    result: NodeResult,
+    options: ScheduleDynamicNodeOptions,
+  ): NodeResult {
+    if (options.useAsOutput) {
       ctx.output = result.output;
       ctx.route = result.route;
     }

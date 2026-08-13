@@ -332,4 +332,77 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
     expect(turn2.some(hasRequestInputFunctionCall)).toBe(false);
     expect(turn2.some((e) => e.output === 'Approved')).toBe(true);
   });
+
+  it('hands back a fast-forwarded run when the same run id is asked for twice', async () => {
+    let stepRuns = 0;
+    const outputs: unknown[] = [];
+
+    const step = new FunctionNode('step', (_c, input) => {
+      stepRuns++;
+      return `step(${input})`;
+    });
+    const ask = new FunctionNode(
+      'ask',
+      (ctx: NodeContext) => {
+        const answer = ctx.resumeInputs['confirm'];
+        return answer === undefined
+          ? new RequestInput({interruptId: 'confirm', message: 'confirm?'})
+          : `confirmed:${answer}`;
+      },
+      {rerunOnResume: true},
+    );
+
+    const wf = new Workflow({
+      name: 'dyn_same_run_id_wf',
+      dynamicEntry: async (ctx, input) => {
+        const first = await ctx.runNode(step, input, {runId: 'once'});
+        const second = await ctx.runNode(step, input, {runId: 'once'});
+        outputs.push(first.output, second.output);
+        const a = await ctx.runNode(ask);
+        return {step: first.output, ask: a.output};
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'test_app', agent: wf, sessionService});
+
+    await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'x'}]},
+      }),
+    );
+    // Turn 1: the in-flight task dedups the second call.
+    expect(stepRuns).toBe(1);
+
+    const turn2 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'confirm',
+                name: 'adk_request_input',
+                response: {result: 'yes'},
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    // Turn 2: the first call fast-forwards from the recorded run; the second
+    // must hand back that same result rather than executing the body again.
+    expect(stepRuns).toBe(1);
+    expect(outputs).toEqual(['step(x)', 'step(x)', 'step(x)', 'step(x)']);
+    expect(turn2.some((e) => e.output === 'confirmed:yes')).toBe(true);
+  });
 });
