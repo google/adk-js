@@ -1,20 +1,20 @@
 [
   {
-    "key": "5c12572a300d06ce",
-    "instructionAgnosticKey": "3855f18c9f65f0c3",
+    "key": "d745c2462b709e3f",
+    "instructionAgnosticKey": "cd29e9d8047eef5e",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "Look up user u123 and tell me my discount."
+              "text": "Look up user c123 and tell me my discount."
             }
           ]
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
         "tools": [
           {
             "functionDeclarations": [
@@ -24,25 +24,25 @@
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
-                    "userId": {
+                    "user_id": {
                       "type": "STRING",
                       "description": "The customer's unique identifier."
                     }
                   },
                   "required": [
-                    "userId"
+                    "user_id"
                   ]
                 }
               },
               {
                 "name": "calculate_discount",
-                "description": "Calculates the discount percentage based on the customer tier.",
+                "description": "Calculates the discount percentage based on customer tier.",
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
                     "tier": {
                       "type": "STRING",
-                      "description": "The customer membership tier (e.g. VIP)."
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
                     }
                   },
                   "required": [
@@ -68,9 +68,9 @@
                 "functionCall": {
                   "name": "customer_lookup_workflow",
                   "args": {
-                    "userId": "u123"
+                    "user_id": "c123"
                   },
-                  "id": "adk-f58be2e3-f696-4d15-8dee-0cee5c320702"
+                  "id": "adk-e49b8903-4128-4665-bf17-af8f9b73509e"
                 }
               }
             ]
@@ -79,36 +79,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 154,
-        "candidatesTokenCount": 10,
-        "totalTokenCount": 271,
+        "promptTokenCount": 162,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 263,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 154
+            "tokenCount": 162
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 10
+            "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 107
+        "thoughtsTokenCount": 89
       }
     }
   },
   {
-    "key": "ea80007f6409252c",
-    "instructionAgnosticKey": "0f0a2260e6e894d0",
+    "key": "31758cfb2f2b5c51",
+    "instructionAgnosticKey": "9c901c45de75f6ba",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "Look up user u123 and tell me my discount."
+              "text": "Look up user c123 and tell me my discount."
             }
           ]
         },
@@ -119,7 +119,7 @@
               "functionCall": {
                 "name": "customer_lookup_workflow",
                 "args": {
-                  "userId": "u123"
+                  "user_id": "c123"
                 }
               }
             }
@@ -132,7 +132,7 @@
               "functionResponse": {
                 "name": "customer_lookup_workflow",
                 "response": {
-                  "userId": "u123",
+                  "user_id": "c123",
                   "tier": "Verified VIP Member"
                 }
               }
@@ -141,7 +141,7 @@
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
         "tools": [
           {
             "functionDeclarations": [
@@ -151,25 +151,25 @@
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
-                    "userId": {
+                    "user_id": {
                       "type": "STRING",
                       "description": "The customer's unique identifier."
                     }
                   },
                   "required": [
-                    "userId"
+                    "user_id"
                   ]
                 }
               },
               {
                 "name": "calculate_discount",
-                "description": "Calculates the discount percentage based on the customer tier.",
+                "description": "Calculates the discount percentage based on customer tier.",
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
                     "tier": {
                       "type": "STRING",
-                      "description": "The customer membership tier (e.g. VIP)."
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
                     }
                   },
                   "required": [
@@ -197,7 +197,7 @@
                   "args": {
                     "tier": "Verified VIP Member"
                   },
-                  "id": "adk-c050f74b-0a29-4720-86a2-fde8da23cb6b"
+                  "id": "adk-f6ee1e8a-2716-4b6f-9a4e-0dc93a9450fb"
                 }
               }
             ]
@@ -206,14 +206,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 178,
+        "promptTokenCount": 190,
         "candidatesTokenCount": 7,
-        "totalTokenCount": 185,
+        "totalTokenCount": 269,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 178
+            "tokenCount": 190
           }
         ],
         "candidatesTokensDetails": [
@@ -221,20 +221,21 @@
             "modality": "TEXT",
             "tokenCount": 7
           }
-        ]
+        ],
+        "thoughtsTokenCount": 72
       }
     }
   },
   {
-    "key": "028f0c7b0f0252ef",
-    "instructionAgnosticKey": "a7d31ef585c10ae6",
+    "key": "106beb6c3c01fe20",
+    "instructionAgnosticKey": "2c0ec1ce41d3014e",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "Look up user u123 and tell me my discount."
+              "text": "Look up user c123 and tell me my discount."
             }
           ]
         },
@@ -245,7 +246,7 @@
               "functionCall": {
                 "name": "customer_lookup_workflow",
                 "args": {
-                  "userId": "u123"
+                  "user_id": "c123"
                 }
               }
             }
@@ -258,7 +259,7 @@
               "functionResponse": {
                 "name": "customer_lookup_workflow",
                 "response": {
-                  "userId": "u123",
+                  "user_id": "c123",
                   "tier": "Verified VIP Member"
                 }
               }
@@ -272,7 +273,7 @@
               "text": "For context:"
             },
             {
-              "text": "[lookup_customer_data] said: {\"userId\":\"u123\",\"tier\":\"Verified VIP Member\"}"
+              "text": "[lookup_customer_data] said: {\"user_id\":\"c123\",\"tier\":\"Verified VIP Member\"}"
             }
           ]
         },
@@ -304,7 +305,7 @@
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
         "tools": [
           {
             "functionDeclarations": [
@@ -314,25 +315,25 @@
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
-                    "userId": {
+                    "user_id": {
                       "type": "STRING",
                       "description": "The customer's unique identifier."
                     }
                   },
                   "required": [
-                    "userId"
+                    "user_id"
                   ]
                 }
               },
               {
                 "name": "calculate_discount",
-                "description": "Calculates the discount percentage based on the customer tier.",
+                "description": "Calculates the discount percentage based on customer tier.",
                 "parameters": {
                   "type": "OBJECT",
                   "properties": {
                     "tier": {
                       "type": "STRING",
-                      "description": "The customer membership tier (e.g. VIP)."
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
                     }
                   },
                   "required": [
@@ -355,7 +356,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Your membership tier is \"Verified VIP Member\" and your discount is 20% off."
+                "text": "Your discount for user c123, who is a Verified VIP Member, is 20% off."
               }
             ]
           },
@@ -363,23 +364,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 219,
-        "candidatesTokenCount": 19,
-        "totalTokenCount": 291,
+        "promptTokenCount": 233,
+        "candidatesTokenCount": 23,
+        "totalTokenCount": 371,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 219
+            "tokenCount": 233
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 19
+            "tokenCount": 23
           }
         ],
-        "thoughtsTokenCount": 53
+        "thoughtsTokenCount": 115
       }
     }
   }

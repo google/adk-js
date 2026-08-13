@@ -1,20 +1,20 @@
 [
   {
-    "key": "5fc04152f12fe2c0",
-    "instructionAgnosticKey": "2fc1b852b548f499",
+    "key": "234de0df3136b92f",
+    "instructionAgnosticKey": "6b5d07c2a8e674bd",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "quantum computing"
+              "text": "computer"
             }
           ]
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"quantum computing\".\n    If feedback is provided, take it into account.\n    The feedback: \n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"computer\".\n    If feedback is provided, take it into account.\n    The feedback: \n    ",
         "labels": {
           "adk_agent_name": "generate_headline"
         }
@@ -27,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Quantum Computing: The Next Frontier in Technology"
+                "text": "The Computer Revolution: Shaping Our Digital Future"
               }
             ]
           },
@@ -35,14 +35,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 48,
+        "promptTokenCount": 46,
         "candidatesTokenCount": 8,
-        "totalTokenCount": 75,
+        "totalTokenCount": 594,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 48
+            "tokenCount": 46
           }
         ],
         "candidatesTokensDetails": [
@@ -51,20 +51,20 @@
             "tokenCount": 8
           }
         ],
-        "thoughtsTokenCount": 19
+        "thoughtsTokenCount": 540
       }
     }
   },
   {
-    "key": "9da3434b6aa989f8",
-    "instructionAgnosticKey": "163205064812ed4e",
+    "key": "09142a2f4182a0ef",
+    "instructionAgnosticKey": "5601a53640996e24",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "quantum computing"
+              "text": "computer"
             }
           ]
         },
@@ -75,7 +75,7 @@
               "text": "For context:"
             },
             {
-              "text": "[generate_headline] said: Quantum Computing: The Next Frontier in Technology"
+              "text": "[generate_headline] said: The Computer Revolution: Shaping Our Digital Future"
             }
           ]
         },
@@ -83,7 +83,367 @@
           "role": "user",
           "parts": [
             {
-              "text": "Quantum Computing: The Next Frontier in Technology"
+              "text": "The Computer Revolution: Shaping Our Digital Future"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "grade": {
+              "type": "STRING",
+              "enum": [
+                "tech-related",
+                "unrelated"
+              ],
+              "description": "Decide if the headline is related to technology or software engineering."
+            },
+            "feedback": {
+              "type": "STRING",
+              "description": "If the headline is unrelated to technology, provide feedback on how to make it more tech-focused."
+            }
+          },
+          "required": [
+            "grade",
+            "feedback"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "\n    Grade whether the headline is related to technology or software engineering.\n    ",
+        "labels": {
+          "adk_agent_name": "evaluate_headline"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\n  \"grade\": \"tech-related\",\n  \"feedback\": \"\"\n}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 88,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 328,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 88
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "thoughtsTokenCount": 221
+      }
+    }
+  },
+  {
+    "key": "ba32ce85868d31a6",
+    "instructionAgnosticKey": "d5b3da4b095b2f9e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "flower"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"flower\".\n    If feedback is provided, take it into account.\n    The feedback: \n    ",
+        "labels": {
+          "adk_agent_name": "generate_headline"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Blooming Beauty: The Enduring Charm of Flowers"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 9,
+        "totalTokenCount": 74,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 46
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 9
+          }
+        ],
+        "thoughtsTokenCount": 19
+      }
+    }
+  },
+  {
+    "key": "d1adcca1e879897f",
+    "instructionAgnosticKey": "cfe2236122cc6b85",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "flower"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_headline] said: Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "grade": {
+              "type": "STRING",
+              "enum": [
+                "tech-related",
+                "unrelated"
+              ],
+              "description": "Decide if the headline is related to technology or software engineering."
+            },
+            "feedback": {
+              "type": "STRING",
+              "description": "If the headline is unrelated to technology, provide feedback on how to make it more tech-focused."
+            }
+          },
+          "required": [
+            "grade",
+            "feedback"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "\n    Grade whether the headline is related to technology or software engineering.\n    ",
+        "labels": {
+          "adk_agent_name": "evaluate_headline"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\"grade\": \"unrelated\", \"feedback\": \"To make this headline more tech-focused, consider integrating technology themes. For example, you could discuss using AI for plant care, robotics in horticulture, data science for flower breeding, or virtual reality for botanical experiences. Original: 'Blooming Beauty: The Enduring Charm of Flowers'. Tech-focused example: 'AI in Bloom: Using Deep Learning to Cultivate the Next Generation of Flowers'.\"}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 90,
+        "candidatesTokenCount": 90,
+        "totalTokenCount": 371,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 90
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 90
+          }
+        ],
+        "thoughtsTokenCount": 191
+      }
+    }
+  },
+  {
+    "key": "3ba3628b133649b7",
+    "instructionAgnosticKey": "6b5d3e51a69f808a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "flower"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[evaluate_headline] said: {\"grade\": \"unrelated\", \"feedback\": \"To make this headline more tech-focused, consider integrating technology themes. For example, you could discuss using AI for plant care, robotics in horticulture, data science for flower breeding, or virtual reality for botanical experiences. Original: 'Blooming Beauty: The Enduring Charm of Flowers'. Tech-focused example: 'AI in Bloom: Using Deep Learning to Cultivate the Next Generation of Flowers'.\"}"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_headline\".\n\n\n    Write a headline about the topic \"flower\".\n    If feedback is provided, take it into account.\n    The feedback: {\"grade\":\"unrelated\",\"feedback\":\"To make this headline more tech-focused, consider integrating technology themes. For example, you could discuss using AI for plant care, robotics in horticulture, data science for flower breeding, or virtual reality for botanical experiences. Original: 'Blooming Beauty: The Enduring Charm of Flowers'. Tech-focused example: 'AI in Bloom: Using Deep Learning to Cultivate the Next Generation of Flowers'.\"}\n    ",
+        "labels": {
+          "adk_agent_name": "generate_headline"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "AI-Powered Petals: How Technology is Redefining Flower Cultivation"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 250,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 696,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 250
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 15
+          }
+        ],
+        "thoughtsTokenCount": 431
+      }
+    }
+  },
+  {
+    "key": "1158f54ecb2f7e2f",
+    "instructionAgnosticKey": "4996630b58425479",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "flower"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_headline] said: Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Blooming Beauty: The Enduring Charm of Flowers"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "{\"grade\": \"unrelated\", \"feedback\": \"To make this headline more tech-focused, consider integrating technology themes. For example, you could discuss using AI for plant care, robotics in horticulture, data science for flower breeding, or virtual reality for botanical experiences. Original: 'Blooming Beauty: The Enduring Charm of Flowers'. Tech-focused example: 'AI in Bloom: Using Deep Learning to Cultivate the Next Generation of Flowers'.\"}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[generate_headline] said: AI-Powered Petals: How Technology is Redefining Flower Cultivation"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "AI-Powered Petals: How Technology is Redefining Flower Cultivation"
             }
           ]
         }
@@ -132,14 +492,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 89,
+        "promptTokenCount": 220,
         "candidatesTokenCount": 12,
-        "totalTokenCount": 286,
+        "totalTokenCount": 340,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 89
+            "tokenCount": 220
           }
         ],
         "candidatesTokensDetails": [
@@ -148,7 +508,7 @@
             "tokenCount": 12
           }
         ],
-        "thoughtsTokenCount": 185
+        "thoughtsTokenCount": 108
       }
     }
   }

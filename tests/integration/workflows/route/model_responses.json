@@ -1,14 +1,14 @@
 [
   {
-    "key": "e2ef67caafcbd841",
-    "instructionAgnosticKey": "c115d001eab3ef66",
+    "key": "7158435b179f11ee",
+    "instructionAgnosticKey": "5dd683d81fe3734a",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "What is ADK?"
+              "text": "who are you"
             }
           ]
         }
@@ -31,7 +31,7 @@
           ]
         },
         "responseMimeType": "application/json",
-        "systemInstruction": "Based on this input, decide which category it belongs to: What is ADK?",
+        "systemInstruction": "Based on this input, decide which category it belongs to: who are you",
         "labels": {
           "adk_agent_name": "classify_input"
         }
@@ -52,14 +52,14 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 29,
+        "promptTokenCount": 25,
         "candidatesTokenCount": 6,
-        "totalTokenCount": 67,
+        "totalTokenCount": 63,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 29
+            "tokenCount": 25
           }
         ],
         "candidatesTokensDetails": [
@@ -73,15 +73,15 @@
     }
   },
   {
-    "key": "d1fcb02355443296",
-    "instructionAgnosticKey": "468125998cc36437",
+    "key": "f2b4cd3df00d7860",
+    "instructionAgnosticKey": "91bb24ccd3a5ed98",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "What is ADK?"
+              "text": "who are you"
             }
           ]
         },
@@ -98,7 +98,7 @@
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: What is ADK?",
+        "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: who are you",
         "labels": {
           "adk_agent_name": "answer_question"
         }
@@ -111,7 +111,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "\"ADK\" can stand for several different things, depending on the context. Here are the most common interpretations:\n\n1.  **Application Development Kit (ADK):** This is a generic term referring to a set of software development tools that allows for the creation of applications for a certain software package, platform, hardware device, or operating system. It's very similar to an SDK (Software Development Kit) and often includes compilers, debuggers, libraries, APIs, documentation, and sample code.\n2.  **Android Development Kit:** While the official term is usually **Android SDK (Software Development Kit)**, \"ADK\" might sometimes be informally used to refer to the tools and resources for developing applications for the Android platform. There was also a specific \"Android ADK\" (Android Open Accessory Development Kit) for connecting hardware accessories to Android devices.\n3.  **Adirondack Park / Mountains:** Often abbreviated as \"ADK,\" this refers to a large protected area in northeastern New York State, known for its mountains, lakes, and forests. People might use \"ADK\" when talking about hiking, camping, or the region in general.\n4.  **Appliance Development Kit:** In the context of embedded systems or IoT (Internet of Things), an ADK might refer to tools used to develop software for specific smart appliances or connected devices.\n\nTo know exactly what \"ADK\" means in a specific situation, you usually need more context."
+                "text": "I am a large language model, trained by Google."
               }
             ]
           },
@@ -119,23 +119,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 45,
-        "candidatesTokenCount": 300,
-        "totalTokenCount": 648,
+        "promptTokenCount": 41,
+        "candidatesTokenCount": 11,
+        "totalTokenCount": 85,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 45
+            "tokenCount": 41
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 300
+            "tokenCount": 11
           }
         ],
-        "thoughtsTokenCount": 303
+        "thoughtsTokenCount": 33
       }
     }
   }

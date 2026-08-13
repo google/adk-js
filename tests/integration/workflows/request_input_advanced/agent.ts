@@ -3,24 +3,23 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/request_input_advanced/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
 
 /**
  * Advanced human-in-the-loop with structured schemas. An LlmAgent extracts a
  * structured time-off request; `evaluate_request` auto-approves short requests
  * (<= 1 day) and otherwise pauses for manager approval (RequestInput carrying a
- * response schema). `process_decision` renders the outcome. Faithful port of
- * Python `contributing/samples/workflows/request_input_advanced`.
+ * response schema). `process_decision` renders the outcome. One-to-one port of
+ * Python `contributing/samples/workflows/request_input_advanced/agent.py`.
  *
- * The manager-approval branch uses `rerun_on_resume=false`: evaluate_request
- * does not re-run on resume; its output becomes the manager's decision, which
- * feeds process_decision.
+ * The manager-approval branch uses `rerunOnResume: false` (the default):
+ * evaluate_request does not re-run on resume; its output becomes the manager's
+ * decision, which feeds process_decision.
  *
  * REQUIRES an API key (process_request calls a live model). Set GEMINI_API_KEY:
- *   npm run sample -- samples/workflows/request_input_advanced/agent.ts
- * Turn 1: e.g. "I need 3 days off next week for a family trip".
- * Turn 2 (only if > 1 day): type "yes" or "no" to approve/deny.
+ *   npm run sample -- tests/integration/workflows/request_input_advanced/agent.ts
+ * Turn 1: e.g. "2 sick days".
+ * Turn 2 (only if > 1 day): reply with the structured decision, e.g.
+ * `{"approved": true}`.
  */
 
 import {
@@ -34,20 +33,26 @@ import {
 import {z} from 'zod';
 
 const timeOffRequestSchema = z.object({
-  days: z.number().describe('Number of days requested.'),
+  days: z.number().int().describe('Number of days requested.'),
   reason: z.string().describe('Reason for the time off.'),
 });
 type TimeOffRequest = z.infer<typeof timeOffRequestSchema>;
 
-const timeOffDecisionSchema = z.object({
-  approved: z.boolean().describe('Whether the time off is approved.'),
-  approvedDays: z.number().nullish().describe('Number of days approved.'),
-});
+const timeOffDecisionSchema = z
+  .object({
+    approved: z.boolean().describe('Whether the time off is approved.'),
+    approved_days: z
+      .number()
+      .int()
+      .nullish()
+      .describe('Number of days approved.'),
+  })
+  .describe('The structured response we expect back from the human manager.');
 type TimeOffDecision = z.infer<typeof timeOffDecisionSchema>;
 
-/** Emits a plain display message (Python `Event(message=...)`). */
+/** Python's `Event(message=...)` content shape (role `user`). */
 const message = (text: string) =>
-  createEvent({content: {role: 'model', parts: [{text}]}});
+  createEvent({content: {role: 'user', parts: [{text}]}});
 
 const processRequest = new LlmAgent({
   name: 'process_request',
@@ -64,15 +69,11 @@ const processRequest = new LlmAgent({
 // expected response schema.
 const evaluateRequest = node(
   (
-    ctx: NodeContext,
+    _ctx: NodeContext,
     request: TimeOffRequest,
   ): TimeOffDecision | RequestInput => {
-    // Persist the request so process_decision can read it back (TypeScript has
-    // no signature-based state injection like Python's `request` parameter).
-    ctx.state.set('request', request);
-
     if (request.days <= 1) {
-      return {approved: true, approvedDays: request.days};
+      return {approved: true};
     }
     return new RequestInput({
       interruptId: 'manager_approval',
@@ -85,35 +86,19 @@ const evaluateRequest = node(
 );
 
 const processDecision = node(
-  (ctx: NodeContext, nodeInput: TimeOffDecision | string) => {
-    const request = ctx.state.get<TimeOffRequest>('request');
-    const decision = normalizeDecision(nodeInput);
+  (ctx: NodeContext, nodeInput: TimeOffDecision) => {
+    const request = ctx.state.get<TimeOffRequest>('request')!;
 
-    if (decision.approved) {
-      const approvedDays = decision.approvedDays ?? request?.days ?? 0;
+    if (nodeInput.approved) {
+      const approvedDays = nodeInput.approved_days ?? request.days;
       return message(
-        `Time Off Approved! ${approvedDays} out of ${request?.days ?? approvedDays} days granted.`,
+        `Time Off Approved! ${approvedDays} out of ${request.days} days granted.`,
       );
     }
     return message('Time Off Denied.');
   },
-  {name: 'process_decision'},
+  {name: 'process_decision', inputSchema: timeOffDecisionSchema},
 );
-
-/**
- * Accepts either a structured {@link TimeOffDecision} (auto-approve path or a
- * structured resume) or a plain-string reply typed by an interactive user
- * (e.g. "yes"/"no"), and normalizes it to a decision.
- */
-function normalizeDecision(input: TimeOffDecision | string): TimeOffDecision {
-  if (typeof input === 'string') {
-    const yes = ['yes', 'y', 'true', 'approve', 'approved'].includes(
-      input.trim().toLowerCase(),
-    );
-    return {approved: yes};
-  }
-  return input;
-}
 
 export const rootAgent = new Workflow({
   name: 'request_input_advanced',

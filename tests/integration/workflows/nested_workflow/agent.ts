@@ -3,16 +3,13 @@
  * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-// Vendored copy of samples/workflows/nested_workflow/agent.ts so this integration test
-// is self-contained; keep it in sync with the sample.
-
 /**
  * Nested workflow: a sub-Workflow used as a node, running in parallel with an
- * agent, joined and aggregated. Faithful port of Python
- * `contributing/samples/workflows/nested_workflow`.
+ * agent, joined and aggregated. One-to-one port of Python
+ * `contributing/samples/workflows/nested_workflow/agent.py`.
  *
  * Requires an API key. Set GEMINI_API_KEY, then:
- *   npm run sample -- samples/workflows/nested_workflow/agent.ts
+ *   npm run sample -- tests/integration/workflows/nested_workflow/agent.ts
  * Enter a 4-digit year, e.g. "1955".
  */
 
@@ -31,13 +28,14 @@ const processInput = node(
     if (!match) {
       yield createEvent({
         content: {
-          role: 'model',
+          role: 'user',
           parts: [{text: 'Please provide a valid 4-digit year (e.g., 1955).'}],
         },
       });
       throw new Error('Invalid year format.');
     }
     ctx.state.set('year', match[0]);
+    yield createEvent({});
   },
   {name: 'process_input'},
 );
@@ -85,7 +83,7 @@ const aggregateResults = node(
       `${nodeInput['find_famous_person']}\n\n` +
       '## Historical Event:\n\n' +
       `${nodeInput['find_historical_event']}`;
-    yield createEvent({content: {role: 'model', parts: [{text: combined}]}});
+    yield createEvent({content: {role: 'user', parts: [{text: combined}]}});
   },
   {name: 'aggregate_results'},
 );

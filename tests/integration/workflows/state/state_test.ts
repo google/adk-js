@@ -4,26 +4,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** Runs the real `state` sample (offline): read/write shared workflow state. */
+/**
+ * Runs the real `state` sample (offline): read/write shared workflow state.
+ * Turn and expectations mirror the Python golden
+ * `contributing/samples/workflows/state/tests/go.json`.
+ */
 
 import {describe, expect, it} from 'vitest';
 import {allEvents, finalOutput, runSample} from '../_harness/sample_harness.js';
 import {rootAgent} from './agent.js';
 
 describe('workflow sample: state', () => {
-  it('threads values through ctx.state across nodes', async () => {
+  it('threads values through state across nodes', async () => {
     const perTurn = await runSample({
       name: 'state',
       rootAgent,
-      turns: ['hello world'],
+      turns: ['go'],
       offline: true,
     });
-    const output = finalOutput(allEvents(perTurn));
+    const events = allEvents(perTurn);
 
-    expect(typeof output).toBe('string');
-    expect(output as string).toContain('Final Result:');
-    // Uppercased value + the original are both threaded through state.
-    expect(output as string).toContain('HELLO WORLD');
-    expect(output as string).toContain('Original was: hello world');
+    const deltas = events
+      .map((e) => e.actions?.stateDelta ?? {})
+      .filter((d) => Object.keys(d).length > 0);
+    expect(deltas).toEqual([
+      {original_text: 'go'},
+      {uppercased_text: 'GO'},
+      {appended_text: 'GO (Original was: go)'},
+    ]);
+
+    expect(finalOutput(events)).toBe('Final Result: GO (Original was: go)!');
   });
 });

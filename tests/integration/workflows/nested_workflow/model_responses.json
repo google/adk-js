@@ -1,20 +1,20 @@
 [
   {
-    "key": "778e1cce4468601d",
-    "instructionAgnosticKey": "6f1092c2fdbac9e3",
+    "key": "5b100c977505f7bd",
+    "instructionAgnosticKey": "68bcd6d8fa3075da",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "1955"
+              "text": "1984"
             }
           ]
         }
       ],
       "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1955.\n    Return ONLY their name, nothing else.\n    ",
+        "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1984.\n    Return ONLY their name, nothing else.\n    ",
         "labels": {
           "adk_agent_name": "find_name"
         }
@@ -27,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Bill Gates"
+                "text": "Mark Zuckerberg"
               }
             ]
           },
@@ -37,7 +37,7 @@
       "usageMetadata": {
         "promptTokenCount": 52,
         "candidatesTokenCount": 2,
-        "totalTokenCount": 98,
+        "totalTokenCount": 167,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
@@ -51,20 +51,76 @@
             "tokenCount": 2
           }
         ],
-        "thoughtsTokenCount": 44
+        "thoughtsTokenCount": 113
       }
     }
   },
   {
-    "key": "228440ecf0c1e553",
-    "instructionAgnosticKey": "4969c8b07da28a12",
+    "key": "3e840407dc663206",
+    "instructionAgnosticKey": "d165670813341e1d",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "1955"
+              "text": "1984"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1984.\n    Keep the description to 2 sentences.\n    ",
+        "labels": {
+          "adk_agent_name": "find_historical_event"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "In December 1984, the Bhopal disaster occurred in India, where a leak of methyl isocyanate gas from a Union Carbide plant killed thousands immediately and caused long-term health issues for hundreds of thousands more. This industrial catastrophe remains one of the world's worst, raising critical questions about corporate responsibility, industrial safety, and environmental justice."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 70,
+        "totalTokenCount": 302,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 52
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 70
+          }
+        ],
+        "thoughtsTokenCount": 180
+      }
+    }
+  },
+  {
+    "key": "010aa2005042745b",
+    "instructionAgnosticKey": "cb42c8dbd3a6eff9",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1984"
             }
           ]
         },
@@ -75,7 +131,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_name] said: Bill Gates"
+              "text": "[find_name] said: Mark Zuckerberg"
             }
           ]
         },
@@ -83,7 +139,7 @@
           "role": "user",
           "parts": [
             {
-              "text": "Bill Gates"
+              "text": "Mark Zuckerberg"
             }
           ]
         }
@@ -102,7 +158,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Bill Gates revolutionized personal computing as the co-founder of Microsoft, turning it into a global software giant that made technology accessible worldwide. His innovative vision and leadership shaped the digital age. Today, he is primarily known for his extensive philanthropic work through the Bill & Melinda Gates Foundation, addressing critical global health and poverty issues."
+                "text": "Mark Zuckerberg is the visionary co-founder and CEO of Meta Platforms, the company behind Facebook. He launched the groundbreaking social media platform from his Harvard dorm room, forever changing how billions connect and interact globally. Today, he continues to drive Meta's ambitious push into the metaverse, aiming to shape the next generation of digital experience."
               }
             ]
           },
@@ -111,7 +167,7 @@
       ],
       "usageMetadata": {
         "promptTokenCount": 51,
-        "candidatesTokenCount": 63,
+        "candidatesTokenCount": 66,
         "totalTokenCount": 245,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
@@ -123,66 +179,10 @@
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 63
-          }
-        ],
-        "thoughtsTokenCount": 131
-      }
-    }
-  },
-  {
-    "key": "e15dc3fa645e73fc",
-    "instructionAgnosticKey": "78053afc62938740",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "1955"
-            }
-          ]
-        }
-      ],
-      "config": {
-        "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1955.\n    Keep the description to 2 sentences.\n    ",
-        "labels": {
-          "adk_agent_name": "find_historical_event"
-        }
-      }
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "role": "model",
-            "parts": [
-              {
-                "text": "In 1955, the Montgomery Bus Boycott began after Rosa Parks' refusal to give up her seat on a bus sparked widespread protest against racial segregation. This pivotal act of civil disobedience, led by Martin Luther King Jr., became a foundational event of the American Civil Rights Movement, demonstrating the power of nonviolent resistance."
-              }
-            ]
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 52,
-        "candidatesTokenCount": 66,
-        "totalTokenCount": 583,
-        "trafficType": "ON_DEMAND",
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 52
-          }
-        ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
             "tokenCount": 66
           }
         ],
-        "thoughtsTokenCount": 465
+        "thoughtsTokenCount": 128
       }
     }
   }

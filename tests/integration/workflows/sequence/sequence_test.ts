@@ -5,8 +5,9 @@
  */
 
 /**
- * Runs the real `samples/workflows/sequence` agent with recorded model
- * responses: two LlmAgents chained in a workflow.
+ * Runs the real `sequence` sample: the first agent names a random fruit and the
+ * second describes a health benefit of it. Turn mirrors the Python golden
+ * `contributing/samples/workflows/sequence/tests/go.json`.
  */
 
 import {describe, expect, it} from 'vitest';
@@ -19,21 +20,31 @@ import {
 import {rootAgent} from './agent.js';
 
 describe('workflow sample: sequence', () => {
-  it('chains two LLM agents, surfacing the second agent output', async () => {
+  it('feeds the first agent output into the second', async () => {
     const perTurn = await runSample({
       name: 'sequence',
       rootAgent,
-      turns: ['Give me a fruit fact'],
+      turns: ['go'],
     });
     const events = allEvents(perTurn);
 
-    // Both agents in the chain ran.
     expect(authors(events).has('generate_fruit_agent')).toBe(true);
     expect(authors(events).has('generate_benefit_agent')).toBe(true);
 
-    // The workflow's final output is a non-empty string (the second response).
-    const output = finalOutput(events);
-    expect(typeof output).toBe('string');
-    expect((output as string).length).toBeGreaterThan(0);
+    const fruit = events
+      .find((e) => e.author === 'generate_fruit_agent')
+      ?.content?.parts?.map((p) => p.text ?? '')
+      .join('')
+      .trim();
+    expect(fruit).toBeTruthy();
+    expect(fruit!.split(/\s+/).length).toBeLessThanOrEqual(3);
+
+    const benefit = finalOutput(events);
+    expect(typeof benefit).toBe('string');
+    const benefitText = String(benefit);
+    expect(benefitText.length).toBeGreaterThan(0);
+    expect(benefitText.toLowerCase()).toContain(
+      fruit!.toLowerCase().replace(/[^a-z]/gi, ''),
+    );
   });
 });
