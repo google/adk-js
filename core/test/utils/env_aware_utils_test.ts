@@ -183,14 +183,25 @@ describe('env_aware_utils', () => {
       process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
       process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'false';
       expect(isEnterpriseModeEnabled()).toBe(true);
-      expect(warnSpy).not.toHaveBeenCalled();
     });
 
     it('should not fall back to GOOGLE_GENAI_USE_VERTEXAI when GOOGLE_GENAI_USE_ENTERPRISE is set but disabled', () => {
       process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = '';
       process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
       expect(isEnterpriseModeEnabled()).toBe(false);
-      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('should warn that GOOGLE_GENAI_USE_VERTEXAI is ignored when both variables are set', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      expect(isEnterpriseModeEnabled()).toBe(true);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'GOOGLE_GENAI_USE_VERTEXAI is set but ignored because ' +
+            'GOOGLE_GENAI_USE_ENTERPRISE takes precedence',
+        ),
+      );
     });
 
     it('should fall back to an enabled GOOGLE_GENAI_USE_VERTEXAI and warn', () => {
