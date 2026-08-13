@@ -15,6 +15,9 @@ export type {
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
 export {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
@@ -65,6 +68,15 @@ export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
+export {
+  getPendingUserInputRequests,
+  getUserInputRequests,
+  requiresUserInput,
+} from './agents/user_input_request.js';
+export type {
+  UserInputKind,
+  UserInputRequest,
+} from './agents/user_input_request.js';
 export {createResumabilityConfig} from './apps/resumability_config.js';
 export type {ResumabilityConfig} from './apps/resumability_config.js';
 export type {
@@ -132,6 +144,8 @@ export {TrajectoryThoughtPruningCompactor} from './context/trajectory_thought_pr
 export type {TrajectoryThoughtPruningCompactorOptions} from './context/trajectory_thought_pruning_compactor.js';
 export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
+export {BaseEnvironment} from './environment/base_environment.js';
+export type {ExecutionResult} from './environment/base_environment.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
@@ -202,7 +216,6 @@ export {PluginManager} from './plugins/plugin_manager.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
-  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   SecurityPlugin,
   getAskUserConfirmationFunctionCalls,
 } from './plugins/security_plugin.js';
@@ -355,6 +368,7 @@ export {
   JoinNode,
   LLMAgentWrapper,
   NodeContext,
+  NodeSchemaValidationError,
   NodeStatus,
   NodeTimeoutError,
   NodeTool,
@@ -365,11 +379,19 @@ export {
   Workflow,
   WorkflowAgent,
   WorkflowNode,
+  asRootAgent,
   commonPrefixOf,
+  createNodeErrorEvent,
   createNodeState,
   createSubBranch,
+  isGraphWorkflowAgent,
+  isNodeErrorEvent,
+  isNodeSchemaValidationError,
   isNodeState,
+  isNodeTimeoutError,
   isRequestInput,
+  isRootAgentLike,
+  isWorkflow,
   node,
   normalizeRetryExceptions,
   prepareRetryConfig,
@@ -378,6 +400,7 @@ export type {
   BaseNodeConfig,
   BuildNodeOptions,
   ChainElement,
+  CreateNodeErrorEventParams,
   DynamicEntry,
   EdgeItem,
   ErrorClass,
@@ -386,6 +409,7 @@ export type {
   FunctionNodeResult,
   LLMAgentWrapperConfig,
   NodeContextOptions,
+  NodeErrorEvent,
   NodeLike,
   NodeOptions,
   NodeResult,
@@ -397,6 +421,7 @@ export type {
   RouteValue,
   RoutingMap,
   RunNodeOptions,
+  RunnableNode,
   ScheduleDynamicNode,
   ScheduleDynamicNodeOptions,
   ToolNodeConfig,

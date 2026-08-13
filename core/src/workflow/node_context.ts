@@ -9,10 +9,10 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
-import type {BaseNode} from './base_node.js';
-import type {RouteValue} from './graph.js';
+import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
  * The result of running a node: the fields a caller (and the engine's
@@ -67,6 +67,14 @@ export class NodeContext {
   readonly channel: AsyncQueue<Event>;
   readonly nodePath: string;
   readonly runId: string;
+
+  /**
+   * Node paths whose output this node's output also becomes: its parent's if
+   * the parent ran it with `useAsOutput`, plus whatever the parent was standing
+   * in for. Stamped onto every output event as `nodeInfo.outputFor`, so a
+   * resumed run can tell that an ancestor already has a result.
+   */
+  outputForAncestors: readonly string[] = [];
   readonly actions: EventActions;
   resumeInputs: Record<string, unknown>;
   isolationScope?: string;
@@ -106,6 +114,10 @@ export class NodeContext {
 
   private readonly _state: State;
   private readonly dynamicRunCounters = new Map<string, number>();
+  /** Run ids this context handed out automatically, per node name. */
+  private readonly autoRunIds = new Map<string, Set<string>>();
+  /** Every run id used for a node name here, automatic or caller-supplied. */
+  private readonly usedRunIds = new Map<string, Set<string>>();
 
   constructor(opts: NodeContextOptions) {
     this.invocationContext = opts.invocationContext;
@@ -116,7 +128,9 @@ export class NodeContext {
     this.isolationScope = opts.isolationScope;
     this.actions = opts.actions ?? createEventActions();
     // Writes via `ctx.state` accumulate into `actions.stateDelta`, mirroring
-    // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour.
+    // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour, and land in
+    // `session.state` at once so a reader outside the workflow — an agent
+    // resolving a `{key}` instruction, a callback, a tool — sees them.
     this._state = new State(
       opts.invocationContext.session.state,
       this.actions.stateDelta,
@@ -143,6 +157,37 @@ export class NodeContext {
     return this.invocationContext.session;
   }
 
+  /**
+   * The invocation context to run a nested agent against.
+   *
+   * The single place where "what a node sees" is translated into "what an
+   * agent sees", so an agent run as a node (`BaseAgent.runImpl`) and one run
+   * directly go through the same seam.
+   *
+   * It hands back the node's own invocation context unchanged, and that is the
+   * intended behaviour rather than a placeholder.
+   *
+   * adk-python's counterpart (`agents/context.py` `get_invocation_context`) is
+   * documented as returning "a copy with the proxy session", which reads as
+   * though the agent is handed a different view of state. It is not: that
+   * `Context.session` returns `self._invocation_context.session`, so the copy
+   * substitutes the same object, and `Context._state` is built directly over
+   * `session.state`. A Python agent run as a node reads session state exactly
+   * as a TypeScript one does.
+   *
+   * The other thing that copy carries — the isolation scope — is already
+   * applied by the time this runs: the node runner builds the child invocation
+   * context with the node's scope, so it is present on the object returned.
+   *
+   * That leaves the node's own `state`, which is this node's pending delta over
+   * `session.state` — the same thing an agent reads, so the two cannot
+   * disagree. The agent-node cases in
+   * `core/test/workflow/state_consistency_test.ts` pin that.
+   */
+  getInvocationContext(): InvocationContext {
+    return this.invocationContext;
+  }
+
   /** Streams a single event out through the workflow's event channel. */
   emit(event: Event): void {
     this.channel.push(event);
@@ -159,20 +204,38 @@ export class NodeContext {
    * When a dynamic-node {@link scheduler} is set (inside a Workflow subtree),
    * the call routes through it for dedup/resume; otherwise the child runs
    * directly.
+   *
+   * Takes anything an edge takes — an agent, a tool, a plain function, or an
+   * already-built node — and wraps it the same way the graph does, so
+   * `ctx.runNode(myAgent, input)` works without `node(myAgent)`. Wrap it
+   * yourself when you need the options `node()` carries, such as a schema or a
+   * name that differs from the value's own.
    */
   runNode(
-    node: BaseNode,
+    nodeLike: RunnableNode,
     input?: unknown,
     options?: RunNodeOptions,
   ): Promise<NodeContext | NodeResult> {
+    const node = buildNode(nodeLike);
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;
+      const used = mapSet(this.usedRunIds, nodeName);
+      if (runId !== undefined) {
+        assertCustomRunId(runId, nodeName, mapSet(this.autoRunIds, nodeName));
+      }
       if (!runId) {
-        const next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
+        // Skip anything a caller already claimed, so the automatic sequence
+        // cannot grow into a custom id and silently dedup against it.
+        let next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
+        while (used.has(String(next))) {
+          next++;
+        }
         this.dynamicRunCounters.set(nodeName, next);
         runId = String(next);
+        mapSet(this.autoRunIds, nodeName).add(runId);
       }
+      used.add(runId);
       return this.scheduler.schedule(this, node, input, {
         ...options,
         nodeName,
@@ -180,5 +243,52 @@ export class NodeContext {
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+}
+
+/** Returns the set stored under `key`, creating it on first use. */
+function mapSet(map: Map<string, Set<string>>, key: string): Set<string> {
+  let set = map.get(key);
+  if (!set) {
+    set = new Set();
+    map.set(key, set);
+  }
+  return set;
+}
+
+/**
+ * Rejects a caller-supplied run id that collides with an automatic one.
+ *
+ * Run ids key the checkpoint lookup that lets a resumed or retried workflow
+ * skip work it already did, so an id that names a run the caller never made is
+ * silently wrong: the scheduler finds the earlier run's checkpoint, returns
+ * *its* output, and the input passed here is dropped without executing.
+ * Nothing downstream can detect that, so it is refused at the call.
+ *
+ * Only collisions with ADK's own numbering are refused. Reusing a custom id
+ * deliberately is a supported way to dedup concurrent calls onto one run, and
+ * `ParallelWorker` keys its fan-out by item index, so neither digits nor
+ * repetition can be banned outright.
+ */
+function assertCustomRunId(
+  runId: string,
+  nodeName: string,
+  autoRunIds: ReadonlySet<string>,
+): void {
+  if (runId.trim() === '') {
+    throw new Error(
+      `Invalid runId for node '${nodeName}': a custom run id cannot be empty. ` +
+        `Omit runId to let ADK number the run automatically.`,
+    );
+  }
+  if (autoRunIds.has(runId)) {
+    throw new Error(
+      `Invalid runId '${runId}' for node '${nodeName}': ADK already numbered ` +
+        `an automatic run of that node '${runId}' in this context, so this ` +
+        `call would resolve to that run's cached output instead of ` +
+        `executing, and the input passed here would be dropped. Automatic ` +
+        `ids are "1", "2", "3" per node; give a custom id a non-numeric ` +
+        `part, e.g. '${nodeName}-${runId}'.`,
+    );
   }
 }

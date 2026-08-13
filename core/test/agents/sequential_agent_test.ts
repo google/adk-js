@@ -127,7 +127,7 @@ describe('SequentialAgent', () => {
 
     const context = makeContext(seq);
 
-    const authors: string[] = [];
+    const authors: Array<string | undefined> = [];
     for await (const event of seq.runAsync(context)) {
       authors.push(event.author);
     }

@@ -95,6 +95,21 @@ describe('Phase 2 — Workflow orchestration', () => {
     expect(output).toEqual({A: 'A(x)', B: 'B(x)'});
   });
 
+  it('releases the barrier when a predecessor completes without an output, keying it undefined', async () => {
+    const a = new FnNode('A', (_c, input) => `A(${input})`);
+    const silent = new FnNode('silent', () => undefined);
+    const join = new JoinNode({name: 'join'});
+    const wf = new Workflow({
+      name: 'fan_wf_silent',
+      edges: [['START', [a, silent], join]],
+    });
+
+    const {output} = await driveWorkflow(wf, 'x');
+
+    expect(output).toEqual({A: 'A(x)', silent: undefined});
+    expect(Object.keys(output as object).sort()).toEqual(['A', 'silent']);
+  });
+
   it('rejects an unconditional cycle at construction', () => {
     const a = new FnNode('cyc_a', (_c, i) => i);
     const b = new FnNode('cyc_b', (_c, i) => i);

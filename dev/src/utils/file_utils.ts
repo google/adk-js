@@ -8,6 +8,18 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+/**
+ * Resolves a user-supplied path against the current working directory.
+ *
+ * `path.resolve` rather than `path.join`: joining strips the leading separator
+ * from an absolute path, so `/tmp/x.json` would become `<cwd>/tmp/x.json`.
+ * These paths come from the command line, so an absolute one has to be
+ * honoured as given.
+ */
+export function getAbsolutePath(p: string): string {
+  return path.resolve(process.cwd(), p);
+}
+
 /** Check if the given folder exists. */
 export async function isFolderExists(folderPath: string): Promise<boolean> {
   try {
@@ -77,9 +89,12 @@ export async function loadFileData<T>(
   try {
     return JSON.parse(await fs.readFile(filePath, {encoding: 'utf-8'})) as T;
   } catch (e) {
-    console.error(`Failed to read or parse file ${filePath}:`, e);
-
-    throw e;
+    // Carry the path in the message and let the caller report it. Logging here
+    // as well as throwing printed every failure twice.
+    throw new Error(
+      `Failed to read or parse file ${filePath}: ${(e as Error).message}`,
+      {cause: e},
+    );
   }
 }
 

@@ -9,7 +9,7 @@ import {SchemaLike} from '../../utils/schema.js';
 import {BaseNode, isBaseNode, START} from '../base_node.js';
 import {NodeLike} from '../graph.js';
 import {NODE_BUILDERS, PARALLEL_WORKER_FACTORY} from '../node_builders.js';
-import {RetryConfig} from '../retry_config.js';
+import {prepareRetryConfig, RetryConfig} from '../retry_config.js';
 
 /**
  * Property overrides applied when building a node from a {@link NodeLike}.
@@ -24,6 +24,8 @@ export interface BuildNodeOptions {
   outputSchema?: SchemaLike;
   stateSchema?: SchemaLike;
   authConfig?: AuthConfig;
+  /** Runs the node's subtree in an isolated conversation scope. */
+  isolationScope?: string | true;
   /** If true, wrap the built node in a parallel worker. */
   parallelWorker?: boolean;
   /** Concurrency limit for the parallel worker (requires `parallelWorker`). */
@@ -45,6 +47,11 @@ export interface NodeBuilder {
   match(value: unknown): boolean;
   /** Builds a node from a value this builder previously matched. */
   build(value: NodeLike, options: BuildNodeOptions): BaseNode;
+  /**
+   * Whether this builder handles agents. An agent is already a `BaseNode`, so
+   * it would otherwise be used as-is; see {@link buildInnerNode}.
+   */
+  agentLike?: boolean;
 }
 
 /**
@@ -131,8 +138,18 @@ function buildInnerNode(
     return START;
   }
   if (isBaseNode(nodeLike)) {
-    // TODO(phase-3+): apply property overrides via a clone when options differ.
-    return nodeLike;
+    // An agent is itself a BaseNode, so it would be returned as-is here and
+    // never reach its builder below. It still needs one: the wrapper is what
+    // injects the node input into the prompt, drives task mode, and turns the
+    // agent's reply into node output. adk-python has the same fork and
+    // resolves it the same way, special-casing LlmAgent inside its own
+    // `isinstance(node_like, BaseNode)` branch.
+    for (const builder of NODE_BUILDERS) {
+      if (builder.agentLike && builder.match(nodeLike)) {
+        return builder.build(nodeLike, options);
+      }
+    }
+    return cloneWithOverrides(nodeLike, options);
   }
   for (const builder of NODE_BUILDERS) {
     if (builder.match(nodeLike)) {
@@ -143,4 +160,111 @@ function buildInnerNode(
     `build_node: unsupported node-like value of type ${typeof nodeLike}. ` +
       'Import the node module that handles it (e.g. via the workflow barrel).',
   );
+}
+
+/**
+ * The {@link BuildNodeOptions} keys that name a property of `BaseNode`.
+ *
+ * Every key of `BuildNodeOptions` is either listed here or excluded for a
+ * reason, because a key that is neither is silently dropped — the fault this
+ * function exists to remove. `satisfies` checks the entries that are listed,
+ * not that the list is complete, so a new overridable `BaseNode` property must
+ * be added here by hand.
+ *
+ * Excluded: `parallelWorker` and `maxParallelWorkers`, which describe the
+ * wrapper {@link buildNode} puts *around* the node rather than the node itself;
+ * and `authConfig`, which is not a `BaseNode` property (see
+ * {@link NODE_DECLARED_KEYS}).
+ */
+const OVERRIDABLE_KEYS = [
+  'name',
+  'description',
+  'rerunOnResume',
+  'retryConfig',
+  'timeout',
+  'inputSchema',
+  'outputSchema',
+  'stateSchema',
+  'isolationScope',
+] as const satisfies ReadonlyArray<keyof BuildNodeOptions & keyof BaseNode>;
+
+/**
+ * {@link BuildNodeOptions} keys that no `BaseNode` declares but a concrete node
+ * class does, applied only to a node that declares the property.
+ *
+ * `authConfig` is the only one: the function builder forwards it to
+ * `FunctionNode`, which reads `this.authConfig` on every run to gate on
+ * credentials, while the tool and agent builders ignore it. Guarding on the
+ * property keeps this path consistent with a fresh build — the option reaches
+ * the node that consumes it and no other.
+ */
+const NODE_DECLARED_KEYS = ['authConfig'] as const satisfies ReadonlyArray<
+  Exclude<keyof BuildNodeOptions, keyof BaseNode>
+>;
+
+/**
+ * Returns a copy of `node` with the given node properties replaced, or `node`
+ * itself when nothing is being overridden.
+ *
+ * A node that was built before it reached the graph — `node(existingNode,
+ * {timeout: 5})`, or a `Workflow` reused in two graphs with different retry
+ * policies — cannot have its properties assigned in place: nodes are shared,
+ * and mutating one would reach through to every graph holding it. adk-python
+ * copies instead (`model_copy(update=...)`); this is the same move.
+ *
+ * The copy keeps the node's prototype, so its behaviour and its class are
+ * unchanged, and carries over own properties including the `BaseNode` brand.
+ * `preparedRetryConfig` is derived from `retryConfig` at construction, so it is
+ * recomputed rather than copied — otherwise overriding the retry policy would
+ * appear to work while the node kept retrying on the old one.
+ *
+ * **The copy is shallow**, so any mutable value a node holds stays shared with
+ * the original. No node class does today — `FunctionNode`, `Workflow`,
+ * `ParallelWorker` and `LLMAgentWrapper` hold only their config and immutable
+ * per-run maps keyed by context — but a subclass that keeps, say, a mutable
+ * array would hand both graphs the same one. That case needs a real clone seam
+ * rather than a wider copy here: `BaseAgent.clone` rebuilds through the
+ * concrete constructor so state is re-derived instead of shared (see #534).
+ */
+function cloneWithOverrides(
+  node: BaseNode,
+  options: BuildNodeOptions,
+): BaseNode {
+  const overrides: Record<string, unknown> = {};
+  for (const key of OVERRIDABLE_KEYS) {
+    if (options[key] !== undefined) {
+      overrides[key] = options[key];
+    }
+  }
+  for (const key of NODE_DECLARED_KEYS) {
+    if (options[key] !== undefined && key in node) {
+      overrides[key] = options[key];
+    }
+  }
+  if (Object.keys(overrides).length === 0) {
+    // Identity matters: callers compare the node they passed in against the one
+    // the graph holds.
+    return node;
+  }
+
+  if (typeof overrides['name'] === 'string') {
+    const name = overrides['name'].trim();
+    if (!name) {
+      throw new Error('Node name must be a non-empty string.');
+    }
+    overrides['name'] = name;
+  }
+
+  const clone = Object.create(
+    Object.getPrototypeOf(node) as object,
+  ) as BaseNode;
+  Object.assign(clone, node, overrides);
+  if ('retryConfig' in overrides) {
+    Object.assign(clone, {
+      preparedRetryConfig: options.retryConfig
+        ? prepareRetryConfig(options.retryConfig)
+        : undefined,
+    });
+  }
+  return clone;
 }

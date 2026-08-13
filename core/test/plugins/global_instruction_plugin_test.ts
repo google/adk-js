@@ -6,6 +6,7 @@
 
 import {
   BaseLlm,
+  BaseLlmConnection,
   Context,
   GlobalInstructionPlugin,
   InMemoryRunner,
@@ -31,6 +32,10 @@ class MockLlm extends BaseLlm {
     yield {
       content: {parts: [{text: 'Hello from mock LLM'}]},
     };
+  }
+
+  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    throw new Error('Method not implemented.');
   }
 }
 

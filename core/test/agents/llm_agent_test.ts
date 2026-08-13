@@ -387,6 +387,37 @@ describe('LlmAgent Schema Initialization', () => {
     expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
   });
 
+  it('validates output against a genai outputSchema', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: {
+        type: Type.OBJECT,
+        properties: {bar: {type: Type.NUMBER}},
+        required: ['bar'],
+      },
+    });
+    expect(agent.validateOutput({bar: 1})).toEqual({bar: 1});
+    expect(() => agent.validateOutput({bar: 'no'})).toThrow();
+  });
+
+  it('validates output against a Zod outputSchema, keeping its refinements', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: z4.object({bar: z4.number().refine((n) => n > 10)}),
+    });
+    expect(agent.validateOutput({bar: 11})).toEqual({bar: 11});
+    // The refinement survives only because the original Zod schema is kept;
+    // it has no representation in the converted genai Schema.
+    expect(() => agent.validateOutput({bar: 1})).toThrow();
+  });
+
+  it('keeps the supplied schema alongside the converted genai form', () => {
+    const zodSchema = z4.object({bar: z4.number()});
+    const agent = new LlmAgent({name: 'test', outputSchema: zodSchema});
+    expect(agent.outputSchemaSource).toBe(zodSchema);
+    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
+  });
+
   it('should initialize outputSchema from Zod v3 object', () => {
     const zodSchema = z3.object({
       bar: z3.number(),
@@ -482,6 +513,24 @@ describe('LlmAgent Output Processing', () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
+  });
+
+  it('keeps the parsed object in state when it violates the output schema', async () => {
+    // Well-formed JSON, but `answer` is declared STRING. The violation is
+    // logged rather than thrown, and state keeps the object the model
+    // returned — a consumer of `outputKey` reads the same type either way.
+    const response: LlmResponse = {
+      content: {parts: [{text: JSON.stringify({answer: 42})}]},
+    };
+    agent.model = new MockLlm(response);
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.actions?.stateDelta?.['result']).toEqual({answer: 42});
   });
 });
 
@@ -1057,5 +1106,89 @@ describe('LlmAgent outputSchema with tools', () => {
       sessionId: 'test_session',
     });
     expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
+  });
+});
+
+describe('LlmAgent usage metadata on content-less responses', () => {
+  let agent: LlmAgent;
+  let invocationContext: InvocationContext;
+
+  beforeEach(() => {
+    agent = new LlmAgent({name: 'usage_test_agent'});
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_usage',
+      session: {
+        id: 'sess_usage',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent,
+      pluginManager: new PluginManager(),
+    });
+  });
+
+  async function runAndCollect(): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  // In SSE streaming, StreamingResponseAggregator.close() reports a turn's
+  // token counts on a response with no content, because the turn's parts were
+  // already yielded. Skipping it loses that turn's usage entirely, and the loss
+  // is silent: downstream, "no usage reported" and "zero tokens used" are the
+  // same value.
+  it('emits an event for a response that carries only usage metadata', async () => {
+    const response: LlmResponse = {
+      usageMetadata: {
+        promptTokenCount: 1234,
+        candidatesTokenCount: 56,
+        totalTokenCount: 1290,
+      },
+    };
+    agent.model = new MockLlm(response);
+
+    const events = await runAndCollect();
+
+    expect(events.length).toBeGreaterThan(0);
+    const usageEvent = events.find((e) => e.usageMetadata);
+    expect(usageEvent).toBeDefined();
+    expect(usageEvent!.usageMetadata?.promptTokenCount).toEqual(1234);
+    expect(usageEvent!.usageMetadata?.candidatesTokenCount).toEqual(56);
+  });
+
+  // The event must NOT carry an empty parts array. That is what poisoned
+  // session history and made Vertex reject the following request with HTTP 400
+  // (#21, #22); buildContents() skips events without `content.role`, so an
+  // undefined content keeps the usage out of history while still delivering it.
+  it('does not emit empty-parts content alongside the usage', async () => {
+    const response: LlmResponse = {
+      usageMetadata: {promptTokenCount: 10, totalTokenCount: 10},
+    };
+    agent.model = new MockLlm(response);
+
+    const events = await runAndCollect();
+
+    const usageEvent = events.find((e) => e.usageMetadata);
+    expect(usageEvent).toBeDefined();
+    expect(usageEvent!.content?.parts).toBeUndefined();
+    expect(usageEvent!.content?.role).toBeUndefined();
+  });
+
+  // Control: without usage metadata the guard must still skip, or the fix would
+  // start emitting events for genuinely empty responses.
+  it('still skips a response with neither content nor usage metadata', async () => {
+    agent.model = new MockLlm({} as LlmResponse);
+
+    const events = await runAndCollect();
+
+    expect(events.find((e) => e.usageMetadata)).toBeUndefined();
   });
 });

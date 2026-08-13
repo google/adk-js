@@ -1,6 +1,7 @@
 [
   {
-    "key": "af9498818db98c17",
+    "key": "cd9270015161d3d2",
+    "instructionAgnosticKey": "4264aed4e3cdf2d9",
     "request": {
       "contents": [
         {
@@ -12,39 +13,58 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"find_related_topics\".\n\nGiven the specific topic \"databases\", generate a list of 3 related topics."
+      "config": {
+        "responseSchema": {
+          "type": "ARRAY",
+          "items": {
+            "type": "STRING"
+          }
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Given the specific topic \"databases\", generate a list of 3 related topics.",
+        "labels": {
+          "adk_agent_name": "find_related_topics"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "[\"SQL\", \"Data Warehousing\", \"Cloud Computing\"]"
+                "text": "[\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 36,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 188,
+        "promptTokenCount": 19,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 64,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 36
+            "tokenCount": 19
           }
         ],
-        "thoughtsTokenCount": 140,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 20
+          }
+        ],
+        "thoughtsTokenCount": 25
       }
     }
   },
   {
-    "key": "725400919553bd3a",
+    "key": "4be471efd03ca099",
+    "instructionAgnosticKey": "41c6a4874736a99c",
     "request": {
       "contents": [
         {
@@ -62,7 +82,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"Data Warehousing\", \"Cloud Computing\"]"
+              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
             }
           ]
         },
@@ -75,39 +95,64 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"explain_topic\".\n\nExplain how the following topic relates to the original topic: \"databases\"."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": ["topic", "explanation"]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"topic\":\"SQL\",\"explanation\":\"SQL (Structured Query Language) is the primary language used to define, manipulate, and query data in relational databases. It's the standard way to interact with and manage the vast majority of database systems, allowing users to create tables, insert data, retrieve specific information, and update records.\"}"
+                "text": "{\n  \"topic\": \"SQL\",\n  \"explanation\": \"SQL (Structured Query Language) is the standard language used for managing and manipulating relational databases. It allows users to create, retrieve, update, and delete data, as well as define database schemas and manage access permissions. Without SQL, interacting with most traditional 'databases' would be significantly more complex, as it provides the core functionality for data operations and database management.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 59,
-        "candidatesTokenCount": 66,
-        "totalTokenCount": 245,
+        "promptTokenCount": 55,
+        "candidatesTokenCount": 89,
+        "totalTokenCount": 178,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 59
+            "tokenCount": 55
           }
         ],
-        "thoughtsTokenCount": 120,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 89
+          }
+        ],
+        "thoughtsTokenCount": 34
       }
     }
   },
   {
-    "key": "4413514f9a6e442e",
+    "key": "ea16caa379152d83",
+    "instructionAgnosticKey": "f74803db885b14a0",
     "request": {
       "contents": [
         {
@@ -125,7 +170,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"Data Warehousing\", \"Cloud Computing\"]"
+              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
             }
           ]
         },
@@ -133,44 +178,69 @@
           "role": "user",
           "parts": [
             {
-              "text": "DATA WAREHOUSING"
+              "text": "DATA MODELING"
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"explain_topic\".\n\nExplain how the following topic relates to the original topic: \"databases\"."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": ["topic", "explanation"]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"topic\":\"DATA WAREHOUSING\",\"explanation\":\"Data Warehousing is a specific type of database system designed for analytical reporting and data analysis. While traditional databases (often called OLTP - Online Transaction Processing) are optimized for transactional operations like inserting, updating, and deleting small amounts of data quickly, data warehouses (OLAP - Online Analytical Processing) are optimized for complex queries that involve reading and aggregating large volumes of historical data. Data warehouses typically collect and consolidate data from multiple operational databases and other sources, transforming it into a format suitable for business intelligence and decision-making. Therefore, data warehousing heavily relies on databases as its foundational technology, but with a distinct architectural and usage pattern focused on analytical workloads rather than real-time transactions.\"}"
+                "text": "{\n  \"topic\": \"DATA MODELING\",\n  \"explanation\": \"Data modeling is a fundamental and crucial step in the design and implementation of databases. It involves creating a visual or conceptual representation of the data that an organization needs to store and manage. This process defines the structure of the data, the relationships between different data elements, and the constraints that govern the data's integrity. Essentially, data modeling provides the blueprint for building a database, determining how tables will be organized, what attributes they will contain, and how they will connect to each other. Without effective data modeling, a database would lack structure, consistency, and efficiency in storing and retrieving information.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 63,
-        "candidatesTokenCount": 148,
-        "totalTokenCount": 347,
+        "promptTokenCount": 57,
+        "candidatesTokenCount": 137,
+        "totalTokenCount": 252,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 63
+            "tokenCount": 57
           }
         ],
-        "thoughtsTokenCount": 136,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 137
+          }
+        ],
+        "thoughtsTokenCount": 58
       }
     }
   },
   {
-    "key": "40da01e7376bf978",
+    "key": "21a12fc32ed4924b",
+    "instructionAgnosticKey": "831e9fdf435ed2b5",
     "request": {
       "contents": [
         {
@@ -188,7 +258,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\"SQL\", \"Data Warehousing\", \"Cloud Computing\"]"
+              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
             }
           ]
         },
@@ -202,10 +272,10 @@
               "text": "[make_upper_case] said: SQL"
             },
             {
-              "text": "[make_upper_case] said: DATA WAREHOUSING"
+              "text": "[make_upper_case] said: DATA MODELING"
             },
             {
-              "text": "[make_upper_case] said: CLOUD COMPUTING"
+              "text": "[make_upper_case] said: DATABASE ADMINISTRATION"
             }
           ]
         },
@@ -213,39 +283,63 @@
           "role": "user",
           "parts": [
             {
-              "text": "CLOUD COMPUTING"
+              "text": "DATABASE ADMINISTRATION"
             }
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"explain_topic\".\n\nExplain how the following topic relates to the original topic: \"databases\"."
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": ["topic", "explanation"]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "{\"topic\": \"CLOUD COMPUTING\", \"explanation\": \"Cloud Computing relates directly to databases by providing the infrastructure, platforms, and services necessary to host, manage, and scale databases. Cloud providers offer 'Database as a Service' (DBaaS) solutions, enabling users to deploy and operate various types of databases (relational, NoSQL, data warehouses) without the need for extensive on-premise hardware or software management. This allows for increased scalability, reliability, cost-efficiency, and global accessibility of database systems.\"}"
+                "text": "{\n  \"topic\": \"DATABASE ADMINISTRATION\",\n  \"explanation\": \"DATABASE ADMINISTRATION is the practice of managing and maintaining databases to ensure their optimal performance, security, and availability. This involves tasks such as installation, configuration, backup and recovery, security management, performance tuning, and troubleshooting. It is directly related to databases as it encompasses all the necessary activities to keep a database system operational, secure, and efficient for the organizations that rely on them.\"\n}"
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 102,
-        "candidatesTokenCount": 106,
-        "totalTokenCount": 393,
+        "promptTokenCount": 92,
+        "candidatesTokenCount": 93,
+        "totalTokenCount": 219,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 102
+            "tokenCount": 92
           }
         ],
-        "thoughtsTokenCount": 185,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 93
+          }
+        ],
+        "thoughtsTokenCount": 34
       }
     }
   }

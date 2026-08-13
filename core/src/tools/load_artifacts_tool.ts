@@ -183,11 +183,7 @@ export class LoadArtifactsTool extends BaseTool {
       if (content.role === 'user' && content.parts) {
         for (const part of content.parts) {
           const functionResponse = part.functionResponse;
-          if (
-            functionResponse &&
-            (functionResponse.name === this.name ||
-              functionResponse.name === 'load_artifacts')
-          ) {
+          if (functionResponse && functionResponse.name === this.name) {
             const response =
               (functionResponse.response as Record<string, unknown>) || {};
             const artifactNames =

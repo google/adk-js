@@ -16,9 +16,11 @@ import {
   ScheduleDynamicNodeOptions,
 } from './schedule_dynamic_node.js';
 import {
+  eventsForCurrentRun,
   isFastForwardable,
   makeFastForwardResult,
   reconstructNodeStatesByPath,
+  type RehydratedNode,
 } from './utils/rehydration_utils.js';
 
 /**
@@ -60,32 +62,98 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       return existing.task;
     }
 
-    // Cross-turn resume: rehydrate this dynamic run from prior session events.
+    // Cross-turn resume: rehydrate this dynamic run from the events of the run
+    // still in progress (a run that already completed must not be replayed).
     if (!this.state.runs.has(nodePath)) {
-      const prior = reconstructNodeStatesByPath(ctx.session?.events ?? []).get(
-        nodePath,
-      );
+      const prior = reconstructNodeStatesByPath(
+        eventsForCurrentRun(ctx.session?.events ?? [], ctx.invocationId),
+      ).get(nodePath);
       if (prior && !node.rerunOnResume && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
-        this.state.runs.set(nodePath, {
-          state: createNodeState({
-            status: NodeStatus.COMPLETED,
-            runId,
-            parentRunId: ctx.runId,
-          }),
-          output: prior.output,
-        });
-        if (options.useAsOutput) {
-          ctx.output = prior.output;
-          ctx.route = prior.route;
-        }
-        return makeFastForwardResult(ctx, prior);
+        return this.completeWithoutRunning(
+          ctx,
+          {nodePath, runId, options},
+          makeFastForwardResult(ctx, prior),
+        );
+      }
+      // Resume with rerunOnResume=false: a child that interrupted last turn
+      // (raised interrupts, produced no output) does NOT re-run its body. It
+      // completes with the resolved resume value(s) as its output, which
+      // `ctx.runNode()` hands back to the caller. Mirrors the static-graph
+      // handoff in `Workflow.scheduleNode`; without it such a child re-runs,
+      // raises a brand-new interrupt, and the workflow can never resume.
+      const handoff = this.resumeHandoff(ctx, node, prior);
+      if (handoff) {
+        return this.completeWithoutRunning(
+          ctx,
+          {nodePath, runId, options},
+          handoff,
+        );
       }
       // Otherwise (waiting/unresolved): resume inputs were already merged into
       // ctx.resumeInputs by the Workflow; fall through to a fresh run.
     }
 
     return this.runFresh(ctx, node, input, name, runId, nodePath, options);
+  }
+
+  /**
+   * Books a dynamic run that completed WITHOUT executing its body — either
+   * fast-forwarded from a cached output or handed the resolved resume value —
+   * and returns `result` for `ctx.runNode()` to give back to the caller.
+   */
+  private completeWithoutRunning(
+    ctx: NodeContext,
+    run: {
+      nodePath: string;
+      runId: string;
+      options: ScheduleDynamicNodeOptions;
+    },
+    result: NodeResult,
+  ): NodeResult {
+    this.state.runs.set(run.nodePath, {
+      state: createNodeState({
+        status: NodeStatus.COMPLETED,
+        runId: run.runId,
+        parentRunId: ctx.runId,
+      }),
+      output: result.output,
+    });
+    if (run.options.useAsOutput) {
+      ctx.output = result.output;
+      ctx.route = result.route;
+    }
+    return result;
+  }
+
+  /**
+   * Builds the completion result for a child that interrupted in a prior turn
+   * and whose interrupts are now all resolved, or `undefined` when the child is
+   * not in that state (so the caller falls through to a fresh run).
+   */
+  private resumeHandoff(
+    ctx: NodeContext,
+    node: BaseNode,
+    prior: RehydratedNode | undefined,
+  ): NodeResult | undefined {
+    if (
+      !prior ||
+      node.rerunOnResume ||
+      prior.output !== undefined ||
+      prior.interruptIds.size === 0
+    ) {
+      return undefined;
+    }
+    const values = [...prior.interruptIds].map((id) => ctx.resumeInputs[id]);
+    if (!values.every((value) => value !== undefined)) {
+      return undefined;
+    }
+    return {
+      output: values.length === 1 ? values[0] : values,
+      route: undefined,
+      branch: prior.branch ?? ctx.branch,
+      interruptIds: [],
+    };
   }
 
   private async runFresh(

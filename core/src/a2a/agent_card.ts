@@ -20,6 +20,7 @@ import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
+import {isGraphWorkflowAgent} from '../workflow/workflow_agent.js';
 
 /**
  * Resolves the AgentCard from the provided source.
@@ -405,7 +406,7 @@ function getAgentSkillName(agent: BaseAgent): string {
   if (isLlmAgent(agent)) {
     return 'model';
   }
-  if (isWorkflowAgent(agent)) {
+  if (isWorkflowAgent(agent) || isGraphWorkflowAgent(agent)) {
     return 'workflow';
   }
   return 'custom';

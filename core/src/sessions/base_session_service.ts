@@ -10,6 +10,7 @@ import {Event} from '../events/event.js';
 
 import {CompositeSessionKey, Session} from './session.js';
 import {State} from './state.js';
+import {carryDeltaStamps, shouldApplyDeltaWrite} from './state_write_order.js';
 
 /**
  * The configuration of getting a session.
@@ -49,8 +50,8 @@ export interface GetSessionRequest extends CompositeSessionKey {
 export interface ListSessionsRequest {
   /** The name of the application. */
   appName: string;
-  /** The ID of the user. */
-  userId: string;
+  /** The ID of the user. Sessions of every user are listed if omitted. */
+  userId?: string;
   /** Maximum number of sessions to return. */
   limit?: number;
   /** Zero-based index of the first session to return. Ignored if `page` is set. */
@@ -196,6 +197,15 @@ export abstract class BaseSessionService {
       if (key.startsWith(State.TEMP_PREFIX)) {
         continue;
       }
+      // Commits lag the writes they carry, and events arrive here in the order
+      // they were streamed rather than the order their writes happened.
+      // Applying an entry that a newer write already superseded would roll the
+      // key back until that newer event commits in turn; skip it instead.
+      if (
+        !shouldApplyDeltaWrite(session.state, event.actions.stateDelta, key)
+      ) {
+        continue;
+      }
       // `session.state` is not always a null-prototype map — a caller can hand
       // us a session whose state is a plain object literal — and on a plain
       // object `state['__proto__'] = value` reaches the inherited `__proto__`
@@ -230,6 +240,9 @@ export function trimTempDeltaState(event: Event): Event {
     }
   }
 
+  // The rebuilt map is a different object, so the write order recorded against
+  // the old one has to come with it or the commit loses its ordering.
+  carryDeltaStamps(stateDelta, filteredStateDelta);
   event.actions.stateDelta = filteredStateDelta;
   return event;
 }

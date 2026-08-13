@@ -12,6 +12,7 @@ import {AuthCredentialTypes} from '../../src/auth/auth_credential.js';
 import {AuthConfig} from '../../src/auth/auth_tool.js';
 import type {Event} from '../../src/events/event.js';
 import {State} from '../../src/sessions/state.js';
+import {toJsonSchema} from '../../src/utils/schema.js';
 import {
   isRequestInput,
   RequestInput,
@@ -22,9 +23,12 @@ import {
   getRequestInputInterruptIds,
   hasAuthCredential,
   hasRequestInputFunctionCall,
+  interruptResponseMismatch,
   processAuthResume,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
+  responseSchemasByInterruptId,
 } from '../../src/workflow/utils/hitl_utils.js';
+import {unwrapResponse} from '../../src/workflow/utils/rehydration_utils.js';
 
 /** Extracts the first function-call args from an event. */
 function firstFunctionCall(event: Event) {
@@ -81,7 +85,7 @@ describe('createRequestInputEvent', () => {
       interruptId: 'i1',
       message: 'pick',
       payload: {x: 1},
-      responseSchema: null,
+      response_schema: null,
     });
     expect(event.longRunningToolIds).toEqual(['i1']);
     expect(hasRequestInputFunctionCall(event)).toBe(true);
@@ -96,7 +100,7 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
   it('converts a Zod v3 responseSchema to a JSON schema', () => {
@@ -107,10 +111,10 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toMatchObject({type: 'object'});
+    expect(args['response_schema']).toMatchObject({type: 'object'});
   });
 
-  it('passes a genai Schema responseSchema through as-is', () => {
+  it('converts a genai Schema responseSchema to a JSON schema', () => {
     const schema: Schema = {
       type: Type.OBJECT,
       properties: {answer: {type: Type.STRING}},
@@ -120,7 +124,27 @@ describe('createRequestInputEvent', () => {
       string,
       unknown
     >;
-    expect(args.responseSchema).toEqual(schema);
+    // Emitted in the same JSON Schema dialect as a Zod responseSchema, so a
+    // client reading this field does not have to handle two type spellings.
+    expect(args['response_schema']).toEqual({
+      type: 'object',
+      properties: {answer: {type: 'string'}},
+    });
+  });
+
+  it('names the schema arg the way clients read it', () => {
+    const args = firstFunctionCall(
+      createRequestInputEvent(
+        new RequestInput({responseSchema: z4.object({answer: z4.string()})}),
+      ),
+    )?.args as Record<string, unknown>;
+
+    expect(Object.keys(args)).toEqual([
+      'interruptId',
+      'payload',
+      'message',
+      'response_schema',
+    ]);
   });
 });
 
@@ -157,5 +181,93 @@ describe('auth gate', () => {
       authType: 'apiKey',
       apiKey: 'my-key',
     });
+  });
+});
+
+describe('responseSchemasByInterruptId', () => {
+  it('recovers the schema an interrupt declared, keyed by id', () => {
+    const event = createRequestInputEvent(
+      new RequestInput({
+        interruptId: 'i1',
+        responseSchema: z4.object({userResponse: z4.string()}),
+      }),
+    );
+
+    const schemas = responseSchemasByInterruptId([event]);
+
+    expect(schemas.get('i1')).toMatchObject({type: 'object'});
+  });
+
+  it('omits interrupts that declared no schema', () => {
+    const event = createRequestInputEvent(
+      new RequestInput({interruptId: 'i1'}),
+    );
+
+    expect(responseSchemasByInterruptId([event]).has('i1')).toBe(false);
+  });
+});
+
+describe('interruptResponseMismatch', () => {
+  const objectSchema = toJsonSchema(z4.object({userResponse: z4.string()}));
+
+  it('accepts a reply matching the declared schema', () => {
+    expect(
+      interruptResponseMismatch('i1', {userResponse: 'yes'}, objectSchema),
+    ).toBeUndefined();
+  });
+
+  it('reports a reply in the wrong shape, naming the interrupt', () => {
+    // The `{response: x}` envelope a client reaches for instead of `{result: x}`:
+    // it is not unwrapped, so the whole object arrives as the node's input.
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/reply to interrupt 'i1' does not match/i);
+  });
+
+  it('explains how a structured reply is expected to look', () => {
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/\{result: <value>\}/);
+  });
+
+  it('says the interrupt can be answered again', () => {
+    expect(
+      interruptResponseMismatch('i1', {response: '21'}, objectSchema),
+    ).toMatch(/still waiting/i);
+  });
+
+  it('passes through when the interrupt declared no schema', () => {
+    expect(
+      interruptResponseMismatch('i1', {anything: true}, undefined),
+    ).toBeUndefined();
+  });
+
+  it('passes through when the schema cannot be compiled', () => {
+    expect(
+      interruptResponseMismatch('i1', 'anything', {
+        $ref: 'https://example.com/unresolvable.json',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('lets a bare-text reply through an object schema, as plain text does', () => {
+    expect(
+      interruptResponseMismatch(
+        'i1',
+        unwrapResponse({result: 'the museum and the lunch'}),
+        objectSchema,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('checks the unwrapped value, so {result: x} satisfies a bare schema', () => {
+    const stringSchema = toJsonSchema(z4.string());
+    expect(
+      interruptResponseMismatch(
+        'i1',
+        unwrapResponse({result: '21'}),
+        stringSchema,
+      ),
+    ).toBeUndefined();
   });
 });

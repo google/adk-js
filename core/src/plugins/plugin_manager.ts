@@ -14,6 +14,8 @@ import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {logger} from '../utils/logger.js';
+import type {BaseNode} from '../workflow/base_node.js';
+import type {NodeContext} from '../workflow/node_context.js';
 
 import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
 
@@ -33,6 +35,12 @@ import {BasePlugin, ContextCompactionTrigger} from './base_plugin.js';
  */
 export class PluginManager {
   private readonly plugins: Set<BasePlugin> = new Set();
+
+  /** Whether any plugin is registered. */
+  get hasPlugins(): boolean {
+    return this.plugins.size > 0;
+  }
+
   /**
    * Initializes the plugin service.
    *
@@ -214,6 +222,46 @@ export class PluginManager {
         plugin.afterAgentCallback({agent, callbackContext}),
       'afterAgentCallback',
     )) as Content | undefined;
+  }
+
+  /**
+   * Runs the `beforeNodeCallback` for all plugins.
+   */
+  async runBeforeNodeCallback({
+    node,
+    nodeContext,
+    input,
+  }: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    input: unknown;
+  }): Promise<unknown> {
+    return this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.beforeNodeCallback({node, nodeContext, input}),
+      'beforeNodeCallback',
+    );
+  }
+
+  /**
+   * Runs the `afterNodeCallback` for all plugins.
+   */
+  async runAfterNodeCallback({
+    node,
+    nodeContext,
+    output,
+  }: {
+    node: BaseNode;
+    nodeContext: NodeContext;
+    output: unknown;
+  }): Promise<unknown> {
+    return this.runCallbacks(
+      this.plugins,
+      (plugin: BasePlugin) =>
+        plugin.afterNodeCallback({node, nodeContext, output}),
+      'afterNodeCallback',
+    );
   }
 
   /**

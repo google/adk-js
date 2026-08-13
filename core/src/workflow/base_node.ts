@@ -7,6 +7,7 @@
 import {Content, createModelContent, PartListUnion} from '@google/genai';
 import {createEvent, Event, isEvent} from '../events/event.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
+import {NodeSchemaValidationError} from './errors.js';
 import type {NodeContext} from './node_context.js';
 import {isRequestInput} from './request_input.js';
 import {
@@ -65,6 +66,13 @@ export interface BaseNodeConfig {
 
   /** Optional schema validating relevant session state (Zod v3/v4 or genai `Schema`). */
   stateSchema?: SchemaLike;
+
+  /**
+   * Runs this node's subtree in an isolated conversation scope: an agent inside
+   * it sees only session events carrying the same scope, plus untagged ones.
+   * `true` derives a scope per node run; a string is an explicit shared tag.
+   */
+  isolationScope?: string | true;
 }
 
 /**
@@ -94,6 +102,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
   readonly inputSchema?: SchemaLike;
   readonly outputSchema?: SchemaLike;
   readonly stateSchema?: SchemaLike;
+  readonly isolationScope?: string | true;
 
   constructor(config: BaseNodeConfig) {
     if (
@@ -115,6 +124,7 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     this.inputSchema = config.inputSchema;
     this.outputSchema = config.outputSchema;
     this.stateSchema = config.stateSchema;
+    this.isolationScope = config.isolationScope;
   }
 
   /**
@@ -169,7 +179,15 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     if (isContent(input)) {
       return input;
     }
-    return parseWithSchema(this.inputSchema, input);
+    try {
+      return parseWithSchema(this.inputSchema, input);
+    } catch (e) {
+      throw new NodeSchemaValidationError({
+        nodeName: this.name,
+        direction: 'input',
+        cause: e,
+      });
+    }
   }
 
   /**
@@ -181,7 +199,15 @@ export abstract class BaseNode<TInput = unknown, TOutput = unknown> {
     if (isContent(output)) {
       return output;
     }
-    return parseWithSchema(this.outputSchema, output);
+    try {
+      return parseWithSchema(this.outputSchema, output);
+    } catch (e) {
+      throw new NodeSchemaValidationError({
+        nodeName: this.name,
+        direction: 'output',
+        cause: e,
+      });
+    }
   }
 
   /**

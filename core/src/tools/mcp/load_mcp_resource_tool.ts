@@ -121,11 +121,7 @@ export class LoadMcpResourceTool extends BaseTool {
       if (content.role === 'user' && content.parts) {
         for (const part of content.parts) {
           const functionResponse = part.functionResponse;
-          if (
-            functionResponse &&
-            (functionResponse.name === this.name ||
-              functionResponse.name === 'load_mcp_resource')
-          ) {
+          if (functionResponse && functionResponse.name === this.name) {
             const response =
               (functionResponse.response as Record<string, unknown>) || {};
             const names = (response['resource_names'] as string[]) || [];

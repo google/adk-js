@@ -8,7 +8,6 @@ import {
   BaseAgent,
   InvocationContext,
   LlmAgent,
-  LlmRequest,
   PluginManager,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   createEvent,
@@ -51,22 +50,10 @@ function createMockInvocationContext(
   });
 }
 
-function makeLlmRequest(): LlmRequest {
-  return {
-    contents: [],
-    toolsDict: {},
-    liveConnectConfig: {},
-  };
-}
-
-async function collectEvents(
-  invocationContext: InvocationContext,
-  llmRequest: LlmRequest = makeLlmRequest(),
-) {
+async function collectEvents(invocationContext: InvocationContext) {
   const events = [];
   for await (const event of REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR.runAsync(
     invocationContext,
-    llmRequest,
   )) {
     events.push(event);
   }

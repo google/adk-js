@@ -15,10 +15,10 @@ import {
 } from '@google/adk';
 import {Argument, Command, Option} from 'commander';
 import dotenv from 'dotenv';
-import * as path from 'path';
 import {runIntegrationTests} from '../integration/run_integration_tests.js';
 import {AdkApiServer} from '../server/adk_api_server.js';
 import {FileModuleType} from '../utils/agent_loader.js';
+import {getAbsolutePath} from '../utils/file_utils.js';
 import {AdkLogger} from '../utils/logger.js';
 import {version} from '../version.js';
 import {createAgent} from './cli_create.js';
@@ -44,14 +44,12 @@ function getLogLevelFromOptions(options: {
   }
 
   if (typeof options.log_level === 'string') {
-    return LOG_LEVEL_MAP[options.log_level.toLowerCase()] || LogLevel.INFO;
+    // `??`, not `||`: LogLevel.DEBUG is 0, so `||` fell through to INFO and
+    // made `--log_level debug` a silent no-op.
+    return LOG_LEVEL_MAP[options.log_level.toLowerCase()] ?? LogLevel.INFO;
   }
 
   return LogLevel.INFO;
-}
-
-function getAbsolutePath(p: string): string {
-  return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
 }
 
 function getSessionServiceFromOptions(options: {
@@ -96,7 +94,7 @@ function getBoolean(option?: string | boolean): boolean {
 
 const AGENT_DIR_ARGUMENT = new Argument(
   '[agents_dir]',
-  'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent)',
+  'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent) or a Workflow',
 ).default(process.cwd());
 const HOST_OPTION = new Option(
   '-h, --host <string>',
@@ -386,6 +384,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error running agent:', (error as Error).message);
+        process.exit(1);
       }
     });
 

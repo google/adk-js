@@ -39,6 +39,8 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import type {RunnableNode} from '../workflow/graph.js';
+import {asRootAgent} from '../workflow/workflow_agent.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -55,9 +57,15 @@ export interface RunnerConfig {
   appName?: string;
 
   /**
-   * The agent to run. Required if `app` is not provided.
+   * The agent or workflow to run. Required if `app` is not provided.
+   *
+   * A bare node — a `Workflow`, most usefully — is accepted as the root and
+   * adapted internally, so a graph does not have to be wrapped by hand to be
+   * run. The accepted set is the same one an edge and `WorkflowAgent` take, so
+   * `{agent: node}` and `{agent: new WorkflowAgent(node)}` mean the same thing.
+   * Mirrors adk-python, whose `Runner.agent` is typed `BaseNode`.
    */
-  agent?: BaseAgent;
+  agent?: RunnableNode;
 
   /**
    * An optional list of plugins to apply globally across all agents.
@@ -160,7 +168,7 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    this.agent = agent;
+    this.agent = asRootAgent(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
@@ -600,9 +608,11 @@ export function determineAgentForResumption(
     if (resumedAgent) {
       return resumedAgent;
     }
-    logger.warn(
-      `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
-    );
+    if (!isWorkflowNodeEvent(event)) {
+      logger.warn(
+        `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+      );
+    }
   }
 
   // =========================================================================
@@ -623,9 +633,11 @@ export function determineAgentForResumption(
 
     const agent = rootAgent.findSubAgent(event.author);
     if (!agent) {
-      logger.warn(
-        `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
-      );
+      if (!isWorkflowNodeEvent(event)) {
+        logger.warn(
+          `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
+        );
+      }
       continue;
     }
     if (isRoutableLlmAgent(agent)) {
@@ -636,6 +648,26 @@ export function determineAgentForResumption(
   // Case 3: default to root agent.
   // =========================================================================
   return rootAgent;
+}
+
+/**
+ * Whether the event was emitted by a graph-workflow node, and so may be
+ * authored by a node name rather than an agent name.
+ *
+ * `nodeInfo.path` is stamped on everything a node emits (`node_runner.ts`).
+ * When the node emits an event of its own — a function node's output, or a HITL
+ * interrupt, which carries no author at all — the node name is stamped as the
+ * author. Nodes are not in the agent tree and never will be: a `WorkflowAgent`
+ * keeps its structure in `edges`, so its `subAgents` is empty. Looking such an
+ * author up could only ever miss, so the miss is not worth warning about — it
+ * fired on the happy path of every human-in-the-loop resume.
+ *
+ * Only the warning is suppressed, never the lookup: a node that wraps an agent
+ * (`LLMAgentWrapper`) yields the agent's own events, so the author is a real
+ * agent name that must still resolve.
+ */
+function isWorkflowNodeEvent(event: Event): boolean {
+  return Boolean(event.nodeInfo?.path);
 }
 
 /**

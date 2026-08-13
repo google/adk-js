@@ -1,6 +1,7 @@
 [
   {
     "key": "5c12572a300d06ce",
+    "instructionAgnosticKey": "3855f18c9f65f0c3",
     "request": {
       "contents": [
         {
@@ -12,12 +13,52 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "userId": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": ["userId"]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on the customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer membership tier (e.g. VIP)."
+                    }
+                  },
+                  "required": ["tier"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "functionCall": {
@@ -25,33 +66,38 @@
                   "args": {
                     "userId": "u123"
                   },
-                  "id": "adk-fd285b1d-b631-4b70-af75-2bfbad658de3"
-                },
-                "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+                  "id": "adk-f58be2e3-f696-4d15-8dee-0cee5c320702"
+                }
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 204,
-        "candidatesTokenCount": 20,
-        "totalTokenCount": 325,
+        "promptTokenCount": 154,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 271,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 204
+            "tokenCount": 154
           }
         ],
-        "thoughtsTokenCount": 101,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 10
+          }
+        ],
+        "thoughtsTokenCount": 107
       }
     }
   },
   {
-    "key": "9198e0671a442787",
+    "key": "ea80007f6409252c",
+    "instructionAgnosticKey": "0f0a2260e6e894d0",
     "request": {
       "contents": [
         {
@@ -63,6 +109,7 @@
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
               "functionCall": {
@@ -70,11 +117,9 @@
                 "args": {
                   "userId": "u123"
                 }
-              },
-              "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+              }
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
@@ -91,12 +136,52 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "userId": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": ["userId"]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on the customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer membership tier (e.g. VIP)."
+                    }
+                  },
+                  "required": ["tier"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
                 "functionCall": {
@@ -104,33 +189,37 @@
                   "args": {
                     "tier": "Verified VIP Member"
                   },
-                  "id": "adk-ad4e599b-b87b-498a-b85a-fd4d57b287e2"
-                },
-                "thoughtSignature": "CskBARFNMg8w0O19xRklAqwMQk8G8Ofbobo8Cn51FOb0XeQ9tViP4OGaHJQ/NYLS/4C3qrT23M7HEmbY+wdN6Qnsxxt+V7Lz9JgFNJpHLqvNhHlyi44zyNDyX6EhhlfxlRG+ZC11hXkaYqSNHgTwDMOk4VEWrrGsxtwgUA9hVtu8n87INMsCUC73l20FY+fj7iT2zS48LRejcRaDVe6PurVFVgK6R7UHueKsSTqyU1bR/Bsk/Y/8AIqHjNR8SdtCI4Zb55dlX9Wknnwt"
+                  "id": "adk-c050f74b-0a29-4720-86a2-fde8da23cb6b"
+                }
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 252,
-        "candidatesTokenCount": 17,
-        "totalTokenCount": 308,
+        "promptTokenCount": 178,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 185,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 252
+            "tokenCount": 178
           }
         ],
-        "thoughtsTokenCount": 39,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 7
+          }
+        ]
       }
     }
   },
   {
-    "key": "5e0e6625f60e416c",
+    "key": "028f0c7b0f0252ef",
+    "instructionAgnosticKey": "a7d31ef585c10ae6",
     "request": {
       "contents": [
         {
@@ -142,6 +231,7 @@
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
               "functionCall": {
@@ -149,11 +239,9 @@
                 "args": {
                   "userId": "u123"
                 }
-              },
-              "thoughtSignature": "CrIDARFNMg/l/BhcmHC+A0NSkm0toDFtvveWfCmbIqCqV6BIB1jyhoJjXACDSqNhNU+Z6l6yjtEjePUAeD0aoJG+62oz3vRp0SyOVeMWOZJH3aKDAiL2A6JZ88xW66hNGng41TLnFQSoG7qDmumte00tpF5yCoF167Z3Vo9uhxm/us9H5XAqS94ftuAdKwSRgL/f4i5bB3EJeoIlS75aFoC7hY8vdzNtMq9sT2axfgNlpU0wbp6BGfCEQJXSulUHhW1KffMeoPulnhoQGj0+oCJ3vJ+PiL7qnZ47p61Vy/25MvmOGuPxzgtGcU7BbSPnFfodXBfxWLZKz2m8kqhBuHB9y3bk4pfdc74RIa1eLr8YZ3QynjmRgE4AXr5HsNcRy+NCzkCK4hLNSTLLVCaTL+c32ONu+YppBOUPzxT+LcwYJzsP5W6By2cZejzCC1zpx5Vj64hXWP4aoip7ws8N6pR0tENvb4idzqNx+Vb3mI3Z4RoSaBfNnoVPtiT0smyLpk+eM6RRcCdLovZUYbtzkggchTSbVNA90If26Pm+1COqRA1HT/ibvZqJOPQOk0MkKL6rtlY="
+              }
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
@@ -181,6 +269,7 @@
           ]
         },
         {
+          "role": "model",
           "parts": [
             {
               "functionCall": {
@@ -188,11 +277,9 @@
                 "args": {
                   "tier": "Verified VIP Member"
                 }
-              },
-              "thoughtSignature": "CskBARFNMg8w0O19xRklAqwMQk8G8Ofbobo8Cn51FOb0XeQ9tViP4OGaHJQ/NYLS/4C3qrT23M7HEmbY+wdN6Qnsxxt+V7Lz9JgFNJpHLqvNhHlyi44zyNDyX6EhhlfxlRG+ZC11hXkaYqSNHgTwDMOk4VEWrrGsxtwgUA9hVtu8n87INMsCUC73l20FY+fj7iT2zS48LRejcRaDVe6PurVFVgK6R7UHueKsSTqyU1bR/Bsk/Y/8AIqHjNR8SdtCI4Zb55dlX9Wknnwt"
+              }
             }
-          ],
-          "role": "model"
+          ]
         },
         {
           "role": "user",
@@ -208,35 +295,79 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    "
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "userId": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": ["userId"]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on the customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer membership tier (e.g. VIP)."
+                    }
+                  },
+                  "required": ["tier"]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "Your membership tier is \"Verified VIP Member\" and you get a 20% discount.",
-                "thoughtSignature": "CpUCARFNMg9D6HOPkkiMGyyxIENysDhYK+G4QMIaNTCQepr/de3zwVjrrT2WGdxDnvWOkDGFGn7s8eBoIGikoLBpYskhZ9lBE5qO3Dm1paFK5+iHECq6QYf5udHpCpzYcyih7kwFbg6u62NJCHV+HVzKgEG4HdSvnzS/9mRQYqzktIhueiGhwVvDJE9zLeNefJsOY1qGrV1XTd3BNOXD5noz5rdOz9azywcidw02CY6FBL4HCtWOtQ7U+eCza4ftTj9we7zbkaySQh5cW+7ifb9QldT+u5kAzWqUjTh8YTXwRQsT8RZr2zdtJ0uZFXvSpwWUNCH2PYRqoiG+yMZOKGwBeI27BlJEAUFfsNkZcCdjeobSR7TAfQ=="
+                "text": "Your membership tier is \"Verified VIP Member\" and your discount is 20% off."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 314,
+        "promptTokenCount": 219,
         "candidatesTokenCount": 19,
-        "totalTokenCount": 396,
+        "totalTokenCount": 291,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 314
+            "tokenCount": 219
           }
         ],
-        "thoughtsTokenCount": 63,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "thoughtsTokenCount": 53
       }
     }
   }

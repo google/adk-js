@@ -1,6 +1,7 @@
 [
   {
     "key": "8069171463b0c7a3",
+    "instructionAgnosticKey": "28b9e67bda5ca5eb",
     "request": {
       "contents": [
         {
@@ -20,34 +21,45 @@
           ]
         }
       ],
-      "systemInstruction": "You are an agent. Your internal name is \"summarizer\".\n\nSummarize the following text in one sentence."
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"summarizer\".\n\nSummarize the following text in one sentence.",
+        "labels": {
+          "adk_agent_name": "summarizer"
+        }
+      }
     },
     "response": {
       "candidates": [
         {
           "content": {
+            "role": "model",
             "parts": [
               {
-                "text": "A quick brown fox repeatedly jumps over a lazy dog throughout the entire day."
+                "text": "The quick brown fox repeatedly jumps over the lazy dog throughout the day."
               }
-            ],
-            "role": "model"
+            ]
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 56,
-        "candidatesTokenCount": 15,
-        "totalTokenCount": 177,
+        "promptTokenCount": 53,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 96,
+        "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 56
+            "tokenCount": 53
           }
         ],
-        "thoughtsTokenCount": 106,
-        "serviceTier": "standard"
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 14
+          }
+        ],
+        "thoughtsTokenCount": 29
       }
     }
   }

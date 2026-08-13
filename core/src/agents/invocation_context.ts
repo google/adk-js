@@ -54,6 +54,7 @@ export interface InvocationContextParams {
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
   workflowInstructionScope?: WorkflowInstructionScope;
+  isolationScope?: string;
   /** Nesting depth of node-as-tool executions; used to bound recursion. */
   nodeToolDepth?: number;
 }
@@ -219,6 +220,12 @@ export class InvocationContext {
   workflowInstructionScope?: WorkflowInstructionScope;
 
   /**
+   * Workflow: the isolation scope of the node this context runs in. Events
+   * carrying a different scope are withheld from this agent's LLM request.
+   */
+  isolationScope?: string;
+
+  /**
    * Nesting depth of node-as-tool ({@link NodeTool}) executions in this
    * invocation. Incremented each time a node runs as a tool (via a depth+1
    * clone), so `NodeTool` can bound `node -> tool -> node` recursion.
@@ -244,6 +251,7 @@ export class InvocationContext {
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
     this.workflowInstructionScope = params.workflowInstructionScope;
+    this.isolationScope = params.isolationScope;
     this.nodeToolDepth = params.nodeToolDepth ?? 0;
     // Inherit the parent invocation's cost manager when one is available.
 

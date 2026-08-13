@@ -9,7 +9,7 @@ import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
 import {buildNode} from '../../src/workflow/utils/workflow_graph_utils.js';
-import {createIc, driveNode} from './test_helpers.js';
+import {createIc, driveNode, ReplyAgent} from './test_helpers.js';
 
 describe('ParallelWorker', () => {
   it('maps a list input through the inner node, preserving order', async () => {
@@ -122,6 +122,42 @@ describe('ParallelWorker', () => {
     // No item was scheduled, and no wrong partial list was emitted.
     expect(calls).toBe(0);
     expect(output).toBeUndefined();
+  });
+});
+
+describe('ParallelWorker takes what edges take', () => {
+  it('maps a bare function across the list without node()', async () => {
+    function double(_c: unknown, n: number) {
+      return n * 2;
+    }
+    const {output} = await driveNode(new ParallelWorker(double), [1, 2, 3]);
+    expect(output).toEqual([2, 4, 6]);
+  });
+
+  it('names itself after the value, as an edge would name it', () => {
+    function double(_c: unknown, n: number) {
+      return n * 2;
+    }
+    expect(new ParallelWorker(double).name).toBe('double');
+  });
+
+  it('maps a bare agent across the list, with its reply as each output', async () => {
+    const worker = new ParallelWorker(new ReplyAgent('reply'));
+    const {output} = await driveNode(worker, [1, 2]);
+    expect(output).toEqual(['ok', 'ok']);
+  });
+
+  it('reports an unnameable value with the builder’s message', () => {
+    expect(() => new ParallelWorker((_c: unknown, n: number) => n)).toThrow(
+      /has no name; pass \{name\} explicitly/,
+    );
+  });
+
+  it('still takes an already-built node, unchanged', async () => {
+    const inner = new FunctionNode('double', (_c, n: number) => n * 2);
+    const worker = new ParallelWorker(inner);
+    expect(worker.name).toBe('double');
+    expect((await driveNode(worker, [1, 2])).output).toEqual([2, 4]);
   });
 });
 

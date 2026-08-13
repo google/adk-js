@@ -229,6 +229,22 @@ describe('InMemorySessionService', () => {
       expect(response.sessions[1].events).toEqual([]);
     });
 
+    it('lists every user of the app when userId is omitted', async () => {
+      const appName = 'app';
+      await service.createSession({appName, userId: 'user1'});
+      await service.createSession({appName, userId: 'user2'});
+      await service.createSession({appName: 'other-app', userId: 'user1'});
+
+      const response = await service.listSessions({appName});
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions.map((s) => s.userId).sort()).toEqual([
+        'user1',
+        'user2',
+      ]);
+      expect(response.totalItems).toBe(2);
+    });
+
     it('limit on empty result → returns pagination metadata with zeros', async () => {
       const response = await service.listSessions({
         appName: 'app',

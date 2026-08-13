@@ -18,8 +18,11 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  node,
   Runner,
   Session,
+  Workflow,
+  WorkflowAgent,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -30,6 +33,7 @@ import {
   AdkApiServer,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
+import {version} from '../../src/version.js';
 
 interface JsonRpcResponse {
   result?: unknown;
@@ -250,6 +254,16 @@ describe('AdkWebServer', () => {
 
   afterEach(async () => {
     await server.stop();
+  });
+
+  describe('Version', () => {
+    it('reports the ADK version the server is running', async () => {
+      const response = await client.get<{version: string}>('/version');
+
+      expect(response.status).toBe(200);
+      expect(response.data?.version).toBe(version);
+      expect(response.data?.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
   });
 
   describe('Sessions', () => {
@@ -881,6 +895,44 @@ describe('AdkWebServer', () => {
       expect(response.data).toHaveLength(1);
       expect(response.data![0].name).toBe('call_llm');
     });
+
+    // The dev UI asks for traces under `/dev/apps/<app>/`; the same store
+    // answers, since a trace is keyed by event and session id alone.
+    it('serves the same traces under the dev UI prefix', async () => {
+      (server as unknown as {traceDict: {[key: string]: unknown}}).traceDict[
+        'event2'
+      ] = {some: 'prefixed trace'};
+      const mockSpan = {
+        name: 'call_llm',
+        spanContext: () => ({traceId: 'trace2', spanId: 'span2'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'gcp.vertex.agent.session_id': 'session2'},
+        parentSpanContext: undefined,
+      } as unknown as ReadableSpan;
+      (
+        server as unknown as {
+          memoryExporter: {
+            export: (
+              spans: ReadableSpan[],
+              resultCallback: (result: {code: number}) => void,
+            ) => void;
+          };
+        }
+      ).memoryExporter.export([mockSpan], () => {});
+
+      const event = await client.get<{some: string}>(
+        '/dev/apps/testApp/debug/trace/event2',
+      );
+      const session = await client.get<{name: string}[]>(
+        '/dev/apps/testApp/debug/trace/session/session2',
+      );
+
+      expect(event.status).toBe(200);
+      expect(event.data).toEqual({some: 'prefixed trace'});
+      expect(session.status).toBe(200);
+      expect(session.data![0].name).toBe('call_llm');
+    });
   });
 
   describe('Graph', () => {
@@ -917,6 +969,64 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('should highlight the workflow node that produced the event', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      const originalGetSession = sessionService.getSession;
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () =>
+            Promise.resolve(
+              new WorkflowAgent({
+                name: 'wf',
+                edges: [
+                  [
+                    'START',
+                    node(async () => 'a', {name: 'one'}),
+                    node(async () => 'b', {name: 'two'}),
+                  ],
+                ],
+              }),
+            ),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+      sessionService.getSession = async () =>
+        createSession({
+          id: 'workflowSession',
+          appName: 'testApp',
+          userId: 'testUser',
+          events: [
+            createEvent({
+              id: 'wfEvent1',
+              author: 'one',
+              invocationId: 'inv-1',
+              nodeInfo: {path: 'wf.one'},
+            }),
+            createEvent({
+              id: 'wfEvent2',
+              author: 'two',
+              invocationId: 'inv-1',
+              nodeInfo: {path: 'wf.two'},
+            }),
+          ],
+        });
+
+      try {
+        const response = await client.get<{dotSrc: string}>(
+          '/apps/testApp/users/testUser/sessions/workflowSession/events/wfEvent2/graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data!.dotSrc).toContain('"wf.one" -> "wf.two"');
+        expect(response.data!.dotSrc).toContain('#69CB87');
+        expect(response.data!.dotSrc).toContain('#0F5223');
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+        sessionService.getSession = originalGetSession;
+      }
+    });
+
     it('should return 404 if session not found', async () => {
       try {
         await client.get(
@@ -940,6 +1050,218 @@ describe('AdkWebServer', () => {
       } catch (e: unknown) {
         expect((e as {response: {status: number}}).response.status).toBe(404);
       }
+    });
+  });
+
+  describe('Structure graph', () => {
+    /** Points the loader at `agent` for the rest of the test. */
+    function loadInstead(agent: unknown) {
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () => Promise.resolve(agent),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+    }
+
+    /** A workflow nesting another workflow, to exercise per-level paths. */
+    function nestedWorkflowAgent() {
+      const inner = new Workflow({
+        name: 'inner',
+        edges: [['START', node(async () => 'b', {name: 'inner_step'})]],
+      });
+
+      return new WorkflowAgent({
+        name: 'outer',
+        edges: [['START', node(async () => 'a', {name: 'outer_step'}), inner]],
+      });
+    }
+
+    describe('build_graph', () => {
+      it('serializes the agent tree, its tools and its sub-agents', async () => {
+        const child = new LlmAgent({name: 'child', description: 'a child'});
+        loadInstead(
+          new LlmAgent({
+            name: 'parent',
+            tools: [
+              new FunctionTool({
+                name: 'lookup',
+                description: 'lookup',
+                execute: async () => 'ok',
+              }),
+            ],
+            subAgents: [child],
+          }),
+        );
+
+        const response = await client.get<{
+          name: string;
+          root_agent: {
+            name: string;
+            type: string;
+            tools?: Array<{name: string}>;
+            sub_agents?: Array<{name: string}>;
+          };
+        }>('/dev/apps/testApp/build_graph');
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testApp');
+        expect(response.data?.root_agent.name).toBe('parent');
+        expect(response.data?.root_agent.type).toBe('agent');
+        expect(response.data?.root_agent.tools).toEqual([
+          {name: 'lookup', type: 'tool'},
+        ]);
+        expect(response.data?.root_agent.sub_agents).toEqual([
+          expect.objectContaining({name: 'child', description: 'a child'}),
+        ]);
+      });
+
+      // A workflow keeps its structure in its edges, so a serializer that only
+      // walks `subAgents` reports an empty tree for it — the same trap the DOT
+      // renderer hit before it learned to walk `edges`.
+      it('serializes a workflow from its edges rather than its sub-agents', async () => {
+        loadInstead(nestedWorkflowAgent());
+
+        const response = await client.get<{
+          root_agent: {
+            name: string;
+            type: string;
+            graph?: {
+              nodes: Array<{name: string; type: string}>;
+              edges: Array<{
+                from_node: {name: string};
+                to_node: {name: string};
+              }>;
+            };
+          };
+        }>('/dev/apps/testApp/build_graph');
+
+        expect(response.status).toBe(200);
+        const root = response.data!.root_agent;
+        expect(root.type).toBe('workflow');
+        expect(root.graph?.nodes.map((n) => n.name)).toEqual([
+          '__START__',
+          'outer_step',
+          'inner',
+        ]);
+        expect(root.graph?.nodes.find((n) => n.name === 'inner')?.type).toBe(
+          'workflow',
+        );
+        expect(
+          root.graph?.edges.map((e) => [e.from_node.name, e.to_node.name]),
+        ).toEqual([
+          ['__START__', 'outer_step'],
+          ['outer_step', 'inner'],
+        ]);
+      });
+
+      it('returns 404 for an app that does not exist', async () => {
+        await expect(
+          client.get('/dev/apps/nope/build_graph'),
+        ).rejects.toMatchObject({response: {status: 404}});
+      });
+    });
+
+    describe('build_graph_image', () => {
+      it('returns the DOT for the app, keyed by level and at the top level', async () => {
+        const response = await client.get<
+          Record<string, unknown> & {dotSrc?: string}
+        >('/dev/apps/testApp/build_graph_image');
+
+        expect(response.status).toBe(200);
+        // The UI preloads every level from the map, but reads `dotSrc` on the
+        // single-level fetch it falls back to, so both have to be present.
+        expect(response.data?.dotSrc).toContain('digraph');
+        expect(response.data?.['']).toEqual({
+          dotSrc: expect.stringContaining('testAgent'),
+        });
+      });
+
+      // The click handler matches a node's `<title>` against a bare child name,
+      // so a qualified `parent.child` id would render but never be clickable.
+      it('names nodes so the UI can match them to a child', async () => {
+        loadInstead(nestedWorkflowAgent());
+
+        const response = await client.get<{dotSrc: string}>(
+          '/dev/apps/testApp/build_graph_image',
+        );
+
+        expect(response.data?.dotSrc).toContain('"outer_step"');
+        expect(response.data?.dotSrc).toContain('"inner"');
+        expect(response.data?.dotSrc).not.toContain('"outer.outer_step"');
+      });
+
+      it('returns one entry per nested workflow, keyed by its path', async () => {
+        loadInstead(nestedWorkflowAgent());
+
+        const response = await client.get<Record<string, {dotSrc: string}>>(
+          '/dev/apps/testApp/build_graph_image',
+        );
+
+        expect(Object.keys(response.data!).sort()).toEqual([
+          '',
+          'dotSrc',
+          'inner',
+        ]);
+        expect(response.data!['inner'].dotSrc).toContain('inner_step');
+        expect(response.data!['inner'].dotSrc).not.toContain('outer_step');
+      });
+
+      it('returns just the requested level for a node path', async () => {
+        loadInstead(nestedWorkflowAgent());
+
+        const response = await client.get<
+          Record<string, unknown> & {dotSrc?: string}
+        >('/dev/apps/testApp/build_graph_image?node=inner');
+
+        expect(Object.keys(response.data!).sort()).toEqual(['dotSrc', 'inner']);
+        expect(response.data?.dotSrc).toContain('inner_step');
+      });
+
+      it('draws each theme with its own palette', async () => {
+        const light = await client.get<{dotSrc: string}>(
+          '/dev/apps/testApp/build_graph_image?dark_mode=false',
+        );
+        const dark = await client.get<{dotSrc: string}>(
+          '/dev/apps/testApp/build_graph_image?dark_mode=true',
+        );
+
+        expect(light.data?.dotSrc).toContain('bgcolor = "#F8FAFC"');
+        expect(dark.data?.dotSrc).toContain('bgcolor = "#0F172A"');
+      });
+
+      // A dynamic workflow builds its nodes as it runs, so it has no static
+      // graph to expand. It still has to draw as something.
+      it('draws a dynamic workflow as a single node', async () => {
+        loadInstead(
+          new WorkflowAgent(
+            new Workflow({
+              name: 'dynamic_flow',
+              dynamicEntry: async () => 'done',
+            }),
+          ),
+        );
+
+        const response = await client.get<{dotSrc: string}>(
+          '/dev/apps/testApp/build_graph_image',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.dotSrc).toContain('"dynamic_flow"');
+      });
+
+      it('returns 404 for an app that does not exist', async () => {
+        await expect(
+          client.get('/dev/apps/nope/build_graph_image'),
+        ).rejects.toMatchObject({response: {status: 404}});
+      });
+
+      it('returns 404 for a node path that resolves to nothing', async () => {
+        await expect(
+          client.get('/dev/apps/testApp/build_graph_image?node=ghost'),
+        ).rejects.toMatchObject({response: {status: 404}});
+      });
     });
   });
 

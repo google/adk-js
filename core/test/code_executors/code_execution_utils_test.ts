@@ -264,17 +264,17 @@ describe('convertCodeExecutionParts', () => {
   });
 
   it('converts last executableCode part to text', () => {
-    const content = {
+    const content: Content = {
       parts: [{executableCode: {code: 'x = 1', language: Language.PYTHON}}],
       role: 'model',
     };
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
-    expect(content.parts[0].text).toBe('```python\nx = 1\n```');
-    expect(content.parts[0].executableCode).toBeUndefined();
+    expect(content.parts![0].text).toBe('```python\nx = 1\n```');
+    expect(content.parts![0].executableCode).toBeUndefined();
   });
 
   it('converts single codeExecutionResult part to text and sets role to user', () => {
-    const content = {
+    const content: Content = {
       parts: [
         {
           codeExecutionResult: {
@@ -286,7 +286,7 @@ describe('convertCodeExecutionParts', () => {
       role: 'model',
     };
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
-    expect(content.parts[0].text).toBe('```tool_output\nhello\n```');
+    expect(content.parts![0].text).toBe('```tool_output\nhello\n```');
     expect(content.role).toBe('user');
   });
 

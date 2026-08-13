@@ -224,12 +224,16 @@ describe('workflow — rerunOnResume', () => {
     });
     const wf = new Workflow({name: 'ff', edges: [['START', node]]});
 
+    const ic = createIc();
+    // Belongs to the run in progress (same invocation), so rehydration sees it.
+    // An event left behind by a run that already FINISHED is deliberately
+    // ignored instead — see rehydration_utils_test.ts.
     const priorEvent: Event = createEvent({
       author: 'once',
+      invocationId: ic.invocationId,
       nodeInfo: {path: 'ff.once'},
       output: 'cached',
     });
-    const ic = createIc();
     ic.session.events.push(priorEvent);
 
     const {output} = await driveNode(wf, 'x', ic);

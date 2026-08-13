@@ -14,10 +14,14 @@
  * closure that static traversal can't reach — resolves to it.
  *
  * - Replay (default): each model call is matched to a recorded response by a
- *   stable fingerprint of its request. Concurrency- and order-independent, so
- *   parallel samples need no special casing. A miss throws with a re-record hint.
+ *   stable fingerprint of its request (contents + config) — exact,
+ *   concurrency- and order-independent, so parallel samples need no special
+ *   casing. On a miss the match degrades once: a request whose system
+ *   instruction alone has changed since it was recorded still matches, but is
+ *   then served in recording order and warns. A miss on both keys throws with a
+ *   re-record hint.
  * - Record (`RECORD_MODEL_RESPONSES=1`): the call is delegated to a real Gemini
- *   and the raw response is captured keyed by the same fingerprint.
+ *   and the raw response is captured under both fingerprints.
  */
 
 import type {BaseLlmConnection, LlmRequest, LlmResponse} from '@google/adk';
@@ -26,25 +30,41 @@ import type {Candidate} from '@google/genai';
 import {createHash} from 'node:crypto';
 import type {RawGenerateContentResponse} from '../../test_case_utils.js';
 
-/** A single recorded model call: its request fingerprint and raw response. */
+/** A single recorded model call: its request fingerprints and raw response. */
 export interface RecordedCall {
-  /** Stable fingerprint of the request (see {@link fingerprint}). */
+  /** Exact fingerprint of the request: contents + config (see {@link fingerprint}). */
   key: string;
-  /** A readable snippet of the request, for debugging the fixture. */
-  request: {contents: unknown; systemInstruction?: unknown};
+  /**
+   * Fallback fingerprint over everything but the system instruction (see
+   * {@link instructionAgnosticFingerprint}), used when a prompt change
+   * invalidates {@link key}.
+   */
+  instructionAgnosticKey: string;
+  /**
+   * The request both keys were taken over: readable when debugging a fixture,
+   * and enough to re-derive the keys offline should the fingerprints ever have
+   * to change, without a re-record.
+   */
+  request: {contents: unknown; config: unknown};
   /** The raw response to replay. */
   response: RawGenerateContentResponse;
 }
 
 type Mode = 'record' | 'replay';
 
+/** Recorded responses for one fingerprint, served in recording order. */
+interface ReplayEntry {
+  responses: RawGenerateContentResponse[];
+  cursor: number;
+}
+
 interface HarnessState {
   mode: Mode;
   recorded: RecordedCall[];
-  replay: Map<
-    string,
-    {responses: RawGenerateContentResponse[]; cursor: number}
-  >;
+  /** Exact index: contents + config. */
+  exact: Map<string, ReplayEntry>;
+  /** Fallback index: everything but the system instruction. */
+  byRequest: Map<string, ReplayEntry>;
   /** Backend used in record mode (default: a real Gemini). Overridable in tests. */
   liveBackend: (model: string) => BaseLlm;
 }
@@ -92,15 +112,60 @@ function normalizeContents(contents: unknown): unknown {
   return clone;
 }
 
-/** Stable fingerprint of a model request (contents + config, id-normalized). */
+function hash(material: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(sortKeys(material)))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * Drops the caller's `AbortSignal`: a live handle rather than request data,
+ * which serializes to `{}` and so tells no two calls apart anyway.
+ */
+function normalizeConfig(
+  config: LlmRequest['config'],
+): Record<string, unknown> {
+  const {abortSignal: _signal, ...rest} = config ?? {};
+  return rest;
+}
+
+/**
+ * Exact fingerprint of a model request: contents + config, id-normalized.
+ *
+ * `config` carries the system instruction, so this is deliberately sensitive to
+ * the prompt — two agents that differ only in their instructions are told
+ * apart. It is also why it cannot be the only key: see
+ * {@link instructionAgnosticFingerprint}.
+ */
 export function fingerprint(req: LlmRequest): string {
-  const material = JSON.stringify(
-    sortKeys({
-      contents: normalizeContents(req.contents),
-      config: req.config ?? {},
-    }),
+  return hash({
+    contents: normalizeContents(req.contents),
+    config: normalizeConfig(req.config),
+  });
+}
+
+/**
+ * Fallback fingerprint over the request minus its system instruction.
+ *
+ * Anything that edits a system instruction — a prompt tweak, or a framework
+ * change like #616 dropping the identity preamble for transfer-disabled agents
+ * — changes {@link fingerprint} for every call in every fixture at once, and
+ * the whole sample suite fails with each agent producing nothing. Dropping just
+ * that one field absorbs such a change while the rest of `config` still has to
+ * match, so a regression that drops a tool or a `responseSchema` is still a
+ * miss rather than a green replay.
+ *
+ * This is a degraded match, not an equal one: calls that differ only in their
+ * instructions (a real case — `nested_workflow`) collapse into one bucket and
+ * are then served in recording order, which a concurrent sample does not
+ * guarantee. Hitting this path warns and asks for a re-record.
+ */
+export function instructionAgnosticFingerprint(req: LlmRequest): string {
+  const {systemInstruction: _instruction, ...config} = normalizeConfig(
+    req.config,
   );
-  return createHash('sha256').update(material).digest('hex').slice(0, 16);
+  return hash({contents: normalizeContents(req.contents), config});
 }
 
 /** Reconstructs the raw response shape the fixture stores from an LlmResponse. */
@@ -129,6 +194,33 @@ function toLlmResponse(raw: RawGenerateContentResponse): LlmResponse {
   };
 }
 
+interface Match {
+  entry: ReplayEntry;
+  /**
+   * Set when only the fallback key matched, naming it for the warning; absent
+   * on an exact match.
+   */
+  staleKey?: string;
+}
+
+/** Finds the recorded responses for a request, exactly or by the fallback key. */
+function lookup(
+  s: HarnessState,
+  keys: {key: string; instructionAgnosticKey: string},
+): Match | undefined {
+  const exact = s.exact.get(keys.key);
+  if (exact) {
+    return {entry: exact};
+  }
+  // The prompt moved under the fixture: match on everything else, so one
+  // instruction edit does not take out every sample at once.
+  const byRequest = s.byRequest.get(keys.instructionAgnosticKey);
+  if (byRequest) {
+    return {entry: byRequest, staleKey: keys.instructionAgnosticKey};
+  }
+  return undefined;
+}
+
 /**
  * The model registered for the Gemini regexes during a sample test. It reuses
  * `Gemini.supportedModels` (the same RegExp instances) so registering it
@@ -148,14 +240,23 @@ class RecordReplayModel extends BaseLlm {
       );
     }
     const key = fingerprint(llmRequest);
+    const instructionAgnosticKey = instructionAgnosticFingerprint(llmRequest);
 
     if (state.mode === 'replay') {
-      const entry = state.replay.get(key);
-      if (!entry) {
-        throw new Error(
-          `No recorded model response for request fingerprint ${key}. ` +
-            'Re-record with: npm run record:samples',
-        );
+      const match = lookup(state, {key, instructionAgnosticKey});
+      if (!match) {
+        // This throw is easy to lose: the caller can swallow it and the failure
+        // then surfaces far away, as a node reading a property of `undefined`.
+        // Say it once on stderr where it happens, with both keys that missed.
+        const message =
+          `No recorded model response for request ${key} (minus instruction ` +
+          `${instructionAgnosticKey}). Re-record with: npm run record:samples`;
+        console.error(`[sample-harness] ${message}`);
+        throw new Error(message);
+      }
+      const {entry, staleKey} = match;
+      if (staleKey) {
+        warnStaleFixture(staleKey, entry.responses.length);
       }
       // Deterministic: identical requests reuse the last recorded response.
       const raw =
@@ -166,6 +267,17 @@ class RecordReplayModel extends BaseLlm {
     }
 
     // Record: delegate to a real backend and capture the raw response.
+    //
+    // Snapshot the request first. A backend may edit it on the way out —
+    // `Gemini.preprocessRequest` clears `config.labels` on the Gemini API path
+    // — and a fixture whose stored request is not the one its keys were taken
+    // over could not re-derive them.
+    const request = {
+      contents: normalizeContents(llmRequest.contents),
+      // Kept whole (system instruction included) so both keys can be
+      // re-derived offline should the fingerprints have to change again.
+      config: normalizeConfig(llmRequest.config),
+    };
     const backend = state.liveBackend(this.model);
     for await (const resp of backend.generateContentAsync(
       llmRequest,
@@ -174,10 +286,8 @@ class RecordReplayModel extends BaseLlm {
     )) {
       state.recorded.push({
         key,
-        request: {
-          contents: normalizeContents(llmRequest.contents),
-          systemInstruction: llmRequest.config?.systemInstruction,
-        },
+        instructionAgnosticKey,
+        request,
         response: toRaw(resp),
       });
       yield resp;
@@ -192,28 +302,58 @@ class RecordReplayModel extends BaseLlm {
 /**
  * Installs the record/replay model into the LLM registry and sets the mode.
  * Call once per test run (before the runner executes).
+ *
+ * Builds the two indexes {@link lookup} consults. A fixture written before both
+ * keys existed lands in neither under a key any request can produce, so it
+ * misses and says to re-record — deliberately, rather than matching on
+ * something loose enough to hide a dropped tool or `responseSchema`.
  */
 export function installRecordReplay(opts: {
   mode: Mode;
   recordedCalls?: RecordedCall[];
   liveBackend?: (model: string) => BaseLlm;
 }): void {
-  const replay = new Map<
-    string,
-    {responses: RawGenerateContentResponse[]; cursor: number}
-  >();
+  const exact = new Map<string, ReplayEntry>();
+  const byRequest = new Map<string, ReplayEntry>();
+  const index = (map: Map<string, ReplayEntry>, key: string): ReplayEntry => {
+    const entry = map.get(key) ?? {responses: [], cursor: 0};
+    map.set(key, entry);
+    return entry;
+  };
   for (const call of opts.recordedCalls ?? []) {
-    const entry = replay.get(call.key) ?? {responses: [], cursor: 0};
-    entry.responses.push(call.response);
-    replay.set(call.key, entry);
+    index(exact, call.key).responses.push(call.response);
+    index(byRequest, call.instructionAgnosticKey).responses.push(call.response);
   }
+  warnedStaleKeys.clear();
   state = {
     mode: opts.mode,
     recorded: [],
-    replay,
+    exact,
+    byRequest,
     liveBackend: opts.liveBackend ?? ((model: string) => new Gemini({model})),
   };
   LLMRegistry.register(RecordReplayModel);
+}
+
+/** Fallback keys already reported stale this run, so each is warned about once. */
+const warnedStaleKeys = new Set<string>();
+
+function warnStaleFixture(matchedKey: string, candidates: number): void {
+  if (warnedStaleKeys.has(matchedKey)) {
+    return;
+  }
+  warnedStaleKeys.add(matchedKey);
+  const ambiguity =
+    candidates > 1
+      ? ` ${candidates} recorded calls share this key, so they are being ` +
+        'served in recording order — which a concurrent sample does not guarantee.'
+      : '';
+  console.warn(
+    `[sample-harness] Stale fixture: matched request ${matchedKey} on ` +
+      'everything but its system instruction, so the prompt has changed since ' +
+      `it was recorded. Replaying anyway.${ambiguity} Refresh with: ` +
+      'npm run record:samples',
+  );
 }
 
 /** Restores the real Gemini registration and clears harness state. */

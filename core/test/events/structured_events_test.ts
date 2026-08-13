@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Outcome} from '@google/genai';
+import {Language, Outcome} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {createEvent} from '../../src/events/event.js';
 import {createEventActions} from '../../src/events/event_actions.js';
@@ -92,7 +92,9 @@ describe('toStructuredEvents', () => {
     const event = createEvent({
       partial: true,
       content: {
-        parts: [{executableCode: {code: 'print("hi")', language: 1}}],
+        parts: [
+          {executableCode: {code: 'print("hi")', language: Language.PYTHON}},
+        ],
       },
     });
     const result = toStructuredEvents(event);

@@ -7,6 +7,30 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "experimentalDecorators": true
-  }
+    "experimentalDecorators": true,
+    // Mirrors the aliases in vitest.config.ts so that a test importing
+    // `@google/adk` type-checks against the same sources it runs against.
+    // Without this, a file mixing `@google/adk` and `../../src/...` imports
+    // gets two distinct identities for the same class. The per-workspace
+    // configs reset this to `{}` so that a published build still resolves
+    // through node_modules.
+    "paths": {
+      "@google/adk": ["./core/src/index.ts"],
+      "@google/adk/*": ["./core/src/*"],
+      "@google/adk-integrations": ["./integrations/src/index.ts"],
+      "@google/adk-integrations/*": ["./integrations/src/*"]
+    }
+  },
+  // gts' `exclude` resolves relative to gts itself, so it excludes nothing
+  // here. Without this, the check picks up every `*/dist/**/*.d.ts` emitted by
+  // the preceding build step, so CI and a fresh clone check different files.
+  // The three workspace configs set their own `exclude`, so this does not
+  // reach them.
+  //
+  // `samples` is excluded because the `paths` above are wrong for it: a sample
+  // is a consumer of the published package, not part of the build, so it has
+  // to resolve `@google/adk` through `node_modules` the way a user's project
+  // does. It is type-checked by `npm run ts:check:samples`, against
+  // `samples/tsconfig.json`, which resets `paths` for exactly that reason.
+  "exclude": ["node_modules", "**/dist", "samples"]
 }

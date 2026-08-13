@@ -13,6 +13,10 @@
 
 import {Part} from '@google/genai';
 import {
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from '../../agents/functions.js';
+import {
   AuthCredential,
   AuthCredentialTypes,
 } from '../../auth/auth_credential.js';
@@ -20,14 +24,24 @@ import {AuthHandler} from '../../auth/auth_handler.js';
 import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event} from '../../events/event.js';
 import {State} from '../../sessions/state.js';
-import {toJsonSchema} from '../../utils/schema.js';
+import {compileJsonSchema, toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
-/** Function-call name marking a request-for-input interrupt. */
-export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
+export {
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+} from '../../agents/functions.js';
 
-/** Function-call name marking a request-for-credential interrupt. */
-export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
+/**
+ * The arg key the declared JSON Schema travels under on an `adk_request_input`
+ * call. Snake_case among camelCase neighbours because that is the cross-
+ * language wire format: `adk-python`'s `create_request_input_event` dumps the
+ * request by alias (`interruptId`, `payload`, `message`) and then sets
+ * `response_schema` explicitly, and clients read that spelling — the dev UI
+ * builds the reply form from `args.response_schema`, so emitting
+ * `responseSchema` leaves the user typing free text at a structured prompt.
+ */
+const RESPONSE_SCHEMA_ARG = 'response_schema';
 
 /**
  * Creates an interrupt {@link Event} from a {@link RequestInput}. The event
@@ -39,7 +53,7 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     interruptId: requestInput.interruptId,
     payload: requestInput.payload ?? null,
     message: requestInput.message ?? null,
-    responseSchema: requestInput.responseSchema
+    [RESPONSE_SCHEMA_ARG]: requestInput.responseSchema
       ? toJsonSchema(requestInput.responseSchema)
       : null,
   };
@@ -59,6 +73,90 @@ export function createRequestInputEvent(requestInput: RequestInput): Event {
     },
     longRunningToolIds: [requestInput.interruptId],
   });
+}
+
+/**
+ * Collects the `responseSchema` each pending interrupt declared, keyed by
+ * interrupt id, as the JSON Schema recorded on its `adk_request_input` call.
+ *
+ * The original {@link RequestInput} is long gone by the time a reply arrives —
+ * a node with `rerunOnResume: false` never runs its body again — so the
+ * serialized copy on the event is the only surviving record of the contract.
+ */
+export function responseSchemasByInterruptId(
+  events: Event[],
+): Map<string, unknown> {
+  const schemas = new Map<string, unknown>();
+  for (const event of events) {
+    for (const part of event.content?.parts ?? []) {
+      const fc = part.functionCall;
+      if (fc?.name !== REQUEST_INPUT_FUNCTION_CALL_NAME || !fc.id) {
+        continue;
+      }
+      const schema = (fc.args as Record<string, unknown> | undefined)?.[
+        RESPONSE_SCHEMA_ARG
+      ];
+      if (schema) {
+        schemas.set(fc.id, schema);
+      }
+    }
+  }
+  return schemas;
+}
+
+/**
+ * Checks a *structured* reply against the `responseSchema` its interrupt
+ * declared, and describes the mismatch when there is one. Returns `undefined`
+ * when the reply is acceptable.
+ *
+ * Reporting rather than throwing is what lets a caller be loud about the reply
+ * that just arrived and quiet about the same reply on every later replay: a
+ * rejected reply stays in the session forever, so a checker that threw on
+ * sight would end the session rather than the turn.
+ *
+ * Only structured replies are checked. A plain-text reply is routed to every
+ * pending interrupt as-is (the interactive CLI and the dev UI both rely on
+ * that), and holding free text to an object schema would break it.
+ *
+ * A reply that unwraps to a bare scalar counts as plain text and is exempt for
+ * the same reason: `{result: <text>}` is the envelope a client sends when it
+ * has only a chat box to offer, so checking it would reject the very answer
+ * the plain-text path accepts.
+ *
+ * What remains checked is the case this exists for: a reply in the wrong
+ * *shape*. A client that wraps its answer as `{response: x}` instead of
+ * `{result: x}` gets the whole envelope delivered as the node's input, which
+ * typically surfaces far downstream as a stringified `[object Object]`.
+ */
+export function interruptResponseMismatch(
+  interruptId: string,
+  value: unknown,
+  jsonSchema: unknown,
+): string | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const validator = compileJsonSchema(jsonSchema);
+  if (!validator) {
+    return undefined;
+  }
+  const result = validator.safeParse(value);
+  if (result.success) {
+    return undefined;
+  }
+  const issues = result.error.issues
+    .map((issue) => {
+      const at = issue.path.length ? ` at '${issue.path.join('.')}'` : '';
+      return `${issue.message}${at}`;
+    })
+    .join('; ');
+  return (
+    `The reply to interrupt '${interruptId}' does not match the ` +
+    `responseSchema it declared: ${issues}. A structured reply must either ` +
+    `match that schema, or wrap a bare value as {result: <value>}; a ` +
+    `plain-text reply is accepted as-is and is not checked. The interrupt is ` +
+    `still waiting, so you can answer it again.`
+  );
 }
 
 /** Returns whether an event contains a `request_input` function call. */

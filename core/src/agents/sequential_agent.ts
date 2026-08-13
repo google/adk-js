@@ -6,6 +6,7 @@
 import {Event} from '../events/event.js';
 import {FunctionTool} from '../tools/function_tool.js';
 
+import {deprecated} from '../utils/deprecated.js';
 import {BaseAgent} from './base_agent.js';
 import {InvocationContext} from './invocation_context.js';
 import {isLlmAgent} from './llm_agent.js';
@@ -37,7 +38,16 @@ export function isSequentialAgent(obj: unknown): obj is SequentialAgent {
 
 /**
  * A shell agent that runs its sub-agents in a sequential order.
+ *
+ * @deprecated Use `Workflow` instead, which expresses the same ordering as a
+ * graph and adds routing, retries, HITL and resumability. This class will be
+ * removed in a future version. Note that a `Workflow` cannot yet be an
+ * `LlmAgent` sub-agent — wrap it in a `WorkflowAgent` for that.
  */
+@deprecated(
+  'SequentialAgent is deprecated in favor of Workflow and will be removed in a' +
+    ' future version. Workflow cannot yet be used as an LlmAgent sub-agent.',
+)
 export class SequentialAgent extends BaseAgent {
   /**
    * A unique symbol to identify ADK sequential agent class.
