@@ -24,6 +24,7 @@ import {
   prepareRetryConfig,
 } from '../../src/workflow/retry_config.js';
 import {
+  errorName,
   getRetryDelaySeconds,
   shouldRetryNode,
 } from '../../src/workflow/utils/retry_utils.js';
@@ -176,6 +177,65 @@ describe('Phase 0 — shouldRetryNode', () => {
         nodeState: state(1),
       }),
     ).toBe(false);
+  });
+
+  it('matches a subclass that never assigns this.name', () => {
+    class RateLimitedError extends Error {}
+    const cfg = prepareRetryConfig({exceptions: [RateLimitedError]});
+    expect(
+      shouldRetryNode({
+        error: new RateLimitedError('x'),
+        retryConfig: cfg,
+        nodeState: state(1),
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryNode({
+        error: new Error('x'),
+        retryConfig: cfg,
+        nodeState: state(1),
+      }),
+    ).toBe(false);
+  });
+
+  it('matches a subclass by class name or by an assigned name', () => {
+    class RetryableError extends Error {
+      constructor(message?: string) {
+        super(message);
+        this.name = 'Retryable';
+      }
+    }
+    for (const cfg of [
+      prepareRetryConfig({exceptions: ['Retryable']}),
+      prepareRetryConfig({exceptions: [RetryableError]}),
+    ]) {
+      expect(
+        shouldRetryNode({
+          error: new RetryableError('x'),
+          retryConfig: cfg,
+          nodeState: state(1),
+        }),
+      ).toBe(true);
+    }
+  });
+});
+
+describe('Phase 0 — errorName', () => {
+  it('reports the class name of a subclass that never assigns this.name', () => {
+    class RateLimitedError extends Error {}
+    expect(errorName(new RateLimitedError('x'))).toBe('RateLimitedError');
+  });
+
+  it('keeps an assigned name when the class name adds nothing', () => {
+    const err = new Error('x');
+    err.name = 'Custom';
+    expect(errorName(err)).toBe('Custom');
+    expect(errorName(new Error('x'))).toBe('Error');
+  });
+
+  it('reports non-Error throws by type', () => {
+    expect(errorName('boom')).toBe('string');
+    expect(errorName(7)).toBe('number');
   });
 });
 
