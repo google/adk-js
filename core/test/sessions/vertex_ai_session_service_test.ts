@@ -1473,7 +1473,7 @@ describe('VertexAiSessionService', () => {
         invocationId: 'inv-1',
         output: {score: 7},
         route: 'approved',
-        nodeInfo: {path: 'wf.reviewer', outputFor: '1'},
+        nodeInfo: {path: 'wf.reviewer', outputFor: ['wf.reviewer']},
         isolationScope: 'wf:evt_1',
         actions: {agentState: {input: 'draft'}, endOfAgent: true},
       });
@@ -1483,7 +1483,10 @@ describe('VertexAiSessionService', () => {
 
       expect(event.output).toEqual({score: 7});
       expect(event.route).toBe('approved');
-      expect(event.nodeInfo).toEqual({path: 'wf.reviewer', outputFor: '1'});
+      expect(event.nodeInfo).toEqual({
+        path: 'wf.reviewer',
+        outputFor: ['wf.reviewer'],
+      });
       expect(event.isolationScope).toBe('wf:evt_1');
       expect(event.actions.agentState).toEqual({input: 'draft'});
       expect(event.actions.endOfAgent).toBe(true);

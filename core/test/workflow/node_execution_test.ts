@@ -364,3 +364,48 @@ describe('retry backoff cancellation', () => {
     expect(isInvocationAbortedError(err)).toBe(true);
   });
 });
+
+describe('outputFor — which nodes an output answers for', () => {
+  it('names the emitting node on its own output event', async () => {
+    const node = new FnNode('solo', () => 'done');
+    const {events} = await driveNode(node);
+
+    const withOutput = events.filter((e) => e.output !== undefined);
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].nodeInfo?.outputFor).toEqual(['solo']);
+  });
+
+  it('names the ancestors that took the output as their own', async () => {
+    // `useAsOutput` makes the parent stand in for the child, so the child's one
+    // event is the result for both. A resumed run reads this to tell that the
+    // parent already has an output, even though no event was authored by it.
+    const inner = new FnNode('inner', () => 'value');
+    const outer = new FnNode('outer', async (ctx) => {
+      await ctx.runNode(inner, null, {useAsOutput: true});
+      return undefined;
+    });
+
+    const {events} = await driveNode(outer);
+
+    const withOutput = events.filter((e) => e.output !== undefined);
+    expect(withOutput).toHaveLength(1);
+    expect(withOutput[0].nodeInfo?.path).toBe('outer.inner');
+    expect(withOutput[0].nodeInfo?.outputFor).toEqual(['outer.inner', 'outer']);
+  });
+
+  it('leaves it off an event that carries no output', async () => {
+    const node = new FnNode('quiet', (ctx) => {
+      ctx.emit(
+        createEvent({author: 'quiet', content: {parts: [{text: 'hi'}]}}),
+      );
+      return undefined;
+    });
+
+    const {events} = await driveNode(node);
+    const textOnly = events.filter((e) => e.output === undefined);
+    expect(textOnly.length).toBeGreaterThan(0);
+    for (const event of textOnly) {
+      expect(event.nodeInfo?.outputFor).toBeUndefined();
+    }
+  });
+});

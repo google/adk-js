@@ -179,6 +179,15 @@ async function runChildNode({
   });
   // Propagate the dynamic scheduler down; a nested Workflow overrides it.
   child.scheduler = parent.scheduler;
+  // A parent that takes this child's output as its own is standing in for it,
+  // so the child's output event answers for both — and for whatever the parent
+  // was already standing in for.
+  if (options.useAsOutput) {
+    child.outputForAncestors = [
+      parent.nodePath,
+      ...parent.outputForAncestors,
+    ].filter((path) => path !== '');
+  }
 
   const nodeState =
     callerNodeState ??
@@ -534,6 +543,9 @@ function enrichEvent({
   }
   // Engine-owned: always stamp the true node path (see doc above).
   event.nodeInfo = {...(event.nodeInfo ?? {}), path: child.nodePath};
+  if (event.output !== undefined) {
+    event.nodeInfo.outputFor = [child.nodePath, ...child.outputForAncestors];
+  }
   if (branch !== undefined && event.branch === undefined) {
     event.branch = branch;
   }
