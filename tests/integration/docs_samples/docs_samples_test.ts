@@ -9,7 +9,7 @@
  *
  * Lint, Prettier, the license check and `ts:check:samples` all read these files
  * already, so a syntax, style, license or type error fails CI. Nothing ran
- * them, which left the interesting failure uncovered: a `WorkflowAgent`
+ * them, which left the interesting failure uncovered: a `Workflow`
  * validates its graph in its constructor, so a rename or a semantics change in
  * the `@experimental` workflow API can turn a sample into a load-time error
  * that still type-checks.
@@ -134,7 +134,7 @@ describe('workflow docs samples', () => {
 
   describe.each(MODEL_BACKED)('%s (model-backed)', (sample) => {
     it('builds a valid graph', async () => {
-      // A WorkflowAgent validates its edges in its constructor, so importing
+      // A Workflow validates its edges in its constructor, so importing
       // the module is the assertion.
       expect(await loadRootAgent(sample)).toBeDefined();
     });

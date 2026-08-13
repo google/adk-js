@@ -54,7 +54,7 @@ export class ReplayPlugin extends BasePlugin {
     toolArgs: Record<string, unknown>;
     toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
-    const agentName = params.toolContext.invocationContext.agent.name;
+    const agentName = params.toolContext.invocationContext.agent?.name ?? '';
     const toolName = params.tool.name;
 
     const index = this.recordings.findIndex(

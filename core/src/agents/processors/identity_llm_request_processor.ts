@@ -6,7 +6,7 @@
 
 import {Event} from '../../events/event.js';
 import {LlmRequest, appendInstructions} from '../../models/llm_request.js';
-import {InvocationContext} from '../invocation_context.js';
+import {InvocationContext, requireAgent} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {BaseLlmRequestProcessor} from './base_llm_processor.js';
 
@@ -30,7 +30,7 @@ export class IdentityLlmRequestProcessor extends BaseLlmRequestProcessor {
     invocationContext: InvocationContext,
     llmRequest: LlmRequest,
   ): AsyncGenerator<Event, void, undefined> {
-    const agent = invocationContext.agent;
+    const agent = requireAgent(invocationContext);
     // The preamble only exists so the model can name itself when handing off
     // control, and embedding the agent name gives every sibling of a fan-out a
     // distinct system prompt, which defeats prompt-prefix caching on local

@@ -31,40 +31,34 @@
       "candidates": [
         {
           "content": {
-            "role": "model",
             "parts": [
               {
-                "text": "[\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
+                "text": "[\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
               }
-            ]
+            ],
+            "role": "model"
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
         "promptTokenCount": 19,
-        "candidatesTokenCount": 20,
-        "totalTokenCount": 64,
-        "trafficType": "ON_DEMAND",
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 185,
         "promptTokensDetails": [
           {
             "modality": "TEXT",
             "tokenCount": 19
           }
         ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 20
-          }
-        ],
-        "thoughtsTokenCount": 25
+        "thoughtsTokenCount": 154,
+        "serviceTier": "standard"
       }
     }
   },
   {
-    "key": "4be471efd03ca099",
-    "instructionAgnosticKey": "41c6a4874736a99c",
+    "key": "e3bca3321aba963d",
+    "instructionAgnosticKey": "6e24d936094013e3",
     "request": {
       "contents": [
         {
@@ -82,7 +76,7 @@
               "text": "For context:"
             },
             {
-              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
+              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
             }
           ]
         },
@@ -91,180 +85,6 @@
           "parts": [
             {
               "text": "SQL"
-            }
-          ]
-        }
-      ],
-      "config": {
-        "responseSchema": {
-          "type": "OBJECT",
-          "properties": {
-            "topic": {
-              "type": "STRING"
-            },
-            "explanation": {
-              "type": "STRING"
-            }
-          },
-          "required": [
-            "topic",
-            "explanation"
-          ]
-        },
-        "responseMimeType": "application/json",
-        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
-        "labels": {
-          "adk_agent_name": "explain_topic"
-        }
-      }
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "role": "model",
-            "parts": [
-              {
-                "text": "{\n  \"topic\": \"SQL\",\n  \"explanation\": \"SQL (Structured Query Language) is the standard language used for managing and manipulating relational databases. It allows users to create, retrieve, update, and delete data, as well as define database schemas and manage access permissions. Without SQL, interacting with most traditional 'databases' would be significantly more complex, as it provides the core functionality for data operations and database management.\"\n}"
-              }
-            ]
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 55,
-        "candidatesTokenCount": 89,
-        "totalTokenCount": 178,
-        "trafficType": "ON_DEMAND",
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 55
-          }
-        ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 89
-          }
-        ],
-        "thoughtsTokenCount": 34
-      }
-    }
-  },
-  {
-    "key": "ea16caa379152d83",
-    "instructionAgnosticKey": "f74803db885b14a0",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "databases"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "DATA MODELING"
-            }
-          ]
-        }
-      ],
-      "config": {
-        "responseSchema": {
-          "type": "OBJECT",
-          "properties": {
-            "topic": {
-              "type": "STRING"
-            },
-            "explanation": {
-              "type": "STRING"
-            }
-          },
-          "required": [
-            "topic",
-            "explanation"
-          ]
-        },
-        "responseMimeType": "application/json",
-        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
-        "labels": {
-          "adk_agent_name": "explain_topic"
-        }
-      }
-    },
-    "response": {
-      "candidates": [
-        {
-          "content": {
-            "role": "model",
-            "parts": [
-              {
-                "text": "{\n  \"topic\": \"DATA MODELING\",\n  \"explanation\": \"Data modeling is a fundamental and crucial step in the design and implementation of databases. It involves creating a visual or conceptual representation of the data that an organization needs to store and manage. This process defines the structure of the data, the relationships between different data elements, and the constraints that govern the data's integrity. Essentially, data modeling provides the blueprint for building a database, determining how tables will be organized, what attributes they will contain, and how they will connect to each other. Without effective data modeling, a database would lack structure, consistency, and efficiency in storing and retrieving information.\"\n}"
-              }
-            ]
-          },
-          "finishReason": "STOP"
-        }
-      ],
-      "usageMetadata": {
-        "promptTokenCount": 57,
-        "candidatesTokenCount": 137,
-        "totalTokenCount": 252,
-        "trafficType": "ON_DEMAND",
-        "promptTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 57
-          }
-        ],
-        "candidatesTokensDetails": [
-          {
-            "modality": "TEXT",
-            "tokenCount": 137
-          }
-        ],
-        "thoughtsTokenCount": 58
-      }
-    }
-  },
-  {
-    "key": "21a12fc32ed4924b",
-    "instructionAgnosticKey": "831e9fdf435ed2b5",
-    "request": {
-      "contents": [
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "databases"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[find_related_topics] said: [\n  \"SQL\",\n  \"data modeling\",\n  \"database administration\"\n]"
             }
           ]
         },
@@ -278,18 +98,10 @@
               "text": "[make_upper_case] said: SQL"
             },
             {
-              "text": "[make_upper_case] said: DATA MODELING"
+              "text": "[make_upper_case] said: NOSQL"
             },
             {
-              "text": "[make_upper_case] said: DATABASE ADMINISTRATION"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "DATABASE ADMINISTRATION"
+              "text": "[make_upper_case] said: DATA WAREHOUSING"
             }
           ]
         }
@@ -321,34 +133,232 @@
       "candidates": [
         {
           "content": {
-            "role": "model",
             "parts": [
               {
-                "text": "{\n  \"topic\": \"DATABASE ADMINISTRATION\",\n  \"explanation\": \"DATABASE ADMINISTRATION is the practice of managing and maintaining databases to ensure their optimal performance, security, and availability. This involves tasks such as installation, configuration, backup and recovery, security management, performance tuning, and troubleshooting. It is directly related to databases as it encompasses all the necessary activities to keep a database system operational, secure, and efficient for the organizations that rely on them.\"\n}"
+                "text": "{\n  \"topic\": \"SQL\",\n  \"explanation\": \"SQL (Structured Query Language) is the standard language used for managing and manipulating relational databases. It is fundamental to interacting with, defining, and querying data stored in many types of databases.\"\n}"
               }
-            ]
+            ],
+            "role": "model"
           },
           "finishReason": "STOP"
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 92,
-        "candidatesTokenCount": 93,
-        "totalTokenCount": 219,
-        "trafficType": "ON_DEMAND",
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 54,
+        "totalTokenCount": 171,
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 92
+            "tokenCount": 83
           }
         ],
-        "candidatesTokensDetails": [
+        "thoughtsTokenCount": 34,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "3b2b3199b7187a30",
+    "instructionAgnosticKey": "3691cf3130333b0a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "databases"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "NOSQL"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[make_upper_case] said: SQL"
+            },
+            {
+              "text": "[make_upper_case] said: NOSQL"
+            },
+            {
+              "text": "[make_upper_case] said: DATA WAREHOUSING"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "topic",
+            "explanation"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"topic\": \"NOSQL\", \"explanation\": \"NoSQL (originally referring to 'non-SQL' or 'not only SQL') is a category of databases that provides a mechanism for storage and retrieval of data that is modeled in means other than the tabular relations used in traditional relational databases (which typically use SQL). While traditional databases are primarily relational, NoSQL databases encompass a wide variety of database technologies developed in response to the demands of modern web applications, big data, and real-time data processing. They are often chosen for their flexibility, scalability, and performance with specific data models, such as document, key-value, wide-column, or graph stores, making them a direct alternative or complement to SQL databases within the broader domain of 'databases'.\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 84,
+        "candidatesTokenCount": 154,
+        "totalTokenCount": 309,
+        "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 93
+            "tokenCount": 84
           }
         ],
-        "thoughtsTokenCount": 34
+        "thoughtsTokenCount": 71,
+        "serviceTier": "standard"
+      }
+    }
+  },
+  {
+    "key": "e1c11a98f2b06d10",
+    "instructionAgnosticKey": "a577040a3abddd36",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "databases"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[find_related_topics] said: [\"SQL\", \"NoSQL\", \"Data Warehousing\"]"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[make_upper_case] said: SQL"
+            },
+            {
+              "text": "[make_upper_case] said: NOSQL"
+            },
+            {
+              "text": "[make_upper_case] said: DATA WAREHOUSING"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "DATA WAREHOUSING"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "topic",
+            "explanation"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates to the original topic: \"databases\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\"topic\":\"DATA WAREHOUSING\",\"explanation\":\"DATA WAREHOUSING is a specialized type of database system designed for analytical processing rather than transactional operations. While databases focus on storing and retrieving current data for day-to-day operations, data warehouses consolidate and store historical data from multiple operational databases to support business intelligence activities, reporting, and data analysis. They are structured differently, often using star or snowflake schemas, to optimize for complex queries and aggregations across large datasets, making them a crucial application and extension of database technology.\"}"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 87,
+        "candidatesTokenCount": 108,
+        "totalTokenCount": 345,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 87
+          }
+        ],
+        "thoughtsTokenCount": 150,
+        "serviceTier": "standard"
       }
     }
   }

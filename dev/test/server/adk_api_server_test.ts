@@ -22,7 +22,6 @@ import {
   Runner,
   Session,
   Workflow,
-  WorkflowAgent,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -976,7 +975,7 @@ describe('AdkWebServer', () => {
         Promise.resolve({
           load: () =>
             Promise.resolve(
-              new WorkflowAgent({
+              new Workflow({
                 name: 'wf',
                 edges: [
                   [
@@ -1066,13 +1065,13 @@ describe('AdkWebServer', () => {
     }
 
     /** A workflow nesting another workflow, to exercise per-level paths. */
-    function nestedWorkflowAgent() {
+    function nestedWorkflow() {
       const inner = new Workflow({
         name: 'inner',
         edges: [['START', node(async () => 'b', {name: 'inner_step'})]],
       });
 
-      return new WorkflowAgent({
+      return new Workflow({
         name: 'outer',
         edges: [['START', node(async () => 'a', {name: 'outer_step'}), inner]],
       });
@@ -1121,7 +1120,7 @@ describe('AdkWebServer', () => {
       // walks `subAgents` reports an empty tree for it — the same trap the DOT
       // renderer hit before it learned to walk `edges`.
       it('serializes a workflow from its edges rather than its sub-agents', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<{
           root_agent: {
@@ -1181,7 +1180,7 @@ describe('AdkWebServer', () => {
       // The click handler matches a node's `<title>` against a bare child name,
       // so a qualified `parent.child` id would render but never be clickable.
       it('names nodes so the UI can match them to a child', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<{dotSrc: string}>(
           '/dev/apps/testApp/build_graph_image',
@@ -1193,7 +1192,7 @@ describe('AdkWebServer', () => {
       });
 
       it('returns one entry per nested workflow, keyed by its path', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<Record<string, {dotSrc: string}>>(
           '/dev/apps/testApp/build_graph_image',
@@ -1209,7 +1208,7 @@ describe('AdkWebServer', () => {
       });
 
       it('returns just the requested level for a node path', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<
           Record<string, unknown> & {dotSrc?: string}
@@ -1235,12 +1234,10 @@ describe('AdkWebServer', () => {
       // graph to expand. It still has to draw as something.
       it('draws a dynamic workflow as a single node', async () => {
         loadInstead(
-          new WorkflowAgent(
-            new Workflow({
-              name: 'dynamic_flow',
-              dynamicEntry: async () => 'done',
-            }),
-          ),
+          new Workflow({
+            name: 'dynamic_flow',
+            dynamicEntry: async () => 'done',
+          }),
         );
 
         const response = await client.get<{dotSrc: string}>(

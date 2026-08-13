@@ -44,7 +44,7 @@ export interface InvocationContextParams {
   credentialService?: BaseCredentialService;
   invocationId: string;
   branch?: string;
-  agent: BaseAgent;
+  agent?: BaseAgent;
   userContent?: Content;
   session: Session;
   endInvocation?: boolean;
@@ -152,9 +152,19 @@ export class InvocationContext {
   branch?: string;
 
   /**
-   * The current agent of this invocation context.
+   * The agent driving this invocation.
+   *
+   * Unset when the root being run is a bare {@link BaseNode} — a `Workflow`
+   * handed straight to the `Runner` — because there is no agent in play at
+   * that level. Nodes deeper in the graph that *are* agents get their own
+   * contexts with this set. Mirrors adk-python, whose field is
+   * `BaseAgent | BaseNode | None` and which passes `None` on the node path.
+   *
+   * Most code reaches this from inside an agent's own execution, where it is
+   * always set; prefer {@link requireAgent} there, so a broken invariant
+   * fails by name rather than as a property access on `undefined`.
    */
-  agent: BaseAgent;
+  agent?: BaseAgent;
 
   /**
    * The user content that started this invocation.
@@ -304,4 +314,29 @@ export class InvocationContext {
 
 export function newInvocationContextId(): string {
   return `e-${randomUUID()}`;
+}
+
+/**
+ * The agent driving `ctx`, for code that only runs because one is.
+ *
+ * An LLM flow, an agent transfer, a tool call: each is reached from inside an
+ * agent's own execution, so {@link InvocationContext.agent} is set by
+ * construction. Going through here says that out loud, and turns a violated
+ * assumption into a named error rather than a property access on `undefined`
+ * several frames away.
+ *
+ * A free function rather than an accessor on the class, because a good deal of
+ * code (and most tests) passes a duck-typed context object; a getter would be
+ * simply absent on those, which fails less clearly than not having the agent.
+ *
+ * @throws if the invocation is driving a bare node rather than an agent.
+ */
+export function requireAgent(ctx: InvocationContext): BaseAgent {
+  if (!ctx.agent) {
+    throw new Error(
+      'InvocationContext.agent is not set: this invocation is running a node ' +
+        'directly, so there is no agent at this level.',
+    );
+  }
+  return ctx.agent;
 }

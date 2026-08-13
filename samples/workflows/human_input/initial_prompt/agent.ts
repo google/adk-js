@@ -23,7 +23,7 @@
  * Turn 1: anything. Turn 2: e.g. "Lisbon, 34, cycling, liked the tram tour".
  */
 
-import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, RequestInput, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 /** Asks the user for itinerary information. */
@@ -63,7 +63,7 @@ const buildItinerary = node(
   {name: 'build_itinerary'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'concierge_workflow',
   edges: [['START', initialPrompt, buildItinerary]],
 });

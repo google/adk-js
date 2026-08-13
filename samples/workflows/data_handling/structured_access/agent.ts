@@ -22,7 +22,7 @@
  *   npm run sample -- samples/workflows/data_handling/structured_access/agent.ts
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const cityTimeSchema = z.object({
@@ -63,7 +63,7 @@ const cityReportAgent = new LlmAgent({
     '<CityTime.city from lookup_time_function> right now.',
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

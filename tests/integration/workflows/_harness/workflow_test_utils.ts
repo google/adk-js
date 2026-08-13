@@ -10,7 +10,6 @@ import {
   LlmAgent,
   LlmAgentConfig,
   Workflow,
-  WorkflowAgent,
 } from '@google/adk';
 import {Content, FinishReason} from '@google/genai';
 import {
@@ -66,15 +65,15 @@ export function mockLlmAgent(
 }
 
 /**
- * Creates a runner for a {@link Workflow} (wrapped as a {@link WorkflowAgent}),
- * bound to a single session so successive `run(...)` calls are additional turns
- * (needed for HITL resume). Accepts a text prompt or a full `Content` (e.g. a
+ * Creates a runner for a {@link Workflow}, driven as the root node, bound to a
+ * single session so successive `run(...)` calls are additional turns (needed
+ * for HITL resume). Accepts a text prompt or a full `Content` (e.g. a
  * function-response resume message).
  */
 export async function createWorkflowRunner(
   workflow: Workflow,
 ): Promise<{run: (message: string | Content) => AsyncGenerator<Event>}> {
-  const agent = new WorkflowAgent(workflow);
+  const agent = workflow;
   const runner = new InMemoryRunner({agent, appName: agent.name});
   const session = await runner.sessionService.createSession({
     appName: agent.name,

@@ -19,7 +19,7 @@
  *   npm run sample -- samples/workflows/dynamic_nodes/agent.ts
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const feedbackSchema = z.object({
@@ -50,7 +50,7 @@ const evaluateHeadline = node(
   }),
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   // Imperative entry: drive the child nodes directly via `ctx.runNode()`
   // rather than a static edge graph (mutually exclusive with `edges`).

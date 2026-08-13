@@ -13,7 +13,7 @@
  * calls the live model and writes that fixture.
  */
 
-import {BaseAgent, Event, InMemoryRunner, RunConfig} from '@google/adk';
+import {Event, InMemoryRunner, RunConfig, RunnableRoot} from '@google/adk';
 import {Content} from '@google/genai';
 import {existsSync, readFileSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
@@ -70,7 +70,7 @@ export interface SampleSpec {
   /** Fixture base name (also the sample directory name by convention). */
   name: string;
   /** The real `rootAgent` imported from the sample module. */
-  rootAgent: BaseAgent;
+  rootAgent: RunnableRoot;
   /** User turns to send, in order (one session, so later turns resume). */
   turns: SampleTurn[];
   /** Optional run config (e.g. `plainTextToolConfirmation` for HITL samples). */

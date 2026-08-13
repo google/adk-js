@@ -7,7 +7,7 @@
 import {describe, expect, it, vi} from 'vitest';
 import {buildAgentSkills} from '../../src/a2a/agent_card.js';
 import {node} from '../../src/workflow/node.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 import {
   BaseAgent,
@@ -222,8 +222,8 @@ describe('Agent Card', () => {
       );
     });
 
-    it('classifies a graph WorkflowAgent as a workflow, not a custom agent', async () => {
-      const agent = new WorkflowAgent({
+    it('classifies a graph Workflow as a workflow, not a custom agent', async () => {
+      const agent = new Workflow({
         name: 'graph_workflow',
         description: 'Runs a graph',
         edges: [['START', node(() => 'done', {name: 'step'})]],

@@ -12,13 +12,13 @@ import {DEFAULT_ROUTE} from '../../src/workflow/graph.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
+import {ReplyAgent} from './test_helpers.js';
 
 async function runViaRunner(
   workflow: Workflow,
   text: string,
 ): Promise<Event[]> {
-  const agent = new WorkflowAgent(workflow);
+  const agent = workflow;
   const sessionService = new InMemorySessionService();
   const session = await sessionService.createSession({
     appName: 'test_app',
@@ -37,7 +37,7 @@ async function runViaRunner(
   return events;
 }
 
-describe('Phase 8 — WorkflowAgent via the real Runner', () => {
+describe('Phase 8 — Workflow via the real Runner', () => {
   it('runs a single-node workflow end-to-end', async () => {
     const wf = new Workflow({
       name: 'greet_wf',
@@ -111,5 +111,66 @@ describe('Phase 8 — WorkflowAgent via the real Runner', () => {
 
     const events = await runViaRunner(wf, 'skip');
     expect(events.some((e) => e.output === 'DEFAULT:skip')).toBe(true);
+  });
+});
+
+/**
+ * The fan-in contract, pinned without a model.
+ *
+ * The `parallel_worker` sample covers this too, but only against recorded
+ * responses: when a worker produces no output the aggregate receives a hole,
+ * and the symptom is a fixture mismatch — which a re-record silently absorbs.
+ * These run the same shape through the real Runner with a `Workflow` root and
+ * assert on what the aggregate is actually handed, so a fan-in regression fails
+ * here whatever the fixtures say.
+ */
+describe('ParallelWorker fan-in under a node root', () => {
+  /** Builds `START -> seed -> worker(parallel) -> aggregate`, capturing the aggregate's input. */
+  function fanInWorkflow(inner: Parameters<typeof node>[0]): {
+    wf: Workflow;
+    received: () => unknown;
+  } {
+    let seen: unknown;
+    const seed = node(() => ['a', 'b', 'c'], {name: 'seed'});
+    // Fewer workers than items, so the pool reuses a slot — the shape that
+    // first surfaced the holes.
+    const worker = node(inner, {parallelWorker: true, maxParallelWorkers: 2});
+    const aggregate = node(
+      (_c: NodeContext, nodeInput: unknown) => {
+        seen = nodeInput;
+        return 'done';
+      },
+      {name: 'aggregate'},
+    );
+    return {
+      wf: new Workflow({
+        name: 'fan_in_wf',
+        edges: [['START', seed, worker, aggregate]],
+      }),
+      received: () => seen,
+    };
+  }
+
+  it('hands the aggregate one output per item, in item order', async () => {
+    const {wf, received} = fanInWorkflow(
+      node((_c: NodeContext, item: string) => item.toUpperCase(), {
+        name: 'shout',
+      }),
+    );
+
+    await runViaRunner(wf, 'go');
+
+    expect(received()).toEqual(['A', 'B', 'C']);
+  });
+
+  it('gives an agent worker an output per item, not a hole', async () => {
+    // An agent worker is the case that broke: with no `ic.agent` at the root,
+    // a worker that produced nothing left `undefined` in the list, and the
+    // aggregate read a property off it.
+    const {wf, received} = fanInWorkflow(new ReplyAgent('worker'));
+
+    await runViaRunner(wf, 'go');
+
+    expect(received()).toEqual(['ok', 'ok', 'ok']);
   });
 });

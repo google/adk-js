@@ -26,7 +26,7 @@ import {
   LlmAgent,
   node,
   NodeContext,
-  WorkflowAgent,
+  Workflow,
 } from '@google/adk';
 import {z} from 'zod';
 
@@ -92,7 +92,7 @@ then generate a concise instruction about how to prepare based on those orders.`
   tools: [findOrders],
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'task_in_workflow',
   edges: [
     ['START', intakeAgent, checkIdentity],

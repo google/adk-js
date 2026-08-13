@@ -14,13 +14,7 @@
  * Run (offline):  npm run sample -- samples/workflows/fan_out_fan_in/agent.ts
  */
 
-import {
-  createEvent,
-  JoinNode,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, JoinNode, node, NodeContext, Workflow} from '@google/adk';
 
 const makeUppercase = node((_c: NodeContext, s: string) => s.toUpperCase(), {
   name: 'make_uppercase',
@@ -54,7 +48,7 @@ const aggregate = node(
   {name: 'aggregate'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [
     [

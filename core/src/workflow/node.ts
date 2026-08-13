@@ -37,8 +37,8 @@ export function node(nodeLike: NodeLike, options: NodeOptions = {}): BaseNode {
  * provide node logic; subclasses inherit the schema/retry/timeout machinery of
  * {@link BaseNode}.
  *
- * Named `WorkflowNode` (not `Node`) to read consistently with `WorkflowAgent`
- * and `WorkflowConfig`, and to avoid shadowing the DOM / `@types/node` `Node`
+ * Named `WorkflowNode` (not `Node`) to read consistently with `Workflow` and
+ * `WorkflowConfig`, and to avoid shadowing the DOM / `@types/node` `Node`
  * global in the flat `@google/adk` namespace. The `node()` factory remains the
  * ergonomic way to wrap a function/tool/agent.
  *

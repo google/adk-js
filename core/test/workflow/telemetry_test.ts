@@ -13,6 +13,9 @@ import {
   type ReadableSpan,
 } from '@opentelemetry/sdk-trace-base';
 import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {BasePlugin} from '../../src/plugins/base_plugin.js';
+import {Runner} from '../../src/runner/runner.js';
+import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {driveWorkflow, FnNode} from './test_helpers.js';
 
@@ -199,5 +202,90 @@ describe('workflow telemetry — span tree', () => {
     expect(onlySpan('execute_node boom').attributes).toMatchObject({
       'adk.node.status': 'failed',
     });
+  });
+});
+
+describe('workflow telemetry — a workflow run as a runner root', () => {
+  it('still emits workflow and node spans without an agent wrapper', async () => {
+    // Driving the workflow as a node loses `BaseAgent.runAsync`'s
+    // `invoke_agent` span. That is only acceptable because node execution is
+    // traced in its own right — so assert it, rather than assume it.
+    const workflow = new Workflow({
+      name: 'traced_root',
+      edges: [['START', new FnNode('step', () => 'done')]],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+    });
+    const runner = new Runner({
+      appName: 'app',
+      agent: workflow,
+      sessionService,
+    });
+    for await (const _ of runner.runAsync({
+      userId: 'u',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+    })) {
+      void _;
+    }
+
+    const workflowSpan = onlySpan('invoke_workflow traced_root');
+    const nodeSpan = onlySpan('execute_node step');
+    expectChildOf(nodeSpan, workflowSpan);
+  });
+
+  it('still runs the node plugin hooks without an agent wrapper', async () => {
+    // Same argument for plugins: the hooks hang off node execution, not off
+    // the agent the workflow used to be wrapped in.
+    const seen: string[] = [];
+    class RecordingPlugin extends BasePlugin {
+      constructor() {
+        super('recording');
+      }
+      override async beforeNodeCallback({node}: {node: {name: string}}) {
+        seen.push(`before:${node.name}`);
+        return undefined;
+      }
+      override async afterNodeCallback({node}: {node: {name: string}}) {
+        seen.push(`after:${node.name}`);
+        return undefined;
+      }
+    }
+
+    const workflow = new Workflow({
+      name: 'plugged_root',
+      edges: [['START', new FnNode('step', () => 'done')]],
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+    });
+    const runner = new Runner({
+      appName: 'app',
+      agent: workflow,
+      sessionService,
+      plugins: [new RecordingPlugin()],
+    });
+    for await (const _ of runner.runAsync({
+      userId: 'u',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+    })) {
+      void _;
+    }
+
+    // The workflow is itself a node, so it is bracketed too — the hooks wrap
+    // the graph and each node inside it.
+    expect(seen).toEqual([
+      'before:plugged_root',
+      'before:step',
+      'after:step',
+      'after:plugged_root',
+    ]);
   });
 });

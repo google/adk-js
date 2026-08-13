@@ -28,7 +28,7 @@
  * Enter a comma-separated list, e.g. "alpha, beta, gamma".
  */
 
-import {node, NodeContext, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, Workflow} from '@google/adk';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -63,7 +63,7 @@ const summarize = node(
   {name: 'summarize'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', parallelSupervisor, summarize]],
 });

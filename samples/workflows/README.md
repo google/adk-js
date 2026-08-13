@@ -32,7 +32,7 @@ npm run ts:check:samples
 ```
 
 CI also executes them, in `tests/integration/docs_samples/`: every sample is
-constructed (a `WorkflowAgent` validates its graph in its constructor), and the
+constructed (a `Workflow` validates its graph in its constructor), and the
 offline ones are run end-to-end with the model stubbed out, so a stray model
 call in one of them fails too. A new sample directory has to be added to that
 test's offline or model-backed list, or it fails for being uncovered.

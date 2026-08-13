@@ -16,7 +16,6 @@ import {
   hasRequestInputFunctionCall,
 } from '../../src/workflow/utils/hitl_utils.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 
 async function collect(gen: AsyncGenerator<Event>): Promise<Event[]> {
   const out: Event[] = [];
@@ -66,7 +65,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       },
     });
 
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',
@@ -142,7 +141,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       },
     });
 
-    const agent = new WorkflowAgent(wf);
+    const agent = wf;
     const sessionService = new InMemorySessionService();
     const session = await sessionService.createSession({
       appName: 'test_app',
@@ -209,7 +208,7 @@ describe('Phase 5b-cont — dynamic (ctx.runNode) resume via the Runner', () => 
       {rerunOnResume: true},
     );
 
-    const agent = new WorkflowAgent({
+    const agent = new Workflow({
       name: 'root_agent',
       edges: [['START', handle]],
     });

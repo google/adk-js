@@ -18,13 +18,7 @@
  * Try "the checkout page throws a 500" or "where is my parcel?".
  */
 
-import {
-  createEvent,
-  LlmAgent,
-  node,
-  NodeContext,
-  WorkflowAgent,
-} from '@google/adk';
+import {createEvent, LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 
 const processMessage = new LlmAgent({
   name: 'process_message',
@@ -62,7 +56,7 @@ const response3Logistics = node(() => message('Handling logistics...'), {
   name: 'response_3_logistics',
 });
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'routing_workflow',
   edges: [
     ['START', processMessage, router],

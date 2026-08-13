@@ -6,7 +6,6 @@
 
 import {
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -18,6 +17,7 @@ import {
   InMemorySessionService,
   isApp,
   requiresUserInput,
+  RunnableRoot,
   Runner,
   Session,
   UserInputKind,
@@ -149,7 +149,7 @@ async function getUserInput(prompt: string): Promise<string> {
 interface RunFromInputFileOptions {
   appName: string;
   userId: string;
-  agent: BaseAgent;
+  agent: RunnableRoot;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
@@ -208,18 +208,22 @@ async function runFromInputFile(
 }
 
 interface RunInteractivelyOptions {
-  rootAgent?: BaseAgent;
+  rootAgent?: RunnableRoot;
   app?: App;
   session: Session;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
-  onAgentFileReloaded?: (subscribe: (newAgent: BaseAgent) => void) => void;
+  onAgentFileReloaded?: (subscribe: (newAgent: RunnableRoot) => void) => void;
 }
 async function runInteractively(
   options: RunInteractivelyOptions,
 ): Promise<void> {
-  let currentAgent = options.rootAgent || options.app?.rootAgent;
+  const currentRoot = options.rootAgent ?? options.app?.rootAgent;
+  if (!currentRoot) {
+    throw new Error('cli_run requires a rootAgent or an app.');
+  }
+  let currentAgent: RunnableRoot = currentRoot;
   let runner = new Runner({
     app: options.app,
     appName: options.app?.name ?? currentAgent.name,
@@ -229,7 +233,7 @@ async function runInteractively(
     memoryService: options.memoryService,
   });
 
-  options.onAgentFileReloaded?.((newAgent: BaseAgent) => {
+  options.onAgentFileReloaded?.((newAgent: RunnableRoot) => {
     currentAgent = newAgent;
     runner = new Runner({
       appName: newAgent.name,
@@ -300,7 +304,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     userId,
   });
 
-  const reloadSubscribers: Array<(agent: BaseAgent) => void> = [];
+  const reloadSubscribers: Array<(agent: RunnableRoot) => void> = [];
   let watcher: fs.FSWatcher | undefined;
 
   if (options.reloadAgents) {
@@ -322,7 +326,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     });
   }
 
-  const onAgentFileReloaded = (subscribe: (agent: BaseAgent) => void) => {
+  const onAgentFileReloaded = (subscribe: (agent: RunnableRoot) => void) => {
     reloadSubscribers.push(subscribe);
   };
 

@@ -10,17 +10,18 @@ import {
   DEFAULT_ROUTE,
   Event,
   RouteValue,
+  RunnableRoot,
   Workflow,
   Graph as WorkflowGraph,
   isAgentTool,
   isBaseAgent,
   isBaseTool,
   isFunctionTool,
-  isGraphWorkflowAgent,
   isLlmAgent,
   isLoopAgent,
   isParallelAgent,
   isSequentialAgent,
+  isWorkflow,
 } from '@google/adk';
 import {
   Digraph,
@@ -43,20 +44,18 @@ const DEFAULT_ROUTE_LABEL = 'default';
 
 export async function buildGraph(
   graph: RootGraph | Subgraph,
-  rootAgent: BaseAgent,
+  root: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
   parentAgent?: BaseAgent,
 ) {
-  if (isGraphWorkflowAgent(rootAgent)) {
-    drawWorkflowCluster(
-      graph,
-      rootAgent.workflow,
-      rootAgent.workflow.name,
-      highlightsPairs,
-    );
-
+  if (isWorkflow(root)) {
+    drawWorkflowCluster(graph, root, root.name, highlightsPairs);
     return;
   }
+
+  // Past the guard this is an agent. Bound to a const so the closures below
+  // keep the narrowing, which a parameter would lose.
+  const rootAgent: BaseAgent = root;
 
   async function buildCluster(
     subgraph: Subgraph,
@@ -605,7 +604,7 @@ function shouldBuildAgentCluster(toolOrAgent: BaseAgent | BaseTool): boolean {
  * @return A graphviz graph of the agent tree.
  */
 export async function getAgentGraph(
-  rootAgent: BaseAgent,
+  rootAgent: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
 ): Promise<Digraph> {
   const graph = new Digraph(rootAgent.name, /* strict= */ true, {
@@ -626,7 +625,7 @@ export async function getAgentGraph(
  * @return A graphviz graph in DOT format of the agent tree as a string.
  */
 export async function getAgentGraphAsDot(
-  rootAgent: BaseAgent,
+  rootAgent: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
 ): Promise<string> {
   const graph = await getAgentGraph(rootAgent, highlightsPairs);
