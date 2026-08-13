@@ -236,4 +236,57 @@ describe('Phase 0 — getRetryDelaySeconds', () => {
     // randomFn=1 -> offset +span -> 4+4=8
     expect(delayWith(() => 1)).toBe(8);
   });
+
+  it('never exceeds maxDelay once jitter is applied', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 1,
+    });
+    for (let attemptCount = 1; attemptCount <= 12; attemptCount++) {
+      for (const draw of [0, 0.25, 0.5, 0.75, 1]) {
+        const delay = getRetryDelaySeconds({
+          retryConfig: cfg,
+          nodeState: createNodeState({attemptCount}),
+          randomFn: () => draw,
+        });
+        expect(delay).toBeGreaterThanOrEqual(0);
+        expect(delay).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
+  it('caps the pre-jitter delay so the widest draw lands on maxDelay', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 1,
+    });
+    const delayWith = (randomFn: () => number) =>
+      getRetryDelaySeconds({
+        retryConfig: cfg,
+        nodeState: createNodeState({attemptCount: 10}),
+        randomFn,
+      });
+    expect(delayWith(() => 0.5)).toBe(30);
+    expect(delayWith(() => 1)).toBe(60);
+    expect(delayWith(() => 0)).toBe(0);
+  });
+
+  it('still honours maxDelay when jitter is disabled', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 0,
+    });
+    expect(
+      getRetryDelaySeconds({
+        retryConfig: cfg,
+        nodeState: createNodeState({attemptCount: 20}),
+      }),
+    ).toBe(60);
+  });
 });
