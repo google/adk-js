@@ -97,8 +97,12 @@ describe('core/package.json install weight', () => {
 });
 
 describe('core/package.json subpath exports', () => {
+  // `.` is the root entry, and `./dist/web/*` is a wildcard passthrough for the
+  // browser bundle whose target is a glob, not a single source module. Neither
+  // is a situational subsystem entry point, so both stay out of these checks.
   const subpaths = Object.entries(pkg.exports).filter(
-    ([subpath, target]) => subpath !== '.' && typeof target === 'object',
+    ([subpath, target]) =>
+      subpath !== '.' && !subpath.includes('*') && typeof target === 'object',
   ) as Array<[string, Record<string, string>]>;
 
   it('exports the situational subsystems as their own entry points', () => {
