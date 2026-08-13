@@ -22,6 +22,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
+/**
+ * Commands are built from the Node binary running the tests so that they work
+ * under both `sh` and `cmd.exe`.
+ */
+const NODE = `"${process.execPath}"`;
+
 function makeContext(
   options: {
     functionCallId?: string;
@@ -55,7 +61,12 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
 
   afterEach(async () => {
     if (tempDir) {
-      await fs.rm(tempDir, {recursive: true, force: true});
+      await fs.rm(tempDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 500,
+      });
     }
   });
 
@@ -164,7 +175,7 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
       const tool = new ExecuteBashTool({requireConfirmation: true});
       const context = makeContext();
       const res = await tool.runAsync({
-        args: {command: 'echo "hello"'},
+        args: {command: `${NODE} -e "process.stdout.write('hello')"`},
         toolContext: context,
       });
 
@@ -181,7 +192,7 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
         toolConfirmation: new ToolConfirmation({confirmed: false}),
       });
       const res = await tool.runAsync({
-        args: {command: 'echo "hello"'},
+        args: {command: `${NODE} -e "process.stdout.write('hello')"`},
         toolContext: context,
       });
 
@@ -194,7 +205,9 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
         toolConfirmation: new ToolConfirmation({confirmed: true}),
       });
       const res = (await tool.runAsync({
-        args: {command: 'echo "confirmed execution"'},
+        args: {
+          command: `${NODE} -e "process.stdout.write('confirmed execution')"`,
+        },
         toolContext: context,
       })) as {stdout: string; returncode: number};
 
@@ -207,7 +220,9 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
     it('executes a standard echo command and captures stdout', async () => {
       const tool = new ExecuteBashTool({requireConfirmation: false});
       const res = (await tool.runAsync({
-        args: {command: 'node -e "console.log(\'test output 123\')"'},
+        args: {
+          command: `${NODE} -e "process.stdout.write('test output 123')"`,
+        },
         toolContext: makeContext(),
       })) as {stdout: string; stderr: string; returncode: number};
 
@@ -227,8 +242,7 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
 
       const res = (await tool.runAsync({
         args: {
-          command:
-            "node -e \"console.log(require('node:fs').readFileSync('sample.txt', 'utf8'))\"",
+          command: `${NODE} -e "process.stdout.write(require('node:fs').readFileSync('sample.txt', 'utf8'))"`,
         },
         toolContext: makeContext(),
       })) as {stdout: string; returncode: number};
@@ -241,8 +255,7 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
       const tool = new ExecuteBashTool({requireConfirmation: false});
       const res = (await tool.runAsync({
         args: {
-          command:
-            'node -e "process.stderr.write(\'error_in_test_execution\'); process.exit(1)"',
+          command: `${NODE} -e "process.stderr.write('error_in_test_execution'); process.exit(1)"`,
         },
         toolContext: makeContext(),
       })) as {stdout: string; stderr: string; returncode: number};
@@ -258,7 +271,7 @@ describe('ExecuteBashTool & BashToolPolicy', () => {
       });
 
       const res = (await tool.runAsync({
-        args: {command: 'node -e "setTimeout(() => {}, 5000)"'},
+        args: {command: `${NODE} -e "setTimeout(() => {}, 5000)"`},
         toolContext: makeContext(),
       })) as {error: string};
 

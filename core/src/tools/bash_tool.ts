@@ -259,16 +259,11 @@ export class ExecuteBashTool extends BaseTool {
 
   private executeProcess(command: string): Promise<BashToolResult> {
     return new Promise((resolve) => {
-      const isWindows = process.platform === 'win32';
-      const shell = this.shellCommandPath ?? (isWindows ? 'cmd.exe' : 'bash');
-      const shellArgs = isWindows ? ['/D', '/c', command] : ['-c', command];
-
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawn(shell, shellArgs, {
+        child = spawn(command, {
+          shell: this.shellCommandPath || true,
           cwd: this.workspace,
-          timeout: this.policy.timeoutSeconds * 1000,
-          killSignal: 'SIGKILL',
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -305,6 +300,9 @@ export class ExecuteBashTool extends BaseTool {
           } catch {
             // Ignore process kill errors if already exited
           }
+          // Destroy read streams so the timeout close event is promptly triggered on Windows
+          child.stdout?.destroy();
+          child.stderr?.destroy();
         }, this.policy.timeoutSeconds * 1000);
       }
 
