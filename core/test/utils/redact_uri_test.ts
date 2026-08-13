@@ -5,8 +5,8 @@
  */
 
 import {describe, expect, it, vi} from 'vitest';
-import {parseAuthorizationCode} from '../../src/auth/oauth2/oauth2_utils.js';
 import {getArtifactServiceFromUri} from '../../src/artifacts/registry.js';
+import {parseAuthorizationCode} from '../../src/auth/oauth2/oauth2_utils.js';
 import {getConnectionOptionsFromUri} from '../../src/sessions/db/operations.js';
 import {getSessionServiceFromUri} from '../../src/sessions/registry.js';
 import {logger} from '../../src/utils/logger.js';
@@ -124,7 +124,9 @@ describe('connection-URI errors do not leak the password', () => {
         'not-a-valid-scheme?code=SECRET_AUTH_CODE&state=xyz',
       );
       expect(result).toBeUndefined();
-      const loggedText = warnSpy.mock.calls.map((call) => call.join(' ')).join(' ');
+      const loggedText = warnSpy.mock.calls
+        .map((call) => call.join(' '))
+        .join(' ');
       expect(loggedText).not.toContain('SECRET_AUTH_CODE');
     } finally {
       warnSpy.mockRestore();
