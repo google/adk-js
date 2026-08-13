@@ -184,6 +184,8 @@ async function runChildNode({
     runId,
     resumeInputs: resumeInputs ?? parent.resumeInputs,
     isolationScope,
+    // A node's own schema wins; otherwise it answers to its parent's.
+    stateSchema: node.stateSchema ?? parent.stateSchema,
   });
   // Propagate the dynamic scheduler down; a nested Workflow overrides it.
   child.scheduler = parent.scheduler;
@@ -422,6 +424,12 @@ async function runOnce({
 }: RunOnceParams): Promise<void> {
   const consume = (event: Event): void => {
     enrichEvent({event, child, nodeName, branch, isolationScope});
+    // An event can carry a state delta that never went through `ctx.state`,
+    // so the schema is enforced here too rather than only on the setter.
+    const emittedDelta = event.actions?.stateDelta;
+    if (emittedDelta && emittedDelta !== child.actions.stateDelta) {
+      child.state.validateDelta(emittedDelta);
+    }
     if (event.output !== undefined) {
       child.output = event.output;
       if (child.outputDelegated) {
