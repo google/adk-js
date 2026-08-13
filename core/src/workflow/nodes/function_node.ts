@@ -6,6 +6,7 @@
 
 import {AuthConfig} from '../../auth/auth_tool.js';
 import {createEvent, Event, isEvent} from '../../events/event.js';
+import {carryDeltaStamp} from '../../sessions/state_write_order.js';
 import {BaseNode, BaseNodeConfig, isContent, toContent} from '../base_node.js';
 import {NodeContext} from '../node_context.js';
 import {
@@ -173,6 +174,9 @@ export class FunctionNode<TInput = unknown, TOutput = unknown> extends BaseNode<
       if (!shadow.has(key) || shadow.get(key) !== value) {
         delta[key] = value;
         shadow.set(key, value);
+        // Carry the write order onto the drained copy, reading the stamp as it
+        // stands now — this is the write that this event reports.
+        carryDeltaStamp(ctx.actions.stateDelta, delta, key);
       }
     }
     return Object.keys(delta).length > 0 ? delta : undefined;

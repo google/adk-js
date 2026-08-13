@@ -128,11 +128,12 @@ export class NodeContext {
     this.isolationScope = opts.isolationScope;
     this.actions = opts.actions ?? createEventActions();
     // Writes via `ctx.state` accumulate into `actions.stateDelta`, mirroring
-    // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour.
-    this._state = new NodeStateView(
-      invocationOverlay(opts.invocationContext),
-      this.actions.stateDelta,
+    // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour, and land in
+    // `session.state` at once so a reader outside the workflow — an agent
+    // resolving a `{key}` instruction, a callback, a tool — sees them.
+    this._state = new State(
       opts.invocationContext.session.state,
+      this.actions.stateDelta,
     );
   }
 
@@ -178,12 +179,10 @@ export class NodeContext {
    * applied by the time this runs: the node runner builds the child invocation
    * context with the node's scope, so it is present on the object returned.
    *
-   * That leaves the node's own `state` view, which layers this node's pending
-   * delta over an invocation-wide overlay. Nodes read through it; an agent
-   * reads `session.state`. The two agree because every write through the view
-   * is also written through to the session — see `NodeStateView` below — and
-   * the agent-node cases in `core/test/workflow/state_consistency_test.ts` pin
-   * that.
+   * That leaves the node's own `state`, which is this node's pending delta over
+   * `session.state` — the same thing an agent reads, so the two cannot
+   * disagree. The agent-node cases in
+   * `core/test/workflow/state_consistency_test.ts` pin that.
    */
   getInvocationContext(): InvocationContext {
     return this.invocationContext;
@@ -291,114 +290,5 @@ function assertCustomRunId(
         `ids are "1", "2", "3" per node; give a custom id a non-numeric ` +
         `part, e.g. '${nodeName}-${runId}'.`,
     );
-  }
-}
-
-/**
- * Per-invocation record of every `ctx.state` write made by the nodes of one
- * invocation, keyed by the session's live state object.
- *
- * `session.state` object identity is stable for the duration of a turn (the
- * session services mutate it in place, and hand out a fresh object per
- * `getSession`), so the WeakMap entry naturally scopes to one turn.
- *
- * The `invocationId` guard covers *sequential* reuse of one state object: a
- * later invocation replaces the entry rather than inheriting the earlier one's
- * writes. It does not let two *live* invocations share a state object — they
- * would evict each other's entry and fall back to reading committed state.
- * Nothing does that today: `getSession` hands out a fresh state object per
- * turn, and a sub-invocation (`AgentTool`) re-fetches the session, so it keys a
- * different entry.
- */
-const invocationOverlays = new WeakMap<
-  Record<string, unknown>,
-  {invocationId: string; values: Record<string, unknown>}
->();
-
-/** Returns the write overlay for `ic`'s invocation, creating it on first use. */
-function invocationOverlay(ic: InvocationContext): Record<string, unknown> {
-  const sessionState = ic.session.state;
-  const existing = invocationOverlays.get(sessionState);
-  if (existing && existing.invocationId === ic.invocationId) {
-    return existing.values;
-  }
-  const created = {invocationId: ic.invocationId, values: {}};
-  invocationOverlays.set(sessionState, created);
-  return created.values;
-}
-
-/**
- * The state view a workflow node sees: its own pending delta, then the
- * invocation's write overlay, then the session's committed state.
- *
- * The overlay exists to keep node-to-node reads honest. `session.state` is
- * mutated from two directions during a run: nodes write through it
- * immediately, while the runner separately re-applies each event's
- * `actions.stateDelta` as it commits that event — and that commit lags node
- * execution. Re-applying an earlier node's delta therefore rolls back a later
- * node's write, and any node reading in that window observes the stale value:
- *
- *   a: set('attempts', 0)
- *   b: get -> 0, set('attempts', 1)
- *   commit(a) re-applies attempts=0        <- rolls back b's write
- *   c: get -> 0                            <- wrong; b already set 1
- *   commit(b) re-applies attempts=1        <- rolls forward, too late
- *
- * Reads are served from the overlay, which only ever moves forward, so `c`
- * sees `1`. Writes still land in `session.state` as well, so consumers that
- * read it directly — notably `{key}` instruction templating in an agent node —
- * behave exactly as before.
- *
- * Two gaps remain. They are mirror images of each other, share the root cause
- * above, and are both only really fixable at the source (version-stamping keys
- * as the session services apply a delta), so neither is closed here:
- *
- * - Workflow writes still reach an outside reader out of order. `session.state`
- *   is written through *and* re-applied by the event commit, so an agent
- *   resolving `{key}` for a key two nodes wrote can observe the stale value
- *   inside the same window.
- * - Outside writes no longer reach a workflow reader. Once a node writes `k`,
- *   every later read of `k` in this invocation is served from the overlay, so a
- *   tool or callback that writes `k` straight to `session.state` mid-run is
- *   invisible to those reads for the rest of the invocation. Before the overlay
- *   they saw it, subject to the rollback race being fixed.
- */
-class NodeStateView extends State {
-  constructor(
-    overlay: Record<string, unknown>,
-    delta: Record<string, unknown>,
-    private readonly committed: Record<string, unknown>,
-  ) {
-    super(overlay, delta);
-  }
-
-  override get<T>(key: string, defaultValue?: T): T | undefined {
-    if (super.has(key)) {
-      return super.get<T>(key, defaultValue);
-    }
-    return key in this.committed ? (this.committed[key] as T) : defaultValue;
-  }
-
-  override has(key: string): boolean {
-    return super.has(key) || key in this.committed;
-  }
-
-  // Both of `State`'s write paths (`set` and `update`) keep writing through to
-  // the session, so readers of `session.state` (agent instruction templates,
-  // callbacks, tools) see the write immediately, as they did before the overlay
-  // existed.
-
-  override set(key: string, value: unknown): void {
-    super.set(key, value);
-    this.committed[key] = value;
-  }
-
-  override update(delta: Record<string, unknown>): void {
-    super.update(delta);
-    Object.assign(this.committed, delta);
-  }
-
-  override toRecord(): Record<string, unknown> {
-    return {...this.committed, ...super.toRecord()};
   }
 }

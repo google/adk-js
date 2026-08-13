@@ -131,6 +131,42 @@ describe('workflow state consistency across nodes', () => {
     expect(state['attempts']).toBe(1);
   });
 
+  it('never rolls a key back in session.state itself', async () => {
+    // The overlay keeps *node* reads honest, but everything else reads
+    // `session.state` directly — an agent resolving a `{key}` instruction, a
+    // callback, a tool. Re-applying `a`'s delta after `b` had written used to
+    // roll the key back there for as long as it took `b`'s event to commit, so
+    // a reader in that window saw 0. Writes are ordered now, so the stale
+    // commit is dropped and the key only ever moves forward.
+    const seen: Array<number | undefined> = [];
+    const watch = (ctx: NodeContext) =>
+      seen.push(ctx.invocationContext.session.state['attempts'] as number);
+
+    const a = new FunctionNode('a', (ctx: NodeContext) => {
+      ctx.state.set('attempts', 0);
+      return 'a';
+    });
+    const b = new FunctionNode('b', (ctx: NodeContext) => {
+      ctx.state.set('attempts', (ctx.state.get<number>('attempts') ?? -1) + 1);
+      watch(ctx);
+      return 'b';
+    });
+    // Reads either side of a tick: the stale commit lands between them.
+    const c = new FunctionNode('c', async (ctx: NodeContext) => {
+      watch(ctx);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      watch(ctx);
+      return 'c';
+    });
+
+    const {state} = await runOnce(
+      new WorkflowAgent({name: 'no_rollback_wf', edges: [['START', a, b, c]]}),
+    );
+
+    expect(seen).toEqual([1, 1, 1]);
+    expect(state['attempts']).toBe(1);
+  });
+
   it('survives a long read-modify-write chain', async () => {
     const reads: number[] = [];
     const bump = (name: string) =>
@@ -329,13 +365,14 @@ describe('workflow state consistency across nodes', () => {
     expect(reads[reads.length - 1]).toBe(state['attempts']);
   });
 
-  it('serves a second invocation over the same session from committed state', () => {
-    // The overlay is keyed by the session's live state object, so sequential
-    // invocations that reuse one session object must not inherit each other's
-    // writes — that is what the invocation-id guard is for.
-    const ic1 = createIc();
+  it('shows a node what someone outside the workflow wrote mid-run', () => {
+    // A node reads `session.state` directly, so a tool, a callback or an agent
+    // that writes a key straight to it mid-run is visible to every later node.
+    // The write overlay this used to be served from was invisible to outside
+    // writers, which shadowed them for the rest of the invocation.
+    const ic = createIc();
     const channel = new AsyncQueue<Event>();
-    const mkCtx = (ic = ic1) =>
+    const mkCtx = () =>
       new NodeContext({
         invocationContext: ic,
         channel,
@@ -343,24 +380,16 @@ describe('workflow state consistency across nodes', () => {
         runId: 'root',
       });
 
-    mkCtx().state.set('k', 'from-inv-1');
-    // Stand in for the runner re-applying a stale delta to the live session
-    // state while the invocation is still running.
-    ic1.session.state['k'] = 'stale';
+    mkCtx().state.set('k', 'from-a-node');
+    expect(mkCtx().state.get('k')).toBe('from-a-node');
 
-    // Same invocation: the overlay wins, which is the whole point of the fix.
-    expect(mkCtx().state.get('k')).toBe('from-inv-1');
-
-    // Next invocation on the same session object: fresh overlay, so the read
-    // falls through to committed state rather than the previous run's write.
-    const ic2 = ic1.clone({invocationId: 'inv-2'});
-    expect(ic2.session.state).toBe(ic1.session.state);
-    expect(mkCtx(ic2).state.get('k')).toBe('stale');
+    ic.session.state['k'] = 'from-outside';
+    expect(mkCtx().state.get('k')).toBe('from-outside');
   });
 
-  it('does not leak one invocation\u2019s overlay into another session', async () => {
-    // The overlay is keyed by the session's live state object and guarded by
-    // invocation id, so a second, unrelated run starts from a clean slate.
+  it('does not leak one run\u2019s writes into another session', async () => {
+    // Node writes land in the session they were made against and nowhere else,
+    // so a second, unrelated run starts from a clean slate.
     const seen: Array<number | undefined> = [];
     const bump = new FunctionNode('bump', (ctx: NodeContext) => {
       const next = (ctx.state.get<number>('count') ?? 0) + 1;

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {recordStateWrite} from './state_write_order.js';
+
 /**
  * A state mapping that maintains the current value and the pending-commit
  * delta.
@@ -49,6 +51,9 @@ export class State {
   set(key: string, value: unknown) {
     this.value[key] = value;
     this.delta[key] = value;
+    // Stamp the write so that committing this delta later cannot roll the key
+    // back over a newer write. See `state_write_order.ts`.
+    recordStateWrite(this.value, this.delta, key);
   }
 
   /**
@@ -74,6 +79,9 @@ export class State {
     // This should be revised while working on the parallel tool execution.
     Object.assign(this.delta, delta);
     Object.assign(this.value, delta);
+    for (const key of Object.keys(delta)) {
+      recordStateWrite(this.value, this.delta, key);
+    }
   }
 
   /**

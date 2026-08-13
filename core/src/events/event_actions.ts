@@ -5,6 +5,7 @@
  */
 
 import {AuthConfig} from '../auth/auth_tool.js';
+import {carryDeltaStamps} from '../sessions/state_write_order.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 /**
@@ -127,6 +128,9 @@ export function mergeEventActions(
 
     if (source.stateDelta) {
       Object.assign(result.stateDelta, source.stateDelta);
+      // The merged map is a new object; carry the write order with the entries
+      // so a late commit can still tell it has been superseded.
+      carryDeltaStamps(source.stateDelta, result.stateDelta);
     }
     if (source.artifactDelta) {
       Object.assign(result.artifactDelta, source.artifactDelta);
