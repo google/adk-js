@@ -50,6 +50,11 @@ export interface ParallelWorkerConfig {
  * - **All-or-nothing.** If any item throws, the first error is rethrown and the
  *   already-computed sibling outputs are discarded. Make individual items
  *   failure-tolerant if partial results matter.
+ * - **An item that interrupts pauses the whole worker.** It has no output to
+ *   contribute, so the worker stops claiming items, emits no list, and raises
+ *   the child's interrupt ids as its own. Once they are answered the worker
+ *   re-runs from the top (`rerunOnResume`), and items that already completed
+ *   are fast-forwarded by their run id rather than executed again.
  * - **Cancellation stops scheduling only.** On abort/timeout the loop stops
  *   claiming new items, but items already in flight run to completion —
  *   `ctx.runNode` has no way to forward a signal into a child run.
@@ -93,6 +98,10 @@ export class ParallelWorker extends BaseNode {
     // silent hole in `results` and resolving successfully.
     let failed = false;
     let firstError: unknown;
+    // An item that stops to ask the user has no result to contribute, so the
+    // fan-out stops claiming work the same way a failure does.
+    let interrupted = false;
+    const interruptIds: string[] = [];
 
     // Populated only when the ParallelWorker itself declares a timeout; on a
     // plain invocation abort the invocation-level signal is the one that fires.
@@ -103,7 +112,7 @@ export class ParallelWorker extends BaseNode {
     // Keep claiming the next item until the list is exhausted, an item fails,
     // or the invocation is aborted.
     const worker = async (): Promise<void> => {
-      while (!failed && !isAborted()) {
+      while (!failed && !interrupted && !isAborted()) {
         const i = nextIndex++;
         if (i >= items.length) {
           break;
@@ -119,6 +128,15 @@ export class ParallelWorker extends BaseNode {
             runId: String(i),
             overrideNodePath: `${ctx.nodePath}.${this.inner.name}@${i}`,
           });
+          if (child.interruptIds.length > 0) {
+            interrupted = true;
+            for (const id of child.interruptIds) {
+              if (!interruptIds.includes(id)) {
+                interruptIds.push(id);
+              }
+            }
+            break;
+          }
           results[i] = child.output;
         } catch (err) {
           if (!failed) {
@@ -134,6 +152,14 @@ export class ParallelWorker extends BaseNode {
 
     if (failed) {
       throw firstError;
+    }
+    if (interrupted) {
+      for (const id of interruptIds) {
+        if (!ctx.interruptIds.includes(id)) {
+          ctx.interruptIds.push(id);
+        }
+      }
+      return;
     }
     if (isAborted()) {
       // Aborted mid-flight: `results` may have holes for unscheduled items, so
