@@ -7,12 +7,9 @@
 import {Part} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
-  DeleteArtifactRequest,
-  ListArtifactKeysRequest,
-  ListVersionsRequest,
-  LoadArtifactRequest,
-  SaveArtifactRequest,
-} from '../../src/artifacts/base_artifact_service.js';
+  SessionLoadArtifactRequest,
+  SessionSaveArtifactRequest,
+} from '../../src/artifacts/session_artifact_service.js';
 import {ForwardingArtifactService} from '../../src/tools/forwarding_artifact_service.js';
 
 function makeArtifactServiceStub() {
@@ -48,10 +45,7 @@ describe('ForwardingArtifactService', () => {
       toolContext.saveArtifact.mockResolvedValue(0);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: SaveArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+      const request: SessionSaveArtifactRequest = {
         filename: 'file.txt',
         artifact: {text: 'hello'},
       };
@@ -71,10 +65,7 @@ describe('ForwardingArtifactService', () => {
       toolContext.loadArtifact.mockResolvedValue(part);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+      const request: SessionLoadArtifactRequest = {
         filename: 'file.txt',
         version: 2,
       };
@@ -89,10 +80,7 @@ describe('ForwardingArtifactService', () => {
       toolContext.loadArtifact.mockResolvedValue(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+      const request: SessionLoadArtifactRequest = {
         filename: 'file.txt',
       };
 
@@ -110,13 +98,7 @@ describe('ForwardingArtifactService', () => {
       toolContext.listArtifacts.mockResolvedValue(['a.txt', 'b.txt']);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: ListArtifactKeysRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-      };
-
-      const result = await service.listArtifactKeys(request);
+      const result = await service.listArtifactKeys();
       expect(toolContext.listArtifacts).toHaveBeenCalled();
       expect(result).toEqual(['a.txt', 'b.txt']);
     });
@@ -129,14 +111,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(artifactService);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: DeleteArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      await service.deleteArtifact(request);
+      await service.deleteArtifact('file.txt');
       expect(artifactService.deleteArtifact).toHaveBeenCalledWith('file.txt');
     });
 
@@ -144,14 +119,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: DeleteArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      await expect(service.deleteArtifact(request)).rejects.toThrow(
+      await expect(service.deleteArtifact('file.txt')).rejects.toThrow(
         'Artifact service is not initialized.',
       );
     });
@@ -164,14 +132,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(artifactService);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      const result = await service.listVersions(request);
+      const result = await service.listVersions('file.txt');
       expect(artifactService.listVersions).toHaveBeenCalledWith('file.txt');
       expect(result).toEqual([0, 1, 2]);
     });
@@ -180,14 +141,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      await expect(service.listVersions(request)).rejects.toThrow(
+      await expect(service.listVersions('file.txt')).rejects.toThrow(
         'Artifact service is not initialized.',
       );
     });
@@ -201,14 +155,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(artifactService);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      const result = await service.listArtifactVersions(request);
+      const result = await service.listArtifactVersions('file.txt');
       expect(artifactService.listArtifactVersions).toHaveBeenCalledWith(
         'file.txt',
       );
@@ -219,14 +166,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: ListVersionsRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
-        filename: 'file.txt',
-      };
-
-      await expect(service.listArtifactVersions(request)).rejects.toThrow(
+      await expect(service.listArtifactVersions('file.txt')).rejects.toThrow(
         'Artifact service is not initialized.',
       );
     });
@@ -240,10 +180,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(artifactService);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+      const request: SessionLoadArtifactRequest = {
         filename: 'file.txt',
         version: 1,
       };
@@ -260,10 +197,7 @@ describe('ForwardingArtifactService', () => {
       const toolContext = makeToolContext(undefined);
       const service = new ForwardingArtifactService(toolContext);
 
-      const request: LoadArtifactRequest = {
-        appName: 'app',
-        userId: 'user',
-        sessionId: 'session',
+      const request: SessionLoadArtifactRequest = {
         filename: 'file.txt',
         version: 0,
       };
