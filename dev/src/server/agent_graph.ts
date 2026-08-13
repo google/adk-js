@@ -453,7 +453,7 @@ function getNodeField(node: BaseNode, field: string): unknown {
  * not available. Caption and shape come from one pass so they cannot drift.
  */
 function classifyWorkflowNode(node: BaseNode): {icon: string; shape: string} {
-  if (isBaseAgent(getNodeField(node, 'agent'))) {
+  if (isBaseAgent(node)) {
     return {icon: '🤖', shape: 'ellipse'};
   }
 

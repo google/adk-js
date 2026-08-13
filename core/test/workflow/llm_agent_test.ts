@@ -5,25 +5,27 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {injectSessionState} from '../../src/agents/instructions.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {ReadonlyContext} from '../../src/agents/readonly_context.js';
+import {LlmAgent} from '../../src/agents/llm_agent.js';
 import {createEvent, Event} from '../../src/events/event.js';
+import {BaseLlm} from '../../src/models/base_llm.js';
+import {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
+import {LlmRequest} from '../../src/models/llm_request.js';
+import {LlmResponse} from '../../src/models/llm_response.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
-import {LLMAgentWrapper} from '../../src/workflow/nodes/llm_agent_wrapper.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {createIc} from './test_helpers.js';
 
 async function driveWorkflow(
   wf: Workflow,
   input?: unknown,
+  ic: InvocationContext = createIc(),
 ): Promise<{output: unknown; events: Event[]}> {
   const channel = new AsyncQueue<Event>();
   const root = new NodeContext({
-    invocationContext: createIc(),
+    invocationContext: ic,
     channel,
     nodePath: '',
     runId: 'root',
@@ -41,73 +43,68 @@ async function driveWorkflow(
 }
 
 /**
- * A fake agent that echoes the most recent user turn as a model response — a
- * stand-in for a real LlmAgent so the wrapper can be tested without a model.
+ * A model that answers with whatever `reply` makes of the request it was sent,
+ * so a test can assert on what the agent actually put in front of a model —
+ * the injected node input, or a resolved instruction.
  */
-class EchoAgent extends BaseAgent {
-  constructor(name = 'echo') {
-    super({name});
+class ScriptedLlm extends BaseLlm {
+  constructor(private readonly reply: (request: LlmRequest) => string) {
+    super({model: 'scripted-llm'});
   }
-  protected async *runAsyncImpl(
-    ctx: InvocationContext,
-  ): AsyncGenerator<Event, void, void> {
-    const lastUser = [...ctx.session.events]
-      .reverse()
-      .find((e) => e.author === 'user');
-    const text = (lastUser?.content?.parts ?? [])
-      .map((p) => p.text ?? '')
-      .join('');
-    yield createEvent({
-      author: this.name,
-      invocationId: ctx.invocationId,
-      branch: ctx.branch,
-      content: {role: 'model', parts: [{text: `echo:${text}`}]},
-    });
+
+  async *generateContentAsync(
+    request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    yield {
+      content: {role: 'model', parts: [{text: this.reply(request)}]},
+    };
   }
-  // eslint-disable-next-line require-yield
-  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
-    return;
+
+  async connect(_request: LlmRequest): Promise<BaseLlmConnection> {
+    throw new Error('not implemented');
   }
+}
+
+/** The text of the last user turn the agent sent to the model. */
+function lastUserText(request: LlmRequest): string {
+  const lastUser = [...request.contents]
+    .reverse()
+    .find((c) => c.role === 'user');
+  return (lastUser?.parts ?? []).map((p) => p.text ?? '').join('');
+}
+
+/** An agent that echoes the last user turn back as its model reply. */
+function echoAgent(name = 'echo'): LlmAgent {
+  return new LlmAgent({
+    name,
+    model: new ScriptedLlm((request) => `echo:${lastUserText(request)}`),
+  });
 }
 
 /**
- * A fake agent that resolves a given instruction template against its context
- * (the way the real instruction request-processor does) and yields the result —
- * so we can assert workflow `{Class.field}` / `<field from node>` placeholders
- * resolve from the scope the wrapper attaches to the invocation context.
+ * An agent whose instruction is `template`, answering with the instruction as
+ * the model received it — i.e. after placeholder resolution. The agent's own
+ * identity preamble comes first in the system instruction, so the reply is the
+ * last non-empty line of it.
  */
-class TemplateProbeAgent extends BaseAgent {
-  constructor(
-    private readonly template: string,
-    name = 'probe',
-  ) {
-    super({name});
-  }
-  protected async *runAsyncImpl(
-    ctx: InvocationContext,
-  ): AsyncGenerator<Event, void, void> {
-    const resolved = await injectSessionState(
-      this.template,
-      new ReadonlyContext(ctx),
-    );
-    yield createEvent({
-      author: this.name,
-      invocationId: ctx.invocationId,
-      branch: ctx.branch,
-      content: {role: 'model', parts: [{text: resolved}]},
-    });
-  }
-  // eslint-disable-next-line require-yield
-  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
-    return;
-  }
+function templateProbeAgent(template: string, name = 'probe'): LlmAgent {
+  return new LlmAgent({
+    name,
+    instruction: template,
+    model: new ScriptedLlm((request) => {
+      const lines = String(request.config?.systemInstruction ?? '')
+        .split('\n')
+        .filter((line) => line.trim());
+      return lines[lines.length - 1] ?? '';
+    }),
+  });
 }
 
-describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
+describe('LlmAgent as a node (single_turn)', () => {
   it('runs an agent as a node and extracts its text output', async () => {
     const wf = new Workflow({
       name: 'agent_wf',
-      edges: [['START', new EchoAgent()]],
+      edges: [['START', echoAgent()]],
     });
     const {output, events} = await driveWorkflow(wf, 'hello');
     expect(output).toBe('echo:hello');
@@ -124,13 +121,13 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
     );
     const wf = new Workflow({
       name: 'agent_then_fn',
-      edges: [['START', new EchoAgent(), upper]],
+      edges: [['START', echoAgent(), upper]],
     });
     expect((await driveWorkflow(wf, 'hi')).output).toBe('ECHO:HI');
   });
 
   it('resolves {Class.field} instruction placeholders from the node input', async () => {
-    const probe = new TemplateProbeAgent(
+    const probe = templateProbeAgent(
       'It is {CityTime.time_info} in {CityTime.city} right now.',
     );
     const wf = new Workflow({name: 'tmpl_input', edges: [['START', probe]]});
@@ -152,26 +149,13 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
         output: {time_info: '9:00 AM', city: 'Rome'},
       }),
     );
-    const probe = new TemplateProbeAgent(
+    const probe = templateProbeAgent(
       'It is <CityTime.time_info from lookup_time_function> in ' +
         '<CityTime.city from lookup_time_function>.',
     );
-    const channel = new AsyncQueue<Event>();
-    const root = new NodeContext({
-      invocationContext: ic,
-      channel,
-      nodePath: '',
-      runId: 'root',
-    });
-    const run = root.runNode(node(probe), undefined, {useAsOutput: true}).then(
-      () => channel.close(),
-      (err) => channel.fail(err),
-    );
-    for await (const _ev of channel) {
-      // drain
-    }
-    await run;
-    expect(root.output).toBe('It is 9:00 AM in Rome.');
+    const wf = new Workflow({name: 'tmpl_pred', edges: [['START', probe]]});
+    const {output} = await driveWorkflow(wf, undefined, ic);
+    expect(output).toBe('It is 9:00 AM in Rome.');
   });
 
   it('persists the injected user turn through the session service', async () => {
@@ -197,12 +181,10 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
       nodePath: '',
       runId: 'root',
     });
-    const run = root
-      .runNode(node(new EchoAgent()), 'hi', {useAsOutput: true})
-      .then(
-        () => channel.close(),
-        (err) => channel.fail(err),
-      );
+    const run = root.runNode(echoAgent(), 'hi', {useAsOutput: true}).then(
+      () => channel.close(),
+      (err) => channel.fail(err),
+    );
     for await (const _ev of channel) {
       // drain
     }
@@ -215,10 +197,10 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
     expect(root.output).toBe('echo:hi');
   });
 
-  it('node(agent) produces an LLMAgentWrapper carrying the agent name', () => {
-    const wrapped = node(new EchoAgent('assistant'));
-    expect(wrapped).toBeInstanceOf(LLMAgentWrapper);
-    expect(wrapped.name).toBe('assistant');
+  it('node(agent) is the agent, carrying its own name', () => {
+    const agent = echoAgent('assistant');
+    expect(node(agent)).toBe(agent);
+    expect(node(agent).name).toBe('assistant');
   });
 
   it('routes on an agent-produced value', async () => {
@@ -237,7 +219,7 @@ describe('Phase 7 — LlmAgent as a node (single_turn)', () => {
     const wf = new Workflow({
       name: 'agent_route',
       edges: [
-        ['START', new EchoAgent(), classify],
+        ['START', echoAgent(), classify],
         [classify, {q: answer, s: comment}],
       ],
     });

@@ -12,7 +12,7 @@ import {DEFAULT_ROUTE} from '../../src/workflow/graph.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {ReplyAgent} from './test_helpers.js';
+import {replyAgent} from './test_helpers.js';
 
 async function runViaRunner(
   workflow: Workflow,
@@ -167,7 +167,7 @@ describe('ParallelWorker fan-in under a node root', () => {
     // An agent worker is the case that broke: with no `ic.agent` at the root,
     // a worker that produced nothing left `undefined` in the list, and the
     // aggregate read a property off it.
-    const {wf, received} = fanInWorkflow(new ReplyAgent('worker'));
+    const {wf, received} = fanInWorkflow(replyAgent('worker'));
 
     await runViaRunner(wf, 'go');
 

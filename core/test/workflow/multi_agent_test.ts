@@ -5,82 +5,16 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {BaseAgent} from '../../src/agents/base_agent.js';
-import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {createEvent, Event} from '../../src/events/event.js';
-import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {node} from '../../src/workflow/node.js';
-import {NodeContext} from '../../src/workflow/node_context.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {createIc} from './test_helpers.js';
+import {driveWorkflow, replyAgent, transferringAgent} from './test_helpers.js';
 
-async function driveWorkflow(
-  wf: Workflow,
-  input?: unknown,
-): Promise<{output: unknown; events: Event[]}> {
-  const channel = new AsyncQueue<Event>();
-  const root = new NodeContext({
-    invocationContext: createIc(),
-    channel,
-    nodePath: '',
-    runId: 'root',
-  });
-  const events: Event[] = [];
-  const settle = root.runNode(wf, input, {useAsOutput: true}).then(
-    () => channel.close(),
-    (err) => channel.fail(err),
-  );
-  for await (const e of channel) {
-    events.push(e);
-  }
-  await settle;
-  return {output: root.output, events};
-}
-
-/** A fake agent that emits a fixed model text and optionally transfers. */
-class ScriptedAgent extends BaseAgent {
-  constructor(
-    name: string,
-    private readonly text: string,
-    private readonly transferTo?: string,
-    subAgents: BaseAgent[] = [],
-  ) {
-    super({name, subAgents});
-  }
-  protected async *runAsyncImpl(
-    ctx: InvocationContext,
-  ): AsyncGenerator<Event, void, void> {
-    if (this.transferTo) {
-      yield createEvent({
-        author: this.name,
-        invocationId: ctx.invocationId,
-        branch: ctx.branch,
-        actions: {transferToAgent: this.transferTo},
-      });
-      return;
-    }
-    yield createEvent({
-      author: this.name,
-      invocationId: ctx.invocationId,
-      branch: ctx.branch,
-      content: {role: 'model', parts: [{text: this.text}]},
-    });
-  }
-  // eslint-disable-next-line require-yield
-  protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
-    return;
-  }
-}
-
-describe('Phase 7b — multi-agent hand-off (transfer_to_agent)', () => {
+describe('multi-agent hand-off (transfer_to_agent)', () => {
   it('follows a transfer to a peer agent and uses its output', async () => {
-    const specialist = new ScriptedAgent('specialist', 'specialist-answer');
-    const coordinator = new ScriptedAgent(
-      'coordinator',
-      '(unused)',
-      'specialist',
-      [specialist],
-    );
+    const specialist = replyAgent('specialist', 'specialist-answer');
+    const coordinator = transferringAgent('coordinator', 'specialist', [
+      specialist,
+    ]);
 
     const wf = new Workflow({
       name: 'transfer_wf',
@@ -89,7 +23,6 @@ describe('Phase 7b — multi-agent hand-off (transfer_to_agent)', () => {
     const {output, events} = await driveWorkflow(wf, 'question');
 
     expect(output).toBe('specialist-answer');
-    // Both the coordinator's transfer event and the specialist's answer stream.
     expect(
       events.some((e) => e.actions?.transferToAgent === 'specialist'),
     ).toBe(true);
@@ -97,19 +30,19 @@ describe('Phase 7b — multi-agent hand-off (transfer_to_agent)', () => {
   });
 
   it('follows a chain of transfers', async () => {
-    const c = new ScriptedAgent('c_agent', 'final');
-    const b = new ScriptedAgent('b_agent', '(unused)', 'c_agent', [c]);
-    const a = new ScriptedAgent('a_agent', '(unused)', 'b_agent', [b]);
+    const c = replyAgent('c_agent', 'final');
+    const b = transferringAgent('b_agent', 'c_agent', [c]);
+    const a = transferringAgent('a_agent', 'b_agent', [b]);
 
     const wf = new Workflow({name: 'chain_wf', edges: [['START', a]]});
     expect((await driveWorkflow(wf, 'x')).output).toBe('final');
   });
 });
 
-describe('Phase 7b — multi-agent orchestration via ctx.runNode', () => {
+describe('multi-agent orchestration via ctx.runNode', () => {
   it('coordinates specialist agents imperatively (node-as-tool)', async () => {
-    const researcher = new ScriptedAgent('researcher', 'facts');
-    const writer = new ScriptedAgent('writer', 'report');
+    const researcher = replyAgent('researcher', 'facts');
+    const writer = replyAgent('writer', 'report');
 
     // Idiomatic TS multi-agent: a coordinator drives sub-agents via runNode.
     const wf = new Workflow({

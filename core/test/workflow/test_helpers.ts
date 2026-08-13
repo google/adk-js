@@ -4,9 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Part} from '@google/genai';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {LlmAgent, LlmAgentConfig} from '../../src/agents/llm_agent.js';
 import {createEvent, Event} from '../../src/events/event.js';
+import {BaseLlm} from '../../src/models/base_llm.js';
+import {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
+import {LlmRequest} from '../../src/models/llm_request.js';
+import {LlmResponse} from '../../src/models/llm_response.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
@@ -26,11 +32,14 @@ class TestAgent extends BaseAgent {
 }
 
 /**
- * An agent that replies with `reply` and leaves `output` unset on its event, so
- * a node output can only have come from the wrapper `buildNode` puts around an
- * agent — which is what a caller passing one bare has to still get.
+ * An agent that replies with `reply` and leaves `output` unset on its event.
+ *
+ * Not an `LlmAgent`, so nothing turns its reply into a node output — promoting
+ * a final model turn is `LlmAgent.runImpl`'s job, as it is adk-python's. Use it
+ * for the cases about an agent that is *not* an `LlmAgent` being a node; use
+ * {@link replyAgent} for one whose reply should become the output.
  */
-export class ReplyAgent extends BaseAgent {
+export class PlainReplyAgent extends BaseAgent {
   constructor(
     name: string,
     private readonly reply = 'ok',
@@ -52,6 +61,74 @@ export class ReplyAgent extends BaseAgent {
   protected async *runLiveImpl(): AsyncGenerator<Event, void, void> {
     return;
   }
+}
+
+/**
+ * A model that replays one canned response per call, so a test can build a real
+ * `LlmAgent` without a network. `replies` may hold text (a plain model turn) or
+ * a function call, and the last entry repeats once exhausted.
+ */
+export class ScriptedLlm extends BaseLlm {
+  private calls = 0;
+
+  constructor(private readonly replies: Array<string | Part>) {
+    super({model: 'scripted-llm'});
+  }
+
+  /** How many times the model has been asked for a response. */
+  get callCount(): number {
+    return this.calls;
+  }
+
+  async *generateContentAsync(
+    _request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    const reply =
+      this.replies[Math.min(this.calls++, this.replies.length - 1)] ?? '';
+    const part: Part = typeof reply === 'string' ? {text: reply} : reply;
+    yield {content: {role: 'model', parts: [part]}};
+  }
+
+  async connect(_request: LlmRequest): Promise<BaseLlmConnection> {
+    throw new Error('ScriptedLlm does not support live mode.');
+  }
+}
+
+/** An {@link LlmAgent} whose model answers `reply`, then repeats it. */
+export function replyAgent(
+  name: string,
+  reply = 'ok',
+  config: Partial<LlmAgentConfig> = {},
+): LlmAgent {
+  return new LlmAgent({name, model: new ScriptedLlm([reply]), ...config});
+}
+
+/**
+ * An {@link LlmAgent} that hands off to `target` by calling `transfer_to_agent`
+ * — the way a real model does it — and then answers `reply` if it is asked
+ * again. `target` must also be among its `subAgents` for the transfer tool to
+ * offer it.
+ */
+export function transferringAgent(
+  name: string,
+  target: string,
+  subAgents: BaseAgent[],
+  reply = '(unused)',
+): LlmAgent {
+  return new LlmAgent({
+    name,
+    subAgents,
+    model: new ScriptedLlm([
+      {
+        functionCall: {
+          id: `fc-${name}`,
+          name: 'transfer_to_agent',
+          args: {agentName: target},
+        },
+      },
+      reply,
+    ]),
+  });
 }
 
 /** Builds a throwaway InvocationContext for driving nodes directly in tests. */
