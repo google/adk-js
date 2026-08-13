@@ -5,10 +5,17 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {Event} from '../../src/events/event.js';
+import {Runner} from '../../src/runner/runner.js';
+import {InMemorySessionService} from '../../src/sessions/in_memory_session_service.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {JoinNode} from '../../src/workflow/nodes/join_node.js';
 import {ParallelWorker} from '../../src/workflow/nodes/parallel_worker.js';
+import {RequestInput} from '../../src/workflow/request_input.js';
+import {hasRequestInputFunctionCall} from '../../src/workflow/utils/hitl_utils.js';
 import {buildNode} from '../../src/workflow/utils/workflow_graph_utils.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 import {createIc, driveNode, replyAgent} from './test_helpers.js';
 
 describe('ParallelWorker', () => {
@@ -104,6 +111,35 @@ describe('ParallelWorker', () => {
     expect(rejected).toBe(true);
   });
 
+  it('emits no list when an item stops to ask the user', async () => {
+    const inner = new FunctionNode('maybeAsk', (_c, n: number) => {
+      if (n === 2) {
+        return new RequestInput({interruptId: `ask-${n}`, message: 'confirm?'});
+      }
+      return n * 10;
+    });
+    const {output} = await driveNode(new ParallelWorker(inner), [1, 2, 3]);
+    // Not [10, undefined, 30]: a hole would be indistinguishable from an item
+    // that legitimately returned nothing, and the worker would report success.
+    expect(output).toBeUndefined();
+  });
+
+  it('stops claiming items once one interrupts', async () => {
+    const started: number[] = [];
+    const inner = new FunctionNode('maybeAsk', (_c, n: number) => {
+      started.push(n);
+      if (n === 1) {
+        return new RequestInput({interruptId: 'ask-1', message: 'confirm?'});
+      }
+      return n;
+    });
+    await driveNode(
+      new ParallelWorker(inner, {maxParallelWorkers: 1}),
+      [1, 2, 3],
+    );
+    expect(started).toEqual([1]);
+  });
+
   it('stops scheduling items once the invocation is aborted', async () => {
     let calls = 0;
     const inner = new FunctionNode('count', (_c, n: number) => {
@@ -184,5 +220,90 @@ describe('JoinNode', () => {
     const {output} = await driveNode(join, aggregated);
     expect(output).toEqual(aggregated);
     expect(join.requiresAllPredecessors).toBe(true);
+  });
+});
+
+describe('ParallelWorker human-in-the-loop', () => {
+  async function collect(gen: AsyncGenerator<Event>): Promise<Event[]> {
+    const out: Event[] = [];
+    for await (const e of gen) {
+      out.push(e);
+    }
+    return out;
+  }
+
+  it('pauses the fan-out, then completes it with the answer on resume', async () => {
+    const runs: number[] = [];
+    const inner = new FunctionNode(
+      'review',
+      (ctx: NodeContext, n: number) => {
+        runs.push(n);
+        if (n === 2) {
+          const answer = ctx.resumeInputs['ask-2'];
+          return answer === undefined
+            ? new RequestInput({interruptId: 'ask-2', message: 'confirm 2?'})
+            : `2:${answer}`;
+        }
+        return `${n}:auto`;
+      },
+      {rerunOnResume: true},
+    );
+
+    const wf = new Workflow({
+      name: 'pw_hitl_wf',
+      dynamicEntry: async (ctx) => {
+        const worker = new ParallelWorker(inner, {maxParallelWorkers: 1});
+        const result = await ctx.runNode(worker, [1, 2, 3]);
+        return result.output;
+      },
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({appName: 'test_app', agent: wf, sessionService});
+
+    const turn1 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {role: 'user', parts: [{text: 'go'}]},
+      }),
+    );
+
+    expect(turn1.some(hasRequestInputFunctionCall)).toBe(true);
+    expect(runs).toEqual([1, 2]);
+    // No list yet: emitting one here records a hole for item 2 that the resumed
+    // turn would then fast-forward, discarding the answer before it is given.
+    expect(turn1.some((e) => Array.isArray(e.output))).toBe(false);
+
+    const turn2 = await collect(
+      runner.runAsync({
+        userId: 'u1',
+        sessionId: session.id,
+        newMessage: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'ask-2',
+                name: 'adk_request_input',
+                response: {result: 'ok'},
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    // Item 1 is fast-forwarded by run id, item 2 resumes, item 3 runs fresh.
+    expect(runs).toEqual([1, 2, 2, 3]);
+    expect(turn2.find((e) => Array.isArray(e.output))?.output).toEqual([
+      '1:auto',
+      '2:ok',
+      '3:auto',
+    ]);
   });
 });
