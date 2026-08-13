@@ -22,7 +22,7 @@ export enum StreamingMode {
   SSE = 'sse',
   /**
    * Bidirectional streaming. Not yet supported; passing this value to
-   * {@link createRunConfig} throws. Use {@link StreamingMode.SSE} for token
+   * `createRunConfig` throws. Use {@link StreamingMode.SSE} for token
    * streaming.
    */
   BIDI = 'bidi',
@@ -60,7 +60,7 @@ export interface RunConfig {
   /**
    * Streaming mode. Supported values are {@link StreamingMode.NONE} and
    * {@link StreamingMode.SSE}. {@link StreamingMode.BIDI} is not yet
-   * supported and is rejected by {@link createRunConfig}.
+   * supported and is rejected by `createRunConfig`.
    */
   streamingMode?: StreamingMode;
 
