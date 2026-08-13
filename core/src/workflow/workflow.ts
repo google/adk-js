@@ -682,8 +682,10 @@ export class Workflow extends BaseNode {
 /**
  * Type guard for {@link Workflow}.
  *
- * Matches on the {@link WORKFLOW_SIGNATURE_SYMBOL} brand rather than
- * `instanceof` so it stays correct across package copies (see the brand's doc).
+ * Matches on the `google.adk.workflow.workflow` brand rather than `instanceof`
+ * so it stays correct across package copies — two copies of adk-js in one
+ * runtime would fail an `instanceof` check between them. Named rather than
+ * `{@link}`ed because the brand itself is internal, and this guard is public.
  */
 export function isWorkflow(value: unknown): value is Workflow {
   return (

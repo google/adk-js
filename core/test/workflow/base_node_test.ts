@@ -12,6 +12,8 @@ import {
   START,
   toContent,
 } from '../../src/workflow/base_node.js';
+import {node} from '../../src/workflow/node.js';
+import {isWorkflow, Workflow} from '../../src/workflow/workflow.js';
 import {FnNode} from './test_helpers.js';
 
 describe('isBaseNode', () => {
@@ -24,6 +26,27 @@ describe('isBaseNode', () => {
     expect(isBaseNode({})).toBe(false);
     expect(isBaseNode(null)).toBe(false);
     expect(isBaseNode('START')).toBe(false);
+  });
+});
+
+describe('isWorkflow', () => {
+  const workflow = new Workflow({
+    name: 'wf',
+    edges: [['START', node(() => 'x', {name: 'step'})]],
+  });
+
+  it('recognizes a Workflow', () => {
+    expect(isWorkflow(workflow)).toBe(true);
+    // The brand is an instance field, so it survives the `@experimental`
+    // decorator wrapping the class.
+    expect(isBaseNode(workflow)).toBe(true);
+  });
+
+  it('rejects other nodes and non-nodes', () => {
+    expect(isWorkflow(new FnNode('n', (_c, i) => i))).toBe(false);
+    expect(isWorkflow(START)).toBe(false);
+    expect(isWorkflow({})).toBe(false);
+    expect(isWorkflow(null)).toBe(false);
   });
 });
 

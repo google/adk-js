@@ -5,7 +5,7 @@
  */
 
 import {Content} from '@google/genai';
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
 import {createEvent, Event} from '../events/event.js';
 import {AsyncQueue} from '../utils/async_queue.js';
@@ -258,4 +258,66 @@ function extractWorkflowInput(content?: Content): unknown {
     return parts.map((p) => p.text).join('');
   }
   return content;
+}
+
+/**
+ * Normalizes whatever was handed in as a root into a `BaseAgent`.
+ *
+ * An agent is already a node (`BaseAgent extends BaseNode`), so the interesting
+ * case is the other direction: a bare node — a `Workflow`, most usefully — has
+ * no `runAsync`, and the things that consume a root (the runner, an `App`, the
+ * agent loader) all drive agents. `WorkflowAgent` is the existing bridge, so
+ * the node is wrapped here rather than each consumer growing its own second
+ * execution path.
+ *
+ * The accepted set is exactly what `WorkflowAgent` accepts, which is what an
+ * edge accepts: a workflow passes through the wrap as itself, and any other
+ * node-like value becomes the single node of a one-node workflow, fed the user
+ * message and streamed back from. Keeping the two in step matters because
+ * `new Runner({agent: node})` and `new Runner({agent: new WorkflowAgent(node)})`
+ * are the same request spelled two ways.
+ *
+ * adk-python reaches the same place from the other side: its runner stores a
+ * `BaseNode` and branches to the node runtime only when the root is a node that
+ * is *not* an agent, leaving agents on the classic path.
+ *
+ * @throws if `root` is not something an edge would accept.
+ */
+export function asRootAgent(root: RunnableNode): BaseAgent {
+  if (isBaseAgent(root)) {
+    return root;
+  }
+  // Guard the untyped callers (the agent loader reads whatever a module
+  // exports). Widened to `unknown` because the guard is for values the type
+  // already excludes: without it a non-node-like value would be read as a
+  // `WorkflowConfig` and fail somewhere inside the graph parser instead.
+  const value: unknown = root;
+  if (!isNodeLike(value) || value === 'START') {
+    const described =
+      value === 'START'
+        ? "the 'START' sentinel"
+        : ((value as {constructor?: {name?: string}})?.constructor?.name ??
+          typeof value);
+    throw new TypeError(
+      `Cannot use ${described} as a root: expected a BaseAgent, a Workflow, ` +
+        'or a node-like value (a node, a tool, or a function).',
+    );
+  }
+  return new WorkflowAgent(value);
+}
+
+/**
+ * Whether a value looks like an intended root, and so is worth handing to
+ * {@link asRootAgent}.
+ *
+ * Used where roots are *discovered* rather than passed — the agent loader
+ * sifting a module's exports — so that a `Workflow` export is found the same
+ * way an agent export is.
+ *
+ * Deliberately narrower than what {@link asRootAgent} accepts: a passed root is
+ * a statement of intent, while a discovered one is a guess, and every module
+ * exports functions that are not meant to be the app.
+ */
+export function isRootAgentLike(value: unknown): value is BaseAgent | Workflow {
+  return isBaseAgent(value) || isWorkflow(value);
 }
