@@ -5,7 +5,13 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {
+  DynamicNodeFailError,
+  isDynamicNodeFailError,
+} from '../../src/workflow/errors.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
+import {RequestInput} from '../../src/workflow/request_input.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {driveWorkflow} from './test_helpers.js';
 
@@ -224,5 +230,62 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
       edges: [['START', orchestrator]],
     });
     expect((await driveWorkflow(wf)).output).toBe(15);
+  });
+});
+
+describe('Phase 4 — a dynamic child unwinds its caller', () => {
+  it('stops the caller body at a child that asks the user', async () => {
+    const after: string[] = [];
+    const ask = new FunctionNode(
+      'ask',
+      () => new RequestInput({interruptId: 'confirm', message: 'confirm?'}),
+    );
+    const wf = new Workflow({
+      name: 'unwind',
+      dynamicEntry: async (ctx) => {
+        await ctx.runNode(ask);
+        // Everything here would run without an answer, and run again on
+        // resume once the answer arrives.
+        after.push('ran');
+        return 'done';
+      },
+    });
+
+    const {output} = await driveWorkflow(wf, 'x');
+    expect(after).toEqual([]);
+    expect(output).toBeUndefined();
+  });
+
+  it('does not retry the caller when a dynamic child fails', async () => {
+    let callerRuns = 0;
+    let childRuns = 0;
+    const boom = new FunctionNode('boom', () => {
+      childRuns++;
+      throw new Error('child exploded');
+    });
+    const caller = new FunctionNode(
+      'caller',
+      async (ctx: NodeContext) => {
+        callerRuns++;
+        await ctx.runNode(boom);
+        return 'unreachable';
+      },
+      {retryConfig: {maxAttempts: 3, initialDelay: 0, jitter: 0}},
+    );
+    const wf = new Workflow({name: 'nofail', edges: [['START', caller]]});
+
+    const err = await driveWorkflow(wf, 'x').then(
+      () => undefined,
+      (e) => e,
+    );
+
+    // Retrying the caller would re-run every child it already ran.
+    expect(callerRuns).toBe(1);
+    expect(childRuns).toBe(1);
+    expect(isDynamicNodeFailError(err)).toBe(true);
+    expect((err as DynamicNodeFailError).errorNodePath).toContain('boom');
+    expect((err as DynamicNodeFailError).error.message).toBe('child exploded');
+    // The author's own message still reaches the surface.
+    expect((err as Error).message).toContain('child exploded');
   });
 });

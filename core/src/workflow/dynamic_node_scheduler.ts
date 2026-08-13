@@ -5,6 +5,11 @@
  */
 
 import {BaseNode} from './base_node.js';
+import {
+  DynamicNodeFailError,
+  isDynamicNodeFailError,
+  isNodeInterruptedError,
+} from './errors.js';
 import {NodeContext, NodeResult} from './node_context.js';
 import {executeChildNode} from './node_runner.js';
 import {createNodeState} from './node_state.js';
@@ -195,7 +200,21 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       },
     });
 
-    const childCtx = await run.task;
+    let childCtx: NodeContext;
+    try {
+      childCtx = await run.task;
+    } catch (err) {
+      if (isNodeInterruptedError(err) || isDynamicNodeFailError(err)) {
+        throw err;
+      }
+      run.state.status = NodeStatus.FAILED;
+      const error = err instanceof Error ? err : new Error(String(err));
+      throw new DynamicNodeFailError({
+        message: `Dynamic node ${name} failed: ${error.message}`,
+        error,
+        errorNodePath: nodePath,
+      });
+    }
     this.recordResult(run, childCtx, node);
     return childCtx;
   }

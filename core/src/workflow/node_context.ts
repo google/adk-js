@@ -9,9 +9,14 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
+import type {BaseNode} from './base_node.js';
+import {NodeInterruptedError} from './errors.js';
 import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
-import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import type {
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+} from './schedule_dynamic_node.js';
 import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
@@ -245,13 +250,39 @@ export class NodeContext {
         mapSet(this.autoRunIds, nodeName).add(runId);
       }
       used.add(runId);
-      return this.scheduler.schedule(this, node, input, {
+      return this.scheduleAndUnwind(node, input, {
         ...options,
         nodeName,
         runId,
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+
+  /**
+   * Runs a child through the scheduler, raising {@link NodeInterruptedError}
+   * when it comes back waiting on an unanswered interrupt.
+   *
+   * The caller's body must not continue past a child that stopped to ask the
+   * user: everything after the call would run on a missing answer, and would
+   * run again when the turn resumes. Its interrupt ids move onto this context
+   * first, so the runner that catches the throw records this node as waiting.
+   */
+  private async scheduleAndUnwind(
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext | NodeResult> {
+    const child = await this.scheduler!.schedule(this, node, input, options);
+    if (child.interruptIds.length > 0) {
+      for (const id of child.interruptIds) {
+        if (!this.interruptIds.includes(id)) {
+          this.interruptIds.push(id);
+        }
+      }
+      throw new NodeInterruptedError();
+    }
+    return child;
   }
 }
 
