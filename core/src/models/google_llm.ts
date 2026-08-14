@@ -36,7 +36,8 @@ export interface GeminiParams {
   model?: string;
   /**
    * The API key to use for the Gemini API. If not provided, it will look for
-   * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.
+   * the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment
+   * variable, in that order.
    */
   apiKey?: string;
   /**
@@ -117,7 +118,7 @@ export class Gemini extends BaseLlm {
     });
     if (!params.vertexai && !params.apiKey) {
       throw new Error(
-        'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
+        'API key must be provided via constructor or the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment variable.',
       );
     }
     this.project = params.project;
@@ -395,8 +396,19 @@ export function geminiInitParams({
     }
   } else {
     if (!params.apiKey && !isBrowser()) {
+      // `GOOGLE_API_KEY` before `GEMINI_API_KEY`, matching @google/genai's own
+      // `getApiKeyFromEnv()` and adk-python, which leaves the choice to the SDK
+      // entirely. Resolving the key here shadows the SDK, so an order that
+      // disagrees with it makes its "Both GOOGLE_API_KEY and GEMINI_API_KEY are
+      // set. Using GOOGLE_API_KEY." warning describe a key adk-js did not use.
+      //
+      // `GOOGLE_GENAI_API_KEY` stays first: no SDK understands that name, and
+      // `adk create` writes it into every scaffolded .env, so it is the
+      // adk-js-specific override.
       params.apiKey =
-        process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
+        process.env['GOOGLE_GENAI_API_KEY'] ||
+        process.env['GOOGLE_API_KEY'] ||
+        process.env['GEMINI_API_KEY'];
     }
   }
   return params;
