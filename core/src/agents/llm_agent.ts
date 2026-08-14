@@ -160,12 +160,6 @@ function applyLiveRunConfig(
 }
 
 /**
- * Whether a live response should be attributed to the user side of the
- * transcript. Input transcriptions are the user speaking; echoed user-role
- * content (e.g. function responses) likewise belongs to the user side.
- */
-
-/**
  * Input/output schema type for agent.
  */
 export type LlmAgentSchema =
@@ -995,7 +989,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     applyLiveRunConfig(invocationContext.runConfig, llmRequest);
 
     const llm = this.canonicalModel;
-    let attempt = 1;
+    let reconnectAttempts = 0;
 
     // Outer reconnect loop. Re-enters on recoverable failures when a session
     // resumption handle is available; the server restores state on the new
@@ -1023,24 +1017,22 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           isRecoverableLiveError(err) &&
           invocationContext.liveSessionResumptionHandle
         ) {
-          if (attempt > MAX_LIVE_RECONNECT_ATTEMPTS) {
+          reconnectAttempts += 1;
+          if (reconnectAttempts > MAX_LIVE_RECONNECT_ATTEMPTS) {
             logger.error(
-              `Max live reconnection attempts reached (${attempt}).`,
+              `Max live reconnection attempts reached (${reconnectAttempts}).`,
               err,
             );
             throw err;
           }
           logger.info(
-            `Live connect failed (attempt ${attempt}); retrying with session handle.`,
+            `Live connect failed (attempt ${reconnectAttempts}); retrying with session handle.`,
             err,
           );
-          attempt += 1;
           continue;
         }
         throw err;
       }
-
-      attempt = 1;
 
       // Skip history replay when resuming -- server already has the state.
       if (
@@ -1050,6 +1042,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         await connection.sendHistory(llmRequest.contents);
       }
 
+      let sendError: unknown;
       const sendAbort = new AbortController();
       // Stop the send loop when either the invocation aborts or this
       // attempt's connection is torn down. AbortSignal.any cleans up its
@@ -1064,6 +1057,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       );
       sendTask.catch((error) => {
         logger.error('Error in live send loop:', error);
+        sendError = error;
         sendAbort.abort(error);
         connection.close().catch((err) => {
           logger.warn('Error closing connection after send loop failure:', err);
@@ -1098,14 +1092,20 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       // Cancel send loop for this attempt; receive loop has exited.
       await this.teardownLiveConnection(sendAbort, connection, sendTask);
 
+      if (sendError) {
+        throw sendError;
+      }
+
       if (!reconnect) {
         return;
       }
 
-      if (attempt > MAX_LIVE_RECONNECT_ATTEMPTS) {
-        throw new Error(`Max live reconnection attempts reached (${attempt}).`);
+      reconnectAttempts += 1;
+      if (reconnectAttempts > MAX_LIVE_RECONNECT_ATTEMPTS) {
+        throw new Error(
+          `Max live reconnection attempts reached (${reconnectAttempts}).`,
+        );
       }
-      attempt += 1;
     }
   }
 
@@ -1258,6 +1258,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         throw new LiveReconnectSignal('goAway');
       }
 
+      // Input transcriptions are the user speaking; echoed user-role
+      // content (e.g. function responses) likewise belongs to the user side.
       const author =
         llmResponse.inputTranscription || llmResponse.content?.role === 'user'
           ? 'user'
@@ -1332,6 +1334,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           return;
         }
       }
+    }
+
+    if (sendAbort.signal.aborted && sendAbort.signal.reason) {
+      throw sendAbort.signal.reason;
     }
   }
 

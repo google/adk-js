@@ -829,14 +829,92 @@ describe('Runner.runLive', () => {
     expect(liveConfig?.enableAffectiveDialog).toBe(true);
   });
 
-  it('reconnects with session handle on websocket close code 1006', async () => {
-    const error1006 = new Error('Connection closed abnormally');
-    (error1006 as {code?: number}).code = 1006;
+  it.each([1006, 1011, 1012])(
+    'reconnects with session handle on websocket close code %i with non-matching message',
+    async (code) => {
+      const closeError = new Error(`boom ${code}`);
+      (closeError as {code?: number}).code = code;
 
-    const llm = new FakeLiveLlm([
-      [{liveSessionResumptionUpdate: {newHandle: 'handle-1006'}}, error1006],
-      [{turnComplete: true}],
+      const llm = new FakeLiveLlm([
+        [
+          {liveSessionResumptionUpdate: {newHandle: `handle-${code}`}},
+          closeError,
+        ],
+        [{turnComplete: true}],
+      ]);
+      const agent = new LlmAgent({name: 'agent', model: llm});
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        artifactService,
+      });
+
+      const queue = new LiveRequestQueue();
+      queue.close();
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+
+      expect(llm.connections.length).toBe(2);
+      expect(
+        llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
+      ).toBe(`handle-${code}`);
+    },
+  );
+
+  it.each([
+    'read ECONNRESET',
+    'socket hang up',
+    'ConnectionClosed',
+    'connection closed',
+  ])(
+    'reconnects with session handle on error message matching regex: %s',
+    async (message) => {
+      const regexError = new Error(message);
+
+      const llm = new FakeLiveLlm([
+        [
+          {liveSessionResumptionUpdate: {newHandle: 'handle-regex'}},
+          regexError,
+        ],
+        [{turnComplete: true}],
+      ]);
+      const agent = new LlmAgent({name: 'agent', model: llm});
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        artifactService,
+      });
+
+      const queue = new LiveRequestQueue();
+      queue.close();
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+
+      expect(llm.connections.length).toBe(2);
+      expect(
+        llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
+      ).toBe('handle-regex');
+    },
+  );
+
+  it('throws when max reconnection attempts is exceeded', async () => {
+    const sequence = Array.from({length: 7}, (_, i) => [
+      {liveSessionResumptionUpdate: {newHandle: `handle-${i}`}},
+      {goAway: {timeLeft: '1s'}},
     ]);
+    const llm = new FakeLiveLlm(sequence);
     const agent = new LlmAgent({name: 'agent', model: llm});
     const runner = new Runner({
       appName: TEST_APP_ID,
@@ -847,18 +925,18 @@ describe('Runner.runLive', () => {
 
     const queue = new LiveRequestQueue();
     queue.close();
-    for await (const _ of runner.runLive({
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
-      liveRequestQueue: queue,
-    })) {
-      // drain
-    }
 
-    expect(llm.connections.length).toBe(2);
-    expect(
-      llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
-    ).toBe('handle-1006');
+    await expect(async () => {
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+    }).rejects.toThrow(/Max live reconnection attempts reached/);
+
+    expect(llm.connections.length).toBe(6);
   });
 
   it('propagates the send-loop error and stops execution when the send loop fails', async () => {
@@ -889,6 +967,36 @@ describe('Runner.runLive', () => {
         // drain
       }
     }).rejects.toThrow('Simulated outbound connection error');
+
+    expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('propagates the send-loop error when the receive loop is empty', async () => {
+    const llm = new FakeLiveLlm([]);
+    llm.sendContentError = new Error(
+      'Simulated outbound connection error on empty receive',
+    );
+
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    queue.sendContent({role: 'user', parts: [{text: 'hello'}]});
+
+    await expect(async () => {
+      for await (const _ of runner.runLive({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        liveRequestQueue: queue,
+      })) {
+        // drain
+      }
+    }).rejects.toThrow('Simulated outbound connection error on empty receive');
 
     expect(llm.connection!.closed).toBe(true);
   });
