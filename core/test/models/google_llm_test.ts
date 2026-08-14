@@ -62,6 +62,7 @@ describe('GoogleLlm', () => {
     delete process.env['GOOGLE_CLOUD_PROJECT'];
     delete process.env['GOOGLE_CLOUD_LOCATION'];
     delete process.env['GOOGLE_GENAI_API_KEY'];
+    delete process.env['GOOGLE_API_KEY'];
     delete process.env['GEMINI_API_KEY'];
     delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
     delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
@@ -75,6 +76,13 @@ describe('GoogleLlm', () => {
     expect(() => new TestGemini({model: 'gemini-1.5-flash'})).toThrow(
       /API key must be provided/,
     );
+  });
+
+  it('should construct with only GOOGLE_API_KEY set', () => {
+    // GOOGLE_API_KEY used to be absent from the Gemini-path order entirely, so
+    // setting only it failed at construction rather than picking the key up.
+    process.env['GOOGLE_API_KEY'] = 'google-api-key';
+    expect(() => new TestGemini({model: 'gemini-1.5-flash'})).not.toThrow();
   });
 
   it('should set tracking headers correctly when GOOGLE_CLOUD_AGENT_ENGINE_ID is not set', () => {
@@ -289,6 +297,28 @@ describe('GoogleLlm', () => {
       };
       const params = geminiInitParams(input);
       expect(params.apiKey).toBe('env-api-key');
+    });
+
+    it('should use GOOGLE_API_KEY env var if apiKey is missing', () => {
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('google-api-key');
+    });
+
+    it('should prefer GOOGLE_API_KEY over GEMINI_API_KEY', () => {
+      // Matches @google/genai and adk-python. The SDK warns "Both ... are set.
+      // Using GOOGLE_API_KEY."; adk-js must not then use the other one.
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      process.env['GEMINI_API_KEY'] = 'gemini-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('google-api-key');
+    });
+
+    it('should prefer GOOGLE_GENAI_API_KEY over GOOGLE_API_KEY', () => {
+      process.env['GOOGLE_GENAI_API_KEY'] = 'genai-api-key';
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('genai-api-key');
     });
 
     it('should return undefined apiKey if missing', () => {
