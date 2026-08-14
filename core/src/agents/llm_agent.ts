@@ -1308,8 +1308,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           // concurrently (mirrors `send_task.cancel()` in the Python flow).
           sendAbort.abort();
           await connection.close();
-          const subAgent =
-            invocationContext.agent.rootAgent.findAgent(transferTo);
+          const agent = requireAgent(invocationContext);
+          const subAgent = agent.rootAgent.findAgent(transferTo);
           if (subAgent) {
             const previousAgent = invocationContext.agent;
             invocationContext.agent = subAgent;

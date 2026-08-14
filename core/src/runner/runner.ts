@@ -657,13 +657,18 @@ export class Runner {
       throw new Error('liveRequestQueue is required for runLive.');
     }
 
+    if (!isBaseAgent(this.agent)) {
+      throw new Error('runLive is only supported for agents.');
+    }
+    const agent = this.agent;
+
     const runConfig = createRunConfig(params.runConfig);
     if (!runConfig.responseModalities?.length) {
       runConfig.responseModalities = [Modality.AUDIO];
     }
     // For multi-agent live setups, the model's text transcription is needed
     // as context for the transferred agent.
-    if (this.agent.subAgents?.length) {
+    if (agent.subAgents?.length) {
       if (runConfig.responseModalities.includes(Modality.AUDIO)) {
         runConfig.outputAudioTranscription ??= {};
       }
@@ -700,7 +705,7 @@ export class Runner {
             memoryService: this.memoryService,
             credentialService: this.credentialService,
             invocationId: newInvocationContextId(),
-            agent: this.agent,
+            agent,
             session,
             runConfig,
             pluginManager: this.pluginManager,
@@ -711,7 +716,7 @@ export class Runner {
 
           invocationContext.agent = this.determineAgentForResumption(
             session,
-            this.agent,
+            agent,
           );
 
           // Step 1: before-run plugin hook (early exit if it returns content).
@@ -737,7 +742,7 @@ export class Runner {
           }
 
           // Step 2: drive the agent's runLive and propagate events.
-          for await (const event of invocationContext.agent.runLive(
+          for await (const event of requireAgent(invocationContext).runLive(
             invocationContext,
           )) {
             if (params.abortSignal?.aborted) {
