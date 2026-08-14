@@ -4,7 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AuthConfig, AuthCredentialTypes, AuthHandler, State} from '@google/adk';
+import {
+  AuthConfig,
+  AuthCredential,
+  AuthCredentialTypes,
+  AuthHandler,
+  OAuth2Auth,
+  State,
+} from '@google/adk';
+import {createHash} from 'node:crypto';
 import {describe, expect, it, vi} from 'vitest';
 
 vi.mock('../../src/auth/oauth2/oauth2_credential_exchanger.js', () => ({
@@ -18,6 +26,44 @@ vi.mock('../../src/auth/oauth2/oauth2_credential_exchanger.js', () => ({
     });
   },
 }));
+
+/** Builds an authorization-code config whose oauth2 block the test controls. */
+function authConfigWithOAuth2(oauth2: OAuth2Auth): AuthConfig {
+  return {
+    credentialKey: 'testKey',
+    authScheme: {
+      type: 'oauth2',
+      flows: {
+        authorizationCode: {
+          authorizationUrl: 'https://auth.com',
+          tokenUrl: 'https://token.com',
+          scopes: {scope1: 'desc'},
+        },
+      },
+    },
+    rawAuthCredential: {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'id',
+        clientSecret: 'secret',
+        redirectUri: 'https://redirect.com',
+        ...oauth2,
+      },
+    },
+  };
+}
+
+/** Reads the query parameters off a generated authorization URI. */
+function authUriParams(
+  credential: AuthCredential | undefined,
+): URLSearchParams {
+  const authUri = credential?.oauth2?.authUri;
+  if (!authUri) {
+    expect.fail('expected the generated credential to carry an auth URI');
+  }
+
+  return new URL(authUri).searchParams;
+}
 
 describe('AuthHandler', () => {
   describe('getAuthResponse', () => {
@@ -402,6 +448,168 @@ describe('AuthHandler', () => {
 
       expect(uri).toBeDefined();
       expect(uri?.oauth2?.authUri).toContain('https://token.com');
+    });
+
+    it('emits the S256 code challenge and its method when PKCE is requested', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'S256'}),
+      );
+
+      const params = authUriParams(handler.generateAuthUri());
+
+      expect(params.get('code_challenge_method')).toBe('S256');
+      expect(params.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    });
+
+    it('emits a code challenge that is the SHA-256 of the returned verifier', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'S256'}),
+      );
+
+      const uri = handler.generateAuthUri();
+      const verifier = uri?.oauth2?.codeVerifier;
+      if (!verifier) {
+        expect.fail('expected the generated credential to carry a verifier');
+      }
+
+      expect(authUriParams(uri).get('code_challenge')).toBe(
+        createHash('sha256').update(verifier).digest('base64url'),
+      );
+    });
+
+    it('generates a 48-character verifier when the credential supplies none', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'S256'}),
+      );
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri?.oauth2?.codeVerifier).toHaveLength(48);
+      expect(uri?.oauth2?.codeVerifier).toMatch(/^[A-Za-z0-9\-._~]+$/);
+    });
+
+    it('does not repeat a generated verifier across calls', () => {
+      const first = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'S256'}),
+      ).generateAuthUri();
+      const second = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'S256'}),
+      ).generateAuthUri();
+
+      expect(first?.oauth2?.codeVerifier).not.toBe(
+        second?.oauth2?.codeVerifier,
+      );
+    });
+
+    it('reuses a supplied codeVerifier instead of generating one', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({
+          codeChallengeMethod: 'S256',
+          codeVerifier: 'supplied-verifier',
+        }),
+      );
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri?.oauth2?.codeVerifier).toBe('supplied-verifier');
+      expect(authUriParams(uri).get('code_challenge')).toBe(
+        createHash('sha256').update('supplied-verifier').digest('base64url'),
+      );
+    });
+
+    it('throws for a code challenge method other than S256', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({codeChallengeMethod: 'plain'}),
+      );
+
+      expect(() => handler.generateAuthUri()).toThrow(
+        /Unsupported codeChallengeMethod: plain/,
+      );
+    });
+
+    it('throws for an unsupported method even when the endpoint is missing', () => {
+      const handler = new AuthHandler({
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {clientCredentials: {tokenUrl: '', scopes: {}}},
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'id', codeChallengeMethod: 'plain'},
+        },
+      });
+
+      expect(() => handler.generateAuthUri()).toThrow(
+        /Unsupported codeChallengeMethod: plain/,
+      );
+    });
+
+    it('omits the PKCE params when no method is requested', () => {
+      const handler = new AuthHandler(authConfigWithOAuth2({}));
+
+      const params = authUriParams(handler.generateAuthUri());
+
+      expect(params.get('code_challenge')).toBeNull();
+      expect(params.get('code_challenge_method')).toBeNull();
+    });
+
+    it('omits the PKCE params for a verifier without a method', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({codeVerifier: 'supplied-verifier'}),
+      );
+
+      const uri = handler.generateAuthUri();
+      const params = authUriParams(uri);
+
+      expect(params.get('code_challenge')).toBeNull();
+      expect(params.get('code_challenge_method')).toBeNull();
+      expect(uri?.oauth2?.codeVerifier).toBe('supplied-verifier');
+    });
+
+    it('forwards the audience when the credential sets one', () => {
+      const handler = new AuthHandler(
+        authConfigWithOAuth2({audience: 'https://api.example.com'}),
+      );
+
+      const params = authUriParams(handler.generateAuthUri());
+
+      expect(params.get('audience')).toBe('https://api.example.com');
+    });
+
+    it('omits the audience when the credential sets none', () => {
+      const handler = new AuthHandler(authConfigWithOAuth2({}));
+
+      expect(
+        authUriParams(handler.generateAuthUri()).get('audience'),
+      ).toBeNull();
+    });
+
+    it('forwards the nonce when the credential sets one', () => {
+      const handler = new AuthHandler(authConfigWithOAuth2({nonce: 'n-0S6'}));
+
+      const params = authUriParams(handler.generateAuthUri());
+
+      expect(params.get('nonce')).toBe('n-0S6');
+    });
+
+    it('omits the nonce when the credential sets none', () => {
+      const handler = new AuthHandler(authConfigWithOAuth2({}));
+
+      expect(authUriParams(handler.generateAuthUri()).get('nonce')).toBeNull();
+    });
+
+    it('does not write the generated verifier back onto the raw credential', () => {
+      const authConfig = authConfigWithOAuth2({codeChallengeMethod: 'S256'});
+      const handler = new AuthHandler(authConfig);
+
+      const uri = handler.generateAuthUri();
+
+      expect(uri?.oauth2?.codeVerifier).toBeDefined();
+      expect(
+        authConfig.rawAuthCredential?.oauth2?.codeVerifier,
+      ).toBeUndefined();
+      expect(authConfig.rawAuthCredential?.oauth2?.authUri).toBeUndefined();
     });
   });
 });

@@ -10,12 +10,18 @@ import {
   AuthorizationCodeParams,
   ClientCredentialsParams,
   createOAuth2TokenRequestBody,
+  createS256CodeChallenge,
   fetchOAuth2Tokens,
+  generateCodeVerifier,
   getTokenEndpoint,
   isTokenExpired,
   parseAuthorizationCode,
   RefreshTokenParams,
 } from '../../../src/auth/oauth2/oauth2_utils.js';
+import {
+  createHash as shimCreateHash,
+  randomBytes as shimRandomBytes,
+} from '../../../src/utils/crypto_shim.js';
 
 describe('oauth2_utils', () => {
   describe('getTokenEndpoint', () => {
@@ -280,6 +286,61 @@ describe('oauth2_utils', () => {
       // With 60s leeway, 30s should be considered expired
       expect(isTokenExpired({expiresAt: nearFutureTimeMs} as OAuth2Auth)).toBe(
         true,
+      );
+    });
+  });
+
+  describe('createS256CodeChallenge', () => {
+    it('matches the published SHA-256 vector for "abc"', () => {
+      expect(createS256CodeChallenge('abc')).toBe(
+        'ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0',
+      );
+    });
+
+    it('encodes base64url, so no "+", "/" or "=" survives', () => {
+      // The standard base64 digest of 'v2' is
+      // '+wTctpcOTD0Yc95R/VpQ17tGszgxE2AmZcNQ7EC1+ZA=', which carries all
+      // three characters RFC 7636 forbids in a code challenge.
+      const challenge = createS256CodeChallenge('v2');
+
+      expect(challenge).toBe('-wTctpcOTD0Yc95R_VpQ17tGszgxE2AmZcNQ7EC1-ZA');
+      expect(challenge).not.toMatch(/[+/=]/);
+    });
+
+    it('returns the 43 characters a SHA-256 digest encodes to', () => {
+      expect(createS256CodeChallenge(generateCodeVerifier())).toHaveLength(43);
+    });
+  });
+
+  describe('generateCodeVerifier', () => {
+    it('returns 48 unreserved characters', () => {
+      const verifier = generateCodeVerifier();
+
+      expect(verifier).toHaveLength(48);
+      expect(verifier).toMatch(/^[A-Za-z0-9\-._~]+$/);
+    });
+
+    it('does not repeat itself across calls', () => {
+      const verifiers = new Set(
+        Array.from({length: 1000}, () => generateCodeVerifier()),
+      );
+
+      expect(verifiers.size).toBe(1000);
+    });
+  });
+
+  // The web build aliases node:crypto to this shim, so it stands in for the
+  // PKCE helpers above in a browser, where no synchronous SHA-256 exists.
+  describe('crypto_shim', () => {
+    it('throws instead of degrading when hashing a code verifier', () => {
+      expect(() => shimCreateHash('sha256')).toThrow(
+        /require a synchronous SHA-256/,
+      );
+    });
+
+    it('throws instead of degrading when generating a code verifier', () => {
+      expect(() => shimRandomBytes(36)).toThrow(
+        /no cryptographically secure source of randomness/,
       );
     });
   });
