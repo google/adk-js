@@ -526,15 +526,19 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     // Validate output schema related configurations.
     if (this.outputSchema) {
-      if (!this.disallowTransferToParent || !this.disallowTransferToPeers) {
+      const transferRequested =
+        config.disallowTransferToParent === false ||
+        config.disallowTransferToPeers === false ||
+        !!this.subAgents?.length;
+      if (transferRequested) {
         logger.warn(
           `Invalid config for agent ${
             this.name
           }: outputSchema cannot co-exist with agent transfer configurations. Setting disallowTransferToParent=true, disallowTransferToPeers=true`,
         );
-        this.disallowTransferToParent = true;
-        this.disallowTransferToPeers = true;
       }
+      this.disallowTransferToParent = true;
+      this.disallowTransferToPeers = true;
     }
   }
 
