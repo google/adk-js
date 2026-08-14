@@ -5,6 +5,10 @@
  */
 
 import {randomUUID as nodeRandomUUID} from 'node:crypto';
+import {logger} from './logger.js';
+
+const ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_ENTERPRISE';
+const DEPRECATED_ENTERPRISE_MODE_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
 
 /**
  * Returns true if the environment is a browser.
@@ -130,4 +134,56 @@ export function getBooleanEnvVar(envVar: string): boolean {
   const envVarValue = (process.env[envVar] || '').toLowerCase();
 
   return ['true', '1'].includes(envVarValue);
+}
+
+let warnedDeprecatedEnterpriseModeEnvVar = false;
+
+function warnDeprecatedEnterpriseModeEnvVar(message: string): void {
+  if (warnedDeprecatedEnterpriseModeEnvVar) {
+    return;
+  }
+  warnedDeprecatedEnterpriseModeEnvVar = true;
+  logger.warn(message);
+}
+
+/**
+ * Returns whether Google GenAI enterprise mode is enabled.
+ *
+ * `GOOGLE_GENAI_USE_ENTERPRISE` takes precedence whenever it is set, even when
+ * it is set to a falsy value. `GOOGLE_GENAI_USE_VERTEXAI` is only consulted
+ * when `GOOGLE_GENAI_USE_ENTERPRISE` is absent.
+ *
+ * Setting the deprecated `GOOGLE_GENAI_USE_VERTEXAI` logs a deprecation
+ * warning, whether it is used or overridden. When both variables are set the
+ * warning also states that `GOOGLE_GENAI_USE_VERTEXAI` is ignored, so a stale
+ * value silently overridden by the new variable is still surfaced. This is
+ * read per request, so the warning is logged only once.
+ *
+ * @return True if enterprise mode is enabled, false otherwise.
+ */
+export function isEnterpriseModeEnabled(): boolean {
+  const deprecatedIsSet =
+    process.env?.[DEPRECATED_ENTERPRISE_MODE_ENV_VAR] !== undefined;
+
+  if (process.env?.[ENTERPRISE_MODE_ENV_VAR] !== undefined) {
+    if (deprecatedIsSet) {
+      warnDeprecatedEnterpriseModeEnvVar(
+        `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is set but ignored because ` +
+          `${ENTERPRISE_MODE_ENV_VAR} takes precedence. ` +
+          `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
+          `${ENTERPRISE_MODE_ENV_VAR} instead.`,
+      );
+    }
+    return getBooleanEnvVar(ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  if (deprecatedIsSet) {
+    warnDeprecatedEnterpriseModeEnvVar(
+      `${DEPRECATED_ENTERPRISE_MODE_ENV_VAR} is deprecated, please use ` +
+        `${ENTERPRISE_MODE_ENV_VAR} instead`,
+    );
+    return getBooleanEnvVar(DEPRECATED_ENTERPRISE_MODE_ENV_VAR);
+  }
+
+  return false;
 }
