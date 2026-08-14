@@ -10,7 +10,11 @@ import {
   AuthCredentialTypes,
   Context,
   createRestApiTool,
+  createSession,
+  InvocationContext,
+  LlmAgent,
   OpenApiSpecParser,
+  PluginManager,
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
@@ -542,34 +546,36 @@ describe('RestApiTool', () => {
       type: 'http',
       scheme: 'basic',
     };
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.HTTP,
+      http: {
+        scheme: 'basic',
+        credentials: {username: 'user', password: 'password'},
+      },
+    };
     const tool = new RestApiTool(
       'test_tool',
       'description',
       endpoint,
       operation,
       authScheme,
+      authCredential,
     );
 
     globalThis.fetch = vi.fn();
 
-    const mockAuthHandler = {
-      prepareAuthCredentials: async () => ({
-        state: 'done',
-        authCredential: {
-          authType: AuthCredentialTypes.HTTP,
-          http: {
-            scheme: 'basic',
-            credentials: {username: 'user', password: 'password'},
-          },
-        },
-      }),
-    };
-    vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue(
-      mockAuthHandler as unknown as ToolAuthHandler,
-    );
-
     await expect(
-      tool.runAsync({args: {}, toolContext: {} as unknown as Context}),
+      tool.runAsync({
+        args: {},
+        toolContext: new Context({
+          invocationContext: new InvocationContext({
+            invocationId: 'invocation-1',
+            agent: new LlmAgent({name: 'test_agent'}),
+            session: createSession({id: 'session-1', appName: 'test_app'}),
+            pluginManager: new PluginManager(),
+          }),
+        }),
+      }),
     ).rejects.toThrow('Basic Authentication is not supported.');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
