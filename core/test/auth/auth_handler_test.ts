@@ -115,6 +115,72 @@ describe('AuthHandler', () => {
         oauth2: {accessToken: 'mockAccessToken'},
       });
     });
+
+    it('throws when credentialKey is an empty string', async () => {
+      const authConfig: AuthConfig = {
+        credentialKey: '',
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'testToken',
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await expect(handler.parseAndStoreAuthResponse(state)).rejects.toThrow(
+        'credentialKey is empty.',
+      );
+      expect(state.get('temp:')).toBeUndefined();
+      expect(state.hasDelta()).toBe(false);
+    });
+
+    it('throws when an untyped config omits credentialKey', async () => {
+      // Mirrors the unchecked cast of client-supplied args in
+      // auth_preprocessor.
+      const authConfig = {
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'testToken',
+        },
+      } as AuthConfig;
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await expect(handler.parseAndStoreAuthResponse(state)).rejects.toThrow(
+        'credentialKey is empty.',
+      );
+      expect(state.get('temp:undefined')).toBeUndefined();
+      expect(state.hasDelta()).toBe(false);
+    });
+
+    it('throws before exchanging an oauth2 credential', async () => {
+      const authConfig: AuthConfig = {
+        credentialKey: '',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {authCode: '123'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await expect(handler.parseAndStoreAuthResponse(state)).rejects.toThrow(
+        'credentialKey is empty.',
+      );
+      expect(state.hasDelta()).toBe(false);
+    });
   });
 
   describe('generateAuthRequest', () => {
