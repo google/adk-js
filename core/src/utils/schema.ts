@@ -146,3 +146,141 @@ export function compileJsonSchema(jsonSchema: unknown): z4.ZodType | undefined {
     return undefined;
   }
 }
+
+/**
+ * Per-field validators for object schemas, keyed by the schema itself. Built
+ * once per schema for the same reason {@link genaiValidators} exists: a schema
+ * outlives the values checked against it.
+ */
+const objectFieldValidators = new WeakMap<
+  object,
+  Map<string, z4.ZodType | undefined> | null
+>();
+
+/**
+ * Decomposes an object {@link SchemaLike} into its declared fields, each mapped
+ * to a validator for that field alone.
+ *
+ * This is what lets a *partial* object be checked key by key. A state schema
+ * declares the keys a workflow may write, but the state holds only the ones
+ * written so far, so validating the whole object against the schema would
+ * reject it for missing fields that simply have not been set yet.
+ *
+ * Returns `undefined` when the schema is not an object schema or cannot be
+ * decomposed, and maps a field to `undefined` when that field's own schema has
+ * no Zod equivalent. Both mean "unvalidatable" rather than invalid, consistent
+ * with {@link parseWithSchema}.
+ */
+export function objectSchemaFields(
+  schema: SchemaLike,
+): Map<string, z4.ZodType | undefined> | undefined {
+  const cached = objectFieldValidators.get(schema as object);
+  if (cached !== undefined) {
+    return cached ?? undefined;
+  }
+  let fields: Map<string, z4.ZodType | undefined> | null = null;
+  try {
+    const document = toJsonSchema(schema);
+    const properties = document['properties'];
+    if (properties && typeof properties === 'object') {
+      fields = new Map(
+        Object.entries(properties as Record<string, unknown>).map(
+          ([name, fieldSchema]) => [name, compileField(fieldSchema, document)],
+        ),
+      );
+    }
+  } catch {
+    fields = null;
+  }
+  objectFieldValidators.set(schema as object, fields);
+  return fields ?? undefined;
+}
+
+/** Sentinel for a `$ref` that cannot be inlined; caught per field. */
+const UNRESOLVABLE_REF = Symbol('unresolvable-ref');
+
+/**
+ * Compiles one field of a schema document into a validator, resolving any
+ * `$ref` it carries against that document first.
+ *
+ * A field whose refs cannot be inlined degrades to `undefined` — unvalidated —
+ * on its own, rather than costing the other fields their validators.
+ */
+function compileField(
+  fieldSchema: unknown,
+  document: unknown,
+): z4.ZodType | undefined {
+  try {
+    return compileJsonSchema(inlineRefs(fieldSchema, document));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolves a local JSON Pointer (`#/properties/foo`) against `document`.
+ */
+function resolvePointer(document: unknown, ref: string): unknown {
+  if (!ref.startsWith('#')) {
+    throw UNRESOLVABLE_REF;
+  }
+  let node: unknown = document;
+  for (const rawSegment of ref.slice(1).split('/').filter(Boolean)) {
+    const segment = decodeURIComponent(rawSegment)
+      .replaceAll('~1', '/')
+      .replaceAll('~0', '~');
+    if (node === null || typeof node !== 'object') {
+      throw UNRESOLVABLE_REF;
+    }
+    node = (node as Record<string, unknown>)[segment];
+  }
+  if (node === undefined) {
+    throw UNRESOLVABLE_REF;
+  }
+  return node;
+}
+
+/**
+ * Replaces every local `$ref` in `node` with the schema it points at.
+ *
+ * A field is compiled on its own, detached from the document that defines it,
+ * so a `$ref` in it would dangle. Zod v4 inlines repeated sub-schemas and never
+ * emits one, but `zod-to-json-schema` (Zod v3) points the second use of a
+ * shared sub-schema back at the first — `{"$ref": "#/properties/nested"}` — and
+ * an uninlined field silently loses its type check.
+ *
+ * A ref that cannot be resolved, and a cycle (`z.lazy` recursion, which has no
+ * finite inlining), throw {@link UNRESOLVABLE_REF}; the caller degrades that
+ * field to unvalidated.
+ */
+function inlineRefs(
+  node: unknown,
+  document: unknown,
+  seen: ReadonlySet<string> = new Set(),
+): unknown {
+  if (Array.isArray(node)) {
+    return node.map((item) => inlineRefs(item, document, seen));
+  }
+  if (node === null || typeof node !== 'object') {
+    return node;
+  }
+  const entries = Object.entries(node as Record<string, unknown>);
+  const ref = (node as Record<string, unknown>)['$ref'];
+  if (typeof ref === 'string') {
+    if (seen.has(ref)) {
+      throw UNRESOLVABLE_REF;
+    }
+    const target = inlineRefs(
+      resolvePointer(document, ref),
+      document,
+      new Set([...seen, ref]),
+    );
+    const siblings = Object.fromEntries(
+      entries.filter(([key]) => key !== '$ref'),
+    );
+    return {...(target as Record<string, unknown>), ...siblings};
+  }
+  return Object.fromEntries(
+    entries.map(([key, value]) => [key, inlineRefs(value, document, seen)]),
+  );
+}

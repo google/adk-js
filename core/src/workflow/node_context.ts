@@ -11,6 +11,7 @@ import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import type {BaseNode} from './base_node.js';
 import {NodeInterruptedError} from './errors.js';
+import type {SchemaLike} from '../utils/schema.js';
 import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {
@@ -57,6 +58,11 @@ export interface NodeContextOptions {
   isolationScope?: string;
   /** Accumulator for event actions (state delta, etc). */
   actions?: EventActions;
+  /**
+   * Declares the keys this node may write to `ctx.state` and their types.
+   * Resolved by the runner: the node's own schema, or the parent's.
+   */
+  stateSchema?: SchemaLike;
 }
 
 /**
@@ -126,6 +132,12 @@ export class NodeContext {
   /** The current attempt number (1-based) for the running node (see retry). */
   attemptCount = 1;
 
+  /**
+   * The state schema in force for this node, inherited by its children unless
+   * they declare their own.
+   */
+  readonly stateSchema?: SchemaLike;
+
   private readonly _state: State;
   private readonly dynamicRunCounters = new Map<string, number>();
   /** Run ids this context handed out automatically, per node name. */
@@ -145,9 +157,11 @@ export class NodeContext {
     // Python's `ctx.state` -> `ctx.actions.state_delta` behaviour, and land in
     // `session.state` at once so a reader outside the workflow — an agent
     // resolving a `{key}` instruction, a callback, a tool — sees them.
+    this.stateSchema = opts.stateSchema;
     this._state = new State(
       opts.invocationContext.session.state,
       this.actions.stateDelta,
+      opts.stateSchema,
     );
   }
 

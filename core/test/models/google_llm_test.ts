@@ -64,6 +64,7 @@ describe('GoogleLlm', () => {
     delete process.env['GOOGLE_GENAI_API_KEY'];
     delete process.env['GEMINI_API_KEY'];
     delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+    delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
     delete process.env['GOOGLE_CLOUD_AGENT_ENGINE_ID'];
   };
 
@@ -332,6 +333,28 @@ describe('GoogleLlm', () => {
       };
       const params = geminiInitParams(input);
       expect(params.vertexai).toBe(true);
+    });
+
+    it('should detect Vertex AI from GOOGLE_GENAI_USE_ENTERPRISE', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+      const input = {
+        model: 'gemini-1.5-flash',
+      };
+      const params = geminiInitParams(input);
+      expect(params.vertexai).toBe(true);
+    });
+
+    it('should not use Vertex AI when GOOGLE_GENAI_USE_ENTERPRISE disables it', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'false';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      const input = {
+        model: 'gemini-1.5-flash',
+        apiKey: 'test-key',
+      };
+      const params = geminiInitParams(input);
+      expect(params.vertexai).toBe(false);
     });
 
     it('should throw error if project is missing for Vertex AI', () => {
