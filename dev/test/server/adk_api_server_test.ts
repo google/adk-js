@@ -932,6 +932,45 @@ describe('AdkWebServer', () => {
       expect(session.status).toBe(200);
       expect(session.data![0].name).toBe('call_llm');
     });
+
+    it('serves traces for a workflow with no LLM span', async () => {
+      const workflowSpan = {
+        name: 'invoke_workflow wf',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span3'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'gen_ai.conversation.id': 'session3'},
+        parentSpanContext: undefined,
+      } as unknown as ReadableSpan;
+      const nodeSpan = {
+        name: 'execute_node wf.one',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span4'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'adk.node.path': 'wf.one'},
+        parentSpanContext: {spanId: 'span3'},
+      } as unknown as ReadableSpan;
+      (
+        server as unknown as {
+          memoryExporter: {
+            export: (
+              spans: ReadableSpan[],
+              resultCallback: (result: {code: number}) => void,
+            ) => void;
+          };
+        }
+      ).memoryExporter.export([workflowSpan, nodeSpan], () => {});
+
+      const response = await client.get<{name: string}[]>(
+        '/debug/trace/session/session3',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data!.map((s) => s.name)).toEqual([
+        'invoke_workflow wf',
+        'execute_node wf.one',
+      ]);
+    });
   });
 
   describe('Graph', () => {

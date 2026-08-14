@@ -200,6 +200,7 @@ export class Workflow extends BaseNode {
         traceWorkflowInvocation({
           workflowName: this.name,
           nodePath: ctx.nodePath,
+          sessionId: ctx.invocationContext.session.id,
         });
         return this.orchestrate(ctx, nodeInput, dynamicState, abort.controller);
       });
