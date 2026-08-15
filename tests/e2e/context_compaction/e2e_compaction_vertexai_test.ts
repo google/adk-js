@@ -59,6 +59,7 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       const projectId = process.env.GOOGLE_CLOUD_PROJECT!;
       const location = process.env.LOCATION || 'us-west1';
       const agentEngineId = process.env.REASONING_ENGINE_ID!;
+      const appName = `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`;
 
       const sessionService = new VertexAiSessionService({
         projectId,
@@ -68,14 +69,14 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       const memoryService = new InMemoryMemoryService();
 
       const runner = new Runner({
-        appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
+        appName,
         agent,
         sessionService,
         memoryService,
       });
 
       const session = await runner.sessionService.createSession({
-        appName: `projects/${projectId}/locations/${location}/reasoningEngines/${agentEngineId}`,
+        appName,
         userId: 'test_user',
       });
 
@@ -98,7 +99,7 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       }
 
       const updatedSession = await runner.sessionService.getSession({
-        appName: 'e2e_test',
+        appName,
         userId: 'test_user',
         sessionId: session.id,
       });
@@ -109,6 +110,7 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       const latestCompacted = compactedEvents[compactedEvents.length - 1];
       expect(latestCompacted.compactedContent).toBeTruthy();
       expect(latestCompacted.compactedContent.length).toBeGreaterThan(0);
+      expect(updatedSession!.appName).toBe(appName);
     },
     30000,
   );
