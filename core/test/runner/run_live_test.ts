@@ -33,6 +33,8 @@ class RecordingConnection implements BaseLlmConnection {
   activityEndCalls = 0;
   closed = false;
   sendContentError?: Error;
+  sendRealtimeError?: Error;
+  rejectOnClose = false;
 
   constructor(private readonly responses: Array<LlmResponse | Error>) {}
 
@@ -40,12 +42,21 @@ class RecordingConnection implements BaseLlmConnection {
     this.historyCalls.push(history);
   }
   async sendContent(content: Content): Promise<void> {
+    if (this.closed && this.rejectOnClose) {
+      throw new Error('Connection closed while sending content');
+    }
     if (this.sendContentError) {
       throw this.sendContentError;
     }
     this.contentCalls.push(content);
   }
   async sendRealtime(blob: Blob): Promise<void> {
+    if (this.closed && this.rejectOnClose) {
+      throw new Error('Connection closed while sending realtime');
+    }
+    if (this.sendRealtimeError) {
+      throw this.sendRealtimeError;
+    }
     this.realtimeCalls.push(blob);
   }
   async sendActivityStart(): Promise<void> {
@@ -69,6 +80,8 @@ class RecordingConnection implements BaseLlmConnection {
 
 class FakeLiveLlm extends BaseLlm {
   sendContentError?: Error;
+  sendRealtimeError?: Error;
+  rejectOnClose = false;
 
   get connection(): RecordingConnection | undefined {
     return this.connections.at(-1);
@@ -112,6 +125,8 @@ class FakeLiveLlm extends BaseLlm {
       : (this.responses as Array<LlmResponse | Error>);
     const connection = new RecordingConnection(responses);
     connection.sendContentError = this.sendContentError;
+    connection.sendRealtimeError = this.sendRealtimeError;
+    connection.rejectOnClose = this.rejectOnClose;
     this.connections.push(connection);
     return connection;
   }
@@ -739,6 +754,42 @@ describe('Runner.runLive', () => {
     expect(
       events.some((e) => e.content?.parts?.[0]?.text === 'second event'),
     ).toBe(false);
+    expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('does not throw when aborted while an outbound send rejects on closed connection', async () => {
+    const llm = new FakeLiveLlm([
+      {content: {role: 'model', parts: [{text: 'first'}]}},
+      {turnComplete: true},
+    ]);
+    llm.rejectOnClose = true;
+
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    const controller = new AbortController();
+    const events: Event[] = [];
+
+    // Push requests into queue that will be processed during/after close
+    queue.sendContent({role: 'user', parts: [{text: 'msg1'}]});
+    queue.sendContent({role: 'user', parts: [{text: 'msg2'}]});
+
+    for await (const event of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+      abortSignal: controller.signal,
+    })) {
+      events.push(event);
+      controller.abort();
+    }
+
     expect(llm.connection!.closed).toBe(true);
   });
 

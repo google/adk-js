@@ -1054,6 +1054,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         connection,
         invocationContext.liveRequestQueue,
         combinedAbort,
+        invocationContext.abortSignal,
       );
       sendTask.catch((error) => {
         logger.error('Error in live send loop:', error);
@@ -1091,6 +1092,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
       // Cancel send loop for this attempt; receive loop has exited.
       await this.teardownLiveConnection(sendAbort, connection, sendTask);
+
+      if (invocationContext.abortSignal?.aborted) {
+        return;
+      }
 
       if (sendError) {
         throw sendError;
@@ -1148,10 +1153,11 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   private async runSendLoop(
     connection: BaseLlmConnection,
     liveRequestQueue: LiveRequestQueue,
-    abortSignal?: AbortSignal,
+    sendAbortSignal?: AbortSignal,
+    invocationAbortSignal?: AbortSignal,
   ): Promise<void> {
     while (true) {
-      if (abortSignal?.aborted) {
+      if (sendAbortSignal?.aborted || invocationAbortSignal?.aborted) {
         return;
       }
       let liveRequest: LiveRequest;
@@ -1159,9 +1165,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         // Pass the abort signal so a parked read is released on teardown
         // (reconnect, agent transfer) instead of stranding a waiter that
         // would later steal a request from the next connection's send loop.
-        liveRequest = await liveRequestQueue.get(abortSignal);
+        liveRequest = await liveRequestQueue.get(sendAbortSignal);
       } catch (error) {
-        if (abortSignal?.aborted) {
+        if (sendAbortSignal?.aborted || invocationAbortSignal?.aborted) {
           return;
         }
         throw error;
@@ -1169,6 +1175,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       try {
         await this.dispatchLiveRequest(connection, liveRequest);
       } catch (error) {
+        if (invocationAbortSignal?.aborted) {
+          return;
+        }
         logger.error('Error dispatching live request to model:', error);
         throw error;
       }
@@ -1236,9 +1245,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         return;
       }
       if (sendAbort.signal.aborted) {
-        if (sendAbort.signal.reason) {
-          throw sendAbort.signal.reason;
-        }
         return;
       }
 
@@ -1334,10 +1340,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           return;
         }
       }
-    }
-
-    if (sendAbort.signal.aborted && sendAbort.signal.reason) {
-      throw sendAbort.signal.reason;
     }
   }
 
