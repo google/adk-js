@@ -59,6 +59,52 @@ import {renderStructureGraphAsDot} from './structure_graph.js';
  */
 export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
 
+/**
+ * Environment variable that turns on caller identity enforcement using the
+ * built-in {@link iapUserIdResolver}, for operators who deploy behind
+ * Identity-Aware Proxy and do not construct the server themselves.
+ */
+export const ENFORCE_USER_IDENTITY_ENV_VAR = 'ADK_ENFORCE_USER_IDENTITY';
+
+/**
+ * Header Identity-Aware Proxy sets on requests it has already authenticated.
+ * The value is prefixed with the identity provider, for example
+ * `accounts.google.com:user@example.com`.
+ */
+export const IAP_AUTHENTICATED_USER_EMAIL_HEADER =
+  'x-goog-authenticated-user-email';
+
+/**
+ * Derives the caller's identity from a request whose credentials the front
+ * door has already verified. Returning `undefined` means the request carries
+ * no identity, which the server answers with `401`.
+ *
+ * A resolver must only read material the deployment's front door guarantees,
+ * such as a header the proxy sets and strips from client input. Reading an
+ * unverified request field would reintroduce the spoofing this check exists
+ * to prevent.
+ */
+export type UserIdResolver = (req: Request) => string | undefined;
+
+/**
+ * Reads the caller's email from the Identity-Aware Proxy header. IAP verifies
+ * the caller before the request reaches the container and overwrites this
+ * header on every request, so a client cannot set it.
+ */
+export function iapUserIdResolver(req: Request): string | undefined {
+  const header = req.get(IAP_AUTHENTICATED_USER_EMAIL_HEADER);
+  if (!header) {
+    return undefined;
+  }
+
+  // Strip the `accounts.google.com:` provider prefix. An email address cannot
+  // contain a colon, so the last one separates provider from identity.
+  const separator = header.lastIndexOf(':');
+  const identity = separator === -1 ? header : header.slice(separator + 1);
+
+  return identity.trim() || undefined;
+}
+
 interface ServerOptions {
   agentsDir?: string;
   host?: string;
@@ -80,6 +126,15 @@ interface ServerOptions {
    * `a2a` is enabled, the A2A surface is mounted WITHOUT authentication.
    */
   a2aAuthToken?: string;
+  /**
+   * Derives the caller's verified identity from a request. When set, the
+   * session, artifact and run endpoints refuse a request whose `userId` names
+   * anyone other than the caller. When unset, `userId` is taken from the
+   * request as before and no identity check is performed, which is only safe
+   * for a single-user local server. Defaults to {@link iapUserIdResolver} when
+   * `ADK_ENFORCE_USER_IDENTITY` is set.
+   */
+  resolveUserId?: UserIdResolver;
   reloadAgents?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
@@ -127,6 +182,7 @@ export class AdkApiServer {
   private readonly logger: Logger;
   private readonly a2a: boolean;
   private readonly a2aAuthToken?: string;
+  private readonly resolveUserId?: UserIdResolver;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -164,6 +220,13 @@ export class AdkApiServer {
     // to the authenticator, which rejects a token that is not usable.
     this.a2aAuthToken =
       options.a2aAuthToken || process.env[A2A_AUTH_TOKEN_ENV_VAR] || undefined;
+    // An explicit resolver wins. Otherwise the environment variable opts a
+    // deployment into the Identity-Aware Proxy header without needing code.
+    this.resolveUserId =
+      options.resolveUserId ??
+      (process.env[ENFORCE_USER_IDENTITY_ENV_VAR]
+        ? iapUserIdResolver
+        : undefined);
     this.app = express();
   }
 
@@ -212,6 +275,86 @@ export class AdkApiServer {
         allowUnauthenticated: authentication === undefined,
       });
     }
+  }
+
+  /**
+   * Checks the `userId` a request asked for against the caller's verified
+   * identity and reports the identity the request must run as.
+   *
+   * With no resolver configured this keeps the historical behaviour and hands
+   * back the requested `userId` unchanged. With a resolver configured an
+   * unidentified caller is answered `401` and a caller naming somebody else is
+   * answered `403`, in both cases without reaching the session service.
+   */
+  private authorizeUserId(
+    req: Request,
+    res: Response,
+    requestedUserId?: string,
+  ): {allowed: boolean; userId?: string} {
+    if (!this.resolveUserId) {
+      return {allowed: true, userId: requestedUserId};
+    }
+
+    const callerId = this.resolveUserId(req);
+    if (!callerId) {
+      res
+        .status(401)
+        .json({error: 'Request carries no verified caller identity'});
+      return {allowed: false};
+    }
+
+    if (requestedUserId !== undefined && requestedUserId !== callerId) {
+      this.logger.warn(
+        `Refused ${req.method} ${req.originalUrl}: the authenticated caller may not act as another user`,
+      );
+      res
+        .status(403)
+        .json({error: 'userId does not match the authenticated caller'});
+      return {allowed: false};
+    }
+
+    // A request that named nobody still runs as the caller, never as a
+    // fallback identity that a second caller could also reach.
+    return {allowed: true, userId: callerId};
+  }
+
+  /**
+   * Rejects requests that ask to act as a user other than the caller, before
+   * any handler reads `userId`.
+   *
+   * The session, artifact and event endpoints carry `userId` in the path, so
+   * the check is mounted on their shared prefix. `/run` and `/run_sse` carry
+   * it in the JSON body, so those are matched by path and read from the body
+   * that `express.json()` has already parsed. `/api/reasoning_engine` accepts
+   * an unparsed body and is checked inside its own handler instead.
+   */
+  private mountUserIdentityChecks(app: express.Application) {
+    app.use(
+      '/apps/:appName/users/:userId',
+      (req: Request, res: Response, next: express.NextFunction) => {
+        if (this.authorizeUserId(req, res, req.params['userId']).allowed) {
+          next();
+        }
+      },
+    );
+
+    app.use(
+      ['/run', '/run_sse'],
+      (req: Request, res: Response, next: express.NextFunction) => {
+        const body = req.body as {userId?: string} | undefined;
+        const {allowed, userId} = this.authorizeUserId(req, res, body?.userId);
+        if (!allowed) {
+          return;
+        }
+
+        // Pin the body to the verified identity so a handler that reads
+        // `req.body.userId` cannot see an absent or stale value.
+        if (body && userId !== undefined) {
+          body.userId = userId;
+        }
+        next();
+      },
+    );
   }
 
   private async init() {
@@ -263,6 +406,8 @@ export class AdkApiServer {
       this.logger.info(`${req.method} ${req.originalUrl}`);
       next();
     });
+
+    this.mountUserIdentityChecks(app);
 
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {
@@ -937,7 +1082,15 @@ export class AdkApiServer {
       const executeQuery = async (body: any) => {
         const input = body.input || {};
         const appName = input.appName || body.appName;
-        const userId = input.userId || body.userId || 'default-user';
+        const authorized = this.authorizeUserId(
+          req,
+          res,
+          input.userId || body.userId || undefined,
+        );
+        if (!authorized.allowed) {
+          return;
+        }
+        const userId = authorized.userId || 'default-user';
         const sessionId =
           input.sessionId || body.sessionId || 'default-session';
         const newMessage = input.newMessage || body.newMessage;
@@ -1077,8 +1230,29 @@ export class AdkApiServer {
     });
   }
 
+  /**
+   * Warns when the server is reachable beyond this machine and still trusts
+   * the `userId` the client sends. `adk deploy` binds to `0.0.0.0`, so this
+   * fires exactly on the deployments where a second user can reach the API.
+   */
+  private warnIfUserIdIsUnverified() {
+    const loopbackHosts = ['localhost', '127.0.0.1', '::1'];
+    if (this.resolveUserId || loopbackHosts.includes(this.host)) {
+      return;
+    }
+
+    this.logger.warn(
+      `Serving on ${this.host} without caller identity enforcement. Sessions ` +
+        `are separated only by the userId each request sends, so any caller ` +
+        `that reaches this server can read, run as, or delete another user's ` +
+        `sessions. Set ${ENFORCE_USER_IDENTITY_ENV_VAR} when deploying behind ` +
+        `Identity-Aware Proxy, or pass a resolveUserId resolver.`,
+    );
+  }
+
   async start(): Promise<void> {
     await this.init();
+    this.warnIfUserIdIsUnverified();
 
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, this.host, async () => {

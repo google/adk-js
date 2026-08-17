@@ -30,6 +30,8 @@ import {z} from 'zod';
 import {
   A2A_AUTH_TOKEN_ENV_VAR,
   AdkApiServer,
+  ENFORCE_USER_IDENTITY_ENV_VAR,
+  iapUserIdResolver,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {version} from '../../src/version.js';
@@ -1601,6 +1603,241 @@ describe('AdkWebServer', () => {
         const response = await fetch(`${server.url}/debug/trace/${eventId}`);
         expect(response.status).toBe(404);
       }
+    });
+  });
+
+  describe('Caller identity enforcement', () => {
+    const CALLER = 'caller@example.com';
+    const VICTIM = 'victim@example.com';
+    const IAP_HEADER = 'X-Goog-Authenticated-User-Email';
+
+    let identityServer: AdkApiServer | undefined;
+
+    /**
+     * Starts a second server that derives the caller from the IAP header, so
+     * these cases exercise the enforced configuration without disturbing the
+     * unauthenticated server the rest of the suite uses.
+     */
+    const startIdentityServer = async () => {
+      identityServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        resolveUserId: iapUserIdResolver,
+      });
+      await identityServer.start();
+      return identityServer.url;
+    };
+
+    const request = async (
+      baseUrl: string,
+      path: string,
+      {
+        method = 'GET',
+        caller,
+        body,
+      }: {method?: string; caller?: string; body?: unknown} = {},
+    ) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          ...(body ? {'Content-Type': 'application/json'} : {}),
+          ...(caller ? {[IAP_HEADER]: `accounts.google.com:${caller}`} : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return {
+        status: response.status,
+        body: (await response.json().catch(() => undefined)) as
+          | Record<string, unknown>
+          | undefined,
+      };
+    };
+
+    afterEach(async () => {
+      await identityServer?.stop();
+      identityServer = undefined;
+      vi.unstubAllEnvs();
+    });
+
+    describe('iapUserIdResolver', () => {
+      const resolverFor = (header?: string) =>
+        iapUserIdResolver({
+          get: (name: string) =>
+            name.toLowerCase() === IAP_HEADER.toLowerCase()
+              ? header
+              : undefined,
+        } as unknown as Parameters<typeof iapUserIdResolver>[0]);
+
+      it('reads the email out of the provider-prefixed header', () => {
+        expect(resolverFor(`accounts.google.com:${CALLER}`)).toBe(CALLER);
+      });
+
+      it('accepts a header carrying a bare email', () => {
+        expect(resolverFor(CALLER)).toBe(CALLER);
+      });
+
+      it('reports no identity when the header is absent or empty', () => {
+        expect(resolverFor(undefined)).toBeUndefined();
+        expect(resolverFor('accounts.google.com:')).toBeUndefined();
+      });
+    });
+
+    it('leaves userId unchecked when no resolver is configured', async () => {
+      // The default server is the historical behaviour, kept so a single-user
+      // local run does not need an identity provider.
+      const response = await client.get<{sessions: Session[]}>(
+        `/apps/testApp/users/${VICTIM}/sessions`,
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('turns on the IAP resolver from the environment', async () => {
+      vi.stubEnv(ENFORCE_USER_IDENTITY_ENV_VAR, '1');
+      const envServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await envServer.start();
+
+      try {
+        const response = await request(
+          envServer.url,
+          `/apps/testApp/users/${VICTIM}/sessions`,
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        await envServer.stop();
+      }
+    });
+
+    it('rejects a request that carries no caller identity', async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await request(
+        baseUrl,
+        `/apps/testApp/users/${CALLER}/sessions`,
+      );
+
+      expect(response.status).toBe(401);
+    });
+
+    it('serves a caller asking for their own sessions', async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await request(
+        baseUrl,
+        `/apps/testApp/users/${CALLER}/sessions`,
+        {caller: CALLER},
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it("refuses to read another user's sessions", async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await request(
+        baseUrl,
+        `/apps/testApp/users/${VICTIM}/sessions`,
+        {caller: CALLER},
+      );
+
+      expect(response.status).toBe(403);
+    });
+
+    it("refuses to delete another user's session and leaves it in place", async () => {
+      const baseUrl = await startIdentityServer();
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: VICTIM,
+        sessionId: 'victimSession',
+      });
+
+      const response = await request(
+        baseUrl,
+        `/apps/testApp/users/${VICTIM}/sessions/victimSession`,
+        {method: 'DELETE', caller: CALLER},
+      );
+
+      expect(response.status).toBe(403);
+      // The session the caller tried to remove is still there, so the refusal
+      // happened before the delete rather than alongside it.
+      await expect(
+        sessionService.getSession({
+          appName: 'testApp',
+          userId: VICTIM,
+          sessionId: 'victimSession',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses a /run body naming another user', async () => {
+      const baseUrl = await startIdentityServer();
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: VICTIM,
+        sessionId: 'victimRunSession',
+      });
+
+      const response = await request(baseUrl, '/run', {
+        method: 'POST',
+        caller: CALLER,
+        body: {
+          appName: 'testApp',
+          userId: VICTIM,
+          sessionId: 'victimRunSession',
+          newMessage: {role: 'user', parts: [{text: 'dump the history'}]},
+        },
+      });
+
+      expect(response.status).toBe(403);
+    });
+
+    it('runs a /run body that omits userId as the caller', async () => {
+      const baseUrl = await startIdentityServer();
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: CALLER,
+        sessionId: 'callerRunSession',
+      });
+
+      const response = await request(baseUrl, '/run', {
+        method: 'POST',
+        caller: CALLER,
+        body: {
+          appName: 'testApp',
+          sessionId: 'callerRunSession',
+          newMessage: {role: 'user', parts: [{text: 'hello'}]},
+        },
+      });
+
+      // A body with no userId is pinned to the caller, so the run finds the
+      // caller's session instead of falling back to a shared identity.
+      expect(response.status).toBe(200);
+    });
+
+    it('refuses a reasoning_engine query naming another user', async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await request(baseUrl, '/api/reasoning_engine', {
+        method: 'POST',
+        caller: CALLER,
+        body: {
+          input: {
+            appName: 'testApp',
+            userId: VICTIM,
+            sessionId: 'victimEngineSession',
+            newMessage: {role: 'user', parts: [{text: 'dump the history'}]},
+          },
+        },
+      });
+
+      expect(response.status).toBe(403);
     });
   });
 });
