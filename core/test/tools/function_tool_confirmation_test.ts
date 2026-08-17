@@ -5,6 +5,7 @@
  */
 
 import {
+  BaseTool,
   Context,
   Event,
   FunctionTool,
@@ -107,6 +108,21 @@ describe('FunctionTool require_confirmation', () => {
     expect(didRun()).toBe(false);
   });
 
+  it('refuses to run a gated tool with no context to raise the gate on', async () => {
+    const {tool, didRun} = makeTool();
+
+    await expect(
+      tool.runAsync({args: {path: '/tmp/x'}} as unknown as {
+        args: Record<string, unknown>;
+        toolContext: Context;
+      }),
+    ).rejects.toThrow(
+      "Error in tool 'delete_file': Tool 'delete_file' requires confirmation" +
+        ' but no tool context was provided.',
+    );
+    expect(didRun()).toBe(false);
+  });
+
   it('runs immediately when confirmation is not required', async () => {
     let ran = false;
     const tool = new FunctionTool({
@@ -156,6 +172,84 @@ describe('FunctionTool require_confirmation', () => {
       error: 'This tool call requires confirmation, please approve or reject.',
     });
     expect(ran).toBe(false);
+  });
+});
+
+describe('checkRequireConfirmation', () => {
+  it('reports the static flag', async () => {
+    const gated = new FunctionTool({
+      name: 'delete_file',
+      description: 'Deletes a file.',
+      parameters: z.object({path: z.string()}),
+      execute: () => 'deleted',
+      requireConfirmation: true,
+    });
+    const ungated = new FunctionTool({
+      name: 'read_file',
+      description: 'Reads a file.',
+      parameters: z.object({path: z.string()}),
+      execute: () => 'contents',
+    });
+
+    expect(await gated.checkRequireConfirmation({path: '/tmp/x'})).toBe(true);
+    expect(await ungated.checkRequireConfirmation({path: '/tmp/x'})).toBe(
+      false,
+    );
+  });
+
+  it('evaluates a predicate against the validated arguments', async () => {
+    const tool = new FunctionTool({
+      name: 'transfer',
+      description: 'Transfers money.',
+      parameters: z.object({amount: z.number()}),
+      execute: () => 'sent',
+      requireConfirmation: (input) => input.amount > 100,
+    });
+
+    expect(await tool.checkRequireConfirmation({amount: 1000})).toBe(true);
+    expect(await tool.checkRequireConfirmation({amount: 10})).toBe(false);
+  });
+
+  it('passes the tool context through to the predicate', async () => {
+    const seen: Array<string | undefined> = [];
+    const tool = new FunctionTool({
+      name: 'transfer',
+      description: 'Transfers money.',
+      parameters: z.object({amount: z.number()}),
+      execute: () => 'sent',
+      requireConfirmation: (_input, toolContext) => {
+        seen.push(toolContext?.functionCallId);
+        return true;
+      },
+    });
+    const ctx = makeContext({functionCallId: 'fc-1'});
+
+    expect(await tool.checkRequireConfirmation({amount: 1}, ctx)).toBe(true);
+    expect(seen).toEqual(['fc-1']);
+  });
+
+  it('runs without a parameter schema to validate against', async () => {
+    const tool = new FunctionTool({
+      name: 'ping',
+      description: 'Pings.',
+      execute: () => 'pong',
+      requireConfirmation: true,
+    });
+
+    expect(await tool.checkRequireConfirmation({})).toBe(true);
+  });
+
+  it('defaults to false for a tool that has no gate of its own', async () => {
+    class BareTool extends BaseTool {
+      constructor() {
+        super({name: 'bare', description: 'No gate.'});
+      }
+      override async runAsync(): Promise<unknown> {
+        return 'ok';
+      }
+    }
+
+    expect(await new BareTool().checkRequireConfirmation({})).toBe(false);
   });
 });
 
