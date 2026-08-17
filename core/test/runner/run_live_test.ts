@@ -5,6 +5,7 @@
  */
 
 import {
+  AsyncQueue,
   BaseLlm,
   BaseLlmConnection,
   BaseTool,
@@ -35,8 +36,13 @@ class RecordingConnection implements BaseLlmConnection {
   sendContentError?: Error;
   sendRealtimeError?: Error;
   rejectOnClose = false;
+  private readonly queue = new AsyncQueue<LlmResponse | Error>();
 
-  constructor(private readonly responses: Array<LlmResponse | Error>) {}
+  constructor(responses: Array<LlmResponse | Error>) {
+    for (const r of responses) {
+      this.queue.push(r);
+    }
+  }
 
   async sendHistory(history: Content[]): Promise<void> {
     this.historyCalls.push(history);
@@ -66,7 +72,7 @@ class RecordingConnection implements BaseLlmConnection {
     this.activityEndCalls += 1;
   }
   async *receive(): AsyncGenerator<LlmResponse, void, void> {
-    for (const response of this.responses) {
+    for await (const response of this.queue) {
       if (response instanceof Error) {
         throw response;
       }
@@ -75,6 +81,7 @@ class RecordingConnection implements BaseLlmConnection {
   }
   async close(): Promise<void> {
     this.closed = true;
+    this.queue.close();
   }
 }
 
@@ -791,6 +798,44 @@ describe('Runner.runLive', () => {
     }
 
     expect(llm.connection!.closed).toBe(true);
+  });
+
+  it('reconnects with session handle on goAway when outbound send rejects on closed connection', async () => {
+    const llm = new FakeLiveLlm([
+      [
+        {liveSessionResumptionUpdate: {newHandle: 'handle-goaway'}},
+        {goAway: {timeLeft: '1s'}},
+      ],
+      [{turnComplete: true}],
+    ]);
+    llm.rejectOnClose = true;
+
+    const agent = new LlmAgent({name: 'agent', model: llm});
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+    });
+
+    const queue = new LiveRequestQueue();
+    // Queue up requests that will be dispatched as connection is closing
+    queue.sendContent({role: 'user', parts: [{text: 'msg1'}]});
+    queue.sendContent({role: 'user', parts: [{text: 'msg2'}]});
+    queue.close();
+
+    for await (const _ of runner.runLive({
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+      liveRequestQueue: queue,
+    })) {
+      // drain
+    }
+
+    expect(llm.connections.length).toBe(2);
+    expect(
+      llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
+    ).toBe('handle-goaway');
   });
 
   it('transfers to a sub-agent on transfer_to_agent and yields its events', async () => {
