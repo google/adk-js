@@ -230,17 +230,27 @@ function collectApprovals(
   return approvals;
 }
 
-/** Reads a {@link ToolConfirmation} out of a confirmation function response. */
+/**
+ * Reads a {@link ToolConfirmation} out of a confirmation function response,
+ * which a client may send as fields or as a JSON string.
+ *
+ * `confirmed` has to be exactly `true`. Every reader of the field tests it for
+ * truthiness, so anything else truthy approves the call — and `"false"` is a
+ * string, which is what an HTML form sends for a box the user left unchecked.
+ * Approval is the one decision that must never be inferred.
+ */
 function parseToolConfirmation(
   response: Record<string, unknown>,
 ): ToolConfirmation {
-  if (Object.keys(response).length === 1 && 'response' in response) {
-    return JSON.parse(response['response'] as string) as ToolConfirmation;
-  }
+  const fields =
+    Object.keys(response).length === 1 && 'response' in response
+      ? (JSON.parse(response['response'] as string) as Record<string, unknown>)
+      : response;
+
   return new ToolConfirmation({
-    hint: response['hint'] as string,
-    payload: response['payload'],
-    confirmed: response['confirmed'] as boolean,
+    hint: fields['hint'] as string,
+    payload: fields['payload'],
+    confirmed: fields['confirmed'] === true,
   });
 }
 

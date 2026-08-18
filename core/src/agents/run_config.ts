@@ -122,9 +122,12 @@ export interface RunConfig {
    * Off by default: a remote peer is not the human operator, and a peer that
    * can post to the task would otherwise be able to approve a dangerous tool
    * call on the operator's behalf — the thing the gate exists to prevent. Turn
-   * it on only where the peer is a trusted relay for a real person: a
-   * front-end that renders the prompt and sends back what they chose. Mirrors
-   * adk-python, which refuses these outright.
+   * it on only where the peer is a trusted relay for a real person: a front-end
+   * that renders the prompt and sends back what they chose.
+   *
+   * A deliberate divergence from adk-python, which refuses a remote-delivered
+   * confirmation outright and offers no way back. The default matches; the
+   * option does not exist there.
    */
   allowRemoteToolConfirmation?: boolean;
 
@@ -133,6 +136,13 @@ export interface RunConfig {
    * remote peer. Not part of the configuration surface: an application setting
    * it by hand is asserting something about the message's provenance that only
    * the transport can know.
+   *
+   * Read by the tool-confirmation resume path only. The other two interrupts a
+   * peer can answer — `adk_request_credential` and `adk_request_input` — are
+   * answerable by a client by design: a credential is something a client holds,
+   * and an input request asks for data, not for judgement. Confirmation is the
+   * one that asks a specific human to take responsibility for an action, which
+   * is why it is the one a peer cannot stand in for.
    *
    * @internal
    */

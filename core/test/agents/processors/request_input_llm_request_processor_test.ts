@@ -152,6 +152,17 @@ describe('RequestInputLlmRequestProcessor provenance', () => {
     expect(runs).toEqual([{topic: 'kelp'}]);
   });
 
+  it('leaves a sibling agent to resume its own node-tool call', async () => {
+    const {tool, runs} = makeNodeTool();
+
+    await run(tool, [
+      ...pausedNodeToolEvents('other_agent'),
+      structuredAnswerEvent(),
+    ]);
+
+    expect(runs).toEqual([]);
+  });
+
   it('does not answer a client-written interrupt by plain text', async () => {
     const {tool, runs} = makeNodeTool();
 

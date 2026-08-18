@@ -365,6 +365,60 @@ describe('event_processor_utils', () => {
       ).toBeUndefined();
     });
 
+    it('does not treat a long-running tool call as a pause', () => {
+      // `isLongRunning` marks a tool that takes its time, not one waiting on a
+      // person — and one that returns nothing never gets a response event, so
+      // treating it as a pause would wedge the conversation shut for good.
+      const longRunning = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'slow-1', name: 'render_video', args: {}}},
+          ],
+        },
+        longRunningToolIds: ['slow-1'],
+      });
+
+      expect(
+        check(undefined, {parts: [{text: 'any news?'}]} as GenAIContent, [
+          longRunning,
+        ]),
+      ).toBeUndefined();
+    });
+
+    it('holds the pause for a credential request too', () => {
+      // All three `adk_request_*` kinds count as waiting on a person, and the
+      // id that answers each is whichever one the framework's own helper picks
+      // — the credential kind also carries one in `args.function_call_id`.
+      const credentialRequest = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'adk-credential-call',
+                name: 'adk_request_credential',
+                args: {function_call_id: 'tool-call-1', auth_config: {}},
+              },
+            },
+          ],
+        },
+      });
+
+      const result = check(
+        undefined,
+        {parts: [{text: 'never mind'}]} as GenAIContent,
+        [credentialRequest],
+      );
+
+      expect(result?.status?.state).toBe('input-required');
+      expect((result!.status?.message?.parts![1] as TextPart)?.text).toContain(
+        'No input provided for function call id adk-credential-call',
+      );
+    });
+
     it('ignores an ordinary tool call, and events with nothing in them', () => {
       const ordinary = createEvent({
         author: 'agent',

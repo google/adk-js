@@ -875,6 +875,98 @@ describe('RequestConfirmationLlmRequestProcessor approval lifecycle', () => {
     expect(resumedCalls).toEqual([wireTransferCall]);
   });
 
+  it.each([
+    ['the string "false"', 'false'],
+    ['the string "true"', 'true'],
+    ['a number', 1],
+    ['an object', {}],
+  ])('refuses to read %s as approval', async (_label, confirmed) => {
+    // Readers of `confirmed` test it for truthiness, so anything that is not
+    // exactly `true` has to be normalized away here — `"false"` above all,
+    // which is what an HTML form sends for a box left unchecked.
+    await run([
+      ...pausedCallEvents(),
+      createEvent({
+        invocationId: 'test-invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'gate-1',
+                name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+                response: {confirmed},
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    // The gate still resolves — as a denial, which is what a decision nobody
+    // can read amounts to.
+    expect(resumedCalls).toEqual([wireTransferCall]);
+    expect(decisions['call-1'].confirmed).toBe(false);
+  });
+
+  it('refuses a truthy `confirmed` inside a JSON response too', async () => {
+    await run([
+      ...pausedCallEvents(),
+      createEvent({
+        invocationId: 'test-invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'gate-1',
+                name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+                response: {response: JSON.stringify({confirmed: 'false'})},
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(decisions['call-1'].confirmed).toBe(false);
+  });
+
+  it('carries the hint and payload out of a JSON response', async () => {
+    await run([
+      ...pausedCallEvents(),
+      createEvent({
+        invocationId: 'test-invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'gate-1',
+                name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+                response: {
+                  response: JSON.stringify({
+                    confirmed: true,
+                    hint: 'looks fine',
+                    payload: {ticket: 'T-1'},
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(decisions['call-1']).toMatchObject({
+      confirmed: true,
+      hint: 'looks fine',
+      payload: {ticket: 'T-1'},
+    });
+  });
   it('resumes two gates from different turns approved together', async () => {
     const secondCall: FunctionCall = {
       id: 'call-2',

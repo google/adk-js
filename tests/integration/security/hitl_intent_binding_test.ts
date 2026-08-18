@@ -5,10 +5,9 @@
  */
 
 /**
- * Regression tests for b/538565318 — "Loopjacking" / agent task smuggling
- * against the human-in-the-loop (HITL) tool-confirmation gate.
+ * Regression tests for the human-in-the-loop (HITL) tool-confirmation gate.
  *
- * Threat model (from the bug): an actor that can write messages into a live
+ * Threat model: an actor that can write messages into a live
  * session/task — a compromised or malicious A2A peer, a second client on a
  * shared `contextId`, a browser tab that reaches the `/run` endpoint — but that
  * is NOT the human approver and cannot author model turns.
@@ -173,7 +172,7 @@ function approval(gateId: string): Content {
   };
 }
 
-describe('HITL tool confirmation intent binding (b/538565318)', () => {
+describe('HITL tool confirmation intent binding', () => {
   it('pins the approved call against a message smuggled into the pause', async () => {
     const {agent, transfers} = createFinanceAgent([
       callWireTransfer('call-1', 10, 'Alice'),
