@@ -216,10 +216,12 @@ export class FunctionTool<
     args: Record<string, unknown>,
     toolContext?: Context,
   ): Promise<boolean> {
-    return this.evaluateRequireConfirmation(
-      this.validateArgs(args),
-      toolContext,
-    );
+    // Only a predicate needs typed arguments. Validating for the static flag
+    // would answer a question about the gate with a schema error.
+    if (typeof this.requireConfirmation !== 'function') {
+      return this.requireConfirmation;
+    }
+    return this.requireConfirmation(this.validateArgs(args), toolContext);
   }
 
   /** Parses `args` against the parameter schema, when one is declared. */

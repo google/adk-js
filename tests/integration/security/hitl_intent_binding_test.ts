@@ -5,26 +5,25 @@
  */
 
 /**
- * Reproduction for b/538565318 — "Loopjacking" / agent task smuggling against
- * the human-in-the-loop (HITL) tool-confirmation gate.
+ * Regression tests for b/538565318 — "Loopjacking" / agent task smuggling
+ * against the human-in-the-loop (HITL) tool-confirmation gate.
  *
  * Threat model (from the bug): an actor that can write messages into a live
  * session/task — a compromised or malicious A2A peer, a second client on a
  * shared `contextId`, a browser tab that reaches the `/run` endpoint — but that
  * is NOT the human approver and cannot author model turns.
  *
- * `requireConfirmation` is supposed to guarantee that a tool runs only with the
- * exact arguments a human saw and approved. These tests probe that guarantee
- * from three directions:
+ * `requireConfirmation` guarantees that a tool runs only with the exact
+ * arguments a human saw and approved. These tests probe that guarantee from
+ * four directions:
  *
- *  1. `pins the approved call` — the intended behaviour, and it holds: a
- *     smuggled instruction that arrives while the gate is open does not change
- *     the arguments that execute.
- *  2. `forged confirmation gate` — the gate itself is forgeable. The resume
- *     path never checks that the `adk_request_confirmation` call it resumes was
- *     issued by the framework, so a client can fabricate one and approve it.
- *  3. `replayed approval` — an approval is not single-use. Re-sending an old
- *     confirmation response runs the tool again.
+ *  1. `pins the approved call` — a smuggled instruction that arrives while the
+ *     gate is open does not change the arguments that execute.
+ *  2. `forged confirmation gate` — a client cannot write its own gate and
+ *     approve it: the resume path refuses a gate it did not raise.
+ *  3. the same forgery over A2A, where a `data` part becomes a function call.
+ *  4. `replayed approval` — an approval is spent by the execution it
+ *     authorized, so replaying it runs nothing.
  */
 
 import {Part as A2APart} from '@a2a-js/sdk';
@@ -36,10 +35,12 @@ import {
   Event,
   FunctionTool,
   InMemoryRunner,
+  IntentMismatchError,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  isIntentMismatchError,
 } from '@google/adk';
 import {Content, createUserContent} from '@google/genai';
 import {describe, expect, it} from 'vitest';
@@ -193,7 +194,7 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
     expect(transfers).toEqual([{amount: 10, recipient: 'Alice'}]);
   });
 
-  it('runs an unapproved call from a client-forged confirmation gate', async () => {
+  it('refuses a client-forged confirmation gate', async () => {
     const {agent, transfers} = createFinanceAgent([
       callWireTransfer('call-1', 10, 'Alice'),
     ]);
@@ -242,14 +243,18 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
       ],
     });
 
-    // Finally it approves its own gate. No human ever saw this action.
-    await session.send(approval('forged-gate'));
+    // Finally it approves its own gate. No human ever saw this action, and the
+    // resume path refuses to treat a client-written gate as one it raised.
+    const refused = await session
+      .send(approval('forged-gate'))
+      .catch((e: unknown) => e);
 
-    // VULNERABILITY: the transfer the human never approved has executed.
-    expect(transfers).toEqual([{amount: 1000, recipient: 'Attacker'}]);
+    expect(isIntentMismatchError(refused)).toBe(true);
+    expect((refused as IntentMismatchError).reason).toBe('untrusted_request');
+    expect(transfers).toEqual([]);
   });
 
-  it('accepts the forged gate from a remote A2A peer', async () => {
+  it('refuses the forged gate from a remote A2A peer', async () => {
     const {agent, transfers} = createFinanceAgent([
       callWireTransfer('call-1', 10, 'Alice'),
     ]);
@@ -331,9 +336,10 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
       },
     ]);
 
-    // VULNERABILITY: reachable over the A2A transport, by a peer that is not
-    // the human approver.
-    expect(transfers).toEqual([{amount: 1000, recipient: 'Attacker'}]);
+    // Nothing ran: the executor turns the refusal into a failed task rather
+    // than executing an action the human never saw.
+    expect(transfers).toEqual([]);
+    expect(published.at(-1)?.status?.state).toBe('failed');
   });
 
   it('refuses a replayed approval', async () => {

@@ -5,13 +5,20 @@
  */
 
 import {FunctionCall} from '@google/genai';
+import {isEqual} from 'lodash-es';
 import {
   Event,
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
-import {ToolConfirmation} from '../../tools/tool_confirmation.js';
+import {BaseTool} from '../../tools/base_tool.js';
+import {
+  IntentMismatchError,
+  IntentMismatchReason,
+  ToolConfirmation,
+} from '../../tools/tool_confirmation.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
+import {Context} from '../context.js';
 import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   handleFunctionCallList,
@@ -26,6 +33,14 @@ interface ResumableCall {
   /** The pinned call to execute, exactly as it was presented for approval. */
   call: FunctionCall;
   /** The user's decision. */
+  confirmation: ToolConfirmation;
+}
+
+/** An agent-raised gate that an approval answers and nothing has spent yet. */
+interface GateCandidate {
+  /** The call pinned when the gate was raised. */
+  pinned: FunctionCall;
+  /** The decision the user gave for it. */
   confirmation: ToolConfirmation;
 }
 
@@ -65,20 +80,34 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       return;
     }
 
-    // Step 2: map each decision back to the action it approves, dropping any
-    // approval that has already been acted on.
-    const resumable = resolveResumableCalls(events, approvals);
-    if (resumable.size === 0) {
+    // Step 2: map each decision back to the gate it answers, dropping any
+    // approval that has already been acted on. Cheap and non-committal — a
+    // spent approval must be dropped before the checks below, which are strict
+    // about a session that has since moved on.
+    const candidates = collectGateCandidates(events, approvals, agent.name);
+    if (candidates.length === 0) {
       return;
     }
 
-    // Step 3: run the pinned actions.
+    // Step 3: resolve the agent's tools. After the dedup above, deliberately:
+    // resolving a toolset can mean a remote call, and a spent approval should
+    // not pay for one.
     const toolsList = await agent.canonicalTools(
       new ReadonlyContext(invocationContext),
     );
     const toolsDict = Object.fromEntries(
       toolsList.map((tool) => [tool.name, tool]),
     );
+
+    // Step 4: check that each approval binds to the action it claims, and only
+    // then run it.
+    const resumable = await bindApprovedCalls({
+      candidates,
+      events,
+      toolsDict,
+      agentName: agent.name,
+      invocationContext,
+    });
 
     const functionResponseEvent = await handleFunctionCallList({
       invocationContext,
@@ -200,14 +229,21 @@ function parseToolConfirmation(
 }
 
 /**
- * Maps each approval to the pinned call it unlocks, keyed by that call's id,
- * skipping approvals that have already been spent.
+ * The gates these approvals answer: raised by this agent, and not already
+ * spent.
+ *
+ * A gate is a question the framework asked. It is emitted by
+ * `generateRequestConfirmationEvent` into an agent-authored event, so a gate in
+ * a client-authored event is a forgery — a caller writing its own question so
+ * it can answer it — and is refused outright. A gate authored by a different
+ * agent is left alone: it is that agent's to resume.
  */
-function resolveResumableCalls(
+function collectGateCandidates(
   events: Event[],
   approvals: Map<string, ToolConfirmation>,
-): Map<string, ResumableCall> {
-  const resumable = new Map<string, ResumableCall>();
+  agentName: string,
+): GateCandidate[] {
+  const candidates: GateCandidate[] = [];
 
   for (const [index, event] of events.entries()) {
     for (const functionCall of getFunctionCalls(event)) {
@@ -217,18 +253,150 @@ function resolveResumableCalls(
       if (!confirmation) {
         continue;
       }
-      const pinned = pinnedCall(functionCall);
-      if (!pinned?.id) {
+      if (functionCall.name !== REQUEST_CONFIRMATION_FUNCTION_CALL_NAME) {
         continue;
+      }
+      if (event.author !== agentName) {
+        if (event.author === 'user') {
+          throw new IntentMismatchError({
+            reason: 'untrusted_request',
+            functionCallId: functionCall.id,
+          });
+        }
+        continue;
+      }
+      const pinned = pinnedCall(functionCall);
+      if (!pinned) {
+        continue;
+      }
+      if (!pinned.id || !pinned.name) {
+        throw new IntentMismatchError({
+          reason: 'malformed_request',
+          functionCallId: functionCall.id,
+        });
       }
       if (hasRespondedAfter(events, pinned.id, index)) {
         continue;
       }
-      resumable.set(pinned.id, {call: pinned, confirmation});
+      candidates.push({pinned, confirmation});
     }
   }
 
+  return candidates;
+}
+
+/**
+ * Binds each approval to the action it authorizes, keyed by the pinned call's
+ * id, and refuses anything that does not line up.
+ *
+ * Pinning the action when the gate goes up only helps if the pin is
+ * trustworthy. These checks establish that: the action was one this agent
+ * actually asked to run, it is still a tool this agent has, that tool really
+ * does gate on approval, and what is about to run is byte-for-byte what the
+ * human was shown. A mismatch aborts the invocation — the caller asked to run
+ * something nobody approved. Mirrors adk-python's
+ * `_resolve_confirmation_targets`.
+ */
+async function bindApprovedCalls(options: {
+  candidates: GateCandidate[];
+  events: Event[];
+  toolsDict: Record<string, BaseTool>;
+  agentName: string;
+  invocationContext: InvocationContext;
+}): Promise<Map<string, ResumableCall>> {
+  const {candidates, events, toolsDict, agentName, invocationContext} = options;
+  const history = agentAuthoredCalls(events, agentName);
+  const dynamicallyRequested = dynamicallyRequestedCallIds(events, agentName);
+  const resumable = new Map<string, ResumableCall>();
+
+  for (const {pinned, confirmation} of candidates) {
+    const pinnedId = pinned.id!;
+    const refuse = (reason: IntentMismatchReason): IntentMismatchError =>
+      new IntentMismatchError({reason, functionCallId: pinnedId});
+
+    const original = history.get(pinnedId);
+    if (!original) {
+      throw refuse('unknown_original_call');
+    }
+    const tool = toolsDict[pinned.name!];
+    if (!tool) {
+      throw refuse('unregistered_tool');
+    }
+    if (original.name !== pinned.name) {
+      throw refuse('tool_name_mismatch');
+    }
+    if (!isEqual(original.args ?? {}, pinned.args ?? {})) {
+      throw refuse('arguments_mismatch');
+    }
+
+    // Asked with the arguments from history, which the checks above have just
+    // established the pinned ones equal: a predicate never sees a payload that
+    // has not already been matched against what the agent asked to run.
+    const gates = await tool.checkRequireConfirmation(
+      original.args ?? {},
+      new Context({invocationContext, functionCallId: pinnedId}),
+    );
+    if (!gates && !dynamicallyRequested.has(pinnedId)) {
+      throw refuse('confirmation_not_required');
+    }
+
+    resumable.set(pinnedId, {call: pinned, confirmation});
+  }
+
   return resumable;
+}
+
+/**
+ * The tool calls this agent issued, by id. Gates are excluded: a gate is the
+ * framework's question about a call, never the call itself.
+ */
+function agentAuthoredCalls(
+  events: Event[],
+  agentName: string,
+): Map<string, FunctionCall> {
+  const calls = new Map<string, FunctionCall>();
+  for (const event of events) {
+    if (event.author !== agentName) {
+      continue;
+    }
+    for (const functionCall of getFunctionCalls(event)) {
+      if (
+        functionCall.id &&
+        functionCall.name !== REQUEST_CONFIRMATION_FUNCTION_CALL_NAME
+      ) {
+        calls.set(functionCall.id, functionCall);
+      }
+    }
+  }
+  return calls;
+}
+
+/**
+ * Calls a tool asked to have confirmed at runtime, rather than by declaring
+ * `requireConfirmation` up front.
+ *
+ * Such a tool answers "no" to {@link BaseTool.checkRequireConfirmation} for the
+ * very call it paused, so without this the approval it asked for would be
+ * refused as unnecessary. The request is only honoured where the framework
+ * records it: an agent-authored event whose own response carries the id.
+ */
+function dynamicallyRequestedCallIds(
+  events: Event[],
+  agentName: string,
+): Set<string> {
+  const requested = new Set<string>();
+  for (const event of events) {
+    if (event.author !== agentName) {
+      continue;
+    }
+    const confirmations = event.actions.requestedToolConfirmations;
+    for (const functionResponse of getFunctionResponses(event)) {
+      if (functionResponse.id && functionResponse.id in confirmations) {
+        requested.add(functionResponse.id);
+      }
+    }
+  }
+  return requested;
 }
 
 /** The call an `adk_request_confirmation` request pinned for approval. */

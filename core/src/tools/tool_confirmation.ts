@@ -41,6 +41,8 @@ export class ToolConfirmation {
  * path makes before it runs a tool call a human approved.
  */
 export type IntentMismatchReason =
+  /** The `adk_request_confirmation` call was not raised by the agent. */
+  | 'untrusted_request'
   /** The `adk_request_confirmation` call carries no usable pinned call. */
   | 'malformed_request'
   /** The pinned call is absent from session history. */
