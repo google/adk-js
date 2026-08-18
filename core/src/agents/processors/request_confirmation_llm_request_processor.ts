@@ -18,6 +18,7 @@ import {
   ToolConfirmation,
 } from '../../tools/tool_confirmation.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
+import {logger} from '../../utils/logger.js';
 import {Context} from '../context.js';
 import {
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
@@ -71,10 +72,25 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       return;
     }
 
+    // A human-in-the-loop gate cannot be satisfied by a message that arrived
+    // over A2A: the peer that sent it is not the operator whose judgement the
+    // gate is asking for. A deployment where the peer is a trusted relay for a
+    // real person opts back in explicitly.
+    const runConfig = invocationContext.runConfig;
+    if (runConfig?.remoteDelivered && !runConfig.allowRemoteToolConfirmation) {
+      logger.warn(
+        'Ignoring tool confirmation(s) delivered over A2A: a remote peer ' +
+          'cannot answer a human-in-the-loop gate. Set ' +
+          '`allowRemoteToolConfirmation` on the run config if the peer relays ' +
+          'a real operator decision.',
+      );
+      return;
+    }
+
     // Step 1: read the decisions out of the user's latest turn.
     const approvals = collectApprovals(
       events,
-      invocationContext.runConfig?.plainTextToolConfirmation ?? false,
+      runConfig?.plainTextToolConfirmation ?? false,
     );
     if (approvals.size === 0) {
       return;

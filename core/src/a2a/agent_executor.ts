@@ -154,7 +154,10 @@ export class A2AAgentExecutor implements AgentExecutor {
         userId,
         sessionId,
         newMessage: genAIUserMessage,
-        runConfig: this.config.runConfig,
+        // Marked remote so the run knows this message came from a peer rather
+        // than from the operator: a human-in-the-loop gate is not answerable
+        // over A2A unless the deployment opts in.
+        runConfig: {...this.config.runConfig, remoteDelivered: true},
       })) {
         adkEvents.push(adkEvent);
 

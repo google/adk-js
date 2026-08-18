@@ -37,24 +37,24 @@ tags: []
 paths:
   /api/get_profile:
     get:
-      description: "get_profile Private API: Request confirmed profile data for your unique member ID"
+      description: 'get_profile Private API: Request confirmed profile data for your unique member ID'
       operationId: getProfile
       parameters:
         - description: This is your unique username or member ID
           in: query
           name: id
           schema:
-            example: "{{your-member-id}}"
+            example: '{{your-member-id}}'
             type: string
         - description: The service name given to you by TruAnon
           in: query
           name: service
           schema:
-            example: "{{service-identifier}}"
+            example: '{{service-identifier}}'
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
       summary: Get Profile
   /api/request_token:
     get:
@@ -72,15 +72,15 @@ paths:
           in: query
           name: id
           schema:
-            example: "{{your-member-id}}"
+            example: '{{your-member-id}}'
             type: string
         - description: The service name given to you by TruAnon
           in: query
           name: service
           schema:
-            example: "{{service-identifier}}"
+            example: '{{service-identifier}}'
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
       summary: Get Token

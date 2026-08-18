@@ -17,6 +17,7 @@ import {
   LlmAgent,
   PluginManager,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  RunConfig,
   ToolConfirmation,
   createEvent,
   createEventActions,
@@ -780,7 +781,12 @@ describe('RequestConfirmationLlmRequestProcessor approval lifecycle', () => {
 
   async function run(
     events: Event[],
-    options: {branch?: string; plainText?: boolean; tools?: BaseTool[]} = {},
+    options: {
+      branch?: string;
+      plainText?: boolean;
+      tools?: BaseTool[];
+      runConfig?: RunConfig;
+    } = {},
   ): Promise<void> {
     const agent = new LlmAgent({name: AGENT_NAME, model: 'gemini-2.5-flash'});
     vi.spyOn(agent, 'canonicalTools').mockResolvedValue(
@@ -797,9 +803,9 @@ describe('RequestConfirmationLlmRequestProcessor approval lifecycle', () => {
         userId: 'test-user',
       }),
       pluginManager: new PluginManager([]),
-      runConfig: options.plainText
-        ? {plainTextToolConfirmation: true}
-        : undefined,
+      runConfig:
+        options.runConfig ??
+        (options.plainText ? {plainTextToolConfirmation: true} : undefined),
     });
     await collectEvents(invocationContext);
   }
@@ -1129,6 +1135,24 @@ describe('RequestConfirmationLlmRequestProcessor approval lifecycle', () => {
       ]);
 
       expect(resumedCalls).toEqual([]);
+    });
+
+    it('ignores an approval delivered over A2A', async () => {
+      // The peer that posted the message is not the operator the gate is
+      // asking, so the decision it carries is not the operator's.
+      await run([...pausedCallEvents(), approvalEvent(['gate-1'])], {
+        runConfig: {remoteDelivered: true},
+      });
+
+      expect(resumedCalls).toEqual([]);
+    });
+
+    it('honours an A2A approval when the deployment opts in', async () => {
+      await run([...pausedCallEvents(), approvalEvent(['gate-1'])], {
+        runConfig: {remoteDelivered: true, allowRemoteToolConfirmation: true},
+      });
+
+      expect(resumedCalls).toEqual([wireTransferCall]);
     });
 
     it('leaves another agent to resume its own gate', async () => {

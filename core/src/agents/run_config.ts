@@ -114,6 +114,29 @@ export interface RunConfig {
    * decision; interactive front-ends (e.g. `adk run`) opt in explicitly.
    */
   plainTextToolConfirmation?: boolean;
+
+  /**
+   * If true, a `requireConfirmation` gate may be answered by a message that
+   * arrived over A2A.
+   *
+   * Off by default: a remote peer is not the human operator, and a peer that
+   * can post to the task would otherwise be able to approve a dangerous tool
+   * call on the operator's behalf — the thing the gate exists to prevent. Turn
+   * it on only where the peer is a trusted relay for a real person: a
+   * front-end that renders the prompt and sends back what they chose. Mirrors
+   * adk-python, which refuses these outright.
+   */
+  allowRemoteToolConfirmation?: boolean;
+
+  /**
+   * Set by the A2A executor to record that this run's message came from a
+   * remote peer. Not part of the configuration surface: an application setting
+   * it by hand is asserting something about the message's provenance that only
+   * the transport can know.
+   *
+   * @internal
+   */
+  remoteDelivered?: boolean;
 }
 
 /**
