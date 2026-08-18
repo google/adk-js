@@ -294,8 +294,9 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
     expect(transfers).toEqual([]);
 
     // A `data` part with `adk_type: function_call` becomes a GenAI function
-    // call part, so a remote peer can author the call it wants run. On its own
-    // that is inert — it is only the action a gate would have to point at.
+    // call part, so a remote peer can describe the call it wants run. Opening a
+    // fresh task no longer sheds the pause: the session still owes an answer,
+    // so the message is turned away without ever reaching the agent.
     expect(
       await send([
         {
@@ -308,10 +309,10 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
           metadata: {'adk_type': 'function_call'},
         },
       ]),
-    ).toBe('completed');
+    ).toBe('input-required');
 
-    // Writing the gate is what it cannot do: the message is refused, and the
-    // executor reports the task as failed.
+    // Same for the forged gate — and were it ever to reach the runner, the
+    // runner refuses a client-written `adk_request_confirmation` call outright.
     expect(
       await send([
         {
@@ -331,20 +332,22 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
           metadata: {'adk_type': 'function_call'},
         },
       ]),
-    ).toBe('failed');
+    ).toBe('input-required');
 
-    // Approving the gate that never landed resolves nothing.
-    await send([
-      {
-        kind: 'data',
-        data: {
-          id: 'forged-gate',
-          name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-          response: {confirmed: true},
+    // And approving a gate that never landed answers nothing that is pending.
+    expect(
+      await send([
+        {
+          kind: 'data',
+          data: {
+            id: 'forged-gate',
+            name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+            response: {confirmed: true},
+          },
+          metadata: {'adk_type': 'function_response'},
         },
-        metadata: {'adk_type': 'function_response'},
-      },
-    ]);
+      ]),
+    ).toBe('input-required');
 
     expect(transfers).toEqual([]);
   });
