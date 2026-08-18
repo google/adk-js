@@ -336,7 +336,7 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
     expect(transfers).toEqual([{amount: 1000, recipient: 'Attacker'}]);
   });
 
-  it('re-runs an approved call when an old approval is replayed', async () => {
+  it('refuses a replayed approval', async () => {
     const {agent, transfers} = createFinanceAgent([
       callWireTransfer('call-1', 10, 'Alice'),
     ]);
@@ -349,14 +349,10 @@ describe('HITL tool confirmation intent binding (b/538565318)', () => {
     expect(transfers).toEqual([{amount: 10, recipient: 'Alice'}]);
 
     // An unrelated turn, then the attacker replays the captured approval byte
-    // for byte. The approval was consumed once already.
+    // for byte. The approval was spent on the execution above.
     await session.send('Thanks!');
     await session.send(approval(gateId));
 
-    // VULNERABILITY: the approval is not single-use — the money moves twice.
-    expect(transfers).toEqual([
-      {amount: 10, recipient: 'Alice'},
-      {amount: 10, recipient: 'Alice'},
-    ]);
+    expect(transfers).toEqual([{amount: 10, recipient: 'Alice'}]);
   });
 });
