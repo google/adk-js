@@ -79,6 +79,13 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
     }
     const pending: Record<string, FunctionCall> = {};
     for (const event of events) {
+      // A pending call is one the agent made and has not finished. A client
+      // that writes a node-tool call into the session as an ordinary message
+      // is not reminding the agent of unfinished work — it is asking for work
+      // to start, with arguments and resume inputs of its own choosing.
+      if (event.author === 'user') {
+        continue;
+      }
       for (const fc of getFunctionCalls(event)) {
         if (
           fc.id &&
@@ -227,6 +234,11 @@ function pendingInterruptIds(
   }
   const pending = new Set<string>();
   for (const event of events) {
+    // An interrupt is raised by the framework, never by the party answering
+    // it — a client-authored one is a question the client asked itself.
+    if (event.author === 'user') {
+      continue;
+    }
     for (const fc of getFunctionCalls(event)) {
       if (
         fc.name === REQUEST_INPUT_FUNCTION_CALL_NAME &&
