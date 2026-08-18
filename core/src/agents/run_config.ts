@@ -6,6 +6,7 @@
 
 import {
   AudioTranscriptionConfig,
+  ContextWindowCompressionConfig,
   Modality,
   ProactivityConfig,
   RealtimeInputConfig,
@@ -90,6 +91,12 @@ export interface RunConfig {
    * Realtime input config for live agents with audio input from user.
    */
   realtimeInputConfig?: RealtimeInputConfig;
+
+  /**
+   * Context window compression config. When the running context exceeds
+   * `triggerTokens`, the server compresses older history to `targetTokens`.
+   */
+  contextWindowCompression?: ContextWindowCompressionConfig;
 
   /**
    * A limit on the total number of llm calls for a given run.

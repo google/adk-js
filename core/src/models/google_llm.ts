@@ -248,6 +248,7 @@ export class Gemini extends BaseLlm {
 
   get liveApiVersion(): string {
     if (!this._liveApiVersion) {
+      // Vertex uses the beta API; the AI Studio backend uses v1alpha.
       this._liveApiVersion =
         this.apiBackend === GoogleLLMVariant.VERTEX_AI ? 'v1beta1' : 'v1alpha';
     }
@@ -312,6 +313,18 @@ export class Gemini extends BaseLlm {
     }
 
     llmRequest.liveConnectConfig.tools = llmRequest.config?.tools;
+
+    // Gemini API (AI Studio) rejects `sessionResumption.transparent`; it is a
+    // Vertex-only flag. Strip it so callers can set a uniform resumption config
+    // regardless of backend.
+    if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
+      const resumption = llmRequest.liveConnectConfig.sessionResumption as
+        | {transparent?: boolean}
+        | undefined;
+      if (resumption) {
+        delete resumption.transparent;
+      }
+    }
 
     const modelVersion = llmRequest.model ?? this.model;
     const messageQueue = new AsyncQueue<LiveServerMessage>();
