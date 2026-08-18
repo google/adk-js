@@ -63,8 +63,12 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    * responses.
    *
    * @param content The content to send to the model.
+   * @param partial Whether the content is a partial turn update that does not
+   *     complete the model turn. The model folds it into the conversation and
+   *     keeps waiting instead of responding. Sent via sendClientContent --
+   *     realtimeInput has no no-response variant.
    */
-  async sendContent(content: Content): Promise<void> {
+  async sendContent(content: Content, partial = false): Promise<void> {
     if (!content.parts) {
       throw new Error('Content must have parts.');
     }
@@ -80,13 +84,18 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     } else {
       logger.debug('Sending LLM new content', content);
       const isGemini3x = isGemini3xFlashLive(this.modelVersion);
-      if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
+      if (
+        !partial &&
+        isGemini3x &&
+        content.parts.length === 1 &&
+        content.parts[0].text
+      ) {
         logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
       } else {
         this.geminiSession.sendClientContent({
           turns: [content],
-          turnComplete: true,
+          turnComplete: !partial,
         });
       }
     }
