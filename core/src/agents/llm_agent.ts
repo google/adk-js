@@ -1176,6 +1176,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         await this.dispatchLiveRequest(connection, liveRequest);
       } catch (error) {
         if (sendAbortSignal?.aborted || invocationAbortSignal?.aborted) {
+          logger.debug('Send failed after teardown:', error);
           return;
         }
         logger.error('Error dispatching live request to model:', error);

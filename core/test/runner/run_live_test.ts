@@ -36,6 +36,8 @@ class RecordingConnection implements BaseLlmConnection {
   sendContentError?: Error;
   sendRealtimeError?: Error;
   rejectOnClose = false;
+  rejectionsOnClosedConnection = 0;
+  sendDelayMs = 0;
   private readonly queue = new AsyncQueue<LlmResponse | Error>();
 
   constructor(responses: Array<LlmResponse | Error>) {
@@ -48,7 +50,11 @@ class RecordingConnection implements BaseLlmConnection {
     this.historyCalls.push(history);
   }
   async sendContent(content: Content): Promise<void> {
+    if (this.sendDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.sendDelayMs));
+    }
     if (this.closed && this.rejectOnClose) {
+      this.rejectionsOnClosedConnection += 1;
       throw new Error('Connection closed while sending content');
     }
     if (this.sendContentError) {
@@ -57,7 +63,11 @@ class RecordingConnection implements BaseLlmConnection {
     this.contentCalls.push(content);
   }
   async sendRealtime(blob: Blob): Promise<void> {
+    if (this.sendDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.sendDelayMs));
+    }
     if (this.closed && this.rejectOnClose) {
+      this.rejectionsOnClosedConnection += 1;
       throw new Error('Connection closed while sending realtime');
     }
     if (this.sendRealtimeError) {
@@ -89,6 +99,7 @@ class FakeLiveLlm extends BaseLlm {
   sendContentError?: Error;
   sendRealtimeError?: Error;
   rejectOnClose = false;
+  sendDelayMs = 0;
 
   get connection(): RecordingConnection | undefined {
     return this.connections.at(-1);
@@ -134,6 +145,7 @@ class FakeLiveLlm extends BaseLlm {
     connection.sendContentError = this.sendContentError;
     connection.sendRealtimeError = this.sendRealtimeError;
     connection.rejectOnClose = this.rejectOnClose;
+    connection.sendDelayMs = this.sendDelayMs;
     this.connections.push(connection);
     return connection;
   }
@@ -770,6 +782,7 @@ describe('Runner.runLive', () => {
       {turnComplete: true},
     ]);
     llm.rejectOnClose = true;
+    llm.sendDelayMs = 10;
 
     const agent = new LlmAgent({name: 'agent', model: llm});
     const runner = new Runner({
@@ -798,6 +811,7 @@ describe('Runner.runLive', () => {
     }
 
     expect(llm.connection!.closed).toBe(true);
+    expect(llm.connection!.rejectionsOnClosedConnection).toBeGreaterThan(0);
   });
 
   it('reconnects with session handle on goAway when outbound send rejects on closed connection', async () => {
@@ -809,6 +823,7 @@ describe('Runner.runLive', () => {
       [{turnComplete: true}],
     ]);
     llm.rejectOnClose = true;
+    llm.sendDelayMs = 10;
 
     const agent = new LlmAgent({name: 'agent', model: llm});
     const runner = new Runner({
@@ -833,6 +848,7 @@ describe('Runner.runLive', () => {
     }
 
     expect(llm.connections.length).toBe(2);
+    expect(llm.connections[0].rejectionsOnClosedConnection).toBeGreaterThan(0);
     expect(
       llm.llmRequestsSeen[1].liveConnectConfig?.sessionResumption?.handle,
     ).toBe('handle-goaway');
