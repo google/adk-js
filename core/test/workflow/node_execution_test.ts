@@ -46,6 +46,16 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     // Engine stamps provenance without clobbering.
     expect(events[0].nodeInfo?.path).toBe('router');
     expect(events[0].author).toBe('router');
+    expect(events[0].invocationId).toBe('inv-1');
+  });
+
+  it('does not clobber an invocation id the node set itself', async () => {
+    const node = new FnNode('router', () =>
+      createEvent({invocationId: 'mine', output: 'q'}),
+    );
+    const {events} = await driveNode(node, 'in');
+
+    expect(events[0].invocationId).toBe('mine');
   });
 
   it('supports nested ctx.runNode() with correct node paths (the bridge)', async () => {
