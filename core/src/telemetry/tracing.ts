@@ -100,17 +100,20 @@ export function traceAgentInvocation({
 export interface TraceWorkflowInvocationParams {
   workflowName: string;
   nodePath: string;
+  sessionId: string;
 }
 
 export function traceWorkflowInvocation({
   workflowName,
   nodePath,
+  sessionId,
 }: TraceWorkflowInvocationParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
 
   span.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'invoke_workflow',
+    [GEN_AI_CONVERSATION_ID]: sessionId,
     [ADK_WORKFLOW_NAME]: workflowName,
     [ADK_NODE_PATH]: nodePath,
   });
@@ -277,6 +280,9 @@ export function traceCallLlm({
   span.setAttributes({
     'gen_ai.system': 'gcp.vertex.agent',
     'gen_ai.request.model': llmRequest.model,
+    ...(invocationContext.agent?.name
+      ? {[GEN_AI_AGENT_NAME]: invocationContext.agent.name}
+      : {}),
     'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
     'gcp.vertex.agent.session_id': invocationContext.session.id,
     'gcp.vertex.agent.event_id': eventId,
