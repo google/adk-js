@@ -137,8 +137,6 @@ export class NodeContext {
   private readonly dynamicRunCounters = new Map<string, number>();
   /** Run ids this context handed out automatically, per node name. */
   private readonly autoRunIds = new Map<string, Set<string>>();
-  /** Every run id used for a node name here, automatic or caller-supplied. */
-  private readonly usedRunIds = new Map<string, Set<string>>();
   /**
    * Caller-supplied run ids shaped like an automatic one (all digits), per node
    * name — the set {@link assertNoNumericCustomRunIds} refuses to auto-number
@@ -249,7 +247,6 @@ export class NodeContext {
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;
-      const used = mapSet(this.usedRunIds, nodeName);
       if (runId !== undefined) {
         assertCustomRunId(runId, nodeName, mapSet(this.autoRunIds, nodeName));
         if (isAutoNumberShaped(runId)) {
@@ -269,7 +266,6 @@ export class NodeContext {
         runId = String(next);
         mapSet(this.autoRunIds, nodeName).add(runId);
       }
-      used.add(runId);
       return this.scheduler.schedule(this, node, input, {
         ...options,
         nodeName,
