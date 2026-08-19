@@ -108,12 +108,6 @@ const ORIGINS_OPTION = new Option(
   '--allow_origins <string>',
   'Optional. The allow origins of the server',
 ).default('');
-// A plain flag, not `[boolean]`: an option declared with an optional value
-// swallows the argument that follows it, so `adk run --verbose <agent>` ate the
-// agent path and commander then reported that path as the missing positional.
-// Nothing reads a value from it either — `getLogLevelFromOptions` only tests it
-// for truth, which made `--verbose=false` turn verbose ON. Use `--log_level`
-// when a level rather than a switch is wanted.
 const VERBOSE_OPTION = new Option(
   '-v, --verbose',
   'Optional. Log at debug level. Shorthand for --log_level debug',

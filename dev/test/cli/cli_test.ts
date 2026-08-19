@@ -266,9 +266,6 @@ describe('CLI Entrypoint', () => {
       ['before the path', ['run', '--verbose', 'agent.ts']],
       ['after the path', ['run', 'agent.ts', '--verbose']],
     ])('takes --verbose %s', async (_name, args) => {
-      // `--verbose` was declared with an optional value, so placed before the
-      // positional it swallowed the agent path, and commander then reported
-      // the path the user actually supplied as the missing argument.
       await parse(args);
 
       expect(runAgent).toHaveBeenCalledWith(
