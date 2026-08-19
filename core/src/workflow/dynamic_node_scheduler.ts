@@ -44,7 +44,37 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
     private readonly abortSignal?: AbortSignal,
   ) {}
 
+  /**
+   * Runs a `ctx.runNode()` call and reports any interrupt it is still waiting
+   * on to the caller's own context.
+   *
+   * A child's interrupt is the caller's problem: the caller cannot produce a
+   * trustworthy result until the human answers, and until the engine knows the
+   * caller is waiting it marks it COMPLETED and schedules its successor —
+   * which then runs on the `undefined` the caller returned when it bailed out.
+   * `ParallelWorker` has always copied its items' interrupt ids onto its own
+   * context for exactly this reason; doing it here extends that to every
+   * caller instead of only the one that remembered.
+   *
+   * Only unresolved interrupts arrive here. A child fast-forwarded from a
+   * checkpoint, or handed a resolved reply as its output, reports none.
+   */
   async schedule(
+    ctx: NodeContext,
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext | NodeResult> {
+    const result = await this.scheduleRun(ctx, node, input, options);
+    for (const id of result.interruptIds) {
+      if (!ctx.interruptIds.includes(id)) {
+        ctx.interruptIds.push(id);
+      }
+    }
+    return result;
+  }
+
+  private async scheduleRun(
     ctx: NodeContext,
     node: BaseNode,
     input: unknown,
