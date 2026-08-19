@@ -262,6 +262,21 @@ describe('CLI Entrypoint', () => {
       );
     });
 
+    it.each([
+      ['before the path', ['run', '--verbose', 'agent.ts']],
+      ['after the path', ['run', 'agent.ts', '--verbose']],
+    ])('takes --verbose %s', async (_name, args) => {
+      // `--verbose` was declared with an optional value, so placed before the
+      // positional it swallowed the agent path, and commander then reported
+      // the path the user actually supplied as the missing argument.
+      await parse(args);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({agentPath: 'agent.ts'}),
+      );
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+    });
+
     it('should pass all options to runAgent', async () => {
       await parse([
         'run',
