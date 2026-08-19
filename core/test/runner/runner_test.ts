@@ -505,6 +505,41 @@ describe('Runner.determineAgentForResumption', () => {
     expect(result.name).toBe('sub_agent1');
   });
 
+  it('does not write an inline attachment payload to the debug log', async () => {
+    const payload = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNk';
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_inline_data',
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'inv1',
+        author: 'sub_agent1',
+        content: {
+          role: 'model',
+          parts: [{inlineData: {mimeType: 'image/png', data: payload}}],
+        },
+      }),
+    });
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+
+    const logged = debugSpy.mock.calls.flat().join('\n');
+    expect(logged).not.toContain(payload);
+    expect(logged).toContain('image/png');
+    expect(logged).toContain(`<redacted ${payload.length} chars>`);
+    expect(result.name).toBe('sub_agent1');
+    debugSpy.mockRestore();
+  });
+
   describe('graph-workflow node events', () => {
     /** A session holding the given events. */
     async function sessionWith(sessionId: string, events: Event[]) {
