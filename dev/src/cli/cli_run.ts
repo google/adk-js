@@ -108,6 +108,13 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
     .join('');
   if (text) {
     console.log(`[${author}]: ${text}`);
+  } else if (event.output === '' && !event.partial) {
+    // A node whose result is the empty string still ran, and that empty value
+    // still travels on to the next node and into the final answer. Printing
+    // nothing for it left the node out of the transcript entirely, reading as
+    // though it had been skipped — the one thing the transcript must not say,
+    // since the reader is using it to find where the empty value came from.
+    console.log(`[${author}]: (empty response)`);
   }
 
   // Reported on the event, not as a text part, so text-only printing drops it.

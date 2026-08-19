@@ -95,16 +95,49 @@ function validateConnectivity(edges: Edge[], nodeNames: Set<string>): void {
   }
 }
 
+/**
+ * Rejects an edge that repeats a `(from, to, route)` triple already in the
+ * graph — the case where one emitted route would trigger the same target twice.
+ *
+ * The route is part of the identity, not just the pair of endpoints: two route
+ * keys sharing a destination (`[router, {approve: shared, escalate: shared}]`)
+ * are distinct edges that {@link Graph.getNextPendingNodes} already matches
+ * independently, and keying on the endpoints alone rejected the obvious way to
+ * point two decisions at one reusable sub-workflow.
+ *
+ * A multi-route edge is checked per route value, since it is the route that
+ * fires an edge, so `route: ['a', 'b']` and `route: 'b'` to the same target
+ * still collide on `'b'`. Route values are compared as strings, matching how
+ * `getNextPendingNodes` matches them, so `2` and `'2'` are the same route here
+ * too. An unconditional edge (`route: null`) is its own identity and never
+ * collides with a routed one.
+ */
 function validateDuplicateEdges(edges: Edge[]): void {
   const seen = new Set<string>();
   for (const edge of edges) {
-    const key = `${edge.fromNode.name}\u0000${edge.toNode.name}`;
-    if (seen.has(key)) {
-      throw new Error(
-        `Graph validation failed. Duplicate edge found: from=${edge.fromNode.name}, to=${edge.toNode.name}`,
-      );
+    const unconditional = edge.route === null || edge.route === undefined;
+    const routes = unconditional
+      ? [null]
+      : (Array.isArray(edge.route) ? edge.route : [edge.route]).map(String);
+    for (const route of routes) {
+      // JSON so an unconditional edge (`null`) cannot collide with an edge
+      // routed on the literal string "null".
+      const key = JSON.stringify([edge.fromNode.name, edge.toNode.name, route]);
+      if (seen.has(key)) {
+        throw new Error(
+          `Graph validation failed. Duplicate edge found: from=${
+            edge.fromNode.name
+          }, to=${edge.toNode.name}${
+            unconditional ? '' : `, route=${JSON.stringify(route)}`
+          }. ${
+            unconditional
+              ? 'The same pair is already connected unconditionally'
+              : 'That route already points at this node'
+          }, so the target would be triggered twice.`,
+        );
+      }
+      seen.add(key);
     }
-    seen.add(key);
   }
 }
 

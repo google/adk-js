@@ -109,8 +109,8 @@ const ORIGINS_OPTION = new Option(
   'Optional. The allow origins of the server',
 ).default('');
 const VERBOSE_OPTION = new Option(
-  '-v, --verbose [boolean]',
-  'Optional. The verbose level of the server',
+  '-v, --verbose',
+  'Optional. Log at debug level. Shorthand for --log_level debug',
 ).default(false);
 const LOG_LEVEL_OPTION = new Option(
   '--log_level <string>',

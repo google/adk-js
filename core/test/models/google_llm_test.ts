@@ -62,8 +62,10 @@ describe('GoogleLlm', () => {
     delete process.env['GOOGLE_CLOUD_PROJECT'];
     delete process.env['GOOGLE_CLOUD_LOCATION'];
     delete process.env['GOOGLE_GENAI_API_KEY'];
+    delete process.env['GOOGLE_API_KEY'];
     delete process.env['GEMINI_API_KEY'];
     delete process.env['GOOGLE_GENAI_USE_VERTEXAI'];
+    delete process.env['GOOGLE_GENAI_USE_ENTERPRISE'];
     delete process.env['GOOGLE_CLOUD_AGENT_ENGINE_ID'];
   };
 
@@ -74,6 +76,13 @@ describe('GoogleLlm', () => {
     expect(() => new TestGemini({model: 'gemini-1.5-flash'})).toThrow(
       /API key must be provided/,
     );
+  });
+
+  it('should construct with only GOOGLE_API_KEY set', () => {
+    // GOOGLE_API_KEY used to be absent from the Gemini-path order entirely, so
+    // setting only it failed at construction rather than picking the key up.
+    process.env['GOOGLE_API_KEY'] = 'google-api-key';
+    expect(() => new TestGemini({model: 'gemini-1.5-flash'})).not.toThrow();
   });
 
   it('should set tracking headers correctly when GOOGLE_CLOUD_AGENT_ENGINE_ID is not set', () => {
@@ -290,6 +299,28 @@ describe('GoogleLlm', () => {
       expect(params.apiKey).toBe('env-api-key');
     });
 
+    it('should use GOOGLE_API_KEY env var if apiKey is missing', () => {
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('google-api-key');
+    });
+
+    it('should prefer GOOGLE_API_KEY over GEMINI_API_KEY', () => {
+      // Matches @google/genai and adk-python. The SDK warns "Both ... are set.
+      // Using GOOGLE_API_KEY."; adk-js must not then use the other one.
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      process.env['GEMINI_API_KEY'] = 'gemini-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('google-api-key');
+    });
+
+    it('should prefer GOOGLE_GENAI_API_KEY over GOOGLE_API_KEY', () => {
+      process.env['GOOGLE_GENAI_API_KEY'] = 'genai-api-key';
+      process.env['GOOGLE_API_KEY'] = 'google-api-key';
+      const params = geminiInitParams({model: 'gemini-1.5-flash'});
+      expect(params.apiKey).toBe('genai-api-key');
+    });
+
     it('should return undefined apiKey if missing', () => {
       const input = {
         model: 'gemini-1.5-flash',
@@ -332,6 +363,28 @@ describe('GoogleLlm', () => {
       };
       const params = geminiInitParams(input);
       expect(params.vertexai).toBe(true);
+    });
+
+    it('should detect Vertex AI from GOOGLE_GENAI_USE_ENTERPRISE', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+      const input = {
+        model: 'gemini-1.5-flash',
+      };
+      const params = geminiInitParams(input);
+      expect(params.vertexai).toBe(true);
+    });
+
+    it('should not use Vertex AI when GOOGLE_GENAI_USE_ENTERPRISE disables it', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'false';
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      const input = {
+        model: 'gemini-1.5-flash',
+        apiKey: 'test-key',
+      };
+      const params = geminiInitParams(input);
+      expect(params.vertexai).toBe(false);
     });
 
     it('should throw error if project is missing for Vertex AI', () => {
@@ -656,6 +709,52 @@ describe('GoogleLlm', () => {
           }),
         }),
       );
+    });
+
+    it('strips sessionResumption.transparent on the Gemini API backend', async () => {
+      const llm = new TestGemini({
+        apiKey: 'test-key',
+        model: 'gemini-2.5-flash',
+      });
+      const request: LlmRequest = {
+        model: 'gemini-2.5-flash',
+        contents: [],
+        liveConnectConfig: {
+          sessionResumption: {handle: 'h-1', transparent: true},
+        },
+        config: {},
+        toolsDict: {},
+      };
+
+      await llm.connect(request);
+
+      expect(llm.liveApiClient.live.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            sessionResumption: {handle: 'h-1'},
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('liveApiVersion', () => {
+    it('uses v1beta1 on the Vertex AI backend', () => {
+      const llm = new TestGemini({
+        model: 'gemini-2.5-flash',
+        vertexai: true,
+        project: 'p',
+        location: 'us-central1',
+      });
+      expect(llm.liveApiVersion).toBe('v1beta1');
+    });
+
+    it('uses v1alpha on the Gemini API backend', () => {
+      const llm = new TestGemini({
+        apiKey: 'test-key',
+        model: 'gemini-3.1-flash-live-preview',
+      });
+      expect(llm.liveApiVersion).toBe('v1alpha');
     });
   });
 });

@@ -22,6 +22,7 @@ import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
+import {LiveRequestQueue} from './live_request_queue.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
 
@@ -61,6 +62,8 @@ export interface InvocationContextParams {
   isolationScope?: string;
   /** Nesting depth of node-as-tool executions; used to bound recursion. */
   nodeToolDepth?: number;
+  liveRequestQueue?: LiveRequestQueue;
+  liveSessionResumptionHandle?: string;
 }
 
 /**
@@ -247,6 +250,19 @@ export class InvocationContext {
   readonly nodeToolDepth: number;
 
   /**
+   * The live request queue feeding the model on the bidirectional (live) path.
+   * Set only for invocations started via `runner.runLive`.
+   */
+  readonly liveRequestQueue?: LiveRequestQueue;
+
+  /**
+   * The most recent session resumption handle observed on the live path.
+   * Updated as the server emits resumption updates so a reconnect can restore
+   * server-side state instead of replaying history. Mutable by design.
+   */
+  liveSessionResumptionHandle?: string;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -277,6 +293,8 @@ export class InvocationContext {
     this.invocationCostManager =
       (params as {invocationCostManager?: InvocationCostManager})
         .invocationCostManager ?? new InvocationCostManager();
+    this.liveRequestQueue = params.liveRequestQueue;
+    this.liveSessionResumptionHandle = params.liveSessionResumptionHandle;
   }
 
   /**

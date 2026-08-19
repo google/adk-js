@@ -77,6 +77,7 @@ describe('workflow telemetry — span tree', () => {
 
     expect(wfSpan.attributes).toMatchObject({
       'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.conversation.id': 's1',
       'adk.workflow.name': 'seq',
       'adk.node.path': 'seq',
     });

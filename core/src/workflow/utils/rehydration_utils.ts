@@ -195,12 +195,9 @@ export function resolvedInterruptResponses(
         if (!fr?.id || !raised.has(fr.id)) {
           continue;
         }
-        const response = unwrapResponse(fr.response);
-        const mismatch = interruptResponseMismatch(
-          fr.id,
-          response,
-          responseSchemas.get(fr.id),
-        );
+        const schema = responseSchemas.get(fr.id);
+        const response = unwrapResponse(fr.response, schema);
+        const mismatch = interruptResponseMismatch(fr.id, response, schema);
         if (mismatch) {
           if (event === newestUserTurn) {
             throw new Error(mismatch);
@@ -443,17 +440,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Unwraps a `{result: value}` FunctionResponse envelope to the bare value.
  *
- * Every string value is JSON-parsed when it parses, because the envelope does
- * not say whether the text is structured: a client answering a `RequestInput`
- * that declared a `responseSchema` sends the object as text (the web frontend
- * wraps whatever the user submitted as `{result: text}`), and the node expects
- * the object back. Text that is not JSON — "approve", "shorter" — is returned
- * as-is, and so a plain answer that happens to be valid JSON is converted too:
- * "42" comes back as a number, "true" as a boolean. That is deliberate parity
- * with Python's `_unwrap_response`, and harmless downstream —
- * {@link interruptResponseMismatch} exempts scalars from the schema check.
+ * A string value is JSON-parsed when it parses, because the envelope does not
+ * say whether the text is structured: a client answering a `RequestInput` that
+ * declared a `responseSchema` sends the object as text (the web frontend wraps
+ * whatever the user submitted as `{result: text}`), and the node expects the
+ * object back. Text that is not JSON — "approve", "shorter" — is returned
+ * as-is. That is parity with Python's `_unwrap_response`.
+ *
+ * `responseSchema`, when the interrupt declared one, decides whether parsing
+ * applies at all. Parsing text the schema asked for as text is destructive
+ * rather than helpful: an answer of "42" to a `z.string()` interrupt reached
+ * the node as the number 42 and crashed it on the first string method, and
+ * every JSON literal did the same — "true", "null", "1e3". So a schema that
+ * accepts a string keeps the text verbatim, and only a schema that cannot
+ * (an object, an array, a number) still parses.
  */
-export function unwrapResponse(response: unknown): unknown {
+export function unwrapResponse(
+  response: unknown,
+  responseSchema?: unknown,
+): unknown {
   if (
     response &&
     typeof response === 'object' &&
@@ -462,9 +467,41 @@ export function unwrapResponse(response: unknown): unknown {
     RESULT_KEY in response
   ) {
     const value = (response as Record<string, unknown>)[RESULT_KEY];
-    return typeof value === 'string' ? parseJsonIfPossible(value) : value;
+    if (typeof value !== 'string' || acceptsString(responseSchema)) {
+      return value;
+    }
+    return parseJsonIfPossible(value);
   }
   return response;
+}
+
+/**
+ * Whether `jsonSchema` accepts a plain string, so text answering it must not be
+ * reinterpreted as JSON.
+ *
+ * Errs towards leaving the text alone: a union is a match if any branch takes a
+ * string, since the text is then already a valid value for the schema and
+ * parsing it could only produce a different one. An absent or unreadable schema
+ * declares nothing and so does not suppress parsing.
+ */
+function acceptsString(jsonSchema: unknown): boolean {
+  if (!isRecord(jsonSchema)) {
+    return false;
+  }
+  const type = jsonSchema['type'];
+  if (type === 'string') {
+    return true;
+  }
+  if (Array.isArray(type) && type.includes('string')) {
+    return true;
+  }
+  for (const key of ['anyOf', 'oneOf']) {
+    const branches = jsonSchema[key];
+    if (Array.isArray(branches) && branches.some(acceptsString)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseJsonIfPossible(value: string): unknown {
