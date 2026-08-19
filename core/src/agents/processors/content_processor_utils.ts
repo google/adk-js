@@ -17,6 +17,11 @@ import {
   getFunctionResponses,
 } from '../../events/event.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
+import {
+  elideQuoteMarkers,
+  OTHER_AGENT_CONTEXT_PREAMBLE,
+  quoteUntrusted,
+} from './_fencing.js';
 
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
@@ -304,6 +309,12 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  * so that current agent can continue to respond, such as summarizing previous
  * agent's reply, etc.
  *
+ * The relayed text is attacker-reachable: whoever talks to the other agent
+ * steers what it says, and its tool results carry whatever the tool read.
+ * Each relayed text payload is therefore fenced, and the leading part states
+ * that fenced content is data, so a payload has to be believed rather than
+ * merely obeyed.
+ *
  * @param event The event to convert.
  *
  * @returns The converted event.
@@ -317,7 +328,7 @@ function convertForeignEvent(event: Event): Event {
     role: 'user',
     parts: [
       {
-        text: 'For context:',
+        text: OTHER_AGENT_CONTEXT_PREAMBLE,
       },
     ],
   };
@@ -327,19 +338,22 @@ function convertForeignEvent(event: Event): Event {
     // TODO - b/425992518: filtring should be configurable.
     if (part.text && !part.thought) {
       content.parts?.push({
-        text: `[${event.author}] said: ${part.text}`,
+        text: `[${event.author}] said:\n${quoteUntrusted(part.text)}`,
       });
     } else if (part.functionCall) {
+      // The tool name is model-chosen too, so it is elided but left
+      // unfenced: it reads as part of the sentence and a fence there would
+      // obscure which tool ran.
       content.parts?.push({
-        text: `[${event.author}] called tool \`${part.functionCall.name}\` with parameters: ${safeStringify(
-          part.functionCall.args,
-        )}`,
+        text: `[${event.author}] called tool \`${elideQuoteMarkers(
+          String(part.functionCall.name),
+        )}\` with parameters:\n${quoteUntrusted(safeStringify(part.functionCall.args))}`,
       });
     } else if (part.functionResponse) {
       content.parts?.push({
-        text: `[${event.author}] tool \`${part.functionResponse.name}\` returned result: ${safeStringify(
-          part.functionResponse.response,
-        )}`,
+        text: `[${event.author}] tool \`${elideQuoteMarkers(
+          String(part.functionResponse.name),
+        )}\` returned result:\n${quoteUntrusted(safeStringify(part.functionResponse.response))}`,
       });
     } else {
       content.parts?.push(cloneDeep(part));

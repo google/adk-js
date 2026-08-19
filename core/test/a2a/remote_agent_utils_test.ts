@@ -16,6 +16,11 @@ import {
 import {AdkMetadataKeys} from '../../src/a2a/metadata_converter_utils.js';
 import {BaseAgent} from '../../src/agents/base_agent.js';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
+import {
+  OTHER_AGENT_CONTEXT_PREAMBLE,
+  QUOTED_CONTENT_BEGIN,
+  QUOTED_CONTENT_END,
+} from '../../src/agents/processors/_fencing.js';
 import {createEvent} from '../../src/events/event.js';
 import {Session} from '../../src/sessions/session.js';
 
@@ -163,8 +168,10 @@ describe('remote_agent_utils', () => {
 
       const result = presentAsUserMessage(mockCtx, agentEvent);
       expect(result.author).toBe('user');
-      expect(result.content?.parts![0].text).toBe('For context:');
-      expect(result.content?.parts![1].text).toBe('[other-agent] said: hello');
+      expect(result.content?.parts![0].text).toBe(OTHER_AGENT_CONTEXT_PREAMBLE);
+      expect(result.content?.parts![1].text).toBe(
+        `[other-agent] said:\n${QUOTED_CONTENT_BEGIN}\nhello\n${QUOTED_CONTENT_END}`,
+      );
     });
 
     it('should handle functionCall parts', () => {
@@ -242,10 +249,12 @@ describe('remote_agent_utils', () => {
       const session = {events: [otherAgent]} as unknown as Session;
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
-      expect(result.parts.length).toBe(2); // "For context:" and "[other-agent] said: ..."
-      expect((result.parts[0] as TextPart).text).toBe('For context:');
+      expect(result.parts.length).toBe(2); // preamble and "[other-agent] said: ..."
+      expect((result.parts[0] as TextPart).text).toBe(
+        OTHER_AGENT_CONTEXT_PREAMBLE,
+      );
       expect((result.parts[1] as TextPart).text).toBe(
-        '[other-agent] said: other response',
+        `[other-agent] said:\n${QUOTED_CONTENT_BEGIN}\nother response\n${QUOTED_CONTENT_END}`,
       );
     });
   });
