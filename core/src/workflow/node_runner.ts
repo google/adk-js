@@ -6,7 +6,7 @@
 
 import {context, type Span, SpanStatusCode, trace} from '@opentelemetry/api';
 import {InvocationContext} from '../agents/invocation_context.js';
-import {Event} from '../events/event.js';
+import {createEvent, Event} from '../events/event.js';
 import {traceNodeExecution, tracer} from '../telemetry/tracing.js';
 import {formatError} from '../utils/error_utils.js';
 import {BaseNode} from './base_node.js';
@@ -236,11 +236,12 @@ async function runChildNode({
     }
 
     let succeeded = false;
+    let inputRecorded = false;
     while (!succeeded) {
       resetState(child);
       child.attemptCount = nodeState.attemptCount;
       try {
-        await runAttempt({
+        inputRecorded = await runAttempt({
           node,
           child,
           input,
@@ -272,6 +273,10 @@ async function runChildNode({
         nodeState.attemptCount += 1;
         await delay(delaySeconds * 1000, effectiveAbortSignal);
       }
+    }
+
+    if (!inputRecorded && child.interruptIds.length > 0) {
+      recordInputForResume({child, nodeName, branch, isolationScope, input});
     }
 
     traceNodeExecution({
@@ -324,8 +329,11 @@ interface RunAttemptParams extends RunOnceParams {
 /**
  * Not `async`: a node without a retry config must reach `runOnce` and settle on
  * exactly the microtask it would have without tracing (see `executeChildNode`).
+ *
+ * Resolves to whether the attempt recorded the node's input for resume (see
+ * {@link runOnce}).
  */
-function runAttempt(params: RunAttemptParams): Promise<void> {
+function runAttempt(params: RunAttemptParams): Promise<boolean> {
   const {node, nodePath, runId, attempt} = params;
   if (!node.preparedRetryConfig) {
     return runOnce(params);
@@ -334,7 +342,7 @@ function runAttempt(params: RunAttemptParams): Promise<void> {
     `execute_node_attempt ${params.nodeName}`,
     async (span) => {
       try {
-        await runOnce(params);
+        const inputRecorded = await runOnce(params);
         traceNodeExecution({
           nodePath,
           runId,
@@ -343,6 +351,7 @@ function runAttempt(params: RunAttemptParams): Promise<void> {
             params.child.interruptIds.length > 0 ? 'waiting' : 'completed',
           interruptCount: params.child.interruptIds.length,
         });
+        return inputRecorded;
       } catch (err) {
         traceNodeExecution({
           nodePath,
@@ -413,6 +422,11 @@ interface RunOnceParams {
  *
  * When there is neither a deadline nor an abort signal, a plain `for await`
  * fast path is used.
+ *
+ * Resolves to whether the node's input was recorded for resume, i.e. whether an
+ * event it emitted carried interrupt ids and so got the input stamped on it.
+ * A node that ends waiting without one needs the checkpoint `runChildNode`
+ * writes instead.
  */
 async function runOnce({
   node,
@@ -421,7 +435,8 @@ async function runOnce({
   nodeName,
   branch,
   isolationScope,
-}: RunOnceParams): Promise<void> {
+}: RunOnceParams): Promise<boolean> {
+  let inputRecorded = false;
   const consume = (event: Event): void => {
     enrichEvent({event, child, nodeName, branch, isolationScope});
     // An event can carry a state delta that never went through `ctx.state`,
@@ -458,6 +473,7 @@ async function runOnce({
         ...(event.actions.agentState ?? {}),
         input,
       };
+      inputRecorded = true;
     }
     child.channel.push(event);
   };
@@ -470,7 +486,7 @@ async function runOnce({
     for await (const event of node.run(child, input)) {
       consume(event);
     }
-    return;
+    return inputRecorded;
   }
 
   // Cooperative cancellation (external abort, no deadline): expose the abort
@@ -488,7 +504,7 @@ async function runOnce({
     } finally {
       child.abortSignal = undefined;
     }
-    return;
+    return inputRecorded;
   }
 
   // Deadline path: drive the node step-by-step and race each step against the
@@ -549,6 +565,50 @@ async function runOnce({
     // queued behind any in-flight `next()`; its result is discarded.
     void Promise.resolve(iterator.return?.(undefined)).catch(() => {});
   }
+  return inputRecorded;
+}
+
+interface RecordInputForResumeParams {
+  child: NodeContext;
+  nodeName: string;
+  branch: string | undefined;
+  isolationScope: string | undefined;
+  input: unknown;
+}
+
+/**
+ * Writes the checkpoint a waiting node needs to resume with the right input,
+ * for a node that has no event of its own to carry it.
+ *
+ * The input is normally stamped on the node's own interrupt event, which only
+ * exists for the node that raised the interrupt itself. A node waiting on a
+ * `ctx.runNode` child raised nothing — it may have emitted nothing at all — so
+ * it left no record, and on resume `Workflow.scheduleNode` found no prior input
+ * and fell back to the trigger's, which carries the human's reply. A
+ * `rerunOnResume` parent then re-ran against "yes" instead of the work it was
+ * given, derived a different work list, and silently dropped the rest of it.
+ *
+ * The checkpoint carries no content and no output, so it says nothing to the
+ * user and is not rendered; it exists to be read back by
+ * {@link reconstructNodeRuns}. Its `longRunningToolIds` are what mark the run
+ * as one that ended waiting, alongside the input under `actions.agentState`.
+ */
+function recordInputForResume({
+  child,
+  nodeName,
+  branch,
+  isolationScope,
+  input,
+}: RecordInputForResumeParams): void {
+  const event = createEvent({
+    author: nodeName,
+    invocationId: child.invocationId,
+    branch,
+    longRunningToolIds: [...child.interruptIds],
+    actions: {agentState: {input}},
+  });
+  enrichEvent({event, child, nodeName, branch, isolationScope});
+  child.channel.push(event);
 }
 
 interface EnrichEventParams {
