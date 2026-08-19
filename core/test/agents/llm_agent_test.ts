@@ -48,8 +48,8 @@ import {
 } from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
-import {logger} from '../../src/utils/logger.js';
 import {CODE_EXECUTION_REQUEST_PROCESSOR} from '../../src/agents/processors/code_execution_request_processor.js';
+import {logger} from '../../src/utils/logger.js';
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
