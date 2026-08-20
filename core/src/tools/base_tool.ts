@@ -109,6 +109,27 @@ export abstract class BaseTool {
   abstract runAsync(request: RunAsyncToolRequest): Promise<unknown>;
 
   /**
+   * Whether this tool needs a human to approve `args` before it runs.
+   *
+   * The gate itself lives in the tool that owns it (see `FunctionTool`), but
+   * the resume path has to ask the same question a turn later, to check that an
+   * approval it is about to honour belongs to a tool that gates at all. A tool
+   * that never gates returns false here, which is the safe default: an approval
+   * naming it is meaningless and gets rejected rather than executed. Mirrors
+   * Python's `BaseTool.check_require_confirmation`.
+   *
+   * @param _args The arguments the tool would run with.
+   * @param _toolContext The context of the call, when there is one.
+   * @return Whether the call requires confirmation.
+   */
+  async checkRequireConfirmation(
+    _args: Record<string, unknown>,
+    _toolContext?: Context,
+  ): Promise<boolean> {
+    return false;
+  }
+
+  /**
    * Processes the outgoing LLM request for this tool.
    *
    * Use cases:
