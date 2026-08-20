@@ -186,28 +186,62 @@ export class FunctionTool<
    */
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
-      let validatedArgs: unknown = req.args;
-      if (isZodObject(this.parameters)) {
-        validatedArgs = this.parameters.parse(req.args);
-      }
+      const validatedArgs = this.validateArgs(req.args);
 
       const pending = await this.checkConfirmation(
-        validatedArgs as ToolExecuteArgument<TParameters>,
+        validatedArgs,
         req.toolContext,
       );
       if (pending !== undefined) {
         return pending;
       }
 
-      return await this.execute(
-        validatedArgs as ToolExecuteArgument<TParameters>,
-        req.toolContext,
-      );
+      return await this.execute(validatedArgs, req.toolContext);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
     }
+  }
+
+  /**
+   * Whether this call is gated on human approval — the static flag, or the
+   * predicate evaluated against the validated arguments.
+   *
+   * @param args The arguments the tool would run with.
+   * @param toolContext The context of the call, when there is one.
+   * @return Whether the call requires confirmation.
+   */
+  override async checkRequireConfirmation(
+    args: Record<string, unknown>,
+    toolContext?: Context,
+  ): Promise<boolean> {
+    // Only a predicate needs typed arguments. Validating for the static flag
+    // would answer a question about the gate with a schema error.
+    if (typeof this.requireConfirmation !== 'function') {
+      return this.requireConfirmation;
+    }
+    return this.requireConfirmation(this.validateArgs(args), toolContext);
+  }
+
+  /** Parses `args` against the parameter schema, when one is declared. */
+  private validateArgs(
+    args: Record<string, unknown>,
+  ): ToolExecuteArgument<TParameters> {
+    if (isZodObject(this.parameters)) {
+      return this.parameters.parse(args) as ToolExecuteArgument<TParameters>;
+    }
+    return args as ToolExecuteArgument<TParameters>;
+  }
+
+  /** Resolves `requireConfirmation`, which may be a flag or a predicate. */
+  private async evaluateRequireConfirmation(
+    input: ToolExecuteArgument<TParameters>,
+    toolContext?: Context,
+  ): Promise<boolean> {
+    return typeof this.requireConfirmation === 'function'
+      ? this.requireConfirmation(input, toolContext)
+      : this.requireConfirmation;
   }
 
   /**
@@ -220,10 +254,10 @@ export class FunctionTool<
     input: ToolExecuteArgument<TParameters>,
     toolContext?: Context,
   ): Promise<{error: string} | undefined> {
-    const requireConfirmation =
-      typeof this.requireConfirmation === 'function'
-        ? await this.requireConfirmation(input, toolContext)
-        : this.requireConfirmation;
+    const requireConfirmation = await this.evaluateRequireConfirmation(
+      input,
+      toolContext,
+    );
     if (!requireConfirmation) {
       return undefined;
     }

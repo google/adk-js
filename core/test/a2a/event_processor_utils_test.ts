@@ -15,7 +15,7 @@ import {Content as GenAIContent} from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
   getFinalTaskStatusUpdate,
-  getTaskInputRequiredEvent,
+  getUnansweredRequestEvent,
 } from '../../src/a2a/event_processor_utils.js';
 
 import {toA2AParts} from '../../src/a2a/part_converter_utils.js';
@@ -174,11 +174,24 @@ describe('event_processor_utils', () => {
     });
   });
 
-  describe('getTaskInputRequiredEvent', () => {
+  describe('getUnansweredRequestEvent', () => {
+    /** Calls the guard the way the executor does, with no session history. */
+    function check(
+      task: Task | undefined,
+      genAIContent: GenAIContent,
+      sessionEvents: AdkEvent[] = [],
+    ) {
+      return getUnansweredRequestEvent({
+        taskId: task?.id ?? 'taskId1',
+        contextId: task?.contextId ?? 'contextId1',
+        task,
+        sessionEvents,
+        genAIContent,
+      });
+    }
+
     it('returns undefined if task is falsy', () => {
-      expect(
-        getTaskInputRequiredEvent(null as unknown as Task, {} as GenAIContent),
-      ).toBeUndefined();
+      expect(check(undefined, {} as GenAIContent)).toBeUndefined();
     });
 
     it('returns undefined if task is not input required', () => {
@@ -186,9 +199,7 @@ describe('event_processor_utils', () => {
         kind: 'task',
         status: {state: 'working'},
       } as Task;
-      expect(
-        getTaskInputRequiredEvent(task, {} as GenAIContent),
-      ).toBeUndefined();
+      expect(check(task, {} as GenAIContent)).toBeUndefined();
     });
 
     it('returns undefined if task does not have a status message', () => {
@@ -196,9 +207,7 @@ describe('event_processor_utils', () => {
         kind: 'task',
         status: {state: 'input-required'},
       } as Task;
-      expect(
-        getTaskInputRequiredEvent(task, {} as GenAIContent),
-      ).toBeUndefined();
+      expect(check(task, {} as GenAIContent)).toBeUndefined();
     });
 
     it('returns undefined if matching response exists in genAIContent', () => {
@@ -222,7 +231,7 @@ describe('event_processor_utils', () => {
         ],
       } as GenAIContent;
 
-      expect(getTaskInputRequiredEvent(task, genAIContent)).toBeUndefined();
+      expect(check(task, genAIContent)).toBeUndefined();
     });
 
     it('returns Error event if matching response does NOT exist in genAIContent', () => {
@@ -244,7 +253,7 @@ describe('event_processor_utils', () => {
         parts: [{text: 'I can not do that.'}],
       } as GenAIContent;
 
-      const result = getTaskInputRequiredEvent(task, genAIContent);
+      const result = check(task, genAIContent);
       expect(result).toBeDefined();
       expect(result!.kind).toBe('status-update');
       expect(result!.status?.state).toBe('input-required');
@@ -276,7 +285,156 @@ describe('event_processor_utils', () => {
         parts: [{text: 'Sure!'}],
       } as GenAIContent;
 
-      expect(getTaskInputRequiredEvent(task, genAIContent)).toBeUndefined();
+      expect(check(task, genAIContent)).toBeUndefined();
+    });
+
+    /** The event a pause leaves in the session: a long-running call, unanswered. */
+    function pendingCallEvent(id: string): AdkEvent {
+      return createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id, name: 'adk_request_confirmation', args: {}}},
+          ],
+        },
+        longRunningToolIds: [id],
+      });
+    }
+
+    it('holds a pause open across a new task in the same context', () => {
+      // The client abandons the task carrying the gate and opens a fresh one.
+      // The session still has the pause, so an unrelated message is refused.
+      const result = check(
+        undefined,
+        {parts: [{text: 'never mind, do something else'}]} as GenAIContent,
+        [pendingCallEvent('gate-1')],
+      );
+
+      expect(result?.status?.state).toBe('input-required');
+      const parts = result!.status?.message?.parts;
+      expect((parts![0] as DataPart)?.data?.id).toBe('gate-1');
+      expect((parts![1] as TextPart)?.text).toContain(
+        'No input provided for function call id gate-1',
+      );
+    });
+
+    it('lets the answer to a session pause through', () => {
+      expect(
+        check(
+          undefined,
+          {
+            parts: [
+              {
+                functionResponse: {
+                  id: 'gate-1',
+                  name: 'adk_request_confirmation',
+                  response: {confirmed: true},
+                },
+              },
+            ],
+          } as GenAIContent,
+          [pendingCallEvent('gate-1')],
+        ),
+      ).toBeUndefined();
+    });
+
+    it('ignores a pause the session already answered', () => {
+      const answered = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'gate-1',
+                name: 'adk_request_confirmation',
+                response: {confirmed: true},
+              },
+            },
+          ],
+        },
+      });
+
+      expect(
+        check(
+          undefined,
+          {parts: [{text: 'and now something else'}]} as GenAIContent,
+          [pendingCallEvent('gate-1'), answered],
+        ),
+      ).toBeUndefined();
+    });
+
+    it('does not treat a long-running tool call as a pause', () => {
+      // `isLongRunning` marks a tool that takes its time, not one waiting on a
+      // person — and one that returns nothing never gets a response event, so
+      // treating it as a pause would wedge the conversation shut for good.
+      const longRunning = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {functionCall: {id: 'slow-1', name: 'render_video', args: {}}},
+          ],
+        },
+        longRunningToolIds: ['slow-1'],
+      });
+
+      expect(
+        check(undefined, {parts: [{text: 'any news?'}]} as GenAIContent, [
+          longRunning,
+        ]),
+      ).toBeUndefined();
+    });
+
+    it('holds the pause for a credential request too', () => {
+      // All three `adk_request_*` kinds count as waiting on a person, and the
+      // id that answers each is whichever one the framework's own helper picks
+      // — the credential kind also carries one in `args.function_call_id`.
+      const credentialRequest = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'adk-credential-call',
+                name: 'adk_request_credential',
+                args: {function_call_id: 'tool-call-1', auth_config: {}},
+              },
+            },
+          ],
+        },
+      });
+
+      const result = check(
+        undefined,
+        {parts: [{text: 'never mind'}]} as GenAIContent,
+        [credentialRequest],
+      );
+
+      expect(result?.status?.state).toBe('input-required');
+      expect((result!.status?.message?.parts![1] as TextPart)?.text).toContain(
+        'No input provided for function call id adk-credential-call',
+      );
+    });
+
+    it('ignores an ordinary tool call, and events with nothing in them', () => {
+      const ordinary = createEvent({
+        author: 'agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'call-1', name: 'lookup', args: {}}}],
+        },
+      });
+      const contentless = createEvent({author: 'agent'});
+
+      expect(
+        check(undefined, {parts: [{text: 'hello'}]} as GenAIContent, [
+          ordinary,
+          contentless,
+        ]),
+      ).toBeUndefined();
     });
   });
 });

@@ -6,6 +6,10 @@
 
 import {Task, TaskStatusUpdateEvent} from '@a2a-js/sdk';
 import {Content as GenAIContent, Part as GenAIPart} from '@google/genai';
+import {
+  getPendingUserInputRequests,
+  getUserInputRequests,
+} from '../agents/user_input_request.js';
 import {Event as AdkEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {
@@ -156,50 +160,123 @@ function getLongRunnningFunctionCallId(
 }
 
 /**
- * Returns input required task status update events if the provided user request does not contain responses for all function calls in the task status.
+ * Returns an input-required status update when the incoming message leaves a
+ * pending request unanswered.
+ *
+ * A pause belongs to the conversation, not to the task that happened to raise
+ * it: the ADK session is keyed by `contextId`, and a client picks its own task
+ * ids. Scoping this to `ctx.task` alone let a caller step around an open gate
+ * by starting a new task in the same context and going on talking to an agent
+ * that is supposed to be waiting on a human. Pending requests are therefore
+ * read from the session as well as from the task, and each one has to be
+ * answered before the agent runs again.
  */
-export function getTaskInputRequiredEvent(
-  task: Task,
-  genAIContent: GenAIContent,
-): TaskStatusUpdateEvent | undefined {
-  if (
-    !task ||
-    !isInputRequiredTaskStatusUpdateEvent(task) ||
-    !task.status.message
-  ) {
+export function getUnansweredRequestEvent(options: {
+  taskId: string;
+  contextId: string;
+  task?: Task;
+  sessionEvents: AdkEvent[];
+  genAIContent: GenAIContent;
+}): TaskStatusUpdateEvent | undefined {
+  const {taskId, contextId, task, sessionEvents, genAIContent} = options;
+  const pending = pendingRequestParts(task, sessionEvents);
+
+  const answered = new Set(
+    (genAIContent?.parts ?? [])
+      .map((part) => part.functionResponse?.id)
+      .filter((id): id is string => !!id),
+  );
+  const missingId = [...pending.keys()].find((id) => !answered.has(id));
+  if (!missingId) {
     return undefined;
   }
 
-  const statusMsg = task.status.message;
-  const taskParts = toGenAIParts(statusMsg.parts);
+  return createInputMissingErrorEvent({
+    taskId: task?.id ?? taskId,
+    contextId: task?.contextId ?? contextId,
+    parts: [
+      ...toA2AParts([...pending.values()]),
+      {
+        kind: 'text',
+        text: `No input provided for function call id ${missingId}`,
+        metadata: {
+          validation_error: true,
+        },
+      },
+    ],
+  });
+}
 
-  for (const taskPart of taskParts) {
-    const functionCallId = taskPart.functionCall?.id;
-    if (!functionCallId) {
-      continue;
-    }
+/**
+ * The requests still awaiting an answer, by the id that answers them: the ones
+ * the task is showing, plus every unanswered `adk_request_*` call in the
+ * session.
+ *
+ * Deliberately not `longRunningToolIds`, which marks any tool declared
+ * `isLongRunning` — a run that merely used one is not waiting on a person, and
+ * a long-running tool that returns nothing leaves its call unanswered forever,
+ * which would wedge the conversation shut. Same rule the workflow rehydration
+ * path states at `workflow/utils/rehydration_utils.ts`.
+ */
+function pendingRequestParts(
+  task: Task | undefined,
+  sessionEvents: AdkEvent[],
+): Map<string, GenAIPart> {
+  const pending = new Map<string, GenAIPart>();
 
-    const hasMatchingResponse = (genAIContent?.parts || []).some(
-      (p) => p.functionResponse?.id === functionCallId,
-    );
-
-    if (!hasMatchingResponse) {
-      return createInputMissingErrorEvent({
-        taskId: task.id,
-        contextId: task.contextId,
-        parts: [
-          ...statusMsg.parts.filter((p) => !p.metadata?.validation_error),
-          {
-            kind: 'text',
-            text: `No input provided for function call id ${functionCallId}`,
-            metadata: {
-              validation_error: true,
-            },
-          },
-        ],
-      });
+  if (
+    task &&
+    isInputRequiredTaskStatusUpdateEvent(task) &&
+    task.status.message
+  ) {
+    for (const part of toGenAIParts(task.status.message.parts)) {
+      if (part.functionCall?.id) {
+        pending.set(part.functionCall.id, part);
+      }
     }
   }
 
-  return undefined;
+  const pendingIds = new Set(
+    getPendingUserInputRequests(sessionEvents).map(
+      (request) => request.interruptId,
+    ),
+  );
+  for (const event of sessionEvents) {
+    for (const part of event.content?.parts ?? []) {
+      const id = interruptIdOfPart(event, part);
+      if (id && pendingIds.has(id)) {
+        pending.set(id, part);
+      }
+    }
+  }
+
+  // The task's own parts are not filtered by the scan above, so sweep anything
+  // the session has since answered.
+  for (const event of sessionEvents) {
+    for (const part of event.content?.parts ?? []) {
+      if (part.functionResponse?.id) {
+        pending.delete(part.functionResponse.id);
+      }
+    }
+  }
+  return pending;
+}
+
+/**
+ * The id that answers this part, when the part is a request for user input.
+ *
+ * Defers to {@link getUserInputRequests} rather than reading `functionCall.id`:
+ * the three request kinds do not agree on where the answering id lives (the
+ * agent auth flow puts it in `args.function_call_id`), and that helper is where
+ * the framework settles it.
+ */
+function interruptIdOfPart(
+  event: AdkEvent,
+  part: GenAIPart,
+): string | undefined {
+  if (!part.functionCall) {
+    return undefined;
+  }
+  const [request] = getUserInputRequests({...event, content: {parts: [part]}});
+  return request?.interruptId;
 }

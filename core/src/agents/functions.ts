@@ -20,6 +20,10 @@ import {BaseTool} from '../tools/base_tool.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
+import {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+} from './framework_function_calls.js';
 
 import {
   traceMergedToolCalls,
@@ -50,10 +54,12 @@ export {
   generateClientFunctionCallId,
   populateClientFunctionCallId,
 } from '../events/event.js';
-export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
-export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
-export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
-  'adk_request_confirmation';
+export {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
+  reservedFunctionCallName,
+} from './framework_function_calls.js';
 
 // Export these items for testing purposes only
 export const functionsExportedForTestingOnly = {
