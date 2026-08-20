@@ -29,17 +29,32 @@ import {
   tracer,
   traceToolCall,
 } from '../telemetry/tracing.js';
+
 import {
   SingleAfterToolCallback,
   SingleBeforeToolCallback,
 } from './llm_agent.js';
+
+/**
+ * Author for an event this module creates.
+ *
+ * Normally the agent whose turn produced the tool call. A `ToolNode` in a
+ * workflow has no agent above it when the workflow is the runner's root, and
+ * the node runner stamps the node's own name onto any event that leaves without
+ * an author — so returning an empty string here defers to that rather than
+ * asserting an agent that legitimately is not there.
+ */
+function toolEventAuthor(invocationContext: InvocationContext): string {
+  return invocationContext.agent?.name ?? '';
+}
 
 export {
   AF_FUNCTION_CALL_ID_PREFIX,
   generateClientFunctionCallId,
   populateClientFunctionCallId,
 } from '../events/event.js';
-export const REQUEST_EUC_FUNCTION_CALL_NAME = 'adk_request_credential';
+export const REQUEST_INPUT_FUNCTION_CALL_NAME = 'adk_request_input';
+export const REQUEST_CREDENTIAL_FUNCTION_CALL_NAME = 'adk_request_credential';
 export const REQUEST_CONFIRMATION_FUNCTION_CALL_NAME =
   'adk_request_confirmation';
 
@@ -94,21 +109,21 @@ export function generateAuthEvent(
   for (const [functionCallId, authConfig] of Object.entries(
     functionResponseEvent.actions.requestedAuthConfigs,
   )) {
-    const requestEucFunctionCall: FunctionCall = {
-      name: REQUEST_EUC_FUNCTION_CALL_NAME,
+    const requestCredentialFunctionCall: FunctionCall = {
+      name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
       args: {
         'function_call_id': functionCallId,
         'auth_config': authConfig,
       },
       id: generateClientFunctionCallId(),
     };
-    longRunningToolIds.add(requestEucFunctionCall.id!);
-    parts.push({functionCall: requestEucFunctionCall});
+    longRunningToolIds.add(requestCredentialFunctionCall.id!);
+    parts.push({functionCall: requestCredentialFunctionCall});
   }
 
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: toolEventAuthor(invocationContext),
     branch: invocationContext.branch,
     content: {
       parts: parts,
@@ -161,7 +176,7 @@ export function generateRequestConfirmationEvent({
   }
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: toolEventAuthor(invocationContext),
     branch: invocationContext.branch,
     content: {
       parts: parts,
@@ -229,7 +244,7 @@ function buildResponseEvent(
 
   return createEvent({
     invocationId: invocationContext.invocationId,
-    author: invocationContext.agent.name,
+    author: toolEventAuthor(invocationContext),
     content: content,
     actions: toolContext.actions,
     branch: invocationContext.branch,
@@ -343,7 +358,7 @@ export async function handleFunctionCallList({
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.
     let functionResponse = null;
-    let functionResponseError: string | unknown | undefined;
+    let functionResponseError: unknown;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
@@ -466,10 +481,9 @@ export async function handleFunctionCallList({
       functionResponse = normalizeCallbackResponse(functionResponse);
     }
 
-    // Builds the function response event.
     const functionResponseEvent = createEvent({
       invocationId: invocationContext.invocationId,
-      author: invocationContext.agent.name,
+      author: toolEventAuthor(invocationContext),
       content: createUserContent({
         functionResponse: {
           id: toolContext.functionCallId,

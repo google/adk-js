@@ -7,6 +7,7 @@
 import {
   CodeExecutionLanguage,
   ExecuteCodeParams,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   PluginManager,
@@ -15,7 +16,23 @@ import {
 } from '@google/adk';
 import {EventEmitter} from 'node:events';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+
+/**
+ * Most of these tests spawn a real interpreter. On Windows the shell case means
+ * Windows PowerShell, whose cold start on a loaded CI runner costs seconds --
+ * enough that `should execute shell code and return stdout` intermittently blew
+ * Vitest's 5s default and, through fail-fast, took the macOS and Linux jobs down
+ * with it. A healthy Windows run needs ~5.3s for the file as a whole, so the
+ * default left no margin.
+ *
+ * Budget by what is actually under test: the executor's own default timeout is
+ * 30s, and a harness that gives up sooner can never observe the behaviour it
+ * covers. This is a ceiling, not a delay -- a passing test still finishes in
+ * milliseconds.
+ */
+vi.setConfig({testTimeout: 30_000});
 
 // Only `spawn` is mocked; it defaults to the real implementation (see
 // `beforeEach`) so the pre-existing tests still execute real scripts.
@@ -88,6 +105,42 @@ describe('UnsafeLocalCodeExecutor', () => {
 
     expect(result.stdout).toContain('Hello, World!');
     expect(result.stderr).toBe('');
+  });
+
+  // The script runs with the temporary directory as its cwd, so it can report
+  // the name and mode the executor actually created.
+  it('creates a private, unpredictable temporary directory', async () => {
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: [
+          'const fs = require("node:fs");',
+          'const dir = process.cwd();',
+          'const mode = (fs.statSync(dir).mode & 0o777).toString(8);',
+          'console.log(JSON.stringify({dir, mode}));',
+        ].join('\n'),
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        inputFiles: [],
+      },
+    };
+
+    const firstResult = await executor.executeCode(params);
+    const secondResult = await executor.executeCode(params);
+    expect(firstResult.stderr).toBe('');
+    expect(secondResult.stderr).toBe('');
+
+    const first = JSON.parse(firstResult.stdout);
+    const second = JSON.parse(secondResult.stdout);
+
+    // mkdtemp appends six random characters to the prefix it is given.
+    expect(path.basename(first.dir)).toMatch(
+      /^adk_js_unsafe_code_executor_.{6}$/,
+    );
+    expect(second.dir).not.toBe(first.dir);
+
+    if (os.platform() !== 'win32') {
+      expect(first.mode).toBe('700');
+    }
   });
 
   it('should capture stderr', async () => {
@@ -274,13 +327,13 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'test.txt',
             content: Buffer.from('hello file content').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
           {
             name: 'subdir/data.json',
             content: '{"key": "value"}',
-            contentEncoding: 'utf8',
+            contentEncoding: FileContentEncoding.UTF8,
             mimeType: 'application/json',
           },
         ],
@@ -304,7 +357,7 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'existing_input.txt',
             content: Buffer.from('hello input').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
         ],
@@ -444,6 +497,50 @@ describe('UnsafeLocalCodeExecutor', () => {
         ['/D', '/c', expect.stringMatching(/script\.bat$/)],
         expect.anything(),
       );
+    });
+
+    describe('shell command detection', () => {
+      async function runShellCode(shellCommandPath: string) {
+        await new UnsafeLocalCodeExecutor({shellCommandPath}).executeCode({
+          invocationContext,
+          codeExecutionInput: {
+            code: 'echo "test"',
+            language: CodeExecutionLanguage.SHELL,
+            inputFiles: [],
+          },
+        });
+      }
+
+      it.each([
+        'pwsh',
+        'pwsh.exe',
+        '/usr/bin/pwsh',
+        'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+        'PWSH',
+        'powershell',
+        'powershell.exe',
+      ])('runs a .ps1 script through PowerShell for %s', async (shell) => {
+        await runShellCode(shell);
+
+        expect(spawnMock).toHaveBeenCalledWith(
+          shell,
+          EXPECTED_POWERSHELL_ARGS,
+          expect.anything(),
+        );
+      });
+
+      it.each([
+        '/opt/pwsh-tools/bin/bash',
+        '/usr/local/powershell-helpers/run.sh',
+      ])('does not treat %s as PowerShell', async (shell) => {
+        await runShellCode(shell);
+
+        expect(spawnMock).toHaveBeenCalledWith(
+          shell,
+          [expect.stringMatching(/script\.(sh|ps1)$/)],
+          expect.anything(),
+        );
+      });
     });
   });
 });

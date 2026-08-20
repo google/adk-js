@@ -11,7 +11,7 @@ import {
   createEvent,
   createEventActions,
 } from '@google/adk';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isInMemoryConnectionString} from '../../src/sessions/in_memory_session_service.js';
 
 describe('isInMemoryConnectionString', () => {
@@ -227,6 +227,22 @@ describe('InMemorySessionService', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions[0].events).toEqual([]);
       expect(response.sessions[1].events).toEqual([]);
+    });
+
+    it('lists every user of the app when userId is omitted', async () => {
+      const appName = 'app';
+      await service.createSession({appName, userId: 'user1'});
+      await service.createSession({appName, userId: 'user2'});
+      await service.createSession({appName: 'other-app', userId: 'user1'});
+
+      const response = await service.listSessions({appName});
+
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions.map((s) => s.userId).sort()).toEqual([
+        'user1',
+        'user2',
+      ]);
+      expect(response.totalItems).toBe(2);
     });
 
     it('limit on empty result → returns pagination metadata with zeros', async () => {
@@ -655,6 +671,215 @@ describe('InMemorySessionService', () => {
       // Should just log warnings and return event
       const returnedEvent = await service.appendEvent({session, event});
       expect(returnedEvent).toBe(event);
+    });
+  });
+
+  describe('prototype pollution', () => {
+    // Every key that any test below can plant on `Object.prototype` when the
+    // fix is reverted, so that reverting it fails these tests instead of
+    // corrupting the ones that run afterwards. `sessions['app1']['__proto__']`
+    // resolves to `Object.prototype`, so the *session id* lands there too, and
+    // `sessions['__proto__']` does the same for the *user id*.
+    const POLLUTED_KEYS = [
+      'polluted',
+      'httpOptions',
+      'pwned',
+      'baseUrl',
+      'poc_sid',
+      'isAdmin',
+      'u1',
+      's1',
+    ];
+
+    const clearPollution = () => {
+      for (const key of POLLUTED_KEYS) {
+        delete (Object.prototype as Record<string, unknown>)[key];
+      }
+    };
+
+    beforeEach(clearPollution);
+    afterEach(clearPollution);
+
+    // A `'__proto__': value` pair in an object literal invokes the prototype
+    // setter instead of creating an own key, so it cannot express what an
+    // attacker actually sends. `JSON.parse` is what the dev server does with a
+    // request body, and it does produce an own `__proto__` key.
+    const parseBody = (json: string): Record<string, unknown> =>
+      JSON.parse(json) as Record<string, unknown>;
+
+    it('does not pollute Object.prototype via appName', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    });
+
+    it('does not pollute Object.prototype via userId in user state', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: '__proto__',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {
+              [`${State.USER_PREFIX}httpOptions`]: {
+                baseUrl: 'https://evil.test',
+              },
+            },
+          }),
+        }),
+      });
+
+      expect(({} as Record<string, unknown>)['httpOptions']).toBeUndefined();
+    });
+
+    it('does not pollute Object.prototype via appName in app state', async () => {
+      const session = await service.createSession({
+        appName: '__proto__',
+        userId: 'u1',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {[`${State.APP_PREFIX}pwned`]: 'attacker-value'},
+          }),
+        }),
+      });
+
+      expect(({} as Record<string, unknown>)['pwned']).toBeUndefined();
+    });
+
+    it('keeps a __proto__ user state key as an own property', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+        state: {},
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: {
+              [`${State.USER_PREFIX}__proto__`]: {
+                baseUrl: 'https://evil.test',
+              },
+            },
+          }),
+        }),
+      });
+
+      // Read the key back through a *second* session. `updateSessionState`
+      // also writes the prefixed key into the originating session's own state,
+      // so only a sibling session exercises the `userState` map: writing
+      // `__proto__` into a plain map re-parents it rather than storing an own
+      // key, and `mergeStates` then silently drops the entry for every other
+      // session of the same user.
+      const sibling = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's2',
+      });
+      expect(sibling.state[`${State.USER_PREFIX}__proto__`]).toEqual({
+        baseUrl: 'https://evil.test',
+      });
+    });
+
+    it('does not re-parent session state via __proto__ in the initial state', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+        state: parseBody('{"__proto__": {"isAdmin": true}}'),
+      });
+
+      // `State` looks keys up with `in`, so a re-parented state object hands
+      // back every key of the attacker's object as if it were session state.
+      expect(new State(session.state).get('isAdmin')).toBeUndefined();
+      expect(session.state['__proto__']).toEqual({isAdmin: true});
+    });
+
+    it('does not re-parent session state via __proto__ in a state delta', async () => {
+      const session = await service.createSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+      await service.appendEvent({
+        session,
+        event: createEvent({
+          timestamp: Date.now(),
+          actions: createEventActions({
+            stateDelta: parseBody('{"__proto__": {"isAdmin": true}}'),
+          }),
+        }),
+      });
+
+      const stored = await service.getSession({
+        appName: 'app1',
+        userId: 'u1',
+        sessionId: 's1',
+      });
+      expect(new State(stored!.state).get('isAdmin')).toBeUndefined();
+      expect(stored?.state['__proto__']).toEqual({isAdmin: true});
+    });
+
+    it('does not leak sessions across apps as phantom entries', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      // An app/user pair that was never created must stay empty.
+      const phantom = await service.listSessions({
+        appName: 'polluted',
+        userId: 'polluted',
+      });
+      expect(phantom.sessions).toHaveLength(0);
+
+      // A real, unrelated app must not gain a phantom user either.
+      await service.createSession({
+        appName: 'real_app',
+        userId: 'alice',
+        sessionId: 's1',
+      });
+      const phantomUser = await service.listSessions({
+        appName: 'real_app',
+        userId: 'polluted',
+      });
+      expect(phantomUser.sessions).toHaveLength(0);
+    });
+
+    it('still stores and retrieves an app literally named __proto__', async () => {
+      await service.createSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+        state: {},
+      });
+
+      const session = await service.getSession({
+        appName: '__proto__',
+        userId: 'polluted',
+        sessionId: 'poc_sid',
+      });
+      expect(session?.id).toBe('poc_sid');
     });
   });
 });

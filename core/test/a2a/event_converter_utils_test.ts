@@ -120,9 +120,45 @@ describe('event_converter_utils', () => {
 
       const event = toAdkEvent(message, 'inv1', 'agent1');
       expect(event).toBeDefined();
-      expect(event!.branch).toBe('test-branch');
       expect(event!.errorCode).toBe('404');
       expect(event!.errorMessage).toBe('not found');
+    });
+
+    it('never restores branch from peer-supplied metadata, even without a caller-supplied branch', () => {
+      // A remote A2A peer fully controls its own outgoing `adk_branch`
+      // metadata. getContents() (content_processor_utils.ts) uses an
+      // event's `branch` to keep sibling sub-agent conversation contexts
+      // isolated, so restoring it from peer metadata would let a malicious
+      // peer forge a shared-ancestor (or absent) branch to leak its content
+      // into an unrelated sibling agent's LLM context.
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-forged-branch',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hello'}],
+        metadata: {'adk_branch': 'forged-parent-branch'},
+      };
+
+      const event = toAdkEvent(message, 'inv1', 'agent1');
+      expect(event!.branch).toBeUndefined();
+    });
+
+    it('sets branch from the caller-supplied local invocation branch, not from peer metadata', () => {
+      const message: Message = {
+        kind: 'message',
+        messageId: 'msg-branch-override',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'hello'}],
+        metadata: {'adk_branch': 'forged-parent-branch'},
+      };
+
+      const event = toAdkEvent(
+        message,
+        'inv1',
+        'agent1',
+        'coordinator.sub_agent_a',
+      );
+      expect(event!.branch).toBe('coordinator.sub_agent_a');
     });
 
     describe('Message', () => {
@@ -200,7 +236,13 @@ describe('event_converter_utils', () => {
         ]);
         expect(event!.turnComplete).toBe(true);
         expect(event!.actions?.escalate).toBe(true);
-        expect(event!.actions?.transferToAgent).toBe('agent2');
+        // Peer-supplied `adk_transfer_to_agent` in the fixture below must be
+        // dropped, not restored -- it drives the local orchestrator's own
+        // control flow and must never come from a remote peer. Asserting
+        // `toBeUndefined()` here (rather than removing the assertion) means
+        // a future regression that re-restores it fails loudly instead of
+        // passing silently.
+        expect(event!.actions?.transferToAgent).toBeUndefined();
         expect(event!.customMetadata).toEqual({
           'a2a:task_id': 'task1',
           'a2a:context_id': 'context1',

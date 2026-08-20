@@ -14,6 +14,8 @@ import {
   traceAgentInvocation,
   tracer,
 } from '../telemetry/tracing.js';
+import {BaseNode, BaseNodeConfig} from '../workflow/base_node.js';
+import type {NodeContext} from '../workflow/node_context.js';
 import {Context} from './context.js';
 import {InvocationContext} from './invocation_context.js';
 
@@ -38,8 +40,13 @@ export type AfterAgentCallback = SingleAgentCallback | SingleAgentCallback[];
 
 /**
  * The config of a base agent.
+ *
+ * Extends {@link BaseNodeConfig}, so every agent also accepts the node-level
+ * options — `retryConfig`, `timeout`, `inputSchema`, `outputSchema`,
+ * `stateSchema`, `rerunOnResume`, `waitForOutput` — which apply when the agent
+ * runs inside a workflow.
  */
-export interface BaseAgentConfig {
+export interface BaseAgentConfig extends BaseNodeConfig {
   name: string;
   description?: string;
   parentAgent?: BaseAgent;
@@ -74,10 +81,15 @@ export function isBaseAgent(obj: unknown): obj is BaseAgent {
  * The class is generic over its config type so that {@link clone} can be typed
  * per subclass (e.g. `LlmAgent.clone({instruction})`). The default keeps bare
  * `BaseAgent` references valid as `BaseAgent<BaseAgentConfig>`.
+ *
+ * An agent **is** a {@link BaseNode}, so any agent can be dropped straight into
+ * a workflow graph without a wrapper — mirroring adk-python, where
+ * `BaseAgent(BaseNode)`. {@link runImpl} bridges the two contracts: the node
+ * runner calls it, and it delegates to the agent's own {@link runAsync}.
  */
 export abstract class BaseAgent<
   TConfig extends BaseAgentConfig = BaseAgentConfig,
-> {
+> extends BaseNode {
   /**
    * A unique symbol to identify ADK agent classes.
    */
@@ -100,13 +112,10 @@ export abstract class BaseAgent<
    */
   readonly name: string;
 
-  /**
-   * Description about the agent's capability.
-   *
-   * The model uses this to determine whether to delegate control to the agent.
-   * One-line description is enough and preferred.
-   */
-  readonly description?: string;
+  // `description` is inherited from BaseNode, which declares it `string` and
+  // defaults it to ''. It used to be `string | undefined` here; every consumer
+  // already coalesced (`agent.description || ''`), so the default is
+  // equivalent for them.
 
   /**
    * Root agent of this agent.
@@ -163,11 +172,13 @@ export abstract class BaseAgent<
   readonly afterAgentCallback: SingleAgentCallback[];
 
   constructor(config: BaseAgentConfig) {
+    // An agent name is stricter than a node name (a JS identifier, and never
+    // "user"), so it is validated here and handed to BaseNode already checked.
+    super({...config, name: validateAgentName(config.name)});
     // Captures every field the concrete subclass passed to super(...), even
     // though the parameter is typed BaseAgentConfig, so clone() can rebuild it.
     this.config = {...config} as TConfig;
     this.name = validateAgentName(config.name);
-    this.description = config.description;
     this.parentAgent = config.parentAgent;
     this.subAgents = config.subAgents || [];
     this.beforeAgentCallback = getCannonicalCallback(
@@ -279,6 +290,35 @@ export abstract class BaseAgent<
     } finally {
       span.end();
     }
+  }
+
+  /**
+   * Runs this agent as a workflow node.
+   *
+   * The node runner calls this; it delegates to {@link runAsync}, so an agent
+   * behaves identically whether it is run directly or as a node. Mirrors
+   * adk-python `BaseAgent._run_impl`.
+   *
+   * The invocation context comes from {@link NodeContext.getInvocationContext}
+   * rather than the raw field, so the agent runs against whatever view of the
+   * session the workflow wants it to see.
+   *
+   * Unlike adk-python's `_run_impl`, nothing is stamped onto the events here.
+   * Python has to fix up the author and the node path because it authors
+   * in-workflow events as the workflow itself; the TypeScript node runner
+   * already owns both (`enrichEvent` keeps an author the node set, and always
+   * stamps the true node path), so repeating it would be dead code.
+   *
+   * `nodeInput` is intentionally unused: an agent's input is its conversation,
+   * which the workflow supplies through the session. A node that needs to read
+   * its input — an `LlmAgent` injecting it into the prompt, say — does so in
+   * its own wrapper.
+   */
+  protected async *runImpl(
+    ctx: NodeContext,
+    _nodeInput: unknown,
+  ): AsyncGenerator<Event, void, void> {
+    yield* this.runAsync(ctx.getInvocationContext());
   }
 
   /**

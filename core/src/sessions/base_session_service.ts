@@ -10,6 +10,7 @@ import {Event} from '../events/event.js';
 
 import {CompositeSessionKey, Session} from './session.js';
 import {State} from './state.js';
+import {carryDeltaStamps, shouldApplyDeltaWrite} from './state_write_order.js';
 
 /**
  * The configuration of getting a session.
@@ -49,8 +50,8 @@ export interface GetSessionRequest extends CompositeSessionKey {
 export interface ListSessionsRequest {
   /** The name of the application. */
   appName: string;
-  /** The ID of the user. */
-  userId: string;
+  /** The ID of the user. Sessions of every user are listed if omitted. */
+  userId?: string;
   /** Maximum number of sessions to return. */
   limit?: number;
   /** Zero-based index of the first session to return. Ignored if `page` is set. */
@@ -196,7 +197,26 @@ export abstract class BaseSessionService {
       if (key.startsWith(State.TEMP_PREFIX)) {
         continue;
       }
-      session.state[key] = value;
+      // Commits lag the writes they carry, and events arrive here in the order
+      // they were streamed rather than the order their writes happened.
+      // Applying an entry that a newer write already superseded would roll the
+      // key back until that newer event commits in turn; skip it instead.
+      if (
+        !shouldApplyDeltaWrite(session.state, event.actions.stateDelta, key)
+      ) {
+        continue;
+      }
+      // `session.state` is not always a null-prototype map — a caller can hand
+      // us a session whose state is a plain object literal — and on a plain
+      // object `state['__proto__'] = value` reaches the inherited `__proto__`
+      // setter, which replaces the object's prototype instead of storing the
+      // entry. `defineProperty` always creates an own property.
+      Object.defineProperty(session.state, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
   }
 }
@@ -210,24 +230,38 @@ export function trimTempDeltaState(event: Event): Event {
   }
 
   const stateDelta = event.actions.stateDelta;
-  const filteredStateDelta: Record<string, unknown> = {};
+  // Null-prototype: the caller controls these keys, and copying a `__proto__`
+  // key into a plain object literal invokes the inherited `__proto__` setter,
+  // which drops the entry and re-parents the map. See `trimTempState`.
+  const filteredStateDelta: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(stateDelta)) {
     if (!key.startsWith(State.TEMP_PREFIX)) {
       filteredStateDelta[key] = value;
     }
   }
 
+  // The rebuilt map is a different object, so the write order recorded against
+  // the old one has to come with it or the commit loses its ordering.
+  carryDeltaStamps(stateDelta, filteredStateDelta);
   event.actions.stateDelta = filteredStateDelta;
   return event;
 }
 
 /**
  * Removes temporary state keys from the state.
+ *
+ * The result is a null-prototype map. `state` comes straight off the request
+ * body on a dev server (`POST /apps/:appName/users/:userId/sessions/:sessionId`),
+ * and `JSON.parse` makes `__proto__` an own key, so copying it into a plain
+ * object literal would invoke the inherited `__proto__` setter: the entry is
+ * dropped and the new state object is re-parented onto the attacker's object.
+ * `State.get`/`State.has` use the `in` operator, so every key on that object
+ * would then read back as session state.
  */
 export function trimTempState(
   state: Record<string, unknown>,
 ): Record<string, unknown> {
-  const filteredState: Record<string, unknown> = {};
+  const filteredState: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(state)) {
     if (!key.startsWith(State.TEMP_PREFIX)) {
       filteredState[key] = value;

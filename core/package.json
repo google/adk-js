@@ -1,6 +1,6 @@
 {
   "name": "@google/adk",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -22,9 +22,14 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "browser": "./dist/web/index_web.js",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./dist/web/*": {
+      "types": "./dist/types/*",
+      "default": "./dist/web/*"
     }
   },
   "scripts": {
@@ -72,6 +77,7 @@
   },
   "devDependencies": {
     "@mikro-orm/sqlite": "^6.6.6",
+    "@opentelemetry/context-async-hooks": "^2.1.0",
     "@types/adm-zip": "^0.5.8",
     "@types/express": "^4.17.25",
     "@types/lodash-es": "^4.17.12",

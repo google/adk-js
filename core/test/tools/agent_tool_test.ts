@@ -89,7 +89,6 @@ describe('AgentTool', () => {
 
     expect(result).toBe('hello');
 
-    // Verify getOrCreateSession called with parent context
     expect(mockSessionService.getOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
         appName: 'sub-agent',
@@ -500,7 +499,6 @@ describe('AgentTool', () => {
       toolContext,
     });
 
-    // Retrieve the created session from the service
     const subAgentSession = await mockSessionService.getSession({
       appName: 'sub-agent',
       userId: 'parent-user',

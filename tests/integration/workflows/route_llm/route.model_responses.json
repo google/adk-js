@@ -1,0 +1,28 @@
+{
+  "classify_input": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "{\"category\": \"question\"}"}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ],
+  "answer_question": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "The answer is 42."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}

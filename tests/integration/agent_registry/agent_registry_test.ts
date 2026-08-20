@@ -19,7 +19,6 @@ import {
   RawGenerateContentResponse,
 } from '../test_case_utils.js';
 
-// Mock google-auth-library
 vi.mock('google-auth-library', () => {
   return {
     GoogleAuth: vi.fn().mockImplementation(() => {

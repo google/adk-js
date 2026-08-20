@@ -6,18 +6,20 @@
 
 import {AuthCredential, AuthCredentialTypes, AuthScheme} from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {BaseCredentialExchanger} from '../../../src/auth/exchanger/base_credential_exchanger.js';
+import {
+  BaseCredentialExchanger,
+  ExchangeResult,
+} from '../../../src/auth/exchanger/base_credential_exchanger.js';
 import {CredentialExchangerRegistry} from '../../../src/auth/exchanger/credential_exchanger_registry.js';
 
-// Mock credential exchanger for testing
 class MockCredentialExchanger implements BaseCredentialExchanger {
   async exchange({
     authCredential,
   }: {
     authCredential: AuthCredential;
     authScheme?: AuthScheme;
-  }): Promise<AuthCredential> {
-    return authCredential;
+  }): Promise<ExchangeResult> {
+    return {credential: authCredential, wasExchanged: false};
   }
 }
 
@@ -52,7 +54,6 @@ describe('CredentialExchangerRegistry', () => {
     const mockExchangerOpenIdConnect = new MockCredentialExchanger();
     const mockExchangerServiceAccount = new MockCredentialExchanger();
 
-    // Register each credential type
     registry.register(AuthCredentialTypes.API_KEY, mockExchangerApiKey);
     registry.register(AuthCredentialTypes.OAUTH2, mockExchangerOauth2);
     registry.register(

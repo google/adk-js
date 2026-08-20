@@ -1,0 +1,25 @@
+{
+  "generate_fruit_agent": [
+    {
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "apple"}]},
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ],
+  "generate_benefit_agent": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "Apples are rich in fiber."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}

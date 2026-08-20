@@ -5,9 +5,36 @@
  */
 
 import {State} from '../sessions/state.js';
+import type {WorkflowInstructionScope} from './invocation_context.js';
 import {ReadonlyContext} from './readonly_context.js';
 
 const ARTIFACT_PREFIX = 'artifact.';
+
+/** Matches a `{Class.field}` workflow placeholder key (dotted identifier pair). */
+const WORKFLOW_FIELD_KEY = /^[A-Za-z_]\w*\.[A-Za-z_]\w*$/;
+
+/** Matches a `<Class.field from source_node>` workflow placeholder. */
+const SOURCE_NODE_PLACEHOLDER =
+  /<\s*[A-Za-z_]\w*\.([A-Za-z_]\w*)\s+from\s+([A-Za-z_]\w*)\s*>/g;
+
+/**
+ * Resolves one `<Class.field from source_node>` placeholder against a workflow
+ * scope (predecessor outputs by node name). Synchronous; an unresolved
+ * placeholder is returned untouched. Mirrors Python's source-node-qualified
+ * data selection.
+ */
+function resolveSourceNode(
+  raw: string,
+  field: string,
+  nodeName: string,
+  scope: WorkflowInstructionScope,
+): string {
+  const out = scope.outputsByNode?.[nodeName];
+  if (out && typeof out === 'object' && field in (out as object)) {
+    return formatValue((out as Record<string, unknown>)[field], false);
+  }
+  return raw;
+}
 
 /**
  * Resolves a single key from the context (state or artifact).
@@ -39,19 +66,30 @@ async function resolveKey(
   }
 
   // Step 3: Handle state variable injection.
-  if (!isValidStateName(key)) {
-    return rawMatch;
+  if (isValidStateName(key)) {
+    if (key in invocationContext.session.state) {
+      return formatValue(invocationContext.session.state[key], false);
+    }
+    if (isOptional) {
+      return '';
+    }
+    throw new Error(`Context variable not found: \`${key}\`.`);
   }
 
-  if (key in invocationContext.session.state) {
-    return formatValue(invocationContext.session.state[key], false);
+  // Step 4: Workflow — resolve `{Class.field}` from the current node input.
+  const scope = invocationContext.workflowInstructionScope;
+  if (scope && WORKFLOW_FIELD_KEY.test(key)) {
+    const field = key.slice(key.indexOf('.') + 1);
+    const input = scope.input;
+    if (input && typeof input === 'object' && field in (input as object)) {
+      return formatValue((input as Record<string, unknown>)[field], false);
+    }
+    if (isOptional) {
+      return '';
+    }
   }
 
-  if (isOptional) {
-    return '';
-  }
-
-  throw new Error(`Context variable not found: \`${key}\`.`);
+  return rawMatch;
 }
 
 /**
@@ -115,10 +153,22 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
+  // Workflow: `<Class.field from source_node>` placeholders, plus
+  // `{Class.field}` resolution below. Both are no-ops (placeholders left
+  // untouched) for ordinary agents, which have no workflow scope.
+  const scope = readonlyContext.invocationContext.workflowInstructionScope;
+  const sourceMatches = scope
+    ? Array.from(template.matchAll(SOURCE_NODE_PLACEHOLDER)).map((match) => ({
+        raw: match[0],
+        index: match.index!,
+        resolved: resolveSourceNode(match[0], match[1], match[2], scope),
+      }))
+    : [];
+
   const pattern = /\{+[^{}]*}+/g;
   const matches = Array.from(template.matchAll(pattern));
 
-  if (matches.length === 0) {
+  if (matches.length === 0 && sourceMatches.length === 0) {
     return template;
   }
 
@@ -130,7 +180,10 @@ export async function injectSessionState(
     if (isOptional) {
       key = key.slice(0, -1);
     }
-    const isValid = key.startsWith(ARTIFACT_PREFIX) || isValidStateName(key);
+    const isValid =
+      key.startsWith(ARTIFACT_PREFIX) ||
+      isValidStateName(key) ||
+      (!!scope && WORKFLOW_FIELD_KEY.test(key));
     return {
       raw,
       key,
@@ -177,11 +230,16 @@ export async function injectSessionState(
   await Promise.all(resolutions.values());
 
   // Reconstruct template using pre-parsed matches
+  const allMatches = [...parsedMatches, ...sourceMatches].sort(
+    (a, b) => a.index - b.index,
+  );
   const result: string[] = [];
   let lastEnd = 0;
-  for (const pm of parsedMatches) {
+  for (const pm of allMatches) {
     result.push(template.slice(lastEnd, pm.index));
-    if (pm.isValid) {
+    if ('resolved' in pm) {
+      result.push(pm.resolved);
+    } else if (pm.isValid) {
       const replacement = await resolutions.get(pm.key)!;
       result.push(replacement);
     } else {

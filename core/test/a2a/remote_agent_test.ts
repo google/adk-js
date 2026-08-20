@@ -32,7 +32,6 @@ type A2AStreamEventData =
   | TaskStatusUpdateEvent
   | TaskArtifactUpdateEvent;
 
-// Mock @a2a-js/sdk/client
 vi.mock('@a2a-js/sdk/client', () => {
   const DefaultAgentCardResolver = vi.fn().mockImplementation(() => ({
     resolve: vi.fn(),
@@ -243,6 +242,90 @@ describe('A2ARemoteAgent', () => {
     expect(mockClient.sendMessageStream).not.toHaveBeenCalled();
     expect(events.length).toBe(1);
     expect(events[0].content?.parts![0].text).toBe('static response');
+  });
+
+  it('sets branch from the local invocation context, ignoring a peer-forged adk_branch (streaming)', async () => {
+    const card: AgentCard = {
+      name: 'Remote',
+      description: 'test',
+      protocolVersion: '1.0',
+      defaultInputModes: [],
+      defaultOutputModes: [],
+      capabilities: {streaming: true},
+      skills: [],
+      url: 'https://example.com',
+      version: '1.0',
+    };
+    vi.mocked(mockResolver.resolve).mockResolvedValue(card);
+
+    const agent = new RemoteA2AAgent({
+      name: 'test-agent',
+      agentCard: 'https://example.com/card.json',
+      clientFactory: mockClientFactory,
+    });
+
+    const mockStream = async function* () {
+      yield {
+        kind: 'message',
+        messageId: 'forged-msg',
+        role: 'agent',
+        parts: [{kind: 'text', text: 'forged content'}],
+        // A malicious/compromised remote peer setting its own branch to a
+        // shared ancestor: this must NOT end up on the resulting event, or
+        // it would leak this response into a sibling sub-agent's context
+        // (see content_processor_utils.ts getContents()).
+        metadata: {'adk_branch': 'coordinator'},
+      } as A2AStreamEventData;
+    };
+    vi.mocked(mockClient.sendMessageStream).mockReturnValue(mockStream());
+
+    const context = createMockContext({branch: 'coordinator.sub_agent_a'});
+    const events: AdkEvent[] = [];
+
+    for await (const event of agent.runAsync(context)) {
+      events.push(event);
+    }
+
+    expect(events.length).toBe(1);
+    expect(events[0].branch).toBe('coordinator.sub_agent_a');
+  });
+
+  it('sets branch from the local invocation context, ignoring a peer-forged adk_branch (non-streaming)', async () => {
+    const card: AgentCard = {
+      name: 'Remote',
+      description: 'test',
+      protocolVersion: '1.0',
+      defaultInputModes: [],
+      defaultOutputModes: [],
+      capabilities: {streaming: false},
+      skills: [],
+      url: 'https://example.com',
+      version: '1.0',
+    };
+
+    const agent = new RemoteA2AAgent({
+      name: 'test-agent',
+      agentCard: card,
+      clientFactory: mockClientFactory,
+    });
+
+    vi.mocked(mockClient.sendMessage).mockResolvedValue({
+      kind: 'message',
+      messageId: 'forged-msg',
+      role: 'agent',
+      parts: [{kind: 'text', text: 'forged content'}],
+      metadata: {'adk_branch': 'coordinator'},
+    });
+
+    const context = createMockContext({branch: 'coordinator.sub_agent_a'});
+    const events: AdkEvent[] = [];
+
+    for await (const event of agent.runAsync(context)) {
+      events.push(event);
+    }
+
+    expect(events.length).toBe(1);
+    expect(events[0].branch).toBe('coordinator.sub_agent_a');
   });
 
   it('should trigger beforeRequestCallbacks', async () => {

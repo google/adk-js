@@ -45,6 +45,11 @@ function build({
     format,
     bundle,
     minify: bundle,
+    // Minification renames classes, and we report those names at runtime:
+    // `@experimental` logs `target.name`, which otherwise reads "Class oR is
+    // experimental". User code that logs `constructor.name` sees the same
+    // mangling, so keep the original names in the bundle.
+    keepNames: true,
     sourcemap: bundle,
     packages: 'external',
     logLevel: 'info',
@@ -53,6 +58,7 @@ function build({
   if (platform === 'browser' && bundle) {
     buildOptions.alias = {
       'node:async_hooks': './src/utils/async_hooks_shim.ts',
+      'node:crypto': './src/utils/crypto_shim.ts',
     };
   }
 

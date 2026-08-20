@@ -1,0 +1,41 @@
+{
+  "summarizer": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "Summary: the report is positive."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ],
+  "researcher": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "Findings: A, B, C."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ],
+  "writer": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [{"text": "Report drafted from the findings."}]
+          },
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ]
+}

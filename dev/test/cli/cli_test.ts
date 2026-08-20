@@ -102,6 +102,18 @@ describe('CLI Entrypoint', () => {
       expect(instance.start).toHaveBeenCalled();
     });
 
+    it('honours --log_level debug', async () => {
+      // LogLevel.DEBUG is 0, so the previous `|| LogLevel.INFO` fallback
+      // discarded it and the flag did nothing.
+      await parse(['web', '--log_level', 'debug']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+    });
+
+    it('falls back to INFO for an unrecognised --log_level', async () => {
+      await parse(['web', '--log_level', 'not-a-level']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.INFO);
+    });
+
     it('should pass options to AdkApiServer', async () => {
       await parse([
         'web',
@@ -225,6 +237,19 @@ describe('CLI Entrypoint', () => {
   });
 
   describe('command: run', () => {
+    it('exits non-zero when the run fails', async () => {
+      (runAgent as Mock).mockRejectedValueOnce(
+        new Error('Agent file /nope/agent.ts does not exists'),
+      );
+      const exit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => undefined) as never);
+
+      await parse(['run', '/nope/agent.ts']);
+
+      expect(exit).toHaveBeenCalledWith(1);
+    });
+
     it('should call runAgent with required args', async () => {
       await parse(['run', 'agent.ts']);
 
@@ -235,6 +260,18 @@ describe('CLI Entrypoint', () => {
           otelToCloud: false,
         }),
       );
+    });
+
+    it.each([
+      ['before the path', ['run', '--verbose', 'agent.ts']],
+      ['after the path', ['run', 'agent.ts', '--verbose']],
+    ])('takes --verbose %s', async (_name, args) => {
+      await parse(args);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({agentPath: 'agent.ts'}),
+      );
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
     });
 
     it('should pass all options to runAgent', async () => {
@@ -276,6 +313,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'cloud_run']);
+
+      expect(
+        (deployToCloudRun as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
     });
 
     it('should pass args to deployToCloudRun including unknowns', async () => {
@@ -348,6 +393,14 @@ describe('CLI Entrypoint', () => {
           withUi: false,
         }),
       );
+    });
+
+    it('should leave tempFolder unset so no temp directory is created eagerly', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].tempFolder,
+      ).toBeUndefined();
     });
 
     it('should pass args to deployToAgentEngine', async () => {

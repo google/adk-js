@@ -35,6 +35,13 @@ const GEN_AI_TOOL_DESCRIPTION = 'gen_ai.tool.description';
 const GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
 const GEN_AI_TOOL_TYPE = 'gen_ai.tool.type';
 
+const ADK_WORKFLOW_NAME = 'adk.workflow.name';
+const ADK_NODE_PATH = 'adk.node.path';
+const ADK_NODE_RUN_ID = 'adk.node.run_id';
+const ADK_NODE_ATTEMPT = 'adk.node.attempt';
+const ADK_NODE_STATUS = 'adk.node.status';
+const ADK_NODE_INTERRUPT_COUNT = 'adk.node.interrupt_count';
+
 export const tracer = trace.getTracer('gcp.vertex.agent', version);
 
 /**
@@ -87,6 +94,58 @@ export function traceAgentInvocation({
     [GEN_AI_AGENT_DESCRIPTION]: agent.description,
     [GEN_AI_AGENT_NAME]: agent.name,
     [GEN_AI_CONVERSATION_ID]: invocationContext.session.id,
+  });
+}
+
+export interface TraceWorkflowInvocationParams {
+  workflowName: string;
+  nodePath: string;
+  sessionId: string;
+}
+
+export function traceWorkflowInvocation({
+  workflowName,
+  nodePath,
+  sessionId,
+}: TraceWorkflowInvocationParams): void {
+  const span = trace.getActiveSpan();
+  if (!span) return;
+
+  span.setAttributes({
+    [GEN_AI_OPERATION_NAME]: 'invoke_workflow',
+    [GEN_AI_CONVERSATION_ID]: sessionId,
+    [ADK_WORKFLOW_NAME]: workflowName,
+    [ADK_NODE_PATH]: nodePath,
+  });
+}
+
+export type NodeExecutionStatus = 'completed' | 'waiting' | 'failed';
+
+export interface TraceNodeExecutionParams {
+  nodePath: string;
+  runId: string;
+  attempt: number;
+  status: NodeExecutionStatus;
+  interruptCount: number;
+}
+
+export function traceNodeExecution({
+  nodePath,
+  runId,
+  attempt,
+  status,
+  interruptCount,
+}: TraceNodeExecutionParams): void {
+  const span = trace.getActiveSpan();
+  if (!span) return;
+
+  span.setAttributes({
+    [GEN_AI_OPERATION_NAME]: 'execute_node',
+    [ADK_NODE_PATH]: nodePath,
+    [ADK_NODE_RUN_ID]: runId,
+    [ADK_NODE_ATTEMPT]: attempt,
+    [ADK_NODE_STATUS]: status,
+    [ADK_NODE_INTERRUPT_COUNT]: interruptCount,
   });
 }
 
@@ -221,6 +280,9 @@ export function traceCallLlm({
   span.setAttributes({
     'gen_ai.system': 'gcp.vertex.agent',
     'gen_ai.request.model': llmRequest.model,
+    ...(invocationContext.agent?.name
+      ? {[GEN_AI_AGENT_NAME]: invocationContext.agent.name}
+      : {}),
     'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
     'gcp.vertex.agent.session_id': invocationContext.session.id,
     'gcp.vertex.agent.event_id': eventId,

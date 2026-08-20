@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.0](https://github.com/google/adk-js/compare/devtools-v1.5.0...devtools-v1.6.0) (2026-08-05)
+
+
+### Features
+
+* CLI-level A2A authenticator for the dev server and Cloud Run deploy (Part 2/2) ([#559](https://github.com/google/adk-js/issues/559)) ([0c0bba2](https://github.com/google/adk-js/commit/0c0bba2cc4639ff89e4fa517ace25e34babb64b0))
+
+
+### Bug Fixes
+
+* **cli:** check isCancel before coercing the project prompt in adk create ([#570](https://github.com/google/adk-js/issues/570)) ([c6f8b2f](https://github.com/google/adk-js/commit/c6f8b2f7482ab18a66d1b0c726e4b524802d2b8b))
+* **cli:** make the getting-started path actually work ([#624](https://github.com/google/adk-js/issues/624)) ([6ea645c](https://github.com/google/adk-js/commit/6ea645cab6c2b20fe91f054cbe2f08beffb3dfb9))
+* create dev-package temp directories atomically with mkdtemp (no predictable parent) ([#615](https://github.com/google/adk-js/issues/615)) ([81c1422](https://github.com/google/adk-js/commit/81c1422268f1295d7ae99e05a7d74cc51682362f))
+* **deploy:** reject unsafe appName/project/region in generated Dockerfile ([#604](https://github.com/google/adk-js/issues/604)) ([dadce1a](https://github.com/google/adk-js/commit/dadce1a1169a56b73e0d152b8c8d584b5b52b7c7))
+* make streaming and stateDelta optional on RunAgentRequest ([#585](https://github.com/google/adk-js/issues/585)) ([1df47e9](https://github.com/google/adk-js/commit/1df47e9733e0f2b0aac1bcbda24b7f1a8ae73d9b))
+* **security:** prevent prototype pollution via untrusted map keys ([#619](https://github.com/google/adk-js/issues/619)) ([2c07ad3](https://github.com/google/adk-js/commit/2c07ad3741cd84788d0b30a793587d5dd4b46106))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.5.0 to ^1.6.0
+
 ## [1.5.0](https://github.com/google/adk-js/compare/devtools-v1.4.0...devtools-v1.5.0) (2026-07-29)
 
 

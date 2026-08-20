@@ -27,7 +27,6 @@ import {
 vi.hoisted(() => {
   vi.resetModules();
 });
-// Mock OpenTelemetry API
 vi.mock('@opentelemetry/api');
 
 describe('Telemetry Tracing Functions', () => {
@@ -249,6 +248,7 @@ describe('Telemetry Tracing Functions', () => {
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.system': 'gcp.vertex.agent',
         'gen_ai.request.model': 'test-model',
+        'gen_ai.agent.name': 'test-agent',
         'gcp.vertex.agent.invocation_id': 'test-invocation-id',
         'gcp.vertex.agent.session_id': 'test-session-id',
         'gcp.vertex.agent.event_id': 'test-event-id',

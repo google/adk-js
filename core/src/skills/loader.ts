@@ -6,6 +6,7 @@
 
 import AdmZip from 'adm-zip';
 import yaml from 'js-yaml';
+import {isUtf8} from 'node:buffer';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {logger} from '../utils/logger.js';
@@ -54,6 +55,17 @@ const IGNORED_EXTENSIONS = new Set([
 ]);
 
 /**
+ * Decodes skill resource bytes as UTF-8 text when valid, otherwise keeps the
+ * raw Buffer.
+ *
+ * `Buffer.prototype.toString('utf-8')` never throws on invalid sequences — it
+ * substitutes U+FFFD — so callers must check validity before decoding.
+ */
+function decodeSkillFileContent(data: Buffer): string | Buffer {
+  return isUtf8(data) ? data.toString('utf-8') : data;
+}
+
+/**
  * Recursively loads files from a directory into a dictionary.
  *
  * @param directoryPath - The absolute or relative path of the directory to load.
@@ -82,12 +94,7 @@ async function loadDir(
         }
 
         const fileData = await fs.readFile(fullPath);
-
-        try {
-          files[relativePath] = fileData.toString('utf-8');
-        } catch (_e: unknown) {
-          files[relativePath] = fileData;
-        }
+        files[relativePath] = decodeSkillFileContent(fileData);
       }
     }
   }
@@ -185,11 +192,10 @@ export function parseSkillMdContent(content: string): {
  * symlinks.
  */
 function isDangerousZipEntryName(entryName: string): boolean {
-  return (
-    entryName.startsWith('/') ||
-    entryName.startsWith('../') ||
-    entryName.includes('/../')
-  );
+  if (path.posix.isAbsolute(entryName) || path.win32.isAbsolute(entryName)) {
+    return true;
+  }
+  return entryName.split(/[/\\]/).some((segment) => segment === '..');
 }
 
 /**
@@ -446,11 +452,7 @@ export function loadSkillFromZipBuffer(zipBuffer: Buffer): Skill {
         const relativePath = entry.entryName.substring(normPrefix.length);
         if (!relativePath) continue;
         const data = entry.getData();
-        try {
-          res[relativePath] = data.toString('utf-8');
-        } catch (_e: unknown) {
-          res[relativePath] = data;
-        }
+        res[relativePath] = decodeSkillFileContent(data);
       }
     }
     return res;

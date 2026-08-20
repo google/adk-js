@@ -21,6 +21,23 @@ import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 const AGENT_ENGINE_ID = '12345';
 
 /**
+ * Builds the Agent Engine `Sessions` client from an `ApiClient`.
+ *
+ * `@google-cloud/vertexai` bundles its own nested copy of `@google/genai`
+ * (1.52.0) while the repo root resolves `@google/genai` to 2.9.0, so the
+ * `ApiClient` this test constructs is a structurally distinct class (its
+ * private fields make the two nominally incompatible) from the one `Sessions`
+ * declares. The instances are interchangeable at runtime -- the mismatch is a
+ * duplicate-dependency artifact, not a real API difference -- so the cast is
+ * confined to this one boundary.
+ */
+function createSessionsClient(apiClient: ApiClient): Sessions {
+  return new Sessions(
+    apiClient as unknown as ConstructorParameters<typeof Sessions>[0],
+  );
+}
+
+/**
  * Exercises `getSession`'s NOT_FOUND handling against an error the SDK builds
  * itself: a loopback HTTP server answers 404 in place of the Agent Engine
  * Sessions API, and the response travels back through the real
@@ -56,7 +73,7 @@ describe('VertexAiSessionService over the real Sessions HTTP client', () => {
     });
     service = new VertexAiSessionService({
       agentEngineId: AGENT_ENGINE_ID,
-      sessions: new Sessions(apiClient),
+      sessions: createSessionsClient(apiClient),
     });
   });
 
@@ -121,7 +138,7 @@ describe('VertexAiSessionService session expiration over the wire', () => {
     });
     service = new VertexAiSessionService({
       agentEngineId: AGENT_ENGINE_ID,
-      sessions: new Sessions(apiClient),
+      sessions: createSessionsClient(apiClient),
     });
   });
 

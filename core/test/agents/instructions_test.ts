@@ -15,6 +15,7 @@ import {injectSessionState} from '../../src/agents/instructions.js';
 function makeContext(
   state: Record<string, unknown> = {},
   artifactService?: unknown,
+  workflowInstructionScope?: unknown,
 ): ReadonlyContext {
   const fakeInvocationContext = {
     session: {
@@ -24,6 +25,7 @@ function makeContext(
       state,
     },
     artifactService,
+    workflowInstructionScope,
   } as unknown as InvocationContext;
 
   return new ReadonlyContext(fakeInvocationContext);
@@ -303,5 +305,99 @@ describe('injectSessionState', () => {
     expect(await injectSessionState('Data: {artifact.data.bin}', ctx)).toBe(
       'Data: {"inlineData":{"mimeType":"text/plain","data":"abc"}}',
     );
+  });
+
+  describe('workflow field placeholders', () => {
+    it('resolves {Class.field} from the node input', async () => {
+      const ctx = makeContext({}, undefined, {
+        input: {time_info: '10:10 AM', city: 'Paris'},
+      });
+      expect(
+        await injectSessionState(
+          'It is {CityTime.time_info} in {CityTime.city} right now.',
+          ctx,
+        ),
+      ).toBe('It is 10:10 AM in Paris right now.');
+    });
+
+    it('resolves <Class.field from source_node> from predecessor outputs', async () => {
+      const ctx = makeContext({}, undefined, {
+        outputsByNode: {
+          lookup_time_function: {time_info: '9:00 AM', city: 'Rome'},
+        },
+      });
+      expect(
+        await injectSessionState(
+          'It is <CityTime.time_info from lookup_time_function> in ' +
+            '<CityTime.city from lookup_time_function>.',
+          ctx,
+        ),
+      ).toBe('It is 9:00 AM in Rome.');
+    });
+
+    it('resolves workflow fields alongside normal state keys', async () => {
+      const ctx = makeContext({tone: 'formal'}, undefined, {
+        input: {city: 'Paris'},
+      });
+      expect(await injectSessionState('{tone}: {City.city}', ctx)).toBe(
+        'formal: Paris',
+      );
+    });
+
+    it('leaves {Class.field} untouched when there is no workflow scope', async () => {
+      const ctx = makeContext();
+      expect(await injectSessionState('It is {CityTime.time_info}.', ctx)).toBe(
+        'It is {CityTime.time_info}.',
+      );
+    });
+
+    it('leaves <field from node> untouched when there is no workflow scope', async () => {
+      const ctx = makeContext();
+      expect(await injectSessionState('X <A.b from n> Y', ctx)).toBe(
+        'X <A.b from n> Y',
+      );
+    });
+
+    it('leaves an unknown {Class.field} untouched when the field is absent', async () => {
+      const ctx = makeContext({}, undefined, {input: {city: 'Paris'}});
+      expect(await injectSessionState('{CityTime.missing}', ctx)).toBe(
+        '{CityTime.missing}',
+      );
+    });
+
+    it('does not rescan an injected source-node value for {placeholders}', async () => {
+      const ctx = makeContext({}, undefined, {
+        outputsByNode: {city_generator: {city: '{my_city}'}},
+      });
+      expect(
+        await injectSessionState(
+          'The city is <City.city from city_generator>.',
+          ctx,
+        ),
+      ).toBe('The city is {my_city}.');
+    });
+
+    it('does not rescan an injected {Class.field} value for {placeholders}', async () => {
+      const ctx = makeContext({}, undefined, {input: {city: '{my_city}'}});
+      expect(await injectSessionState('The city is {City.city}.', ctx)).toBe(
+        'The city is {my_city}.',
+      );
+    });
+
+    it('does not rescan an injected state value for {placeholders}', async () => {
+      const ctx = makeContext({city: '{my_city}'});
+      expect(await injectSessionState('The city is {city}.', ctx)).toBe(
+        'The city is {my_city}.',
+      );
+    });
+
+    it('resolves source-node and state placeholders in one pass', async () => {
+      const ctx = makeContext({tone: 'formal'}, undefined, {
+        outputsByNode: {lookup: {city: 'Rome'}},
+      });
+      expect(
+        await injectSessionState('{tone}: <City.city from lookup> now', ctx),
+      ).toBe('formal: Rome now');
+    });
   });
 });

@@ -4,10 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+/**
+ * Resolves a user-supplied path against the current working directory.
+ *
+ * `path.resolve` rather than `path.join`: joining strips the leading separator
+ * from an absolute path, so `/tmp/x.json` would become `<cwd>/tmp/x.json`.
+ * These paths come from the command line, so an absolute one has to be
+ * honoured as given.
+ */
+export function getAbsolutePath(p: string): string {
+  return path.resolve(process.cwd(), p);
+}
 
 /** Check if the given folder exists. */
 export async function isFolderExists(folderPath: string): Promise<boolean> {
@@ -78,9 +89,12 @@ export async function loadFileData<T>(
   try {
     return JSON.parse(await fs.readFile(filePath, {encoding: 'utf-8'})) as T;
   } catch (e) {
-    console.error(`Failed to read or parse file ${filePath}:`, e);
-
-    throw e;
+    // Carry the path in the message and let the caller report it. Logging here
+    // as well as throwing printed every failure twice.
+    throw new Error(
+      `Failed to read or parse file ${filePath}: ${(e as Error).message}`,
+      {cause: e},
+    );
   }
 }
 
@@ -100,20 +114,20 @@ export async function saveToFile<T>(filePath: string, data: T): Promise<void> {
 }
 
 /**
- * Return a temporary directory path.
- * @param prefix Optional prefix for the temp directory
- * @returns
+ * Atomically creates a private temporary directory and returns its path.
+ *
+ * The directory is created by a single `mkdtemp` call directly under the system
+ * temp root, with a random name and, on POSIX, mode 0700. Composing the path
+ * from a fixed prefix and materialising it later with a recursive `mkdir` would
+ * leave a predictable intermediate directory that another local user can
+ * pre-create or replace with a symlink, placing everything written afterwards
+ * under their control.
+ *
+ * @param prefix Name prefix for the directory. Must be a single path segment.
+ * @returns The absolute path of the newly created directory.
  */
-export function getTempDir(prefix?: string): string {
-  const pathParts = [os.tmpdir()];
-
-  if (prefix) {
-    pathParts.push(prefix);
-  }
-
-  pathParts.push(crypto.randomUUID());
-
-  return path.join(...pathParts);
+export async function createTempDir(prefix: string): Promise<string> {
+  return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
 }
 
 /**

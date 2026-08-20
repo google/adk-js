@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 
 import {
-  getTempDir,
+  createTempDir,
   isFile,
   isFileExists,
   isFolderExists,
@@ -25,6 +25,7 @@ vi.mock('node:fs/promises', async () => {
     access: vi.fn(),
     stat: vi.fn(),
     mkdir: vi.fn(),
+    mkdtemp: vi.fn(),
     rm: vi.fn(),
     readdir: vi.fn(),
   };
@@ -44,6 +45,7 @@ describe('file_utils', () => {
     access: Mock;
     stat: Mock;
     mkdir: Mock;
+    mkdtemp: Mock;
     rm: Mock;
     readdir: Mock;
   };
@@ -61,6 +63,7 @@ describe('file_utils', () => {
       access: Mock;
       stat: Mock;
       mkdir: Mock;
+      mkdtemp: Mock;
       rm: Mock;
       readdir: Mock;
     };
@@ -103,6 +106,19 @@ describe('file_utils', () => {
     await expect(loadFileData(testPath)).rejects.toThrow('read error');
   });
 
+  it('loadFileData names the file it could not read, and reports once', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    fsPromises.readFile.mockRejectedValue(new Error('ENOENT'));
+
+    await expect(loadFileData(testPath)).rejects.toThrow(
+      new RegExp(`Failed to read or parse file ${testPath}: ENOENT`),
+    );
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it('saveToFile writes string data as-is', async () => {
     fsPromises.writeFile.mockResolvedValue(undefined);
     await expect(saveToFile(testPath, testContent)).resolves.toBeUndefined();
@@ -122,15 +138,15 @@ describe('file_utils', () => {
     );
   });
 
-  it('getTempDir uses os.tmpdir and optional prefix and crypto.randomUUID', () => {
+  it('createTempDir creates the directory atomically under os.tmpdir', async () => {
     osMock.tmpdir.mockReturnValue('/tmp');
-    const dir = getTempDir('myprefix');
-    const basename = path.basename(dir);
-    const parentDir = path.dirname(dir);
+    fsPromises.mkdtemp.mockResolvedValue('/tmp/myprefix-a1b2c3');
 
-    expect(parentDir).toBe(path.join('/tmp', 'myprefix'));
-    expect(basename).toMatch(
-      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+    await expect(createTempDir('myprefix')).resolves.toBe(
+      '/tmp/myprefix-a1b2c3',
+    );
+    expect(fsPromises.mkdtemp).toHaveBeenCalledWith(
+      path.join('/tmp', 'myprefix-'),
     );
   });
 

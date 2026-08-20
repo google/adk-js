@@ -121,9 +121,7 @@ describe('RoutedAgent', () => {
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
     const context = createTestContext({agent: routedAgent});
 
-    const generator = routedAgent['runAsyncImpl'](context); // Test runAsyncImpl directly or runAsync
-    // If we run runAsync, it will create a new context, so testing runAsyncImpl is closer to our logic.
-    // But testing runAsync verifies the whole pipeline. Let's test runAsync to see if it works as a standard agent.
+    const generator = routedAgent['runAsyncImpl'](context);
     const result = await generator.next();
 
     expect(result.value?.author).toBe('agent-a');

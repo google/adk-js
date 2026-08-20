@@ -1,0 +1,134 @@
+[
+  {
+    "key": "7158435b179f11ee",
+    "instructionAgnosticKey": "5dd683d81fe3734a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "who are you"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "category": {
+              "type": "STRING",
+              "enum": [
+                "question",
+                "statement",
+                "other"
+              ]
+            }
+          },
+          "required": [
+            "category"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Based on this input, decide which category it belongs to: who are you",
+        "labels": {
+          "adk_agent_name": "classify_input"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\"category\": \"question\"}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 25,
+        "candidatesTokenCount": 6,
+        "totalTokenCount": 60,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 25
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 6
+          }
+        ],
+        "thoughtsTokenCount": 29
+      }
+    }
+  },
+  {
+    "key": "100505b197e7cc8d",
+    "instructionAgnosticKey": "1c7399c7e32aa748",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[classify_input] said: {\"category\": \"question\"}"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"answer_question\".\n\nAnswer the question: who are you",
+        "labels": {
+          "adk_agent_name": "answer_question"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "I am a large language model, trained by Google."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 38,
+        "candidatesTokenCount": 11,
+        "totalTokenCount": 83,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 38
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 11
+          }
+        ],
+        "thoughtsTokenCount": 34
+      }
+    }
+  }
+]

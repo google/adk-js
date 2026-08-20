@@ -6,7 +6,6 @@
 
 import {
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -21,6 +20,7 @@ import {
   Logger,
   LogLevel,
   RunConfig,
+  RunnableRoot,
   Runner,
   StreamingMode,
   toA2a,
@@ -32,6 +32,7 @@ import cors from 'cors';
 import express, {Request, Response} from 'express';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import {version} from '../version.js';
 
 import {AgentFileOptions, AgentLoader} from '../utils/agent_loader.js';
 import {AdkLogger} from '../utils/logger.js';
@@ -41,7 +42,15 @@ import {
   InMemoryExporter,
   setupTelemetry,
 } from '../utils/telemetry_utils.js';
-import {getAgentGraphAsDot} from './agent_graph.js';
+import {getAgentGraphAsDot, getWorkflowHighlights} from './agent_graph.js';
+import {
+  collectSubWorkflows,
+  GraphTarget,
+  navigateToNode,
+  serializeAgent,
+  serializeAppInfo,
+} from './app_info.js';
+import {renderStructureGraphAsDot} from './structure_graph.js';
 
 /**
  * Environment variable holding the shared bearer token used to authenticate
@@ -91,7 +100,15 @@ export class AdkApiServer {
 
   readonly app: express.Application;
   private readonly agentLoader: AgentLoader;
-  private readonly runnerCache: Record<string, Runner> = {};
+  /**
+   * Caches below are keyed by request path parameters (`appName`, `eventId`,
+   * `sessionId`), so each is created with `Object.create(null)`. On an
+   * ordinary `{}` literal, inherited names such as `toString` make
+   * `key in cache` report a spurious hit and `cache[key]` yield a `Function`
+   * where a `Runner` or trace record is expected, and a key of `__proto__`
+   * aliases `Object.prototype` on write.
+   */
+  private readonly runnerCache: Record<string, Runner> = Object.create(null);
   private readonly sessionService: BaseSessionService;
   private readonly memoryService: BaseMemoryService;
   private readonly artifactService: BaseArtifactService;
@@ -102,8 +119,10 @@ export class AdkApiServer {
     tracerProvider: TracerProvider,
   ) => void;
   private server?: http.Server;
-  private readonly traceDict: Record<string, Record<string, unknown>> = {};
-  private readonly sessionTraceDict: Record<string, string[]> = {};
+  private readonly traceDict: Record<string, Record<string, unknown>> =
+    Object.create(null);
+  private readonly sessionTraceDict: Record<string, string[]> =
+    Object.create(null);
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
   private readonly a2a: boolean;
@@ -222,6 +241,10 @@ export class AdkApiServer {
       });
     }
 
+    app.get('/version', (req: Request, res: Response) => {
+      res.status(200).json({version});
+    });
+
     if (this.allowOrigins) {
       app.use(
         cors({
@@ -255,28 +278,38 @@ export class AdkApiServer {
       }
     });
 
-    app.get('/debug/trace/:eventId', (req: Request, res: Response) => {
-      try {
-        const eventId = req.params['eventId'];
-        const eventDict = this.traceDict[eventId];
+    // Both prefixes resolve to the same trace store: the dev UI asks under
+    // `/dev/apps/<app>/`, while `adk api_server` clients use the bare path.
+    // Traces are keyed by event and session id alone, so the app name in the
+    // UI's path is not needed to answer.
+    app.get(
+      ['/debug/trace/:eventId', '/dev/apps/:appName/debug/trace/:eventId'],
+      (req: Request, res: Response) => {
+        try {
+          const eventId = req.params['eventId'];
+          const eventDict = this.traceDict[eventId];
 
-        if (!eventDict) {
-          return res.status(404).json({error: 'Trace not found'});
+          if (!eventDict) {
+            return res.status(404).json({error: 'Trace not found'});
+          }
+
+          return res.json(eventDict);
+        } catch (e) {
+          const error = `Failed to get trace: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
+
+          return;
         }
-
-        return res.json(eventDict);
-      } catch (e) {
-        const error = `Failed to get trace: ${e}`;
-
-        res.status(500).json({error});
-        this.logger.error(error);
-
-        return;
-      }
-    });
+      },
+    );
 
     app.get(
-      '/debug/trace/session/:sessionId',
+      [
+        '/debug/trace/session/:sessionId',
+        '/dev/apps/:appName/debug/trace/session/:sessionId',
+      ],
       (req: Request, res: Response) => {
         try {
           const sessionId = req.params['sessionId'];
@@ -340,6 +373,16 @@ export class AdkApiServer {
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
+          const workflowHighlights = getWorkflowHighlights(
+            sessionEvents,
+            event,
+          );
+          if (workflowHighlights) {
+            return res.send({
+              dotSrc: await getAgentGraphAsDot(rootAgent, workflowHighlights),
+            });
+          }
+
           if (functionCalls.length > 0) {
             const functionCallHighlights: Array<[string, string]> = [];
             for (const functionCall of functionCalls) {
@@ -377,6 +420,90 @@ export class AdkApiServer {
           });
         } catch (e) {
           const error = `Failed to get agent graph: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
+          return;
+        }
+      },
+    );
+
+    // ---------------------- Agent structure graph endpoints ------------------
+    // The dev UI's graph tab reads the app's structure from these two, under a
+    // `/dev` prefix that marks them as debug-UI-only (adk-python registers the
+    // same pair in `dev_server.py`).
+    app.get(
+      '/dev/apps/:appName/build_graph',
+      async (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        try {
+          const rootAgent = await this.loadRootTarget(appName);
+          if (!rootAgent) {
+            return res.status(404).json({error: `App not found: ${appName}`});
+          }
+
+          return res.json(serializeAppInfo(appName, rootAgent));
+        } catch (e) {
+          const error = `Failed to get app info: ${e}`;
+
+          res.status(500).json({error});
+          this.logger.error(error);
+          return;
+        }
+      },
+    );
+
+    app.get(
+      '/dev/apps/:appName/build_graph_image',
+      async (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        try {
+          const rootAgent = await this.loadRootTarget(appName);
+          if (!rootAgent) {
+            return res.status(404).json({error: `App not found: ${appName}`});
+          }
+
+          const darkMode = String(req.query['dark_mode']) === 'true';
+          const nodePath =
+            typeof req.query['node'] === 'string' ? req.query['node'] : '';
+
+          const target = nodePath
+            ? navigateToNode(rootAgent, nodePath)
+            : rootAgent;
+          if (!target) {
+            return res.status(404).json({error: `Node not found: ${nodePath}`});
+          }
+
+          // One DOT per level, keyed by path, so the UI can preload the whole
+          // app in a single request and re-render instantly as the user
+          // navigates. A level that owns no workflow graph — a plain agent tree
+          // — is drawn whole at its own path, which is why the requested level
+          // is always present.
+          const levels = collectSubWorkflows(target, nodePath);
+          if (!levels.has(nodePath)) {
+            levels.set(nodePath, target);
+          }
+
+          const results: Record<string, {dotSrc: string}> = {};
+          for (const [path, level] of levels) {
+            results[path] = {
+              dotSrc: renderStructureGraphAsDot(
+                serializeAgent(level),
+                darkMode,
+              ),
+            };
+          }
+
+          // `dotSrc` for the requested level alongside the map: the UI reads
+          // the map when it preloads every level, but reads `o.dotSrc` on the
+          // single-level fetch it falls back to when a level is missing from
+          // that preload. Returning only the map leaves that fallback blank.
+          return res.json({
+            ...results,
+            dotSrc: results[nodePath]?.dotSrc,
+          });
+        } catch (e) {
+          const error = `Failed to get app graph image: ${e}`;
 
           res.status(500).json({error});
           this.logger.error(error);
@@ -778,8 +905,8 @@ export class AdkApiServer {
         }
       });
 
+      const events: Event[] = [];
       try {
-        const events: Event[] = [];
         for await (const e of this.executeAgentRun({
           appName,
           userId,
@@ -796,7 +923,7 @@ export class AdkApiServer {
       } catch (e: unknown) {
         const error = `Failed to run agent: ${e}`;
 
-        res.status(500).json({error});
+        res.status(500).json({error, events});
         this.logger.error(error);
       }
     });
@@ -819,6 +946,7 @@ export class AdkApiServer {
           res.status(400).json({error: 'appName is required in input'});
           return;
         }
+        const events: Event[] = [];
         try {
           await this.sessionService.getOrCreateSession({
             appName,
@@ -826,7 +954,6 @@ export class AdkApiServer {
             sessionId,
             state: {},
           });
-          const events: Event[] = [];
           const abortController = new AbortController();
           req.on('close', () => {
             abortController.abort();
@@ -844,7 +971,7 @@ export class AdkApiServer {
           res.json({output: events});
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
-          res.status(500).json({error});
+          res.status(500).json({error, output: events});
           this.logger.error(error);
         }
       };
@@ -1007,8 +1134,30 @@ export class AdkApiServer {
     });
   }
 
+  /**
+   * Loads an app's root agent for the structure-graph endpoints, or returns
+   * undefined when no app goes by that name.
+   *
+   * Membership is checked against `listAgents()` rather than by matching the
+   * loader's error text, so an app that exists but throws while loading still
+   * surfaces as a 500 with its real cause instead of a misleading 404.
+   */
+  private async loadRootTarget(
+    appName: string,
+  ): Promise<GraphTarget | undefined> {
+    const apps = await this.agentLoader.listAgents();
+    if (!apps.includes(appName)) {
+      return undefined;
+    }
+
+    await using agentFile = await this.agentLoader.getAgentFile(appName);
+    const loaded = await agentFile.load();
+
+    return isApp(loaded) ? loaded.rootAgent : loaded;
+  }
+
   private async getRunner(
-    agentOrApp: BaseAgent | App,
+    agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
     if (!(appName in this.runnerCache)) {

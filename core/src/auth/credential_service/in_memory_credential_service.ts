@@ -15,10 +15,21 @@ import {BaseCredentialService} from './base_credential_service.js';
  * implementation of credential service
  */
 export class InMemoryCredentialService implements BaseCredentialService {
+  /**
+   * A map from app name to a map from user ID to a map from credential key to
+   * credential.
+   *
+   * `appName`, `userId` and `credentialKey` are all attacker-influenced, so
+   * every level is created with `Object.create(null)`. On an ordinary `{}`
+   * literal a key of `__proto__` resolves to the inherited `__proto__`
+   * accessor rather than creating an own property, so nested assignment
+   * pollutes every object in the process, and a lookup of an inherited key
+   * such as `toString` returns a function instead of `undefined`.
+   */
   private readonly credentials: Record<
     string,
     Record<string, Record<string, AuthCredential>>
-  > = {};
+  > = Object.create(null);
 
   loadCredential(
     authConfig: AuthConfig,
@@ -47,11 +58,11 @@ export class InMemoryCredentialService implements BaseCredentialService {
     const {appName, userId} = toolContext.invocationContext.session;
 
     if (!this.credentials[appName]) {
-      this.credentials[appName] = {};
+      this.credentials[appName] = Object.create(null);
     }
 
     if (!this.credentials[appName][userId]) {
-      this.credentials[appName][userId] = {};
+      this.credentials[appName][userId] = Object.create(null);
     }
 
     return this.credentials[appName][userId];

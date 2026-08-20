@@ -52,7 +52,11 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    });
 
     const result = await handler.prepareAuthCredentials();
 
@@ -69,7 +73,11 @@ describe('ToolAuthHandler', () => {
       requestCredential: vi.fn(),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    });
 
     const result = await handler.prepareAuthCredentials();
 
@@ -87,7 +95,11 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    });
 
     const result = await handler.prepareAuthCredentials();
 
@@ -105,7 +117,11 @@ describe('ToolAuthHandler', () => {
       }),
     } as unknown as Context;
 
-    const handler = new ToolAuthHandler(mockContext, {type: 'apiKey'});
+    const handler = new ToolAuthHandler(mockContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    });
 
     const result = await handler.prepareAuthCredentials();
 
@@ -132,6 +148,8 @@ describe('ToolAuthHandler', () => {
     } as unknown as Context;
     await new ToolAuthHandler(firstContext, {
       type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
     }).prepareAuthCredentials();
 
     // Each tool call gets a fresh Context whose State is rebuilt from the
@@ -144,6 +162,8 @@ describe('ToolAuthHandler', () => {
     } as unknown as Context;
     const result = await new ToolAuthHandler(secondContext, {
       type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
     }).prepareAuthCredentials();
 
     expect(result.state).toBe('done');

@@ -40,6 +40,13 @@ export function experimental<
       }
     };
 
+    // The subclass above is anonymous, so it would otherwise report the
+    // binding name ("newConstructor") to anyone reading `SomeClass.name`.
+    Object.defineProperty(newConstructor, 'name', {
+      value: className,
+      configurable: true,
+    });
+
     // We must cast to the conditional return type because TS cannot
     // narrow return types based on control flow across conditional types.
     return newConstructor as P extends undefined ? T : PropertyDescriptor;

@@ -113,7 +113,6 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Extract raw events to compact.
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
 
     let scratchpadEvent: CompactedEvent;

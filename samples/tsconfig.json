@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // The root config aliases `@google/adk` to `core/src`, so that a test
+    // type-checks against the sources vitest runs it against. A sample is a
+    // consumer, not part of the build, so it has to resolve the package the
+    // way a user's project does: through `node_modules`, against the
+    // published types. `core`, `dev` and `integrations` reset this for the
+    // same reason.
+    "paths": {}
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

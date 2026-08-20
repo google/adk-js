@@ -18,6 +18,8 @@ import {
   createEvent,
   createSession,
   Event,
+  FunctionTool,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
@@ -25,13 +27,15 @@ import {
   LongRunningFunctionTool,
   PluginManager,
   RunAsyncToolRequest,
+  Runner,
   Session,
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
+import {logger} from '../../src/utils/logger.js';
 
 class MockLlmConnection implements BaseLlmConnection {
   sendHistory(_history: Content[]): Promise<void> {
@@ -407,6 +411,37 @@ describe('LlmAgent Schema Initialization', () => {
     expect((agent.outputSchema as Schema).properties?.bar?.type).toBe('NUMBER');
   });
 
+  it('validates output against a genai outputSchema', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: {
+        type: Type.OBJECT,
+        properties: {bar: {type: Type.NUMBER}},
+        required: ['bar'],
+      },
+    });
+    expect(agent.validateOutput({bar: 1})).toEqual({bar: 1});
+    expect(() => agent.validateOutput({bar: 'no'})).toThrow();
+  });
+
+  it('validates output against a Zod outputSchema, keeping its refinements', () => {
+    const agent = new LlmAgent({
+      name: 'test',
+      outputSchema: z4.object({bar: z4.number().refine((n) => n > 10)}),
+    });
+    expect(agent.validateOutput({bar: 11})).toEqual({bar: 11});
+    // The refinement survives only because the original Zod schema is kept;
+    // it has no representation in the converted genai Schema.
+    expect(() => agent.validateOutput({bar: 1})).toThrow();
+  });
+
+  it('keeps the supplied schema alongside the converted genai form', () => {
+    const zodSchema = z4.object({bar: z4.number()});
+    const agent = new LlmAgent({name: 'test', outputSchema: zodSchema});
+    expect(agent.outputSchemaSource).toBe(zodSchema);
+    expect((agent.outputSchema as Schema).type).toBe('OBJECT');
+  });
+
   it('should initialize outputSchema from Zod v3 object', () => {
     const zodSchema = z3.object({
       bar: z3.number(),
@@ -430,6 +465,37 @@ describe('LlmAgent Schema Initialization', () => {
     });
     expect(agent.disallowTransferToParent).toBe(true);
     expect(agent.disallowTransferToPeers).toBe(true);
+  });
+
+  it('warns about transfer only when transfer was asked for explicitly', () => {
+    const outputSchema: Schema = {type: Type.OBJECT};
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const quiet = new LlmAgent({name: 'quiet', outputSchema});
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(quiet.disallowTransferToParent).toBe(true);
+    expect(quiet.disallowTransferToPeers).toBe(true);
+
+    new LlmAgent({
+      name: 'loud',
+      outputSchema,
+      disallowTransferToPeers: false,
+    });
+    expect(warnSpy).toHaveBeenCalledOnce();
+
+    warnSpy.mockRestore();
+  });
+
+  it('warns about transfer when outputSchema co-exists with subAgents', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const agent = new LlmAgent({
+      name: 'parent',
+      outputSchema: {type: Type.OBJECT},
+      subAgents: [new LlmAgent({name: 'child'})],
+    });
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(agent.disallowTransferToPeers).toBe(true);
+    warnSpy.mockRestore();
   });
 });
 
@@ -502,6 +568,24 @@ describe('LlmAgent Output Processing', () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent.actions?.stateDelta?.['result']).toEqual(invalidJson);
+  });
+
+  it('keeps the parsed object in state when it violates the output schema', async () => {
+    // Well-formed JSON, but `answer` is declared STRING. The violation is
+    // logged rather than thrown, and state keeps the object the model
+    // returned — a consumer of `outputKey` reads the same type either way.
+    const response: LlmResponse = {
+      content: {parts: [{text: JSON.stringify({answer: 42})}]},
+    };
+    agent.model = new MockLlm(response);
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.actions?.stateDelta?.['result']).toEqual({answer: 42});
   });
 });
 
@@ -934,5 +1018,305 @@ describe('LlmAgent Default Request Processors', () => {
       CONTENT_REQUEST_PROCESSOR,
     );
     expect(authIndex).toBeLessThan(contentIndex);
+  });
+});
+
+describe('LlmAgent outputSchema with tools', () => {
+  const VERTEX_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+
+  const OUTPUT_SCHEMA: Schema = {
+    type: Type.OBJECT,
+    properties: {answer: {type: Type.STRING}},
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * Records the single request the agent builds so that all three gated sites
+   * can be asserted against one run of the default processor chain.
+   */
+  class CapturingLlm extends BaseLlm {
+    capturedRequest?: LlmRequest;
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedRequest = request;
+      yield {content: {role: 'model', parts: [{text: '{"answer": "42"}'}]}};
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  async function captureRequest(options: {
+    model: string;
+    withTools: boolean;
+  }): Promise<LlmRequest> {
+    const llm = new CapturingLlm({model: options.model});
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: llm,
+      instruction: 'Base instruction',
+      outputSchema: OUTPUT_SCHEMA,
+      tools: options.withTools
+        ? [
+            new FunctionTool({
+              name: 'some_tool',
+              description: 'A test tool',
+              execute: () => 'result',
+            }),
+          ]
+        : [],
+    });
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: createSession({
+        id: 'sess_123',
+        events: [],
+        appName: 'test-app',
+        userId: 'test-user',
+      }),
+      agent,
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _ of agent.runAsync(invocationContext)) {
+      // Drain the run so that the request is fully built.
+    }
+
+    const request = llm.capturedRequest;
+    if (!request) {
+      expect.fail('the agent never called the model');
+    }
+    return request;
+  }
+
+  it('uses the native response schema on Vertex AI with a Gemini 2.0+ model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeDefined();
+    expect(request.config?.responseMimeType).toBe('application/json');
+    expect(request.toolsDict).not.toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).not.toContain(
+      'set_model_response',
+    );
+  });
+
+  it('uses the set_model_response workaround outside the Vertex AI variant', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+    const request = await captureRequest({
+      model: 'gemini-2.5-flash',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.toolsDict).toHaveProperty('some_tool');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it('uses the set_model_response workaround on Vertex AI with a pre-2.0 model', async () => {
+    vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+    const request = await captureRequest({
+      model: 'gemini-1.5-pro',
+      withTools: true,
+    });
+
+    expect(request.config?.responseSchema).toBeUndefined();
+    expect(request.toolsDict).toHaveProperty('set_model_response');
+    expect(request.config?.systemInstruction).toContain('set_model_response');
+  });
+
+  it.each(['true', undefined])(
+    'uses the native response schema without tools when %s',
+    async (vertexEnv) => {
+      vi.stubEnv(VERTEX_ENV_VAR, vertexEnv);
+
+      const request = await captureRequest({
+        model: 'gemini-2.5-flash',
+        withTools: false,
+      });
+
+      expect(request.config?.responseSchema).toBeDefined();
+      expect(request.toolsDict).not.toHaveProperty('set_model_response');
+      expect(request.config?.systemInstruction).not.toContain(
+        'set_model_response',
+      );
+    },
+  );
+
+  it('persists state writes made in processLlmRequest across turns', async () => {
+    class StateProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'state_probe_tool', description: 'test probe'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        const {toolContext} = request;
+        const current = toolContext.state.get<number>('probe_counter') ?? 0;
+        toolContext.state.set('probe_counter', current + 1);
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return Promise.resolve({result: 'ok'});
+      }
+    }
+
+    const tool = new StateProbeTool();
+    const mockLlm = new MockLlm({
+      content: {role: 'model', parts: [{text: 'Done'}]},
+    });
+    const agent = new LlmAgent({
+      name: 'probe_agent',
+      model: mockLlm,
+      tools: [tool],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 1'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn1 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn1?.state?.['probe_counter']).toBe(1);
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 2'}]},
+    })) {
+      // Consume the stream
+    }
+
+    const sessionAfterTurn2 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
+  });
+});
+
+describe('LlmAgent usage metadata on content-less responses', () => {
+  let agent: LlmAgent;
+  let invocationContext: InvocationContext;
+
+  beforeEach(() => {
+    agent = new LlmAgent({name: 'usage_test_agent'});
+    const mockState = {
+      hasDelta: () => false,
+      get: () => undefined,
+      set: () => {},
+    };
+    invocationContext = new InvocationContext({
+      invocationId: 'inv_usage',
+      session: {
+        id: 'sess_usage',
+        state: mockState,
+        events: [],
+      } as unknown as Session,
+      agent,
+      pluginManager: new PluginManager(),
+    });
+  });
+
+  async function runAndCollect(): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(invocationContext)) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  // In SSE streaming, StreamingResponseAggregator.close() reports a turn's
+  // token counts on a response with no content, because the turn's parts were
+  // already yielded. Skipping it loses that turn's usage entirely, and the loss
+  // is silent: downstream, "no usage reported" and "zero tokens used" are the
+  // same value.
+  it('emits an event for a response that carries only usage metadata', async () => {
+    const response: LlmResponse = {
+      usageMetadata: {
+        promptTokenCount: 1234,
+        candidatesTokenCount: 56,
+        totalTokenCount: 1290,
+      },
+    };
+    agent.model = new MockLlm(response);
+
+    const events = await runAndCollect();
+
+    expect(events.length).toBeGreaterThan(0);
+    const usageEvent = events.find((e) => e.usageMetadata);
+    expect(usageEvent).toBeDefined();
+    expect(usageEvent!.usageMetadata?.promptTokenCount).toEqual(1234);
+    expect(usageEvent!.usageMetadata?.candidatesTokenCount).toEqual(56);
+  });
+
+  // The event must NOT carry an empty parts array. That is what poisoned
+  // session history and made Vertex reject the following request with HTTP 400
+  // (#21, #22); buildContents() skips events without `content.role`, so an
+  // undefined content keeps the usage out of history while still delivering it.
+  it('does not emit empty-parts content alongside the usage', async () => {
+    const response: LlmResponse = {
+      usageMetadata: {promptTokenCount: 10, totalTokenCount: 10},
+    };
+    agent.model = new MockLlm(response);
+
+    const events = await runAndCollect();
+
+    const usageEvent = events.find((e) => e.usageMetadata);
+    expect(usageEvent).toBeDefined();
+    expect(usageEvent!.content?.parts).toBeUndefined();
+    expect(usageEvent!.content?.role).toBeUndefined();
+  });
+
+  // Control: without usage metadata the guard must still skip, or the fix would
+  // start emitting events for genuinely empty responses.
+  it('still skips a response with neither content nor usage metadata', async () => {
+    agent.model = new MockLlm({} as LlmResponse);
+
+    const events = await runAndCollect();
+
+    expect(events.find((e) => e.usageMetadata)).toBeUndefined();
   });
 });

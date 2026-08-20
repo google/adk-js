@@ -7,6 +7,7 @@
 import {GroundingMetadata, LiveServerGoAway} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {LiveResponseAggregator} from '../../src/utils/live_connection_utils.js';
+import {liveServerMessage} from './live_server_message_test_utils.js';
 
 describe('LiveResponseAggregator', () => {
   it('should yield usage metadata', () => {
@@ -17,7 +18,9 @@ describe('LiveResponseAggregator', () => {
       totalTokenCount: 30,
     };
 
-    const generator = aggregator.processMessage({usageMetadata});
+    const generator = aggregator.processMessage(
+      liveServerMessage({usageMetadata}),
+    );
     const results = Array.from(generator);
 
     expect(results).toEqual([
@@ -32,13 +35,15 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
 
     // Message 1: partial text
-    const gen1 = aggregator.processMessage({
-      serverContent: {
-        modelTurn: {
-          parts: [{text: 'Hello'}],
+    const gen1 = aggregator.processMessage(
+      liveServerMessage({
+        serverContent: {
+          modelTurn: {
+            parts: [{text: 'Hello'}],
+          },
         },
-      },
-    });
+      }),
+    );
     const res1 = Array.from(gen1);
     expect(res1).toEqual([
       {
@@ -49,16 +54,18 @@ describe('LiveResponseAggregator', () => {
     ]);
 
     // Message 2: partial text and turnComplete
-    const gen2 = aggregator.processMessage({
-      serverContent: {
-        modelTurn: {
-          parts: [{text: ' world!'}],
+    const gen2 = aggregator.processMessage(
+      liveServerMessage({
+        serverContent: {
+          modelTurn: {
+            parts: [{text: ' world!'}],
+          },
+          turnComplete: true,
+          interrupted: false,
+          groundingMetadata: {groundingChunks: []} as GroundingMetadata,
         },
-        turnComplete: true,
-        interrupted: false,
-        groundingMetadata: {groundingChunks: []} as GroundingMetadata,
-      },
-    });
+      }),
+    );
     const res2 = Array.from(gen2);
     expect(res2).toEqual([
       {
@@ -90,13 +97,15 @@ describe('LiveResponseAggregator', () => {
 
     // Message 1: thought
     const res1 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          modelTurn: {
-            parts: [{text: 'Thinking...', thought: true}],
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            modelTurn: {
+              parts: [{text: 'Thinking...', thought: true}],
+            },
           },
-        },
-      }),
+        }),
+      ),
     );
     expect(res1).toEqual([
       {
@@ -108,13 +117,15 @@ describe('LiveResponseAggregator', () => {
 
     // Message 2: transition to text
     const res2 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          modelTurn: {
-            parts: [{text: 'Answer is 42.'}],
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            modelTurn: {
+              parts: [{text: 'Answer is 42.'}],
+            },
           },
-        },
-      }),
+        }),
+      ),
     );
     expect(res2).toEqual([
       {
@@ -134,11 +145,13 @@ describe('LiveResponseAggregator', () => {
 
     // Message 3: turn complete
     const res3 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          turnComplete: true,
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            turnComplete: true,
+          },
+        }),
+      ),
     );
     expect(res3).toEqual([
       {
@@ -160,11 +173,13 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
 
     const res1 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          inputTranscription: {text: 'hello', finished: false},
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: 'hello', finished: false},
+          },
+        }),
+      ),
     );
     expect(res1).toEqual([
       {
@@ -175,11 +190,13 @@ describe('LiveResponseAggregator', () => {
     ]);
 
     const res2 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          inputTranscription: {text: ' world', finished: true},
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: ' world', finished: true},
+          },
+        }),
+      ),
     );
     expect(res2).toEqual([
       {
@@ -199,11 +216,13 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
 
     const res1 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          inputTranscription: {text: 'hello', finished: false},
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: 'hello', finished: false},
+          },
+        }),
+      ),
     );
     expect(res1[0].inputTranscription).toEqual({
       text: 'hello',
@@ -211,11 +230,13 @@ describe('LiveResponseAggregator', () => {
     });
 
     const res2 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          interrupted: true,
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            interrupted: true,
+          },
+        }),
+      ),
     );
     expect(res2).toEqual([
       {
@@ -234,18 +255,20 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
 
     const res1 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          modelTurn: {
-            parts: [{text: 'Partial text'}],
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            modelTurn: {
+              parts: [{text: 'Partial text'}],
+            },
+            groundingMetadata: {
+              groundingChunks: [
+                {web: {uri: 'https://google.com', title: 'Google'}},
+              ],
+            } as GroundingMetadata,
           },
-          groundingMetadata: {
-            groundingChunks: [
-              {web: {uri: 'https://google.com', title: 'Google'}},
-            ],
-          } as GroundingMetadata,
-        },
-      }),
+        }),
+      ),
     );
     expect(res1).toEqual([
       {
@@ -265,20 +288,24 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
 
     const res1 = Array.from(
-      aggregator.processMessage({
-        toolCall: {
-          functionCalls: [{name: 'tool_a', args: {x: 1}, id: '1'}],
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          toolCall: {
+            functionCalls: [{name: 'tool_a', args: {x: 1}, id: '1'}],
+          },
+        }),
+      ),
     );
     expect(res1).toEqual([]); // Buffered
 
     const res2 = Array.from(
-      aggregator.processMessage({
-        serverContent: {
-          turnComplete: true,
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            turnComplete: true,
+          },
+        }),
+      ),
     );
     expect(res2).toEqual([
       {
@@ -299,11 +326,13 @@ describe('LiveResponseAggregator', () => {
     const aggregator = new LiveResponseAggregator('gemini-3.1-flash-live');
 
     const res1 = Array.from(
-      aggregator.processMessage({
-        toolCall: {
-          functionCalls: [{name: 'tool_a', args: {x: 1}, id: '1'}],
-        },
-      }),
+      aggregator.processMessage(
+        liveServerMessage({
+          toolCall: {
+            functionCalls: [{name: 'tool_a', args: {x: 1}, id: '1'}],
+          },
+        }),
+      ),
     );
     expect(res1).toEqual([
       {
@@ -318,10 +347,12 @@ describe('LiveResponseAggregator', () => {
 
   it('should yield session resumption update', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
-    const resumptionUpdate = {resumed: true};
+    const resumptionUpdate = {resumable: true};
 
     const res = Array.from(
-      aggregator.processMessage({sessionResumptionUpdate: resumptionUpdate}),
+      aggregator.processMessage(
+        liveServerMessage({sessionResumptionUpdate: resumptionUpdate}),
+      ),
     );
     expect(res).toEqual([
       {
@@ -333,10 +364,10 @@ describe('LiveResponseAggregator', () => {
 
   it('should yield go away', () => {
     const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
-    const goAway = {goAway: true};
+    const goAway: LiveServerGoAway = {timeLeft: '10s'};
 
     const res = Array.from(
-      aggregator.processMessage({goAway: goAway as LiveServerGoAway}),
+      aggregator.processMessage(liveServerMessage({goAway})),
     );
     expect(res).toEqual([
       {

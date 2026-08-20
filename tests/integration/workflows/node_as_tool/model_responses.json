@@ -1,0 +1,387 @@
+[
+  {
+    "key": "d745c2462b709e3f",
+    "instructionAgnosticKey": "cd29e9d8047eef5e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user c123 and tell me my discount."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "user_id": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": [
+                    "user_id"
+                  ]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
+                    }
+                  },
+                  "required": [
+                    "tier"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "customer_lookup_workflow",
+                  "args": {
+                    "user_id": "c123"
+                  },
+                  "id": "adk-2333f4a6-613b-4285-983b-64b2ca0323ee"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 162,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 274,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 162
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 100
+      }
+    }
+  },
+  {
+    "key": "31758cfb2f2b5c51",
+    "instructionAgnosticKey": "9c901c45de75f6ba",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user c123 and tell me my discount."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "customer_lookup_workflow",
+                "args": {
+                  "user_id": "c123"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "customer_lookup_workflow",
+                "response": {
+                  "user_id": "c123",
+                  "tier": "Verified VIP Member"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "user_id": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": [
+                    "user_id"
+                  ]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
+                    }
+                  },
+                  "required": [
+                    "tier"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "calculate_discount",
+                  "args": {
+                    "tier": "Verified VIP Member"
+                  },
+                  "id": "adk-165d46f5-4f95-4095-8396-10cebd7089b8"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 190,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 256,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 190
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 7
+          }
+        ],
+        "thoughtsTokenCount": 59
+      }
+    }
+  },
+  {
+    "key": "106beb6c3c01fe20",
+    "instructionAgnosticKey": "2c0ec1ce41d3014e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Look up user c123 and tell me my discount."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "customer_lookup_workflow",
+                "args": {
+                  "user_id": "c123"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "customer_lookup_workflow",
+                "response": {
+                  "user_id": "c123",
+                  "tier": "Verified VIP Member"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[lookup_customer_data] said: {\"user_id\":\"c123\",\"tier\":\"Verified VIP Member\"}"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "calculate_discount",
+                "args": {
+                  "tier": "Verified VIP Member"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "calculate_discount",
+                "response": {
+                  "result": "20% off"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"customer_service_agent\".\n\n\n    You are a customer service assistant.\n    1. First, call `customer_lookup_workflow` using the user_id to get their membership tier.\n    2. Then, call `calculate_discount` node with that tier to find out what discount they get.\n    Summarize these details for the customer.\n    ",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "customer_lookup_workflow",
+                "description": "Looks up customer status and tier by user_id.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "user_id": {
+                      "type": "STRING",
+                      "description": "The customer's unique identifier."
+                    }
+                  },
+                  "required": [
+                    "user_id"
+                  ]
+                }
+              },
+              {
+                "name": "calculate_discount",
+                "description": "Calculates the discount percentage based on customer tier.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "tier": {
+                      "type": "STRING",
+                      "description": "The customer's membership tier (e.g., VIP, Standard)."
+                    }
+                  },
+                  "required": [
+                    "tier"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "customer_service_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Your membership tier is Verified VIP Member, and you receive a 20% discount."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 233,
+        "candidatesTokenCount": 18,
+        "totalTokenCount": 396,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 233
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 18
+          }
+        ],
+        "thoughtsTokenCount": 145
+      }
+    }
+  }
+]

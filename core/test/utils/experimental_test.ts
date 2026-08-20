@@ -31,7 +31,6 @@ describe('experimental decorator', () => {
     resetLogger();
   });
 
-  // Verify class decorator behavior
   describe('class decorator', () => {
     it('warns when an experimental class is instantiated', () => {
       @experimental
@@ -57,6 +56,14 @@ describe('experimental decorator', () => {
       expect(warnCalls).toHaveLength(0);
     });
 
+    it('keeps the class name, which the warning itself reports', () => {
+      @experimental
+      class NamedClass {}
+
+      expect(NamedClass.name).toBe('NamedClass');
+      expect(new NamedClass().constructor.name).toBe('NamedClass');
+    });
+
     it('preserves constructor arguments and behavior', () => {
       @experimental
       class ArgClass {
@@ -68,7 +75,6 @@ describe('experimental decorator', () => {
     });
   });
 
-  // Verify method decorator behavior
   describe('method decorator', () => {
     it('warns when an experimental method is called', () => {
       class TestMethodClass {

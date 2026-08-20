@@ -71,7 +71,6 @@ describe('FeatureRegistry', () => {
 
     expect(isFeatureEnabled(FeatureName.PROGRESSIVE_SSE_STREAMING)).toBe(true);
 
-    // Clean up override
     overrideFeatureEnabled(FeatureName.PROGRESSIVE_SSE_STREAMING, undefined);
   });
 
@@ -82,7 +81,6 @@ describe('FeatureRegistry', () => {
   });
 
   it('should support temporary overrides', async () => {
-    // default is false
     expect(isFeatureEnabled(FeatureName.PROGRESSIVE_SSE_STREAMING)).toBe(false);
 
     await withTemporaryFeatureOverride(

@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import {promisify} from 'node:util';
 import {
   createFolder,
+  getAbsolutePath,
   isFolderExists,
   listFiles,
   removeFolder,
@@ -17,7 +18,6 @@ import {
 } from '../utils/file_utils.js';
 
 const execPromise = promisify(exec);
-const dirname = process.cwd();
 
 const TS_CONFIG = `{
   "compilerOptions": {
@@ -163,7 +163,11 @@ async function generateAgentFolder(agentDir: string, forceYes: boolean) {
 function generateEnvFile(options: AgentCreationOptions): string {
   const lines = [];
   if (options.apiKey) {
-    lines.push(`GOOGLE_API_KEY=${options.apiKey}`);
+    // The Gemini API path — the one `GOOGLE_GENAI_USE_VERTEXAI=0` selects —
+    // reads GOOGLE_GENAI_API_KEY, then GOOGLE_API_KEY, then GEMINI_API_KEY (see
+    // `geminiInitParams` in core). GOOGLE_GENAI_API_KEY is the adk-js-specific
+    // name and wins outright, so it is the unambiguous one to scaffold.
+    lines.push(`GOOGLE_GENAI_API_KEY=${options.apiKey}`);
     lines.push(`GOOGLE_GENAI_USE_VERTEXAI=0`);
   }
   if (options.project) {
@@ -179,7 +183,7 @@ function generateEnvFile(options: AgentCreationOptions): string {
 }
 
 async function generateFiles(options: AgentCreationOptions) {
-  const agentDir = path.join(dirname, options.agentName);
+  const agentDir = getAbsolutePath(options.agentName);
 
   await saveToFile(
     path.join(agentDir, `agent.${options.language}`),
@@ -196,7 +200,7 @@ async function generateFiles(options: AgentCreationOptions) {
 }
 
 export async function createAgent(options: AgentCreationOptions) {
-  const agentDir = path.join(dirname, options.agentName);
+  const agentDir = getAbsolutePath(options.agentName);
   await generateAgentFolder(agentDir, options.forceYes);
 
   if (!options.model) {

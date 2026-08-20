@@ -13,7 +13,6 @@ import {
 import {AutoAuthCredentialExchanger} from '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 import {ServiceAccountCredentialExchanger} from '../../../src/tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';
 
-// Mock google-auth-library
 vi.mock('google-auth-library', () => {
   return {
     JWT: vi.fn().mockImplementation(() => ({

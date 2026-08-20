@@ -5,6 +5,7 @@
  */
 
 import {FunctionDeclaration, Type} from '@google/genai';
+import {requireAgent} from '../../agents/invocation_context.js';
 import {experimental} from '../../utils/experimental.js';
 import {BaseTool, RunAsyncToolRequest} from '../base_tool.js';
 import {SkillToolset} from './skill_toolset.js';
@@ -68,7 +69,7 @@ export class LoadSkillTool extends BaseTool {
     }
 
     // Record skill activation in agent state
-    const agentName = toolContext.invocationContext.agent.name;
+    const agentName = requireAgent(toolContext.invocationContext).name;
     const stateKey = `_adk_activated_skill_${agentName}`;
 
     const currentActivated = toolContext.state.get<string[]>(stateKey) || [];

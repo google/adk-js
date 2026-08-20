@@ -6,6 +6,7 @@
 
 import {
   AudioTranscriptionConfig,
+  ContextWindowCompressionConfig,
   Modality,
   ProactivityConfig,
   RealtimeInputConfig,
@@ -20,6 +21,11 @@ import {logger} from '../utils/logger.js';
 export enum StreamingMode {
   NONE = 'none',
   SSE = 'sse',
+  /**
+   * Bidirectional streaming. Not yet supported; passing this value to
+   * `createRunConfig` throws. Use {@link StreamingMode.SSE} for token
+   * streaming.
+   */
   BIDI = 'bidi',
 }
 
@@ -53,7 +59,9 @@ export interface RunConfig {
   supportCfc?: boolean;
 
   /**
-   * Streaming mode, None or StreamingMode.SSE or StreamingMode.BIDI.
+   * Streaming mode. Supported values are {@link StreamingMode.NONE} and
+   * {@link StreamingMode.SSE}. {@link StreamingMode.BIDI} is not yet
+   * supported and is rejected by `createRunConfig`.
    */
   streamingMode?: StreamingMode;
 
@@ -85,6 +93,12 @@ export interface RunConfig {
   realtimeInputConfig?: RealtimeInputConfig;
 
   /**
+   * Context window compression config. When the running context exceeds
+   * `triggerTokens`, the server compresses older history to `targetTokens`.
+   */
+  contextWindowCompression?: ContextWindowCompressionConfig;
+
+  /**
    * A limit on the total number of llm calls for a given run.
    *
    * Valid Values:
@@ -99,6 +113,14 @@ export interface RunConfig {
    * to intercept and execute tools (Client-Side Tool Execution).
    */
   pauseOnToolCalls?: boolean;
+
+  /**
+   * If true, a plain-text user reply (e.g. "yes"/"no") may resolve a pending
+   * `requireConfirmation` tool gate. Off by default so an ordinary chat message
+   * on a web/API surface is never silently reinterpreted as a security
+   * decision; interactive front-ends (e.g. `adk run`) opt in explicitly.
+   */
+  plainTextToolConfirmation?: boolean;
 }
 
 /**
@@ -115,8 +137,10 @@ export interface RunConfig {
  * @param params - Optional partial {@link RunConfig} overriding defaults.
  * @returns A merged {@link RunConfig} object.
  * @throws {Error} When `params.maxLlmCalls` exceeds `Number.MAX_SAFE_INTEGER`.
+ * @throws {Error} When `params.streamingMode` is {@link StreamingMode.BIDI}.
  */
 export function createRunConfig(params: Partial<RunConfig> = {}) {
+  validateStreamingMode(params.streamingMode);
   return {
     saveInputBlobsAsArtifacts: false,
     supportCfc: false,
@@ -126,6 +150,14 @@ export function createRunConfig(params: Partial<RunConfig> = {}) {
     ...params,
     maxLlmCalls: validateMaxLlmCalls(params.maxLlmCalls ?? 500),
   };
+}
+
+function validateStreamingMode(streamingMode?: StreamingMode): void {
+  if (streamingMode === StreamingMode.BIDI) {
+    throw new Error(
+      'StreamingMode.BIDI is not supported; use StreamingMode.SSE.',
+    );
+  }
 }
 
 function validateMaxLlmCalls(value: number): number {

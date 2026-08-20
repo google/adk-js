@@ -18,9 +18,22 @@ import {
   PluginManager,
   RunConfig,
 } from '@google/adk';
-import {Content, Blob as GenaiBlob, Modality} from '@google/genai';
-import {beforeAll, describe, expect, it} from 'vitest';
+import {
+  Content,
+  Blob as GenaiBlob,
+  Modality,
+  Schema,
+  Type,
+} from '@google/genai';
+import {afterEach, beforeAll, describe, expect, it, vi} from 'vitest';
 import {BASIC_LLM_REQUEST_PROCESSOR} from '../../../src/agents/processors/basic_llm_request_processor.js';
+
+const VERTEX_ENV_VAR = 'GOOGLE_GENAI_USE_VERTEXAI';
+
+const OUTPUT_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {answer: {type: Type.STRING}},
+};
 
 class TestLlmConnection implements BaseLlmConnection {
   async sendHistory(_history: Content[]): Promise<void> {}
@@ -149,10 +162,10 @@ describe('BasicLlmRequestProcessor', () => {
   });
 
   it('should set outputSchema in config when agent has outputSchema', async () => {
-    const outputSchema = {
-      type: 'object' as const,
+    const outputSchema: Schema = {
+      type: Type.OBJECT,
       properties: {
-        answer: {type: 'string' as const},
+        answer: {type: Type.STRING},
       },
     };
     const agent = new LlmAgent({
@@ -170,10 +183,10 @@ describe('BasicLlmRequestProcessor', () => {
   });
 
   it('should not set outputSchema in config when agent has outputSchema and tools', async () => {
-    const outputSchema = {
-      type: 'object' as const,
+    const outputSchema: Schema = {
+      type: Type.OBJECT,
       properties: {
-        answer: {type: 'string' as const},
+        answer: {type: Type.STRING},
       },
     };
     const agent = new LlmAgent({
@@ -195,6 +208,63 @@ describe('BasicLlmRequestProcessor', () => {
 
     expect(llmRequest.config?.responseSchema).toBeUndefined();
     expect(llmRequest.config?.responseMimeType).toBeUndefined();
+  });
+
+  describe('outputSchema with tools on a model that supports both', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    async function runWithOutputSchemaAndTools(
+      model: string,
+    ): Promise<LlmRequest> {
+      const agent = new LlmAgent({
+        name: 'test_agent',
+        // A model instance is used so that `canonicalModel` resolves without
+        // credentials.
+        model: new TestLlmModel({model}),
+        outputSchema: OUTPUT_SCHEMA,
+        tools: [
+          new FunctionTool({
+            name: 'some_tool',
+            description: 'A test tool',
+            execute: () => 'result',
+          }),
+        ],
+      });
+      const llmRequest = makeLlmRequest();
+
+      await runProcessor(createMockInvocationContext(agent), llmRequest);
+
+      return llmRequest;
+    }
+
+    it('should set outputSchema on Vertex AI with a Gemini 2.0+ model', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequest = await runWithOutputSchemaAndTools('gemini-2.5-flash');
+
+      expect(llmRequest.config?.responseSchema).toBeDefined();
+      expect(llmRequest.config?.responseMimeType).toBe('application/json');
+    });
+
+    it('should not set outputSchema on Vertex AI with a pre-2.0 model', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, 'true');
+
+      const llmRequest = await runWithOutputSchemaAndTools('gemini-1.5-pro');
+
+      expect(llmRequest.config?.responseSchema).toBeUndefined();
+      expect(llmRequest.config?.responseMimeType).toBeUndefined();
+    });
+
+    it('should not set outputSchema outside the Vertex AI variant', async () => {
+      vi.stubEnv(VERTEX_ENV_VAR, undefined);
+
+      const llmRequest = await runWithOutputSchemaAndTools('gemini-2.5-flash');
+
+      expect(llmRequest.config?.responseSchema).toBeUndefined();
+      expect(llmRequest.config?.responseMimeType).toBeUndefined();
+    });
   });
 
   it('should populate liveConnectConfig from runConfig', async () => {
