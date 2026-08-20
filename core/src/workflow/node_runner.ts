@@ -32,8 +32,10 @@ export interface RunNodeOptions {
    * "2", "3" in call order — which is what a resume matches checkpoints on.
    *
    * Supply one only when position is not stable but identity is (a reorderable
-   * collection: key it off the item's own id). It must contain a non-numeric
-   * character so it cannot collide with the automatic sequence.
+   * collection: key it off the item's own id). Give it a non-numeric character
+   * so it cannot collide with the automatic sequence: an all-digit id is
+   * refused for any node ADK also numbers automatically in the same context,
+   * whichever call comes first.
    */
   runId?: string;
   /** If true, the child's output replaces the caller's output. */
