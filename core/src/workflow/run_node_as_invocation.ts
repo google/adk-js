@@ -172,16 +172,21 @@ function resumeInputsFromPlainText(
 }
 
 /**
- * Derives the node input from the user message: plain text when the content is
- * text-only, otherwise the raw `Content` (nodes coerce as needed).
+ * Derives the node input from the user message: the text the user wrote when
+ * there is any, otherwise the raw `Content`.
+ *
+ * Non-text parts are not lost, since the whole message stays on the invocation
+ * as `ctx.invocationContext.userContent` and in the session as the user's own
+ * event.
  */
 function extractNodeInput(content?: Content): unknown {
   if (!content) {
     return undefined;
   }
   const parts = content.parts ?? [];
-  if (parts.length > 0 && parts.every((p) => typeof p.text === 'string')) {
-    return parts.map((p) => p.text).join('');
+  const textParts = parts.filter((p) => typeof p.text === 'string');
+  if (textParts.length > 0) {
+    return textParts.map((p) => p.text).join('');
   }
   return content;
 }

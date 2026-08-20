@@ -177,6 +177,80 @@ describe('cli_run', () => {
     expect(
       (console.log as Mock).mock.calls.map((call) => call.join(' ')).join('\n'),
     ).toContain('recovered');
+    // Surviving the turn must not cost the cleanup: stdin is still released
+    // when the loop finally ends.
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses one readline interface across prompts', async () => {
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('hello'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('21'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(readline.createInterface as Mock).toHaveBeenCalledTimes(1);
+    expect(mockRl.question as Mock).toHaveBeenCalledTimes(3);
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the readline interface when a failure escapes the loop', async () => {
+    (mockRl.question as Mock).mockImplementation(
+      (_p: string, cb: (a: string) => void) => cb('exit'),
+    );
+    // A failing turn no longer escapes — the REPL reports it and prompts again
+    // — so the throw that still has to release stdin comes from the save step.
+    (saveToFile as Mock).mockRejectedValue(new Error('save exploded'));
+
+    await expect(
+      runAgent({
+        agentPath: 'agent.ts',
+        saveSession: true,
+        sessionId: 'session-123',
+        sessionService: createMockSessionService(),
+      }),
+    ).rejects.toThrow('save exploded');
+
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('echoes the answer when stdin is not a terminal', async () => {
+    const isTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: false,
+      configurable: true,
+    });
+    try {
+      (mockRl.question as Mock)
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('hi'),
+        )
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('exit'),
+        );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(
+        (console.log as Mock).mock.calls.map((c) => c.join(' ')),
+      ).toContain('hi');
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: isTTY,
+        configurable: true,
+      });
+    }
   });
 
   it('should run from input file', async () => {

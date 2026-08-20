@@ -39,6 +39,16 @@ vi.mock('../../src/auth/auth_handler.js', () => ({
 describe('AuthPreprocessor', () => {
   const LLM_AGENT_SYMBOL = Symbol.for('google.adk.llmAgent');
 
+  /**
+   * A credential request is only an authority if it says what is being
+   * collected, so these fixtures carry a scheme and the response carries its
+   * material under `exchangedAuthCredential`, as a real client sends it.
+   */
+  const API_KEY_SCHEME = {type: 'apiKey', in: 'header', name: 'X-API-Key'};
+  const CREDENTIAL_RESPONSE = {
+    exchangedAuthCredential: {authType: 'apiKey', apiKey: 'test'},
+  };
+
   it('skips if agent is not LlmAgent', async () => {
     const invocationContext = {
       agent: {}, // Not an LlmAgent
@@ -142,7 +152,10 @@ describe('AuthPreprocessor', () => {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
-                      authConfig: {credentialKey: 'testKey'},
+                      authConfig: {
+                        credentialKey: 'testKey',
+                        authScheme: API_KEY_SCHEME,
+                      },
                       functionCallId: 'toolFc1',
                     },
                   },
@@ -158,7 +171,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -217,7 +230,10 @@ describe('AuthPreprocessor', () => {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
-                      auth_config: {credentialKey: 'testKey'},
+                      auth_config: {
+                        credentialKey: 'testKey',
+                        authScheme: API_KEY_SCHEME,
+                      },
                       function_call_id: 'toolFc1',
                     },
                   },
@@ -233,7 +249,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -292,7 +308,10 @@ describe('AuthPreprocessor', () => {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
-                      auth_config: {credential_key: 'testKey'},
+                      auth_config: {
+                        credential_key: 'testKey',
+                        auth_scheme: API_KEY_SCHEME,
+                      },
                       function_call_id: 'toolFc1',
                     },
                   },
@@ -308,7 +327,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -379,7 +398,10 @@ describe('AuthPreprocessor', () => {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
-                      authConfig: {credentialKey: 'testKey'},
+                      authConfig: {
+                        credentialKey: 'testKey',
+                        authScheme: API_KEY_SCHEME,
+                      },
                       functionCallId: '_adk_toolset_auth_something',
                     },
                   },
@@ -395,7 +417,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -431,7 +453,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -482,7 +504,10 @@ describe('AuthPreprocessor', () => {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                     args: {
-                      authConfig: {credentialKey: 'testKey'},
+                      authConfig: {
+                        credentialKey: 'testKey',
+                        authScheme: API_KEY_SCHEME,
+                      },
                       functionCallId: 'toolFc1',
                     },
                   },
@@ -498,7 +523,7 @@ describe('AuthPreprocessor', () => {
                   functionResponse: {
                     id: 'fc1',
                     name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                    response: {authType: 'apiKey', apiKey: 'test'},
+                    response: CREDENTIAL_RESPONSE,
                   },
                 },
               ],
@@ -548,7 +573,10 @@ describe('AuthPreprocessor', () => {
                       id: 'fc1',
                       name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
                       args: {
-                        authConfig: {credentialKey: 'testKey'},
+                        authConfig: {
+                          credentialKey: 'testKey',
+                          authScheme: API_KEY_SCHEME,
+                        },
                         functionCallId: 'toolFc1',
                       },
                     },
@@ -564,7 +592,7 @@ describe('AuthPreprocessor', () => {
                     functionResponse: {
                       id: 'fc1',
                       name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                      response: {authType: 'apiKey', apiKey: 'test'},
+                      response: CREDENTIAL_RESPONSE,
                     },
                   },
                 ],
@@ -626,7 +654,12 @@ describe('AuthPreprocessor', () => {
                     functionResponse: {
                       id: 'never-requested',
                       name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
-                      response: {authType: 'apiKey', apiKey: 'attacker-key'},
+                      response: {
+                        exchangedAuthCredential: {
+                          authType: 'apiKey',
+                          apiKey: 'attacker-key',
+                        },
+                      },
                     },
                   },
                 ],
@@ -637,6 +670,102 @@ describe('AuthPreprocessor', () => {
       } as unknown as InvocationContext;
 
       const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+
+      expect((await generator.next()).done).toBe(true);
+      expect(storeCredential).not.toHaveBeenCalled();
+    });
+  });
+
+  // The request is the authority for what is being collected and where it goes.
+  // If it cannot play that part, there is nothing to reconcile the response
+  // against, and storing what arrived would be taking the client's word for it.
+  describe('credential request completeness', () => {
+    /** A session pairing an arbitrary request config with a response. */
+    function contextFor(
+      authConfig: Record<string, unknown>,
+      response: Record<string, unknown>,
+    ): InvocationContext {
+      return {
+        agent: {
+          [LLM_AGENT_SYMBOL]: true,
+          name: 'agent',
+          canonicalTools: vi.fn().mockResolvedValue([{name: 'someTool'}]),
+          canonicalBeforeToolCallbacks: [],
+          canonicalAfterToolCallbacks: [],
+        },
+        session: {
+          state: {},
+          events: [
+            createEvent({
+              author: 'agent',
+              content: {
+                parts: [
+                  {functionCall: {id: 'toolFc1', name: 'someTool', args: {}}},
+                ],
+              },
+            }),
+            createEvent({
+              author: 'agent',
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      id: 'fc1',
+                      name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                      args: {authConfig, functionCallId: 'toolFc1'},
+                    },
+                  },
+                ],
+              },
+            }),
+            createEvent({
+              author: 'user',
+              content: {
+                parts: [
+                  {
+                    functionResponse: {
+                      id: 'fc1',
+                      name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                      response,
+                    },
+                  },
+                ],
+              },
+            }),
+          ],
+        },
+      } as unknown as InvocationContext;
+    }
+
+    beforeEach(() => {
+      storeCredential.mockClear();
+    });
+
+    it('refuses a request that names no auth scheme', async () => {
+      const generator = AUTH_PREPROCESSOR.runAsync(
+        contextFor({credentialKey: 'testKey'}, CREDENTIAL_RESPONSE),
+      );
+
+      expect((await generator.next()).done).toBe(true);
+      expect(storeCredential).not.toHaveBeenCalled();
+    });
+
+    it('refuses a request that names no credential key', async () => {
+      const generator = AUTH_PREPROCESSOR.runAsync(
+        contextFor({authScheme: API_KEY_SCHEME}, CREDENTIAL_RESPONSE),
+      );
+
+      expect((await generator.next()).done).toBe(true);
+      expect(storeCredential).not.toHaveBeenCalled();
+    });
+
+    it('refuses a response carrying no credential material', async () => {
+      const generator = AUTH_PREPROCESSOR.runAsync(
+        contextFor(
+          {credentialKey: 'testKey', authScheme: API_KEY_SCHEME},
+          {authScheme: API_KEY_SCHEME},
+        ),
+      );
 
       expect((await generator.next()).done).toBe(true);
       expect(storeCredential).not.toHaveBeenCalled();

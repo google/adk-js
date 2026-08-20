@@ -139,18 +139,37 @@ interface InputFile {
   queries: string[];
 }
 
-async function getUserInput(prompt: string): Promise<string> {
-  const rl = readline.createInterface({
+/**
+ * The one readline interface for the run, created on first prompt. A fresh
+ * interface per prompt discards the lines readline had already read ahead from
+ * a pipe.
+ */
+let sharedReadline: readline.Interface | undefined;
+
+function getReadline(): readline.Interface {
+  sharedReadline ??= readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
+  return sharedReadline;
+}
 
-  return new Promise<string>((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
+/** Releases the shared interface, so an idle stdin stops holding the process open. */
+function closeUserInput(): void {
+  sharedReadline?.close();
+  sharedReadline = undefined;
+}
+
+async function getUserInput(prompt: string): Promise<string> {
+  const rl = getReadline();
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(prompt, resolve);
   });
+
+  if (!process.stdin.isTTY) {
+    console.log(answer);
+  }
+  return answer;
 }
 
 interface RunFromInputFileOptions {
@@ -403,27 +422,30 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           : undefined,
       });
     }
+
+    if (options.saveSession) {
+      const sessionId =
+        options.sessionId || (await getUserInput('Session ID to save: '));
+      // Sibling of the agent file, not inside it: joining onto the agent path
+      // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
+      // no mkdir, so the write failed with ENOTDIR.
+      const sessionPath = path.join(
+        path.dirname(options.agentPath),
+        `${sessionId}.session.json`,
+      );
+      const sessionToStore = await sessionService.getSession({
+        appName: session.appName,
+        userId: session.userId,
+        sessionId: session.id,
+      });
+      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+
+      console.log('Session saved to', sessionPath);
+    }
   } finally {
+    // A throw out of the run or the save step must still release these, or the
+    // shared interface holds stdin open for an in-process caller.
     watcher?.close();
-  }
-
-  if (options.saveSession) {
-    const sessionId =
-      options.sessionId || (await getUserInput('Session ID to save: '));
-    // Sibling of the agent file, not inside it: joining onto the agent path
-    // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
-    // no mkdir, so the write failed with ENOTDIR.
-    const sessionPath = path.join(
-      path.dirname(options.agentPath),
-      `${sessionId}.session.json`,
-    );
-    const sessionToStore = await sessionService.getSession({
-      appName: session.appName,
-      userId: session.userId,
-      sessionId: session.id,
-    });
-    await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
-
-    console.log('Session saved to', sessionPath);
+    closeUserInput();
   }
 }
