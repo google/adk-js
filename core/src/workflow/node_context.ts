@@ -104,6 +104,17 @@ export class NodeContext {
   interruptIds: string[] = [];
 
   /**
+   * The failure a node reported by emitting an error event rather than by
+   * throwing, for the attempt in progress.
+   *
+   * An `LlmAgent` reports a model error this way. The engine reads it back at
+   * the end of the attempt and, if the node produced nothing, fails the node
+   * rather than letting `undefined` flow down its edge. Cleared per attempt by
+   * the node runner, like the other per-attempt fields.
+   */
+  reportedError?: {errorCode?: string; errorMessage?: string};
+
+  /**
    * Abort signal for the current node run, set by the engine while the node is
    * executing under a deadline or an external cancellation signal — i.e. when
    * the node declares a `timeout`, when the invocation itself can be aborted, or

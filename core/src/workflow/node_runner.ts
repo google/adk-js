@@ -14,9 +14,11 @@ import {createSubBranch} from './branch_path.js';
 import {
   InvocationAbortedError,
   isInvocationAbortedError,
+  NodeReportedError,
   NodeTimeoutError,
 } from './errors.js';
 import {NodeContext} from './node_context.js';
+import {claimNodeErrorReport, isNodeErrorEvent} from './node_error_event.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
 import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
@@ -253,6 +255,7 @@ async function runChildNode({
           runId,
           attempt: nodeState.attemptCount,
         });
+        failIfNodeReportedError(child, nodeName);
         succeeded = true;
       } catch (err) {
         // Cancellation is terminal: an aborted invocation (or a sibling
@@ -366,6 +369,36 @@ function runAttempt(params: RunAttemptParams): Promise<void> {
 }
 
 /**
+ * Turns a failure the node *reported* into one it *threw*, so the engine's
+ * existing failure path handles it.
+ *
+ * Only when the node produced nothing: an error event followed by a real output
+ * is a node that recovered, and one that ended waiting on a human has not
+ * failed at all. Without this the node was recorded COMPLETED, its edge was
+ * walked, and the successor ran on `undefined` — so the run's top-level error
+ * became whatever the successor tripped over, with the real cause buried
+ * further up the transcript.
+ *
+ * The error is claimed on the node's behalf so `Workflow.reportNodeError` does
+ * not emit a second error event for it: the node already emitted one, and two
+ * identical error lines describing one failure is what the caller has to read.
+ */
+function failIfNodeReportedError(child: NodeContext, nodeName: string): void {
+  const reported = child.reportedError;
+  if (
+    !reported ||
+    child.output !== undefined ||
+    child.route !== undefined ||
+    child.interruptIds.length > 0
+  ) {
+    return;
+  }
+  const error = new NodeReportedError({nodeName, ...reported});
+  claimNodeErrorReport(error, child.invocationId);
+  throw error;
+}
+
+/**
  * Reset per-attempt state so a retry starts clean. This covers everything a
  * failed attempt can leave behind on the child context: its output/route,
  * interrupt ids, AND its state writes. A node that calls `ctx.state.set(...)`
@@ -384,6 +417,7 @@ function resetState(childNodeContext: NodeContext): void {
   childNodeContext.output = undefined;
   childNodeContext.route = undefined;
   childNodeContext.interruptIds = [];
+  childNodeContext.reportedError = undefined;
   for (const key of Object.keys(childNodeContext.actions.stateDelta)) {
     delete childNodeContext.actions.stateDelta[key];
   }
@@ -445,6 +479,18 @@ async function runOnce({
     }
     if (event.route !== undefined) {
       child.route = event.route;
+    }
+    // A node can report a failure by emitting an error event instead of
+    // throwing — an LlmAgent does exactly that for a model error. Remember it;
+    // whether it actually failed the node is decided once the attempt is over,
+    // since a node that reports an error and then recovers still has an output.
+    // A node error event is the engine's own report of a throw and is skipped,
+    // so it cannot re-fail the node it is describing.
+    if (event.errorCode !== undefined && !isNodeErrorEvent(event)) {
+      child.reportedError = {
+        errorCode: event.errorCode,
+        errorMessage: event.errorMessage,
+      };
     }
     // HITL: an interrupt event marks its ids as long-running tool ids.
     if (event.longRunningToolIds && event.longRunningToolIds.length > 0) {

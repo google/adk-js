@@ -99,6 +99,57 @@ export function isDynamicNodeFailError(e: unknown): e is DynamicNodeFailError {
 }
 
 /**
+ * Raised when a node reported a failure by emitting an error event instead of
+ * throwing, and produced nothing.
+ *
+ * An `LlmAgent` turns a model error into an event carrying `errorCode` and
+ * `errorMessage` rather than raising, which the engine had no way to see: the
+ * node "completed" with no output, its edge was walked, and its successor ran
+ * on `undefined`. Converting that report into a throw puts such a node on the
+ * same failure path as one that raised.
+ *
+ * A regular `Error`, so `retryConfig` can retry it — target it by name with
+ * `exceptions: ['NodeReportedError']`. `code` carries the reported error code
+ * so `createNodeErrorEvent` recovers it.
+ */
+export class NodeReportedError extends Error {
+  readonly code: string;
+  readonly nodeName: string;
+
+  /**
+   * @param options.nodeName The node that reported the error.
+   * @param options.errorCode The code carried on the reported event.
+   * @param options.errorMessage The message carried on the reported event.
+   */
+  constructor(options: {
+    nodeName: string;
+    errorCode?: string;
+    errorMessage?: string;
+  }) {
+    const code = options.errorCode ?? 'UNKNOWN_ERROR';
+    const detail = options.errorMessage ?? code;
+    // The node name and the code are in the message because this error is what
+    // the run reports at top level, and the point of it is to name the node
+    // that actually failed rather than whichever successor tripped over its
+    // `undefined` first.
+    super(
+      `Node '${options.nodeName}' failed: ${
+        code === 'UNKNOWN_ERROR' ? detail : `${code}: ${detail}`
+      }`,
+    );
+    this.name = 'NodeReportedError';
+    this.code = code;
+    this.nodeName = options.nodeName;
+    Object.setPrototypeOf(this, NodeReportedError.prototype);
+  }
+}
+
+/** Type guard for {@link NodeReportedError} (name-based; see above). */
+export function isNodeReportedError(e: unknown): e is NodeReportedError {
+  return e instanceof Error && e.name === 'NodeReportedError';
+}
+
+/**
  * Raised when the invocation is aborted (e.g. its abort signal fires) while the
  * engine is waiting — currently during a node's retry backoff delay.
  *
