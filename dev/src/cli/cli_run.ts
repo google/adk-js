@@ -139,18 +139,47 @@ interface InputFile {
   queries: string[];
 }
 
-async function getUserInput(prompt: string): Promise<string> {
-  const rl = readline.createInterface({
+/**
+ * The one readline interface for the run, created on first prompt.
+ *
+ * A fresh interface per prompt loses piped input: readline reads ahead from the
+ * stream, so lines already sitting in the pipe when a turn ends are buffered
+ * inside the interface, and `close()` throws them away. The next prompt then
+ * built a new interface over a stream those lines had already left. Only the
+ * first line of `printf 'hello\n21\nexit\n' | adk run …` ever reached the
+ * agent, which is every scripted and CI use of the command.
+ */
+let sharedReadline: readline.Interface | undefined;
+
+function getReadline(): readline.Interface {
+  sharedReadline ??= readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
+  return sharedReadline;
+}
 
-  return new Promise<string>((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
+/** Releases the shared interface, so an idle stdin stops holding the process open. */
+function closeUserInput(): void {
+  sharedReadline?.close();
+  sharedReadline = undefined;
+}
+
+async function getUserInput(prompt: string): Promise<string> {
+  const rl = getReadline();
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(prompt, resolve);
   });
+
+  // A terminal echoes what was typed; a pipe does not, so the prompt sat
+  // unterminated and whatever printed next landed on the same line —
+  // `[user]: [hello_node]: Hello World`, reading as though the user had typed
+  // the node's output. Echo it so a piped transcript reads like the session it
+  // was.
+  if (!process.stdin.isTTY) {
+    console.log(answer);
+  }
+  return answer;
 }
 
 interface RunFromInputFileOptions {
@@ -418,4 +447,6 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
 
     console.log('Session saved to', sessionPath);
   }
+
+  closeUserInput();
 }

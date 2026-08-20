@@ -144,6 +144,62 @@ describe('cli_run', () => {
       }),
     }) as unknown as BaseSessionService;
 
+  it('reuses one readline interface across prompts', async () => {
+    // A fresh interface per prompt threw away the lines readline had already
+    // read ahead from the pipe, so only the first line of
+    // `printf 'hello\n21\nexit\n' | adk run …` ever reached the agent.
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('hello'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('21'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(readline.createInterface as Mock).toHaveBeenCalledTimes(1);
+    expect(mockRl.question as Mock).toHaveBeenCalledTimes(3);
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('echoes the answer when stdin is not a terminal', async () => {
+    // A pipe does not echo, so the prompt sat unterminated and the next line
+    // printed onto it: `[user]: [hello_node]: Hello World`.
+    const isTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: false,
+      configurable: true,
+    });
+    try {
+      (mockRl.question as Mock)
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('hi'),
+        )
+        .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+          cb('exit'),
+        );
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      });
+
+      expect(
+        (console.log as Mock).mock.calls.map((c) => c.join(' ')),
+      ).toContain('hi');
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: isTTY,
+        configurable: true,
+      });
+    }
+  });
+
   it('should run from input file', async () => {
     const inputFileContent = {
       state: {foo: 'bar'},
