@@ -471,4 +471,99 @@ describe('Phase 5b — HITL resume via the Runner', () => {
     // The workflow resumed through the gate and completed at c.
     expect(turn2.some((e) => e.output === 'C(A(x)|approved)')).toBe(true);
   });
+
+  it('re-runs a supervisor whose child interrupted on its ORIGINAL input', async () => {
+    const supervisorInputs: unknown[] = [];
+
+    const worker = node(
+      (ctx: NodeContext, item: unknown) => {
+        if (item !== 'beta') {
+          return `${item}:auto`;
+        }
+        const answer = ctx.resumeInputs['approve-beta'];
+        if (answer === undefined) {
+          return new RequestInput({
+            interruptId: 'approve-beta',
+            message: 'approve beta?',
+          });
+        }
+        return `beta:${answer}`;
+      },
+      {name: 'worker', rerunOnResume: true},
+    );
+    const supervisor = node(
+      async (ctx: NodeContext, input: unknown) => {
+        supervisorInputs.push(input);
+        const items = String(input)
+          .split(',')
+          .map((item) => item.trim());
+        const results: unknown[] = [];
+        for (const item of items) {
+          const run = await ctx.runNode(worker, item, {runId: `item-${item}`});
+          if (run.interruptIds.length > 0) {
+            return undefined;
+          }
+          results.push(run.output);
+        }
+        return results.join('|');
+      },
+      {name: 'supervisor', rerunOnResume: true},
+    );
+    const wf = new Workflow({
+      name: 'supervisor_wf',
+      edges: [['START', supervisor]],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({
+      appName: 'test_app',
+      agent: wf,
+      sessionService,
+    });
+
+    // --- Turn 1: beta stops to ask ---
+    const turn1: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'u1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'alpha, beta, gamma'}]},
+    })) {
+      turn1.push(event);
+    }
+    expect(turn1.some(hasRequestInputFunctionCall)).toBe(true);
+    expect(supervisorInputs).toEqual(['alpha, beta, gamma']);
+
+    // --- Turn 2: the human answers ---
+    const turn2: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'u1',
+      sessionId: session.id,
+      newMessage: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'approve-beta',
+              name: 'adk_request_input',
+              response: {result: 'yes'},
+            },
+          },
+        ],
+      },
+    })) {
+      turn2.push(event);
+    }
+
+    expect(supervisorInputs).toEqual([
+      'alpha, beta, gamma',
+      'alpha, beta, gamma',
+    ]);
+    expect(
+      turn2.some((e) => e.output === 'alpha:auto|beta:yes|gamma:auto'),
+    ).toBe(true);
+  });
 });
