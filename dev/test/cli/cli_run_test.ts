@@ -144,6 +144,45 @@ describe('cli_run', () => {
       }),
     }) as unknown as BaseSessionService;
 
+  it('keeps the REPL alive when a turn fails', async () => {
+    // Every failure used to reach the CLI's single top-level catch, which
+    // exits 1, so one bad model answer ended the session and the turn queued
+    // behind it never ran.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let turn = 0;
+    (Runner as unknown as Mock).mockImplementation(() => ({
+      runAsync: async function* () {
+        turn++;
+        if (turn === 1) {
+          throw new Error('Context variable not found: `my_city`.');
+        }
+        yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
+      },
+    }));
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('boom'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('go'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    // The failure is reported, and the next turn still runs.
+    expect(
+      errors.mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('Context variable not found');
+    expect(turn).toBe(2);
+    expect(
+      (console.log as Mock).mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('recovered');
+  });
+
   it('should run from input file', async () => {
     const inputFileContent = {
       state: {foo: 'bar'},

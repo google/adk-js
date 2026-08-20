@@ -263,15 +263,28 @@ async function runInteractively(
       break;
     }
 
-    for await (const event of runner.runAsync({
-      userId: options.session.userId,
-      sessionId: options.session.id,
-      newMessage: {role: 'user', parts: [{text: query}]},
-      // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
-      // confirmation (opt-in; off by default on non-interactive surfaces).
-      runConfig: {plainTextToolConfirmation: true},
-    })) {
-      printEvent(event);
+    try {
+      for await (const event of runner.runAsync({
+        userId: options.session.userId,
+        sessionId: options.session.id,
+        newMessage: {role: 'user', parts: [{text: query}]},
+        // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+        // confirmation (opt-in; off by default on non-interactive surfaces).
+        runConfig: {plainTextToolConfirmation: true},
+      })) {
+        printEvent(event);
+      }
+    } catch (error) {
+      // A failed turn is not a session that has to end. `adk run` advertises
+      // itself as a loop ("type exit to exit"), but every failure reached the
+      // CLI's single top-level catch, which exits 1 — so one bad model answer
+      // cost a restart and a fresh session, and any turn queued behind it never
+      // ran. Startup failures still reach that catch, where fatal is right.
+      console.error(
+        `[ADK CLI] Turn failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 }
