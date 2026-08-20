@@ -464,7 +464,7 @@ export async function handleFunctionCallList({
         functionResponseEvents.push(
           createEvent({
             invocationId: invocationContext.invocationId,
-            author: invocationContext.agent.name,
+            author: toolEventAuthor(invocationContext),
             actions: toolContext.actions,
             branch: invocationContext.branch,
           }),
