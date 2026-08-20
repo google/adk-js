@@ -23,6 +23,7 @@ import {camelCaseKeys} from '../utils/case_utils.js';
 import {logger} from '../utils/logger.js';
 import {AuthHandler} from './auth_handler.js';
 import {AuthConfig} from './auth_tool.js';
+import {bindCredentialResponse} from './credential_response_binding.js';
 
 const TOOLSET_AUTH_CREDENTIAL_ID_PREFIX = '_adk_toolset_auth_';
 
@@ -91,9 +92,18 @@ async function storeAuthAndCollectResumeTargets(
       continue;
     }
 
-    const authConfig = authResponses[fcId] as AuthConfig;
-    if (request.config.credentialKey) {
-      authConfig.credentialKey = request.config.credentialKey;
+    // The response answers the request; it does not get to restate it. The
+    // scheme, the client identity and the key all come from the request, and
+    // only the credential material comes from the response.
+    const authConfig = bindCredentialResponse(
+      request.config,
+      authResponses[fcId],
+    );
+    if (!authConfig) {
+      logger.warn(
+        `Ignoring credential response '${fcId}': it carries no credential for the request this agent raised.`,
+      );
+      continue;
     }
     await new AuthHandler(authConfig).parseAndStoreAuthResponse(state);
 

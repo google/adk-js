@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Content, Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
 import {Event} from '../../src/events/event.js';
@@ -11,6 +12,7 @@ import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
 import {node} from '../../src/workflow/node.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
+import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
 import {RequestInput} from '../../src/workflow/request_input.js';
 import {
   asRunnableRoot,
@@ -84,6 +86,93 @@ describe('runNodeAsInvocation — plain-text resume', () => {
     // user never gave it; the ambiguous case is dropped (structured function
     // responses are required to address a specific interrupt).
     expect(await resumeInputsFor(['first', 'second'], 'yes')).toEqual({});
+  });
+});
+
+describe('runNodeAsInvocation — what the START node is handed', () => {
+  /** Runs a one-node workflow over `parts` and returns what the node received. */
+  async function inputFor(parts: Part[]): Promise<unknown> {
+    let received: unknown;
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [
+        [
+          'START',
+          new FunctionNode('start', (_c, input) => {
+            received = input;
+            return 'ok';
+          }),
+        ],
+      ],
+    });
+    const ic = new InvocationContext({
+      invocationId: 'inv-1',
+      session: createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u',
+        lastUpdateTime: Date.now(),
+      }),
+      userContent: {role: 'user', parts},
+      pluginManager: new PluginManager(),
+    });
+    const drained: Event[] = [];
+    for await (const event of runNodeAsInvocation(wf, ic)) {
+      drained.push(event);
+    }
+    expect(drained.length).toBeGreaterThan(0);
+    return received;
+  }
+
+  const image: Part = {inlineData: {mimeType: 'image/png', data: 'aGk='}};
+
+  it('joins text parts, as before', async () => {
+    expect(await inputFor([{text: 'alpha'}, {text: 'beta'}])).toBe('alphabeta');
+  });
+
+  it('still hands over the text when an attachment rides along', async () => {
+    expect(await inputFor([{text: 'gamma'}, image])).toBe('gamma');
+  });
+
+  it('passes the content through when the user sent no text at all', async () => {
+    const received = await inputFor([image]);
+
+    expect(typeof received).toBe('object');
+    expect((received as Content).parts).toEqual([image]);
+  });
+
+  it('leaves the whole message reachable on the invocation', async () => {
+    let seen: Content | undefined;
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [
+        [
+          'START',
+          new FunctionNode('start', (ctx) => {
+            seen = ctx.invocationContext.userContent;
+            return 'ok';
+          }),
+        ],
+      ],
+    });
+    const ic = new InvocationContext({
+      invocationId: 'inv-1',
+      session: createSession({
+        id: 's1',
+        appName: 'app',
+        userId: 'u',
+        lastUpdateTime: Date.now(),
+      }),
+      userContent: {role: 'user', parts: [{text: 'gamma'}, image]},
+      pluginManager: new PluginManager(),
+    });
+    const drained: Event[] = [];
+    for await (const event of runNodeAsInvocation(wf, ic)) {
+      drained.push(event);
+    }
+
+    expect(drained.length).toBeGreaterThan(0);
+    expect(seen?.parts).toEqual([{text: 'gamma'}, image]);
   });
 });
 

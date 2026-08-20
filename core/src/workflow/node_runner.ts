@@ -13,7 +13,9 @@ import {BaseNode} from './base_node.js';
 import {createSubBranch} from './branch_path.js';
 import {
   InvocationAbortedError,
+  isDynamicNodeFailError,
   isInvocationAbortedError,
+  isNodeInterruptedError,
   NodeReportedError,
   NodeTimeoutError,
 } from './errors.js';
@@ -258,9 +260,20 @@ async function runChildNode({
         failIfNodeReportedError(child, nodeName);
         succeeded = true;
       } catch (err) {
+        // A dynamic child stopped to ask the user. Its ids are already on
+        // `child`, so this node is waiting rather than failed.
+        if (isNodeInterruptedError(err)) {
+          succeeded = true;
+          break;
+        }
         // Cancellation is terminal: an aborted invocation (or a sibling
         // failure that cancelled this node) is never retried.
         if (isInvocationAbortedError(err)) {
+          throw err;
+        }
+        // A dynamic child's own failure is not this node's to retry: rerunning
+        // the body would re-run every sibling the child ran before it.
+        if (isDynamicNodeFailError(err)) {
           throw err;
         }
         // Check retry eligibility with the attempt that just failed, compute
