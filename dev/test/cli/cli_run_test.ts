@@ -569,5 +569,49 @@ describe('cli_run', () => {
 
       expect(output).not.toContain('[bookkeeping]');
     });
+
+    it("prints an output-only event, the run's actual answer", async () => {
+      // `createEvent({output})` is one of the sample's "three equivalent ways
+      // to produce output", and it was the one the user never saw.
+      const output = await runOneTurn({
+        author: 'final_answer',
+        output: '<<HELLO!>>',
+      });
+
+      expect(output).toContain('[final_answer]: <<HELLO!>>');
+    });
+
+    it('renders a structured output-only event as JSON', async () => {
+      const output = await runOneTurn({
+        author: 'lookup',
+        output: {timeInfo: '10:10 AM', city: 'Paris'},
+      });
+
+      expect(output).toContain(
+        '[lookup]: {"timeInfo":"10:10 AM","city":"Paris"}',
+      );
+    });
+
+    it('does not print a node result twice when it fills content and output', async () => {
+      // `FunctionNode.toEvent` puts a bare return in both fields; the dev UI
+      // prints both and shows it twice, which the CLI must not copy.
+      const output = await runOneTurn({
+        author: 'echo',
+        content: {role: 'model', parts: [{text: 'HELLO'}]},
+        output: 'HELLO',
+      });
+
+      expect(output.match(/\[echo\]: HELLO/g)).toHaveLength(1);
+    });
+
+    it('stays quiet for a partial (streaming) event', async () => {
+      const output = await runOneTurn({
+        author: 'streamer',
+        output: 'partial value',
+        partial: true,
+      });
+
+      expect(output).not.toContain('[streamer]');
+    });
   });
 });

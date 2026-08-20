@@ -98,6 +98,23 @@ interface PrintEventOptions {
   announcePauses?: boolean;
 }
 
+/**
+ * Renders a node output for the transcript: a string as itself, anything else
+ * as JSON — the same shape a `FunctionNode` puts in its own event text, so the
+ * two forms read alike. The empty string is named rather than printed, since a
+ * bare `[node]: ` line is indistinguishable from a rendering glitch.
+ */
+function renderOutput(output: unknown): string {
+  if (typeof output === 'string') {
+    return output === '' ? '(empty response)' : output;
+  }
+  try {
+    return JSON.stringify(output) ?? String(output);
+  } catch {
+    return String(output);
+  }
+}
+
 /** Prints one event's text, plus anything the user would otherwise not see. */
 function printEvent(event: Event, options: PrintEventOptions = {}): void {
   const {announcePauses = true} = options;
@@ -108,13 +125,17 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
     .join('');
   if (text) {
     console.log(`[${author}]: ${text}`);
-  } else if (event.output === '' && !event.partial) {
-    // A node whose result is the empty string still ran, and that empty value
-    // still travels on to the next node and into the final answer. Printing
-    // nothing for it left the node out of the transcript entirely, reading as
-    // though it had been skipped — the one thing the transcript must not say,
-    // since the reader is using it to find where the empty value came from.
-    console.log(`[${author}]: (empty response)`);
+  } else if (event.output !== undefined && !event.partial) {
+    // `content` is what a node says to the user and `output` is what it hands
+    // the next node, but a node may emit only the latter — the
+    // `data_handling/node_output` sample calls `createEvent({output})` one of
+    // "three equivalent ways to produce output". Rendering text alone made
+    // that form invisible, so a workflow whose answer was produced that way
+    // could never reach the user, and an empty result read as a skipped node.
+    //
+    // Only when there is no text: a node that fills both (as `FunctionNode`
+    // does for a bare return) must not have its result printed twice.
+    console.log(`[${author}]: ${renderOutput(event.output)}`);
   }
 
   // Reported on the event, not as a text part, so text-only printing drops it.
