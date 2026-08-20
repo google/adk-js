@@ -10,9 +10,14 @@ import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import type {SchemaLike} from '../utils/schema.js';
+import type {BaseNode} from './base_node.js';
+import {NodeInterruptedError} from './errors.js';
 import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
-import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import type {
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+} from './schedule_dynamic_node.js';
 import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
@@ -266,13 +271,35 @@ export class NodeContext {
         runId = String(next);
         mapSet(this.autoRunIds, nodeName).add(runId);
       }
-      return this.scheduler.schedule(this, node, input, {
+      return this.scheduleAndUnwind(node, input, {
         ...options,
         nodeName,
         runId,
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+
+  /**
+   * Runs a child through the scheduler, raising {@link NodeInterruptedError}
+   * when it comes back waiting on an unanswered interrupt.
+   *
+   * The caller's body must not continue past a child that stopped to ask the
+   * user: everything after the call would run on a missing answer, and would
+   * run again when the turn resumes. The scheduler has already copied the
+   * child's interrupt ids onto this context by the time it returns, so the
+   * runner that catches the throw records this node as waiting.
+   */
+  private async scheduleAndUnwind(
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext | NodeResult> {
+    const child = await this.scheduler!.schedule(this, node, input, options);
+    if (child.interruptIds.length > 0) {
+      throw new NodeInterruptedError();
+    }
+    return child;
   }
 }
 
