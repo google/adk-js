@@ -9,9 +9,9 @@ import {Event} from '../events/event.js';
 import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
+import type {SchemaLike} from '../utils/schema.js';
 import type {BaseNode} from './base_node.js';
 import {NodeInterruptedError} from './errors.js';
-import type {SchemaLike} from '../utils/schema.js';
 import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
 import type {
