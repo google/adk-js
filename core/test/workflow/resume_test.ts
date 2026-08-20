@@ -289,6 +289,108 @@ describe('Phase 5b — rehydration utility', () => {
   });
 });
 
+describe('Phase 5b — a reply that answers no open interrupt', () => {
+  /** An interrupt raised by `gate`, as a node event would record it. */
+  function raised(interruptId: string): Event {
+    return createEvent({
+      author: 'gate',
+      nodeInfo: {path: 'wf.gate'},
+      longRunningToolIds: [interruptId],
+    });
+  }
+
+  /** A user turn replying to `interruptId`. */
+  function reply(interruptId: string, result: unknown): Event {
+    return createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: interruptId,
+              name: 'adk_request_input',
+              response: {result},
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  it('refuses an id that names no interrupt, naming what is waiting', () => {
+    expect(() =>
+      reconstructNodeStates([raised('gate-1'), reply('no-such-interrupt', 21)]),
+    ).toThrow(/'no-such-interrupt'.*does not match any interrupt.*'gate-1'/s);
+  });
+
+  it('leaves the real interrupt answerable after refusing one', () => {
+    const states = reconstructNodeStates([
+      raised('gate-1'),
+      reply('no-such-interrupt', 21),
+      reply('gate-1', 'yes'),
+    ]);
+
+    expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe('yes');
+  });
+
+  it('refuses a reply to an interrupt that is already answered', () => {
+    expect(() =>
+      reconstructNodeStates([
+        raised('gate-1'),
+        reply('gate-1', 'yes'),
+        reply('gate-1', 'no'),
+      ]),
+    ).toThrow(/'gate-1' has already been answered/);
+  });
+
+  it('accepts a second answer once the node has asked again', () => {
+    const states = reconstructNodeStates([
+      raised('gate-1'),
+      reply('gate-1', 'shorter'),
+      raised('gate-1'),
+      reply('gate-1', 'approve'),
+    ]);
+
+    expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe('approve');
+  });
+
+  it('stops refusing once the turn that carried the bad reply has passed', () => {
+    expect(() =>
+      reconstructNodeStates([
+        raised('gate-1'),
+        reply('no-such-interrupt', 21),
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'yes'}]},
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
+  it('ignores an ordinary tool response that is not an interrupt reply', () => {
+    const toolResponse = createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'call-1',
+              name: 'get_weather',
+              response: {result: 'sunny'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() =>
+      reconstructNodeStates([raised('gate-1'), toolResponse]),
+    ).not.toThrow();
+  });
+});
+
 describe('Phase 5b — HITL resume via the Runner', () => {
   it('resumes an interrupted workflow without re-running completed nodes', async () => {
     let aRuns = 0;
