@@ -105,12 +105,7 @@ export class NodeContext {
 
   /**
    * The failure a node reported by emitting an error event rather than by
-   * throwing, for the attempt in progress.
-   *
-   * An `LlmAgent` reports a model error this way. The engine reads it back at
-   * the end of the attempt and, if the node produced nothing, fails the node
-   * rather than letting `undefined` flow down its edge. Cleared per attempt by
-   * the node runner, like the other per-attempt fields.
+   * throwing. Read back at the end of the attempt; cleared per attempt.
    */
   reportedError?: {errorCode?: string; errorMessage?: string};
 

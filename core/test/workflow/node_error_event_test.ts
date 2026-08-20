@@ -347,11 +347,7 @@ describe('NodeErrorEvent — retries and timeouts', () => {
 });
 
 describe('NodeErrorEvent — a node that reports an error instead of throwing', () => {
-  /**
-   * A node that emits an error event and returns nothing, the way an
-   * `LlmAgent` surfaces a model error: `llm_agent.ts` yields an event carrying
-   * `errorCode`/`errorMessage` rather than raising.
-   */
+  /** A node that emits an error event and returns nothing, as an LlmAgent does. */
   function reportingNode(
     name: string,
     errorCode: string,
@@ -383,8 +379,6 @@ describe('NodeErrorEvent — a node that reports an error instead of throwing', 
 
     const {thrown} = await driveExpectingFailure(wf, 'x');
 
-    // The run fails with the real cause, naming the node that produced it —
-    // not with the successor's "Cannot read properties of undefined".
     expect(isNodeReportedError(thrown)).toBe(true);
     expect((thrown as Error).message).toContain('city_generator_agent');
     expect((thrown as Error).message).toContain('401');
@@ -402,7 +396,6 @@ describe('NodeErrorEvent — a node that reports an error instead of throwing', 
 
     const {events, errorEvents} = await driveExpectingFailure(wf, 'x');
 
-    // The node's own error event is there; the engine does not add a second.
     expect(errorEvents).toHaveLength(0);
     expect(events.filter((e) => e.errorCode !== undefined)).toHaveLength(1);
   });

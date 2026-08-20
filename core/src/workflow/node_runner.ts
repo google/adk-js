@@ -370,18 +370,11 @@ function runAttempt(params: RunAttemptParams): Promise<void> {
 
 /**
  * Turns a failure the node *reported* into one it *threw*, so the engine's
- * existing failure path handles it.
+ * existing failure path handles it. Only when the node produced nothing: one
+ * that reported an error and still returned a value recovered.
  *
- * Only when the node produced nothing: an error event followed by a real output
- * is a node that recovered, and one that ended waiting on a human has not
- * failed at all. Without this the node was recorded COMPLETED, its edge was
- * walked, and the successor ran on `undefined` — so the run's top-level error
- * became whatever the successor tripped over, with the real cause buried
- * further up the transcript.
- *
- * The error is claimed on the node's behalf so `Workflow.reportNodeError` does
- * not emit a second error event for it: the node already emitted one, and two
- * identical error lines describing one failure is what the caller has to read.
+ * Claims the error so `Workflow.reportNodeError` does not emit a second event
+ * for a failure the node already reported.
  */
 function failIfNodeReportedError(child: NodeContext, nodeName: string): void {
   const reported = child.reportedError;
@@ -480,12 +473,6 @@ async function runOnce({
     if (event.route !== undefined) {
       child.route = event.route;
     }
-    // A node can report a failure by emitting an error event instead of
-    // throwing — an LlmAgent does exactly that for a model error. Remember it;
-    // whether it actually failed the node is decided once the attempt is over,
-    // since a node that reports an error and then recovers still has an output.
-    // A node error event is the engine's own report of a throw and is skipped,
-    // so it cannot re-fail the node it is describing.
     if (event.errorCode !== undefined && !isNodeErrorEvent(event)) {
       child.reportedError = {
         errorCode: event.errorCode,
