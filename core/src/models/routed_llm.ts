@@ -9,7 +9,6 @@ import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmRequest} from './llm_request.js';
 import {LlmResponse} from './llm_response.js';
 
-import {experimental} from '../utils/experimental.js';
 import {runWithRouting} from '../utils/failover_utils.js';
 import {logger} from '../utils/logger.js';
 
@@ -25,7 +24,6 @@ export type LlmRouter = (
 /**
  * A BaseLlm implementation that delegates to one of multiple models based on a router function.
  */
-@experimental
 export class RoutedLlm extends BaseLlm {
   private readonly models: Readonly<Record<string, BaseLlm>>;
   private readonly router: LlmRouter;
