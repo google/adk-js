@@ -369,9 +369,17 @@ export class InvocationContext {
         event.longRunningToolIds!.includes(fc.id) &&
         !subsequentEvents.some(
           (e) =>
-            e.author === 'user' &&
-            ((e.branch && extractRunIds(e.branch).has(fc.id!)) ||
-              getFunctionResponses(e).some((fr) => fr.id === fc.id)),
+            // A response settles the call whoever authored it: the user
+            // answering a resumed interrupt, or the framework completing a
+            // tool that is merely declared long-running (a node/workflow tool)
+            // inline within this same turn. Only a call left without any
+            // response is still pending. See `handleFunctionCallList`, where a
+            // long-running tool defers its event only on a nullish result.
+            getFunctionResponses(e).some((fr) => fr.id === fc.id) ||
+            // A resumed run addresses the call through its branch instead.
+            (e.author === 'user' &&
+              e.branch &&
+              extractRunIds(e.branch).has(fc.id!)),
         ),
     );
   }
