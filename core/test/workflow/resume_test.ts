@@ -371,11 +371,6 @@ describe('Phase 5b — HITL resume via the Runner', () => {
   });
 
   it('re-runs a supervisor whose child interrupted on its ORIGINAL input', async () => {
-    // The supervisor never raises the interrupt itself — its child does — so it
-    // had no event carrying its input, and on resume it re-ran against the
-    // trigger's input, i.e. the human's reply. It then derived its work list
-    // from "yes", issued one child call instead of three, and the rest of the
-    // work was silently dropped.
     const supervisorInputs: unknown[] = [];
 
     const worker = node(

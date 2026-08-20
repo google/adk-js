@@ -425,10 +425,8 @@ interface RunOnceParams {
  * When there is neither a deadline nor an abort signal, a plain `for await`
  * fast path is used.
  *
- * Resolves to whether the node's input was recorded for resume, i.e. whether an
- * event it emitted carried interrupt ids and so got the input stamped on it.
- * A node that ends waiting without one needs the checkpoint `runChildNode`
- * writes instead.
+ * Resolves to whether an event the node emitted carried interrupt ids, and so
+ * got its input stamped on it for resume.
  */
 async function runOnce({
   node,
@@ -579,21 +577,12 @@ interface RecordInputForResumeParams {
 }
 
 /**
- * Writes the checkpoint a waiting node needs to resume with the right input,
- * for a node that has no event of its own to carry it.
+ * Writes the resume checkpoint for a waiting node that has no event of its own
+ * to carry its input — one waiting on a `ctx.runNode` child rather than on an
+ * interrupt it raised.
  *
- * The input is normally stamped on the node's own interrupt event, which only
- * exists for the node that raised the interrupt itself. A node waiting on a
- * `ctx.runNode` child raised nothing — it may have emitted nothing at all — so
- * it left no record, and on resume `Workflow.scheduleNode` found no prior input
- * and fell back to the trigger's, which carries the human's reply. A
- * `rerunOnResume` parent then re-ran against "yes" instead of the work it was
- * given, derived a different work list, and silently dropped the rest of it.
- *
- * The checkpoint carries no content and no output, so it says nothing to the
- * user and is not rendered; it exists to be read back by
- * {@link reconstructNodeRuns}. Its `longRunningToolIds` are what mark the run
- * as one that ended waiting, alongside the input under `actions.agentState`.
+ * Carries no content and no output, so it renders nowhere; it exists to be read
+ * back by {@link reconstructNodeRuns}.
  */
 function recordInputForResume({
   child,
