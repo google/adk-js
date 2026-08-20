@@ -109,6 +109,12 @@ export class NodeContext {
   interruptIds: string[] = [];
 
   /**
+   * The failure a node reported by emitting an error event rather than by
+   * throwing. Read back at the end of the attempt; cleared per attempt.
+   */
+  reportedError?: {errorCode?: string; errorMessage?: string};
+
+  /**
    * Abort signal for the current node run, set by the engine while the node is
    * executing under a deadline or an external cancellation signal — i.e. when
    * the node declares a `timeout`, when the invocation itself can be aborted, or

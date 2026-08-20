@@ -16,9 +16,11 @@ import {
   isDynamicNodeFailError,
   isInvocationAbortedError,
   isNodeInterruptedError,
+  NodeReportedError,
   NodeTimeoutError,
 } from './errors.js';
 import {NodeContext} from './node_context.js';
+import {claimNodeErrorReport, isNodeErrorEvent} from './node_error_event.js';
 import {createNodeState, NodeState} from './node_state.js';
 import {NodeStatus} from './node_status.js';
 import {getRetryDelaySeconds, shouldRetryNode} from './utils/retry_utils.js';
@@ -256,6 +258,7 @@ async function runChildNode({
           runId,
           attempt: nodeState.attemptCount,
         });
+        failIfNodeReportedError(child, nodeName);
         succeeded = true;
       } catch (err) {
         // A dynamic child stopped to ask the user. Its ids are already on
@@ -388,6 +391,29 @@ function runAttempt(params: RunAttemptParams): Promise<boolean> {
 }
 
 /**
+ * Turns a failure the node *reported* into one it *threw*, so the engine's
+ * existing failure path handles it. Only when the node produced nothing: one
+ * that reported an error and still returned a value recovered.
+ *
+ * Claims the error so `Workflow.reportNodeError` does not emit a second event
+ * for a failure the node already reported.
+ */
+function failIfNodeReportedError(child: NodeContext, nodeName: string): void {
+  const reported = child.reportedError;
+  if (
+    !reported ||
+    child.output !== undefined ||
+    child.route !== undefined ||
+    child.interruptIds.length > 0
+  ) {
+    return;
+  }
+  const error = new NodeReportedError({nodeName, ...reported});
+  claimNodeErrorReport(error, child.invocationId);
+  throw error;
+}
+
+/**
  * Reset per-attempt state so a retry starts clean. This covers everything a
  * failed attempt can leave behind on the child context: its output/route,
  * interrupt ids, AND its state writes. A node that calls `ctx.state.set(...)`
@@ -406,6 +432,7 @@ function resetState(childNodeContext: NodeContext): void {
   childNodeContext.output = undefined;
   childNodeContext.route = undefined;
   childNodeContext.interruptIds = [];
+  childNodeContext.reportedError = undefined;
   for (const key of Object.keys(childNodeContext.actions.stateDelta)) {
     delete childNodeContext.actions.stateDelta[key];
   }
@@ -471,6 +498,12 @@ async function runOnce({
     }
     if (event.route !== undefined) {
       child.route = event.route;
+    }
+    if (event.errorCode !== undefined && !isNodeErrorEvent(event)) {
+      child.reportedError = {
+        errorCode: event.errorCode,
+        errorMessage: event.errorMessage,
+      };
     }
     // HITL: an interrupt event marks its ids as long-running tool ids.
     if (event.longRunningToolIds && event.longRunningToolIds.length > 0) {
