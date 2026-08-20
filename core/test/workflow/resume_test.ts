@@ -319,9 +319,6 @@ describe('Phase 5b — a reply that answers no open interrupt', () => {
   }
 
   it('refuses an id that names no interrupt, naming what is waiting', () => {
-    // Silently dropping this let the turn be served as a new user message, so
-    // the waiting node re-ran and raised a SECOND interrupt. From then on two
-    // were pending, plain text resolved neither, and the count only grew.
     expect(() =>
       reconstructNodeStates([raised('gate-1'), reply('no-such-interrupt', 21)]),
     ).toThrow(/'no-such-interrupt'.*does not match any interrupt.*'gate-1'/s);
@@ -338,7 +335,6 @@ describe('Phase 5b — a reply that answers no open interrupt', () => {
   });
 
   it('refuses a reply to an interrupt that is already answered', () => {
-    // What a stale approval form in the dev UI submits.
     expect(() =>
       reconstructNodeStates([
         raised('gate-1'),
@@ -349,8 +345,6 @@ describe('Phase 5b — a reply that answers no open interrupt', () => {
   });
 
   it('accepts a second answer once the node has asked again', () => {
-    // The revise loop: `gate` asks, is told to redraft, and asks again under
-    // the same id. The second answer must land, not be read as a duplicate.
     const states = reconstructNodeStates([
       raised('gate-1'),
       reply('gate-1', 'shorter'),
@@ -362,8 +356,6 @@ describe('Phase 5b — a reply that answers no open interrupt', () => {
   });
 
   it('stops refusing once the turn that carried the bad reply has passed', () => {
-    // The reply stays in the session for good, so re-throwing on every replay
-    // would end the session rather than the turn.
     expect(() =>
       reconstructNodeStates([
         raised('gate-1'),

@@ -186,11 +186,6 @@ export function resolvedInterruptResponses(
 ): Map<string, unknown> {
   const responseSchemas = responseSchemasByInterruptId(events);
   const newestUserTurn = lastUserEvent(events);
-  // Every id this run has ever raised, and the subset still awaiting an answer.
-  // They differ because an id can be re-raised: the revise loop in the
-  // request-input samples asks `review` again after the first answer sent it
-  // back to redraft, so "already answered" only means anything until the node
-  // asks again.
   const raised = new Set<string>();
   const open = new Set<string>();
   const resolved = new Map<string, unknown>();
@@ -203,12 +198,6 @@ export function resolvedInterruptResponses(
           continue;
         }
         if (!open.has(fr.id)) {
-          // A reply addressed to the interrupt mechanism that answers nothing
-          // currently open. Skipping it silently let the turn fall through and
-          // be served as a brand-new user message, so the waiting node re-ran
-          // and raised a SECOND interrupt — and with two pending, plain text no
-          // longer resolves either, so every later turn added one more and the
-          // count could never come back down.
           if (
             fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME &&
             event === newestUserTurn
@@ -251,13 +240,7 @@ function waitingList(open: ReadonlySet<string>): string {
     : 'This run has no interrupt waiting for an answer.';
 }
 
-/**
- * Explains a reply whose interrupt id names nothing this run raised.
- *
- * Worded like the schema-mismatch refusal, and for the same reason: the caller
- * hears about it once, on the turn that carried it, nothing is resolved, and
- * the interrupts that genuinely are waiting stay answerable.
- */
+/** Explains a reply whose interrupt id names nothing this run raised. */
 function unroutableReplyMessage(
   interruptId: string,
   open: ReadonlySet<string>,
