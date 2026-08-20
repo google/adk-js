@@ -11,6 +11,7 @@ import {
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
+  InMemorySessionService,
   InvocationContext,
   LlmAgent,
   PluginManager,
@@ -439,6 +440,20 @@ describe('handleFunctionCallList', () => {
   });
 
   describe('parallel execution', () => {
+    // Writes {subKey: name} to the 'user' state key after delayMs, so tests
+    // can stage sibling writes to the same key in a chosen temporal order.
+    const makeStateTool = (name: string, subKey: string, delayMs: number) =>
+      new FunctionTool({
+        name,
+        description: name,
+        parameters: z.object({}),
+        execute: async (_args, context) => {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          context!.state.set('user', {[subKey]: name});
+          return {result: name};
+        },
+      });
+
     it('should execute multiple function calls concurrently', async () => {
       const executionLog: string[] = [];
       const makeTool = (name: string, delayMs: number) =>
@@ -592,6 +607,61 @@ describe('handleFunctionCallList', () => {
       // but never to the original FunctionCall.
       expect(argsSeenByTool).toEqual({injected: 'by-callback'});
       expect(call.args).toEqual({});
+    });
+
+    it('should deep-merge nested stateDelta objects from sibling tool calls', async () => {
+      const profileTool = makeStateTool('profileTool', 'profile', 10);
+      const prefsTool = makeStateTool('prefsTool', 'prefs', 0);
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(profileTool), callFor(prefsTool)],
+        toolsDict: {profileTool, prefsTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      // Python ADK deep-merges the actions of sibling responses
+      // (deep_merge_dicts in merge_parallel_function_response_events), so
+      // writes to different sub-keys of the same state object both survive.
+      expect(event?.actions.stateDelta.user).toEqual({
+        profile: 'profileTool',
+        prefs: 'prefsTool',
+      });
+    });
+
+    it('should commit the deep-merged stateDelta to session state regardless of completion order', async () => {
+      // Adverse timing for write-order stamps: the FIRST-listed tool writes
+      // temporally LAST. The blended delta entry must carry a stamp at least
+      // as new as every write it subsumes, or the commit-time stale-write
+      // check drops the blend and session state keeps only a fragment.
+      const sessionService = new InMemorySessionService();
+      const session = await sessionService.createSession({
+        appName: 'test_app',
+        userId: 'test_user',
+      });
+      const ic = new InvocationContext({
+        invocationId: 'inv_commit',
+        session,
+        agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+        pluginManager,
+      });
+      const profileTool = makeStateTool('profileTool', 'profile', 20);
+      const prefsTool = makeStateTool('prefsTool', 'prefs', 0);
+
+      const event = await handleFunctionCallList({
+        invocationContext: ic,
+        functionCalls: [callFor(profileTool), callFor(prefsTool)],
+        toolsDict: {profileTool, prefsTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      await sessionService.appendEvent({session, event: event as Event});
+
+      expect(session.state.user).toEqual({
+        profile: 'profileTool',
+        prefs: 'prefsTool',
+      });
     });
 
     it('should isolate a tool error to its own response part', async () => {

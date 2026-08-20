@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {isPlainObject} from 'lodash-es';
+
 import {AuthConfig} from '../auth/auth_tool.js';
-import {carryDeltaStamps} from '../sessions/state_write_order.js';
+import {
+  carryBlendedDeltaStamp,
+  carryDeltaStamp,
+} from '../sessions/state_write_order.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 
 /**
@@ -95,15 +100,45 @@ export function createEventActions(
 }
 
 /**
+ * Recursively merges two `stateDelta` values, mirroring Python ADK's
+ * `deep_merge_dicts` (flows/llm_flows/functions.py): plain objects merge
+ * key-by-key, everything else — arrays included — is overwritten by the later
+ * value. Copies at each level instead of mutating, so the source events'
+ * deltas stay intact.
+ */
+function deepMergeStateValues(
+  base: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {...base};
+  for (const key of Object.keys(incoming)) {
+    const value = incoming[key];
+    const existing = merged[key];
+    merged[key] =
+      isPlainObject(existing) && isPlainObject(value)
+        ? deepMergeStateValues(
+            existing as Record<string, unknown>,
+            value as Record<string, unknown>,
+          )
+        : value;
+  }
+  return merged;
+}
+
+/**
  * Merges a list of {@link EventActions} objects into a single
  * {@link EventActions} object.
  *
  * Merge semantics:
- * 1. **Dictionary fields** (`stateDelta`, `artifactDelta`,
- *    `requestedAuthConfigs`, `requestedToolConfirmations`) — all entries from
- *    every source are combined via `Object.assign`. Later sources win on
- *    duplicate keys.
- * 2. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
+ * 1. **`stateDelta`** — entries from every source are combined key-by-key.
+ *    When both sides of a duplicate key hold plain objects they are
+ *    recursively deep-merged, mirroring Python ADK's `deep_merge_dicts`;
+ *    anything else — arrays included — is last-writer-wins.
+ * 2. **Other dictionary fields** (`artifactDelta`, `requestedAuthConfigs`,
+ *    `requestedToolConfirmations`) — combined via `Object.assign`. Later
+ *    sources win on duplicate keys (which cannot collide in practice: they
+ *    are keyed by unique function-call ids or hold scalar versions).
+ * 3. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
  *    last-writer-wins: the value from the last source that sets the field is
  *    kept.
  *
@@ -127,10 +162,24 @@ export function mergeEventActions(
     if (!source) continue;
 
     if (source.stateDelta) {
-      Object.assign(result.stateDelta, source.stateDelta);
-      // The merged map is a new object; carry the write order with the entries
-      // so a late commit can still tell it has been superseded.
-      carryDeltaStamps(source.stateDelta, result.stateDelta);
+      for (const key of Object.keys(source.stateDelta)) {
+        const incoming = source.stateDelta[key];
+        const existing = result.stateDelta[key];
+        if (isPlainObject(existing) && isPlainObject(incoming)) {
+          result.stateDelta[key] = deepMergeStateValues(
+            existing as Record<string, unknown>,
+            incoming as Record<string, unknown>,
+          );
+          // The blend subsumes both contributing writes, so it must carry a
+          // stamp that beats both — otherwise a commit could skip it as stale.
+          carryBlendedDeltaStamp(source.stateDelta, result.stateDelta, key);
+        } else {
+          result.stateDelta[key] = incoming;
+          // The merged map is a new object; carry the write order with the
+          // entry so a late commit can still tell it has been superseded.
+          carryDeltaStamp(source.stateDelta, result.stateDelta, key);
+        }
+      }
     }
     if (source.artifactDelta) {
       Object.assign(result.artifactDelta, source.artifactDelta);

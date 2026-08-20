@@ -127,6 +127,30 @@ export function carryDeltaStamp(from: object, to: object, key: string): void {
   }
 }
 
+/**
+ * Carries the stamp for one key onto a merged delta whose value at `key` was
+ * blended from `to`'s existing entry and `from`'s entry (a deep merge of two
+ * parallel writes). The blend subsumes both writes, so it must carry a stamp
+ * at least as new as either — carrying only the later source's stamp could
+ * leave the blend older than a write it contains, and the commit would skip
+ * it. When either contributor is unstamped the blend is left unstamped,
+ * keeping the unconditional-apply behaviour unstamped entries are promised.
+ */
+export function carryBlendedDeltaStamp(
+  from: object,
+  to: object,
+  key: string,
+): void {
+  const incoming = deltaStamps.get(from)?.get(key);
+  const existing = deltaStamps.get(to)?.get(key);
+  const carried = stampsFor(deltaStamps, to);
+  if (incoming === undefined || existing === undefined) {
+    carried.delete(key);
+    return;
+  }
+  carried.set(key, Math.max(incoming, existing));
+}
+
 /** {@link carryDeltaStamp} for every key `from` carries a stamp for. */
 export function carryDeltaStamps(from: object, to: object): void {
   const stamps = deltaStamps.get(from);

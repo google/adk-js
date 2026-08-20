@@ -97,6 +97,57 @@ describe('mergeEventActions', () => {
     expect(result.stateDelta).toEqual({a: 1, b: 2});
   });
 
+  it('deep-merges plain objects under the same stateDelta key', () => {
+    // Mirrors Python ADK's deep_merge_dicts (functions.py) used by
+    // merge_parallel_function_response_events.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {profile: {name: 'a'}, x: 1}}}),
+      createEventActions({stateDelta: {user: {profile: {age: 2}, y: 3}}}),
+    ]);
+    expect(result.stateDelta).toEqual({
+      user: {profile: {name: 'a', age: 2}, x: 1, y: 3},
+    });
+  });
+
+  it('does not mutate source stateDelta objects when deep-merging', () => {
+    const first = createEventActions({stateDelta: {user: {a: 1}}});
+    const second = createEventActions({stateDelta: {user: {b: 2}}});
+    mergeEventActions([first, second]);
+    expect(first.stateDelta).toEqual({user: {a: 1}});
+    expect(second.stateDelta).toEqual({user: {b: 2}});
+  });
+
+  it('overwrites arrays under the same stateDelta key (last write wins)', () => {
+    // Python parity: deep_merge_dicts does NOT concatenate lists — upstream
+    // added concatenation in adk-python PR #5191 and reverted it the same day.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {items: [1, 2]}}),
+      createEventActions({stateDelta: {items: [3]}}),
+    ]);
+    expect(result.stateDelta.items).toEqual([3]);
+  });
+
+  it('overwrites when types differ under the same stateDelta key', () => {
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {k: {nested: true}, j: 'scalar'}}),
+      createEventActions({stateDelta: {k: 'scalar', j: {nested: true}}}),
+    ]);
+    expect(result.stateDelta.k).toBe('scalar');
+    expect(result.stateDelta.j).toEqual({nested: true});
+  });
+
+  it('preserves an explicit null/undefined stateDelta entry as a clear', () => {
+    // Python parity: exclude_none drops unset model FIELDS, but None values
+    // inside state_delta survive the merge as explicit clears.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {a: {keep: 1}}}),
+      createEventActions({stateDelta: {a: null, b: undefined}}),
+    ]);
+    expect(result.stateDelta.a).toBeNull();
+    expect('b' in result.stateDelta).toBe(true);
+    expect(result.stateDelta.b).toBeUndefined();
+  });
+
   it('merges artifactDelta from multiple sources', () => {
     const result = mergeEventActions([
       {
