@@ -164,6 +164,27 @@ describe('cli_run', () => {
     expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
   });
 
+  it('closes the readline interface when the run throws', async () => {
+    (mockRl.question as Mock).mockImplementation(
+      (_p: string, cb: (a: string) => void) => cb('hello'),
+    );
+    (Runner as unknown as Mock).mockImplementation(() => ({
+      runAsync: async function* () {
+        yield runnerState.events[0];
+        throw new Error('runner exploded');
+      },
+    }));
+
+    await expect(
+      runAgent({
+        agentPath: 'agent.ts',
+        sessionService: createMockSessionService(),
+      }),
+    ).rejects.toThrow('runner exploded');
+
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
   it('echoes the answer when stdin is not a terminal', async () => {
     const isTTY = process.stdin.isTTY;
     Object.defineProperty(process.stdin, 'isTTY', {
