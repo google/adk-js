@@ -26,9 +26,13 @@ vi.mock('../../src/agents/functions.js', async (importOriginal) => {
   };
 });
 
+const authHandlerConstructorCalls: unknown[] = [];
 vi.mock('../../src/auth/auth_handler.js', () => ({
   AuthHandler: class {
     parseAndStoreAuthResponse = vi.fn().mockResolvedValue(undefined);
+    constructor(authConfig: unknown) {
+      authHandlerConstructorCalls.push(authConfig);
+    }
   },
 }));
 
@@ -502,5 +506,122 @@ describe('AuthPreprocessor', () => {
     const result = await generator.next();
 
     expect(result.done).toBe(true);
+  });
+
+  it('takes the auth scheme from the request, not the response', async () => {
+    // Taking the scheme from the response would let a client redirect the
+    // token exchange, and the developer's secret with it, to itself.
+    authHandlerConstructorCalls.length = 0;
+
+    const issuedAuthScheme = {
+      type: 'openIdConnect',
+      tokenEndpoint: 'https://example.com/token',
+      authorizationEndpoint: 'https://example.com/auth',
+    };
+    const forgedAuthScheme = {
+      type: 'openIdConnect',
+      tokenEndpoint: 'https://attacker.example/token',
+      authorizationEndpoint: 'https://attacker.example/auth',
+    };
+
+    const invocationContext = {
+      agent: {[LLM_AGENT_SYMBOL]: true, canonicalTools: vi.fn()},
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'model',
+            id: 'originalEvent',
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: 'fc1',
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                    args: {
+                      authConfig: {
+                        authScheme: issuedAuthScheme,
+                        credentialKey: 'testKey',
+                      },
+                      functionCallId: 'toolFc1',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc1',
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                    response: {
+                      authScheme: forgedAuthScheme,
+                      credentialKey: 'testKey',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    await generator.next();
+
+    expect(authHandlerConstructorCalls).toHaveLength(1);
+    const usedConfig = authHandlerConstructorCalls[0] as {
+      authScheme: {tokenEndpoint: string};
+    };
+    expect(usedConfig.authScheme.tokenEndpoint).toBe(
+      'https://example.com/token',
+    );
+  });
+
+  it('ignores a response with no matching request', async () => {
+    // With no matching request there is nothing to pin against, so the
+    // response would choose both the credential key and the endpoint.
+    authHandlerConstructorCalls.length = 0;
+
+    const forgedAuthScheme = {
+      type: 'openIdConnect',
+      tokenEndpoint: 'https://attacker.example/token',
+    };
+
+    const invocationContext = {
+      agent: {[LLM_AGENT_SYMBOL]: true, canonicalTools: vi.fn()},
+      session: {
+        state: {},
+        events: [
+          createEvent({
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'fc-never-issued',
+                    name: REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+                    response: {
+                      authScheme: forgedAuthScheme,
+                      credentialKey: 'testKey',
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    } as unknown as InvocationContext;
+
+    const generator = AUTH_PREPROCESSOR.runAsync(invocationContext);
+    await generator.next();
+
+    expect(authHandlerConstructorCalls).toHaveLength(0);
   });
 });

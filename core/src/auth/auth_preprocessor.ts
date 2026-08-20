@@ -20,6 +20,7 @@ import {
 import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {camelCaseKeys} from '../utils/case_utils.js';
+import {AuthCredential} from './auth_credential.js';
 import {AuthHandler} from './auth_handler.js';
 import {AuthConfig} from './auth_tool.js';
 
@@ -28,6 +29,36 @@ const TOOLSET_AUTH_CREDENTIAL_ID_PREFIX = '_adk_toolset_auth_';
 interface RequestCredentialArgs {
   authConfig?: AuthConfig;
   functionCallId?: string;
+}
+
+/**
+ * Merges OAuth2 fields from `source` into `target` for fields where `target`
+ * is unset. Mirrors adk-python's `_merge_credential_oauth2_fields`.
+ */
+function mergeCredentialOAuth2Fields(
+  target: AuthCredential | undefined,
+  source: AuthCredential | undefined,
+): AuthCredential | undefined {
+  if (!source) {
+    return target;
+  }
+  if (!target) {
+    return source;
+  }
+  if (!target.oauth2 && source.oauth2) {
+    target.oauth2 = {...source.oauth2};
+  } else if (target.oauth2 && source.oauth2) {
+    const targetOauth2 = target.oauth2;
+    const sourceOauth2 = source.oauth2;
+    for (const key of Object.keys(sourceOauth2) as Array<
+      keyof typeof sourceOauth2
+    >) {
+      if (targetOauth2[key] === undefined && sourceOauth2[key] !== undefined) {
+        (targetOauth2 as Record<string, unknown>)[key] = sourceOauth2[key];
+      }
+    }
+  }
+  return target;
 }
 
 async function storeAuthAndCollectResumeTargets(
@@ -54,12 +85,33 @@ async function storeAuthAndCollectResumeTargets(
     }
   }
 
+  // Step 2: Store credentials. The client's response supplies the result of
+  // the user's browser round trip; the auth scheme and the credential key
+  // come from the request this server issued.
   for (const fcId of authFcIds) {
-    const authConfig = authResponses[fcId] as AuthConfig;
     const requestedAuthConfig = requestedAuthConfigById[fcId];
-    if (requestedAuthConfig && requestedAuthConfig.credentialKey) {
+    if (!requestedAuthConfig) {
+      // Nothing to pin against, so the response would get to choose both
+      // the credential it is exchanged with and the endpoint that goes to.
+      continue;
+    }
+
+    const authConfig = authResponses[fcId] as AuthConfig;
+    // The scheme names the token endpoint the developer's secret is posted
+    // to -- it must come from the request this server issued, never from
+    // the client's response.
+    authConfig.authScheme = requestedAuthConfig.authScheme;
+    if (requestedAuthConfig.credentialKey) {
       authConfig.credentialKey = requestedAuthConfig.credentialKey;
     }
+    authConfig.rawAuthCredential = mergeCredentialOAuth2Fields(
+      authConfig.rawAuthCredential,
+      requestedAuthConfig.rawAuthCredential,
+    );
+    authConfig.exchangedAuthCredential = mergeCredentialOAuth2Fields(
+      authConfig.exchangedAuthCredential,
+      requestedAuthConfig.exchangedAuthCredential,
+    );
     await new AuthHandler(authConfig).parseAndStoreAuthResponse(state);
   }
 
