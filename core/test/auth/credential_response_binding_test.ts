@@ -208,7 +208,9 @@ describe('credential response binding', () => {
   });
 
   // A response carrying a ready-made token short-circuits the exchanger. The
-  // agent asked for an authorization code, so a token is not an answer to it.
+  // agent asked for an authorization code, so a token is not an answer to it —
+  // and having no answer at all, the response is refused outright rather than
+  // carried as far as the exchanger.
   it('does not store an access token in place of an authorization code', async () => {
     const {invocationContext, state} = sessionAnswering(pendingOAuthRequest(), {
       authScheme: oauth2Scheme(),
@@ -218,11 +220,11 @@ describe('credential response binding', () => {
       },
     });
 
-    await resume(invocationContext);
+    const error = await resume(invocationContext);
 
-    expect(storedCredential(state)?.oauth2?.accessToken).not.toBe(
-      'attacker-token',
-    );
+    expect(error).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(storedCredential(state)).toBeUndefined();
   });
 
   // The token endpoint lives in the scheme, so a response that restates the
@@ -378,17 +380,49 @@ describe('bindCredentialResponse', () => {
     });
   });
 
-  it('ignores an answer field that is not a string', () => {
-    const bound = bindCredentialResponse(pendingOAuthRequest(), {
-      exchangedAuthCredential: {oauth2: {authCode: {nested: 'object'}}},
-    });
-
-    expect(bound?.exchangedAuthCredential?.oauth2?.authCode).toBeUndefined();
+  it('refuses an answer field that is not a string', () => {
+    expect(
+      bindCredentialResponse(pendingOAuthRequest(), {
+        exchangedAuthCredential: {oauth2: {authCode: {nested: 'object'}}},
+      }),
+    ).toBeUndefined();
   });
 
   it('returns nothing when the response carries no credential', () => {
     expect(
       bindCredentialResponse(pendingOAuthRequest(), {authScheme: 'anything'}),
     ).toBeUndefined();
+  });
+
+  // The shape the nit on #775 named: a credential is present, but nothing in it
+  // answers the pending authorization-code flow.
+  it('refuses a credential that answers nothing', () => {
+    expect(
+      bindCredentialResponse(pendingOAuthRequest(), {
+        exchangedAuthCredential: {
+          authType: 'oauth2',
+          oauth2: {redirectUri: 'https://app.example.com/callback'},
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  // The other path is unaffected: with no authorization code pending, the
+  // supplied credential is the answer and carries no code fields at all.
+  it('still accepts a credential when no authorization code is pending', () => {
+    const request: AuthConfig = {
+      credentialKey: CREDENTIAL_KEY,
+      authScheme: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+      } as AuthConfig['authScheme'],
+    };
+
+    const bound = bindCredentialResponse(request, {
+      exchangedAuthCredential: {authType: 'apiKey', apiKey: 'user-key'},
+    });
+
+    expect(bound?.exchangedAuthCredential?.apiKey).toBe('user-key');
   });
 });

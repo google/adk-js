@@ -47,11 +47,15 @@ function readString(source: unknown, name: string): string | undefined {
  * `state`, which is what makes the exchanger's CSRF check mean something: the
  * state it compares against the redirect is now the one the agent issued, not
  * one the same message chose.
+ *
+ * Returns `undefined` when a pending authorization-code flow gets no answer at
+ * all, so that shape is refused here alongside every other unusable response
+ * rather than travelling on to fail deeper in the exchanger.
  */
 function bindCredential(
   request: Partial<AuthConfig>,
   supplied: unknown,
-): AuthCredential {
+): AuthCredential | undefined {
   const requested = request.exchangedAuthCredential;
   if (!requested?.oauth2?.authUri) {
     return supplied as AuthCredential;
@@ -66,6 +70,9 @@ function bindCredential(
   const authCode = readString(suppliedOAuth2, 'authCode');
   if (authCode !== undefined) {
     answer.authCode = authCode;
+  }
+  if (authResponseUri === undefined && authCode === undefined) {
+    return undefined;
   }
 
   return {
@@ -88,7 +95,7 @@ function bindCredential(
  * The request is typed loosely on purpose: it is read back off the wire out of
  * a function call's args, so it can arrive missing the fields its type
  * promises. Returns `undefined` when it is too incomplete to be an authority,
- * or when the response carries no credential material — either way there is
+ * or when the response carries nothing that answers it — either way there is
  * nothing that can safely be stored.
  */
 export function bindCredentialResponse(
@@ -105,10 +112,15 @@ export function bindCredentialResponse(
     return undefined;
   }
 
+  const exchangedAuthCredential = bindCredential(request, supplied);
+  if (!exchangedAuthCredential) {
+    return undefined;
+  }
+
   return {
     authScheme,
     credentialKey,
     rawAuthCredential: request.rawAuthCredential,
-    exchangedAuthCredential: bindCredential(request, supplied),
+    exchangedAuthCredential,
   };
 }
