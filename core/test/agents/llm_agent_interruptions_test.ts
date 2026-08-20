@@ -282,6 +282,9 @@ describe('LlmAgent Interruptions', () => {
       name: 'transfer_to_child',
       description: 'Transfer to child agent',
       execute: (_args, toolContext) => {
+        if (!toolContext) {
+          throw new Error('toolContext is required.');
+        }
         toolContext.actions.transferToAgent = 'child_agent';
         return 'transferring';
       },
