@@ -549,9 +549,6 @@ describe('cli_run', () => {
     });
 
     it('attributes a node whose response was empty', async () => {
-      // The node ran and handed the empty string to its successor, but with
-      // no text to print it vanished from the transcript, which then read as
-      // though it had been skipped.
       const output = await runOneTurn({
         author: 'city_generator_agent',
         content: {role: 'model', parts: [{text: ''}]},
@@ -571,8 +568,6 @@ describe('cli_run', () => {
     });
 
     it("prints an output-only event, the run's actual answer", async () => {
-      // `createEvent({output})` is one of the sample's "three equivalent ways
-      // to produce output", and it was the one the user never saw.
       const output = await runOneTurn({
         author: 'final_answer',
         output: '<<HELLO!>>',
@@ -593,8 +588,6 @@ describe('cli_run', () => {
     });
 
     it('does not print a node result twice when it fills content and output', async () => {
-      // `FunctionNode.toEvent` puts a bare return in both fields; the dev UI
-      // prints both and shows it twice, which the CLI must not copy.
       const output = await runOneTurn({
         author: 'echo',
         content: {role: 'model', parts: [{text: 'HELLO'}]},
