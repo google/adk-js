@@ -935,7 +935,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
       let stepTransferred = false;
-      let shouldPause = false;
+      // Events of this step that raised a long-running call. Whether such a
+      // call pauses the run is only decided once the step has finished, since
+      // a tool that resolves inline emits its response later in the same step.
+      const pauseCandidates: Event[] = [];
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -958,11 +961,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         }
         this.maybeSaveOutputToState(event);
         yield event;
-        if (context.shouldPauseInvocation(event)) {
-          shouldPause = true;
+        if (event.longRunningToolIds?.length) {
+          pauseCandidates.push(event);
         }
       }
 
+      const shouldPause = pauseCandidates.some((e) =>
+        context.shouldPauseInvocation(e),
+      );
       if (shouldPause || !lastEvent) {
         break;
       }
@@ -1786,7 +1792,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     }
     yield mergedEvent;
-    const shouldPause = invocationContext.shouldPauseInvocation(mergedEvent);
 
     // =========================================================================
     // Process function calls if any, which inlcudes agent transfer.
@@ -1866,7 +1871,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
     yield functionResponseEvent;
 
-    if (shouldPause) {
+    // Decided only now: the responses just emitted are what tell a genuinely
+    // pending long-running call apart from one that resolved inline.
+    if (invocationContext.shouldPauseInvocation(mergedEvent)) {
       return;
     }
 
