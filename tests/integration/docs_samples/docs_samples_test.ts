@@ -9,7 +9,7 @@
  *
  * Lint, Prettier, the license check and `ts:check:samples` all read these files
  * already, so a syntax, style, license or type error fails CI. Nothing ran
- * them, which left the interesting failure uncovered: a `WorkflowAgent`
+ * them, which left the interesting failure uncovered: a `Workflow`
  * validates its graph in its constructor, so a rename or a semantics change in
  * the `@experimental` workflow API can turn a sample into a load-time error
  * that still type-checks.
@@ -47,6 +47,11 @@ interface OfflineSample {
   turns: string[];
   /** Set for a sample that pauses for a human on its first turn. */
   pausesOnFirstTurn?: boolean;
+  /**
+   * The exact final output, for a sample whose transformation is the point and
+   * so is worth pinning rather than just asserting something came back.
+   */
+  expectedFinalOutput?: unknown;
 }
 
 /**
@@ -81,7 +86,10 @@ const OFFLINE: Record<string, OfflineSample> = {
   'routes/fan_out_join': {turns: ['hello world']},
   'routes/function_node': {turns: ['hello world']},
   'routes/loop_escalation': {turns: ['graph workflows']},
-  'routes/nested_workflow': {turns: ['hello world']},
+  'routes/nested_workflow': {
+    turns: ['ünïcödé strässe ß ǅungla 😀 test'],
+    expectedFinalOutput: '[B] Ünïcödé Strässe ß Ǆungla 😀 Test',
+  },
   'routes/sequence': {turns: ['hello world']},
 };
 
@@ -134,7 +142,7 @@ describe('workflow docs samples', () => {
 
   describe.each(MODEL_BACKED)('%s (model-backed)', (sample) => {
     it('builds a valid graph', async () => {
-      // A WorkflowAgent validates its edges in its constructor, so importing
+      // A Workflow validates its edges in its constructor, so importing
       // the module is the assertion.
       expect(await loadRootAgent(sample)).toBeDefined();
     });
@@ -158,9 +166,11 @@ describe('workflow docs samples', () => {
         expect(isPaused(perTurn[perTurn.length - 1])).toBe(false);
       }
       // The last turn produces the workflow's answer.
-      expect(
-        finalOutput(allEvents([perTurn[perTurn.length - 1]])),
-      ).toBeDefined();
+      const answer = finalOutput(allEvents([perTurn[perTurn.length - 1]]));
+      expect(answer).toBeDefined();
+      if ('expectedFinalOutput' in spec) {
+        expect(answer).toEqual(spec.expectedFinalOutput);
+      }
     });
   });
 });

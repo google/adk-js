@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {App, asRootAgent, BaseAgent, isApp, isRootAgentLike} from '@google/adk';
+import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -150,7 +150,7 @@ export class AgentFile {
   private cleanupFilePath: string | undefined;
   private cleanupDirPath: string | undefined;
   private disposed = false;
-  private agent?: BaseAgent;
+  private agent?: RunnableRoot;
   private app?: App;
 
   constructor(
@@ -158,7 +158,7 @@ export class AgentFile {
     private readonly options = DEFAULT_AGENT_FILE_OPTIONS,
   ) {}
 
-  async load(): Promise<BaseAgent | App> {
+  async load(): Promise<RunnableRoot | App> {
     if (this.app) {
       return this.app;
     }
@@ -274,22 +274,21 @@ export class AgentFile {
         return this.app!;
       }
 
-      // A bare `Workflow` counts as a root: it is adapted by `asRootAgent`,
-      // so a sample can export a graph directly instead of wrapping it.
-      if (isRootAgentLike(jsModule.rootAgent)) {
-        return (this.agent = asRootAgent(jsModule.rootAgent));
+      // A bare `Workflow` counts as a root: the runner drives it as a node, so
+      // a sample can export a graph directly rather than dressing it as an
+      // agent.
+      if (isRunnableRoot(jsModule.rootAgent)) {
+        return (this.agent = jsModule.rootAgent);
       }
 
       const defaultAgent = [jsModule.default, jsModule.default?.default].find(
-        isRootAgentLike,
+        isRunnableRoot,
       );
       if (defaultAgent) {
-        return (this.agent = asRootAgent(defaultAgent));
+        return (this.agent = defaultAgent);
       }
 
-      const rootAgents = Object.values(jsModule)
-        .filter(isRootAgentLike)
-        .map(asRootAgent);
+      const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
 
       if (rootAgents.length > 1) {
         console.warn(
@@ -310,7 +309,7 @@ export class AgentFile {
     );
   }
 
-  async loadAgent(): Promise<BaseAgent> {
+  async loadAgent(): Promise<RunnableRoot> {
     await this.load();
     return this.agent!;
   }
@@ -543,6 +542,12 @@ export class AgentLoader {
         }
 
         if (fileOrDir.isDirectory) {
+          if (
+            fileOrDir.name === 'node_modules' ||
+            fileOrDir.name.startsWith('.')
+          ) {
+            return;
+          }
           return this.loadAgentFromDirectory(fileOrDir);
         }
       }),

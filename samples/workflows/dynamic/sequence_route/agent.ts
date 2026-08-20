@@ -17,7 +17,7 @@
  *   npm run sample -- samples/workflows/dynamic/sequence_route/agent.ts
  */
 
-import {LlmAgent, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {LlmAgent, node, NodeContext, Workflow} from '@google/adk';
 import {z} from 'zod';
 
 const cityTimeSchema = z.object({
@@ -61,7 +61,7 @@ const cityWorkflow = node(
   {name: 'city_workflow', rerunOnResume: true},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', cityWorkflow]],
 });

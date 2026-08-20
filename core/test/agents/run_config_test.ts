@@ -45,9 +45,10 @@ describe('createRunConfig', () => {
     expect(config.maxLlmCalls).toBe(100);
   });
 
-  it('accepts StreamingMode.BIDI', () => {
-    const config = createRunConfig({streamingMode: StreamingMode.BIDI});
-    expect(config.streamingMode).toBe(StreamingMode.BIDI);
+  it('throws when streamingMode is StreamingMode.BIDI', () => {
+    expect(() => createRunConfig({streamingMode: StreamingMode.BIDI})).toThrow(
+      'StreamingMode.BIDI is not supported; use StreamingMode.SSE.',
+    );
   });
 
   it('logs a warning when maxLlmCalls is 0', () => {

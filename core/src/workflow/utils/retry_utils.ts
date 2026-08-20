@@ -20,19 +20,35 @@ const DEFAULT_BACKOFF_FACTOR = 2.0;
 const DEFAULT_JITTER = 1.0;
 
 /**
- * Resolves the runtime name of a thrown value for exception-name matching.
- * Mirrors Python's `type(exception).__name__`.
+ * Resolves every runtime name a thrown value can be matched by: its class name,
+ * as Python's `type(exception).__name__` gives, and any `name` assigned on top
+ * of it. A subclass that never sets `this.name` inherits `'Error'`, so the two
+ * disagree exactly when matching on one alone would miss.
  */
-export function errorName(error: unknown): string {
+export function errorNames(error: unknown): string[] {
   if (error instanceof Error) {
-    // `name` is set by well-behaved Error subclasses; fall back to the
-    // constructor name for plain `throw new Error()` cases.
-    return error.name || error.constructor.name;
+    const names = [error.constructor?.name, error.name].filter(
+      (name): name is string => !!name,
+    );
+    return [...new Set(names)];
   }
   if (typeof error === 'object' && error !== null) {
-    return error.constructor.name;
+    return [error.constructor.name];
   }
-  return typeof error;
+  return [typeof error];
+}
+
+/**
+ * Resolves the most specific runtime name of a thrown value, for reporting.
+ * Mirrors Python's `type(exception).__name__`, preferring an assigned `name`
+ * only when the class name carries nothing more than `Error`.
+ */
+export function errorName(error: unknown): string {
+  const [className, assigned] = errorNames(error);
+  if (className === 'Error' && assigned) {
+    return assigned;
+  }
+  return className;
 }
 
 /** Parameters for {@link shouldRetryNode}. */
@@ -63,7 +79,10 @@ export function shouldRetryNode({
   }
 
   const exceptions = retryConfig.exceptions;
-  if (exceptions !== undefined && !exceptions.includes(errorName(error))) {
+  if (
+    exceptions !== undefined &&
+    !errorNames(error).some((name) => exceptions.includes(name))
+  ) {
     return false;
   }
 
@@ -103,14 +122,14 @@ export function getRetryDelaySeconds({
   const attemptForCalc = Math.max(0, attemptCount - 1);
 
   let delay = initialDelay * Math.pow(backoffFactor, attemptForCalc);
-  delay = Math.min(delay, maxDelay);
 
   if (jitter > 0.0) {
+    delay = Math.min(delay, maxDelay / (1.0 + jitter));
     // random.uniform(-jitter*delay, jitter*delay)
     const span = jitter * delay;
     const randomOffset = -span + randomFn() * (2 * span);
     delay = Math.max(0.0, delay + randomOffset);
   }
 
-  return delay;
+  return Math.min(delay, maxDelay);
 }

@@ -24,6 +24,7 @@ import {
   prepareRetryConfig,
 } from '../../src/workflow/retry_config.js';
 import {
+  errorName,
   getRetryDelaySeconds,
   shouldRetryNode,
 } from '../../src/workflow/utils/retry_utils.js';
@@ -177,6 +178,65 @@ describe('Phase 0 — shouldRetryNode', () => {
       }),
     ).toBe(false);
   });
+
+  it('matches a subclass that never assigns this.name', () => {
+    class RateLimitedError extends Error {}
+    const cfg = prepareRetryConfig({exceptions: [RateLimitedError]});
+    expect(
+      shouldRetryNode({
+        error: new RateLimitedError('x'),
+        retryConfig: cfg,
+        nodeState: state(1),
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryNode({
+        error: new Error('x'),
+        retryConfig: cfg,
+        nodeState: state(1),
+      }),
+    ).toBe(false);
+  });
+
+  it('matches a subclass by class name or by an assigned name', () => {
+    class RetryableError extends Error {
+      constructor(message?: string) {
+        super(message);
+        this.name = 'Retryable';
+      }
+    }
+    for (const cfg of [
+      prepareRetryConfig({exceptions: ['Retryable']}),
+      prepareRetryConfig({exceptions: [RetryableError]}),
+    ]) {
+      expect(
+        shouldRetryNode({
+          error: new RetryableError('x'),
+          retryConfig: cfg,
+          nodeState: state(1),
+        }),
+      ).toBe(true);
+    }
+  });
+});
+
+describe('Phase 0 — errorName', () => {
+  it('reports the class name of a subclass that never assigns this.name', () => {
+    class RateLimitedError extends Error {}
+    expect(errorName(new RateLimitedError('x'))).toBe('RateLimitedError');
+  });
+
+  it('keeps an assigned name when the class name adds nothing', () => {
+    const err = new Error('x');
+    err.name = 'Custom';
+    expect(errorName(err)).toBe('Custom');
+    expect(errorName(new Error('x'))).toBe('Error');
+  });
+
+  it('reports non-Error throws by type', () => {
+    expect(errorName('boom')).toBe('string');
+    expect(errorName(7)).toBe('number');
+  });
 });
 
 describe('Phase 0 — getRetryDelaySeconds', () => {
@@ -235,5 +295,58 @@ describe('Phase 0 — getRetryDelaySeconds', () => {
     expect(delayWith(() => 0)).toBe(0);
     // randomFn=1 -> offset +span -> 4+4=8
     expect(delayWith(() => 1)).toBe(8);
+  });
+
+  it('never exceeds maxDelay once jitter is applied', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 1,
+    });
+    for (let attemptCount = 1; attemptCount <= 12; attemptCount++) {
+      for (const draw of [0, 0.25, 0.5, 0.75, 1]) {
+        const delay = getRetryDelaySeconds({
+          retryConfig: cfg,
+          nodeState: createNodeState({attemptCount}),
+          randomFn: () => draw,
+        });
+        expect(delay).toBeGreaterThanOrEqual(0);
+        expect(delay).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
+  it('caps the pre-jitter delay so the widest draw lands on maxDelay', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 1,
+    });
+    const delayWith = (randomFn: () => number) =>
+      getRetryDelaySeconds({
+        retryConfig: cfg,
+        nodeState: createNodeState({attemptCount: 10}),
+        randomFn,
+      });
+    expect(delayWith(() => 0.5)).toBe(30);
+    expect(delayWith(() => 1)).toBe(60);
+    expect(delayWith(() => 0)).toBe(0);
+  });
+
+  it('still honours maxDelay when jitter is disabled', () => {
+    const cfg = prepareRetryConfig({
+      initialDelay: 1,
+      backoffFactor: 2,
+      maxDelay: 60,
+      jitter: 0,
+    });
+    expect(
+      getRetryDelaySeconds({
+        retryConfig: cfg,
+        nodeState: createNodeState({attemptCount: 20}),
+      }),
+    ).toBe(60);
   });
 });

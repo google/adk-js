@@ -22,7 +22,6 @@ import {
   Runner,
   Session,
   Workflow,
-  WorkflowAgent,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
@@ -123,7 +122,7 @@ class HttpClient {
 
     if (response.status > 399) {
       throw {
-        response: {status: response.status},
+        response: {status: response.status, data, text},
         message: (data as {error?: string})?.error || response.statusText,
       };
     }
@@ -639,6 +638,66 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('should return the events a failed invocation produced', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'wf',
+                edges: [
+                  [
+                    'START',
+                    node(async () => 'ok', {name: 'first'}),
+                    node(
+                      async () => {
+                        throw new Error('boom');
+                      },
+                      {name: 'second'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'failSession',
+      });
+
+      let status: number | undefined;
+      let body: {error: string; events: Event[]} | undefined;
+      try {
+        await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'failSession',
+          newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+        });
+      } catch (e: unknown) {
+        const response = (e as {response: {status: number; data: typeof body}})
+          .response;
+        status = response.status;
+        body = response.data;
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+
+      expect(status).toBe(500);
+      expect(body?.error).toContain('Failed to run agent');
+      expect(body?.events.some((e) => e.author === 'first')).toBe(true);
+      const nodeError = body?.events.find(
+        (e) => (e as Event & {isNodeError?: boolean}).isNodeError,
+      );
+      expect(nodeError?.nodeInfo?.path).toBe('wf.second');
+    });
+
     it('should pass abortSignal to Runner.runAsync in /run', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -933,6 +992,45 @@ describe('AdkWebServer', () => {
       expect(session.status).toBe(200);
       expect(session.data![0].name).toBe('call_llm');
     });
+
+    it('serves traces for a workflow with no LLM span', async () => {
+      const workflowSpan = {
+        name: 'invoke_workflow wf',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span3'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'gen_ai.conversation.id': 'session3'},
+        parentSpanContext: undefined,
+      } as unknown as ReadableSpan;
+      const nodeSpan = {
+        name: 'execute_node wf.one',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span4'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'adk.node.path': 'wf.one'},
+        parentSpanContext: {spanId: 'span3'},
+      } as unknown as ReadableSpan;
+      (
+        server as unknown as {
+          memoryExporter: {
+            export: (
+              spans: ReadableSpan[],
+              resultCallback: (result: {code: number}) => void,
+            ) => void;
+          };
+        }
+      ).memoryExporter.export([workflowSpan, nodeSpan], () => {});
+
+      const response = await client.get<{name: string}[]>(
+        '/debug/trace/session/session3',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data!.map((s) => s.name)).toEqual([
+        'invoke_workflow wf',
+        'execute_node wf.one',
+      ]);
+    });
   });
 
   describe('Graph', () => {
@@ -976,7 +1074,7 @@ describe('AdkWebServer', () => {
         Promise.resolve({
           load: () =>
             Promise.resolve(
-              new WorkflowAgent({
+              new Workflow({
                 name: 'wf',
                 edges: [
                   [
@@ -1066,13 +1164,13 @@ describe('AdkWebServer', () => {
     }
 
     /** A workflow nesting another workflow, to exercise per-level paths. */
-    function nestedWorkflowAgent() {
+    function nestedWorkflow() {
       const inner = new Workflow({
         name: 'inner',
         edges: [['START', node(async () => 'b', {name: 'inner_step'})]],
       });
 
-      return new WorkflowAgent({
+      return new Workflow({
         name: 'outer',
         edges: [['START', node(async () => 'a', {name: 'outer_step'}), inner]],
       });
@@ -1121,7 +1219,7 @@ describe('AdkWebServer', () => {
       // walks `subAgents` reports an empty tree for it — the same trap the DOT
       // renderer hit before it learned to walk `edges`.
       it('serializes a workflow from its edges rather than its sub-agents', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<{
           root_agent: {
@@ -1181,7 +1279,7 @@ describe('AdkWebServer', () => {
       // The click handler matches a node's `<title>` against a bare child name,
       // so a qualified `parent.child` id would render but never be clickable.
       it('names nodes so the UI can match them to a child', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<{dotSrc: string}>(
           '/dev/apps/testApp/build_graph_image',
@@ -1193,7 +1291,7 @@ describe('AdkWebServer', () => {
       });
 
       it('returns one entry per nested workflow, keyed by its path', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<Record<string, {dotSrc: string}>>(
           '/dev/apps/testApp/build_graph_image',
@@ -1209,7 +1307,7 @@ describe('AdkWebServer', () => {
       });
 
       it('returns just the requested level for a node path', async () => {
-        loadInstead(nestedWorkflowAgent());
+        loadInstead(nestedWorkflow());
 
         const response = await client.get<
           Record<string, unknown> & {dotSrc?: string}
@@ -1235,12 +1333,10 @@ describe('AdkWebServer', () => {
       // graph to expand. It still has to draw as something.
       it('draws a dynamic workflow as a single node', async () => {
         loadInstead(
-          new WorkflowAgent(
-            new Workflow({
-              name: 'dynamic_flow',
-              dynamicEntry: async () => 'done',
-            }),
-          ),
+          new Workflow({
+            name: 'dynamic_flow',
+            dynamicEntry: async () => 'done',
+          }),
         );
 
         const response = await client.get<{dotSrc: string}>(

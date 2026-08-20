@@ -12,7 +12,6 @@ import {runAgent} from '../../src/cli/cli_run.js';
 import {AgentFile} from '../../src/utils/agent_loader.js';
 import {loadFileData, saveToFile} from '../../src/utils/file_utils.js';
 
-// Mock dependencies
 vi.mock('../../src/utils/agent_loader.js', () => ({
   AgentFile: vi.fn(),
 }));
@@ -547,6 +546,28 @@ describe('cli_run', () => {
       });
 
       expect(output).not.toContain('is waiting');
+    });
+
+    it('attributes a node whose response was empty', async () => {
+      // The node ran and handed the empty string to its successor, but with
+      // no text to print it vanished from the transcript, which then read as
+      // though it had been skipped.
+      const output = await runOneTurn({
+        author: 'city_generator_agent',
+        content: {role: 'model', parts: [{text: ''}]},
+        output: '',
+      });
+
+      expect(output).toContain('[city_generator_agent]: (empty response)');
+    });
+
+    it('stays quiet for an event that carries no output at all', async () => {
+      const output = await runOneTurn({
+        author: 'bookkeeping',
+        content: {role: 'model', parts: []},
+      });
+
+      expect(output).not.toContain('[bookkeeping]');
     });
   });
 });

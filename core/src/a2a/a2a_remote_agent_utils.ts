@@ -6,7 +6,7 @@
 
 import {Part as A2APart} from '@a2a-js/sdk';
 import {Part as GenAIPart} from '@google/genai';
-import {InvocationContext} from '../agents/invocation_context.js';
+import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {AdkMetadataKeys} from './metadata_converter_utils.js';
@@ -121,7 +121,7 @@ export function toMissingRemoteSessionParts(
 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (event.author === ctx.agent.name) {
+    if (event.author === requireAgent(ctx).name) {
       lastRemoteResponseIndex = i;
       const metadata = event.customMetadata || {};
       contextId = metadata[AdkMetadataKeys.CONTEXT_ID] as string;
@@ -133,7 +133,7 @@ export function toMissingRemoteSessionParts(
 
   for (let i = lastRemoteResponseIndex + 1; i < events.length; i++) {
     let event = events[i];
-    if (event.author !== 'user' && event.author !== ctx.agent.name) {
+    if (event.author !== 'user' && event.author !== requireAgent(ctx).name) {
       event = presentAsUserMessage(ctx, event);
     }
 

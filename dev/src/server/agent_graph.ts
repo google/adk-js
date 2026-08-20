@@ -10,17 +10,18 @@ import {
   DEFAULT_ROUTE,
   Event,
   RouteValue,
+  RunnableRoot,
   Workflow,
   Graph as WorkflowGraph,
   isAgentTool,
   isBaseAgent,
   isBaseTool,
   isFunctionTool,
-  isGraphWorkflowAgent,
   isLlmAgent,
   isLoopAgent,
   isParallelAgent,
   isSequentialAgent,
+  isWorkflow,
 } from '@google/adk';
 import {
   Digraph,
@@ -43,20 +44,18 @@ const DEFAULT_ROUTE_LABEL = 'default';
 
 export async function buildGraph(
   graph: RootGraph | Subgraph,
-  rootAgent: BaseAgent,
+  root: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
   parentAgent?: BaseAgent,
 ) {
-  if (isGraphWorkflowAgent(rootAgent)) {
-    drawWorkflowCluster(
-      graph,
-      rootAgent.workflow,
-      rootAgent.workflow.name,
-      highlightsPairs,
-    );
-
+  if (isWorkflow(root)) {
+    drawWorkflowCluster(graph, root, root.name, highlightsPairs);
     return;
   }
+
+  // Past the guard this is an agent. Bound to a const so the closures below
+  // keep the narrowing, which a parameter would lose.
+  const rootAgent: BaseAgent = root;
 
   async function buildCluster(
     subgraph: Subgraph,
@@ -323,17 +322,38 @@ function drawWorkflowEdges(
   path: string,
   highlightsPairs: Array<[string, string]>,
 ) {
-  // No grouping by endpoint pair is needed before emitting into the `strict`
-  // root graph: `validateDuplicateEdges` rejects a second edge with the same
-  // `from`/`to` at construction, so two routes to one node arrive as a single
-  // multi-route `Edge` and are joined by `getRouteLabels`.
+  // Edges are grouped by anchor pair before being emitted into the `strict`
+  // root graph, which merges same-endpoint statements and would keep only the
+  // last one's label. Two route keys can legitimately point at one node
+  // (`{approve: shared, escalate: shared}`), so their routes are joined into a
+  // single label exactly as a multi-route `Edge`'s are.
+  const merged = new Map<
+    string,
+    {tail: string; head: string; routes: string[]; highlighted: boolean}
+  >();
+
   for (const edge of graph.edges) {
     const from = workflowNodeId(edge.fromNode, path);
     const to = workflowNodeId(edge.toNode, path);
     const tail = workflowExitAnchorId(edge.fromNode, path);
     const head = workflowEntryAnchorId(edge.toNode, path);
-    const routes = getRouteLabels(edge.route);
-    const highlighted = isHighlightedEdge(from, to, highlightsPairs);
+    const key = `${tail}\u0000${head}`;
+    const entry = merged.get(key) ?? {
+      tail,
+      head,
+      routes: [],
+      highlighted: false,
+    };
+    for (const label of getRouteLabels(edge.route)) {
+      if (!entry.routes.includes(label)) {
+        entry.routes.push(label);
+      }
+    }
+    entry.highlighted ||= isHighlightedEdge(from, to, highlightsPairs);
+    merged.set(key, entry);
+  }
+
+  for (const {tail, head, routes, highlighted} of merged.values()) {
     const color = highlighted ? LIGHT_GREEN : LIGHT_GRAY;
     cluster.addEdge(
       new Edge([new Node(tail), new Node(head)], {
@@ -454,7 +474,7 @@ function getNodeField(node: BaseNode, field: string): unknown {
  * not available. Caption and shape come from one pass so they cannot drift.
  */
 function classifyWorkflowNode(node: BaseNode): {icon: string; shape: string} {
-  if (isBaseAgent(getNodeField(node, 'agent'))) {
+  if (isBaseAgent(node)) {
     return {icon: '🤖', shape: 'ellipse'};
   }
 
@@ -605,7 +625,7 @@ function shouldBuildAgentCluster(toolOrAgent: BaseAgent | BaseTool): boolean {
  * @return A graphviz graph of the agent tree.
  */
 export async function getAgentGraph(
-  rootAgent: BaseAgent,
+  rootAgent: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
 ): Promise<Digraph> {
   const graph = new Digraph(rootAgent.name, /* strict= */ true, {
@@ -626,7 +646,7 @@ export async function getAgentGraph(
  * @return A graphviz graph in DOT format of the agent tree as a string.
  */
 export async function getAgentGraphAsDot(
-  rootAgent: BaseAgent,
+  rootAgent: RunnableRoot,
   highlightsPairs: Array<[string, string]>,
 ): Promise<string> {
   const graph = await getAgentGraph(rootAgent, highlightsPairs);

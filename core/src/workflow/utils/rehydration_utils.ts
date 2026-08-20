@@ -195,12 +195,9 @@ export function resolvedInterruptResponses(
         if (!fr?.id || !raised.has(fr.id)) {
           continue;
         }
-        const response = unwrapResponse(fr.response);
-        const mismatch = interruptResponseMismatch(
-          fr.id,
-          response,
-          responseSchemas.get(fr.id),
-        );
+        const schema = responseSchemas.get(fr.id);
+        const response = unwrapResponse(fr.response, schema);
+        const mismatch = interruptResponseMismatch(fr.id, response, schema);
         if (mismatch) {
           if (event === newestUserTurn) {
             throw new Error(mismatch);
@@ -219,22 +216,102 @@ export function resolvedInterruptResponses(
   return resolved;
 }
 
+/**
+ * Reconstructs each node's prior runs in order, rather than merging them into
+ * one record per node.
+ *
+ * A node the graph routes back to runs more than once, and a pause can fall
+ * between two of its runs — the revise loop in the request-input samples pauses
+ * on `request_human_review@1`, resumes, and pauses again on `@2`. Merged into a
+ * single record those two runs are indistinguishable, and the resumed turn
+ * replays the first run's answer forever. `google/adk-python` avoids this by
+ * keying its recovered executions on `name@run_id`; TypeScript node paths carry
+ * no run id for static graph nodes, so the runs are recovered positionally
+ * instead: the Nth activation in the resumed turn matches the Nth prior run.
+ *
+ * A run is closed once it has produced an output, a route, or an interrupt, so
+ * the next event for that node opens the next run. Events a run emits before
+ * that (messages, state deltas) accumulate into the run in progress.
+ */
+export function reconstructNodeRuns(
+  events: Event[],
+  parentPath?: string,
+): Map<string, RehydratedNode[]> {
+  return reconstructRuns(events, keyFn(parentPath));
+}
+
+function keyFn(parentPath?: string): (event: Event) => string | undefined {
+  if (parentPath) {
+    return (event) =>
+      event.nodeInfo?.path
+        ? directChildName(event.nodeInfo.path, parentPath)
+        : undefined;
+  }
+  return (event) =>
+    event.nodeInfo?.path ? nodeNameFromPath(event.nodeInfo.path) : event.author;
+}
+
+/** Whether a run has reached a terminal result, so the next event is a new run. */
+function isRunClosed(node: RehydratedNode): boolean {
+  return (
+    node.output !== undefined ||
+    node.route !== undefined ||
+    node.interruptIds.size > 0
+  );
+}
+
 /** Shared scan that groups node events by the key returned by `keyFor`. */
 function reconstruct(
   events: Event[],
   keyFor: (event: Event) => string | undefined,
 ): Map<string, RehydratedNode> {
-  const nodes = new Map<string, RehydratedNode>();
-  const interruptOwner = new Map<string, string>();
+  const merged = new Map<string, RehydratedNode>();
+  for (const [key, runs] of reconstructRuns(events, keyFor)) {
+    const node: RehydratedNode = {
+      interruptIds: new Set(),
+      resolvedResponses: new Map(),
+    };
+    for (const run of runs) {
+      if (run.output !== undefined) {
+        node.output = run.output;
+        node.branch = run.branch;
+      }
+      if (run.route !== undefined) node.route = run.route;
+      if (run.input !== undefined) node.input = run.input;
+      for (const id of run.interruptIds) node.interruptIds.add(id);
+      for (const [id, value] of run.resolvedResponses) {
+        node.resolvedResponses.set(id, value);
+      }
+    }
+    merged.set(key, node);
+  }
+  return merged;
+}
+
+function reconstructRuns(
+  events: Event[],
+  keyFor: (event: Event) => string | undefined,
+): Map<string, RehydratedNode[]> {
+  const nodes = new Map<string, RehydratedNode[]>();
+  const interruptOwner = new Map<string, RehydratedNode>();
   const resolved = resolvedInterruptResponses(events);
 
-  const getNode = (name: string): RehydratedNode => {
-    let node = nodes.get(name);
-    if (!node) {
-      node = {interruptIds: new Set(), resolvedResponses: new Map()};
-      nodes.set(name, node);
+  const currentRun = (name: string): RehydratedNode => {
+    let runs = nodes.get(name);
+    if (!runs) {
+      runs = [];
+      nodes.set(name, runs);
     }
-    return node;
+    const open = runs[runs.length - 1];
+    if (open && !isRunClosed(open)) {
+      return open;
+    }
+    const run: RehydratedNode = {
+      interruptIds: new Set(),
+      resolvedResponses: new Map(),
+    };
+    runs.push(run);
+    return run;
   };
 
   for (const event of events) {
@@ -245,8 +322,9 @@ function reconstruct(
       for (const part of event.content.parts) {
         const fr = part.functionResponse;
         if (fr?.id && interruptOwner.has(fr.id) && resolved.has(fr.id)) {
-          const owner = interruptOwner.get(fr.id)!;
-          getNode(owner).resolvedResponses.set(fr.id, resolved.get(fr.id));
+          interruptOwner
+            .get(fr.id)!
+            .resolvedResponses.set(fr.id, resolved.get(fr.id));
         }
       }
       continue;
@@ -257,7 +335,7 @@ function reconstruct(
     if (!key) {
       continue;
     }
-    const node = getNode(key);
+    const node = currentRun(key);
     if (event.output !== undefined) {
       node.output = event.output;
       node.branch = event.branch;
@@ -267,7 +345,7 @@ function reconstruct(
     }
     for (const id of event.longRunningToolIds ?? []) {
       node.interruptIds.add(id);
-      interruptOwner.set(id, key);
+      interruptOwner.set(id, node);
     }
     // Capture the node's original input, stashed on the interrupt event, so a
     // resumed waiting node re-runs with it (not the resume message). Guard the
@@ -296,11 +374,12 @@ function lastUserEvent(events: Event[]): Event | undefined {
 }
 
 /**
- * Whether a rehydrated node can be fast-forwarded on resume: it produced an
- * output and all of its raised interrupts have been resolved.
+ * Whether a rehydrated node can be fast-forwarded on resume: it produced a
+ * result — an output or a route — and all of its raised interrupts have been
+ * resolved.
  */
 export function isFastForwardable(node: RehydratedNode): boolean {
-  if (node.output === undefined) {
+  if (node.output === undefined && node.route === undefined) {
     return false;
   }
   for (const id of node.interruptIds) {
@@ -358,8 +437,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Unwraps a `{result: value}` FunctionResponse envelope to the bare value. */
-export function unwrapResponse(response: unknown): unknown {
+/**
+ * Unwraps a `{result: value}` FunctionResponse envelope to the bare value.
+ *
+ * A string value is JSON-parsed when it parses, because the envelope does not
+ * say whether the text is structured: a client answering a `RequestInput` that
+ * declared a `responseSchema` sends the object as text (the web frontend wraps
+ * whatever the user submitted as `{result: text}`), and the node expects the
+ * object back. Text that is not JSON — "approve", "shorter" — is returned
+ * as-is. That is parity with Python's `_unwrap_response`.
+ *
+ * `responseSchema`, when the interrupt declared one, decides whether parsing
+ * applies at all. Parsing text the schema asked for as text is destructive
+ * rather than helpful: an answer of "42" to a `z.string()` interrupt reached
+ * the node as the number 42 and crashed it on the first string method, and
+ * every JSON literal did the same — "true", "null", "1e3". So a schema that
+ * accepts a string keeps the text verbatim, and only a schema that cannot
+ * (an object, an array, a number) still parses.
+ */
+export function unwrapResponse(
+  response: unknown,
+  responseSchema?: unknown,
+): unknown {
   if (
     response &&
     typeof response === 'object' &&
@@ -367,7 +466,48 @@ export function unwrapResponse(response: unknown): unknown {
     Object.keys(response).length === 1 &&
     RESULT_KEY in response
   ) {
-    return (response as Record<string, unknown>)[RESULT_KEY];
+    const value = (response as Record<string, unknown>)[RESULT_KEY];
+    if (typeof value !== 'string' || acceptsString(responseSchema)) {
+      return value;
+    }
+    return parseJsonIfPossible(value);
   }
   return response;
+}
+
+/**
+ * Whether `jsonSchema` accepts a plain string, so text answering it must not be
+ * reinterpreted as JSON.
+ *
+ * Errs towards leaving the text alone: a union is a match if any branch takes a
+ * string, since the text is then already a valid value for the schema and
+ * parsing it could only produce a different one. An absent or unreadable schema
+ * declares nothing and so does not suppress parsing.
+ */
+function acceptsString(jsonSchema: unknown): boolean {
+  if (!isRecord(jsonSchema)) {
+    return false;
+  }
+  const type = jsonSchema['type'];
+  if (type === 'string') {
+    return true;
+  }
+  if (Array.isArray(type) && type.includes('string')) {
+    return true;
+  }
+  for (const key of ['anyOf', 'oneOf']) {
+    const branches = jsonSchema[key];
+    if (Array.isArray(branches) && branches.some(acceptsString)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseJsonIfPossible(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }

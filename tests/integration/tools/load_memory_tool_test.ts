@@ -55,7 +55,6 @@ describe('LoadMemoryTool Integration', () => {
       appName: 'test_memory_app',
     });
 
-    // We define a mock memory session
     const memorySession = await runner.sessionService.createSession({
       appName: 'test_memory_app',
       userId: 'test_user',
@@ -67,7 +66,6 @@ describe('LoadMemoryTool Integration', () => {
         content: createUserContent('My favorite color is green.'),
       }),
     });
-    // Now we add the session context to memory
     await runner.memoryService!.addSessionToMemory(memorySession);
 
     const session = await runner.sessionService.createSession({

@@ -6,7 +6,6 @@
 
 import {
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -18,6 +17,7 @@ import {
   InMemorySessionService,
   isApp,
   requiresUserInput,
+  RunnableRoot,
   Runner,
   Session,
   UserInputKind,
@@ -108,6 +108,13 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
     .join('');
   if (text) {
     console.log(`[${author}]: ${text}`);
+  } else if (event.output === '' && !event.partial) {
+    // A node whose result is the empty string still ran, and that empty value
+    // still travels on to the next node and into the final answer. Printing
+    // nothing for it left the node out of the transcript entirely, reading as
+    // though it had been skipped — the one thing the transcript must not say,
+    // since the reader is using it to find where the empty value came from.
+    console.log(`[${author}]: (empty response)`);
   }
 
   // Reported on the event, not as a text part, so text-only printing drops it.
@@ -149,7 +156,7 @@ async function getUserInput(prompt: string): Promise<string> {
 interface RunFromInputFileOptions {
   appName: string;
   userId: string;
-  agent: BaseAgent;
+  agent: RunnableRoot;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
@@ -208,18 +215,22 @@ async function runFromInputFile(
 }
 
 interface RunInteractivelyOptions {
-  rootAgent?: BaseAgent;
+  rootAgent?: RunnableRoot;
   app?: App;
   session: Session;
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
-  onAgentFileReloaded?: (subscribe: (newAgent: BaseAgent) => void) => void;
+  onAgentFileReloaded?: (subscribe: (newAgent: RunnableRoot) => void) => void;
 }
 async function runInteractively(
   options: RunInteractivelyOptions,
 ): Promise<void> {
-  let currentAgent = options.rootAgent || options.app?.rootAgent;
+  const currentRoot = options.rootAgent ?? options.app?.rootAgent;
+  if (!currentRoot) {
+    throw new Error('cli_run requires a rootAgent or an app.');
+  }
+  let currentAgent: RunnableRoot = currentRoot;
   let runner = new Runner({
     app: options.app,
     appName: options.app?.name ?? currentAgent.name,
@@ -229,7 +240,7 @@ async function runInteractively(
     memoryService: options.memoryService,
   });
 
-  options.onAgentFileReloaded?.((newAgent: BaseAgent) => {
+  options.onAgentFileReloaded?.((newAgent: RunnableRoot) => {
     currentAgent = newAgent;
     runner = new Runner({
       appName: newAgent.name,
@@ -300,7 +311,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     userId,
   });
 
-  const reloadSubscribers: Array<(agent: BaseAgent) => void> = [];
+  const reloadSubscribers: Array<(agent: RunnableRoot) => void> = [];
   let watcher: fs.FSWatcher | undefined;
 
   if (options.reloadAgents) {
@@ -322,7 +333,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     });
   }
 
-  const onAgentFileReloaded = (subscribe: (agent: BaseAgent) => void) => {
+  const onAgentFileReloaded = (subscribe: (agent: RunnableRoot) => void) => {
     reloadSubscribers.push(subscribe);
   };
 

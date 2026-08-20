@@ -69,6 +69,13 @@ export interface ExecuteChildNodeParams {
    */
   abortSignal?: AbortSignal;
   nodeState?: NodeState;
+  /**
+   * Resume responses this run may consume, overriding the parent's. The
+   * workflow loop passes an empty map for a run that is not the one recovered
+   * from the previous turn, so a node re-triggered later in a resumed turn
+   * starts clean instead of re-reading a response it already answered.
+   */
+  resumeInputs?: Record<string, unknown>;
 }
 
 /**
@@ -130,6 +137,7 @@ async function runChildNode({
     options = {},
     abortSignal,
     nodeState: callerNodeState,
+    resumeInputs,
   },
   nodeName,
   nodePath,
@@ -174,8 +182,10 @@ async function runChildNode({
     channel: parent.channel,
     nodePath,
     runId,
-    resumeInputs: parent.resumeInputs,
+    resumeInputs: resumeInputs ?? parent.resumeInputs,
     isolationScope,
+    // A node's own schema wins; otherwise it answers to its parent's.
+    stateSchema: node.stateSchema ?? parent.stateSchema,
   });
   // Propagate the dynamic scheduler down; a nested Workflow overrides it.
   child.scheduler = parent.scheduler;
@@ -286,6 +296,7 @@ async function runChildNode({
     if (options.useAsOutput) {
       parent.output = child.output;
       parent.route = child.route;
+      parent.outputDelegated = true;
     }
 
     return child;
@@ -413,8 +424,22 @@ async function runOnce({
 }: RunOnceParams): Promise<void> {
   const consume = (event: Event): void => {
     enrichEvent({event, child, nodeName, branch, isolationScope});
+    // An event can carry a state delta that never went through `ctx.state`,
+    // so the schema is enforced here too rather than only on the setter.
+    const emittedDelta = event.actions?.stateDelta;
+    if (emittedDelta && emittedDelta !== child.actions.stateDelta) {
+      child.state.validateDelta(emittedDelta);
+    }
     if (event.output !== undefined) {
       child.output = event.output;
+      if (child.outputDelegated) {
+        const stateDelta = event.actions?.stateDelta;
+        if (!stateDelta || Object.keys(stateDelta).length === 0) {
+          return;
+        }
+        event.output = undefined;
+        event.content = undefined;
+      }
     }
     if (event.route !== undefined) {
       child.route = event.route;
@@ -470,7 +495,8 @@ async function runOnce({
   // timeout (and any external abort). On the deadline (or abort) the engine
   // stops consuming events, closes the generator so its `finally` runs, and
   // aborts `child.abortSignal` so a cooperative body can cancel its in-flight
-  // work; the run rejects with NodeTimeoutError. Mirrors Python's
+  // work; the run rejects with NodeTimeoutError for a fired deadline and
+  // InvocationAbortedError for any other abort. Mirrors Python's
   // `asyncio.wait_for`.
   const timeoutSeconds = node.timeout;
   const controller = new AbortController();
@@ -480,8 +506,12 @@ async function runOnce({
   } else {
     parentSignal?.addEventListener('abort', onParentAbort, {once: true});
   }
+  let deadlineFired = false;
   const timer = setTimeout(
-    () => controller.abort(),
+    () => {
+      deadlineFired = true;
+      controller.abort();
+    },
     (timeoutSeconds ?? 0) * 1000,
   );
   child.abortSignal = controller.signal;
@@ -490,7 +520,13 @@ async function runOnce({
   // reused across iterations so we don't leak a listener per step.
   const aborted = new Promise<never>((_, reject) => {
     const fail = () =>
-      reject(new NodeTimeoutError({nodeName, timeout: timeoutSeconds ?? 0}));
+      reject(
+        deadlineFired
+          ? new NodeTimeoutError({nodeName, timeout: timeoutSeconds ?? 0})
+          : new InvocationAbortedError(
+              `Invocation aborted while running node '${nodeName}'.`,
+            ),
+      );
     if (controller.signal.aborted) {
       fail();
     } else {
@@ -540,6 +576,9 @@ function enrichEvent({
 }: EnrichEventParams): void {
   if (!event.author) {
     event.author = nodeName;
+  }
+  if (!event.invocationId) {
+    event.invocationId = child.invocationId;
   }
   // Engine-owned: always stamp the true node path (see doc above).
   event.nodeInfo = {...(event.nodeInfo ?? {}), path: child.nodePath};

@@ -12,7 +12,7 @@ import {
   GenerateContentResponseUsageMetadata,
   GroundingMetadata,
 } from '@google/genai';
-import {InvocationContext} from '../agents/invocation_context.js';
+import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {
   A2AEvent,
@@ -174,7 +174,7 @@ export class A2ARemoteAgentRunProcessor {
     this.promoteTextBlocksToParts(agg);
 
     const result = createEvent({
-      author: context.agent.name,
+      author: requireAgent(context).name,
       invocationId: context.invocationId,
       content:
         agg.parts.length > 0 ? createModelContent([...agg.parts]) : undefined,

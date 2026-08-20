@@ -492,7 +492,6 @@ export class DatabaseSessionService extends BaseSessionService {
       }
       await txEm.commit();
 
-      // Update session timestamp to match event timestamp
       storageSession.updateTime = new Date(event.timestamp);
 
       const newMergedState = mergeStates(

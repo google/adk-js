@@ -70,7 +70,6 @@ describe('MCPTool', () => {
       closeSession: vi.fn().mockResolvedValue(undefined),
     } as unknown as MCPSessionManager;
 
-    // Pass 'test-tool' as originalName
     const tool = new MCPTool(mockTool, mockSessionManager, 'test-tool');
 
     const controller = new AbortController();
@@ -156,7 +155,6 @@ describe('MCPTool', () => {
 
     const toolContext = new Context({invocationContext});
 
-    // Assert that the tool still propagates the error
     await expect(tool.runAsync({args: {}, toolContext})).rejects.toThrow(
       'Call failed',
     );

@@ -200,6 +200,26 @@ export class RequestConfirmationLlmRequestProcessor extends BaseLlmRequestProces
       });
 
       if (functionResponseEvent) {
+        // Put the response in the in-memory session before yielding it. The
+        // content builder runs immediately behind this processor in the same
+        // step and reads `session.events`, while a yielded event only reaches
+        // the runner — which is what durably appends it — once the step is
+        // done. Without this the model is rebuilt with neither the tool call
+        // nor its result in view, and re-issues the call every turn.
+        //
+        // In memory only, deliberately: the runner appends this same event
+        // through the session service, and `VertexAiSessionService` posts to
+        // the remote store unconditionally rather than deduping by event id,
+        // so appending here too would write it twice on Agent Engine.
+        const events = invocationContext.session.events;
+        const existing = events.findIndex(
+          (e) => e.id === functionResponseEvent.id,
+        );
+        if (existing >= 0) {
+          events[existing] = functionResponseEvent;
+        } else {
+          events.push(functionResponseEvent);
+        }
         yield functionResponseEvent;
       }
       return;

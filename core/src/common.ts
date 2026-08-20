@@ -22,7 +22,7 @@ export {
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
 } from './agents/functions.js';
-export {InvocationContext} from './agents/invocation_context.js';
+export {InvocationContext, requireAgent} from './agents/invocation_context.js';
 export type {
   InvocationContextParams,
   WorkflowInstructionScope,
@@ -246,7 +246,7 @@ export type {
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
-export {State} from './sessions/state.js';
+export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
@@ -366,7 +366,6 @@ export {
   FunctionNode,
   Graph,
   JoinNode,
-  LLMAgentWrapper,
   NodeContext,
   NodeSchemaValidationError,
   NodeStatus,
@@ -377,20 +376,18 @@ export {
   START,
   ToolNode,
   Workflow,
-  WorkflowAgent,
   WorkflowNode,
-  asRootAgent,
+  asRunnableRoot,
   commonPrefixOf,
   createNodeErrorEvent,
   createNodeState,
   createSubBranch,
-  isGraphWorkflowAgent,
   isNodeErrorEvent,
   isNodeSchemaValidationError,
   isNodeState,
   isNodeTimeoutError,
   isRequestInput,
-  isRootAgentLike,
+  isRunnableRoot,
   isWorkflow,
   node,
   normalizeRetryExceptions,
@@ -407,7 +404,6 @@ export type {
   FunctionNodeConfig,
   FunctionNodeHandler,
   FunctionNodeResult,
-  LLMAgentWrapperConfig,
   NodeContextOptions,
   NodeErrorEvent,
   NodeLike,
@@ -422,10 +418,10 @@ export type {
   RoutingMap,
   RunNodeOptions,
   RunnableNode,
+  RunnableRoot,
   ScheduleDynamicNode,
   ScheduleDynamicNodeOptions,
   ToolNodeConfig,
-  WorkflowAgentConfig,
   WorkflowConfig,
 } from './workflow/index.js';
 

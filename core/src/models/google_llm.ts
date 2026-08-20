@@ -13,7 +13,7 @@ import {
   LiveServerMessage,
 } from '@google/genai';
 
-import {getBooleanEnvVar, isBrowser} from '../utils/env_aware_utils.js';
+import {isBrowser, isEnterpriseModeEnabled} from '../utils/env_aware_utils.js';
 import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
@@ -36,7 +36,8 @@ export interface GeminiParams {
   model?: string;
   /**
    * The API key to use for the Gemini API. If not provided, it will look for
-   * the GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.
+   * the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment
+   * variable, in that order.
    */
   apiKey?: string;
   /**
@@ -117,7 +118,7 @@ export class Gemini extends BaseLlm {
     });
     if (!params.vertexai && !params.apiKey) {
       throw new Error(
-        'API key must be provided via constructor or GOOGLE_GENAI_API_KEY or GEMINI_API_KEY environment variable.',
+        'API key must be provided via constructor or the GOOGLE_GENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY environment variable.',
       );
     }
     this.project = params.project;
@@ -247,6 +248,7 @@ export class Gemini extends BaseLlm {
 
   get liveApiVersion(): string {
     if (!this._liveApiVersion) {
+      // Vertex uses the beta API; the AI Studio backend uses v1alpha.
       this._liveApiVersion =
         this.apiBackend === GoogleLLMVariant.VERTEX_AI ? 'v1beta1' : 'v1alpha';
     }
@@ -312,6 +314,18 @@ export class Gemini extends BaseLlm {
 
     llmRequest.liveConnectConfig.tools = llmRequest.config?.tools;
 
+    // Gemini API (AI Studio) rejects `sessionResumption.transparent`; it is a
+    // Vertex-only flag. Strip it so callers can set a uniform resumption config
+    // regardless of backend.
+    if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
+      const resumption = llmRequest.liveConnectConfig.sessionResumption as
+        | {transparent?: boolean}
+        | undefined;
+      if (resumption) {
+        delete resumption.transparent;
+      }
+    }
+
     const modelVersion = llmRequest.model ?? this.model;
     const messageQueue = new AsyncQueue<LiveServerMessage>();
 
@@ -373,7 +387,7 @@ export function geminiInitParams({
 
   params.vertexai = !!vertexai;
   if (!params.vertexai && !isBrowser()) {
-    params.vertexai = getBooleanEnvVar('GOOGLE_GENAI_USE_VERTEXAI');
+    params.vertexai = isEnterpriseModeEnabled();
   }
 
   if (params.vertexai) {
@@ -395,8 +409,19 @@ export function geminiInitParams({
     }
   } else {
     if (!params.apiKey && !isBrowser()) {
+      // `GOOGLE_API_KEY` before `GEMINI_API_KEY`, matching @google/genai's own
+      // `getApiKeyFromEnv()` and adk-python, which leaves the choice to the SDK
+      // entirely. Resolving the key here shadows the SDK, so an order that
+      // disagrees with it makes its "Both GOOGLE_API_KEY and GEMINI_API_KEY are
+      // set. Using GOOGLE_API_KEY." warning describe a key adk-js did not use.
+      //
+      // `GOOGLE_GENAI_API_KEY` stays first: no SDK understands that name, and
+      // `adk create` writes it into every scaffolded .env, so it is the
+      // adk-js-specific override.
       params.apiKey =
-        process.env['GOOGLE_GENAI_API_KEY'] || process.env['GEMINI_API_KEY'];
+        process.env['GOOGLE_GENAI_API_KEY'] ||
+        process.env['GOOGLE_API_KEY'] ||
+        process.env['GEMINI_API_KEY'];
     }
   }
   return params;

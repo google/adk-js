@@ -20,7 +20,7 @@
  * Turn 1: anything. Turn 2: type a number, e.g. "21".
  */
 
-import {node, NodeContext, RequestInput, WorkflowAgent} from '@google/adk';
+import {node, NodeContext, RequestInput, Workflow} from '@google/adk';
 
 const step1 = node(
   async function* () {
@@ -40,7 +40,7 @@ const step2 = node(
   {name: 'step2'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'root_agent',
   edges: [['START', step1, step2]],
 });

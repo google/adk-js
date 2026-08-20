@@ -18,21 +18,22 @@ const SOURCE_NODE_PLACEHOLDER =
   /<\s*[A-Za-z_]\w*\.([A-Za-z_]\w*)\s+from\s+([A-Za-z_]\w*)\s*>/g;
 
 /**
- * Resolves `<Class.field from source_node>` placeholders against a workflow
- * scope (predecessor outputs by node name). Synchronous; unresolved placeholders
- * are left untouched. Mirrors Python's source-node-qualified data selection.
+ * Resolves one `<Class.field from source_node>` placeholder against a workflow
+ * scope (predecessor outputs by node name). Synchronous; an unresolved
+ * placeholder is returned untouched. Mirrors Python's source-node-qualified
+ * data selection.
  */
-function resolveSourceNodePlaceholders(
-  template: string,
+function resolveSourceNode(
+  raw: string,
+  field: string,
+  nodeName: string,
   scope: WorkflowInstructionScope,
 ): string {
-  return template.replace(SOURCE_NODE_PLACEHOLDER, (raw, field, nodeName) => {
-    const out = scope.outputsByNode?.[nodeName];
-    if (out && typeof out === 'object' && field in (out as object)) {
-      return formatValue((out as Record<string, unknown>)[field], false);
-    }
-    return raw;
-  });
+  const out = scope.outputsByNode?.[nodeName];
+  if (out && typeof out === 'object' && field in (out as object)) {
+    return formatValue((out as Record<string, unknown>)[field], false);
+  }
+  return raw;
 }
 
 /**
@@ -152,18 +153,22 @@ export async function injectSessionState(
   template: string,
   readonlyContext: ReadonlyContext,
 ): Promise<string> {
-  // Workflow: first resolve `<Class.field from source_node>` placeholders, and
-  // enable `{Class.field}` resolution below. Both are no-ops (placeholders left
+  // Workflow: `<Class.field from source_node>` placeholders, plus
+  // `{Class.field}` resolution below. Both are no-ops (placeholders left
   // untouched) for ordinary agents, which have no workflow scope.
   const scope = readonlyContext.invocationContext.workflowInstructionScope;
-  if (scope) {
-    template = resolveSourceNodePlaceholders(template, scope);
-  }
+  const sourceMatches = scope
+    ? Array.from(template.matchAll(SOURCE_NODE_PLACEHOLDER)).map((match) => ({
+        raw: match[0],
+        index: match.index!,
+        resolved: resolveSourceNode(match[0], match[1], match[2], scope),
+      }))
+    : [];
 
   const pattern = /\{+[^{}]*}+/g;
   const matches = Array.from(template.matchAll(pattern));
 
-  if (matches.length === 0) {
+  if (matches.length === 0 && sourceMatches.length === 0) {
     return template;
   }
 
@@ -225,11 +230,16 @@ export async function injectSessionState(
   await Promise.all(resolutions.values());
 
   // Reconstruct template using pre-parsed matches
+  const allMatches = [...parsedMatches, ...sourceMatches].sort(
+    (a, b) => a.index - b.index,
+  );
   const result: string[] = [];
   let lastEnd = 0;
-  for (const pm of parsedMatches) {
+  for (const pm of allMatches) {
     result.push(template.slice(lastEnd, pm.index));
-    if (pm.isValid) {
+    if ('resolved' in pm) {
+      result.push(pm.resolved);
+    } else if (pm.isValid) {
       const replacement = await resolutions.get(pm.key)!;
       result.push(replacement);
     } else {

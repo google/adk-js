@@ -31,7 +31,6 @@ describe('experimental decorator', () => {
     resetLogger();
   });
 
-  // Verify class decorator behavior
   describe('class decorator', () => {
     it('warns when an experimental class is instantiated', () => {
       @experimental
@@ -76,7 +75,6 @@ describe('experimental decorator', () => {
     });
   });
 
-  // Verify method decorator behavior
   describe('method decorator', () => {
     it('warns when an experimental method is called', () => {
       class TestMethodClass {

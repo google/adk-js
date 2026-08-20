@@ -6,7 +6,6 @@
 
 import {
   App,
-  BaseAgent,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -21,6 +20,7 @@ import {
   Logger,
   LogLevel,
   RunConfig,
+  RunnableRoot,
   Runner,
   StreamingMode,
   toA2a,
@@ -905,8 +905,8 @@ export class AdkApiServer {
         }
       });
 
+      const events: Event[] = [];
       try {
-        const events: Event[] = [];
         for await (const e of this.executeAgentRun({
           appName,
           userId,
@@ -923,7 +923,7 @@ export class AdkApiServer {
       } catch (e: unknown) {
         const error = `Failed to run agent: ${e}`;
 
-        res.status(500).json({error});
+        res.status(500).json({error, events});
         this.logger.error(error);
       }
     });
@@ -946,6 +946,7 @@ export class AdkApiServer {
           res.status(400).json({error: 'appName is required in input'});
           return;
         }
+        const events: Event[] = [];
         try {
           await this.sessionService.getOrCreateSession({
             appName,
@@ -953,7 +954,6 @@ export class AdkApiServer {
             sessionId,
             state: {},
           });
-          const events: Event[] = [];
           const abortController = new AbortController();
           req.on('close', () => {
             abortController.abort();
@@ -971,7 +971,7 @@ export class AdkApiServer {
           res.json({output: events});
         } catch (e: unknown) {
           const error = `Failed to run agent via Reasoning Engine API: ${e}`;
-          res.status(500).json({error});
+          res.status(500).json({error, output: events});
           this.logger.error(error);
         }
       };
@@ -1157,7 +1157,7 @@ export class AdkApiServer {
   }
 
   private async getRunner(
-    agentOrApp: BaseAgent | App,
+    agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
     if (!(appName in this.runnerCache)) {

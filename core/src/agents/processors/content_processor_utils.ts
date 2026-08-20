@@ -22,6 +22,7 @@ import {
   AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../functions.js';
 
 /**
@@ -66,31 +67,9 @@ export function getContents(
       continue;
     }
 
-    // Skip events without content, or generated neither by user nor by model.
-    // E.g. events purely for mutating session states.
-    if (!event.content?.role || event.content.parts?.[0]?.text === '') {
-      continue;
-    }
-
-    // Skip events not in the current branch.
-    // simplicity: direct segment prefix check avoids per-invocation Trie allocations; upgrade to Trie index if unique branches > 100
     if (
-      currentBranch &&
-      event.branch &&
-      !isSegmentPrefix(currentBranch, event.branch)
+      !shouldIncludeEventInContext(event, currentBranch, currentIsolationScope)
     ) {
-      continue;
-    }
-
-    if (isOutsideIsolationScope(event, currentIsolationScope)) {
-      continue;
-    }
-
-    if (isAuthEvent(event)) {
-      continue;
-    }
-
-    if (isToolConfirmationEvent(event)) {
       continue;
     }
 
@@ -111,6 +90,65 @@ export function getContents(
     contents.push(content);
   }
   return contents;
+}
+
+/**
+ * Whether an event may appear in an LLM request at all: it carries content,
+ * belongs to the current branch and isolation scope, and is not an internal
+ * auth/confirmation event.
+ *
+ * Shared by {@link getContents} and {@link getCurrentTurnContents} so the scan
+ * for where a turn starts cannot settle on an event the build then drops —
+ * which yields empty contents. Mirrors Python's
+ * `_should_include_event_in_context`, which its equivalent scan also applies.
+ */
+function shouldIncludeEventInContext(
+  event: Event,
+  currentBranch?: string,
+  currentIsolationScope?: string,
+): boolean {
+  if (!event.content?.role || event.content.parts?.[0]?.text === '') {
+    return false;
+  }
+  if (
+    currentBranch &&
+    event.branch &&
+    !isSegmentPrefix(currentBranch, event.branch)
+  ) {
+    return false;
+  }
+  if (isOutsideIsolationScope(event, currentIsolationScope)) {
+    return false;
+  }
+  return (
+    !isAuthEvent(event) &&
+    !isToolConfirmationEvent(event) &&
+    !isRequestInputEvent(event)
+  );
+}
+
+/**
+ * Whether the event is a workflow human-input interrupt or its reply.
+ *
+ * Like the auth and tool-confirmation interrupts alongside it, this exchange is
+ * between the framework and the client, not something the model asked for. An
+ * agent that never issued the call must not be shown its reply: the reply would
+ * arrive as a function response with no matching call in view, which the
+ * rearrange step rejects outright.
+ */
+function isRequestInputEvent(event: Event): boolean {
+  if (!event.content?.parts) {
+    return false;
+  }
+  for (const part of event.content.parts) {
+    if (
+      part.functionCall?.name === REQUEST_INPUT_FUNCTION_CALL_NAME ||
+      part.functionResponse?.name === REQUEST_INPUT_FUNCTION_CALL_NAME
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -140,12 +178,14 @@ export function getCurrentTurnContents(
   // Find the latest event that starts the current turn and process from there.
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (isOutsideIsolationScope(event, currentIsolationScope)) {
+    if (
+      !shouldIncludeEventInContext(event, currentBranch, currentIsolationScope)
+    ) {
       continue;
     }
     if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
       return getContents(
-        events.slice(i),
+        events.slice(turnStart(events, i)),
         agentName,
         currentBranch,
         currentIsolationScope,
@@ -154,6 +194,38 @@ export function getCurrentTurnContents(
   }
 
   return [];
+}
+
+/**
+ * Widens the turn window back over a function call the turn answers.
+ *
+ * A tool that paused for confirmation is called in one turn and answered in the
+ * next, so the response falls inside the turn while the call that earned it
+ * sits before it. Left split, the model is shown a result for a call it cannot
+ * see — it re-issues the call, and the confirmation never resolves.
+ */
+function turnStart(events: Event[], anchor: number): number {
+  const answered = new Set<string>();
+  for (const event of events.slice(anchor)) {
+    for (const part of event.content?.parts ?? []) {
+      if (part.functionResponse?.id) {
+        answered.add(part.functionResponse.id);
+      }
+    }
+  }
+  if (answered.size === 0) {
+    return anchor;
+  }
+  let start = anchor;
+  for (let i = anchor - 1; i >= 0; i--) {
+    const answersACall = (events[i].content?.parts ?? []).some((p) =>
+      p.functionCall?.id ? answered.has(p.functionCall.id) : false,
+    );
+    if (answersACall) {
+      start = i;
+    }
+  }
+  return start;
 }
 
 /**

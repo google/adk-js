@@ -112,7 +112,6 @@ describe('BaseAgent', () => {
 
       const generator = agent.runAsync(parentContext);
 
-      // Consume the generator
       for await (const _ of generator) {
         // do nothing
       }
@@ -155,7 +154,6 @@ describe('BaseAgent', () => {
 
       const generator = agent.runAsync(parentContext);
 
-      // Consume the generator
       for await (const _ of generator) {
         // do nothing
       }

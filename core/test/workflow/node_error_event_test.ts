@@ -18,8 +18,8 @@ import {
   NodeErrorEvent,
 } from '../../src/workflow/node_error_event.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
+import {runNodeAsInvocation} from '../../src/workflow/run_node_as_invocation.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {WorkflowAgent} from '../../src/workflow/workflow_agent.js';
 import {createIc} from './test_helpers.js';
 
 interface FailedRun {
@@ -66,10 +66,8 @@ function icWithId(invocationId: string): InvocationContext {
       userId: 'u',
       lastUpdateTime: Date.now(),
     }),
-    agent: new WorkflowAgent({
-      name: 'wf',
-      edges: [['START', new FunctionNode('n', () => null)]],
-    }),
+    // A workflow root has no agent at this level.
+    agent: undefined,
     pluginManager: new PluginManager(),
   });
 }
@@ -213,10 +211,10 @@ describe('NodeErrorEvent — a failure is recorded once, where it happened', () 
   });
 });
 
-describe('NodeErrorEvent — delivery ordering through WorkflowAgent', () => {
+describe('NodeErrorEvent — delivery ordering when a workflow is the root', () => {
   it('reaches the caller BEFORE the rejection surfaces', async () => {
     const kaboom = new Error('kaboom');
-    const agent = new WorkflowAgent({
+    const workflow = new Workflow({
       name: 'wf',
       edges: [['START', throwingNode('boom', kaboom)]],
     });
@@ -228,7 +226,6 @@ describe('NodeErrorEvent — delivery ordering through WorkflowAgent', () => {
         userId: 'u',
         lastUpdateTime: Date.now(),
       }),
-      agent,
       userContent: {role: 'user', parts: [{text: 'go'}]},
       pluginManager: new PluginManager(),
     });
@@ -236,7 +233,7 @@ describe('NodeErrorEvent — delivery ordering through WorkflowAgent', () => {
     const observed: string[] = [];
     let thrown: unknown;
     try {
-      for await (const event of agent.runAsync(ic)) {
+      for await (const event of runNodeAsInvocation(workflow, ic)) {
         observed.push(isNodeErrorEvent(event) ? 'node-error' : 'event');
       }
     } catch (err) {

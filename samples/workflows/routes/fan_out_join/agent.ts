@@ -22,7 +22,7 @@
  *   npm run sample -- samples/workflows/routes/fan_out_join/agent.ts
  */
 
-import {JoinNode, node, NodeContext, WorkflowAgent} from '@google/adk';
+import {JoinNode, node, NodeContext, Workflow} from '@google/adk';
 
 const parallelTaskA = node(
   (_ctx: NodeContext, text: string) => text.toUpperCase(),
@@ -51,7 +51,7 @@ const finalTaskD = node(
   {name: 'final_task_D'},
 );
 
-export const rootAgent = new WorkflowAgent({
+export const rootAgent = new Workflow({
   name: 'fan_out_workflow',
   // One edge row per parallel path. The equivalent shorthand nests the
   // parallel nodes in an array:

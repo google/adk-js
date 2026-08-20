@@ -42,7 +42,7 @@ export function isParallelAgent(obj: unknown): obj is ParallelAgent {
  * @deprecated Use `Workflow` instead, which expresses the same ordering as a
  * graph and adds routing, retries, HITL and resumability. This class will be
  * removed in a future version. Note that a `Workflow` cannot yet be an
- * `LlmAgent` sub-agent — wrap it in a `WorkflowAgent` for that.
+ * `LlmAgent` sub-agent.
  */
 @deprecated(
   'ParallelAgent is deprecated in favor of Workflow and will be removed in a' +

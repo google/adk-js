@@ -153,12 +153,9 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     let found = false;
     for (const fr of getFunctionResponses(event)) {
       if (fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fr.id) {
-        const response = unwrapResponse(fr.response);
-        const mismatch = interruptResponseMismatch(
-          fr.id,
-          response,
-          responseSchemas.get(fr.id),
-        );
+        const schema = responseSchemas.get(fr.id);
+        const response = unwrapResponse(fr.response, schema);
+        const mismatch = interruptResponseMismatch(fr.id, response, schema);
         if (mismatch) {
           if (isCurrentTurn) {
             throw new Error(mismatch);
@@ -176,7 +173,7 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
   }
 
   // Plain-text fallback: map the latest plain-text user turn to pending
-  // interrupts (mirrors WorkflowAgent's interactive resume).
+  // interrupts (mirrors a workflow root's interactive resume).
   const pending = pendingInterruptIds(events, responseSchemas);
   if (pending.size === 0) {
     return {};
@@ -215,10 +212,11 @@ function pendingInterruptIds(
       if (!fr.id) {
         continue;
       }
+      const schema = responseSchemas.get(fr.id);
       const mismatch = interruptResponseMismatch(
         fr.id,
-        unwrapResponse(fr.response),
-        responseSchemas.get(fr.id),
+        unwrapResponse(fr.response, schema),
+        schema,
       );
       if (!mismatch) {
         answered.add(fr.id);

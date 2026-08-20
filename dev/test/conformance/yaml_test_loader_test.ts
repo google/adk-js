@@ -9,14 +9,12 @@ import * as fs from 'node:fs/promises';
 import {beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {batchLoadYamlTestDefs} from '../../src/conformance/yaml_test_loader.js';
 
-// Mock fast-glob
 vi.mock('fast-glob', () => ({
   default: {
     stream: vi.fn(),
   },
 }));
 
-// Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
 }));

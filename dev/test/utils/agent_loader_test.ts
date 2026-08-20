@@ -253,7 +253,7 @@ describe('AgentLoader', () => {
   describe('AgentFile', () => {
     it('loads an agent file whose root is a bare Workflow', async () => {
       // A graph is a node, not an agent. The loader adapts it, so a sample can
-      // export a Workflow directly rather than wrapping it in a WorkflowAgent.
+      // export a Workflow directly rather than wrapping it in a Workflow.
       const agentPath = path.join(tempAgentsDir, 'graph_root.js');
       await fs.writeFile(agentPath, workflowRootJsContent);
 
@@ -898,6 +898,30 @@ describe('AgentLoader', () => {
         (loader as unknown as {agentsAlreadyPreloaded: boolean})
           .agentsAlreadyPreloaded,
       ).toBe(false);
+
+      await loader.disposeAll();
+    });
+
+    it('ignores node_modules and hidden dot directories during discovery', async () => {
+      // Create agent inside node_modules directory
+      const nodeModulesDir = path.join(tempAgentsDir, 'node_modules');
+      await fs.mkdir(nodeModulesDir, {recursive: true});
+      await fs.writeFile(
+        path.join(nodeModulesDir, 'agent.js'),
+        agent3JsContent,
+      );
+
+      // Create agent inside a hidden dot directory
+      const hiddenDir = path.join(tempAgentsDir, '.hidden');
+      await fs.mkdir(hiddenDir, {recursive: true});
+      await fs.writeFile(path.join(hiddenDir, 'agent.js'), agent3JsContent);
+
+      const loader = new AgentLoader(tempAgentsDir);
+      const agents = await loader.listAgents();
+
+      expect(agents).toEqual(['agent1', 'agent2', 'agent3']);
+      expect(agents).not.toContain('node_modules');
+      expect(agents).not.toContain('.hidden');
 
       await loader.disposeAll();
     });

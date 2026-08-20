@@ -46,6 +46,16 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     // Engine stamps provenance without clobbering.
     expect(events[0].nodeInfo?.path).toBe('router');
     expect(events[0].author).toBe('router');
+    expect(events[0].invocationId).toBe('inv-1');
+  });
+
+  it('does not clobber an invocation id the node set itself', async () => {
+    const node = new FnNode('router', () =>
+      createEvent({invocationId: 'mine', output: 'q'}),
+    );
+    const {events} = await driveNode(node, 'in');
+
+    expect(events[0].invocationId).toBe('mine');
   });
 
   it('supports nested ctx.runNode() with correct node paths (the bridge)', async () => {
@@ -257,6 +267,80 @@ describe('Phase 1 — node execution & the push/pull bridge', () => {
     expect(seen).toContain('early');
     expect(seen).not.toContain('late'); // produced after the deadline -> dropped
     expect(captured?.aborted).toBe(true); // signal fired for cooperative cancel
+  });
+
+  it('reports an external abort on a timeout-bearing node as an abort', async () => {
+    const controller = new AbortController();
+    const node = new FnNode(
+      'slow',
+      () => new Promise((resolve) => setTimeout(() => resolve('late'), 500)),
+      {timeout: 10},
+    );
+    setTimeout(() => controller.abort(), 10);
+
+    const err = await driveNode(
+      node,
+      'x',
+      createIc({}, controller.signal),
+    ).then(
+      () => undefined,
+      (e) => e,
+    );
+
+    expect(isInvocationAbortedError(err)).toBe(true);
+    expect(isNodeTimeoutError(err)).toBe(false);
+  });
+
+  it('does not spend a retry attempt on an external abort', async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const node = new FnNode(
+      'slow',
+      () => {
+        attempts++;
+        return new Promise((resolve) => setTimeout(() => resolve('late'), 500));
+      },
+      {
+        timeout: 10,
+        retryConfig: {maxAttempts: 3, initialDelay: 0, jitter: 0},
+      },
+    );
+    setTimeout(() => controller.abort(), 10);
+
+    const err = await driveNode(
+      node,
+      'x',
+      createIc({}, controller.signal),
+    ).then(
+      () => undefined,
+      (e) => e,
+    );
+
+    expect(isInvocationAbortedError(err)).toBe(true);
+    // Attributed to the run, not laundered through the retry backoff's own
+    // abort, which would mean the attempt was booked before anyone noticed.
+    expect((err as Error).message).toContain("node 'slow'");
+    expect(attempts).toBe(1);
+  });
+
+  it('still reports a fired deadline as a timeout when a signal is present', async () => {
+    const controller = new AbortController();
+    const node = new FnNode(
+      'slow',
+      () => new Promise((resolve) => setTimeout(() => resolve('late'), 500)),
+      {timeout: 0.02},
+    );
+
+    const err = await driveNode(
+      node,
+      'x',
+      createIc({}, controller.signal),
+    ).then(
+      () => undefined,
+      (e) => e,
+    );
+
+    expect(isNodeTimeoutError(err)).toBe(true);
   });
 });
 

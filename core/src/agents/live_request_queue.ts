@@ -55,17 +55,38 @@ export class LiveRequestQueue {
   /**
    * Retrieves a request from the queue. If the queue is empty, it will
    * wait until a request is available.
+   *
+   * @param abortSignal When provided, a parked (pending) read is released by
+   *     rejecting with an abort error once the signal fires. The live send
+   *     loop passes the connection's abort signal so a waiter is not stranded
+   *     across reconnect/teardown, where it could otherwise steal a request
+   *     from the next connection's send loop.
    * @returns A promise that resolves with the next available request.
    */
-  async get(): Promise<LiveRequest> {
+  async get(abortSignal?: AbortSignal): Promise<LiveRequest> {
     if (this.queue.length > 0) {
       return this.queue.shift()!;
     }
     if (this.isClosed) {
       return {close: true};
     }
-    return new Promise<LiveRequest>((resolve) => {
-      this.resolveFnFifoQueue.push(resolve);
+    if (abortSignal?.aborted) {
+      throw new Error('LiveRequestQueue.get() was aborted.');
+    }
+    return new Promise<LiveRequest>((resolve, reject) => {
+      const onAbort = () => {
+        const index = this.resolveFnFifoQueue.indexOf(resolveFn);
+        if (index !== -1) {
+          this.resolveFnFifoQueue.splice(index, 1);
+        }
+        reject(new Error('LiveRequestQueue.get() was aborted.'));
+      };
+      const resolveFn: PromiseResolveFn = (req: LiveRequest) => {
+        abortSignal?.removeEventListener('abort', onAbort);
+        resolve(req);
+      };
+      this.resolveFnFifoQueue.push(resolveFn);
+      abortSignal?.addEventListener('abort', onAbort, {once: true});
     });
   }
 

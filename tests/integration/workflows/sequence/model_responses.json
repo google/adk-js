@@ -1,22 +1,14 @@
 [
   {
-    "key": "fe3c05c052fff445",
-    "instructionAgnosticKey": "e2299668e57ebcb1",
+    "key": "344ca7d27432abea",
+    "instructionAgnosticKey": "b7d8b17b7ea4d757",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "Give me a fruit fact"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "Give me a fruit fact"
+              "text": "go"
             }
           ]
         }
@@ -35,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "I cannot provide a fruit fact. I can only provide the name of a random fruit."
+                "text": "Apple"
               }
             ]
           },
@@ -43,63 +35,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 45,
-        "candidatesTokenCount": 18,
-        "totalTokenCount": 103,
+        "promptTokenCount": 36,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 59,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 45
+            "tokenCount": 36
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 18
+            "tokenCount": 1
           }
         ],
-        "thoughtsTokenCount": 40
+        "thoughtsTokenCount": 22
       }
     }
   },
   {
-    "key": "6fee2a727c1ea777",
-    "instructionAgnosticKey": "3506ab9a2bab86b7",
+    "key": "b87634a049ca625e",
+    "instructionAgnosticKey": "76f05d0d271c04a2",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "Give me a fruit fact"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "Give me a fruit fact"
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "For context:"
-            },
-            {
-              "text": "[generate_fruit_agent] said: I cannot provide a fruit fact. I can only provide the name of a random fruit."
-            }
-          ]
-        },
-        {
-          "role": "user",
-          "parts": [
-            {
-              "text": "I cannot provide a fruit fact. I can only provide the name of a random fruit."
+              "text": "Apple"
             }
           ]
         }
@@ -118,7 +83,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Here's a health benefit about an apple:\n\n**Apples are a good source of dietary fiber, which can help promote healthy digestion and regulate blood sugar levels.**"
+                "text": "Eating an apple can help promote good digestion due to its high fiber content."
               }
             ]
           },
@@ -126,23 +91,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 85,
-        "candidatesTokenCount": 34,
-        "totalTokenCount": 212,
+        "promptTokenCount": 28,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 64,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 85
+            "tokenCount": 28
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 34
+            "tokenCount": 15
           }
         ],
-        "thoughtsTokenCount": 93
+        "thoughtsTokenCount": 21
       }
     }
   }
