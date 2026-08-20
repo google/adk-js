@@ -437,6 +437,190 @@ describe('handleFunctionCallList', () => {
       }),
     ]);
   });
+
+  describe('parallel execution', () => {
+    it('should execute multiple function calls concurrently', async () => {
+      const executionLog: string[] = [];
+      const makeTool = (name: string, delayMs: number) =>
+        new FunctionTool({
+          name,
+          description: name,
+          parameters: z.object({}),
+          execute: async () => {
+            executionLog.push(`${name}:start`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            executionLog.push(`${name}:end`);
+            return {result: name};
+          },
+        });
+      const slowTool = makeTool('slowTool', 50);
+      const fastTool = makeTool('fastTool', 5);
+
+      await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(slowTool), callFor(fastTool)],
+        toolsDict: {slowTool, fastTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      // Both tools start before either finishes; sequential execution would
+      // log slowTool:end before fastTool:start.
+      expect(executionLog.indexOf('fastTool:start')).toBeLessThan(
+        executionLog.indexOf('slowTool:end'),
+      );
+    });
+
+    it('should keep response parts in input order regardless of completion order', async () => {
+      const slowTool = new FunctionTool({
+        name: 'slowTool',
+        description: 'slow tool',
+        parameters: z.object({}),
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return {result: 'slow'};
+        },
+      });
+      const fastTool = new FunctionTool({
+        name: 'fastTool',
+        description: 'fast tool',
+        parameters: z.object({}),
+        execute: async () => {
+          return {result: 'fast'};
+        },
+      });
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(slowTool), callFor(fastTool)],
+        toolsDict: {slowTool, fastTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(
+        event?.content?.parts?.map((part) => part.functionResponse?.name),
+      ).toEqual(['slowTool', 'fastTool']);
+    });
+
+    it('should let all calls settle before propagating an error', async () => {
+      let slowToolCompleted = false;
+      const slowTool = new FunctionTool({
+        name: 'slowTool',
+        description: 'slow tool',
+        parameters: z.object({}),
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          slowToolCompleted = true;
+          return {result: 'slow'};
+        },
+      });
+
+      await expect(
+        handleFunctionCallList({
+          invocationContext,
+          functionCalls: [
+            callFor(slowTool),
+            {id: randomIdForTestingOnly(), name: 'unknownTool', args: {}},
+          ],
+          toolsDict: {slowTool},
+          beforeToolCallbacks: [],
+          afterToolCallbacks: [],
+        }),
+      ).rejects.toThrow('Function unknownTool is not found in the toolsDict.');
+      expect(slowToolCompleted).toBe(true);
+    });
+
+    it('should deep-copy args so tool mutations do not leak into the FunctionCall', async () => {
+      const mutatingTool = new FunctionTool({
+        name: 'mutatingTool',
+        description: 'mutates its args',
+        parameters: z.object({}).passthrough(),
+        execute: async (args: Record<string, unknown>) => {
+          (args.nested as Record<string, unknown>).value = 'mutated';
+          args.added = true;
+          return {result: 'done'};
+        },
+      });
+      const call: FunctionCall = {
+        id: randomIdForTestingOnly(),
+        name: 'mutatingTool',
+        args: {nested: {value: 'original'}},
+      };
+
+      await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [call],
+        toolsDict: {mutatingTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(call.args).toEqual({nested: {value: 'original'}});
+    });
+
+    it('should share one args copy per call between callbacks and the tool', async () => {
+      let argsSeenByTool: Record<string, unknown> | undefined;
+      const inspectingTool = new FunctionTool({
+        name: 'inspectingTool',
+        description: 'records its args',
+        parameters: z.object({}).passthrough(),
+        execute: async (args: Record<string, unknown>) => {
+          argsSeenByTool = args;
+          return {result: 'done'};
+        },
+      });
+      const beforeToolCallback: SingleBeforeToolCallback = async ({args}) => {
+        args.injected = 'by-callback';
+        return undefined;
+      };
+      const call: FunctionCall = {
+        id: randomIdForTestingOnly(),
+        name: 'inspectingTool',
+        args: {},
+      };
+
+      await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [call],
+        toolsDict: {inspectingTool},
+        beforeToolCallbacks: [beforeToolCallback],
+        afterToolCallbacks: [],
+      });
+
+      // The callback's mutation is visible to the tool (same per-call copy)
+      // but never to the original FunctionCall.
+      expect(argsSeenByTool).toEqual({injected: 'by-callback'});
+      expect(call.args).toEqual({});
+    });
+
+    it('should isolate a tool error to its own response part', async () => {
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [functionCall, callFor(errorTool)],
+        toolsDict: {testTool, errorTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(event?.content?.parts).toEqual([
+        expect.objectContaining({
+          functionResponse: expect.objectContaining({
+            name: 'testTool',
+            response: {result: 'tool executed'},
+          }),
+        }),
+        expect.objectContaining({
+          functionResponse: expect.objectContaining({
+            name: 'errorTool',
+            response: {
+              error: "Error in tool 'errorTool': tool error message content",
+            },
+          }),
+        }),
+      ]);
+    });
+  });
 });
 
 describe('generateAuthEvent', () => {
