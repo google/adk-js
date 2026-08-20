@@ -5,7 +5,7 @@
  */
 
 import {FunctionDeclaration, Part, Type} from '@google/genai';
-import {
+import type {
   BlobResourceContents,
   TextResourceContents,
 } from '@modelcontextprotocol/sdk/types.js';
