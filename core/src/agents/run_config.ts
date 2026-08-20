@@ -121,6 +121,11 @@ export interface RunConfig {
    * decision; interactive front-ends (e.g. `adk run`) opt in explicitly.
    */
   plainTextToolConfirmation?: boolean;
+
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  a2aMetadata?: Record<string, unknown>;
 }
 
 /**

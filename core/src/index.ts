@@ -20,7 +20,12 @@ export type {
   BeforeExecuteCallback,
   RunnerOrRunnerConfig,
 } from './a2a/agent_executor.js';
-export {toA2a} from './a2a/agent_to_a2a.js';
+export {
+  AdkDefaultRequestHandler,
+  getA2aRequestMetadata,
+  requestMetadataStore,
+  toA2a,
+} from './a2a/agent_to_a2a.js';
 export type {A2aUserBuilder, ToA2aOptions} from './a2a/agent_to_a2a.js';
 export {bearerTokenUserBuilder} from './a2a/auth.js';
 export type {ExecutorContext} from './a2a/executor_context.js';

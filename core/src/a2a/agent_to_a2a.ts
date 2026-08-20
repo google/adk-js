@@ -5,7 +5,7 @@
  */
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
-import {DefaultRequestHandler, InMemoryTaskStore} from '@a2a-js/sdk/server';
+import {InMemoryTaskStore} from '@a2a-js/sdk/server';
 import {
   agentCardHandler,
   jsonRpcHandler,
@@ -23,6 +23,13 @@ import {logger} from '../utils/logger.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
 import {getA2AAgentCard, resolveAgentCard} from './agent_card.js';
 import {A2AAgentExecutor} from './agent_executor.js';
+import {
+  AdkDefaultRequestHandler,
+  getA2aRequestMetadata,
+  requestMetadataStore,
+} from './request_metadata.js';
+
+export {AdkDefaultRequestHandler, getA2aRequestMetadata, requestMetadataStore};
 
 /**
  * A request authenticator for the A2A surface.
@@ -173,7 +180,7 @@ export async function toA2a(
     },
   });
 
-  const requestHandler = new DefaultRequestHandler(
+  const requestHandler = new AdkDefaultRequestHandler(
     agentCard,
     new InMemoryTaskStore(),
     agentExecutor,

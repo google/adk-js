@@ -33,6 +33,7 @@ import {
   getA2ASessionMetadata,
 } from './metadata_converter_utils.js';
 import {toA2AParts, toGenAIContent} from './part_converter_utils.js';
+import {getA2aRequestMetadata} from './request_metadata.js';
 
 /**
  * Represents a runner or a configuration for a runner.
@@ -46,7 +47,10 @@ export type RunnerOrRunnerConfig =
 /**
  * Callback called before execution starts.
  */
-export type BeforeExecuteCallback = (reqCtx: RequestContext) => Promise<void>;
+export type BeforeExecuteCallback = (
+  reqCtx: RequestContext,
+  a2aMetadata?: Record<string, unknown>,
+) => Promise<void>;
 
 /**
  * Callback called after an ADK event is converted to an A2A event.
@@ -104,15 +108,17 @@ export class A2AAgentExecutor implements AgentExecutor {
       adkRunner.sessionService,
       adkRunner.appName,
     );
+    const a2aMetadata = getA2aRequestMetadata(ctx);
     const executorContext = createExecutorContext({
       session,
       userContent: genAIUserMessage,
       requestContext: ctx,
+      a2aMetadata,
     });
 
     try {
       if (this.config.beforeExecuteCallback) {
-        await this.config.beforeExecuteCallback(ctx);
+        await this.config.beforeExecuteCallback(ctx, a2aMetadata);
       }
 
       if (ctx.task) {
@@ -153,7 +159,10 @@ export class A2AAgentExecutor implements AgentExecutor {
         userId,
         sessionId,
         newMessage: genAIUserMessage,
-        runConfig: this.config.runConfig,
+        runConfig: {
+          ...this.config.runConfig,
+          ...(a2aMetadata ? {a2aMetadata} : {}),
+        },
       })) {
         adkEvents.push(adkEvent);
 
