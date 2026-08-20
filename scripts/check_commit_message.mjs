@@ -66,20 +66,22 @@ const EXAMPLES = [
 function checkSubject(subject) {
   const errors = [];
 
-  // The "(#123)" is machinery GitHub appends, so measure and match the subject
-  // without it. A PR title and the squash commit it becomes then read alike.
+  // The "(#123)" suffix and the "Revert \"...\"" wrapper are both machinery
+  // GitHub adds, so strip them before measuring and matching. A PR title and
+  // the squash commit it becomes then read alike, and a revert is judged on
+  // the subject it quotes rather than on the wrapper's extra characters.
   let core = subject.replace(SQUASH_SUFFIX_PATTERN, '');
+
+  const revert = REVERT_PATTERN.exec(core);
+  if (revert) {
+    core = revert.groups.reverted.replace(SQUASH_SUFFIX_PATTERN, '');
+  }
 
   if (core.length > MAX_SUBJECT_LENGTH) {
     errors.push(
       `Subject is ${core.length} characters. Keep it to ` +
         `${MAX_SUBJECT_LENGTH} or fewer so the changelog stays readable.`,
     );
-  }
-
-  const revert = REVERT_PATTERN.exec(core);
-  if (revert) {
-    core = revert.groups.reverted.replace(SQUASH_SUFFIX_PATTERN, '');
   }
 
   const match = SUBJECT_PATTERN.exec(core);
