@@ -265,6 +265,44 @@ describe('A2AAgentExecutor', () => {
     expect(firstPart.text).toContain('LLM failed');
   });
 
+  it('marks the run as remote-delivered, preserving the configured run config', async () => {
+    // A human-in-the-loop gate is not answerable by the peer on the other end
+    // of the transport; the run has to know where its message came from.
+    const mockSession = {
+      id: 'session-id',
+      userId: 'test-user',
+      appName: 'test-app',
+      events: [],
+      state: {},
+    } as unknown as Session;
+    mockSessionService.getSession.mockResolvedValue(mockSession);
+
+    const mockRunAsync = vi.fn(async function* () {});
+    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    }) as unknown as () => Runner);
+
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+      runConfig: {maxLlmCalls: 7},
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    expect(mockRunAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runConfig: {maxLlmCalls: 7, remoteDelivered: true},
+      }),
+    );
+  });
+
   it('should fail cancelTask because it is not implemented', async () => {
     const executor = new A2AAgentExecutor({
       runner: {

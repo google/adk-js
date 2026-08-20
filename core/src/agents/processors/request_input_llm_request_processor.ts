@@ -79,6 +79,14 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
     }
     const pending: Record<string, FunctionCall> = {};
     for (const event of events) {
+      // A pending call is one THIS agent made and has not finished. A client
+      // that writes a node-tool call into the session as an ordinary message is
+      // not reminding the agent of unfinished work — it is asking for work to
+      // start, with arguments and resume inputs of its own choosing — and a
+      // sibling agent's call is that agent's to resume.
+      if (event.author !== agent.name) {
+        continue;
+      }
       for (const fc of getFunctionCalls(event)) {
         if (
           fc.id &&
@@ -153,12 +161,9 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     let found = false;
     for (const fr of getFunctionResponses(event)) {
       if (fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fr.id) {
-        const response = unwrapResponse(fr.response);
-        const mismatch = interruptResponseMismatch(
-          fr.id,
-          response,
-          responseSchemas.get(fr.id),
-        );
+        const schema = responseSchemas.get(fr.id);
+        const response = unwrapResponse(fr.response, schema);
+        const mismatch = interruptResponseMismatch(fr.id, response, schema);
         if (mismatch) {
           if (isCurrentTurn) {
             throw new Error(mismatch);
@@ -215,10 +220,11 @@ function pendingInterruptIds(
       if (!fr.id) {
         continue;
       }
+      const schema = responseSchemas.get(fr.id);
       const mismatch = interruptResponseMismatch(
         fr.id,
-        unwrapResponse(fr.response),
-        responseSchemas.get(fr.id),
+        unwrapResponse(fr.response, schema),
+        schema,
       );
       if (!mismatch) {
         answered.add(fr.id);
@@ -227,6 +233,17 @@ function pendingInterruptIds(
   }
   const pending = new Set<string>();
   for (const event of events) {
+    // An interrupt is raised by the framework, never by the party answering it:
+    // a client-authored one is a question the client asked itself.
+    //
+    // Tested against the client rather than against the agent's own name, which
+    // is what the confirmation and credential paths do: a node raises its
+    // interrupt under the node's name (`workflow/node_runner.ts` stamps it), so
+    // an agent-name test would never match one. The distinction that matters
+    // here is only that the party answering is not the party that asked.
+    if (event.author === 'user') {
+      continue;
+    }
     for (const fc of getFunctionCalls(event)) {
       if (
         fc.name === REQUEST_INPUT_FUNCTION_CALL_NAME &&

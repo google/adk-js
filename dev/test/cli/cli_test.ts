@@ -262,6 +262,18 @@ describe('CLI Entrypoint', () => {
       );
     });
 
+    it.each([
+      ['before the path', ['run', '--verbose', 'agent.ts']],
+      ['after the path', ['run', 'agent.ts', '--verbose']],
+    ])('takes --verbose %s', async (_name, args) => {
+      await parse(args);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({agentPath: 'agent.ts'}),
+      );
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.DEBUG);
+    });
+
     it('should pass all options to runAgent', async () => {
       await parse([
         'run',

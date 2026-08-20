@@ -1375,6 +1375,116 @@ describe('VertexAiSessionService', () => {
         expect('transferAgent' in sent.config.actions).toBe(false);
       });
     });
+
+    describe('unsupported fields and fallback', () => {
+      const appendSession = () =>
+        ({
+          id: 'append-session',
+          appName: '12345',
+          userId: 'testUser',
+          events: [],
+          lastUpdateTime: Date.now(),
+        }) as unknown as Session;
+
+      /** The request config captured by the first appendEvent call. */
+      const appendedConfig = () =>
+        mockClient.events.append.mock.calls[0][0].config;
+
+      it('strips partMetadata from content and rawEvent without mutating the event', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {
+            role: 'user',
+            parts: [
+              {text: 'hello', partMetadata: {source: 'portal'}},
+              {text: 'world', partMetadata: {source: 'portal'}},
+            ],
+          },
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(config.rawEvent?.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(event.content?.parts?.[0].partMetadata).toEqual({
+          source: 'portal',
+        });
+      });
+
+      it('handles content without parts', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user'},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(appendedConfig().content).toEqual({role: 'user'});
+      });
+
+      it('handles an event without content', async () => {
+        const event = createEvent({timestamp: 1620000000000});
+        delete event.content;
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toBeUndefined();
+        expect(config.rawEvent).not.toHaveProperty('content');
+      });
+
+      it('retries without rawEvent when the API rejects it with 400', async () => {
+        const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        // The retry reuses the request object, so record what each attempt
+        // actually carried instead of inspecting it afterwards.
+        const sentRawEvent: boolean[] = [];
+        mockClient.events.append
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            throw new ApiError({message: 'Unknown name', status: 400});
+          })
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            return {};
+          });
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(sentRawEvent).toEqual([true, false]);
+        // Reusing the request is what keeps the retry's invocation id and
+        // timestamp identical to the first attempt's.
+        const [first, second] = mockClient.events.append.mock.calls;
+        expect(second[0]).toBe(first[0]);
+        loggerSpy.mockRestore();
+      });
+
+      it.each([
+        ['a server error', new ApiError({message: 'try later', status: 503})],
+        ['a network error', new Error('socket hang up')],
+      ])('rethrows %s without re-appending', async (_label, failure) => {
+        mockClient.events.append.mockRejectedValueOnce(failure);
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await expect(
+          service.appendEvent({session: appendSession(), event}),
+        ).rejects.toBe(failure);
+        expect(mockClient.events.append).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('workflow event fields', () => {
@@ -1584,6 +1694,33 @@ describe('VertexAiSessionService', () => {
       expect(isFastForwardable(states.get('fetch')!)).toBe(true);
       expect([...states.get('gate')!.interruptIds]).toEqual(['gate-1']);
       expect(states.get('gate')?.input).toBe('A(x)');
+    });
+  });
+
+  describe('legacy read path', () => {
+    it('restores transferToAgent from a legacy transferToAgent key', async () => {
+      // Sessions written by earlier adk-js versions stored ADK's own
+      // `transferToAgent` key rather than the API's `transferAgent`.
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'reasoningEngines/12345/sessions/s/events/e1',
+            author: 'model',
+            actions: {transferToAgent: 'legacy-specialist'},
+          },
+        ],
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session?.events).toHaveLength(1);
+      expect(session!.events[0].actions.transferToAgent).toBe(
+        'legacy-specialist',
+      );
     });
   });
 });

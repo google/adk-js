@@ -122,7 +122,7 @@ class HttpClient {
 
     if (response.status > 399) {
       throw {
-        response: {status: response.status},
+        response: {status: response.status, data, text},
         message: (data as {error?: string})?.error || response.statusText,
       };
     }
@@ -638,6 +638,66 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('should return the events a failed invocation produced', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'wf',
+                edges: [
+                  [
+                    'START',
+                    node(async () => 'ok', {name: 'first'}),
+                    node(
+                      async () => {
+                        throw new Error('boom');
+                      },
+                      {name: 'second'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'failSession',
+      });
+
+      let status: number | undefined;
+      let body: {error: string; events: Event[]} | undefined;
+      try {
+        await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'failSession',
+          newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+        });
+      } catch (e: unknown) {
+        const response = (e as {response: {status: number; data: typeof body}})
+          .response;
+        status = response.status;
+        body = response.data;
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+
+      expect(status).toBe(500);
+      expect(body?.error).toContain('Failed to run agent');
+      expect(body?.events.some((e) => e.author === 'first')).toBe(true);
+      const nodeError = body?.events.find(
+        (e) => (e as Event & {isNodeError?: boolean}).isNodeError,
+      );
+      expect(nodeError?.nodeInfo?.path).toBe('wf.second');
+    });
+
     it('should pass abortSignal to Runner.runAsync in /run', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -931,6 +991,45 @@ describe('AdkWebServer', () => {
       expect(event.data).toEqual({some: 'prefixed trace'});
       expect(session.status).toBe(200);
       expect(session.data![0].name).toBe('call_llm');
+    });
+
+    it('serves traces for a workflow with no LLM span', async () => {
+      const workflowSpan = {
+        name: 'invoke_workflow wf',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span3'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'gen_ai.conversation.id': 'session3'},
+        parentSpanContext: undefined,
+      } as unknown as ReadableSpan;
+      const nodeSpan = {
+        name: 'execute_node wf.one',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span4'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'adk.node.path': 'wf.one'},
+        parentSpanContext: {spanId: 'span3'},
+      } as unknown as ReadableSpan;
+      (
+        server as unknown as {
+          memoryExporter: {
+            export: (
+              spans: ReadableSpan[],
+              resultCallback: (result: {code: number}) => void,
+            ) => void;
+          };
+        }
+      ).memoryExporter.export([workflowSpan, nodeSpan], () => {});
+
+      const response = await client.get<{name: string}[]>(
+        '/debug/trace/session/session3',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data!.map((s) => s.name)).toEqual([
+        'invoke_workflow wf',
+        'execute_node wf.one',
+      ]);
     });
   });
 

@@ -343,24 +343,26 @@ describe('AgentGraph — graph Workflow', () => {
     );
   });
 
-  it('cannot be handed two separate edges with the same endpoints', () => {
+  it('merges two routes to the same node into one labelled edge', async () => {
     const classify = node(noopHandler, {name: 'classify'});
     const send = node(noopHandler, {name: 'send'});
 
-    // The renderer emits one DOT statement per `Edge` into a `strict` graph, so
-    // two edges sharing endpoints would be merged by graphviz and lose a label.
-    // Core forbids that shape, so a routing map with two routes to one node
-    // never reaches the renderer at all.
-    expect(
-      () =>
-        new Workflow({
-          name: 'router',
-          edges: [
-            ['START', classify],
-            [classify, {yes: send, no: send}],
-          ],
-        }),
-    ).toThrow(/Duplicate edge found: from=classify, to=send/);
+    // The renderer emits into a `strict` graph, which merges same-endpoint
+    // statements and keeps only the last label. Two route keys pointing at one
+    // node are a supported shape, so the routes are joined before emitting.
+    const workflow = new Workflow({
+      name: 'router',
+      edges: [
+        ['START', classify],
+        [classify, {yes: send, no: send}],
+      ],
+    });
+
+    const dot = await renderDot(workflow);
+
+    expect(edgeBlock(dot, 'router.classify', 'router.send')).toContain(
+      'label = "yes, no"',
+    );
   });
 
   it('renders a nested workflow as a recursive cluster', async () => {

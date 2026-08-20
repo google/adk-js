@@ -20,6 +20,7 @@ import {
   FINISH_TASK_SUCCESS_RESULT,
   FINISH_TASK_TOOL_NAME,
 } from '../tools/finish_task_tool.js';
+import {logger} from '../utils/logger.js';
 import {isContent} from './base_node.js';
 import {NodeContext} from './node_context.js';
 
@@ -173,6 +174,18 @@ function maybeSetOutput(agent: LlmAgent, event: Event): void {
     } catch {
       output = text;
     }
+  }
+
+  if (output === '') {
+    // Logged at debug rather than warn, for the reason `getNextPendingNodes`
+    // logs its unmatched route there: an empty answer is the model's to give,
+    // so a correct run must not complain. It exists for the case it was
+    // written for — an empty value turning up several nodes downstream with
+    // nothing in the transcript to say which node produced it.
+    logger.debug(
+      `Agent '${agent.name}' returned an empty response, so this node's ` +
+        `output is the empty string and that is what the next node receives.`,
+    );
   }
 
   event.output = output;

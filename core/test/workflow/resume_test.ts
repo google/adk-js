@@ -131,6 +131,40 @@ describe('Phase 5b — rehydration utility', () => {
       );
     });
 
+    it('hands a numeric-looking reply to a string interrupt back as text', () => {
+      // "42" answering a z.string() interrupt used to unwrap to the number 42,
+      // which crashed the node on its first string method and left the session
+      // unable to resume. Every JSON literal did the same.
+      const interrupt = createRequestInputEvent(
+        new RequestInput({interruptId: 'gate-1', responseSchema: z.string()}),
+      );
+      interrupt.author = 'gate';
+      interrupt.nodeInfo = {path: 'wf.gate'};
+
+      for (const text of ['42', 'true', 'null', '1e3']) {
+        const states = reconstructNodeStates([
+          interrupt,
+          createEvent({
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'gate-1',
+                    name: 'adk_request_input',
+                    response: {result: text},
+                  },
+                },
+              ],
+            },
+          }),
+        ]);
+
+        expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(text);
+      }
+    });
+
     it('rejects the wrong envelope instead of passing it to the next node', () => {
       // `{response: x}` is not the `{result: x}` envelope, so it is not
       // unwrapped; before this check it reached the successor whole and
