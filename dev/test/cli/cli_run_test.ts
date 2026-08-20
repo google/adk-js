@@ -621,9 +621,6 @@ describe('cli_run', () => {
     });
 
     it('attributes a node whose response was empty', async () => {
-      // The node ran and handed the empty string to its successor, but with
-      // no text to print it vanished from the transcript, which then read as
-      // though it had been skipped.
       const output = await runOneTurn({
         author: 'city_generator_agent',
         content: {role: 'model', parts: [{text: ''}]},
@@ -640,6 +637,46 @@ describe('cli_run', () => {
       });
 
       expect(output).not.toContain('[bookkeeping]');
+    });
+
+    it("prints an output-only event, the run's actual answer", async () => {
+      const output = await runOneTurn({
+        author: 'final_answer',
+        output: '<<HELLO!>>',
+      });
+
+      expect(output).toContain('[final_answer]: <<HELLO!>>');
+    });
+
+    it('renders a structured output-only event as JSON', async () => {
+      const output = await runOneTurn({
+        author: 'lookup',
+        output: {timeInfo: '10:10 AM', city: 'Paris'},
+      });
+
+      expect(output).toContain(
+        '[lookup]: {"timeInfo":"10:10 AM","city":"Paris"}',
+      );
+    });
+
+    it('does not print a node result twice when it fills content and output', async () => {
+      const output = await runOneTurn({
+        author: 'echo',
+        content: {role: 'model', parts: [{text: 'HELLO'}]},
+        output: 'HELLO',
+      });
+
+      expect(output.match(/\[echo\]: HELLO/g)).toHaveLength(1);
+    });
+
+    it('stays quiet for a partial (streaming) event', async () => {
+      const output = await runOneTurn({
+        author: 'streamer',
+        output: 'partial value',
+        partial: true,
+      });
+
+      expect(output).not.toContain('[streamer]');
     });
   });
 });
