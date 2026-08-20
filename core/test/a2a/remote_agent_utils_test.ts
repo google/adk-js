@@ -248,5 +248,84 @@ describe('remote_agent_utils', () => {
         '[other-agent] said: other response',
       );
     });
+
+    it('drops a credential request function_call from forwarded parts', () => {
+      // An adk_request_credential call carries a serialized AuthConfig in
+      // its arguments, including rawAuthCredential -- an OAuth2 client
+      // secret or a service account key. It must never reach a remote peer.
+      const credentialRequest = createEvent({
+        author: 'root_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-1',
+                name: 'adk_request_credential',
+                args: {
+                  functionCallId: 'toolFc1',
+                  authConfig: {
+                    authScheme: {type: 'oauth2'},
+                    credentialKey: 'test-key',
+                    rawAuthCredential: {
+                      oauth2: {
+                        clientId: 'real-client-id',
+                        clientSecret: 'SUPER_SECRET_DO_NOT_LEAK',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            {text: 'accompanying text'},
+          ],
+        },
+      });
+
+      const session = {events: [credentialRequest]} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).not.toContain('SUPER_SECRET_DO_NOT_LEAK');
+      expect(dumped).not.toContain('adk_request_credential');
+      // The accompanying text part is preserved.
+      expect(
+        result.parts.some((p) =>
+          (p as TextPart).text?.includes('accompanying text'),
+        ),
+      ).toBe(true);
+    });
+
+    it('drops a credential response function_response from forwarded parts', () => {
+      const credentialResponse = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'fc-1',
+                name: 'adk_request_credential',
+                response: {
+                  authScheme: {type: 'oauth2'},
+                  credentialKey: 'test-key',
+                  exchangedAuthCredential: {
+                    oauth2: {accessToken: 'SECRET_ACCESS_TOKEN'},
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {events: [credentialResponse]} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).not.toContain('SECRET_ACCESS_TOKEN');
+    });
   });
 });

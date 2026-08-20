@@ -5,12 +5,94 @@
  */
 
 import {Part as A2APart} from '@a2a-js/sdk';
-import {Part as GenAIPart} from '@google/genai';
+import {Content, Part as GenAIPart} from '@google/genai';
+import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/functions.js';
 import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {AdkMetadataKeys} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
+
+// Top-level keys of a serialized AuthConfig, the shape an
+// adk_request_credential call's arguments (one level down, under
+// `authConfig`) and its response (flat) both carry.
+const AUTH_CONFIG_KEYS: ReadonlyArray<string> = ['authScheme', 'credentialKey'];
+
+/** Whether `payload` looks like a serialized AuthConfig (fail closed). */
+function payloadIsAuthConfig(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  const keys = new Set(Object.keys(payload as Record<string, unknown>));
+  return AUTH_CONFIG_KEYS.every((key) => keys.has(key));
+}
+
+/** Whether a function_call carries credential material (fail closed). */
+function isCredentialFunctionCall(functionCall: {
+  name?: string;
+  args?: unknown;
+}): boolean {
+  if (functionCall.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
+    return true;
+  }
+  // A request wraps the AuthConfig in an AuthToolArguments envelope, so the
+  // shape has to be read one level down, under `authConfig`.
+  const args = functionCall.args;
+  if (!args || typeof args !== 'object') {
+    return false;
+  }
+  const authConfig = (args as Record<string, unknown>)['authConfig'];
+  return payloadIsAuthConfig(authConfig);
+}
+
+/** Whether a function_response carries credential material (fail closed). */
+function isCredentialFunctionResponse(functionResponse: {
+  name?: string;
+  response?: unknown;
+}): boolean {
+  if (functionResponse.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
+    return true;
+  }
+  return payloadIsAuthConfig(functionResponse.response);
+}
+
+/**
+ * Returns `content` with any credential-bearing function_call or
+ * function_response part removed.
+ *
+ * An adk_request_credential call carries a serialized AuthConfig in its
+ * arguments -- including rawAuthCredential, an OAuth2 client secret or a
+ * service account key -- and its response carries one back. Forwarding
+ * either to a remote A2A peer would leak that credential material outside
+ * the trust boundary it was issued within.
+ */
+function withoutCredentialParts(
+  content: Content | undefined,
+): Content | undefined {
+  if (!content || !content.parts) {
+    return content;
+  }
+  const hasCredentialPart = content.parts.some(
+    (part) =>
+      (part.functionCall && isCredentialFunctionCall(part.functionCall)) ||
+      (part.functionResponse &&
+        isCredentialFunctionResponse(part.functionResponse)),
+  );
+  if (!hasCredentialPart) {
+    return content;
+  }
+  return {
+    ...content,
+    parts: content.parts.filter(
+      (part) =>
+        !(part.functionCall && isCredentialFunctionCall(part.functionCall)) &&
+        !(
+          part.functionResponse &&
+          isCredentialFunctionResponse(part.functionResponse)
+        ),
+    ),
+  };
+}
 
 export interface UserFunctionCall {
   response: AdkEvent;
@@ -133,6 +215,14 @@ export function toMissingRemoteSessionParts(
 
   for (let i = lastRemoteResponseIndex + 1; i < events.length; i++) {
     let event = events[i];
+    // Drop credential material before anything else looks at the event.
+    // presentAsUserMessage renders a function_call as text with its
+    // arguments inlined, so scrubbing after it would be too late.
+    const scrubbedContent = withoutCredentialParts(event.content);
+    if (scrubbedContent !== event.content) {
+      event = {...event, content: scrubbedContent};
+    }
+
     if (event.author !== 'user' && event.author !== requireAgent(ctx).name) {
       event = presentAsUserMessage(ctx, event);
     }
