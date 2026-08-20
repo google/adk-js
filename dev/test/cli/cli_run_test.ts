@@ -144,6 +144,44 @@ describe('cli_run', () => {
       }),
     }) as unknown as BaseSessionService;
 
+  it('keeps the REPL alive when a turn fails', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let turn = 0;
+    (Runner as unknown as Mock).mockImplementation(() => ({
+      runAsync: async function* () {
+        turn++;
+        if (turn === 1) {
+          throw new Error('Context variable not found: `my_city`.');
+        }
+        yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
+      },
+    }));
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('boom'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) => cb('go'))
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(
+      errors.mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('Context variable not found');
+    expect(turn).toBe(2);
+    expect(
+      (console.log as Mock).mock.calls.map((call) => call.join(' ')).join('\n'),
+    ).toContain('recovered');
+    // Surviving the turn must not cost the cleanup: stdin is still released
+    // when the loop finally ends.
+    expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
+  });
+
   it('reuses one readline interface across prompts', async () => {
     (mockRl.question as Mock)
       .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
@@ -164,23 +202,22 @@ describe('cli_run', () => {
     expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
   });
 
-  it('closes the readline interface when the run throws', async () => {
+  it('closes the readline interface when a failure escapes the loop', async () => {
     (mockRl.question as Mock).mockImplementation(
-      (_p: string, cb: (a: string) => void) => cb('hello'),
+      (_p: string, cb: (a: string) => void) => cb('exit'),
     );
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        yield runnerState.events[0];
-        throw new Error('runner exploded');
-      },
-    }));
+    // A failing turn no longer escapes — the REPL reports it and prompts again
+    // — so the throw that still has to release stdin comes from the save step.
+    (saveToFile as Mock).mockRejectedValue(new Error('save exploded'));
 
     await expect(
       runAgent({
         agentPath: 'agent.ts',
+        saveSession: true,
+        sessionId: 'session-123',
         sessionService: createMockSessionService(),
       }),
-    ).rejects.toThrow('runner exploded');
+    ).rejects.toThrow('save exploded');
 
     expect(mockRl.close as Mock).toHaveBeenCalledTimes(1);
   });
