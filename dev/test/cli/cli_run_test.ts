@@ -145,9 +145,6 @@ describe('cli_run', () => {
     }) as unknown as BaseSessionService;
 
   it('reuses one readline interface across prompts', async () => {
-    // A fresh interface per prompt threw away the lines readline had already
-    // read ahead from the pipe, so only the first line of
-    // `printf 'hello\n21\nexit\n' | adk run …` ever reached the agent.
     (mockRl.question as Mock)
       .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
         cb('hello'),
@@ -168,8 +165,6 @@ describe('cli_run', () => {
   });
 
   it('echoes the answer when stdin is not a terminal', async () => {
-    // A pipe does not echo, so the prompt sat unterminated and the next line
-    // printed onto it: `[user]: [hello_node]: Hello World`.
     const isTTY = process.stdin.isTTY;
     Object.defineProperty(process.stdin, 'isTTY', {
       value: false,

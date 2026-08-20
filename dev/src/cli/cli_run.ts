@@ -140,14 +140,9 @@ interface InputFile {
 }
 
 /**
- * The one readline interface for the run, created on first prompt.
- *
- * A fresh interface per prompt loses piped input: readline reads ahead from the
- * stream, so lines already sitting in the pipe when a turn ends are buffered
- * inside the interface, and `close()` throws them away. The next prompt then
- * built a new interface over a stream those lines had already left. Only the
- * first line of `printf 'hello\n21\nexit\n' | adk run …` ever reached the
- * agent, which is every scripted and CI use of the command.
+ * The one readline interface for the run, created on first prompt. A fresh
+ * interface per prompt discards the lines readline had already read ahead from
+ * a pipe.
  */
 let sharedReadline: readline.Interface | undefined;
 
@@ -171,11 +166,6 @@ async function getUserInput(prompt: string): Promise<string> {
     rl.question(prompt, resolve);
   });
 
-  // A terminal echoes what was typed; a pipe does not, so the prompt sat
-  // unterminated and whatever printed next landed on the same line —
-  // `[user]: [hello_node]: Hello World`, reading as though the user had typed
-  // the node's output. Echo it so a piped transcript reads like the session it
-  // was.
   if (!process.stdin.isTTY) {
     console.log(answer);
   }
