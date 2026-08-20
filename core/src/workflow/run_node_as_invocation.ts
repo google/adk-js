@@ -172,16 +172,33 @@ function resumeInputsFromPlainText(
 }
 
 /**
- * Derives the node input from the user message: plain text when the content is
- * text-only, otherwise the raw `Content` (nodes coerce as needed).
+ * Derives the node input from the user message: the text the user wrote when
+ * there is any, otherwise the raw `Content`.
+ *
+ * The text parts are what a node is written against, and they used to be
+ * handed over only when *every* part was text. One attachment alongside the
+ * message — a file dropped into the dev UI — flipped the return type, so a
+ * handler typed `(ctx, input: string)` was given an object and died on its
+ * first string method behind an unattributed HTTP 500, and a handler typed
+ * `unknown` quietly answered `[object Object]` with the user's caption
+ * nowhere in sight. Neither is something the caller can see or act on.
+ *
+ * Non-text parts are not lost by this: the whole message stays on the
+ * invocation as `ctx.invocationContext.userContent`, and it is already in the
+ * session as the user's own event, which is what an `LlmAgent` node reads. A
+ * node that wants the attachment reads it there.
+ *
+ * With no text at all — a bare attachment — there is nothing to prefer, so the
+ * `Content` is passed through as before.
  */
 function extractNodeInput(content?: Content): unknown {
   if (!content) {
     return undefined;
   }
   const parts = content.parts ?? [];
-  if (parts.length > 0 && parts.every((p) => typeof p.text === 'string')) {
-    return parts.map((p) => p.text).join('');
+  const textParts = parts.filter((p) => typeof p.text === 'string');
+  if (textParts.length > 0) {
+    return textParts.map((p) => p.text).join('');
   }
   return content;
 }
