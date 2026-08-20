@@ -116,9 +116,11 @@ describe('runNodeAsInvocation — what the START node is handed', () => {
       userContent: {role: 'user', parts},
       pluginManager: new PluginManager(),
     });
-    for await (const _ of runNodeAsInvocation(wf, ic)) {
-      // drain
+    const drained: Event[] = [];
+    for await (const event of runNodeAsInvocation(wf, ic)) {
+      drained.push(event);
     }
+    expect(drained.length).toBeGreaterThan(0);
     return received;
   }
 
@@ -129,9 +131,6 @@ describe('runNodeAsInvocation — what the START node is handed', () => {
   });
 
   it('still hands over the text when an attachment rides along', async () => {
-    // One non-text part used to flip the return type to the raw Content, which
-    // died on the first string method in a handler typed `(ctx, s: string)`
-    // and silently dropped the caption in one typed `unknown`.
     expect(await inputFor([{text: 'gamma'}, image])).toBe('gamma');
   });
 
@@ -143,8 +142,6 @@ describe('runNodeAsInvocation — what the START node is handed', () => {
   });
 
   it('leaves the whole message reachable on the invocation', async () => {
-    // The attachment is not lost by preferring the text: the full Content is
-    // still on the invocation, and in the session as the user's own event.
     let seen: Content | undefined;
     const wf = new Workflow({
       name: 'wf',
@@ -169,10 +166,12 @@ describe('runNodeAsInvocation — what the START node is handed', () => {
       userContent: {role: 'user', parts: [{text: 'gamma'}, image]},
       pluginManager: new PluginManager(),
     });
-    for await (const _ of runNodeAsInvocation(wf, ic)) {
-      // drain
+    const drained: Event[] = [];
+    for await (const event of runNodeAsInvocation(wf, ic)) {
+      drained.push(event);
     }
 
+    expect(drained.length).toBeGreaterThan(0);
     expect(seen?.parts).toEqual([{text: 'gamma'}, image]);
   });
 });
