@@ -11,6 +11,7 @@
 * **agents:** `BaseAgent` now extends `BaseNode`, so subclasses inherit `rerunOnResume`, `waitForOutput`, `retryConfig`, `timeout`, `inputSchema`, `outputSchema` and `stateSchema`. A subclass that declares a field of the same name now collides with the inherited one. `BaseAgent.description` is also no longer `undefined` when unset.
 * **workflow:** a dynamic `ctx.runNode()` child that raises an interrupt and re-reads `ctx.resumeInputs` on re-run must now declare `rerunOnResume: true`. With the default it is completed with the raw reply as its output instead of re-running. `Workflow` is still @experimental.
 * **workflow:** add engine core — execution model, graph, and node registry (Part 2) ([#588](https://github.com/google/adk-js/issues/588))
+* **workflow:** event model extensions and shared node primitives (Part 1) ([#587](https://github.com/google/adk-js/issues/587))
 
 ### Features
 
@@ -29,6 +30,7 @@
 * **workflow:** built-in Function and Tool nodes (Part 3) ([#590](https://github.com/google/adk-js/issues/590)) ([68aebdb](https://github.com/google/adk-js/commit/68aebdbfa4aa87a40fd7e49c70fc1dca05da985e))
 * **workflow:** drive workflows as nodes and remove WorkflowAgent ([#688](https://github.com/google/adk-js/issues/688)) ([534546f](https://github.com/google/adk-js/commit/534546f5f847fc677bbb9e5abe11beabebf9e574))
 * **workflow:** enforce a node's declared stateSchema ([#713](https://github.com/google/adk-js/issues/713)) ([379e45c](https://github.com/google/adk-js/commit/379e45c44d96784034822445822f173146d92057))
+* **workflow:** event model extensions and shared node primitives (Part 1) ([#587](https://github.com/google/adk-js/issues/587)) ([3865f3c](https://github.com/google/adk-js/commit/3865f3c05984ff6406b4f52a1db6c3bec6bde574))
 * **workflow:** let ctx.runNode() take what edges take ([#683](https://github.com/google/adk-js/issues/683)) ([53535d3](https://github.com/google/adk-js/commit/53535d345e3abcbc15613e4fe12dc3661fb36942))
 * **workflow:** LLM-agent-as-node, task mode, and node-as-tool (Part 6) ([#593](https://github.com/google/adk-js/issues/593)) ([5334b45](https://github.com/google/adk-js/commit/5334b4502edc8e8086b11d7e679b6decee944d67))
 * **workflow:** make isolationScope real by filtering LLM contents on it ([#656](https://github.com/google/adk-js/issues/656)) ([bdc9090](https://github.com/google/adk-js/commit/bdc90901edd6ce64acc97f349a11e485ede5c234))
@@ -59,6 +61,7 @@
 * **skills:** materialize script output into a dedicated dir, not process.cwd() ([#620](https://github.com/google/adk-js/issues/620)) ([2ea08cf](https://github.com/google/adk-js/commit/2ea08cf8ba5fca65d678cdabecbf78713fee4106))
 * **skills:** preserve binary skill assets as Buffer ([#644](https://github.com/google/adk-js/issues/644)) ([94cbe4a](https://github.com/google/adk-js/commit/94cbe4a5f44fb52a994a1e632d98cad64340d696))
 * skip identity preamble when agent transfer is disabled ([#616](https://github.com/google/adk-js/issues/616)) ([09e2375](https://github.com/google/adk-js/commit/09e23757f0cbbd4dfbf71a4704c15ab1352d6434))
+* StreamingMode.BIDI is accepted but has no effect — silently degrades to NONE with no error or warning ([#692](https://github.com/google/adk-js/issues/692)) ([8c1004f](https://github.com/google/adk-js/commit/8c1004ffbfdbe5aa5261fdec16441810f6e67e80)), closes [#676](https://github.com/google/adk-js/issues/676)
 * **telemetry:** make a workflow's spans retrievable so its traces render ([#750](https://github.com/google/adk-js/issues/750)) ([63a5f43](https://github.com/google/adk-js/commit/63a5f4395e6367d5129ccd679b76104eb7e6a8d3))
 * **tests:** give the local code executor tests a Windows-sized budget ([#662](https://github.com/google/adk-js/issues/662)) ([9726467](https://github.com/google/adk-js/commit/9726467f3eaa79a4f416811561371f501127431c))
 * three defects found bug-bashing the graph-workflow docs samples ([#664](https://github.com/google/adk-js/issues/664)) ([e0dae58](https://github.com/google/adk-js/commit/e0dae584d43bab7ef068decb4743e6d6753d176f))
