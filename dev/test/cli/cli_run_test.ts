@@ -145,9 +145,6 @@ describe('cli_run', () => {
     }) as unknown as BaseSessionService;
 
   it('keeps the REPL alive when a turn fails', async () => {
-    // Every failure used to reach the CLI's single top-level catch, which
-    // exits 1, so one bad model answer ended the session and the turn queued
-    // behind it never ran.
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     let turn = 0;
     (Runner as unknown as Mock).mockImplementation(() => ({
@@ -173,7 +170,6 @@ describe('cli_run', () => {
       sessionService: createMockSessionService(),
     });
 
-    // The failure is reported, and the next turn still runs.
     expect(
       errors.mock.calls.map((call) => call.join(' ')).join('\n'),
     ).toContain('Context variable not found');
