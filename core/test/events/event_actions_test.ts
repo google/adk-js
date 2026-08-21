@@ -152,6 +152,42 @@ describe('mergeEventActions', () => {
     expect('polluted' in user).toBe(false);
   });
 
+  it('merged nested values are ordinary plain objects', () => {
+    // The blend must behave like every other state value: pollution safety
+    // comes from storing own properties, not from a null prototype, which
+    // would break hasOwnProperty and template interpolation downstream.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {a: 1}}}),
+      createEventActions({stateDelta: {user: {b: 2}}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.getPrototypeOf(user)).toBe(Object.prototype);
+    expect(typeof user.hasOwnProperty).toBe('function');
+  });
+
+  it('passes a lone top-level __proto__ entry through without phantom-merging', () => {
+    // result.stateDelta starts as a plain {}, so a naive read of
+    // result.stateDelta['__proto__'] resolves Object.prototype through the
+    // prototype chain and takes the deep-merge branch against it. The read
+    // must be own-property-only: with no genuine existing entry the value
+    // passes through unchanged (same reference, prototype intact).
+    const poisoned = JSON.parse('{"__proto__": {"a": 1}}') as Record<
+      string,
+      unknown
+    >;
+    const inner = Object.getOwnPropertyDescriptor(poisoned, '__proto__')!
+      .value as Record<string, unknown>;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: poisoned}),
+    ]);
+    const stored = Object.getOwnPropertyDescriptor(
+      result.stateDelta,
+      '__proto__',
+    )?.value;
+    expect(stored).toBe(inner);
+    expect(Object.getPrototypeOf(result.stateDelta)).toBe(Object.prototype);
+  });
+
   it('merges self-referencing values without exhausting the call stack', () => {
     // State is expected to be JSON-serializable, but a cycle must degrade to
     // last-writer-wins instead of a RangeError deep inside event merging.

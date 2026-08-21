@@ -6,6 +6,7 @@
 
 import type {Bucket, File, StorageOptions} from '@google-cloud/storage';
 import {createPartFromBase64, createPartFromText, Part} from '@google/genai';
+import {KeyedMutex} from '../utils/keyed_mutex.js';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
 
@@ -28,6 +29,8 @@ export class GcsArtifactService implements BaseArtifactService {
   private readonly bucketName: string;
   private readonly storageOptions?: StorageOptions;
   private bucketPromise?: Promise<Bucket>;
+  /** Serializes the per-file version read-modify-write in saveArtifact. */
+  private readonly saveMutex = new KeyedMutex();
 
   constructor(bucket: string, options?: StorageOptions) {
     this.bucketName = bucket;
@@ -57,60 +60,67 @@ export class GcsArtifactService implements BaseArtifactService {
       throw new Error('Artifact must have either inlineData or text content.');
     }
 
-    const versions = await this.listVersions(request);
-    const version = versions.length > 0 ? Math.max(...versions) + 1 : 0;
-    const bucket = await this.getBucket();
-    const file = bucket.file(
-      getFileName({
-        ...request,
-        version,
-      }),
-    );
-
-    const customMetadata: Record<string, unknown> = {
-      ...request.customMetadata,
-    };
-
-    if (request.artifact.inlineData) {
-      if (request.artifact.inlineData.displayName) {
-        customMetadata[GCS_DISPLAY_NAME_METADATA_KEY] =
-          request.artifact.inlineData.displayName;
-      }
-      await file.save(
-        Buffer.from(request.artifact.inlineData.data || '', 'base64'),
-        {
-          contentType: request.artifact.inlineData.mimeType,
-          metadata: {metadata: customMetadata},
-        },
+    // The version read-modify-write below spans awaits (list, then save), so
+    // two parallel sibling tool calls saving the same filename would draw the
+    // same version and one payload would silently overwrite the other.
+    // Serialize per artifact object path; distinct files stay concurrent.
+    const artifactKey = `${request.appName}/${request.userId}/${request.sessionId}/${request.filename}`;
+    return this.saveMutex.runExclusive(artifactKey, async () => {
+      const versions = await this.listVersions(request);
+      const version = versions.length > 0 ? Math.max(...versions) + 1 : 0;
+      const bucket = await this.getBucket();
+      const file = bucket.file(
+        getFileName({
+          ...request,
+          version,
+        }),
       );
 
-      return version;
-    } else if (request.artifact.text !== undefined) {
-      await file.save(request.artifact.text, {
-        contentType: 'text/plain',
-        metadata: {
-          metadata: {...customMetadata, [GCS_IS_TEXT_METADATA_KEY]: 'true'},
-        },
-      });
+      const customMetadata: Record<string, unknown> = {
+        ...request.customMetadata,
+      };
 
-      return version;
-    } else {
-      const fileData = request.artifact.fileData;
-      const fileUri = fileData?.fileUri;
-      if (!fileUri) {
-        throw new Error('Artifact fileData must have a fileUri.');
+      if (request.artifact.inlineData) {
+        if (request.artifact.inlineData.displayName) {
+          customMetadata[GCS_DISPLAY_NAME_METADATA_KEY] =
+            request.artifact.inlineData.displayName;
+        }
+        await file.save(
+          Buffer.from(request.artifact.inlineData.data || '', 'base64'),
+          {
+            contentType: request.artifact.inlineData.mimeType,
+            metadata: {metadata: customMetadata},
+          },
+        );
+
+        return version;
+      } else if (request.artifact.text !== undefined) {
+        await file.save(request.artifact.text, {
+          contentType: 'text/plain',
+          metadata: {
+            metadata: {...customMetadata, [GCS_IS_TEXT_METADATA_KEY]: 'true'},
+          },
+        });
+
+        return version;
+      } else {
+        const fileData = request.artifact.fileData;
+        const fileUri = fileData?.fileUri;
+        if (!fileUri) {
+          throw new Error('Artifact fileData must have a fileUri.');
+        }
+        // Store the URI and mime_type (if any) as blob metadata; no content to upload.
+        customMetadata[GCS_FILE_URI_METADATA_KEY] = fileUri;
+        if (fileData.mimeType) {
+          customMetadata[GCS_FILE_MIME_TYPE_METADATA_KEY] = fileData.mimeType;
+        }
+        await file.save('', {
+          contentType: fileData.mimeType || undefined,
+          metadata: {metadata: customMetadata},
+        });
+        return version;
       }
-      // Store the URI and mime_type (if any) as blob metadata; no content to upload.
-      customMetadata[GCS_FILE_URI_METADATA_KEY] = fileUri;
-      if (fileData.mimeType) {
-        customMetadata[GCS_FILE_MIME_TYPE_METADATA_KEY] = fileData.mimeType;
-      }
-      await file.save('', {
-        contentType: fileData.mimeType || undefined,
-        metadata: {metadata: customMetadata},
-      });
-      return version;
-    }
+    });
   }
 
   async loadArtifact(request: LoadArtifactRequest): Promise<Part | undefined> {

@@ -119,11 +119,18 @@ export function shouldApplyDeltaWrite(
  * new object, so the stamps have to be carried with it. An entry that arrives
  * at the commit unstamped is applied unconditionally, which is the old
  * behaviour, so a missed hop degrades rather than breaks.
+ *
+ * When the source entry is unstamped, any stamp `to` already holds for the
+ * key is cleared: in a last-writer-wins merge the new value must not inherit
+ * the superseded source's stamp, or the unconditional-apply promise above
+ * breaks and a commit can silently drop the write.
  */
 export function carryDeltaStamp(from: object, to: object, key: string): void {
   const stamp = deltaStamps.get(from)?.get(key);
   if (stamp !== undefined) {
     stampsFor(deltaStamps, to).set(key, stamp);
+  } else {
+    deltaStamps.get(to)?.delete(key);
   }
 }
 

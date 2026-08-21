@@ -603,7 +603,10 @@ function getToolAndContext({
 
   const toolContext = new Context({
     invocationContext: invocationContext,
-    functionCallId: functionCall.id,
+    // '' is treated as absent by every consumer (filters, requestCredential,
+    // requestConfirmation), so normalize it here rather than emit
+    // `functionResponse.id: ''` on the wire.
+    functionCallId: functionCall.id || undefined,
     toolConfirmation,
   });
 
@@ -646,6 +649,9 @@ export function mergeParallelFunctionResponseEvents(
     branch: baseEvent.branch,
     content: {role: 'user', parts: mergedParts},
     actions: mergedActions,
+    // The first-listed call's completion time. Under parallel execution that
+    // call may finish anywhere in the batch, so this is an arbitrary point
+    // inside it — kept for determinism, not chronology.
     timestamp: baseEvent.timestamp!,
   });
 }

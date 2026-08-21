@@ -127,11 +127,13 @@ function setOwnProperty(
  * value. Copies at each level instead of mutating, so the source events'
  * deltas stay intact.
  *
- * The merged copies are null-prototype and written via `setOwnProperty`, so a
- * caller-supplied `__proto__` key stays an own entry instead of re-parenting
- * the merge (lodash's `isPlainObject` accepts null-prototype objects, so the
- * recursion still descends into them). A self-referencing `incoming` value —
- * already illegal for state, which must stay JSON-serializable — degrades to
+ * Merged copies are ordinary plain objects — state values must keep
+ * `Object.prototype` (`hasOwnProperty`, template interpolation) because they
+ * are stored verbatim into `session.state`. Pollution safety comes from
+ * `setOwnProperty` and own-property reads: a caller-supplied `__proto__` key
+ * is stored and read as an own entry, never through the inherited setter or
+ * the prototype chain. A self-referencing `incoming` value — already illegal
+ * for state, which must stay JSON-serializable — degrades to
  * last-writer-wins instead of exhausting the call stack.
  */
 function deepMergeStateValues(
@@ -140,13 +142,16 @@ function deepMergeStateValues(
   merging: WeakSet<object> = new WeakSet(),
 ): Record<string, unknown> {
   merging.add(incoming);
-  const merged: Record<string, unknown> = Object.create(null);
+  const merged: Record<string, unknown> = {};
   for (const key of Object.keys(base)) {
     setOwnProperty(merged, key, base[key]);
   }
   for (const key of Object.keys(incoming)) {
     const value = incoming[key];
-    const existing = merged[key];
+    // Own-property read: `merged[key]` for a not-yet-set `__proto__` key
+    // would resolve `Object.prototype` through the prototype chain and
+    // phantom-merge against it.
+    const existing = Object.hasOwn(merged, key) ? merged[key] : undefined;
     const mergeable =
       isPlainObject(existing) &&
       isPlainObject(value) &&
@@ -206,7 +211,11 @@ export function mergeEventActions(
     if (source.stateDelta) {
       for (const key of Object.keys(source.stateDelta)) {
         const incoming = source.stateDelta[key];
-        const existing = result.stateDelta[key];
+        // Own-property read — see deepMergeStateValues: a first-seen
+        // `__proto__` key must not resolve `Object.prototype` as `existing`.
+        const existing = Object.hasOwn(result.stateDelta, key)
+          ? result.stateDelta[key]
+          : undefined;
         if (isPlainObject(existing) && isPlainObject(incoming)) {
           setOwnProperty(
             result.stateDelta,

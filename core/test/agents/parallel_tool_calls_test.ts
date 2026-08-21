@@ -75,11 +75,11 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
       },
     });
 
-  it('F1: sibling artifact saves to the same filename collide on one version', async () => {
-    // Both siblings read the artifact version listing before either writes,
-    // so both save as version 0 and one payload is lost. The merged
-    // artifactDelta records a single save although two happened. A per-file
-    // serialization fix should invert this to versions [0, 1].
+  it('F1: sibling artifact saves to the same filename get distinct versions', async () => {
+    // The backends serialize the per-file version read-modify-write, so
+    // sibling saves both land: distinct versions, both payloads on disk.
+    // artifactDelta stays last-writer-wins by input order, so it records the
+    // second-listed sibling's version (whichever version that call drew).
     const {invocationContext, artifactService} = await makeSessionInvocation();
     const toolA = makeSaverTool('saverA', 'payload-A');
     const toolB = makeSaverTool('saverB', 'payload-B');
@@ -95,9 +95,9 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
     const versions = event?.content?.parts?.map(
       (part) => (part.functionResponse?.response as {version: number}).version,
     );
-    expect(versions?.sort()).toEqual([0, 0]);
-    expect(event?.actions.artifactDelta).toEqual({'report.txt': 0});
-    expect(await artifactService.listVersions('report.txt')).toEqual([0]);
+    expect(versions?.slice().sort()).toEqual([0, 1]);
+    expect([0, 1]).toContain(event?.actions.artifactDelta['report.txt']);
+    expect(await artifactService.listVersions('report.txt')).toEqual([0, 1]);
   });
 
   const makeProfileTool = (name: string, subKey: string, delayMs: number) =>
@@ -112,13 +112,11 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
       },
     });
 
-  it('F2: the committed blend is a null-prototype object', async () => {
-    // deepMergeStateValues allocates merged levels with Object.create(null)
-    // and updateSessionState stores the value verbatim, so a key two siblings
-    // collided on holds an object with no Object.prototype: hasOwnProperty is
-    // undefined and template interpolation throws. A fix that merges into a
-    // plain object (pollution safety comes from setOwnProperty, not the null
-    // prototype) should invert these assertions.
+  it('F2: the committed blend is an ordinary plain object', async () => {
+    // The deep merge produces plain objects (pollution safety comes from
+    // storing own properties via defineProperty, not from a null prototype),
+    // so a key two siblings collided on behaves like every other state value:
+    // Object.prototype methods work and template interpolation is safe.
     const {session, invocationContext} = await makeSessionInvocation();
     const toolA = makeProfileTool('profileA', 'age', 10);
     const toolB = makeProfileTool('profileB', 'name', 0);
@@ -134,9 +132,9 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
 
     const profile = session.state.profile as Record<string, unknown>;
     expect(profile).toEqual({age: 'profileA', name: 'profileB'});
-    expect(Object.getPrototypeOf(profile)).toBeNull();
-    expect(profile.hasOwnProperty).toBeUndefined();
-    expect(() => `${profile}`).toThrow(TypeError);
+    expect(Object.getPrototypeOf(profile)).toBe(Object.prototype);
+    expect(typeof profile.hasOwnProperty).toBe('function');
+    expect(() => `${profile}`).not.toThrow();
   });
 
   it('F2 control: a single-writer value keeps Object.prototype', async () => {

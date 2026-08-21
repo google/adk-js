@@ -817,9 +817,11 @@ describe('handleFunctionCallList', () => {
       });
     });
 
-    it('preserves an empty-string function-call id on the response part', async () => {
-      // Pins the drive-by change from `functionCall.id || undefined`:
-      // an empty-string id is now carried through instead of being dropped.
+    it('omits an empty-string function-call id from the response part', async () => {
+      // Every internal consumer treats '' as absent (filters use
+      // `functionCall.id && …`; requestCredential/requestConfirmation throw
+      // on a falsy id), so an empty-string id is normalized to undefined
+      // rather than emitted as `functionResponse.id: ''` on the wire.
       const event = await handleFunctionCallList({
         invocationContext,
         functionCalls: [{id: '', name: 'testTool', args: {}}],
@@ -828,7 +830,7 @@ describe('handleFunctionCallList', () => {
         afterToolCallbacks: [],
       });
 
-      expect(event?.content?.parts?.[0]?.functionResponse?.id).toBe('');
+      expect(event?.content?.parts?.[0]?.functionResponse?.id).toBeUndefined();
     });
 
     it('should isolate a tool error to its own response part', async () => {

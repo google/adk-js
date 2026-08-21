@@ -11,6 +11,7 @@ import {
   createEventActions,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {mergeEventActions} from '../../src/events/event_actions.js';
 import {
   recordStateWrite,
   shouldApplyDeltaWrite,
@@ -35,6 +36,44 @@ describe('shouldApplyDeltaWrite', () => {
 
     expect(shouldApplyDeltaWrite(state, deltaA, 'key')).toBe(false);
     expect(shouldApplyDeltaWrite(state, deltaB, 'key')).toBe(true);
+  });
+
+  it('keeps write-order protection for a merged top-level __proto__ entry', async () => {
+    // A stamped __proto__ entry must not lose its stamp in mergeEventActions:
+    // a phantom `existing` read through the prototype chain used to route it
+    // into the blended-stamp path, which deleted the stamp and let a stale
+    // entry re-apply over a newer write.
+    const state: Record<string, unknown> = {};
+    const delta = JSON.parse('{"__proto__": {"a": 1}}') as Record<
+      string,
+      unknown
+    >;
+    recordStateWrite(state, delta, '__proto__');
+    const merged = mergeEventActions([createEventActions({stateDelta: delta})]);
+    const newerDelta: Record<string, unknown> = {};
+    recordStateWrite(state, newerDelta, '__proto__');
+
+    expect(shouldApplyDeltaWrite(state, merged.stateDelta, '__proto__')).toBe(
+      false,
+    );
+  });
+
+  it('applies an unstamped write unconditionally after a merge over a stamped one', async () => {
+    // Module promise: an unstamped delta entry applies unconditionally. In
+    // the last-writer-wins merge branch the unstamped value must not inherit
+    // the superseded source's stamp, or a commit can silently drop it.
+    const state: Record<string, unknown> = {};
+    const stamped: Record<string, unknown> = {key: 'stamped-old'};
+    recordStateWrite(state, stamped, 'key');
+    const merged = mergeEventActions([
+      createEventActions({stateDelta: stamped}),
+      createEventActions({stateDelta: {key: 'unstamped-new'}}),
+    ]);
+    const laterDelta: Record<string, unknown> = {};
+    recordStateWrite(state, laterDelta, 'key');
+
+    expect(merged.stateDelta.key).toBe('unstamped-new');
+    expect(shouldApplyDeltaWrite(state, merged.stateDelta, 'key')).toBe(true);
   });
 
   it('skips a stale sibling delta at session commit', async () => {

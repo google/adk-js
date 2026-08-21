@@ -27,12 +27,10 @@ describe('concurrent saveArtifact (characterization for PR #770 review F1)', () 
     await fs.rm(rootDir, {recursive: true, force: true});
   });
 
-  it('FileArtifactService: two concurrent saves of the same filename collide on one version', async () => {
-    // saveArtifact computes nextVersion from a directory listing awaited
-    // BEFORE the version directory is written, so two in-flight saves both
-    // observe the empty listing and both resolve version 0. One payload
-    // silently overwrites the other. A fix that serializes the per-file
-    // read-modify-write should invert this assertion to [0, 1].
+  it('FileArtifactService: two concurrent saves of the same filename get distinct versions', async () => {
+    // saveArtifact serializes the version read-modify-write per artifact
+    // path, so two in-flight saves of the same filename resolve distinct
+    // versions and both payloads survive.
     const service = new FileArtifactService(rootDir);
     const versions = await Promise.all([
       service.saveArtifact({
@@ -47,10 +45,41 @@ describe('concurrent saveArtifact (characterization for PR #770 review F1)', () 
       }),
     ]);
 
-    expect(versions.sort()).toEqual([0, 0]);
+    expect(versions.sort()).toEqual([0, 1]);
     expect(
       await service.listVersions({...SCOPE, filename: 'report.txt'}),
-    ).toEqual([0]);
+    ).toEqual([0, 1]);
+    const payloads = await Promise.all(
+      [0, 1].map(async (version) => {
+        const part = await service.loadArtifact({
+          ...SCOPE,
+          filename: 'report.txt',
+          version,
+        });
+        return (
+          part?.text ??
+          Buffer.from(part?.inlineData?.data ?? '', 'base64').toString('utf-8')
+        );
+      }),
+    );
+    expect(payloads.sort()).toEqual(['payload-A', 'payload-B']);
+  });
+
+  it('FileArtifactService: concurrent saves of DIFFERENT filenames stay concurrent and correct', async () => {
+    const service = new FileArtifactService(rootDir);
+    const versions = await Promise.all([
+      service.saveArtifact({
+        ...SCOPE,
+        filename: 'left.txt',
+        artifact: {text: 'left'},
+      }),
+      service.saveArtifact({
+        ...SCOPE,
+        filename: 'right.txt',
+        artifact: {text: 'right'},
+      }),
+    ]);
+    expect(versions).toEqual([0, 0]);
   });
 
   it('FileArtifactService: sequential saves version correctly (control)', async () => {
