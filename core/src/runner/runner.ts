@@ -321,7 +321,7 @@ export class Runner {
             session,
             userContent: newMessage,
             runConfig,
-            a2aMetadata: runConfig.a2aMetadata ?? params.customMetadata,
+            a2aMetadata: runConfig.a2aMetadata,
             pluginManager: this.pluginManager,
             abortSignal: params.abortSignal,
           });

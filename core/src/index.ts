@@ -23,7 +23,6 @@ export type {
 export {
   AdkDefaultRequestHandler,
   getA2aRequestMetadata,
-  requestMetadataStore,
   toA2a,
 } from './a2a/agent_to_a2a.js';
 export type {A2aUserBuilder, ToA2aOptions} from './a2a/agent_to_a2a.js';

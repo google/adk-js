@@ -38,7 +38,6 @@ import {A2AAgentExecutor} from '../../src/a2a/agent_executor.js';
 import {
   AdkDefaultRequestHandler,
   getA2aRequestMetadata,
-  requestMetadataStore,
 } from '../../src/a2a/request_metadata.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 
@@ -65,7 +64,6 @@ class MockAgent extends BaseAgent {
 describe('A2A Request Metadata Propagation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    requestMetadataStore.clear();
   });
 
   describe('getA2aRequestMetadata', () => {
@@ -98,64 +96,6 @@ describe('A2A Request Metadata Propagation', () => {
         },
         request: {
           metadata: expectedMetadata,
-        },
-      } as unknown as RequestContext;
-
-      expect(getA2aRequestMetadata(ctx)).toEqual(expectedMetadata);
-    });
-
-    it('extracts metadata from direct ctx.metadata property', () => {
-      const expectedMetadata = {
-        customExtension: {flag: true},
-      };
-      const ctx = {
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        userMessage: {
-          messageId: 'msg-1',
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'hi'}],
-        },
-        metadata: expectedMetadata,
-      } as unknown as RequestContext;
-
-      expect(getA2aRequestMetadata(ctx)).toEqual(expectedMetadata);
-    });
-
-    it('extracts metadata from ctx.params.metadata property', () => {
-      const expectedMetadata = {
-        tenantContext: {tenantId: 'tenant-42'},
-      };
-      const ctx = {
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        userMessage: {
-          messageId: 'msg-1',
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'hi'}],
-        },
-        params: {
-          metadata: expectedMetadata,
-        },
-      } as unknown as RequestContext;
-
-      expect(getA2aRequestMetadata(ctx)).toEqual(expectedMetadata);
-    });
-
-    it('extracts metadata from requestMetadataStore by userMessage.messageId (SDK 0.3.x style)', () => {
-      const expectedMetadata = {
-        'https://a2a.dev/extensions/tracing': {spanId: 'span-99'},
-      };
-      const messageId = 'msg-abc-123';
-      requestMetadataStore.set(messageId, expectedMetadata);
-
-      const ctx = {
-        contextId: 'ctx-1',
-        taskId: 'task-1',
-        userMessage: {
-          messageId,
-          role: MessageRole.USER,
-          parts: [{kind: 'text', text: 'hi'}],
         },
       } as unknown as RequestContext;
 
@@ -219,8 +159,12 @@ describe('A2A Request Metadata Propagation', () => {
 
       // Verify executor received the metadata during execution
       expect(capturedMetadataDuringExecution).toEqual(expectedMetadata);
-      // Verify store was cleaned up afterwards
-      expect(requestMetadataStore.has('msg-unique-1')).toBe(false);
+      // Verify metadata is cleaned up after settlement
+      expect(
+        getA2aRequestMetadata({
+          userMessage: message,
+        } as unknown as RequestContext),
+      ).toBeUndefined();
       expect(result).toBeDefined();
     });
 
@@ -286,7 +230,11 @@ describe('A2A Request Metadata Propagation', () => {
       }
 
       expect(capturedMetadataDuringExecution).toEqual(expectedMetadata);
-      expect(requestMetadataStore.has('msg-stream-1')).toBe(false);
+      expect(
+        getA2aRequestMetadata({
+          userMessage: message,
+        } as unknown as RequestContext),
+      ).toBeUndefined();
       expect(events.length).toBeGreaterThan(0);
     });
 
@@ -343,7 +291,11 @@ describe('A2A Request Metadata Propagation', () => {
       );
 
       expect(capturedMetadataDuringExecution).toBeUndefined();
-      expect(requestMetadataStore.has('msg-no-meta')).toBe(false);
+      expect(
+        getA2aRequestMetadata({
+          userMessage: message,
+        } as unknown as RequestContext),
+      ).toBeUndefined();
     });
   });
 

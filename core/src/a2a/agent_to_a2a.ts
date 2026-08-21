@@ -26,10 +26,9 @@ import {A2AAgentExecutor} from './agent_executor.js';
 import {
   AdkDefaultRequestHandler,
   getA2aRequestMetadata,
-  requestMetadataStore,
 } from './request_metadata.js';
 
-export {AdkDefaultRequestHandler, getA2aRequestMetadata, requestMetadataStore};
+export {AdkDefaultRequestHandler, getA2aRequestMetadata};
 
 /**
  * A request authenticator for the A2A surface.
