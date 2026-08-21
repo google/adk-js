@@ -98,6 +98,21 @@ interface PrintEventOptions {
   announcePauses?: boolean;
 }
 
+/**
+ * Renders a node output for the transcript: a string as itself, anything else
+ * as JSON. The empty string is named rather than printed.
+ */
+function renderOutput(output: unknown): string {
+  if (typeof output === 'string') {
+    return output === '' ? '(empty response)' : output;
+  }
+  try {
+    return JSON.stringify(output) ?? String(output);
+  } catch {
+    return String(output);
+  }
+}
+
 /** Prints one event's text, plus anything the user would otherwise not see. */
 function printEvent(event: Event, options: PrintEventOptions = {}): void {
   const {announcePauses = true} = options;
@@ -108,13 +123,8 @@ function printEvent(event: Event, options: PrintEventOptions = {}): void {
     .join('');
   if (text) {
     console.log(`[${author}]: ${text}`);
-  } else if (event.output === '' && !event.partial) {
-    // A node whose result is the empty string still ran, and that empty value
-    // still travels on to the next node and into the final answer. Printing
-    // nothing for it left the node out of the transcript entirely, reading as
-    // though it had been skipped — the one thing the transcript must not say,
-    // since the reader is using it to find where the empty value came from.
-    console.log(`[${author}]: (empty response)`);
+  } else if (event.output !== undefined && !event.partial) {
+    console.log(`[${author}]: ${renderOutput(event.output)}`);
   }
 
   // Reported on the event, not as a text part, so text-only printing drops it.
@@ -139,18 +149,37 @@ interface InputFile {
   queries: string[];
 }
 
-async function getUserInput(prompt: string): Promise<string> {
-  const rl = readline.createInterface({
+/**
+ * The one readline interface for the run, created on first prompt. A fresh
+ * interface per prompt discards the lines readline had already read ahead from
+ * a pipe.
+ */
+let sharedReadline: readline.Interface | undefined;
+
+function getReadline(): readline.Interface {
+  sharedReadline ??= readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
+  return sharedReadline;
+}
 
-  return new Promise<string>((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
+/** Releases the shared interface, so an idle stdin stops holding the process open. */
+function closeUserInput(): void {
+  sharedReadline?.close();
+  sharedReadline = undefined;
+}
+
+async function getUserInput(prompt: string): Promise<string> {
+  const rl = getReadline();
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(prompt, resolve);
   });
+
+  if (!process.stdin.isTTY) {
+    console.log(answer);
+  }
+  return answer;
 }
 
 interface RunFromInputFileOptions {
@@ -263,15 +292,23 @@ async function runInteractively(
       break;
     }
 
-    for await (const event of runner.runAsync({
-      userId: options.session.userId,
-      sessionId: options.session.id,
-      newMessage: {role: 'user', parts: [{text: query}]},
-      // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
-      // confirmation (opt-in; off by default on non-interactive surfaces).
-      runConfig: {plainTextToolConfirmation: true},
-    })) {
-      printEvent(event);
+    try {
+      for await (const event of runner.runAsync({
+        userId: options.session.userId,
+        sessionId: options.session.id,
+        newMessage: {role: 'user', parts: [{text: query}]},
+        // Interactive CLI: let a plain-text "yes"/"no" resolve a pending tool
+        // confirmation (opt-in; off by default on non-interactive surfaces).
+        runConfig: {plainTextToolConfirmation: true},
+      })) {
+        printEvent(event);
+      }
+    } catch (error) {
+      console.error(
+        `[ADK CLI] Turn failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 }
@@ -395,27 +432,30 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           : undefined,
       });
     }
+
+    if (options.saveSession) {
+      const sessionId =
+        options.sessionId || (await getUserInput('Session ID to save: '));
+      // Sibling of the agent file, not inside it: joining onto the agent path
+      // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
+      // no mkdir, so the write failed with ENOTDIR.
+      const sessionPath = path.join(
+        path.dirname(options.agentPath),
+        `${sessionId}.session.json`,
+      );
+      const sessionToStore = await sessionService.getSession({
+        appName: session.appName,
+        userId: session.userId,
+        sessionId: session.id,
+      });
+      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+
+      console.log('Session saved to', sessionPath);
+    }
   } finally {
+    // A throw out of the run or the save step must still release these, or the
+    // shared interface holds stdin open for an in-process caller.
     watcher?.close();
-  }
-
-  if (options.saveSession) {
-    const sessionId =
-      options.sessionId || (await getUserInput('Session ID to save: '));
-    // Sibling of the agent file, not inside it: joining onto the agent path
-    // itself yields `<cwd>/agent.ts/<id>.session.json`, and saveToFile does
-    // no mkdir, so the write failed with ENOTDIR.
-    const sessionPath = path.join(
-      path.dirname(options.agentPath),
-      `${sessionId}.session.json`,
-    );
-    const sessionToStore = await sessionService.getSession({
-      appName: session.appName,
-      userId: session.userId,
-      sessionId: session.id,
-    });
-    await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
-
-    console.log('Session saved to', sessionPath);
+    closeUserInput();
   }
 }

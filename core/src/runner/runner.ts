@@ -8,6 +8,7 @@ import {Content, createPartFromText, Modality, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
+import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
 import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
@@ -259,6 +260,7 @@ export class Runner {
     if (newMessage && !newMessage.role) {
       newMessage.role = 'user';
     }
+    rejectReservedFunctionCalls(newMessage);
 
     // =========================================================================
     // Setup the session and invocation context
@@ -950,4 +952,30 @@ function getAllToolsets(agent: BaseAgent): BaseToolset[] {
 
   traverse(agent);
   return toolsets;
+}
+
+/**
+ * Refuses a client message that carries one of the framework's own
+ * control-plane function calls.
+ *
+ * `adk_request_confirmation`, `adk_request_credential` and `adk_request_input`
+ * are questions the framework raises into agent-authored events. A client
+ * answers one with a function *response*, which stays perfectly legal here; a
+ * client that sends the *call* is writing the question — the first half of
+ * approving its own action. There is no legitimate reason to do it, so the
+ * message is rejected at the door rather than allowed into the event log for
+ * later checks to sort out.
+ *
+ * @param newMessage The message about to be appended to the session.
+ * @throws {Error} If the message contains a reserved function call.
+ */
+function rejectReservedFunctionCalls(newMessage: Content | undefined): void {
+  const reserved = reservedFunctionCallName(newMessage);
+  if (reserved) {
+    throw new Error(
+      `A client message may not contain a '${reserved}' function call: it is ` +
+        'raised by the framework, and can only be answered with a function ' +
+        'response.',
+    );
+  }
 }

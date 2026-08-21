@@ -19,6 +19,7 @@ import {RouteValue} from '../graph.js';
 import type {NodeContext, NodeResult} from '../node_context.js';
 import {
   interruptResponseMismatch,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   responseSchemasByInterruptId,
 } from './hitl_utils.js';
 
@@ -186,13 +187,27 @@ export function resolvedInterruptResponses(
   const responseSchemas = responseSchemasByInterruptId(events);
   const newestUserTurn = lastUserEvent(events);
   const raised = new Set<string>();
+  const open = new Set<string>();
   const resolved = new Map<string, unknown>();
 
   for (const event of events) {
     if (event.author === 'user' && event.content?.parts) {
       for (const part of event.content.parts) {
         const fr = part.functionResponse;
-        if (!fr?.id || !raised.has(fr.id)) {
+        if (!fr?.id) {
+          continue;
+        }
+        if (!open.has(fr.id)) {
+          if (
+            fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME &&
+            event === newestUserTurn
+          ) {
+            throw new Error(
+              raised.has(fr.id)
+                ? alreadyAnsweredMessage(fr.id, open)
+                : unroutableReplyMessage(fr.id, open),
+            );
+          }
           continue;
         }
         const schema = responseSchemas.get(fr.id);
@@ -204,16 +219,51 @@ export function resolvedInterruptResponses(
           }
           continue;
         }
+        open.delete(fr.id);
         resolved.set(fr.id, response);
       }
       continue;
     }
     for (const id of event.longRunningToolIds ?? []) {
       raised.add(id);
+      open.add(id);
     }
   }
 
   return resolved;
+}
+
+/** Names the interrupts still awaiting an answer, for a refusal message. */
+function waitingList(open: ReadonlySet<string>): string {
+  return open.size
+    ? `Still waiting: ${[...open].map((id) => `'${id}'`).join(', ')}.`
+    : 'This run has no interrupt waiting for an answer.';
+}
+
+/** Explains a reply whose interrupt id names nothing this run raised. */
+function unroutableReplyMessage(
+  interruptId: string,
+  open: ReadonlySet<string>,
+): string {
+  return (
+    `The reply carries interrupt id '${interruptId}', which does not match ` +
+    `any interrupt this run raised. ${waitingList(open)} A reply must use the ` +
+    `id from the 'adk_request_input' function call it answers. Nothing was ` +
+    `resolved, so any waiting interrupt can still be answered.`
+  );
+}
+
+/** Explains a reply to an interrupt that has already been answered. */
+function alreadyAnsweredMessage(
+  interruptId: string,
+  open: ReadonlySet<string>,
+): string {
+  return (
+    `Interrupt '${interruptId}' has already been answered, so this reply ` +
+    `resolves nothing. Sending it again does not change the earlier answer, ` +
+    `and it would otherwise be served as a new message, restarting the node ` +
+    `that asked. ${waitingList(open)}`
+  );
 }
 
 /**

@@ -25,7 +25,7 @@ import {
 } from './a2a_event.js';
 import {
   getFinalTaskStatusUpdate,
-  getTaskInputRequiredEvent,
+  getUnansweredRequestEvent,
 } from './event_processor_utils.js';
 import {createExecutorContext, ExecutorContext} from './executor_context.js';
 import {
@@ -121,20 +121,21 @@ export class A2AAgentExecutor implements AgentExecutor {
         await this.config.beforeExecuteCallback(ctx, a2aMetadata);
       }
 
-      if (ctx.task) {
-        const inputRequiredEvent = getTaskInputRequiredEvent(
-          ctx.task,
-          genAIUserMessage,
-        );
-        if (inputRequiredEvent) {
-          await this.publishFinalTaskStatus({
-            executorContext,
-            eventBus,
-            event: inputRequiredEvent,
-          });
+      const unansweredRequestEvent = getUnansweredRequestEvent({
+        taskId: ctx.taskId,
+        contextId: ctx.contextId,
+        task: ctx.task,
+        sessionEvents: session.events,
+        genAIContent: genAIUserMessage,
+      });
+      if (unansweredRequestEvent) {
+        await this.publishFinalTaskStatus({
+          executorContext,
+          eventBus,
+          event: unansweredRequestEvent,
+        });
 
-          return;
-        }
+        return;
       }
 
       if (!ctx.task) {
@@ -159,8 +160,12 @@ export class A2AAgentExecutor implements AgentExecutor {
         userId,
         sessionId,
         newMessage: genAIUserMessage,
+        // Marked remote so the run knows this message came from a peer rather
+        // than from the operator: a human-in-the-loop gate is not answerable
+        // over A2A unless the deployment opts in.
         runConfig: {
           ...this.config.runConfig,
+          remoteDelivered: true,
           ...(a2aMetadata ? {a2aMetadata} : {}),
         },
       })) {

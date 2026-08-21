@@ -71,6 +71,13 @@ describe('createAgent', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // getGcpProject()/getGcpRegion() read these before falling back to
+    // `gcloud config get-value`, so on a developer machine that exports them
+    // the mocked execSync is never consulted and the assertions below see the
+    // real local project/region instead of the mocked gcloud output. Clear
+    // them so the gcloud fallback is what actually gets exercised.
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
     (isCancel as unknown as Mock).mockReturnValue(false);
     (listFiles as Mock).mockResolvedValue(['file1', 'file2']);
     // `createAgent` prefers these over `gcloud config`, so a machine with
@@ -82,6 +89,7 @@ describe('createAgent', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
