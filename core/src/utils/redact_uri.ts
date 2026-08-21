@@ -17,6 +17,8 @@ const SECRET_QUERY_PARAMS = new Set([
   // query parameters rather than in userinfo: an authorization `code` is a
   // single-use, bearer-equivalent credential, and a token response echoed
   // back via URI can carry `access_token`/`id_token`/`refresh_token`.
+  // Only the query string is scanned: in the implicit and hybrid flows those
+  // token parameters arrive in the fragment, which is left untouched.
   // `client_secret` is not meant to travel in a URL at all, but is included
   // here in case a misconfigured flow puts it there anyway.
   'code',
