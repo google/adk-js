@@ -21,6 +21,7 @@ import {
   elideQuoteMarkers,
   OTHER_AGENT_CONTEXT_PREAMBLE,
   quoteUntrusted,
+  safeStringify,
 } from './_fencing.js';
 
 import {isEventVisibleInIsolationScope} from '../../context/compaction_utils.js';
@@ -30,9 +31,6 @@ import {
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../functions.js';
-
-/** Returned by {@link safeStringify} when a value defeats every conversion. */
-const UNSTRINGIFIABLE_VALUE = '<unstringifiable value>';
 
 /**
  * Removes the client-generated function call IDs from a given content object.
@@ -673,33 +671,6 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
   }
 
   return resultEvents;
-}
-
-/**
- * Safely stringifies a value for inclusion in LLM-facing text.
- *
- * Always returns a string and never throws. `JSON.stringify` is typed as
- * returning `string` but yields `undefined` when `toJSON` yields nothing, and
- * it throws on a cycle or a BigInt. `String` throws on a null-prototype object
- * or a throwing `toString`.
- */
-function safeStringify(obj: unknown): string {
-  if (typeof obj === 'string') {
-    return obj;
-  }
-  try {
-    const json = JSON.stringify(obj);
-    if (typeof json === 'string') {
-      return json;
-    }
-  } catch {
-    // Falls through to `String`, which renders a cycle as `[object Object]`.
-  }
-  try {
-    return String(obj);
-  } catch {
-    return UNSTRINGIFIABLE_VALUE;
-  }
 }
 
 /**
