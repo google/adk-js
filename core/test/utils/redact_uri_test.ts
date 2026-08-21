@@ -133,14 +133,15 @@ describe('connection-URI errors do not leak the password', () => {
     }
   });
 
-  it('redacts oauth2 query-parameter secrets alongside password forms', () => {
+  it.each([
+    'code',
+    'access_token',
+    'id_token',
+    'refresh_token',
+    'client_secret',
+  ])('redacts the %s query parameter', (param) => {
     expect(
-      redactUriPassword('https://app/callback?code=SECRET&state=xyz'),
-    ).toBe('https://app/callback?code=***&state=xyz');
-    expect(
-      redactUriPassword(
-        'https://app/callback?access_token=SECRET&token_type=Bearer',
-      ),
-    ).toBe('https://app/callback?access_token=***&token_type=Bearer');
+      redactUriPassword(`https://app/callback?${param}=SECRET&state=xyz`),
+    ).toBe(`https://app/callback?${param}=***&state=xyz`);
   });
 });
