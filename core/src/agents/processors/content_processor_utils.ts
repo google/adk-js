@@ -21,6 +21,7 @@ import {
   elideQuoteMarkers,
   OTHER_AGENT_CONTEXT_PREAMBLE,
   quoteUntrusted,
+  safeStringify,
 } from './_fencing.js';
 
 import {
@@ -336,7 +337,10 @@ function convertForeignEvent(event: Event): Event {
   for (const part of event.content.parts) {
     // Exclude thoughts from the context.
     // TODO - b/425992518: filtring should be configurable.
-    if (part.text && !part.thought) {
+    if (part.thought) {
+      continue;
+    }
+    if (part.text) {
       content.parts?.push({
         text: `[${event.author}] said:\n${quoteUntrusted(part.text)}`,
       });
@@ -356,6 +360,12 @@ function convertForeignEvent(event: Event): Event {
         )}\` returned result:\n${quoteUntrusted(safeStringify(part.functionResponse.response))}`,
       });
     } else {
+      // Relayed on their own part types rather than fenced. Fencing means
+      // flattening a part into the text channel, which is what created the
+      // ambiguity here in the first place; blobs cannot be flattened at all,
+      // and doing it to code and its output would drop the pairing the model
+      // reads them by. They stay attacker-reachable, and the preamble frames
+      // the whole message rather than each of them.
       content.parts?.push(cloneDeep(part));
     }
   }
@@ -630,20 +640,6 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
   }
 
   return resultEvents;
-}
-
-/**
- * Safely stringifies an object, handling circular references.
- */
-function safeStringify(obj: unknown): string {
-  if (typeof obj === 'string') {
-    return obj;
-  }
-  try {
-    return JSON.stringify(obj);
-  } catch (_e: unknown) {
-    return String(obj);
-  }
 }
 
 /**

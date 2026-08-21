@@ -11,6 +11,7 @@ import {
   elideQuoteMarkers,
   OTHER_AGENT_CONTEXT_PREAMBLE,
   quoteUntrusted,
+  safeStringify,
 } from '../agents/processors/_fencing.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
@@ -198,14 +199,14 @@ export function presentAsUserMessage(
       parts.push({
         text: `[${agentEvent.author}] called tool ${elideQuoteMarkers(
           String(call.name),
-        )} with parameters:\n${quoteUntrusted(JSON.stringify(call.args))}`,
+        )} with parameters:\n${quoteUntrusted(safeStringify(call.args))}`,
       });
     } else if (part.functionResponse) {
       const resp = part.functionResponse;
       parts.push({
         text: `[${agentEvent.author}] ${elideQuoteMarkers(
           String(resp.name),
-        )} tool returned result:\n${quoteUntrusted(JSON.stringify(resp.response))}`,
+        )} tool returned result:\n${quoteUntrusted(safeStringify(resp.response))}`,
       });
     } else {
       parts.push(part);
