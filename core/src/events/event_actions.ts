@@ -181,11 +181,14 @@ function deepMergeStateValues(
  *    When both sides of a duplicate key hold plain objects they are
  *    recursively deep-merged, mirroring Python ADK's `deep_merge_dicts`;
  *    anything else — arrays included — is last-writer-wins.
- * 2. **Other dictionary fields** (`artifactDelta`, `requestedAuthConfigs`,
- *    `requestedToolConfirmations`) — combined via `Object.assign`. Later
- *    sources win on duplicate keys (which cannot collide in practice: they
- *    are keyed by unique function-call ids or hold scalar versions).
- * 3. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
+ * 2. **`artifactDelta`** — combined per filename; on a duplicate filename
+ *    (parallel siblings saving the same artifact) the highest version wins,
+ *    since versions increase in completion order and the newest is the
+ *    surviving payload.
+ * 3. **Other dictionary fields** (`requestedAuthConfigs`,
+ *    `requestedToolConfirmations`) — combined via `Object.assign`; keys are
+ *    unique function-call ids, so duplicates cannot collide in practice.
+ * 4. **Scalar fields** (`skipSummarization`, `transferToAgent`, `escalate`) —
  *    last-writer-wins: the value from the last source that sets the field is
  *    kept.
  *
@@ -237,7 +240,20 @@ export function mergeEventActions(
       }
     }
     if (source.artifactDelta) {
-      Object.assign(result.artifactDelta, source.artifactDelta);
+      for (const key of Object.keys(source.artifactDelta)) {
+        const version = source.artifactDelta[key];
+        const existing = Object.hasOwn(result.artifactDelta, key)
+          ? result.artifactDelta[key]
+          : undefined;
+        // Parallel sibling saves to one filename draw distinct increasing
+        // versions in completion order, which need not match input order —
+        // keep the newest so the event records the surviving payload.
+        setOwnProperty(
+          result.artifactDelta,
+          key,
+          existing !== undefined && existing > version ? existing : version,
+        );
+      }
     }
     if (source.requestedAuthConfigs) {
       Object.assign(result.requestedAuthConfigs, source.requestedAuthConfigs);

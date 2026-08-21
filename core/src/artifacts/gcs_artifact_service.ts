@@ -61,10 +61,13 @@ export class GcsArtifactService implements BaseArtifactService {
     }
 
     // The version read-modify-write below spans awaits (list, then save), so
-    // two parallel sibling tool calls saving the same filename would draw the
-    // same version and one payload would silently overwrite the other.
-    // Serialize per artifact object path; distinct files stay concurrent.
-    const artifactKey = `${request.appName}/${request.userId}/${request.sessionId}/${request.filename}`;
+    // two parallel saves of the same filename would draw the same version and
+    // one payload would silently overwrite the other. Serialize per RESOLVED
+    // object path (version-less getFileName): a `user:`-scoped filename maps
+    // to one session-independent path, so keying on the raw sessionId would
+    // let two sessions race on the same object. Distinct files stay
+    // concurrent.
+    const artifactKey = getFileName({...request, version: undefined});
     return this.saveMutex.runExclusive(artifactKey, async () => {
       const versions = await this.listVersions(request);
       const version = versions.length > 0 ? Math.max(...versions) + 1 : 0;

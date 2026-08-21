@@ -78,8 +78,8 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
   it('F1: sibling artifact saves to the same filename get distinct versions', async () => {
     // The backends serialize the per-file version read-modify-write, so
     // sibling saves both land: distinct versions, both payloads on disk.
-    // artifactDelta stays last-writer-wins by input order, so it records the
-    // second-listed sibling's version (whichever version that call drew).
+    // The merged artifactDelta records the highest version — the surviving
+    // payload — regardless of which sibling drew it.
     const {invocationContext, artifactService} = await makeSessionInvocation();
     const toolA = makeSaverTool('saverA', 'payload-A');
     const toolB = makeSaverTool('saverB', 'payload-B');
@@ -96,7 +96,7 @@ describe('parallel tool calls (characterization for PR #770 review F1/F2)', () =
       (part) => (part.functionResponse?.response as {version: number}).version,
     );
     expect(versions?.slice().sort()).toEqual([0, 1]);
-    expect([0, 1]).toContain(event?.actions.artifactDelta['report.txt']);
+    expect(event?.actions.artifactDelta).toEqual({'report.txt': 1});
     expect(await artifactService.listVersions('report.txt')).toEqual([0, 1]);
   });
 

@@ -236,6 +236,18 @@ describe('mergeEventActions', () => {
     expect(result.stateDelta.b).toBeUndefined();
   });
 
+  it('keeps the highest version on an artifactDelta filename collision', () => {
+    // Parallel sibling saves to one filename get distinct increasing
+    // versions, but their completion order is arbitrary — input-order
+    // last-writer-wins could record the superseded lower version. The merged
+    // event must point at the surviving (newest) payload.
+    const result = mergeEventActions([
+      createEventActions({artifactDelta: {'report.txt': 1}}),
+      createEventActions({artifactDelta: {'report.txt': 0}}),
+    ]);
+    expect(result.artifactDelta['report.txt']).toBe(1);
+  });
+
   it('merges artifactDelta from multiple sources', () => {
     const result = mergeEventActions([
       {

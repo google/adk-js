@@ -116,6 +116,39 @@ describe('GcsArtifactService', () => {
     },
   );
 
+  describe('concurrent saves', () => {
+    it('serializes user-scoped saves arriving from different sessions', async () => {
+      // `user:` filenames map to one session-independent object path, so the
+      // save mutex must key on the resolved path — keying on sessionId would
+      // let two sessions draw the same version and silently lose a payload.
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      const base = {
+        appName: 'test-app',
+        userId: 'test-user',
+        filename: 'user:prefs.txt',
+      };
+
+      const versions = await Promise.all([
+        service.saveArtifact({
+          ...base,
+          sessionId: 'session-a',
+          artifact: {text: 'payload-A'},
+        }),
+        service.saveArtifact({
+          ...base,
+          sessionId: 'session-b',
+          artifact: {text: 'payload-B'},
+        }),
+      ]);
+
+      expect(versions.slice().sort()).toEqual([0, 1]);
+      expect(
+        await service.listVersions({...base, sessionId: 'session-a'}),
+      ).toEqual([0, 1]);
+    });
+  });
+
   describe('customMetadata GCS shape', () => {
     it('stores customMetadata nested under metadata.metadata, not flat', async () => {
       storageMock.buckets.clear();
