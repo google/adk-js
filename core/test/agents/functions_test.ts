@@ -346,6 +346,93 @@ describe('handleFunctionCallList', () => {
     });
   });
 
+  it('should route an unregistered tool name through plugin onToolErrorCallback', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {
+      error: 'no such tool, try testTool',
+    };
+    pluginManager.registerPlugin(plugin);
+    const onToolErrorCallback = vi.spyOn(plugin, 'onToolErrorCallback');
+    const hallucinatedCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {query: 'anything'},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [hallucinatedCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(onToolErrorCallback).toHaveBeenCalledTimes(1);
+    const {tool, toolArgs} = onToolErrorCallback.mock.calls[0][0];
+    expect(tool.name).toBe('google_search');
+    expect(toolArgs).toEqual({query: 'anything'});
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(hallucinatedCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    expect(functionResponse.response).toEqual({
+      error: 'no such tool, try testTool',
+    });
+  });
+
+  it('should answer an unregistered tool name with the resolution error when no plugin handles it', async () => {
+    const unresolvableCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [unresolvableCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // The call has to be answered, not left dangling: the request is otherwise
+    // identical next iteration, and Gemini rejects an unpaired functionCall.
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(unresolvableCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    const {error} = functionResponse.response as {error: string};
+    expect(error).toContain(
+      'Function google_search is not found in the toolsDict.',
+    );
+    expect(error).toContain('Callable tools: testTool.');
+    // A built-in tool is registered on the agent yet absent here, so the
+    // message must not pin the blame on the model naming something unknown.
+    expect(error).toContain('runs inside the model');
+  });
+
+  it('should answer every call in a batch when one name is unresolvable', async () => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        callFor(testTool),
+        {id: randomIdForTestingOnly(), name: 'google_search', args: {}},
+        callFor(testTool),
+      ],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const responses = event!.content!.parts!.map((p) => p.functionResponse!);
+    expect(responses.map((r) => r.name)).toEqual([
+      'testTool',
+      'google_search',
+      'testTool',
+    ]);
+    expect(responses[0].response).toEqual({result: 'tool executed'});
+    expect(responses[2].response).toEqual({result: 'tool executed'});
+  });
+
   it('should pass abortSignal to tool execution', async () => {
     const abortController = new AbortController();
     const signal = abortController.signal;

@@ -165,7 +165,7 @@ describe('ToolFilterRequestProcessor', () => {
     expect(llmRequest.allowedTools).toBeUndefined();
   });
 
-  it('should fail if model tries to call a filtered tool', async () => {
+  it('should answer with an error if model tries to call a filtered tool', async () => {
     const tool1 = new MockTool('tool1');
     const agent = new LlmAgent({
       name: 'test_agent',
@@ -212,14 +212,18 @@ describe('ToolFilterRequestProcessor', () => {
       },
     });
 
-    await expect(
-      handleFunctionCallsAsync({
-        invocationContext,
-        functionCallEvent,
-        toolsDict: llmRequest.toolsDict,
-        beforeToolCallbacks: [],
-        afterToolCallbacks: [],
-      }),
-    ).rejects.toThrow('Function tool1 is not found in the toolsDict.');
+    const event = await handleFunctionCallsAsync({
+      invocationContext,
+      functionCallEvent,
+      toolsDict: llmRequest.toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.name).toBe('tool1');
+    expect((functionResponse.response as {error: string}).error).toContain(
+      'Function tool1 is not found in the toolsDict.',
+    );
   });
 });

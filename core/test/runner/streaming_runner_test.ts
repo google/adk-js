@@ -74,6 +74,11 @@ class SleepyTool extends BaseTool {
   constructor() {
     super({name: 'sleepy_tool', description: 'sleepy tool'});
   }
+  // Without a declaration the tool never lands in `toolsDict`, so the call
+  // below would fail to resolve and the tool would never actually run.
+  override _getDeclaration() {
+    return {name: this.name, description: this.description};
+  }
   async runAsync(
     request: RunAsyncToolRequest,
     abortSignal?: AbortSignal,

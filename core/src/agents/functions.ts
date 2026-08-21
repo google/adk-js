@@ -257,6 +257,9 @@ function buildResponseEvent(
  * Handles function calls.
  * Runtime behavior to pay attention to:
  * - Iterate through each function call in the `functionCallEvent`:
+ *   - Resolve the named tool. If the name is not callable, run the on-tool-
+ *     error callbacks and answer the call with their response, or with the
+ *     resolution error when none handles it.
  *   - Execute before tool callbacks !!if a callback provides a response, short
  *     circuit the rest.
  *   - Execute the tool.
@@ -313,6 +316,21 @@ function normalizeCallbackResponse(
 }
 
 /**
+ * Stands in for a tool the model named but that the agent does not have, so
+ * the on-tool-error callbacks get something to inspect. It is never run.
+ * Mirrors the bare `BaseTool` Python builds in the same spot.
+ */
+class ToolNotFoundPlaceholder extends BaseTool {
+  constructor(name: string) {
+    super({name, description: 'Tool not found'});
+  }
+
+  override async runAsync(): Promise<unknown> {
+    throw new Error(`Function ${this.name} is not found in the toolsDict.`);
+  }
+}
+
+/**
  * The underlying implementation of handleFunctionCalls, but takes a list of
  * function calls instead of an event.
  * This is also used by llm_agent execution flow in preprocessing.
@@ -347,12 +365,52 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
-    const {tool, toolContext} = getToolAndContext({
-      invocationContext,
-      functionCall,
-      toolsDict,
-      toolConfirmation,
-    });
+    let tool: BaseTool;
+    let toolContext: Context;
+    try {
+      ({tool, toolContext} = getToolAndContext({
+        invocationContext,
+        functionCall,
+        toolsDict,
+        toolConfirmation,
+      }));
+    } catch (e: unknown) {
+      if (!(e instanceof Error)) {
+        throw e;
+      }
+      // Failing to resolve the tool is a tool error, not a model error, so it
+      // goes through the same on-tool-error callbacks, and then the same
+      // error response, that a registered tool throwing would.
+      const notFoundTool = new ToolNotFoundPlaceholder(
+        functionCall.name || '<unnamed>',
+      );
+      const notFoundContext = new Context({
+        invocationContext,
+        functionCallId: functionCall.id || undefined,
+        toolConfirmation,
+      });
+      const onToolErrorResponse =
+        await invocationContext.pluginManager.runOnToolErrorCallback({
+          tool: notFoundTool,
+          toolArgs: functionCall.args ?? {},
+          toolContext: notFoundContext,
+          error: e,
+        });
+      // With no plugin response, hand the model the error as this call's
+      // result, the same shape a registered tool's failure takes. Rethrowing
+      // instead would leave the call unanswered, and since nothing else in the
+      // request changes between iterations the model re-issues it until
+      // `maxLlmCalls` trips.
+      functionResponseEvents.push(
+        buildResponseEvent(
+          notFoundTool,
+          onToolErrorResponse ?? {error: e.message},
+          notFoundContext,
+          invocationContext,
+        ),
+      );
+      continue;
+    }
 
     // TODO - b/436079721: implement [tracer.start_as_current_span]
     logger.debug(`execute_tool ${tool.name}`);
@@ -535,8 +593,14 @@ function getToolAndContext({
   toolConfirmation?: ToolConfirmation;
 }): {tool: BaseTool; toolContext: Context} {
   if (!functionCall.name || !(functionCall.name in toolsDict)) {
+    const callableTools = Object.keys(toolsDict);
     throw new Error(
-      `Function ${functionCall.name} is not found in the toolsDict.`,
+      `Function ${functionCall.name} is not found in the toolsDict. ` +
+        `Callable tools: ${callableTools.length ? callableTools.join(', ') : '(none)'}. ` +
+        'A built-in tool such as `google_search` runs inside the model and is ' +
+        'never callable from here, so a function call naming one lands here ' +
+        'even though the tool is registered; otherwise the model named a tool ' +
+        'this agent does not have.',
     );
   }
 
