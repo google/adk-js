@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
+import type {ListToolsResult} from '@modelcontextprotocol/sdk/types.js';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {AuthScheme} from '../../auth/auth_schemes.js';

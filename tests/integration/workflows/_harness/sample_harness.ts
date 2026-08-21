@@ -131,6 +131,7 @@ export async function runSample(spec: SampleSpec): Promise<Event[][]> {
   installRecordReplay({
     mode: recording ? 'record' : 'replay',
     recordedCalls,
+    fixtureId: file,
   });
 
   try {

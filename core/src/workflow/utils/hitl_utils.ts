@@ -22,8 +22,10 @@ import {
 } from '../../auth/auth_credential.js';
 import {AuthHandler} from '../../auth/auth_handler.js';
 import {AuthConfig} from '../../auth/auth_tool.js';
+import {bindCredentialResponse} from '../../auth/credential_response_binding.js';
 import {createEvent, Event} from '../../events/event.js';
 import {State} from '../../sessions/state.js';
+import {logger} from '../../utils/logger.js';
 import {compileJsonSchema, toJsonSchema} from '../../utils/schema.js';
 import {RequestInput} from '../request_input.js';
 
@@ -267,12 +269,11 @@ export async function processAuthResume({
   authConfig,
   state,
 }: ProcessAuthResumeParams): Promise<void> {
-  let responseConfig: AuthConfig;
+  let responseConfig: AuthConfig | undefined;
   if (isAuthConfigLike(responseData)) {
-    responseConfig = {
-      ...(responseData as AuthConfig),
-      credentialKey: authConfig.credentialKey,
-    };
+    // A full config from the web UI flow answers the request; it does not get
+    // to restate it. Same reconciliation the LLM-agent resume path applies.
+    responseConfig = bindCredentialResponse(authConfig, responseData);
   } else {
     responseConfig = {
       ...authConfig,
@@ -281,6 +282,12 @@ export async function processAuthResume({
         responseData,
       ),
     };
+  }
+  if (!responseConfig) {
+    logger.warn(
+      `Ignoring auth resume response for '${authConfig.credentialKey}': it carries no credential for the request that was raised.`,
+    );
+    return;
   }
   await new AuthHandler(responseConfig).parseAndStoreAuthResponse(state);
 }

@@ -9,8 +9,10 @@ import {
   DynamicNodeFailError,
   InvocationAbortedError,
   isInvocationAbortedError,
+  isNodeReportedError,
   isNodeTimeoutError,
   NodeInterruptedError,
+  NodeReportedError,
   NodeTimeoutError,
 } from '../../src/workflow/errors.js';
 import {
@@ -38,6 +40,22 @@ describe('Phase 0 — errors', () => {
     expect(err.nodeName).toBe('n1');
     expect(err.timeout).toBe(2.5);
     expect(err.message).toContain("Node 'n1' timed out after 2.5 seconds");
+  });
+
+  it('NodeReportedError carries the reported code and is instanceof Error', () => {
+    const err = new NodeReportedError({
+      nodeName: 'n1',
+      errorCode: '401',
+      errorMessage: 'invalid credentials',
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(NodeReportedError);
+    expect(err.name).toBe('NodeReportedError');
+    expect(err.nodeName).toBe('n1');
+    expect(err.code).toBe('401');
+    expect(err.message).toBe("Node 'n1' failed: 401: invalid credentials");
+    expect(isNodeReportedError(err)).toBe(true);
+    expect(isNodeTimeoutError(err)).toBe(false);
   });
 
   it('NodeInterruptedError is a distinct catchable error', () => {
