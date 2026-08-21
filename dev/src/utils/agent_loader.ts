@@ -197,30 +197,38 @@ export class AgentFile {
         target: 'node16',
         platform: 'node',
         format: moduleType,
-        packages: 'bundle',
         bundle: this.options.bundle,
         minify: this.options.bundle,
         plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
-        // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
-        external: [
-          'sqlite3',
-          'better-sqlite3',
-          'mysql',
-          'mysql2',
-          // Native addons must remain external so Node can resolve their
-          // platform-specific assets at runtime.
-          'onnxruntime-node',
-          'oracledb',
-          'pg-native',
-          'pg-query-stream',
-          'tedious',
-          'libsql',
-          // Optional peer dependencies of vite and eslint that are not
-          // installed and MUST NOT be bundled.
-          'lightningcss',
-          'jiti',
-          'jiti/package.json',
-        ],
+        // esbuild rejects `packages` and `external` unless it is bundling, so
+        // both have to be withheld when `--bundle false` asks it only to
+        // transpile. Nothing is being inlined in that mode, so there is
+        // nothing to hold out of the bundle either.
+        ...(this.options.bundle
+          ? {
+              packages: 'bundle' as const,
+              // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
+              external: [
+                'sqlite3',
+                'better-sqlite3',
+                'mysql',
+                'mysql2',
+                // Native addons must remain external so Node can resolve their
+                // platform-specific assets at runtime.
+                'onnxruntime-node',
+                'oracledb',
+                'pg-native',
+                'pg-query-stream',
+                'tedious',
+                'libsql',
+                // Optional peer dependencies of vite and eslint that are not
+                // installed and MUST NOT be bundled.
+                'lightningcss',
+                'jiti',
+                'jiti/package.json',
+              ],
+            }
+          : {}),
       });
 
       this.cleanupDirPath = outputDir;
