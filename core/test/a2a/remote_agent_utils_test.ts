@@ -249,10 +249,11 @@ describe('remote_agent_utils', () => {
       );
     });
 
-    it('drops a credential request function_call from forwarded parts', () => {
-      // An adk_request_credential call carries a serialized AuthConfig in
-      // its arguments, including rawAuthCredential -- an OAuth2 client
-      // secret or a service account key. It must never reach a remote peer.
+    it('drops a credential request function_call this agent raised', () => {
+      // An adk_request_credential call this LOCAL agent (author != peer
+      // name) raised carries a serialized AuthConfig in its arguments,
+      // including rawAuthCredential -- an OAuth2 client secret or a service
+      // account key. It must never reach a remote peer.
       const credentialRequest = createEvent({
         author: 'root_agent',
         content: {
@@ -289,7 +290,6 @@ describe('remote_agent_utils', () => {
 
       expect(dumped).not.toContain('SUPER_SECRET_DO_NOT_LEAK');
       expect(dumped).not.toContain('adk_request_credential');
-      // The accompanying text part is preserved.
       expect(
         result.parts.some((p) =>
           (p as TextPart).text?.includes('accompanying text'),
@@ -297,7 +297,22 @@ describe('remote_agent_utils', () => {
       ).toBe(true);
     });
 
-    it('drops a credential response function_response from forwarded parts', () => {
+    it('drops a credential response this agent raised the request for', () => {
+      const credentialRequest = createEvent({
+        author: 'root_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-1',
+                name: 'adk_request_credential',
+                args: {functionCallId: 'toolFc1', authConfig: {}},
+              },
+            },
+          ],
+        },
+      });
       const credentialResponse = createEvent({
         author: 'user',
         content: {
@@ -320,12 +335,131 @@ describe('remote_agent_utils', () => {
         },
       });
 
-      const session = {events: [credentialResponse]} as unknown as Session;
+      const session = {
+        events: [credentialRequest, credentialResponse],
+      } as unknown as Session;
 
       const result = toMissingRemoteSessionParts(mockCtx, session);
       const dumped = JSON.stringify(result.parts);
 
       expect(dumped).not.toContain('SECRET_ACCESS_TOKEN');
+    });
+
+    it('forwards a credential response the remote peer itself requested', () => {
+      // The remote peer's OWN request for a credential arrives as an event
+      // authored by the peer's own name (mockAgent.name, "test-agent") --
+      // see toAdkEvent. Its answer must reach the peer, or the peer's
+      // pending request is silently stranded forever.
+      const peerCredentialRequest = createEvent({
+        author: 'test-agent', // the peer's own name
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'peer-fc-1',
+                name: 'adk_request_credential',
+                args: {functionCallId: 'peerToolFc1', authConfig: {}},
+              },
+            },
+          ],
+        },
+      });
+      const answerToPeer = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'peer-fc-1',
+                name: 'adk_request_credential',
+                response: {
+                  authScheme: {type: 'oauth2'},
+                  credentialKey: 'peer-key',
+                  exchangedAuthCredential: {
+                    oauth2: {accessToken: 'ANSWER_FOR_THE_PEER'},
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {
+        events: [peerCredentialRequest, answerToPeer],
+      } as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).toContain('ANSWER_FOR_THE_PEER');
+    });
+
+    it('matches a differently-named credential call in snake_case', () => {
+      // generateAuthEvent, the primary in-tree producer, emits args in
+      // snake_case (function_call_id/auth_config). The structural fallback
+      // must still catch a credential envelope under a name other than
+      // adk_request_credential once normalised.
+      const credentialRequest = createEvent({
+        author: 'root_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-1',
+                name: 'some_other_tool_name',
+                args: {
+                  function_call_id: 'toolFc1',
+                  auth_config: {
+                    authScheme: {type: 'oauth2'},
+                    rawAuthCredential: {
+                      oauth2: {clientSecret: 'SNAKE_CASE_SECRET'},
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {events: [credentialRequest]} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).not.toContain('SNAKE_CASE_SECRET');
+    });
+
+    it('does not drop a non-credential function_call', () => {
+      // The shape probe must not over-match: unrelated tool history should
+      // survive forwarding intact.
+      const unrelatedToolCall = createEvent({
+        author: 'root_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-1',
+                name: 'get_weather',
+                args: {location: 'Pimpri'},
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {events: [unrelatedToolCall]} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).toContain('get_weather');
+      expect(dumped).toContain('Pimpri');
     });
   });
 });

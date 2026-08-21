@@ -366,4 +366,179 @@ describe('A2ARemoteAgent', () => {
       }),
     );
   });
+
+  it('does not leak a credential response as the final session event', async () => {
+    // Regression test for the getUserFunctionCallAt short-circuit bypassing
+    // credential scrubbing: this reproduces the exact end-to-end shape --
+    // a real RemoteA2AAgent, the local agent's own adk_request_credential
+    // call, and the client's answer as the LAST event -- and asserts on
+    // what actually goes out over sendMessageStream, not on an isolated
+    // call to a utility function.
+    const card: AgentCard = {
+      name: 'Remote',
+      description: 'test',
+      protocolVersion: '1.0',
+      defaultInputModes: [],
+      defaultOutputModes: [],
+      capabilities: {streaming: true},
+      skills: [],
+      url: 'https://example.com',
+      version: '1.0',
+    };
+
+    let capturedParts: unknown;
+    const agent = new RemoteA2AAgent({
+      name: 'test-agent',
+      agentCard: card,
+      clientFactory: mockClientFactory,
+      beforeRequestCallbacks: [
+        async (ctx, params) => {
+          capturedParts = params.message.parts;
+        },
+      ],
+    });
+
+    vi.mocked(mockClient.sendMessageStream).mockReturnValue(
+      (async function* () {})(),
+    );
+
+    const credentialRequest = createEvent({
+      author: 'root_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc1',
+              name: 'adk_request_credential',
+              args: {functionCallId: 'toolFc1', authConfig: {}},
+            },
+          },
+        ],
+      },
+    });
+    const credentialResponse = createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc1',
+              name: 'adk_request_credential',
+              response: {
+                authScheme: {type: 'oauth2'},
+                credentialKey: 'k',
+                exchangedAuthCredential: {
+                  oauth2: {accessToken: 'SUPER_SECRET_TOKEN'},
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const context = createMockContext({
+      session: {
+        id: 'test-session',
+        userId: 'test-user',
+        appName: 'test-app',
+        events: [credentialRequest, credentialResponse],
+        state: {},
+      } as unknown as Session,
+    });
+
+    for await (const _ of agent.runAsync(context)) {
+      // empty
+    }
+
+    const dumped = JSON.stringify(capturedParts);
+    expect(dumped).not.toContain('SUPER_SECRET_TOKEN');
+  });
+
+  it('forwards a credential response the remote peer itself requested, as the final event', async () => {
+    const card: AgentCard = {
+      name: 'Remote',
+      description: 'test',
+      protocolVersion: '1.0',
+      defaultInputModes: [],
+      defaultOutputModes: [],
+      capabilities: {streaming: true},
+      skills: [],
+      url: 'https://example.com',
+      version: '1.0',
+    };
+
+    let capturedParts: unknown;
+    const agent = new RemoteA2AAgent({
+      name: 'test-agent',
+      agentCard: card,
+      clientFactory: mockClientFactory,
+      beforeRequestCallbacks: [
+        async (ctx, params) => {
+          capturedParts = params.message.parts;
+        },
+      ],
+    });
+
+    vi.mocked(mockClient.sendMessageStream).mockReturnValue(
+      (async function* () {})(),
+    );
+
+    // The peer's own request -- authored by "test-agent", the peer's name.
+    const peerCredentialRequest = createEvent({
+      author: 'test-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'peer-fc1',
+              name: 'adk_request_credential',
+              args: {functionCallId: 'peerToolFc1', authConfig: {}},
+            },
+          },
+        ],
+      },
+    });
+    const answerToPeer = createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'peer-fc1',
+              name: 'adk_request_credential',
+              response: {
+                authScheme: {type: 'oauth2'},
+                credentialKey: 'peer-key',
+                exchangedAuthCredential: {
+                  oauth2: {accessToken: 'ANSWER_FOR_THE_PEER'},
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const context = createMockContext({
+      session: {
+        id: 'test-session',
+        userId: 'test-user',
+        appName: 'test-app',
+        events: [peerCredentialRequest, answerToPeer],
+        state: {},
+      } as unknown as Session,
+    });
+
+    for await (const _ of agent.runAsync(context)) {
+      // empty
+    }
+
+    const dumped = JSON.stringify(capturedParts);
+    expect(dumped).toContain('ANSWER_FOR_THE_PEER');
+  });
 });

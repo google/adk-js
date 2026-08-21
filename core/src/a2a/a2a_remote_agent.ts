@@ -24,13 +24,14 @@ import {logger} from '../utils/logger.js';
 import {MessageRole} from './a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from './a2a_remote_agent_run_processor.js';
 import {
+  getFunctionResponseCallId,
   getUserFunctionCallAt,
+  toForwardableA2AParts,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
 import {resolveAgentCard} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
-import {toA2AParts} from './part_converter_utils.js';
 
 export {AGENT_CARD_PATH};
 
@@ -169,9 +170,18 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
 
       if (userFnCall) {
         const event = userFnCall.response;
-        parts = toA2AParts(
-          event.content?.parts || [],
+        // Route through the shared scrub: this credential response must not
+        // cross the trust boundary unless the remote peer itself is the one
+        // that asked for it (requestAuthor === this.name).
+        const fnCallId = getFunctionResponseCallId(event);
+        const callAuthors = fnCallId
+          ? new Map([[fnCallId, userFnCall.requestAuthor]])
+          : new Map<string, string>();
+        parts = toForwardableA2AParts(
+          event.content,
           event.longRunningToolIds,
+          callAuthors,
+          this.name,
         );
         taskId = userFnCall.taskId;
         contextId = userFnCall.contextId;

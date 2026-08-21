@@ -10,94 +10,23 @@ import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/functions.js';
 import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
+import {camelCaseKeys} from '../utils/case_utils.js';
+import {logger} from '../utils/logger.js';
 import {AdkMetadataKeys} from './metadata_converter_utils.js';
 import {toA2AParts} from './part_converter_utils.js';
-
-// Top-level keys of a serialized AuthConfig, the shape an
-// adk_request_credential call's arguments (one level down, under
-// `authConfig`) and its response (flat) both carry.
-const AUTH_CONFIG_KEYS: ReadonlyArray<string> = ['authScheme', 'credentialKey'];
-
-/** Whether `payload` looks like a serialized AuthConfig (fail closed). */
-function payloadIsAuthConfig(payload: unknown): boolean {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return false;
-  }
-  const keys = new Set(Object.keys(payload as Record<string, unknown>));
-  return AUTH_CONFIG_KEYS.every((key) => keys.has(key));
-}
-
-/** Whether a function_call carries credential material (fail closed). */
-function isCredentialFunctionCall(functionCall: {
-  name?: string;
-  args?: unknown;
-}): boolean {
-  if (functionCall.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
-    return true;
-  }
-  // A request wraps the AuthConfig in an AuthToolArguments envelope, so the
-  // shape has to be read one level down, under `authConfig`.
-  const args = functionCall.args;
-  if (!args || typeof args !== 'object') {
-    return false;
-  }
-  const authConfig = (args as Record<string, unknown>)['authConfig'];
-  return payloadIsAuthConfig(authConfig);
-}
-
-/** Whether a function_response carries credential material (fail closed). */
-function isCredentialFunctionResponse(functionResponse: {
-  name?: string;
-  response?: unknown;
-}): boolean {
-  if (functionResponse.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
-    return true;
-  }
-  return payloadIsAuthConfig(functionResponse.response);
-}
-
-/**
- * Returns `content` with any credential-bearing function_call or
- * function_response part removed.
- *
- * An adk_request_credential call carries a serialized AuthConfig in its
- * arguments -- including rawAuthCredential, an OAuth2 client secret or a
- * service account key -- and its response carries one back. Forwarding
- * either to a remote A2A peer would leak that credential material outside
- * the trust boundary it was issued within.
- */
-function withoutCredentialParts(
-  content: Content | undefined,
-): Content | undefined {
-  if (!content || !content.parts) {
-    return content;
-  }
-  const hasCredentialPart = content.parts.some(
-    (part) =>
-      (part.functionCall && isCredentialFunctionCall(part.functionCall)) ||
-      (part.functionResponse &&
-        isCredentialFunctionResponse(part.functionResponse)),
-  );
-  if (!hasCredentialPart) {
-    return content;
-  }
-  return {
-    ...content,
-    parts: content.parts.filter(
-      (part) =>
-        !(part.functionCall && isCredentialFunctionCall(part.functionCall)) &&
-        !(
-          part.functionResponse &&
-          isCredentialFunctionResponse(part.functionResponse)
-        ),
-    ),
-  };
-}
 
 export interface UserFunctionCall {
   response: AdkEvent;
   taskId: string;
   contextId: string;
+  /**
+   * Author of the FunctionCall event this response answers. Distinguishes a
+   * credential this local agent requested (must never cross the trust
+   * boundary to the remote peer) from one the remote peer itself requested
+   * (the peer's own name, per toMissingRemoteSessionParts) -- the answer to
+   * that one IS what the peer is waiting for.
+   */
+  requestAuthor: string;
 }
 
 /**
@@ -142,6 +71,7 @@ export function getUserFunctionCallAt(
       response: candidate,
       taskId,
       contextId,
+      requestAuthor: request.author ?? '',
     };
   }
 
@@ -184,6 +114,174 @@ export function getFunctionResponseCallId(event: AdkEvent): string | undefined {
   return responsePart?.functionResponse?.id;
 }
 
+// Top-level keys of a serialized AuthConfig that indicate credential
+// material, the shape an adk_request_credential call's arguments (one level
+// down, under `authConfig`) and its response (flat) both carry.
+const AUTH_CONFIG_SCHEME_KEY = 'authScheme';
+const AUTH_CONFIG_CREDENTIAL_KEYS: ReadonlyArray<string> = [
+  'rawAuthCredential',
+  'exchangedAuthCredential',
+];
+
+/**
+ * Whether `payload` looks like a serialized AuthConfig carrying credential
+ * material. Requires `authScheme` plus at least one credential-bearing
+ * field, rather than requiring every field AuthConfig's type declares --
+ * a config read back off a function call's args can arrive missing fields
+ * its type promises (see credential_response_binding.ts), so requiring all
+ * of them would leave a gap for an incomplete-but-still-credential-bearing
+ * envelope.
+ *
+ * NOTE: this check is fail-OPEN, not fail-closed: a payload that doesn't
+ * match is forwarded unredacted, not dropped. Ambiguous input is treated as
+ * safe to forward, which is the direction that risks a leak, not the
+ * direction that risks over-dropping legitimate content.
+ */
+function payloadIsAuthConfig(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  const keys = new Set(Object.keys(payload as Record<string, unknown>));
+  if (!keys.has(AUTH_CONFIG_SCHEME_KEY)) {
+    return false;
+  }
+  return AUTH_CONFIG_CREDENTIAL_KEYS.some((key) => keys.has(key));
+}
+
+/**
+ * Whether a function_call carries credential material.
+ *
+ * NOTE: fail-open, as above -- an ambiguous call is left unscrubbed.
+ */
+function isCredentialFunctionCall(functionCall: {
+  name?: string;
+  args?: unknown;
+}): boolean {
+  if (functionCall.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
+    return true;
+  }
+  // A request wraps the AuthConfig in an AuthToolArguments envelope, so the
+  // shape has to be read one level down, under `authConfig`. Args are
+  // normalised with camelCaseKeys first: generateAuthEvent (the primary,
+  // in-tree producer) emits this envelope in snake_case
+  // (function_call_id/auth_config), and reading it raw would silently never
+  // match that shape.
+  const args = camelCaseKeys(functionCall.args);
+  if (!args || typeof args !== 'object') {
+    return false;
+  }
+  const authConfig = (args as Record<string, unknown>)['authConfig'];
+  return payloadIsAuthConfig(authConfig);
+}
+
+/**
+ * Whether a function_response carries credential material.
+ *
+ * NOTE: fail-open, as above -- an ambiguous response is left unscrubbed.
+ */
+function isCredentialFunctionResponse(functionResponse: {
+  name?: string;
+  response?: unknown;
+}): boolean {
+  if (functionResponse.name === REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
+    return true;
+  }
+  return payloadIsAuthConfig(camelCaseKeys(functionResponse.response));
+}
+
+/**
+ * Builds a map from FunctionCall id to the author of the event that issued
+ * it, across every event in `events`. Used to decide whether a credential
+ * response answers a request this local agent raised (scrub) or one the
+ * remote peer itself raised (forward -- see withoutCredentialParts).
+ */
+export function buildFunctionCallAuthors(
+  events: readonly AdkEvent[],
+): Map<string, string> {
+  const authors = new Map<string, string>();
+  for (const event of events) {
+    for (const part of event.content?.parts ?? []) {
+      if (part.functionCall?.id) {
+        authors.set(part.functionCall.id, event.author ?? '');
+      }
+    }
+  }
+  return authors;
+}
+
+/**
+ * Returns `content` with any credential-bearing function_call or
+ * function_response part removed, except a function_response whose matching
+ * request was authored by `peerName` -- that credential was requested BY the
+ * remote peer, so withholding it would silently strand the peer's pending
+ * request forever with nothing logged to explain why. Every other
+ * credential-bearing part is a request this local agent raised for its own
+ * tools, or an answer to one, and must never cross the trust boundary to the
+ * peer.
+ *
+ * An adk_request_credential call carries a serialized AuthConfig in its
+ * arguments -- including rawAuthCredential, an OAuth2 client secret or a
+ * service account key -- and its response carries the exchanged credential
+ * back (an API key, bearer token, or exchanged OAuth token). Forwarding
+ * either to a remote A2A peer would leak that credential material outside
+ * the trust boundary it was issued within.
+ */
+function withoutCredentialParts(
+  content: Content | undefined,
+  callAuthors: ReadonlyMap<string, string>,
+  peerName: string,
+): Content | undefined {
+  if (!content || !content.parts) {
+    return content;
+  }
+
+  const isDroppedCredentialPart = (part: GenAIPart): boolean => {
+    if (part.functionCall && isCredentialFunctionCall(part.functionCall)) {
+      return true;
+    }
+    if (
+      part.functionResponse &&
+      isCredentialFunctionResponse(part.functionResponse)
+    ) {
+      const id = part.functionResponse.id;
+      const requestAuthor = id ? callAuthors.get(id) : undefined;
+      return requestAuthor !== peerName;
+    }
+    return false;
+  };
+
+  const parts = content.parts.filter((part) => !isDroppedCredentialPart(part));
+  if (parts.length === content.parts.length) {
+    return content;
+  }
+  logger.warn(
+    `Dropped ${content.parts.length - parts.length} credential-bearing ` +
+      'part(s) before forwarding to the remote peer -- it did not request them.',
+  );
+  return {...content, parts};
+}
+
+/**
+ * Converts genai parts to A2A parts for forwarding to the remote peer,
+ * scrubbing credential material the peer did not itself request. The single
+ * point both session-forwarding paths (toMissingRemoteSessionParts and the
+ * getUserFunctionCallAt short-circuit in RemoteA2AAgent) converge on, so the
+ * scrubbing guarantee holds by construction rather than by both call sites
+ * remembering to apply it separately.
+ */
+export function toForwardableA2AParts(
+  content: Content | undefined,
+  longRunningToolIds: string[] | undefined,
+  callAuthors: ReadonlyMap<string, string>,
+  peerName: string,
+): A2APart[] {
+  const scrubbed = withoutCredentialParts(content, callAuthors, peerName);
+  if (!scrubbed?.parts) {
+    return [];
+  }
+  return toA2AParts(scrubbed.parts, longRunningToolIds);
+}
+
 /**
  * Returns A2A content parts for all events not yet seen by the remote agent,
  * along with the A2A context ID found in the most recent remote agent event.
@@ -198,12 +296,13 @@ export function toMissingRemoteSessionParts(
   session: Session,
 ): {parts: A2APart[]; contextId?: string} {
   const events = session.events;
+  const peerName = requireAgent(ctx).name;
   let contextId: string | undefined = undefined;
   let lastRemoteResponseIndex = -1;
 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    if (event.author === requireAgent(ctx).name) {
+    if (event.author === peerName) {
       lastRemoteResponseIndex = i;
       const metadata = event.customMetadata || {};
       contextId = metadata[AdkMetadataKeys.CONTEXT_ID] as string;
@@ -211,19 +310,25 @@ export function toMissingRemoteSessionParts(
     }
   }
 
+  const callAuthors = buildFunctionCallAuthors(events);
   const missingParts: A2APart[] = [];
 
   for (let i = lastRemoteResponseIndex + 1; i < events.length; i++) {
     let event = events[i];
-    // Drop credential material before anything else looks at the event.
-    // presentAsUserMessage renders a function_call as text with its
-    // arguments inlined, so scrubbing after it would be too late.
-    const scrubbedContent = withoutCredentialParts(event.content);
+
+    // Scrub before presentAsUserMessage, not after: it renders a
+    // function_call/function_response as text with its arguments inlined,
+    // which would embed the secret in a string no shape check can catch.
+    const scrubbedContent = withoutCredentialParts(
+      event.content,
+      callAuthors,
+      peerName,
+    );
     if (scrubbedContent !== event.content) {
       event = {...event, content: scrubbedContent};
     }
 
-    if (event.author !== 'user' && event.author !== requireAgent(ctx).name) {
+    if (event.author !== 'user' && event.author !== peerName) {
       event = presentAsUserMessage(ctx, event);
     }
 
