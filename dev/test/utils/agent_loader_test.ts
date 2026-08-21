@@ -318,6 +318,33 @@ describe('AgentLoader', () => {
       await expect(fs.access(compiledAgentPath)).rejects.toThrow();
     });
 
+    it('withholds bundle-only options when asked only to transpile', async () => {
+      const agentPath = path.join(tempAgentsDir, 'agent2.ts');
+      await fs.writeFile(agentPath, agent2TsContent);
+
+      const compiledAgentPath = compiledPath('agent2.cjs');
+      (esbuild.build as Mock).mockImplementation(async () => {
+        await fs.writeFile(compiledAgentPath, agent2CjsContentMocked);
+        return Promise.resolve();
+      });
+
+      const agentFile = new AgentFile(agentPath, {
+        compile: true,
+        bundle: false,
+      });
+      await agentFile.load();
+
+      // esbuild rejects `external` and `packages` outside a bundling build
+      // with `Cannot use "external" without "bundle"`, which made
+      // `--bundle false` fail on every agent.
+      const buildOptions = (esbuild.build as Mock).mock.calls[0][0];
+      expect(buildOptions.bundle).toBe(false);
+      expect(buildOptions).not.toHaveProperty('external');
+      expect(buildOptions).not.toHaveProperty('packages');
+
+      await agentFile.dispose();
+    });
+
     it('compiles into a private temp dir without allowing overwrite', async () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
