@@ -140,6 +140,40 @@ describe('RequestConfirmationLlmRequestProcessor', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('should not crash the turn on a malformed confirmation JSON payload', async () => {
+    // The confirmation response is client-authored. When it arrives as the
+    // single-key `{response: "<json>"}` shape, a malformed string must be
+    // treated as "no usable decision" (gate stays pending) rather than throwing
+    // out of the processor and tearing down the whole invocation.
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      model: 'gemini-2.5-flash',
+    });
+    const userConfirmationEvent = createEvent({
+      invocationId: 'test-invocation',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-confirm-1',
+              name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+              response: {response: 'not-valid-json{'},
+            },
+          },
+        ],
+      },
+    });
+    const invocationContext = createMockInvocationContext(agent, [
+      userConfirmationEvent,
+    ]);
+
+    const events = await collectEvents(invocationContext);
+
+    expect(events).toHaveLength(0);
+  });
+
   it('should do nothing if user event has non-confirmation function response', async () => {
     const agent = new LlmAgent({
       name: 'test_agent',

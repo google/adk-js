@@ -493,18 +493,24 @@ async function executeSingleFunctionCall({
  * `handle_function_call_list_async` (`asyncio.gather`). Response events keep
  * the input order of the function calls regardless of completion order.
  *
- * Concurrency caveats, both deliberate Python parity:
- * - Every sibling call's `Context` wraps the SAME `session.state` object, so
- *   sibling reads observe sibling writes as they happen and a
- *   read-modify-write across an `await` is not atomic — two siblings
- *   incrementing the same key can lose an update. Sibling `stateDelta`s are
- *   deep-merged per plain-object key on the merged event; scalar and array
- *   collisions are last-writer-wins by input order.
- * - If any call throws an unrecoverable error (e.g. an unknown tool name),
- *   the rejection propagates only after ALL started siblings have settled.
- *   Those siblings run to completion first: their side effects — external
- *   calls, artifact writes, live `session.state` mutations — still land, and
- *   then their response events and deltas are discarded with the rethrow.
+ * Concurrency caveats:
+ * - (Deliberate Python parity.) Every sibling call's `Context` wraps the SAME
+ *   `session.state` object, so sibling reads observe sibling writes as they
+ *   happen and a read-modify-write across an `await` is not atomic — two
+ *   siblings incrementing the same key can lose an update. Sibling
+ *   `stateDelta`s are deep-merged per plain-object key on the merged event;
+ *   scalar and array collisions are last-writer-wins by input order.
+ * - (Deliberate divergence from Python — NOT parity.) On an unrecoverable
+ *   error the two runtimes differ in two ways, both forced or chosen here:
+ *     1. Python's `asyncio.gather` cancels the still-running siblings on the
+ *        first failure; JS promises are not cancellable, so with
+ *        `Promise.allSettled` ALL started siblings run to completion. Their
+ *        side effects — external calls, artifact writes, live `session.state`
+ *        mutations — still land, then their response events and deltas are
+ *        discarded with the rethrow.
+ *     2. Python re-raises the first exception to be *raised* (whichever sibling
+ *        fails first in time); we re-throw the first rejection by *input index*
+ *        so the surfaced error is deterministic regardless of completion order.
  *   (Normal tool errors do not reject; they are isolated into that tool's
  *   `{error: ...}` response part.)
  */
