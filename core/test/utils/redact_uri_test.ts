@@ -124,10 +124,12 @@ describe('connection-URI errors do not leak the password', () => {
         'not-a-valid-scheme?code=SECRET_AUTH_CODE&state=xyz',
       );
       expect(result).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledOnce();
       const loggedText = warnSpy.mock.calls
         .map((call) => call.join(' '))
         .join(' ');
       expect(loggedText).not.toContain('SECRET_AUTH_CODE');
+      expect(loggedText).toContain('<unparseable URI, redacted>');
     } finally {
       warnSpy.mockRestore();
     }
