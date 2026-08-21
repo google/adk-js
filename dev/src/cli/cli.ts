@@ -68,21 +68,19 @@ function getArtifactServiceFromOptions(options: {
   );
 }
 
-function getAgentFileOptions(
-  options: {
-    compile?: boolean;
-    bundle?: boolean;
-    file_type?: string;
-  },
+function getAgentFileOptions(options: {
+  compile?: boolean;
+  bundle?: boolean;
+  file_type?: string;
   // Minification destroys stack traces, so it is opt-in and reserved for
   // deployment bundles where the artifact size matters more than a readable
   // trace. Local commands (run/web/api_server) keep readable output.
-  minify = false,
-) {
+  minify?: boolean;
+}) {
   return {
     compile: getBoolean(options['compile']),
     bundle: getBoolean(options['bundle']),
-    minify,
+    minify: getBoolean(options['minify']),
     moduleType: options['file_type'] as FileModuleType | undefined,
   };
 }
@@ -458,10 +456,7 @@ export function createProgram(): Command {
           allowOrigins: options['allow_origins'],
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
-          agentFileLoadOptions: getAgentFileOptions(
-            options,
-            /* minify= */ true,
-          ),
+          agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
           extraGcloudArgs,
@@ -514,10 +509,10 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
-            agentFileLoadOptions: getAgentFileOptions(
-              options,
-              /* minify= */ true,
-            ),
+            agentFileLoadOptions: getAgentFileOptions({
+              ...options,
+              minify: true,
+            }),
             a2a: getBoolean(options['a2a']),
             agentEngineId: options['agent_engine_id'],
           });
