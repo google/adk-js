@@ -135,6 +135,15 @@ export function carryDeltaStamp(from: object, to: object, key: string): void {
  * leave the blend older than a write it contains, and the commit would skip
  * it. When either contributor is unstamped the blend is left unstamped,
  * keeping the unconditional-apply behaviour unstamped entries are promised.
+ *
+ * Trade-off: `max` is permissive, not merely order-restoring. The blend
+ * carries the newest contributor's stamp while containing the oldest
+ * contributor's sub-values, so a non-sibling write that landed between the
+ * two contributors and superseded the key wholesale can be resurrected when
+ * the blend commits. That loosens the module invariant above for blended
+ * entries; the alternative — the oldest stamp — would instead drop the whole
+ * blend whenever any contributor was superseded, losing sibling writes that
+ * were never in conflict.
  */
 export function carryBlendedDeltaStamp(
   from: object,

@@ -14,6 +14,8 @@ import {
   InMemorySessionService,
   InvocationContext,
   LlmAgent,
+  MCPSessionManager,
+  MCPTool,
   PluginManager,
   Session,
   SingleAfterToolCallback,
@@ -21,6 +23,8 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {Tool} from '@modelcontextprotocol/sdk/types.js';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
@@ -454,6 +458,25 @@ describe('handleFunctionCallList', () => {
         },
       });
 
+    // A real session-backed InvocationContext, for tests about shared live
+    // session.state. The beforeEach context's session is a bare `{}` cast, so
+    // there each sibling Context falls back to its own fresh state object.
+    const makeSessionInvocation = async (state?: Record<string, unknown>) => {
+      const sessionService = new InMemorySessionService();
+      const session = await sessionService.createSession({
+        appName: 'test_app',
+        userId: 'test_user',
+        state,
+      });
+      const sessionInvocationContext = new InvocationContext({
+        invocationId: 'inv_session',
+        session,
+        agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
+        pluginManager,
+      });
+      return {sessionService, session, sessionInvocationContext};
+    };
+
     it('should execute multiple function calls concurrently', async () => {
       const executionLog: string[] = [];
       const makeTool = (name: string, delayMs: number) =>
@@ -516,6 +539,47 @@ describe('handleFunctionCallList', () => {
       expect(
         event?.content?.parts?.map((part) => part.functionResponse?.name),
       ).toEqual(['slowTool', 'fastTool']);
+    });
+
+    it('should execute multiple MCP tool calls concurrently', async () => {
+      const executionLog: string[] = [];
+      const makeMcpTool = (name: string, delayMs: number) => {
+        const mcpDefinition: Tool = {
+          name,
+          description: name,
+          inputSchema: {type: 'object', properties: {}},
+        };
+        const mockClient = {
+          callTool: vi.fn().mockImplementation(async () => {
+            executionLog.push(`${name}:start`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            executionLog.push(`${name}:end`);
+            return {content: [{type: 'text', text: name}]};
+          }),
+        } as unknown as Client;
+        const mockSessionManager = {
+          createSession: vi.fn().mockResolvedValue(mockClient),
+          closeSession: vi.fn().mockResolvedValue(undefined),
+        } as unknown as MCPSessionManager;
+        return new MCPTool(mcpDefinition, mockSessionManager);
+      };
+      const slowMcpTool = makeMcpTool('slowMcpTool', 50);
+      const fastMcpTool = makeMcpTool('fastMcpTool', 5);
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(slowMcpTool), callFor(fastMcpTool)],
+        toolsDict: {slowMcpTool, fastMcpTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(executionLog.indexOf('fastMcpTool:start')).toBeLessThan(
+        executionLog.indexOf('slowMcpTool:end'),
+      );
+      expect(
+        event?.content?.parts?.map((part) => part.functionResponse?.name),
+      ).toEqual(['slowMcpTool', 'fastMcpTool']);
     });
 
     it('should let all calls settle before propagating an error', async () => {
@@ -609,7 +673,7 @@ describe('handleFunctionCallList', () => {
       expect(call.args).toEqual({});
     });
 
-    it('should deep-merge nested stateDelta objects from sibling tool calls', async () => {
+    it('should deep-merge sibling response-event stateDeltas (delta merge only; state is per-call here)', async () => {
       const profileTool = makeStateTool('profileTool', 'profile', 10);
       const prefsTool = makeStateTool('prefsTool', 'prefs', 0);
 
@@ -635,22 +699,13 @@ describe('handleFunctionCallList', () => {
       // temporally LAST. The blended delta entry must carry a stamp at least
       // as new as every write it subsumes, or the commit-time stale-write
       // check drops the blend and session state keeps only a fragment.
-      const sessionService = new InMemorySessionService();
-      const session = await sessionService.createSession({
-        appName: 'test_app',
-        userId: 'test_user',
-      });
-      const ic = new InvocationContext({
-        invocationId: 'inv_commit',
-        session,
-        agent: new LlmAgent({name: 'test_agent', model: 'test_model'}),
-        pluginManager,
-      });
+      const {sessionService, session, sessionInvocationContext} =
+        await makeSessionInvocation();
       const profileTool = makeStateTool('profileTool', 'profile', 20);
       const prefsTool = makeStateTool('prefsTool', 'prefs', 0);
 
       const event = await handleFunctionCallList({
-        invocationContext: ic,
+        invocationContext: sessionInvocationContext,
         functionCalls: [callFor(profileTool), callFor(prefsTool)],
         toolsDict: {profileTool, prefsTool},
         beforeToolCallbacks: [],
@@ -662,6 +717,118 @@ describe('handleFunctionCallList', () => {
         profile: 'profileTool',
         prefs: 'prefsTool',
       });
+    });
+
+    it('pins that sibling calls share live session.state: read-modify-write across an await is not atomic', async () => {
+      // Every sibling Context wraps the SAME session.state object, so a
+      // get -> await -> set sequence in two siblings is a classic lost
+      // update: both read 0, both write 1. This is deliberate Python parity
+      // (asyncio.gather has the same hazard), pinned here so the semantics
+      // stay a decision rather than an accident. Sequential execution on
+      // main produced 2.
+      const {sessionService, session, sessionInvocationContext} =
+        await makeSessionInvocation({count: 0});
+      const makeIncrementTool = (name: string) =>
+        new FunctionTool({
+          name,
+          description: name,
+          parameters: z.object({}),
+          execute: async (_args, context) => {
+            const count = context!.state.get('count') as number;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            context!.state.set('count', count + 1);
+            return {result: name};
+          },
+        });
+      const incrementA = makeIncrementTool('incrementA');
+      const incrementB = makeIncrementTool('incrementB');
+
+      const event = await handleFunctionCallList({
+        invocationContext: sessionInvocationContext,
+        functionCalls: [callFor(incrementA), callFor(incrementB)],
+        toolsDict: {incrementA, incrementB},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+      await sessionService.appendEvent({session, event: event as Event});
+
+      expect(session.state.count).toBe(1);
+      expect(event?.actions.stateDelta.count).toBe(1);
+    });
+
+    it('pins that sibling side effects land on live session.state even when the batch rejects', async () => {
+      // A hallucinated tool name in one slot no longer prevents the other
+      // slots from running: every started sibling settles, its state writes
+      // land on the shared session.state, and only then does the rejection
+      // propagate — discarding the siblings' response events and deltas.
+      const {session, sessionInvocationContext} = await makeSessionInvocation();
+      const writerTool = new FunctionTool({
+        name: 'writerTool',
+        description: 'writes state',
+        parameters: z.object({}),
+        execute: async (_args, context) => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          context!.state.set('sideEffect', 'landed');
+          return {result: 'written'};
+        },
+      });
+
+      await expect(
+        handleFunctionCallList({
+          invocationContext: sessionInvocationContext,
+          functionCalls: [
+            {id: randomIdForTestingOnly(), name: 'unknownTool', args: {}},
+            callFor(writerTool),
+          ],
+          toolsDict: {writerTool},
+          beforeToolCallbacks: [],
+          afterToolCallbacks: [],
+        }),
+      ).rejects.toThrow('Function unknownTool is not found in the toolsDict.');
+
+      // The write hit the live state even though the batch's merged response
+      // event (and its stateDelta) was discarded with the rejection.
+      expect(session.state.sideEffect).toBe('landed');
+    });
+
+    it('should execute a call that omits args with an empty args object', async () => {
+      let argsSeen: unknown;
+      const noArgsTool = new FunctionTool({
+        name: 'noArgsTool',
+        description: 'no args tool',
+        parameters: z.object({}),
+        execute: async (args) => {
+          argsSeen = args;
+          return {result: 'ok'};
+        },
+      });
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: randomIdForTestingOnly(), name: 'noArgsTool'}],
+        toolsDict: {noArgsTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(argsSeen).toEqual({});
+      expect(event?.content?.parts?.[0]?.functionResponse?.response).toEqual({
+        result: 'ok',
+      });
+    });
+
+    it('preserves an empty-string function-call id on the response part', async () => {
+      // Pins the drive-by change from `functionCall.id || undefined`:
+      // an empty-string id is now carried through instead of being dropped.
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: '', name: 'testTool', args: {}}],
+        toolsDict: {testTool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(event?.content?.parts?.[0]?.functionResponse?.id).toBe('');
     });
 
     it('should isolate a tool error to its own response part', async () => {

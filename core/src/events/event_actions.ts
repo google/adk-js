@@ -100,28 +100,70 @@ export function createEventActions(
 }
 
 /**
+ * Stores `key` as an own data property. State values are caller-controlled
+ * JSON, and on a plain object `obj[key] = value` with an own `__proto__` key
+ * invokes the inherited setter — the entry is silently dropped and the object
+ * is re-parented with the value. `defineProperty` always creates an own
+ * property. See `updateSessionState`/`trimTempDeltaState` in
+ * `base_session_service.ts`, which harden the same class of write.
+ */
+function setOwnProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+/**
  * Recursively merges two `stateDelta` values, mirroring Python ADK's
  * `deep_merge_dicts` (flows/llm_flows/functions.py): plain objects merge
  * key-by-key, everything else — arrays included — is overwritten by the later
  * value. Copies at each level instead of mutating, so the source events'
  * deltas stay intact.
+ *
+ * The merged copies are null-prototype and written via `setOwnProperty`, so a
+ * caller-supplied `__proto__` key stays an own entry instead of re-parenting
+ * the merge (lodash's `isPlainObject` accepts null-prototype objects, so the
+ * recursion still descends into them). A self-referencing `incoming` value —
+ * already illegal for state, which must stay JSON-serializable — degrades to
+ * last-writer-wins instead of exhausting the call stack.
  */
 function deepMergeStateValues(
   base: Record<string, unknown>,
   incoming: Record<string, unknown>,
+  merging: WeakSet<object> = new WeakSet(),
 ): Record<string, unknown> {
-  const merged: Record<string, unknown> = {...base};
+  merging.add(incoming);
+  const merged: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(base)) {
+    setOwnProperty(merged, key, base[key]);
+  }
   for (const key of Object.keys(incoming)) {
     const value = incoming[key];
     const existing = merged[key];
-    merged[key] =
-      isPlainObject(existing) && isPlainObject(value)
+    const mergeable =
+      isPlainObject(existing) &&
+      isPlainObject(value) &&
+      !merging.has(value as object);
+    setOwnProperty(
+      merged,
+      key,
+      mergeable
         ? deepMergeStateValues(
             existing as Record<string, unknown>,
             value as Record<string, unknown>,
+            merging,
           )
-        : value;
+        : value,
+    );
   }
+  merging.delete(incoming);
   return merged;
 }
 
@@ -166,15 +208,19 @@ export function mergeEventActions(
         const incoming = source.stateDelta[key];
         const existing = result.stateDelta[key];
         if (isPlainObject(existing) && isPlainObject(incoming)) {
-          result.stateDelta[key] = deepMergeStateValues(
-            existing as Record<string, unknown>,
-            incoming as Record<string, unknown>,
+          setOwnProperty(
+            result.stateDelta,
+            key,
+            deepMergeStateValues(
+              existing as Record<string, unknown>,
+              incoming as Record<string, unknown>,
+            ),
           );
           // The blend subsumes both contributing writes, so it must carry a
           // stamp that beats both — otherwise a commit could skip it as stale.
           carryBlendedDeltaStamp(source.stateDelta, result.stateDelta, key);
         } else {
-          result.stateDelta[key] = incoming;
+          setOwnProperty(result.stateDelta, key, incoming);
           // The merged map is a new object; carry the write order with the
           // entry so a late commit can still tell it has been superseded.
           carryDeltaStamp(source.stateDelta, result.stateDelta, key);

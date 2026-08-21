@@ -340,7 +340,7 @@ async function executeSingleFunctionCall({
   logger.debug(`execute_tool ${tool.name}`);
   // Deep-copy args (Python ADK: copy.deepcopy) so callback/tool mutations
   // stay within this call and never leak back into the FunctionCall.
-  const functionArgs = functionCall.args ? cloneDeep(functionCall.args) : {};
+  const functionArgs = cloneDeep(functionCall.args ?? {});
 
   // Step 1: Check if plugin before_tool_callback overrides the function
   // response.
@@ -485,9 +485,22 @@ async function executeSingleFunctionCall({
  *
  * Function calls are executed in parallel, mirroring Python ADK's
  * `handle_function_call_list_async` (`asyncio.gather`). Response events keep
- * the input order of the function calls regardless of completion order. If any
- * call throws, the error propagates only after all calls have settled, so no
- * execution is left dangling mid-flight.
+ * the input order of the function calls regardless of completion order.
+ *
+ * Concurrency caveats, both deliberate Python parity:
+ * - Every sibling call's `Context` wraps the SAME `session.state` object, so
+ *   sibling reads observe sibling writes as they happen and a
+ *   read-modify-write across an `await` is not atomic — two siblings
+ *   incrementing the same key can lose an update. Sibling `stateDelta`s are
+ *   deep-merged per plain-object key on the merged event; scalar and array
+ *   collisions are last-writer-wins by input order.
+ * - If any call throws an unrecoverable error (e.g. an unknown tool name),
+ *   the rejection propagates only after ALL started siblings have settled.
+ *   Those siblings run to completion first: their side effects — external
+ *   calls, artifact writes, live `session.state` mutations — still land, and
+ *   then their response events and deltas are discarded with the rethrow.
+ *   (Normal tool errors do not reject; they are isolated into that tool's
+ *   `{error: ...}` response part.)
  */
 export async function handleFunctionCallList({
   invocationContext,

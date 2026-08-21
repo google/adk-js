@@ -117,6 +117,58 @@ describe('mergeEventActions', () => {
     expect(second.stateDelta).toEqual({user: {b: 2}});
   });
 
+  it('keeps a nested __proto__ own key and does not re-parent the merge', () => {
+    // A tool can legitimately write attacker-shaped JSON into state
+    // (`state.set('user', await res.json())`). The nested merge must store
+    // `__proto__` as an own data property — assigning it through a plain
+    // object would instead invoke the inherited setter, silently dropping
+    // the entry and swapping the merged object's prototype.
+    const poisoned = JSON.parse(
+      '{"__proto__": {"polluted": "yes"}, "ok": 1}',
+    ) as Record<string, unknown>;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {name: 'alice'}}}),
+      createEventActions({stateDelta: {user: poisoned}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.keys(user).sort()).toEqual(['__proto__', 'name', 'ok']);
+    expect(Object.getOwnPropertyDescriptor(user, '__proto__')?.value).toEqual({
+      polluted: 'yes',
+    });
+    expect('polluted' in user).toBe(false);
+  });
+
+  it('keeps a base-side __proto__ own key across the nested merge', () => {
+    const poisoned = JSON.parse('{"__proto__": {"polluted": "yes"}}') as Record<
+      string,
+      unknown
+    >;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: poisoned}}),
+      createEventActions({stateDelta: {user: {name: 'alice'}}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.keys(user).sort()).toEqual(['__proto__', 'name']);
+    expect('polluted' in user).toBe(false);
+  });
+
+  it('merges self-referencing values without exhausting the call stack', () => {
+    // State is expected to be JSON-serializable, but a cycle must degrade to
+    // last-writer-wins instead of a RangeError deep inside event merging.
+    const first: Record<string, unknown> = {tag: 'first'};
+    first.self = first;
+    const second: Record<string, unknown> = {tag: 'second'};
+    second.self = second;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {key: first}}),
+      createEventActions({stateDelta: {key: second}}),
+    ]);
+    const merged = result.stateDelta.key as Record<string, unknown>;
+    expect(merged.tag).toBe('second');
+    // The cycle falls back to last-writer-wins for the self-referencing entry.
+    expect(merged.self).toBe(second);
+  });
+
   it('overwrites arrays under the same stateDelta key (last write wins)', () => {
     // Python parity: deep_merge_dicts does NOT concatenate lists — upstream
     // added concatenation in adk-python PR #5191 and reverted it the same day.
