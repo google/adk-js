@@ -45,6 +45,9 @@ export interface RunConfig {
 
   /**
    * Whether or not to save the input blobs as artifacts.
+   *
+   * @deprecated Use `SaveFilesAsArtifactsPlugin` instead for better control and
+   * flexibility. See `SaveFilesAsArtifactsPlugin`.
    */
   saveInputBlobsAsArtifacts?: boolean;
 

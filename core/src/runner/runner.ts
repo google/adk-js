@@ -356,6 +356,11 @@ export class Runner {
             // replaces the artifact data with a file name placeholder.
             // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
+              logger.warn(
+                "The 'saveInputBlobsAsArtifacts' parameter is deprecated. Use " +
+                  'SaveFilesAsArtifactsPlugin instead for better control and ' +
+                  'flexibility.',
+              );
               newMessage = await this.saveArtifacts(
                 invocationContext.invocationId,
                 session.userId,
