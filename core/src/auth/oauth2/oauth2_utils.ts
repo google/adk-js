@@ -101,10 +101,8 @@ export function parseAuthorizationCode(uri: string): string | undefined {
   try {
     const url = new URL(uri);
     return url.searchParams.get('code') || undefined;
-  } catch (e) {
-    logger.warn(
-      `Failed to parse authorization URI ${redactUriPassword(uri)}: ${e}`,
-    );
+  } catch {
+    logger.warn(`Failed to parse authorization URI ${redactUriPassword(uri)}`);
     return undefined;
   }
 }
