@@ -50,6 +50,10 @@ import {
   serializeAgent,
   serializeAppInfo,
 } from './app_info.js';
+import {
+  getAllowedRequestHosts,
+  isDnsRebindingRequest,
+} from './dns_rebinding_guard.js';
 import {renderStructureGraphAsDot} from './structure_graph.js';
 
 /**
@@ -217,6 +221,31 @@ export class AdkApiServer {
   private async init() {
     const app = this.app;
     await this.setupTelemetry();
+
+    // Registered before any route (including /health, /, /version) so the
+    // DNS-rebinding guard applies to every endpoint, not just the ones
+    // registered after this point. Origin cannot be relied on here: a
+    // DNS-rebound page's requests look same-origin to the browser, which
+    // omits Origin for them, so safe methods (GET/HEAD/OPTIONS) get the
+    // same check as everything else.
+    const allowedRequestHosts = getAllowedRequestHosts(this.allowOrigins);
+    app.use((req: Request, res: Response, next: express.NextFunction) => {
+      if (
+        isDnsRebindingRequest(req.headers.host, this.host, allowedRequestHosts)
+      ) {
+        this.logger.warn(
+          `Rejected request with Host "${req.headers.host}": the server is bound to ` +
+            `${this.host} and only loopback hosts are accepted. Set --allow_origins ` +
+            `to the origin you are reaching this server through.`,
+        );
+        res
+          .status(403)
+          .type('text/plain')
+          .send('Forbidden: possible DNS-rebinding request');
+        return;
+      }
+      next();
+    });
 
     if (this.serveDebugUI) {
       app.get('/', (req: Request, res: Response) => {

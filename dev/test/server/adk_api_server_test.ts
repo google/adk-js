@@ -24,6 +24,7 @@ import {
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import * as http from 'node:http';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
@@ -262,6 +263,84 @@ describe('AdkWebServer', () => {
       expect(response.status).toBe(200);
       expect(response.data?.version).toBe(version);
       expect(response.data?.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+  });
+
+  /**
+   * Sends a GET with an explicit Host header, bypassing whatever Host `url`'s
+   * hostname would otherwise imply. `fetch()` cannot do this: undici rewrites
+   * Host to match the actual connection target for any request it dispatches,
+   * which is exactly why the DNS-rebinding guard below has to be tested with
+   * a lower-level client that reproduces what a rebound page's browser
+   * actually sends on the wire.
+   */
+  function getWithHost(url: string, hostHeader: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const target = new URL(url);
+      const req = http.request(
+        {
+          host: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: 'GET',
+          headers: {Host: hostHeader},
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  describe('DNS-rebinding guard', () => {
+    // Regression tests for a missing DNS-rebinding guard: the server bound
+    // to loopback with no --allow_origins configured accepted requests
+    // naming an arbitrary Host, which a page reached via a rebound hostname
+    // would send. Origin cannot catch this -- browsers omit it on requests
+    // they consider same-origin, as a rebound page's are -- so the guard
+    // must key off Host instead, on every method including GET.
+    let guardServer: AdkApiServer;
+
+    beforeEach(async () => {
+      guardServer = new AdkApiServer({
+        agentLoader: {
+          listAgents: () => Promise.resolve(['testApp']),
+        } as unknown as AgentLoader,
+      });
+      await guardServer.start();
+    });
+
+    afterEach(async () => {
+      await guardServer.stop();
+    });
+
+    it('accepts a request whose Host names the loopback bind', async () => {
+      const status = await getWithHost(
+        `${guardServer.url}/version`,
+        'localhost',
+      );
+      expect(status).toBe(200);
+    });
+
+    it('rejects a GET whose Host does not name loopback', async () => {
+      const status = await getWithHost(
+        `${guardServer.url}/version`,
+        'evil.attacker.example',
+      );
+      expect(status).toBe(403);
+    });
+
+    it('rejects a read endpoint with no Origin header at all', async () => {
+      // The exact shape of a DNS-rebound page's request: same-origin as far
+      // as the browser is concerned, so no Origin header is sent.
+      const status = await getWithHost(
+        `${guardServer.url}/list-apps`,
+        'evil.attacker.example',
+      );
+      expect(status).toBe(403);
     });
   });
 
