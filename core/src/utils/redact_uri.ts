@@ -24,6 +24,7 @@ const SECRET_QUERY_PARAMS = new Set([
   'id_token',
   'refresh_token',
   'client_secret',
+  'code_verifier',
 ]);
 
 /**
