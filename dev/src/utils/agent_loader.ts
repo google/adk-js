@@ -201,26 +201,33 @@ export class AgentFile {
         bundle: this.options.bundle,
         minify: this.options.bundle,
         plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
-        // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
-        external: [
-          'sqlite3',
-          'better-sqlite3',
-          'mysql',
-          'mysql2',
-          // Native addons must remain external so Node can resolve their
-          // platform-specific assets at runtime.
-          'onnxruntime-node',
-          'oracledb',
-          'pg-native',
-          'pg-query-stream',
-          'tedious',
-          'libsql',
-          // Optional peer dependencies of vite and eslint that are not
-          // installed and MUST NOT be bundled.
-          'lightningcss',
-          'jiti',
-          'jiti/package.json',
-        ],
+        // esbuild rejects `external` when `bundle` is false, and it is also
+        // unnecessary: unbundled output already keeps every import as a
+        // runtime require, resolved from the linked project node_modules.
+        ...(this.options.bundle
+          ? {
+              // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
+              external: [
+                'sqlite3',
+                'better-sqlite3',
+                'mysql',
+                'mysql2',
+                // Native addons must remain external so Node can resolve their
+                // platform-specific assets at runtime.
+                'onnxruntime-node',
+                'oracledb',
+                'pg-native',
+                'pg-query-stream',
+                'tedious',
+                'libsql',
+                // Optional peer dependencies of vite and eslint that are not
+                // installed and MUST NOT be bundled.
+                'lightningcss',
+                'jiti',
+                'jiti/package.json',
+              ],
+            }
+          : {}),
       });
 
       this.cleanupDirPath = outputDir;
