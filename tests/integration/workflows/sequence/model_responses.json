@@ -1,0 +1,114 @@
+[
+  {
+    "key": "344ca7d27432abea",
+    "instructionAgnosticKey": "b7d8b17b7ea4d757",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_fruit_agent\".\n\nReturn the name of a random fruit.\n      Return only the name, nothing else.",
+        "labels": {
+          "adk_agent_name": "generate_fruit_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Apple"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 36,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 59,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 36
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 1
+          }
+        ],
+        "thoughtsTokenCount": 22
+      }
+    }
+  },
+  {
+    "key": "b87634a049ca625e",
+    "instructionAgnosticKey": "76f05d0d271c04a2",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Apple"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_benefit_agent\".\n\nTell me a health benefit about the specified fruit.",
+        "labels": {
+          "adk_agent_name": "generate_benefit_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Eating an apple can help promote good digestion due to its high fiber content."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 28,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 64,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 28
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 15
+          }
+        ],
+        "thoughtsTokenCount": 21
+      }
+    }
+  }
+]

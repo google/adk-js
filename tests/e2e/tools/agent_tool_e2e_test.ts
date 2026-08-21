@@ -69,7 +69,6 @@ describe('E2E AgentTool State Filtering', () => {
         // Let it run
       }
 
-      // Retrieve the sub-agent's session
       const subAgentSession = await runner.sessionService.getSession({
         appName: 'sub_agent',
         userId: 'test_user',

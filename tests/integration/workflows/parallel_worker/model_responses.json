@@ -1,0 +1,281 @@
+[
+  {
+    "key": "92014c360cbc0a50",
+    "instructionAgnosticKey": "0c04e22ff5342701",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "flower"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "ARRAY",
+          "items": {
+            "type": "STRING"
+          }
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Given the specific topic \"flower\", generate a list of 3 related topics.",
+        "labels": {
+          "adk_agent_name": "find_related_topics"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "[\n  \"gardening\",\n  \"botany\",\n  \"bees\"\n]"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 19,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 66,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 20
+          }
+        ],
+        "thoughtsTokenCount": 27
+      }
+    }
+  },
+  {
+    "key": "bfa5021ba9e9267f",
+    "instructionAgnosticKey": "5cbdb7a52d07aab7",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "BOTANY"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "topic",
+            "explanation"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\n  \"topic\": \"BOTANY\",\n  \"explanation\": \"Botany is the scientific study of plants, and flowers are a central subject within this field. Botanists study the morphology, anatomy, physiology, genetics, ecology, and evolution of flowers, as they are crucial for plant reproduction, classification, and understanding plant diversity.\"\n}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 23,
+        "candidatesTokenCount": 71,
+        "totalTokenCount": 136,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 71
+          }
+        ],
+        "thoughtsTokenCount": 42
+      }
+    }
+  },
+  {
+    "key": "b5a5f000bf9e532e",
+    "instructionAgnosticKey": "1570ada1892676ed",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "GARDENING"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "topic",
+            "explanation"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\n  \"topic\": \"GARDENING\",\n  \"explanation\": \"Gardening is the practice of cultivating and growing plants as part of horticulture. This often directly involves the planting, tending, and harvesting of flowers for aesthetic enjoyment, scent, or decorative purposes. Flowers are a primary component and desired outcome for many gardeners.\"\n}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 24,
+        "candidatesTokenCount": 69,
+        "totalTokenCount": 126,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 24
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 69
+          }
+        ],
+        "thoughtsTokenCount": 33
+      }
+    }
+  },
+  {
+    "key": "fd5a4677430bab7a",
+    "instructionAgnosticKey": "42a0418822d5a65a",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "BEES"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "topic": {
+              "type": "STRING"
+            },
+            "explanation": {
+              "type": "STRING"
+            }
+          },
+          "required": [
+            "topic",
+            "explanation"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Explain how the following topic relates the the original topic: \"flower\".",
+        "labels": {
+          "adk_agent_name": "explain_topic"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\n  \"topic\": \"BEES\",\n  \"explanation\": \"Bees have a crucial symbiotic relationship with flowers. Flowers provide bees with nectar (a sugary liquid for energy) and pollen (a protein source for bee larvae) as food. In return, as bees move from flower to flower collecting these resources, they inadvertently transfer pollen grains, facilitating the pollination process. This pollination is essential for the reproduction of many flowering plants, leading to fruit and seed production.\"\n}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 23,
+        "candidatesTokenCount": 97,
+        "totalTokenCount": 168,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 97
+          }
+        ],
+        "thoughtsTokenCount": 48
+      }
+    }
+  }
+]

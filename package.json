@@ -1,6 +1,6 @@
 {
   "name": "adk",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -11,10 +11,12 @@
   },
   "scripts": {
     "build": "npm run build --workspaces",
+    "sample": "node dev/dist/esm/cli_entrypoint.js run",
     "clean": "npm run clean --workspaces",
     "clean:all": "rm package-lock.json && rm -rf ./node_modules && npm run clean:all --workspaces",
     "rebuild": "npm run clean:all && npm install && npm run build",
     "ts:check": "tsc --noEmit",
+    "ts:check:samples": "tsc --noEmit -p samples",
     "lint": "eslint \"**/*.ts\"",
     "lint:fix": "eslint --fix \"**/*.ts\"",
     "format": "prettier \"**/*.ts\" --write",
@@ -27,6 +29,7 @@
     "test": "vitest --project unit:core --project unit:dev --project integration --project e2e",
     "test:unit": "vitest --project unit:core --project unit:dev",
     "test:integration": "vitest --project integration",
+    "record:samples": "RECORD_MODEL_RESPONSES=1 vitest run --project integration tests/integration/workflows/*/*_test.ts",
     "test:e2e": "vitest --project e2e",
     "test:cross-language": "vitest --project cross-language",
     "test:coverage": "vitest run --project unit:core --project unit:dev --project integration --project e2e --coverage",

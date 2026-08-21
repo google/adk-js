@@ -50,6 +50,11 @@ function build({
     format,
     bundle,
     minify: bundle,
+    // Minification renames classes, and we report those names at runtime:
+    // `@experimental` logs `target.name`, which otherwise reads "Class oR is
+    // experimental". User code that logs `constructor.name` sees the same
+    // mangling, so keep the original names in the bundle.
+    keepNames: true,
     sourcemap: bundle,
     // The web target ships a self-contained bundle so a browser can load it
     // directly; bare specifiers like '@google/genai' are not resolvable there.

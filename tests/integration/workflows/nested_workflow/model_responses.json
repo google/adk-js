@@ -1,0 +1,170 @@
+[
+  {
+    "key": "5b100c977505f7bd",
+    "instructionAgnosticKey": "68bcd6d8fa3075da",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1984"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"find_name\".\n\n\n    Find the name of one famous person who was born in this year: 1984.\n    Return ONLY their name, nothing else.\n    ",
+        "labels": {
+          "adk_agent_name": "find_name"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Robert Pattinson"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 96,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 52
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 41
+      }
+    }
+  },
+  {
+    "key": "c18e393877853a11",
+    "instructionAgnosticKey": "fb99c860252431b8",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Robert Pattinson"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_bio\".\n\n\n    Write a short, engaging 3-sentence biography for the specified person.\n    ",
+        "labels": {
+          "adk_agent_name": "generate_bio"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Robert Pattinson shot to global stardom as the brooding vampire Edward Cullen in the *Twilight* saga, captivating millions worldwide. He then masterfully transitioned to critically acclaimed independent films, earning praise for his intense performances in movies like *Good Time* and *The Lighthouse*. Most recently, he donned the cape and cowl as the Caped Crusader in *The Batman*, solidifying his status as one of Hollywood's most versatile and compelling leading men."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 36,
+        "candidatesTokenCount": 90,
+        "totalTokenCount": 308,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 36
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 90
+          }
+        ],
+        "thoughtsTokenCount": 182
+      }
+    }
+  },
+  {
+    "key": "3e840407dc663206",
+    "instructionAgnosticKey": "d165670813341e1d",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "1984"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"find_historical_event\".\n\n\n    Describe one highly significant historical event that occurred in this year: 1984.\n    Keep the description to 2 sentences.\n    ",
+        "labels": {
+          "adk_agent_name": "find_historical_event"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "In December 1984, the Bhopal disaster occurred in India when a Union Carbide pesticide plant leaked toxic gas, killing thousands instantly and causing long-term health issues for hundreds of thousands more. This catastrophe remains one of the world's worst industrial accidents, leading to significant legal battles, environmental activism, and reforms in corporate safety regulations globally."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 70,
+        "totalTokenCount": 701,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 52
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 70
+          }
+        ],
+        "thoughtsTokenCount": 579
+      }
+    }
+  }
+]

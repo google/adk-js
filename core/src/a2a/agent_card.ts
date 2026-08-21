@@ -20,6 +20,8 @@ import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
+import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
+import {isWorkflow} from '../workflow/workflow.js';
 
 /**
  * Resolves the AgentCard from the provided source.
@@ -51,7 +53,7 @@ export async function resolveAgentCard(
  * Converts an ADK agent to an A2A AgentCard.
  */
 export async function getA2AAgentCard(
-  agent: BaseAgent,
+  agent: RunnableRoot,
   transports: AgentInterface[],
 ): Promise<AgentCard> {
   return {
@@ -82,7 +84,7 @@ export async function getA2AAgentCard(
  * @returns A promise resolving to a list of AgentSkills.
  */
 export async function buildAgentSkills(
-  agent: BaseAgent,
+  agent: RunnableRoot,
 ): Promise<AgentSkill[]> {
   const [primarySkills, subAgentSkills] = await Promise.all([
     buildPrimarySkills(agent),
@@ -92,7 +94,19 @@ export async function buildAgentSkills(
   return [...primarySkills, ...subAgentSkills];
 }
 
-async function buildPrimarySkills(agent: BaseAgent): Promise<AgentSkill[]> {
+async function buildPrimarySkills(agent: RunnableRoot): Promise<AgentSkill[]> {
+  if (isWorkflow(agent)) {
+    // A workflow advertises itself as one skill. It has no sub-agents to
+    // enumerate, and its internals are a graph rather than a roster.
+    return [
+      {
+        id: agent.name,
+        name: 'workflow',
+        description: agent.description || `Workflow ${agent.name}`,
+        tags: ['workflow'],
+      },
+    ];
+  }
   if (isLlmAgent(agent)) {
     return buildLLMAgentSkills(agent);
   }
@@ -100,8 +114,10 @@ async function buildPrimarySkills(agent: BaseAgent): Promise<AgentSkill[]> {
   return buildNonLLMAgentSkills(agent);
 }
 
-async function buildSubAgentSkills(agent: BaseAgent): Promise<AgentSkill[]> {
-  const subAgents = agent.subAgents;
+async function buildSubAgentSkills(agent: RunnableRoot): Promise<AgentSkill[]> {
+  // A workflow has nodes, not sub-agents: its shape is described by the single
+  // `workflow` skill rather than one skill per child.
+  const subAgents = isWorkflow(agent) ? [] : agent.subAgents;
   const result: AgentSkill[] = [];
 
   for (const sub of subAgents) {
@@ -405,13 +421,13 @@ function getAgentSkillName(agent: BaseAgent): string {
   if (isLlmAgent(agent)) {
     return 'model';
   }
-  if (isWorkflowAgent(agent)) {
+  if (isCompositeShellAgent(agent) || isWorkflow(agent)) {
     return 'workflow';
   }
   return 'custom';
 }
 
-function isWorkflowAgent(agent: BaseAgent): boolean {
+function isCompositeShellAgent(agent: BaseAgent): boolean {
   return (
     isLoopAgent(agent) || isSequentialAgent(agent) || isParallelAgent(agent)
   );

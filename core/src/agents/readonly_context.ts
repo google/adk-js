@@ -8,7 +8,7 @@ import {Content} from '@google/genai';
 
 import {State} from '../sessions/state.js';
 
-import {InvocationContext} from './invocation_context.js';
+import {InvocationContext, requireAgent} from './invocation_context.js';
 
 /**
  * A readonly context represents the data of a single invocation of an agent.
@@ -48,7 +48,7 @@ export class ReadonlyContext {
    * The current agent name.
    */
   get agentName(): string {
-    return this.invocationContext.agent.name;
+    return requireAgent(this.invocationContext).name;
   }
 
   /**

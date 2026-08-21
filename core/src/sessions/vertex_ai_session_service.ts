@@ -7,18 +7,23 @@
 import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
+  EventActions as ApiEventActions,
   AppendAgentEngineSessionEventConfig,
   AppendAgentEngineSessionEventRequestParameters,
   EventMetadata,
   Session as VertexAiSession,
   SessionEvent as VertexAiSessionEvent,
 } from '@google-cloud/vertexai/build/src/genai/types.js';
-import {Content, GenerateContentResponseUsageMetadata} from '@google/genai';
+import {
+  Content,
+  GenerateContentResponseUsageMetadata,
+  GroundingMetadata,
+} from '@google/genai';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {experimental} from '../utils/experimental.js';
 
 import {AuthConfig} from '../auth/auth_tool.js';
-import {Event} from '../events/event.js';
+import {Event, NodeInfo, Route} from '../events/event.js';
 import {EventActions} from '../events/event_actions.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
@@ -43,6 +48,21 @@ import {createSession, Session} from './session.js';
 const DEFAULT_MAX_ATTEMPTS = 30;
 const GRPC_NOT_FOUND = 5;
 const HTTP_NOT_FOUND = 404;
+const HTTP_BAD_REQUEST = 400;
+
+/**
+ * `eventMetadata.customMetadata` key carrying the workflow fields of an
+ * {@link Event} that the Agent Engine sessions API does not model: a node's
+ * `output`, `route`, `nodeInfo` and `isolationScope`, plus the
+ * `agentState`/`endOfAgent` actions. It is the same escape hatch this service
+ * already uses for `_compaction` and `_usage_metadata`.
+ *
+ * Workflow resume is driven entirely by these fields — `reconstructNodeStates`
+ * groups prior events by `nodeInfo.path` and replays their `output`/`route`,
+ * and a paused node recovers its input from `actions.agentState` — so an event
+ * rebuilt without them makes a resumed run re-execute completed nodes.
+ */
+const WORKFLOW_CUSTOM_METADATA_KEY = '_workflow';
 
 /**
  * Checks if the given URI is a Vertex AI session service URI.
@@ -431,13 +451,22 @@ export class VertexAiSessionService extends BaseSessionService {
     if (event.usageMetadata) {
       customMetadata._usage_metadata = event.usageMetadata;
     }
+    const workflowMetadata = toWorkflowMetadata(event);
+    if (workflowMetadata) {
+      customMetadata[WORKFLOW_CUSTOM_METADATA_KEY] = workflowMetadata;
+    }
 
     const config = partialCopy<AppendAgentEngineSessionEventConfig>(event, [
-      'content',
-      'actions',
       'errorCode',
       'errorMessage',
     ]);
+    config.actions = toApiActions(event.actions);
+
+    // Strip Part fields the Sessions API rejects (e.g. `partMetadata`) from
+    // both the wire content and the `rawEvent` blob it is stored under, so the
+    // append is not rejected with 400 INVALID_ARGUMENT.
+    const content = dropUnsupportedPartFields(event.content);
+    config.content = content;
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
@@ -452,7 +481,7 @@ export class VertexAiSessionService extends BaseSessionService {
         Object.keys(customMetadata).length > 0 ? customMetadata : undefined,
     };
 
-    config.rawEvent = JSON.parse(JSON.stringify(event)) as Record<
+    config.rawEvent = JSON.parse(JSON.stringify({...event, content})) as Record<
       string,
       unknown
     >;
@@ -468,22 +497,135 @@ export class VertexAiSessionService extends BaseSessionService {
     try {
       await this.sessions.events.append(params);
     } catch (error) {
+      // Only a rejected payload (400) is safe to retry without `rawEvent`. Any
+      // other failure may already have persisted the event, so re-appending
+      // would duplicate it; let it propagate.
+      if (!isInvalidArgumentError(error)) {
+        throw error;
+      }
       logger.warn(
-        'Failed to append event with rawEvent, falling back...',
+        'Failed to append event with rawEvent; retrying without it. The event ' +
+          'will be reconstructed from its structured fields and ' +
+          'customMetadata on read.',
         error,
       );
       delete config.rawEvent;
-      await this.sessions.events.append({
-        name: `reasoningEngines/${reasoningEngineId}/sessions/${session.id}`,
-        author: event.author || 'user',
-        invocationId: event.invocationId || `inv-${Date.now()}`,
-        timestamp: new Date(event.timestamp).toISOString(),
-        config,
-      });
+      await this.sessions.events.append(params);
     }
 
     return event;
   }
+}
+
+interface WorkflowEventMetadata {
+  output?: unknown;
+  route?: Route;
+  nodeInfo?: NodeInfo;
+  isolationScope?: string;
+  agentState?: Record<string, unknown>;
+  endOfAgent?: boolean;
+}
+
+function toWorkflowMetadata(event: Event): WorkflowEventMetadata | undefined {
+  const metadata: WorkflowEventMetadata = {};
+  if (event.output !== undefined) {
+    metadata.output = event.output;
+  }
+  if (event.route !== undefined) {
+    metadata.route = event.route;
+  }
+  if (event.nodeInfo !== undefined) {
+    metadata.nodeInfo = event.nodeInfo;
+  }
+  if (event.isolationScope !== undefined) {
+    metadata.isolationScope = event.isolationScope;
+  }
+  if (event.actions?.agentState !== undefined) {
+    metadata.agentState = event.actions.agentState;
+  }
+  if (event.actions?.endOfAgent !== undefined) {
+    metadata.endOfAgent = event.actions.endOfAgent;
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function applyWorkflowMetadata(
+  event: Event,
+  metadata: WorkflowEventMetadata,
+): void {
+  if (metadata.output !== undefined) {
+    event.output = metadata.output;
+  }
+  if (metadata.route !== undefined) {
+    event.route = metadata.route;
+  }
+  if (metadata.nodeInfo !== undefined) {
+    event.nodeInfo = metadata.nodeInfo;
+  }
+  if (metadata.isolationScope !== undefined) {
+    event.isolationScope = metadata.isolationScope;
+  }
+  if (metadata.agentState !== undefined) {
+    event.actions.agentState = metadata.agentState;
+  }
+  if (metadata.endOfAgent !== undefined) {
+    event.actions.endOfAgent = metadata.endOfAgent;
+  }
+}
+
+/**
+ * Renames `transferToAgent` to the `transferAgent` the Agent Engine sessions
+ * API actually defines, mirroring what `_fromApiEvent` reads back and what
+ * adk-python writes. Returns a new object: `partialCopy` is shallow, so
+ * rewriting the event's own `actions` in place would mutate the caller's event.
+ */
+function toApiActions(
+  actions: EventActions | undefined,
+): ApiEventActions | undefined {
+  if (!actions) {
+    return undefined;
+  }
+  const {transferToAgent, ...rest} = actions;
+  return {
+    ...rest,
+    ...(transferToAgent !== undefined ? {transferAgent: transferToAgent} : {}),
+  } as ApiEventActions;
+}
+
+/**
+ * Returns a copy of `content` without Part fields the Agent Engine Sessions
+ * API rejects, passing `undefined` through unchanged.
+ *
+ * `partMetadata` is a Gemini Developer API-only field; the Sessions API fails
+ * appendEvent with 400 INVALID_ARGUMENT ("Unknown name \"part_metadata\"").
+ * The input is never mutated, so the caller's event keeps its metadata.
+ */
+function dropUnsupportedPartFields(
+  content: Content | undefined,
+): Content | undefined {
+  if (!content?.parts) {
+    return content;
+  }
+  return {
+    ...content,
+    parts: content.parts.map((part) => {
+      const copy = {...part};
+      delete copy.partMetadata;
+      return copy;
+    }),
+  };
+}
+
+/**
+ * True when the service rejected the request payload itself, which is what an
+ * API that does not know `rawEvent` returns. Any other failure must propagate:
+ * the event may already be persisted, so retrying would append it twice.
+ *
+ * Matched structurally on the `ApiError`'s `status`, for the reason given in
+ * getSession's catch.
+ */
+function isInvalidArgumentError(error: unknown): boolean {
+  return (error as {status?: number} | null)?.status === HTTP_BAD_REQUEST;
 }
 
 interface ExtendedEventActions extends EventActions {
@@ -527,8 +669,10 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     compactedContent: string;
   } | null = null;
   let usageMetadataData = null;
+  let workflowData: WorkflowEventMetadata | undefined;
 
   if (customMetadata) {
+    customMetadata = {...customMetadata};
     if (customMetadata._compaction) {
       compactionData = customMetadata._compaction as {
         startTime: number;
@@ -540,6 +684,12 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     if (customMetadata._usage_metadata) {
       usageMetadataData = customMetadata._usage_metadata;
       delete customMetadata._usage_metadata;
+    }
+    if (customMetadata[WORKFLOW_CUSTOM_METADATA_KEY]) {
+      workflowData = customMetadata[
+        WORKFLOW_CUSTOM_METADATA_KEY
+      ] as WorkflowEventMetadata;
+      delete customMetadata[WORKFLOW_CUSTOM_METADATA_KEY];
     }
     if (Object.keys(customMetadata).length === 0) {
       customMetadata = undefined;
@@ -556,7 +706,12 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
         'requestedToolConfirmations'
       ] as Record<string, ToolConfirmation>) || {},
     skipSummarization: actions['skipSummarization'] as boolean | undefined,
-    transferToAgent: actions['transferAgent'] as string | undefined,
+    // Earlier adk-js versions copied `event.actions` onto the request
+    // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
+    transferToAgent: (actions['transferAgent'] ??
+      (actions as Record<string, unknown>)['transferToAgent']) as
+      | string
+      | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -580,6 +735,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
       | string[]
       | undefined,
+    groundingMetadata: eventMetadata['groundingMetadata'] as
+      | GroundingMetadata
+      | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };
@@ -589,6 +747,10 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     event.startTime = compactionData.startTime;
     event.endTime = compactionData.endTime;
     event.compactedContent = compactionData.compactedContent;
+  }
+
+  if (workflowData) {
+    applyWorkflowMetadata(event, workflowData);
   }
 
   return event;

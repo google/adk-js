@@ -40,8 +40,20 @@ export type ToolExecuteArgument<TParameters extends ToolInputParameters> =
  */
 export type ToolExecuteFunction<TParameters extends ToolInputParameters> = (
   input: ToolExecuteArgument<TParameters>,
-  tool_context?: Context,
+  toolContext?: Context,
 ) => Promise<unknown> | unknown;
+
+/**
+ * Whether a {@link FunctionTool} requires user confirmation before it runs: a
+ * boolean, or a predicate over the (validated) call arguments and tool context.
+ * See {@link ToolOptions.requireConfirmation}.
+ */
+export type RequireConfirmation<TParameters extends ToolInputParameters> =
+  | boolean
+  | ((
+      input: ToolExecuteArgument<TParameters>,
+      toolContext?: Context,
+    ) => boolean | Promise<boolean>);
 
 /**
  * The configuration options for creating a function-based tool.
@@ -57,6 +69,24 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   parameters?: TParameters;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
+  /**
+   * Whether this tool requires user confirmation before it runs. A boolean, or
+   * a predicate over the (validated) call arguments and tool context returning
+   * a boolean.
+   *
+   * The HITL gate is enforced when the tool is invoked through an `LlmAgent`
+   * turn: `agents/functions.ts` surfaces an `adk_request_confirmation`
+   * interrupt from the tool's `requestedToolConfirmations`, and the tool only
+   * executes once the user approves (via the
+   * `RequestConfirmationLlmRequestProcessor`).
+   *
+   * NOTE: a workflow `ToolNode` does not yet route through that path, so a
+   * `requireConfirmation` tool used directly as a node does not pause — it
+   * returns the "requires confirmation" error as its node output. Approval for
+   * workflow nodes is not wired up. Mirrors Python's
+   * `FunctionTool(require_confirmation=...)`.
+   */
+  requireConfirmation?: RequireConfirmation<TParameters>;
 };
 
 function toSchema<TParameters extends ToolInputParameters>(
@@ -111,6 +141,8 @@ export class FunctionTool<
   private readonly execute: ToolExecuteFunction<TParameters>;
   // Typed input parameters.
   private readonly parameters?: TParameters;
+  // Whether the tool requires user confirmation before running.
+  private readonly requireConfirmation: RequireConfirmation<TParameters>;
 
   /**
    * The constructor acts as the user-friendly factory.
@@ -130,6 +162,7 @@ export class FunctionTool<
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
+    this.requireConfirmation = options.requireConfirmation ?? false;
   }
 
   /**
@@ -153,18 +186,102 @@ export class FunctionTool<
    */
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
-      let validatedArgs: unknown = req.args;
-      if (isZodObject(this.parameters)) {
-        validatedArgs = this.parameters.parse(req.args);
-      }
-      return await this.execute(
-        validatedArgs as ToolExecuteArgument<TParameters>,
+      const validatedArgs = this.validateArgs(req.args);
+
+      const pending = await this.checkConfirmation(
+        validatedArgs,
         req.toolContext,
       );
+      if (pending !== undefined) {
+        return pending;
+      }
+
+      return await this.execute(validatedArgs, req.toolContext);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
     }
+  }
+
+  /**
+   * Whether this call is gated on human approval — the static flag, or the
+   * predicate evaluated against the validated arguments.
+   *
+   * @param args The arguments the tool would run with.
+   * @param toolContext The context of the call, when there is one.
+   * @return Whether the call requires confirmation.
+   */
+  override async checkRequireConfirmation(
+    args: Record<string, unknown>,
+    toolContext?: Context,
+  ): Promise<boolean> {
+    // Only a predicate needs typed arguments. Validating for the static flag
+    // would answer a question about the gate with a schema error.
+    if (typeof this.requireConfirmation !== 'function') {
+      return this.requireConfirmation;
+    }
+    return this.requireConfirmation(this.validateArgs(args), toolContext);
+  }
+
+  /** Parses `args` against the parameter schema, when one is declared. */
+  private validateArgs(
+    args: Record<string, unknown>,
+  ): ToolExecuteArgument<TParameters> {
+    if (isZodObject(this.parameters)) {
+      return this.parameters.parse(args) as ToolExecuteArgument<TParameters>;
+    }
+    return args as ToolExecuteArgument<TParameters>;
+  }
+
+  /** Resolves `requireConfirmation`, which may be a flag or a predicate. */
+  private async evaluateRequireConfirmation(
+    input: ToolExecuteArgument<TParameters>,
+    toolContext?: Context,
+  ): Promise<boolean> {
+    return typeof this.requireConfirmation === 'function'
+      ? this.requireConfirmation(input, toolContext)
+      : this.requireConfirmation;
+  }
+
+  /**
+   * Evaluates the confirmation gate. Returns `undefined` if the tool may
+   * proceed; otherwise returns the function response payload to surface instead
+   * of running (a request-for-confirmation on the first pass, or a rejection
+   * once the user declined).
+   */
+  private async checkConfirmation(
+    input: ToolExecuteArgument<TParameters>,
+    toolContext?: Context,
+  ): Promise<{error: string} | undefined> {
+    const requireConfirmation = await this.evaluateRequireConfirmation(
+      input,
+      toolContext,
+    );
+    if (!requireConfirmation) {
+      return undefined;
+    }
+    if (!toolContext) {
+      throw new Error(
+        `Tool '${this.name}' requires confirmation but no tool context was provided.`,
+      );
+    }
+    if (!toolContext.toolConfirmation) {
+      toolContext.requestConfirmation({
+        hint:
+          `Please approve or reject the tool call ${this.name}() by ` +
+          'responding with a FunctionResponse with an expected ' +
+          'ToolConfirmation payload.',
+      });
+      toolContext.actions.skipSummarization = true;
+      return {
+        error:
+          'This tool call requires confirmation, please approve or reject.',
+      };
+    }
+    if (!toolContext.toolConfirmation.confirmed) {
+      return {error: 'This tool call is rejected.'};
+    }
+    return undefined;
   }
 }

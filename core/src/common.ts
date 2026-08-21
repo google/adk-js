@@ -15,12 +15,18 @@ export type {
 } from './agents/base_agent.js';
 export {Context} from './agents/context.js';
 export {
+  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
+  REQUEST_INPUT_FUNCTION_CALL_NAME,
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
 } from './agents/functions.js';
-export {InvocationContext} from './agents/invocation_context.js';
-export type {InvocationContextParams} from './agents/invocation_context.js';
+export {InvocationContext, requireAgent} from './agents/invocation_context.js';
+export type {
+  InvocationContextParams,
+  WorkflowInstructionScope,
+} from './agents/invocation_context.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
 export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
@@ -62,6 +68,15 @@ export {StreamingMode} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
+export {
+  getPendingUserInputRequests,
+  getUserInputRequests,
+  requiresUserInput,
+} from './agents/user_input_request.js';
+export type {
+  UserInputKind,
+  UserInputRequest,
+} from './agents/user_input_request.js';
 export {createResumabilityConfig} from './apps/resumability_config.js';
 export type {ResumabilityConfig} from './apps/resumability_config.js';
 export type {
@@ -129,6 +144,8 @@ export {TrajectoryThoughtPruningCompactor} from './context/trajectory_thought_pr
 export type {TrajectoryThoughtPruningCompactorOptions} from './context/trajectory_thought_pruning_compactor.js';
 export {TruncatingContextCompactor} from './context/truncating_context_compactor.js';
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
+export {BaseEnvironment} from './environment/base_environment.js';
+export type {ExecutionResult} from './environment/base_environment.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
@@ -143,7 +160,13 @@ export {
   pruneThoughts,
   stringifyContent,
 } from './events/event.js';
-export type {Event} from './events/event.js';
+export type {
+  CreateEventParams,
+  Event,
+  NodeInfo,
+  Route,
+  RouteKey,
+} from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';
@@ -191,7 +214,6 @@ export {PluginManager} from './plugins/plugin_manager.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
-  REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   SecurityPlugin,
   getAskUserConfirmationFunctionCalls,
 } from './plugins/security_plugin.js';
@@ -222,7 +244,7 @@ export type {
 export {InMemorySessionService} from './sessions/in_memory_session_service.js';
 export {createSession} from './sessions/session.js';
 export type {CompositeSessionKey, Session} from './sessions/session.js';
-export {State} from './sessions/state.js';
+export {State, StateSchemaError, isStateSchemaError} from './sessions/state.js';
 export {AgentTool, isAgentTool} from './tools/agent_tool.js';
 export type {AgentToolConfig} from './tools/agent_tool.js';
 export {BaseTool, isBaseTool} from './tools/base_tool.js';
@@ -240,8 +262,14 @@ export {
 } from './tools/enterprise_web_search_tool.js';
 export {ExampleTool} from './tools/example_tool.js';
 export {EXIT_LOOP, ExitLoopTool} from './tools/exit_loop_tool.js';
+export {
+  FINISH_TASK_SUCCESS_RESULT,
+  FINISH_TASK_TOOL_NAME,
+  FinishTaskTool,
+} from './tools/finish_task_tool.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
+  RequireConfirmation,
   ToolExecuteArgument,
   ToolExecuteFunction,
   ToolInputParameters,
@@ -264,7 +292,12 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
-export {ToolConfirmation} from './tools/tool_confirmation.js';
+export {
+  IntentMismatchError,
+  ToolConfirmation,
+  isIntentMismatchError,
+} from './tools/tool_confirmation.js';
+export type {IntentMismatchReason} from './tools/tool_confirmation.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {
@@ -275,10 +308,12 @@ export type {
   VertexAiSearchToolParams,
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
+export {AsyncQueue} from './utils/async_queue.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
+export type {SchemaLike} from './utils/schema.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
@@ -296,6 +331,78 @@ export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
+
+// Workflow (parity port of google/adk-python `google/adk/workflow`). Named
+// explicitly (not `export *`) so the top-level surface stays intentional and
+// collisions are compile errors; keep this in sync with `./workflow/index.js`.
+export {
+  BaseNode,
+  BranchPath,
+  DEFAULT_ROUTE,
+  Edge,
+  FunctionNode,
+  Graph,
+  JoinNode,
+  NodeContext,
+  NodeReportedError,
+  NodeSchemaValidationError,
+  NodeStatus,
+  NodeTimeoutError,
+  NodeTool,
+  ParallelWorker,
+  RequestInput,
+  START,
+  ToolNode,
+  Workflow,
+  WorkflowNode,
+  asRunnableRoot,
+  commonPrefixOf,
+  createNodeErrorEvent,
+  createNodeState,
+  createSubBranch,
+  isNodeErrorEvent,
+  isNodeReportedError,
+  isNodeSchemaValidationError,
+  isNodeState,
+  isNodeTimeoutError,
+  isRequestInput,
+  isRunnableRoot,
+  isWorkflow,
+  node,
+  normalizeRetryExceptions,
+  prepareRetryConfig,
+} from './workflow/index.js';
+export type {
+  BaseNodeConfig,
+  BuildNodeOptions,
+  ChainElement,
+  CreateNodeErrorEventParams,
+  DynamicEntry,
+  EdgeItem,
+  ErrorClass,
+  FunctionNodeConfig,
+  FunctionNodeHandler,
+  FunctionNodeResult,
+  NodeContextOptions,
+  NodeErrorEvent,
+  NodeLike,
+  NodeOptions,
+  NodeResult,
+  NodeState,
+  ParallelWorkerConfig,
+  PreparedRetryConfig,
+  RequestInputParams,
+  RetryConfig,
+  RouteValue,
+  RoutingMap,
+  RunNodeOptions,
+  RunnableNode,
+  RunnableRoot,
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+  ToolNodeConfig,
+  WorkflowConfig,
+} from './workflow/index.js';
 
 export * from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';

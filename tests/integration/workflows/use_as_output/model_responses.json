@@ -1,0 +1,58 @@
+[
+  {
+    "key": "0e7b07a014bc9a1e",
+    "instructionAgnosticKey": "4da46c316b797362",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"summarizer\".\n\nSummarize the following text in one sentence.",
+        "labels": {
+          "adk_agent_name": "summarizer"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "The text is the word \"go,\" which typically functions as an imperative to start or proceed."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 24,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 448,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 24
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "thoughtsTokenCount": 405
+      }
+    }
+  }
+]

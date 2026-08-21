@@ -267,4 +267,33 @@ describe('InMemoryMemoryService', () => {
       expect(result.memories).toHaveLength(1);
     });
   });
+
+  describe('prototype pollution', () => {
+    it('indexes a session whose id is __proto__', async () => {
+      // `session.id` comes off the request path and holds no `/`, so unlike
+      // the user key it can be exactly `__proto__`. On a plain inner map that
+      // key re-parents the map instead of creating an own property, and the
+      // `Object.values` scan in `searchMemory` then steps over the session.
+      const event = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'hello world'}]},
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+        sessionId: '__proto__',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'hello',
+      });
+
+      expect(result.memories).toHaveLength(1);
+    });
+  });
 });

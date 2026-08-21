@@ -32,6 +32,15 @@ export function isInMemoryConnectionString(uri?: string): boolean {
 
 /**
  * An in-memory implementation of the session service.
+ *
+ * Every map below is keyed by untrusted input — `appName`, `userId`,
+ * `sessionId` and state keys all arrive straight off the request path or body
+ * on a dev server — so each is created with `Object.create(null)`. On an
+ * ordinary `{}` literal a key of `__proto__` resolves to the inherited
+ * `__proto__` accessor instead of creating an own property, so
+ * `map[appName][userId] = ...` writes onto `Object.prototype` and pollutes
+ * every object in the process. A null-prototype map has no such accessor, so
+ * those keys become ordinary own properties.
  */
 export class InMemorySessionService extends BaseSessionService {
   /**
@@ -39,18 +48,19 @@ export class InMemorySessionService extends BaseSessionService {
    * session.
    */
   private sessions: Record<string, Record<string, Record<string, Session>>> =
-    {};
+    Object.create(null);
 
   /**
    * A map from app name to a map from user ID to a map from key to the value.
    */
   private userState: Record<string, Record<string, Record<string, unknown>>> =
-    {};
+    Object.create(null);
 
   /**
    * A map from app name to a map from key to the value.
    */
-  private appState: Record<string, Record<string, unknown>> = {};
+  private appState: Record<string, Record<string, unknown>> =
+    Object.create(null);
 
   async createSession({
     appName,
@@ -69,10 +79,10 @@ export class InMemorySessionService extends BaseSessionService {
     });
 
     if (!this.sessions[appName]) {
-      this.sessions[appName] = {};
+      this.sessions[appName] = Object.create(null);
     }
     if (!this.sessions[appName][userId]) {
-      this.sessions[appName][userId] = {};
+      this.sessions[appName][userId] = Object.create(null);
     }
 
     this.sessions[appName][userId][session.id] = session;
@@ -141,7 +151,20 @@ export class InMemorySessionService extends BaseSessionService {
     page,
     order,
   }: ListSessionsRequest): Promise<ListSessionsResponse> {
-    if (!this.sessions[appName] || !this.sessions[appName][userId]) {
+    const appSessions = this.sessions[appName];
+    // An omitted `userId` lists every user's sessions, the same as the
+    // filter-less branches in `VertexAiSessionService` and
+    // `DatabaseSessionService`.
+    const sessionsByUser =
+      appSessions === undefined
+        ? []
+        : userId === undefined
+          ? Object.values(appSessions)
+          : appSessions[userId]
+            ? [appSessions[userId]]
+            : [];
+
+    if (sessionsByUser.length === 0) {
       if (limit !== undefined) {
         const effectiveOffset =
           page !== undefined ? (page - 1) * limit : (offset ?? 0);
@@ -168,8 +191,8 @@ export class InMemorySessionService extends BaseSessionService {
       });
     }
 
-    const all: Session[] = Object.values(this.sessions[appName][userId]).map(
-      (session) =>
+    const all: Session[] = sessionsByUser.flatMap((sessionsById) =>
+      Object.values(sessionsById).map((session) =>
         createSession({
           id: session.id,
           appName: session.appName,
@@ -178,6 +201,7 @@ export class InMemorySessionService extends BaseSessionService {
           events: [],
           lastUpdateTime: session.lastUpdateTime,
         }),
+      ),
     );
 
     if (order === 'asc') {
@@ -275,15 +299,17 @@ export class InMemorySessionService extends BaseSessionService {
     if (event.actions && event.actions.stateDelta) {
       for (const key of Object.keys(event.actions.stateDelta)) {
         if (key.startsWith(State.APP_PREFIX)) {
-          this.appState[appName] = this.appState[appName] || {};
+          this.appState[appName] =
+            this.appState[appName] || Object.create(null);
           this.appState[appName][key.replace(State.APP_PREFIX, '')] =
             event.actions.stateDelta[key];
         }
 
         if (key.startsWith(State.USER_PREFIX)) {
-          this.userState[appName] = this.userState[appName] || {};
+          this.userState[appName] =
+            this.userState[appName] || Object.create(null);
           this.userState[appName][userId] =
-            this.userState[appName][userId] || {};
+            this.userState[appName][userId] || Object.create(null);
           this.userState[appName][userId][key.replace(State.USER_PREFIX, '')] =
             event.actions.stateDelta[key];
         }

@@ -1,6 +1,6 @@
 {
   "name": "@google/adk-integrations",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "Google ADK JS Integrations",
   "author": "Google",
   "license": "Apache-2.0",
@@ -22,9 +22,14 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "browser": "./dist/web/index_web.js",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./dist/web/*": {
+      "types": "./dist/types/*",
+      "default": "./dist/web/*"
     }
   },
   "scripts": {
@@ -40,6 +45,6 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@google/adk": "^1.5.0"
+    "@google/adk": "^2.0.0"
   }
 }

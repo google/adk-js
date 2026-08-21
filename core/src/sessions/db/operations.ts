@@ -5,12 +5,22 @@
  */
 
 import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
+import {loadOptionalPeer} from '../../utils/optional_peer.js';
+import {redactUriPassword} from '../../utils/redact_uri.js';
 import {
   ENTITIES,
   SCHEMA_VERSION_1_JSON,
   SCHEMA_VERSION_KEY,
   StorageMetadata,
 } from './schema.js';
+
+/** Describes the optional driver peer backing a connection-string scheme. */
+function driverPeer(packageName: string, scheme: string) {
+  return {
+    packageName,
+    feature: `DatabaseSessionService with a "${scheme}" connection string`,
+  };
+}
 
 /**
  * Parses a database connection URI and returns MikroORM Options.
@@ -22,25 +32,40 @@ import {
 export async function getConnectionOptionsFromUri(
   uri: string,
 ): Promise<MikroORMOptions> {
-  let driver: unknown | undefined;
+  let driver: unknown;
 
   if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
-    const {PostgreSqlDriver} = await import('@mikro-orm/postgresql');
+    const {PostgreSqlDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/postgresql', 'postgres'),
+      () => import('@mikro-orm/postgresql'),
+    );
     driver = PostgreSqlDriver;
   } else if (uri.startsWith('mysql://')) {
-    const {MySqlDriver} = await import('@mikro-orm/mysql');
+    const {MySqlDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/mysql', 'mysql'),
+      () => import('@mikro-orm/mysql'),
+    );
     driver = MySqlDriver;
   } else if (uri.startsWith('mariadb://')) {
-    const {MariaDbDriver} = await import('@mikro-orm/mariadb');
+    const {MariaDbDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/mariadb', 'mariadb'),
+      () => import('@mikro-orm/mariadb'),
+    );
     driver = MariaDbDriver;
   } else if (uri.startsWith('sqlite://')) {
-    const {SqliteDriver} = await import('@mikro-orm/sqlite');
+    const {SqliteDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/sqlite', 'sqlite'),
+      () => import('@mikro-orm/sqlite'),
+    );
     driver = SqliteDriver;
   } else if (uri.startsWith('mssql://')) {
-    const {MsSqlDriver} = await import('@mikro-orm/mssql');
+    const {MsSqlDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/mssql', 'mssql'),
+      () => import('@mikro-orm/mssql'),
+    );
     driver = MsSqlDriver;
   } else {
-    throw new Error(`Unsupported database URI: ${uri}`);
+    throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
   }
 
   if (uri.startsWith('sqlite://')) {

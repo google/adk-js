@@ -12,6 +12,9 @@ import {normalizeLineEndings, sendInput} from '../../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 const PROJECT_PATH = `${dirname}/tests/integration/skills/script_js`;
+// The agent writes script output into a dedicated subdirectory of the project
+// (see agent.ts), never into the project/working directory itself.
+const OUTPUT_PATH = `${PROJECT_PATH}/output`;
 const TEST_EXECUTION_TIMEOUT = 60000;
 
 /**
@@ -22,7 +25,7 @@ const TEST_EXECUTION_TIMEOUT = 60000;
  * 1. Starts the agent by running `npm run start` in the test project directory.
  * 2. Simulates user interaction by sending a prompt: "Let's create algorithmic art."
  * 3. Asserts that the agent's response matches the expected output, confirming it claims to have created the art and files.
- * 4. Verifies that the expected files (`ephemeral_entanglement.md`, `index.html`, `sketch.js`) were actually generated in the file system.
+ * 4. Verifies that the expected files (`ephemeral_entanglement.md`, `index.html`, `sketch.js`) were actually generated in the agent's `output/` directory.
  * 5. Compares the content of these generated files with reference files in the `expected/` directory to ensure correctness.
  * 6. Cleans up the generated files and installed dependencies after execution.
  *
@@ -54,15 +57,15 @@ describe('Agent with skills that generates JS script and runs it locally', () =>
 
       // verify that files were created and have the expected content
       const resultMdFile = await fs.readFile(
-        `${PROJECT_PATH}/ephemeral_entanglement.md`,
+        `${OUTPUT_PATH}/ephemeral_entanglement.md`,
         'utf-8',
       );
       const resultScriptFile = await fs.readFile(
-        `${PROJECT_PATH}/sketch.js`,
+        `${OUTPUT_PATH}/sketch.js`,
         'utf-8',
       );
       const resultHtmlFile = await fs.readFile(
-        `${PROJECT_PATH}/index.html`,
+        `${OUTPUT_PATH}/index.html`,
         'utf-8',
       );
 
@@ -94,11 +97,7 @@ describe('Agent with skills that generates JS script and runs it locally', () =>
 
   afterAll(async () => {
     // delete generated files
-    await fs
-      .rm(`${PROJECT_PATH}/ephemeral_entanglement.md`, {force: true})
-      .catch(() => {});
-    await fs.rm(`${PROJECT_PATH}/index.html`, {force: true}).catch(() => {});
-    await fs.rm(`${PROJECT_PATH}/sketch.js`, {force: true}).catch(() => {});
+    await fs.rm(OUTPUT_PATH, {recursive: true, force: true}).catch(() => {});
 
     await fs
       .rm(`${PROJECT_PATH}/node_modules`, {recursive: true, force: true})

@@ -17,7 +17,6 @@ import {
   isRoutedAgent,
 } from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {Logger, setLogger} from '../../src/utils/logger.js';
 
 class MockAgent extends BaseAgent {
   constructor(name: string) {
@@ -81,30 +80,6 @@ describe('RoutedAgent', () => {
     agents = [agentA, agentB];
   });
 
-  describe('experimental check', () => {
-    const warnCalls: string[] = [];
-    const mockLogger: Logger = {
-      setLogLevel: () => {},
-      log: () => {},
-      debug: () => {},
-      info: () => {},
-      warn: (...args: unknown[]) => {
-        warnCalls.push(args.map((a) => String(a)).join(' '));
-      },
-      error: () => {},
-    };
-
-    it('warns when instantiated', () => {
-      setLogger(mockLogger);
-
-      const router = async () => 'agent-a';
-      new RoutedAgent({name: 'router', agents: [], router});
-
-      expect(warnCalls).toHaveLength(1);
-      expect(warnCalls[0]).toContain('Class RoutedAgent is experimental');
-    });
-  });
-
   it('should route runAsync to the selected agent A', async () => {
     let routerCalledWithAgents: Readonly<Record<string, BaseAgent>> | null =
       null;
@@ -121,9 +96,7 @@ describe('RoutedAgent', () => {
     const routedAgent = new RoutedAgent({name: 'router', agents, router});
     const context = createTestContext({agent: routedAgent});
 
-    const generator = routedAgent['runAsyncImpl'](context); // Test runAsyncImpl directly or runAsync
-    // If we run runAsync, it will create a new context, so testing runAsyncImpl is closer to our logic.
-    // But testing runAsync verifies the whole pipeline. Let's test runAsync to see if it works as a standard agent.
+    const generator = routedAgent['runAsyncImpl'](context);
     const result = await generator.next();
 
     expect(result.value?.author).toBe('agent-a');

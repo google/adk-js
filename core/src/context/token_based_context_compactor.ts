@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {InvocationContext} from '../agents/invocation_context.js';
+import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
@@ -100,7 +100,6 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       return;
     }
 
-    // Extract raw events to compact.
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
     const compactedEventPresent = activeEvents.find(isCompactedEvent);
 
@@ -120,7 +119,6 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
-    // Append the new compacted event to the session history.
     invocationContext.session.events.push(compactedEvent);
   }
 }
@@ -162,7 +160,7 @@ function estimatePromptTokenCount(
 ): number | undefined {
   const contents = getContents(
     activeEvents,
-    invocationContext.agent.name,
+    requireAgent(invocationContext).name,
     invocationContext.branch,
   );
 

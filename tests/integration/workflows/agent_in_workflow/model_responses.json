@@ -1,0 +1,1622 @@
+[
+  {
+    "key": "cda70ddac6ecda04",
+    "instructionAgnosticKey": "72ac0e556094db7e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "I am Jane Doe, my phone number is 555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "name": "Jane Doe",
+                    "phone_number": "555-1234"
+                  },
+                  "id": "adk-9432115f-c234-4f73-b8a6-c5cd32016b8f"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 188,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 257,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 188
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 52
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-15baef5c-d662-4080-bf08-83206a58ab88"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 118,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 32
+      }
+    }
+  },
+  {
+    "key": "744e4e9e6c00078a",
+    "instructionAgnosticKey": "5b231d4a1f166598",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Hello! I'm your medical lab intake assistant. To get started, could I please have your full name?"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 171,
+        "candidatesTokenCount": 23,
+        "totalTokenCount": 256,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 171
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ],
+        "thoughtsTokenCount": 62
+      }
+    }
+  },
+  {
+    "key": "88648d2b30bda6ea",
+    "instructionAgnosticKey": "727aa693fca8284b",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Hello! I'm your medical lab intake assistant. To get started, could I please have your full name?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Jane Doe"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Thank you, Jane Doe. Could I also please get your phone number?"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 196,
+        "candidatesTokenCount": 15,
+        "totalTokenCount": 228,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 196
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 15
+          }
+        ],
+        "thoughtsTokenCount": 17
+      }
+    }
+  },
+  {
+    "key": "90d84b7ec2b03cc9",
+    "instructionAgnosticKey": "4932b888add26a45",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "go"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Hello! I'm your medical lab intake assistant. To get started, could I please have your full name?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Jane Doe"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Thank you, Jane Doe. Could I also please get your phone number?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "phone_number": "555-1234",
+                    "name": "Jane Doe"
+                  },
+                  "id": "adk-525f6f4f-a8dd-4558-b9b0-cd1646c515b8"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 219,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 292,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 219
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 56
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-2ed49ab6-1c6d-43f6-8faf-b29a038f62ed"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 120,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 34
+      }
+    }
+  },
+  {
+    "key": "77517ef377aedaea",
+    "instructionAgnosticKey": "5e2aea58683a0364",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My name is John Doe"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Thanks, John Doe. What is your phone number?"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 175,
+        "candidatesTokenCount": 11,
+        "totalTokenCount": 206,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 175
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 11
+          }
+        ],
+        "thoughtsTokenCount": 20
+      }
+    }
+  },
+  {
+    "key": "1e1c036a08077c1e",
+    "instructionAgnosticKey": "a2066f03f06d597c",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My name is John Doe"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Thanks, John Doe. What is your phone number?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "name": "John Doe",
+                    "phone_number": "555-1234"
+                  },
+                  "id": "adk-0a688dc8-5b25-42b6-991f-3e40e6832ec9"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 194,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 268,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 194
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 57
+      }
+    }
+  },
+  {
+    "key": "7c2efea7b01a5c42",
+    "instructionAgnosticKey": "dfdb03b36f51c881",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My name is John Doe"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Thanks, John Doe. What is your phone number?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "555-1234"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "finish_task",
+                "args": {
+                  "name": "John Doe",
+                  "phone_number": "555-1234"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "finish_task",
+                "response": {
+                  "result": "Task completed."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Could not find matching records for John Doe. Let's try again."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "It looks like \"John Doe\" didn't match our records. Could you please provide another name?"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 243,
+        "candidatesTokenCount": 21,
+        "totalTokenCount": 300,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 243
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 21
+          }
+        ],
+        "thoughtsTokenCount": 36
+      }
+    }
+  },
+  {
+    "key": "aa3b4aa17b8b3c82",
+    "instructionAgnosticKey": "461a1e7aea806753",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "My name is John Doe"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Thanks, John Doe. What is your phone number?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "555-1234"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "finish_task",
+                "args": {
+                  "name": "John Doe",
+                  "phone_number": "555-1234"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "finish_task",
+                "response": {
+                  "result": "Task completed."
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Could not find matching records for John Doe. Let's try again."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "It looks like \"John Doe\" didn't match our records. Could you please provide another name?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Jane Doe, 555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "phone_number": "555-1234",
+                    "name": "Jane Doe"
+                  },
+                  "id": "adk-41e907e6-0ee8-469e-a377-b5672d712d7b"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 276,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 368,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 276
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 75
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-1a4298e3-dd85-4405-8e60-cba73ea91b53"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 127,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 41
+      }
+    }
+  },
+  {
+    "key": "cda70ddac6ecda04",
+    "instructionAgnosticKey": "72ac0e556094db7e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "I am Jane Doe, my phone number is 555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "phone_number": "555-1234",
+                    "name": "Jane Doe"
+                  },
+                  "id": "adk-c165d838-4415-4106-a970-0c92226b74fd"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 188,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 311,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 188
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 106
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-2409e37d-09f0-48a9-adc6-675904a1d337"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 127,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 41
+      }
+    }
+  },
+  {
+    "key": "363bbcfe5fead81b",
+    "instructionAgnosticKey": "0c6282ade1f44048",
+    "request": {
+      "contents": [
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "find_orders",
+                "args": {}
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "find_orders",
+                "response": {
+                  "results": [
+                    "CBC (Complete Blood Count)",
+                    "Lipid Panel"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "The patient has the following orders:\n* CBC (Complete Blood Count)\n* Lipid Panel\n\nPlease instruct the patient to fast for 8-12 hours prior to their appointment for accurate test results. They may drink water."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 78,
+        "candidatesTokenCount": 47,
+        "totalTokenCount": 203,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 78
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 47
+          }
+        ],
+        "thoughtsTokenCount": 78
+      }
+    }
+  },
+  {
+    "key": "cda70ddac6ecda04",
+    "instructionAgnosticKey": "72ac0e556094db7e",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "I am Jane Doe, my phone number is 555-1234"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are a medical lab intake assistant. Your job is to chat with\nthe user to get their full name and phone number. Do not make up\ninformation. Once you have both, finish your task.\nIf identity check failed, ask for another name.\n\nDo NOT call `finish_task` prematurely. Use your available tools to fully complete every aspect of the task first. If the task is unclear, ask the user for clarification before proceeding. Once the task is fully complete, call `finish_task` by itself with no accompanying text output.",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "finish_task",
+                "description": "Signal that this agent has completed its delegated task. Call this when you have finished your delegated task. Pass the required output data in the parameters.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": {
+                      "type": "STRING",
+                      "description": "The patient's full name."
+                    },
+                    "phone_number": {
+                      "type": "STRING",
+                      "description": "The patient's phone number."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "phone_number"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "intake_agent"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "finish_task",
+                  "args": {
+                    "name": "Jane Doe",
+                    "phone_number": "555-1234"
+                  },
+                  "id": "adk-54b39661-1db8-4d67-a844-5e4fe0ac50fe"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 188,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 263,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 188
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 58
+      }
+    }
+  },
+  {
+    "key": "5c5365170f539e07",
+    "instructionAgnosticKey": "548db01caf18de84",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[check_identity] said: Hello Jane Doe! Let me look up your orders."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "find_orders",
+                  "args": {},
+                  "id": "adk-136f6412-fb3c-40de-9fbe-a0364b556791"
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 83,
+        "candidatesTokenCount": 3,
+        "totalTokenCount": 127,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 83
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 3
+          }
+        ],
+        "thoughtsTokenCount": 41
+      }
+    }
+  },
+  {
+    "key": "aa20c20a93b6509b",
+    "instructionAgnosticKey": "d760e5c79bb67ec2",
+    "request": {
+      "contents": [
+        {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "find_orders",
+                "args": {}
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "functionResponse": {
+                "name": "find_orders",
+                "response": {
+                  "error": "This tool call is rejected."
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generate_instruction\".\n\n\nUse the find_orders tool to get the patient's orders.\nList the orders found, and then generate a concise instruction about how to prepare based on those orders.\n",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "find_orders",
+                "description": "Finds orders for the patient.",
+                "parameters": {
+                  "type": "OBJECT",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "adk_agent_name": "generate_instruction"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "I am sorry, I cannot find the orders at this time. The tool call was rejected."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 75,
+        "candidatesTokenCount": 19,
+        "totalTokenCount": 136,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 75
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 19
+          }
+        ],
+        "thoughtsTokenCount": 42
+      }
+    }
+  }
+]

@@ -4,15 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, createPartFromText, Part} from '@google/genai';
+import {Content, createPartFromText, Modality, Part} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 
-import {BaseAgent} from '../agents/base_agent.js';
+import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
+import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
 import {findMatchingFunctionCall} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
+  requireAgent,
 } from '../agents/invocation_context.js';
+import {LiveRequestQueue} from '../agents/live_request_queue.js';
 import {isLlmAgent} from '../agents/llm_agent.js';
 import {createRunConfig, RunConfig} from '../agents/run_config.js';
 import {App} from '../apps/app.js';
@@ -39,6 +42,12 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import type {RunnableNode} from '../workflow/graph.js';
+import {
+  asRunnableRoot,
+  RunnableRoot,
+  runNodeAsInvocation,
+} from '../workflow/run_node_as_invocation.js';
 
 /**
  * The configuration parameters for the Runner.
@@ -55,9 +64,15 @@ export interface RunnerConfig {
   appName?: string;
 
   /**
-   * The agent to run. Required if `app` is not provided.
+   * The agent or workflow to run. Required if `app` is not provided.
+   *
+   * A bare node — a `Workflow`, most usefully — is accepted as the root and
+   * driven directly, so a graph does not have to be wrapped by hand to be run.
+   * The accepted set is the one an edge takes: any other node-like value
+   * becomes the single node of a one-node workflow. Mirrors adk-python, whose
+   * `Runner.agent` is typed `BaseNode`.
    */
-  agent?: BaseAgent;
+  agent?: RunnableNode;
 
   /**
    * An optional list of plugins to apply globally across all agents.
@@ -138,7 +153,11 @@ export function isRunner(obj: unknown): obj is Runner {
 export class Runner {
   readonly [RUNNER_SIGNATURE_SYMBOL] = true;
   readonly appName: string;
-  readonly agent: BaseAgent;
+  /**
+   * The root being run: an agent, or a bare node (a `Workflow`) that the
+   * runner drives directly.
+   */
+  readonly agent: RunnableRoot;
   readonly pluginManager: PluginManager;
   readonly artifactService?: BaseArtifactService;
   readonly sessionService: BaseSessionService;
@@ -160,7 +179,9 @@ export class Runner {
       );
     }
     this.appName = appName!;
-    this.agent = agent;
+    // A workflow is kept as itself rather than wrapped: the runner drives a
+    // node directly (see `runRoot`), so there is no agent to manufacture.
+    this.agent = asRunnableRoot(agent);
     const appPlugins = input.app?.plugins ?? [];
     const configPlugins = input.plugins ?? [];
     this.pluginManager = new PluginManager([...appPlugins, ...configPlugins]);
@@ -239,6 +260,7 @@ export class Runner {
     if (newMessage && !newMessage.role) {
       newMessage.role = 'user';
     }
+    rejectReservedFunctionCalls(newMessage);
 
     // =========================================================================
     // Setup the session and invocation context
@@ -297,7 +319,7 @@ export class Runner {
             memoryService: this.memoryService,
             credentialService: this.credentialService,
             invocationId: newInvocationContextId(),
-            agent: this.agent,
+            agent: isBaseAgent(this.agent) ? this.agent : undefined,
             session,
             userContent: newMessage,
             runConfig,
@@ -365,10 +387,14 @@ export class Runner {
           // =========================================================================
           // Determine which agent should handle the workflow resumption.
           // =========================================================================
-          invocationContext.agent = this.determineAgentForResumption(
-            session,
-            this.agent,
-          );
+          // Only meaningful for an agent root: this resolves an event author
+          // against the agent tree, and a node subtree is not in that tree.
+          if (isBaseAgent(this.agent)) {
+            invocationContext.agent = this.determineAgentForResumption(
+              session,
+              this.agent,
+            );
+          }
 
           // =========================================================================
           // Run the agent with the plugins (aka hooks to apply in the lifecycle)
@@ -405,9 +431,7 @@ export class Runner {
               yield earlyExitEvent;
             } else {
               // Step 2: Otherwise continue with normal execution
-              for await (const event of invocationContext.agent.runAsync(
-                invocationContext,
-              )) {
+              for await (const event of this.runRoot(invocationContext)) {
                 if (params.abortSignal?.aborted) {
                   return;
                 }
@@ -452,9 +476,33 @@ export class Runner {
       );
     } finally {
       span.end();
-      const toolsets = getAllToolsets(this.agent);
+      const toolsets = isBaseAgent(this.agent)
+        ? getAllToolsets(this.agent)
+        : [];
       await Promise.allSettled(toolsets.map((t) => t.close()));
     }
+  }
+
+  /**
+   * Runs whatever this runner was given as its root.
+   *
+   * An agent is run through `runAsync`, as always. A bare node — a `Workflow`
+   * handed to the runner directly — is driven by {@link runNodeAsInvocation}.
+   *
+   * Only the execution differs. Everything around it (the run callbacks, event
+   * persistence, cancellation) is shared, so the node path cannot drift from
+   * the agent path on the things that are not about execution. adk-python has
+   * two separate loops here and a TODO noting its node one lacks tracing and
+   * plugins; there is nothing to lack if there is only one loop.
+   */
+  private async *runRoot(
+    invocationContext: InvocationContext,
+  ): AsyncGenerator<Event, void, void> {
+    if (isBaseAgent(this.agent)) {
+      yield* requireAgent(invocationContext).runAsync(invocationContext);
+      return;
+    }
+    yield* runNodeAsInvocation(this.agent, invocationContext);
   }
 
   /**
@@ -577,7 +625,188 @@ export class Runner {
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     return isRoutableLlmAgent(agentToRun);
   }
-  // TODO - b/425992518: Implement runLive and related methods.
+  /**
+   * Runs the agent in the live (bidirectional streaming) mode.
+   *
+   * Model media events that carry raw inline bytes (audio, video, or image)
+   * are yielded but not appended to the session to avoid persisting large
+   * blobs; events with `fileData` references and most other live events
+   * (transcriptions, tool calls, usage) are persisted as in `runAsync`.
+   *
+   * This feature is **experimental** and its API may change.
+   *
+   * @param params.userId The user ID of the session.
+   * @param params.sessionId The session ID of the session.
+   * @param params.liveRequestQueue The queue used to feed the live model.
+   * @param params.runConfig The run config for the agent.
+   * @param params.abortSignal Optional signal to abort the live run.
+   * @param params.liveSessionResumptionHandle Optional session resumption
+   *     handle observed from a prior `runLive` cycle on the same conversation.
+   *     When set, the agent's live flow opens the connection with
+   *     `liveConnectConfig.sessionResumption.handle` so the server restores its
+   *     state instead of relying on client-side history replay.
+   * @yields The events generated by the agent.
+   */
+  async *runLive(params: {
+    userId: string;
+    sessionId: string;
+    liveRequestQueue: LiveRequestQueue;
+    runConfig?: RunConfig;
+    abortSignal?: AbortSignal;
+    liveSessionResumptionHandle?: string;
+  }): AsyncGenerator<Event, void, undefined> {
+    if (!params.liveRequestQueue) {
+      throw new Error('liveRequestQueue is required for runLive.');
+    }
+
+    if (!isBaseAgent(this.agent)) {
+      throw new Error('runLive is only supported for agents.');
+    }
+    const agent = this.agent;
+
+    const runConfig = createRunConfig(params.runConfig);
+    if (!runConfig.responseModalities?.length) {
+      runConfig.responseModalities = [Modality.AUDIO];
+    }
+    // For multi-agent live setups, the model's text transcription is needed
+    // as context for the transferred agent.
+    if (agent.subAgents?.length) {
+      if (runConfig.responseModalities.includes(Modality.AUDIO)) {
+        runConfig.outputAudioTranscription ??= {};
+      }
+      runConfig.inputAudioTranscription ??= {};
+    }
+
+    const span = tracer.startSpan('invocation');
+    const ctx = trace.setSpan(context.active(), span);
+    try {
+      yield* runAsyncGeneratorWithOtelContext<Runner, Event>(
+        ctx,
+        this,
+        async function* () {
+          const session = await this.sessionService.getOrCreateSession({
+            appName: this.appName,
+            userId: params.userId,
+            sessionId: params.sessionId,
+          });
+
+          if (params.abortSignal?.aborted) {
+            return;
+          }
+
+          const invocationContext = new InvocationContext({
+            artifactService: this.artifactService
+              ? new ScopedArtifactService(
+                  this.artifactService,
+                  this.appName,
+                  params.userId,
+                  params.sessionId,
+                )
+              : undefined,
+            sessionService: this.sessionService,
+            memoryService: this.memoryService,
+            credentialService: this.credentialService,
+            invocationId: newInvocationContextId(),
+            agent,
+            session,
+            runConfig,
+            pluginManager: this.pluginManager,
+            liveRequestQueue: params.liveRequestQueue,
+            abortSignal: params.abortSignal,
+            liveSessionResumptionHandle: params.liveSessionResumptionHandle,
+          });
+
+          invocationContext.agent = this.determineAgentForResumption(
+            session,
+            agent,
+          );
+
+          // Step 1: before-run plugin hook (early exit if it returns content).
+          const beforeRunCallbackResponse =
+            await this.pluginManager.runBeforeRunCallback({
+              invocationContext,
+            });
+          if (params.abortSignal?.aborted) {
+            return;
+          }
+          if (beforeRunCallbackResponse) {
+            const earlyExitEvent = createEvent({
+              invocationId: invocationContext.invocationId,
+              author: 'model',
+              content: beforeRunCallbackResponse,
+            });
+            await this.sessionService.appendEvent({
+              session,
+              event: earlyExitEvent,
+            });
+            yield earlyExitEvent;
+            return;
+          }
+
+          // Step 2: drive the agent's runLive and propagate events.
+          for await (const event of requireAgent(invocationContext).runLive(
+            invocationContext,
+          )) {
+            if (params.abortSignal?.aborted) {
+              return;
+            }
+
+            const modifiedEvent = await this.pluginManager.runOnEventCallback({
+              invocationContext,
+              event,
+            });
+            if (params.abortSignal?.aborted) {
+              return;
+            }
+
+            const eventToProcess = modifiedEvent ?? event;
+
+            if (
+              !eventToProcess.partial &&
+              !isLiveModelMediaEventWithInlineData(eventToProcess)
+            ) {
+              await this.sessionService.appendEvent({
+                session,
+                event: eventToProcess,
+              });
+            }
+
+            yield eventToProcess;
+          }
+
+          // Step 3: after-run plugin hook for cleanup/metrics.
+          await this.pluginManager.runAfterRunCallback({invocationContext});
+        },
+      );
+    } finally {
+      span.end();
+    }
+  }
+}
+
+/**
+ * Whether a live event is a model media event carrying inline data (audio,
+ * video, or image).
+ *
+ * Such events are deliberately not persisted to the session to avoid storing
+ * large raw blobs. Media referenced via `fileData` (e.g. saved as artifacts)
+ * and all non-media events (transcriptions, tool calls, usage) are persisted
+ * as in `runAsync`.
+ */
+function isLiveModelMediaEventWithInlineData(event: Event): boolean {
+  const parts = event.content?.parts;
+  if (!parts?.length) {
+    return false;
+  }
+  return parts.some((part) => {
+    const mimeType = part.inlineData?.mimeType?.toLowerCase();
+    return (
+      mimeType !== undefined &&
+      (mimeType.startsWith('audio/') ||
+        mimeType.startsWith('video/') ||
+        mimeType.startsWith('image/'))
+    );
+  });
 }
 
 /**
@@ -600,9 +829,11 @@ export function determineAgentForResumption(
     if (resumedAgent) {
       return resumedAgent;
     }
-    logger.warn(
-      `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
-    );
+    if (!isWorkflowNodeEvent(event)) {
+      logger.warn(
+        `Function response from an unknown agent: ${event.author}, event id: ${event.id}`,
+      );
+    }
   }
 
   // =========================================================================
@@ -623,9 +854,11 @@ export function determineAgentForResumption(
 
     const agent = rootAgent.findSubAgent(event.author);
     if (!agent) {
-      logger.warn(
-        `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
-      );
+      if (!isWorkflowNodeEvent(event)) {
+        logger.warn(
+          `Event from an unknown agent: ${event.author}, event id: ${event.id}`,
+        );
+      }
       continue;
     }
     if (isRoutableLlmAgent(agent)) {
@@ -636,6 +869,26 @@ export function determineAgentForResumption(
   // Case 3: default to root agent.
   // =========================================================================
   return rootAgent;
+}
+
+/**
+ * Whether the event was emitted by a graph-workflow node, and so may be
+ * authored by a node name rather than an agent name.
+ *
+ * `nodeInfo.path` is stamped on everything a node emits (`node_runner.ts`).
+ * When the node emits an event of its own — a function node's output, or a HITL
+ * interrupt, which carries no author at all — the node name is stamped as the
+ * author. Nodes are not in the agent tree and never will be: a workflow
+ * keeps its structure in `edges`, so its `subAgents` is empty. Looking such an
+ * author up could only ever miss, so the miss is not worth warning about — it
+ * fired on the happy path of every human-in-the-loop resume.
+ *
+ * Only the warning is suppressed, never the lookup: a node that wraps an agent
+ * (`LLMAgentWrapper`) yields the agent's own events, so the author is a real
+ * agent name that must still resolve.
+ */
+function isWorkflowNodeEvent(event: Event): boolean {
+  return Boolean(event.nodeInfo?.path);
 }
 
 /**
@@ -697,4 +950,30 @@ function getAllToolsets(agent: BaseAgent): BaseToolset[] {
 
   traverse(agent);
   return toolsets;
+}
+
+/**
+ * Refuses a client message that carries one of the framework's own
+ * control-plane function calls.
+ *
+ * `adk_request_confirmation`, `adk_request_credential` and `adk_request_input`
+ * are questions the framework raises into agent-authored events. A client
+ * answers one with a function *response*, which stays perfectly legal here; a
+ * client that sends the *call* is writing the question — the first half of
+ * approving its own action. There is no legitimate reason to do it, so the
+ * message is rejected at the door rather than allowed into the event log for
+ * later checks to sort out.
+ *
+ * @param newMessage The message about to be appended to the session.
+ * @throws {Error} If the message contains a reserved function call.
+ */
+function rejectReservedFunctionCalls(newMessage: Content | undefined): void {
+  const reserved = reservedFunctionCallName(newMessage);
+  if (reserved) {
+    throw new Error(
+      `A client message may not contain a '${reserved}' function call: it is ` +
+        'raised by the framework, and can only be answered with a function ' +
+        'response.',
+    );
+  }
 }

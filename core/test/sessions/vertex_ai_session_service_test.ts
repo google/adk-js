@@ -5,10 +5,19 @@
  */
 
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
-import {createEvent, State, VertexAiSessionService} from '@google/adk';
+import {
+  createEvent,
+  isCompactedEvent,
+  State,
+  VertexAiSessionService,
+} from '@google/adk';
 import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  isFastForwardable,
+  reconstructNodeStates,
+} from '../../src/workflow/utils/rehydration_utils.js';
 
 // Mock the unreleased nodejs-vertexai package so the import resolves
 vi.mock('nodejs-vertexai', () => ({
@@ -484,8 +493,42 @@ describe('VertexAiSessionService', () => {
 
       expect(session?.events).toHaveLength(1);
       const parsedEvent = session?.events[0];
-      expect(parsedEvent?.isCompacted).toBe(true);
+      // `isCompacted` is declared on `CompactedEvent`, a refinement of `Event`,
+      // so it is only readable after narrowing with the exported type guard
+      // (which checks exactly `isCompacted === true`).
+      expect(parsedEvent !== undefined && isCompactedEvent(parsedEvent)).toBe(
+        true,
+      );
       expect(parsedEvent?.usageMetadata).toEqual({promptTokens: 10});
+    });
+
+    it('restores groundingMetadata when rawEvent is absent', async () => {
+      const groundingMetadata = {
+        webSearchQueries: ['adk js sessions'],
+        groundingChunks: [
+          {web: {uri: 'https://example.com', title: 'Example'}},
+        ],
+      };
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'projects/p/locations/l/sessions/s/events/e1',
+            invocationId: 'inv-1',
+            author: 'agent',
+            content: {role: 'model', parts: [{text: 'grounded'}]},
+            timestamp: '2026-04-09T13:00:00Z',
+            eventMetadata: {groundingMetadata},
+          },
+        ],
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session?.events[0].groundingMetadata).toEqual(groundingMetadata);
     });
 
     it('slices events based on numRecentEvents', async () => {
@@ -1241,6 +1284,442 @@ describe('VertexAiSessionService', () => {
             actions: undefined,
           }),
         }),
+      );
+    });
+
+    describe('agent transfer action', () => {
+      const transferSession = () =>
+        ({
+          id: 'transfer-session',
+          appName: '12345',
+          userId: 'testUser',
+          events: [],
+          lastUpdateTime: Date.now(),
+        }) as unknown as Session;
+
+      it('sends the transfer under the name the API defines', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        expect(sent.config.actions.transferAgent).toBe('billing_agent');
+        expect(sent.config.actions.transferToAgent).toBeUndefined();
+      });
+
+      it('round-trips the transfer when rawEvent is absent', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        mockClient.events.listInternal.mockResolvedValue({
+          sessionEvents: [
+            {
+              name: 'reasoningEngines/12345/sessions/transfer-session/events/e1',
+              author: sent.author,
+              invocationId: sent.invocationId,
+              timestamp: sent.timestamp,
+              content: sent.config.content,
+              actions: sent.config.actions,
+              eventMetadata: sent.config.eventMetadata,
+            },
+          ],
+        });
+
+        const session = await service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'transfer-session',
+        });
+
+        expect(session!.events[0].actions.transferToAgent).toBe(
+          'billing_agent',
+        );
+      });
+
+      it('does not mutate the caller event', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'router',
+          invocationId: 'inv-1',
+          actions: {transferToAgent: 'billing_agent'},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        expect(event.actions.transferToAgent).toBe('billing_agent');
+        expect('transferAgent' in event.actions).toBe(false);
+      });
+
+      it('adds no transfer key when the event has none', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'agent',
+          invocationId: 'inv-1',
+          content: {role: 'model', parts: [{text: 'hi'}]},
+        });
+
+        await service.appendEvent({session: transferSession(), event});
+
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        expect('transferAgent' in sent.config.actions).toBe(false);
+      });
+    });
+
+    describe('unsupported fields and fallback', () => {
+      const appendSession = () =>
+        ({
+          id: 'append-session',
+          appName: '12345',
+          userId: 'testUser',
+          events: [],
+          lastUpdateTime: Date.now(),
+        }) as unknown as Session;
+
+      /** The request config captured by the first appendEvent call. */
+      const appendedConfig = () =>
+        mockClient.events.append.mock.calls[0][0].config;
+
+      it('strips partMetadata from content and rawEvent without mutating the event', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {
+            role: 'user',
+            parts: [
+              {text: 'hello', partMetadata: {source: 'portal'}},
+              {text: 'world', partMetadata: {source: 'portal'}},
+            ],
+          },
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(config.rawEvent?.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(event.content?.parts?.[0].partMetadata).toEqual({
+          source: 'portal',
+        });
+      });
+
+      it('handles content without parts', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user'},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(appendedConfig().content).toEqual({role: 'user'});
+      });
+
+      it('handles an event without content', async () => {
+        const event = createEvent({timestamp: 1620000000000});
+        delete event.content;
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toBeUndefined();
+        expect(config.rawEvent).not.toHaveProperty('content');
+      });
+
+      it('retries without rawEvent when the API rejects it with 400', async () => {
+        const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        // The retry reuses the request object, so record what each attempt
+        // actually carried instead of inspecting it afterwards.
+        const sentRawEvent: boolean[] = [];
+        mockClient.events.append
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            throw new ApiError({message: 'Unknown name', status: 400});
+          })
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            return {};
+          });
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(sentRawEvent).toEqual([true, false]);
+        // Reusing the request is what keeps the retry's invocation id and
+        // timestamp identical to the first attempt's.
+        const [first, second] = mockClient.events.append.mock.calls;
+        expect(second[0]).toBe(first[0]);
+        loggerSpy.mockRestore();
+      });
+
+      it.each([
+        ['a server error', new ApiError({message: 'try later', status: 503})],
+        ['a network error', new Error('socket hang up')],
+      ])('rethrows %s without re-appending', async (_label, failure) => {
+        mockClient.events.append.mockRejectedValueOnce(failure);
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await expect(
+          service.appendEvent({session: appendSession(), event}),
+        ).rejects.toBe(failure);
+        expect(mockClient.events.append).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe('workflow event fields', () => {
+    const appendSession = () =>
+      ({
+        id: 'wf-session',
+        appName: '12345',
+        userId: 'testUser',
+        events: [],
+        lastUpdateTime: Date.now(),
+      }) as unknown as Session;
+
+    /**
+     * Replays an API event the way the real service sees it: the request is
+     * serialized on the wire, so anything that survives only by object
+     * identity (a `Date`, `Map` or `Set` inside `output`) must not survive
+     * here either.
+     */
+    const overTheWire = <T>(value: T): T =>
+      JSON.parse(JSON.stringify(value)) as T;
+
+    const readBackWithoutRawEvent = async () => {
+      const sent = mockClient.events.append.mock.calls.at(-1)![0];
+      const apiEvent = overTheWire({
+        name: 'reasoningEngines/12345/sessions/wf-session/events/e1',
+        author: sent.author,
+        invocationId: sent.invocationId,
+        timestamp: sent.timestamp,
+        content: sent.config.content,
+        actions: sent.config.actions,
+        eventMetadata: sent.config.eventMetadata,
+      });
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [apiEvent],
+      });
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'wf-session',
+      });
+      return {apiEvent, event: session!.events[0]};
+    };
+
+    it('writes workflow fields into customMetadata', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: {score: 7},
+        route: 'approved',
+        nodeInfo: {path: 'wf.reviewer', messageAsOutput: true},
+        isolationScope: 'wf:evt_1',
+        actions: {agentState: {input: 'draft'}, endOfAgent: true},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+
+      expect(mockClient.events.append).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            eventMetadata: expect.objectContaining({
+              customMetadata: expect.objectContaining({
+                _workflow: {
+                  output: {score: 7},
+                  route: 'approved',
+                  nodeInfo: {path: 'wf.reviewer', messageAsOutput: true},
+                  isolationScope: 'wf:evt_1',
+                  agentState: {input: 'draft'},
+                  endOfAgent: true,
+                },
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('writes no workflow metadata for a plain event', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'agent',
+        invocationId: 'inv-1',
+        content: {role: 'model', parts: [{text: 'hi'}]},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+
+      const sent = mockClient.events.append.mock.calls.at(-1)![0];
+      expect(sent.config.eventMetadata.customMetadata).toBeUndefined();
+    });
+
+    it('restores workflow fields when rawEvent is absent', async () => {
+      const original = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: {score: 7},
+        route: 'approved',
+        nodeInfo: {path: 'wf.reviewer', outputFor: ['wf.reviewer']},
+        isolationScope: 'wf:evt_1',
+        actions: {agentState: {input: 'draft'}, endOfAgent: true},
+      });
+
+      await service.appendEvent({session: appendSession(), event: original});
+      const {event} = await readBackWithoutRawEvent();
+
+      expect(event.output).toEqual({score: 7});
+      expect(event.route).toBe('approved');
+      expect(event.nodeInfo).toEqual({
+        path: 'wf.reviewer',
+        outputFor: ['wf.reviewer'],
+      });
+      expect(event.isolationScope).toBe('wf:evt_1');
+      expect(event.actions.agentState).toEqual({input: 'draft'});
+      expect(event.actions.endOfAgent).toBe(true);
+    });
+
+    it('round-trips a falsy output rather than dropping it', async () => {
+      for (const output of [false, 0, '', null]) {
+        mockClient.events.append.mockClear();
+        const event = createEvent({
+          timestamp: 1620000000000,
+          author: 'gate',
+          invocationId: 'inv-1',
+          nodeInfo: {path: 'wf.gate'},
+          output,
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+        const {event: readBack} = await readBackWithoutRawEvent();
+
+        expect(readBack.output).toBe(output);
+      }
+    });
+
+    it('keeps the workflow key out of user-visible customMetadata', async () => {
+      const event = createEvent({
+        timestamp: 1620000000000,
+        author: 'reviewer',
+        invocationId: 'inv-1',
+        output: 'done',
+        nodeInfo: {path: 'wf.reviewer'},
+        customMetadata: {tenant: 'acme'},
+      });
+
+      await service.appendEvent({session: appendSession(), event});
+      const {apiEvent, event: readBack} = await readBackWithoutRawEvent();
+
+      expect(readBack.customMetadata).toEqual({tenant: 'acme'});
+      expect(readBack.output).toBe('done');
+      expect(
+        (apiEvent.eventMetadata.customMetadata as Record<string, unknown>)
+          ._workflow,
+      ).toBeDefined();
+    });
+
+    it('lets a resumed workflow rehydrate from reconstructed events', async () => {
+      const completed = createEvent({
+        timestamp: 1620000000000,
+        author: 'fetch',
+        invocationId: 'inv-1',
+        nodeInfo: {path: 'wf.fetch'},
+        output: 'A(x)',
+      });
+      const paused = createEvent({
+        timestamp: 1620000001000,
+        author: 'gate',
+        invocationId: 'inv-1',
+        nodeInfo: {path: 'wf.gate'},
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'adk_request_input', id: 'gate-1'}}],
+        },
+        longRunningToolIds: ['gate-1'],
+        actions: {agentState: {input: 'A(x)'}},
+      });
+
+      const apiEvents = [];
+      for (const event of [completed, paused]) {
+        mockClient.events.append.mockClear();
+        await service.appendEvent({session: appendSession(), event});
+        const sent = mockClient.events.append.mock.calls.at(-1)![0];
+        apiEvents.push(
+          overTheWire({
+            name: `reasoningEngines/12345/sessions/wf-session/events/${apiEvents.length}`,
+            author: sent.author,
+            invocationId: sent.invocationId,
+            timestamp: sent.timestamp,
+            content: sent.config.content,
+            actions: sent.config.actions,
+            eventMetadata: sent.config.eventMetadata,
+          }),
+        );
+      }
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: apiEvents,
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'wf-session',
+      });
+
+      const states = reconstructNodeStates(session!.events, 'wf');
+      expect(states.get('fetch')?.output).toBe('A(x)');
+      expect(isFastForwardable(states.get('fetch')!)).toBe(true);
+      expect([...states.get('gate')!.interruptIds]).toEqual(['gate-1']);
+      expect(states.get('gate')?.input).toBe('A(x)');
+    });
+  });
+
+  describe('legacy read path', () => {
+    it('restores transferToAgent from a legacy transferToAgent key', async () => {
+      // Sessions written by earlier adk-js versions stored ADK's own
+      // `transferToAgent` key rather than the API's `transferAgent`.
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'reasoningEngines/12345/sessions/s/events/e1',
+            author: 'model',
+            actions: {transferToAgent: 'legacy-specialist'},
+          },
+        ],
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session?.events).toHaveLength(1);
+      expect(session!.events[0].actions.transferToAgent).toBe(
+        'legacy-specialist',
       );
     });
   });

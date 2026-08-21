@@ -5,6 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {File} from '../../src/code_executors/code_execution_utils.js';
 import {CodeExecutorContext} from '../../src/code_executors/code_executor_context.js';
 import {State} from '../../src/sessions/state.js';
 
@@ -77,8 +78,18 @@ describe('CodeExecutorContext', () => {
   });
 
   describe('getInputFiles / addInputFiles / clearInputFiles', () => {
-    const file1 = {name: 'f1.txt', content: 'aGVsbG8=', encoding: undefined};
-    const file2 = {name: 'f2.txt', content: 'd29ybGQ=', encoding: undefined};
+    const file1: File = {
+      name: 'f1.txt',
+      content: 'aGVsbG8=',
+      contentEncoding: undefined,
+      mimeType: 'text/plain',
+    };
+    const file2: File = {
+      name: 'f2.txt',
+      content: 'd29ybGQ=',
+      contentEncoding: undefined,
+      mimeType: 'text/plain',
+    };
 
     it('returns an empty array when no input files have been added', () => {
       const {ctx} = makeContext();

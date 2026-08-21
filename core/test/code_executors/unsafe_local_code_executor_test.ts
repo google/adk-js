@@ -7,6 +7,7 @@
 import {
   CodeExecutionLanguage,
   ExecuteCodeParams,
+  FileContentEncoding,
   InvocationContext,
   LlmAgent,
   PluginManager,
@@ -17,6 +18,21 @@ import {EventEmitter} from 'node:events';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+
+/**
+ * Most of these tests spawn a real interpreter. On Windows the shell case means
+ * Windows PowerShell, whose cold start on a loaded CI runner costs seconds --
+ * enough that `should execute shell code and return stdout` intermittently blew
+ * Vitest's 5s default and, through fail-fast, took the macOS and Linux jobs down
+ * with it. A healthy Windows run needs ~5.3s for the file as a whole, so the
+ * default left no margin.
+ *
+ * Budget by what is actually under test: the executor's own default timeout is
+ * 30s, and a harness that gives up sooner can never observe the behaviour it
+ * covers. This is a ceiling, not a delay -- a passing test still finishes in
+ * milliseconds.
+ */
+vi.setConfig({testTimeout: 30_000});
 
 // Only `spawn` is mocked; it defaults to the real implementation (see
 // `beforeEach`) so the pre-existing tests still execute real scripts.
@@ -311,13 +327,13 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'test.txt',
             content: Buffer.from('hello file content').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
           {
             name: 'subdir/data.json',
             content: '{"key": "value"}',
-            contentEncoding: 'utf8',
+            contentEncoding: FileContentEncoding.UTF8,
             mimeType: 'application/json',
           },
         ],
@@ -341,7 +357,7 @@ describe('UnsafeLocalCodeExecutor', () => {
           {
             name: 'existing_input.txt',
             content: Buffer.from('hello input').toString('base64'),
-            contentEncoding: 'base64',
+            contentEncoding: FileContentEncoding.BASE64,
             mimeType: 'text/plain',
           },
         ],

@@ -5,7 +5,7 @@
  */
 
 import {FunctionDeclaration} from '@google/genai';
-import {
+import type {
   CallToolRequest,
   CallToolResult,
   Tool,

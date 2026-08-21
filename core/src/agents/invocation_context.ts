@@ -8,16 +8,32 @@ import {Content} from '@google/genai';
 
 import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
+import {Event} from '../events/event.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import {AsyncQueue} from '../utils/async_queue.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
 import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {BaseAgent} from './base_agent.js';
+import {LiveRequestQueue} from './live_request_queue.js';
 import {RunConfig} from './run_config.js';
 import {TranscriptionEntry} from './transcription_entry.js';
+
+/**
+ * Workflow: data exposed to `{Class.field}` and `<Class.field from source_node>`
+ * instruction placeholders when an LlmAgent runs as a workflow node. Populated by
+ * `LLMAgentWrapper`; absent for ordinary (non-workflow) agent runs, in which case
+ * those placeholders are left untouched.
+ */
+export interface WorkflowInstructionScope {
+  /** The current node's input, exposing fields for `{Class.field}`. */
+  input?: unknown;
+  /** Predecessor node outputs keyed by node name, for `<Class.field from node>`. */
+  outputsByNode?: Record<string, unknown>;
+}
 
 /**
  * The parameters for creating an invocation context.
@@ -29,7 +45,7 @@ export interface InvocationContextParams {
   credentialService?: BaseCredentialService;
   invocationId: string;
   branch?: string;
-  agent: BaseAgent;
+  agent?: BaseAgent;
   userContent?: Content;
   session: Session;
   endInvocation?: boolean;
@@ -38,6 +54,12 @@ export interface InvocationContextParams {
   activeStreamingTools?: Record<string, ActiveStreamingTool>;
   pluginManager: PluginManager;
   abortSignal?: AbortSignal;
+  workflowInstructionScope?: WorkflowInstructionScope;
+  isolationScope?: string;
+  /** Nesting depth of node-as-tool executions; used to bound recursion. */
+  nodeToolDepth?: number;
+  liveRequestQueue?: LiveRequestQueue;
+  liveSessionResumptionHandle?: string;
 }
 
 /**
@@ -133,9 +155,19 @@ export class InvocationContext {
   branch?: string;
 
   /**
-   * The current agent of this invocation context.
+   * The agent driving this invocation.
+   *
+   * Unset when the root being run is a bare {@link BaseNode} — a `Workflow`
+   * handed straight to the `Runner` — because there is no agent in play at
+   * that level. Nodes deeper in the graph that *are* agents get their own
+   * contexts with this set. Mirrors adk-python, whose field is
+   * `BaseAgent | BaseNode | None` and which passes `None` on the node path.
+   *
+   * Most code reaches this from inside an agent's own execution, where it is
+   * always set; prefer {@link requireAgent} there, so a broken invariant
+   * fails by name rather than as a property access on `undefined`.
    */
-  agent: BaseAgent;
+  agent?: BaseAgent;
 
   /**
    * The user content that started this invocation.
@@ -186,6 +218,47 @@ export class InvocationContext {
   readonly abortSignal?: AbortSignal;
 
   /**
+   * An optional channel into which a running tool can push events to be
+   * interleaved into the agent's output stream. Set by the LLM flow around tool
+   * execution so a {@link NodeTool} (running a node/workflow) can surface the
+   * node's intermediate and interrupt events. Cleared once tools finish.
+   */
+  eventQueue?: AsyncQueue<Event>;
+
+  /**
+   * Workflow: field-resolution scope for `{Class.field}` /
+   * `<Class.field from node>` instruction placeholders (set by
+   * `LLMAgentWrapper`).
+   */
+  workflowInstructionScope?: WorkflowInstructionScope;
+
+  /**
+   * Workflow: the isolation scope of the node this context runs in. Events
+   * carrying a different scope are withheld from this agent's LLM request.
+   */
+  isolationScope?: string;
+
+  /**
+   * Nesting depth of node-as-tool ({@link NodeTool}) executions in this
+   * invocation. Incremented each time a node runs as a tool (via a depth+1
+   * clone), so `NodeTool` can bound `node -> tool -> node` recursion.
+   */
+  readonly nodeToolDepth: number;
+
+  /**
+   * The live request queue feeding the model on the bidirectional (live) path.
+   * Set only for invocations started via `runner.runLive`.
+   */
+  readonly liveRequestQueue?: LiveRequestQueue;
+
+  /**
+   * The most recent session resumption handle observed on the live path.
+   * Updated as the server emits resumption updates so a reconnect can restore
+   * server-side state instead of replaying history. Mutable by design.
+   */
+  liveSessionResumptionHandle?: string;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -203,7 +276,11 @@ export class InvocationContext {
     this.activeStreamingTools = params.activeStreamingTools;
     this.pluginManager = params.pluginManager;
     this.abortSignal = params.abortSignal;
+    this.workflowInstructionScope = params.workflowInstructionScope;
+    this.isolationScope = params.isolationScope;
+    this.nodeToolDepth = params.nodeToolDepth ?? 0;
     // Inherit the parent invocation's cost manager when one is available.
+
     // Child contexts created for sub-agents, agent transfers and loop
     // iterations (via createInvocationContext / createBranchCtxForSubAgent)
     // carry the parent context's fields over, so reusing its cost manager
@@ -212,6 +289,8 @@ export class InvocationContext {
     this.invocationCostManager =
       (params as {invocationCostManager?: InvocationCostManager})
         .invocationCostManager ?? new InvocationCostManager();
+    this.liveRequestQueue = params.liveRequestQueue;
+    this.liveSessionResumptionHandle = params.liveSessionResumptionHandle;
   }
 
   /**
@@ -236,8 +315,46 @@ export class InvocationContext {
   incrementLlmCallCount() {
     this.invocationCostManager.incrementAndEnforceLlmCallsLimit(this.runConfig);
   }
+
+  /**
+   * Returns a copy of this context with `overrides` applied. The spread carries
+   * every own field over (including the shared cost manager), so the copy keeps
+   * a single LLM-call counter for the invocation.
+   *
+   * Note: this copies own enumerable fields by value — scalar mutable fields
+   * (e.g. `endInvocation`) are decoupled from the original, while object-valued
+   * fields (`session`, …) stay shared by reference.
+   */
+  clone(overrides: Partial<InvocationContextParams> = {}): InvocationContext {
+    return new InvocationContext({...this, ...overrides});
+  }
 }
 
 export function newInvocationContextId(): string {
   return `e-${randomUUID()}`;
+}
+
+/**
+ * The agent driving `ctx`, for code that only runs because one is.
+ *
+ * An LLM flow, an agent transfer, a tool call: each is reached from inside an
+ * agent's own execution, so {@link InvocationContext.agent} is set by
+ * construction. Going through here says that out loud, and turns a violated
+ * assumption into a named error rather than a property access on `undefined`
+ * several frames away.
+ *
+ * A free function rather than an accessor on the class, because a good deal of
+ * code (and most tests) passes a duck-typed context object; a getter would be
+ * simply absent on those, which fails less clearly than not having the agent.
+ *
+ * @throws if the invocation is driving a bare node rather than an agent.
+ */
+export function requireAgent(ctx: InvocationContext): BaseAgent {
+  if (!ctx.agent) {
+    throw new Error(
+      'InvocationContext.agent is not set: this invocation is running a node ' +
+        'directly, so there is no agent at this level.',
+    );
+  }
+  return ctx.agent;
 }

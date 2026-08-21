@@ -77,7 +77,6 @@ describe('A2AAgentExecutor', () => {
   });
 
   it('should get or create a session, run the agent, and publish working and final status events', async () => {
-    // Setup Session
     const mockSession = {
       id: 'session-id',
       userId: 'test-user',
@@ -87,7 +86,6 @@ describe('A2AAgentExecutor', () => {
     } as unknown as Session;
     mockSessionService.getSession.mockResolvedValue(mockSession);
 
-    // Setup Runner
     const adkEvents: AdkEvent[] = [
       createEvent({
         author: 'model',
@@ -265,6 +263,44 @@ describe('A2AAgentExecutor', () => {
     expect(lastCallArg.status.state).toBe('failed');
     const firstPart = lastCallArg.status.message!.parts[0] as TextPart;
     expect(firstPart.text).toContain('LLM failed');
+  });
+
+  it('marks the run as remote-delivered, preserving the configured run config', async () => {
+    // A human-in-the-loop gate is not answerable by the peer on the other end
+    // of the transport; the run has to know where its message came from.
+    const mockSession = {
+      id: 'session-id',
+      userId: 'test-user',
+      appName: 'test-app',
+      events: [],
+      state: {},
+    } as unknown as Session;
+    mockSessionService.getSession.mockResolvedValue(mockSession);
+
+    const mockRunAsync = vi.fn(async function* () {});
+    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    }) as unknown as () => Runner);
+
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+      runConfig: {maxLlmCalls: 7},
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    expect(mockRunAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runConfig: {maxLlmCalls: 7, remoteDelivered: true},
+      }),
+    );
   });
 
   it('should fail cancelTask because it is not implemented', async () => {

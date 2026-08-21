@@ -5,7 +5,7 @@
  */
 
 import {
-  REQUEST_EUC_FUNCTION_CALL_NAME,
+  REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   handleFunctionCallsAsync,
 } from '../agents/functions.js';
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -20,8 +20,10 @@ import {
 import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {camelCaseKeys} from '../utils/case_utils.js';
+import {logger} from '../utils/logger.js';
 import {AuthHandler} from './auth_handler.js';
 import {AuthConfig} from './auth_tool.js';
+import {bindCredentialResponse} from './credential_response_binding.js';
 
 const TOOLSET_AUTH_CREDENTIAL_ID_PREFIX = '_adk_toolset_auth_';
 
@@ -30,64 +32,87 @@ interface RequestCredentialArgs {
   functionCallId?: string;
 }
 
+/**
+ * The credential requests this agent raised, by function call id.
+ *
+ * Author-checked, because the request is what makes the response meaningful:
+ * it says which tool is waiting and under which key the credential belongs. A
+ * request in a client-authored event is the client describing its own errand —
+ * a credential to store wherever it likes, and a tool of its choosing to
+ * resume. Only requests the agent itself raised are honoured.
+ */
+function requestedAuthConfigs(
+  events: Event[],
+  authFcIds: Set<string>,
+  agentName: string,
+): Map<string, {config: AuthConfig; args: RequestCredentialArgs}> {
+  const requests = new Map<
+    string,
+    {config: AuthConfig; args: RequestCredentialArgs}
+  >();
+  for (const event of events) {
+    if (event.author !== agentName) {
+      continue;
+    }
+    for (const functionCall of getFunctionCalls(event)) {
+      if (
+        !functionCall.id ||
+        !authFcIds.has(functionCall.id) ||
+        functionCall.name !== REQUEST_CREDENTIAL_FUNCTION_CALL_NAME
+      ) {
+        continue;
+      }
+      const args = camelCaseKeys(functionCall.args) as RequestCredentialArgs;
+      if (args?.authConfig) {
+        requests.set(functionCall.id, {config: args.authConfig, args});
+      }
+    }
+  }
+  return requests;
+}
+
 async function storeAuthAndCollectResumeTargets(
   events: Event[],
   authFcIds: Set<string>,
   authResponses: Record<string, unknown>,
   state: State,
+  agentName: string,
 ): Promise<Set<string>> {
-  const requestedAuthConfigById: Record<string, AuthConfig> = {};
-  for (const event of events) {
-    const eventFunctionCalls = getFunctionCalls(event);
-    for (const functionCall of eventFunctionCalls) {
-      if (
-        functionCall.id &&
-        authFcIds.has(functionCall.id) &&
-        functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
-      ) {
-        const args = camelCaseKeys(functionCall.args) as RequestCredentialArgs;
-        const authConfig = args?.authConfig;
-        if (authConfig) {
-          requestedAuthConfigById[functionCall.id] = authConfig;
-        }
-      }
-    }
-  }
-
-  for (const fcId of authFcIds) {
-    const authConfig = authResponses[fcId] as AuthConfig;
-    const requestedAuthConfig = requestedAuthConfigById[fcId];
-    if (requestedAuthConfig && requestedAuthConfig.credentialKey) {
-      authConfig.credentialKey = requestedAuthConfig.credentialKey;
-    }
-    await new AuthHandler(authConfig).parseAndStoreAuthResponse(state);
-  }
+  const requests = requestedAuthConfigs(events, authFcIds, agentName);
 
   const toolsToResume: Set<string> = new Set();
   for (const fcId of authFcIds) {
-    const requestedAuthConfig = requestedAuthConfigById[fcId];
-    if (!requestedAuthConfig) {
+    const request = requests.get(fcId);
+    if (!request) {
+      // A credential nobody asked for. Storing it would let a caller seed the
+      // session's credential store under a key of its own choosing.
+      logger.warn(
+        `Ignoring credential response '${fcId}': no matching request from this agent.`,
+      );
       continue;
     }
-    for (const event of events) {
-      const eventFunctionCalls = getFunctionCalls(event);
-      for (const functionCall of eventFunctionCalls) {
-        if (
-          functionCall.id === fcId &&
-          functionCall.name === REQUEST_EUC_FUNCTION_CALL_NAME
-        ) {
-          const args = camelCaseKeys(
-            functionCall.args,
-          ) as RequestCredentialArgs;
-          const functionCallId = args?.functionCallId;
-          if (functionCallId) {
-            if (functionCallId.startsWith(TOOLSET_AUTH_CREDENTIAL_ID_PREFIX)) {
-              continue;
-            }
-            toolsToResume.add(functionCallId);
-          }
-        }
-      }
+
+    // The response answers the request; it does not get to restate it. The
+    // scheme, the client identity and the key all come from the request, and
+    // only the credential material comes from the response.
+    const authConfig = bindCredentialResponse(
+      request.config,
+      authResponses[fcId],
+    );
+    if (!authConfig) {
+      logger.warn(
+        `Ignoring credential response '${fcId}': it carries no credential for the request this agent raised.`,
+      );
+      continue;
+    }
+    await new AuthHandler(authConfig).parseAndStoreAuthResponse(state);
+
+    const functionCallId = request.args?.functionCallId;
+    if (
+      functionCallId &&
+      !functionCallId.startsWith(TOOLSET_AUTH_CREDENTIAL_ID_PREFIX)
+    ) {
+      toolsToResume.add(functionCallId);
     }
   }
 
@@ -130,7 +155,7 @@ export class AuthPreprocessor extends BaseLlmRequestProcessor {
     const authResponses: Record<string, unknown> = {};
 
     for (const functionCallResponse of responses) {
-      if (functionCallResponse.name !== REQUEST_EUC_FUNCTION_CALL_NAME) {
+      if (functionCallResponse.name !== REQUEST_CREDENTIAL_FUNCTION_CALL_NAME) {
         continue;
       }
       if (functionCallResponse.id) {
@@ -149,6 +174,7 @@ export class AuthPreprocessor extends BaseLlmRequestProcessor {
       authFcIds,
       authResponses,
       state,
+      agent.name,
     );
 
     if (toolsToResume.size === 0) {

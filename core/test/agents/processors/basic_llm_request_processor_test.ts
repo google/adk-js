@@ -162,10 +162,10 @@ describe('BasicLlmRequestProcessor', () => {
   });
 
   it('should set outputSchema in config when agent has outputSchema', async () => {
-    const outputSchema = {
-      type: 'object' as const,
+    const outputSchema: Schema = {
+      type: Type.OBJECT,
       properties: {
-        answer: {type: 'string' as const},
+        answer: {type: Type.STRING},
       },
     };
     const agent = new LlmAgent({
@@ -183,10 +183,10 @@ describe('BasicLlmRequestProcessor', () => {
   });
 
   it('should not set outputSchema in config when agent has outputSchema and tools', async () => {
-    const outputSchema = {
-      type: 'object' as const,
+    const outputSchema: Schema = {
+      type: Type.OBJECT,
       properties: {
-        answer: {type: 'string' as const},
+        answer: {type: Type.STRING},
       },
     };
     const agent = new LlmAgent({

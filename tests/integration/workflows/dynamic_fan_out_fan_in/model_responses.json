@@ -1,0 +1,179 @@
+[
+  {
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Triple Threat: Handling 3 Topics, One Swift Stroke."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 90,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 46
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 32
+      }
+    }
+  },
+  {
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Triple Threat: Parallel Processing Engaged."
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 8,
+        "totalTokenCount": 811,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 46
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "thoughtsTokenCount": 757
+      }
+    }
+  },
+  {
+    "key": "b386c4192eb9fd20",
+    "instructionAgnosticKey": "7b8db6467af3e028",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "For context:"
+            },
+            {
+              "text": "[orchestrator] said: Processing 3 topics in parallel."
+            }
+          ]
+        }
+      ],
+      "config": {
+        "systemInstruction": "You are an agent. Your internal name is \"generator\".\n\nWrite a catchy one-line headline about the topic provided in the user message.",
+        "labels": {
+          "adk_agent_name": "generator"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "**3-Way Flow: Parallel Processing Unleashed!**"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 46,
+        "candidatesTokenCount": 12,
+        "totalTokenCount": 893,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 46
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 12
+          }
+        ],
+        "thoughtsTokenCount": 835
+      }
+    }
+  }
+]

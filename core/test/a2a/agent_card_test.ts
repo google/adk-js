@@ -6,6 +6,8 @@
 
 import {describe, expect, it, vi} from 'vitest';
 import {buildAgentSkills} from '../../src/a2a/agent_card.js';
+import {node} from '../../src/workflow/node.js';
+import {Workflow} from '../../src/workflow/workflow.js';
 
 import {
   BaseAgent,
@@ -218,6 +220,20 @@ describe('Agent Card', () => {
       expect(workflowSkill?.description).toBe(
         'This agent will do A and do B in a loop (max 5 iterations).',
       );
+    });
+
+    it('classifies a graph Workflow as a workflow, not a custom agent', async () => {
+      const agent = new Workflow({
+        name: 'graph_workflow',
+        description: 'Runs a graph',
+        edges: [['START', node(() => 'done', {name: 'step'})]],
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      const workflowSkill = skills.find((s) => s.name === 'workflow');
+      expect(workflowSkill?.description).toBe('Runs a graph');
+      expect(skills.find((s) => s.name === 'custom')).toBeUndefined();
     });
   });
 });

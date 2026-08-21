@@ -1,0 +1,81 @@
+[
+  {
+    "key": "ccda84296ec48f98",
+    "instructionAgnosticKey": "cf6f22ff16664446",
+    "request": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Event wrapped output: Processed input: go"
+            }
+          ]
+        }
+      ],
+      "config": {
+        "responseSchema": {
+          "type": "OBJECT",
+          "properties": {
+            "title": {
+              "type": "STRING",
+              "description": "The title of the generated topic."
+            },
+            "description": {
+              "type": "STRING",
+              "description": "A short description of the topic."
+            },
+            "category": {
+              "type": "STRING",
+              "description": "The broad category of the topic."
+            }
+          },
+          "required": [
+            "title",
+            "description",
+            "category"
+          ]
+        },
+        "responseMimeType": "application/json",
+        "systemInstruction": "Generate a creative topic based on the following input.",
+        "labels": {
+          "adk_agent_name": "generate_pydantic_output"
+        }
+      }
+    },
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "{\n  \"title\": \"The Impetus of Motion: Exploring the Forces That Drive Us Forward\",\n  \"description\": \"This topic delves into the various internal and external catalysts that initiate action, progress, and change in individuals, societies, and nature. From the first spark of an idea to the momentum of a movement, we investigate what truly makes things 'go'.\",\n  \"category\": \"Philosophy & Psychology\"\n}"
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 50,
+        "candidatesTokenCount": 89,
+        "totalTokenCount": 349,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 50
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 89
+          }
+        ],
+        "thoughtsTokenCount": 210
+      }
+    }
+  }
+]

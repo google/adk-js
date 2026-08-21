@@ -4,8 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
+import {
+  asRunnableRoot,
+  RunnableRoot,
+} from '../workflow/run_node_as_invocation.js';
 import {ResumabilityConfig} from './resumability_config.js';
 
 const VALID_APP_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -49,7 +52,12 @@ export function isApp(obj: unknown): obj is App {
  */
 export interface AppOptions {
   name: string;
-  rootAgent: BaseAgent;
+  /**
+   * The root of the application. A bare node — a `Workflow`, most usefully —
+   * is accepted and adapted, so a graph does not have to be wrapped by hand to
+   * be an app root. Accepts the same set a `Runner` does.
+   */
+  rootAgent: RunnableRoot;
   plugins?: BasePlugin[];
   resumabilityConfig?: ResumabilityConfig;
 }
@@ -69,8 +77,7 @@ export class App {
   readonly [APP_SIGNATURE_SYMBOL] = true;
 
   readonly name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly rootAgent: BaseAgent | any;
+  readonly rootAgent: RunnableRoot;
   readonly plugins: BasePlugin[];
   readonly resumabilityConfig?: ResumabilityConfig;
 
@@ -81,17 +88,10 @@ export class App {
       throw new Error('rootAgent must be provided.');
     }
 
-    if (!isBaseAgent(options.rootAgent)) {
-      throw new TypeError(
-        `rootAgent must be a BaseAgent instance, got ${
-          (options.rootAgent as {constructor?: {name?: string}})?.constructor
-            ?.name ?? typeof options.rootAgent
-        }`,
-      );
-    }
-
     this.name = options.name;
-    this.rootAgent = options.rootAgent;
+    // `asRunnableRoot` is also what validates, so an App accepts exactly what a
+    // Runner does rather than its own narrower set.
+    this.rootAgent = asRunnableRoot(options.rootAgent);
     this.plugins = options.plugins ?? [];
     this.resumabilityConfig = options.resumabilityConfig;
   }

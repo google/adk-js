@@ -14,6 +14,17 @@ describe('requestInputTool', () => {
     expect(declaration?.description).toContain('Presents a custom message');
   });
 
+  it('asks the model for the schema under the key clients read', () => {
+    // Same spelling a workflow `RequestInput` uses on the wire, so a client
+    // renders a reply form for either kind of pause.
+    const declaration = requestInputTool._getDeclaration();
+
+    expect(Object.keys(declaration?.parameters?.properties ?? {})).toEqual([
+      'message',
+      'response_schema',
+    ]);
+  });
+
   it('sets skipSummarization flag on execution', async () => {
     const mockActions = createEventActions();
     const mockContext = {actions: mockActions} as unknown as Context;

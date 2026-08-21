@@ -240,8 +240,38 @@ Instructions`,
       expect(skill.resources?.references?.['ref.txt']).toBe(
         'reference content',
       );
+      // File is named .png but contents are valid UTF-8 text, so it stays a string.
       expect(skill.resources?.assets?.['logo.png']).toBe('binary content');
       expect(skill.resources?.scripts?.['run.sh']).toEqual({src: 'echo hello'});
+
+      await fs.rm(tempDir, {recursive: true, force: true});
+    });
+
+    it('keeps non-UTF-8 binary assets as Buffer', async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'adk-skill-test-'));
+      const skillDir = path.join(tempDir, 'test-skill');
+      await fs.mkdir(skillDir);
+      await fs.mkdir(path.join(skillDir, 'assets'));
+
+      await fs.writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---
+name: test-skill
+description: A test skill
+---
+Instructions`,
+      );
+
+      // Minimal PNG signature bytes — invalid UTF-8, must not be stringified.
+      const pngBytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xd8,
+      ]);
+      await fs.writeFile(path.join(skillDir, 'assets', 'logo.png'), pngBytes);
+
+      const skill = await loadSkillFromDir(skillDir);
+      const asset = skill.resources?.assets?.['logo.png'];
+      expect(Buffer.isBuffer(asset)).toBe(true);
+      expect(asset).toEqual(pngBytes);
 
       await fs.rm(tempDir, {recursive: true, force: true});
     });
@@ -612,14 +642,31 @@ Instruction body`;
       expect(skill.resources?.scripts?.['run.sh']?.src).toBe('echo hello');
     });
 
-    it.each(['/etc/passwd', '../evil.txt', 'references/../../esc.txt'])(
-      'rejects the whole archive for the dangerous entry %s',
-      (entryName) => {
-        expect(() =>
-          loadSkillFromZipBuffer(createZipWithRawEntryName(entryName)),
-        ).toThrow(`Dangerous zip entry ignored: ${entryName}`);
-      },
-    );
+    it('keeps non-UTF-8 binary assets as Buffer', () => {
+      const pngBytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xd8,
+      ]);
+      const zip = new AdmZip();
+      zip.addFile('SKILL.md', Buffer.from(validSkillMd, 'utf-8'));
+      zip.addFile('assets/logo.png', pngBytes);
+
+      const skill = loadSkillFromZipBuffer(zip.toBuffer());
+      const asset = skill.resources?.assets?.['logo.png'];
+      expect(Buffer.isBuffer(asset)).toBe(true);
+      expect(asset).toEqual(pngBytes);
+    });
+
+    it.each([
+      '/etc/passwd',
+      '../evil.txt',
+      'references/../../esc.txt',
+      'scripts/..',
+      'scripts\\..\\..\\pwned.txt',
+    ])('rejects the whole archive for the dangerous entry %s', (entryName) => {
+      expect(() =>
+        loadSkillFromZipBuffer(createZipWithRawEntryName(entryName)),
+      ).toThrow(`Dangerous zip entry ignored: ${entryName}`);
+    });
 
     it('reports the dangerous entry even when SKILL.md is absent', () => {
       const zip = new AdmZip();
