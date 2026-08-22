@@ -230,14 +230,25 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         stderr: string;
         exitCode: number | null;
       }>((resolve) => {
-        const child = spawn(command, args, {
-          timeout: this.timeoutSeconds * 1000,
-          killSignal: 'SIGKILL',
-          cwd: tempDir,
-        });
+        const child = spawn(command, args, {cwd: tempDir});
 
         let stdout = '';
         let stderr = '';
+        let timedOut = false;
+
+        // `spawn`'s own `timeout` option kills the interpreter and then leaves
+        // us waiting on 'close', which only fires once every stdio stream is
+        // closed. An interpreter that forked rather than exec'd leaves a
+        // survivor holding those pipes, so 'close' never arrives and this
+        // promise never settles -- no timeout value bounds that wait. Run the
+        // timer here instead and release the read ends along with the kill, so
+        // the timeout is actually enforced. Mirrors LocalEnvironment.execute.
+        const timer = setTimeout(() => {
+          timedOut = true;
+          child.kill('SIGKILL');
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }, this.timeoutSeconds * 1000);
 
         if (child.stdout) {
           child.stdout.on('data', (data) => {
@@ -256,7 +267,11 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         });
 
         child.on('close', (exitCode, signal) => {
-          if (signal === 'SIGKILL' || signal === 'SIGTERM') {
+          clearTimeout(timer);
+          // Prefer the flag over the signal: Windows does not report a
+          // terminating signal the way POSIX does, so a killed child can close
+          // with signal `null` there.
+          if (timedOut || signal === 'SIGKILL' || signal === 'SIGTERM') {
             stderr += `\nCode execution timed out after ${this.timeoutSeconds} seconds.`;
           } else if (exitCode !== 0 && exitCode !== null) {
             if (!stderr) {
