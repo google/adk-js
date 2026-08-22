@@ -459,6 +459,8 @@ describe('handleFunctionCallList', () => {
     expect(warning).toContain('Possible causes:');
     // The cause this change tripped over in SleepyTool has to be listed.
     expect(warning).toContain('_getDeclaration()');
+    // Built-in tools register themselves now, so they must not be blamed here.
+    expect(warning).not.toContain('google_search`');
   });
 
   it('should not warn when a plugin handles the unresolvable call', async () => {

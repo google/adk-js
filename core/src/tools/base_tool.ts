@@ -43,6 +43,25 @@ export interface BaseToolParams {
 const BASE_TOOL_SIGNATURE_SYMBOL = Symbol.for('google.adk.baseTool');
 
 /**
+ * Marks a tool the model runs itself rather than the framework — see
+ * `BuiltInTool`. Such a tool claims its name in the `toolsDict` only so a
+ * function call naming it can be routed, so a genuinely callable tool of the
+ * same name takes precedence over it.
+ */
+export const IN_MODEL_TOOL_SYMBOL = Symbol.for('google.adk.inModelTool');
+
+/**
+ * Whether `tool` is one the model runs itself.
+ */
+export function isInModelTool(tool: unknown): boolean {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    (tool as Record<symbol, unknown>)[IN_MODEL_TOOL_SYMBOL] === true
+  );
+}
+
+/**
  * Type guard to check if an object is an instance of BaseTool.
  * @param obj The object to check.
  * @returns True if the object is an instance of BaseTool, false otherwise.
@@ -144,7 +163,10 @@ export abstract class BaseTool {
       return;
     }
 
-    if (this.name in llmRequest.toolsDict) {
+    // An in-model tool holds the name only so a call naming it can be routed;
+    // a callable tool of the same name displaces it rather than colliding.
+    const registered = llmRequest.toolsDict[this.name];
+    if (registered && !isInModelTool(registered)) {
       throw new Error(`Duplicate tool name: ${this.name}`);
     }
 
