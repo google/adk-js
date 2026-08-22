@@ -107,6 +107,40 @@ describe('UnsafeLocalCodeExecutor', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('times out even when the script leaves a child holding the pipes open', async () => {
+    // An interpreter that forks rather than exec's its work leaves a survivor
+    // that keeps stdout/stderr open after the kill. 'close' waits on those
+    // streams, so before the read ends were released this hung forever and no
+    // timeout value bounded it -- the flake behind #622 on Windows.
+    const timeoutSeconds = 0.5;
+    const survivorLifetimeMs = 60_000;
+    const timedOutExecutor = new UnsafeLocalCodeExecutor({timeoutSeconds});
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: [
+          'const {spawn} = require("node:child_process");',
+          `spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${survivorLifetimeMs})'], {`,
+          '  stdio: "inherit",',
+          '});',
+          `setTimeout(() => {}, ${survivorLifetimeMs});`,
+        ].join('\n'),
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        inputFiles: [],
+      },
+    };
+
+    const startedAt = Date.now();
+    const result = await timedOutExecutor.executeCode(params);
+
+    expect(result.stderr).toContain(
+      `Code execution timed out after ${timeoutSeconds} seconds.`,
+    );
+    // Comfortably under the survivor's lifetime: the point is that the wait is
+    // bounded by our timer rather than by the survivor exiting on its own.
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+  });
+
   // The script runs with the temporary directory as its cwd, so it can report
   // the name and mode the executor actually created.
   it('creates a private, unpredictable temporary directory', async () => {
