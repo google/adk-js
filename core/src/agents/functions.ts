@@ -327,6 +327,23 @@ const RESOLUTION_FAILURE_CAUSES = `Possible causes:
   3. The name does not match the registered tool's name exactly.
   4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined or it is a built-in tool that runs inside the model (\`google_search\`, \`url_context\`, ...).`;
 
+const TOOL_NOT_FOUND_SYMBOL = Symbol.for('google.adk.toolNotFound');
+
+/**
+ * Whether `tool` is the placeholder handed to the on-tool-error callbacks for a
+ * function call naming a tool this agent cannot call.
+ *
+ * Lets a plugin tell an unresolvable name from a registered tool that threw
+ * without matching on the error message.
+ */
+export function isToolNotFound(tool: unknown): boolean {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    (tool as Record<symbol, unknown>)[TOOL_NOT_FOUND_SYMBOL] === true
+  );
+}
+
 /**
  * Stands in for a tool the model named but that the agent cannot call, so the
  * on-tool-error callbacks get something to inspect. Mirrors the bare
@@ -337,6 +354,8 @@ const RESOLUTION_FAILURE_CAUSES = `Possible causes:
  * message that could drift from the first.
  */
 class ToolNotFoundPlaceholder extends BaseTool {
+  readonly [TOOL_NOT_FOUND_SYMBOL] = true;
+
   constructor(
     name: string,
     private readonly resolutionError: Error,
@@ -347,6 +366,63 @@ class ToolNotFoundPlaceholder extends BaseTool {
   override async runAsync(): Promise<never> {
     throw this.resolutionError;
   }
+}
+
+/**
+ * Answers a function call naming a tool this agent cannot call.
+ *
+ * Failing to resolve the tool is a tool error, not a model error, so it runs
+ * through the same on-tool-error callbacks a registered tool that throws does.
+ * With no plugin response the model is handed the error as the call's result:
+ * leaving the call unanswered makes the next request identical to this one, and
+ * the model re-issues it until `maxLlmCalls` trips.
+ */
+async function answerUnresolvableCall({
+  invocationContext,
+  functionCall,
+  toolsDict,
+  toolContext,
+}: {
+  invocationContext: InvocationContext;
+  functionCall: FunctionCall;
+  toolsDict: Record<string, BaseTool>;
+  toolContext: Context;
+}): Promise<Event> {
+  const toolName = functionCall.name || '<unnamed>';
+  const error = new Error(
+    `Function ${toolName} is not found in the toolsDict.`,
+  );
+  const tool = new ToolNotFoundPlaceholder(toolName, error);
+
+  const onToolErrorResponse =
+    await invocationContext.pluginManager.runOnToolErrorCallback({
+      tool,
+      toolArgs: functionCall.args ?? {},
+      toolContext,
+      error,
+    });
+
+  if (onToolErrorResponse == null) {
+    // Only an unhandled failure is the operator's problem; a plugin that
+    // answers these has made them an expected condition. The tool inventory
+    // belongs here rather than in the model's payload — the model already has
+    // its declarations, and a large toolset would cost kilobytes per
+    // occurrence.
+    const callableTools = Object.keys(toolsDict);
+    logger.warn(
+      `Could not resolve tool '${toolName}' for function call ` +
+        `'${functionCall.id ?? ''}'. Callable tools: ` +
+        `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+        RESOLUTION_FAILURE_CAUSES,
+    );
+  }
+
+  return buildResponseEvent(
+    tool,
+    onToolErrorResponse ?? {error: error.message},
+    toolContext,
+    invocationContext,
+  );
 }
 
 /**
@@ -384,57 +460,21 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
-    let tool: BaseTool;
-    let toolContext: Context;
-    try {
-      ({tool, toolContext} = getToolAndContext({
-        invocationContext,
-        functionCall,
-        toolsDict,
-        toolConfirmation,
-      }));
-    } catch (e: unknown) {
-      // `getToolAndContext` has a single throw site and it throws an `Error`,
-      // so this only guards a future one added there.
-      if (!(e instanceof Error)) {
-        throw e;
-      }
-      const toolName = functionCall.name || '<unnamed>';
-      // The model gets a short answer it can act on; the operator gets the
-      // diagnosis. Without this line a misconfigured agent degrades into a
-      // string only the model ever sees.
-      logger.warn(
-        `Could not resolve tool '${toolName}' for function call ` +
-          `'${functionCall.id ?? ''}'. ${e.message}\n${RESOLUTION_FAILURE_CAUSES}`,
-      );
-      // Failing to resolve the tool is a tool error, not a model error, so it
-      // goes through the same on-tool-error callbacks, and then the same
-      // error response, that a registered tool throwing would.
-      const notFoundTool = new ToolNotFoundPlaceholder(toolName, e);
-      const notFoundContext = new Context({
-        invocationContext,
-        functionCallId: functionCall.id || undefined,
-        toolConfirmation,
-      });
-      const onToolErrorResponse =
-        await invocationContext.pluginManager.runOnToolErrorCallback({
-          tool: notFoundTool,
-          toolArgs: functionCall.args ?? {},
-          toolContext: notFoundContext,
-          error: e,
-        });
-      // With no plugin response, hand the model the error as this call's
-      // result, the same shape a registered tool's failure takes. Rethrowing
-      // instead would leave the call unanswered, and since nothing else in the
-      // request changes between iterations the model re-issues it until
-      // `maxLlmCalls` trips.
+    const toolContext = new Context({
+      invocationContext,
+      functionCallId: functionCall.id || undefined,
+      toolConfirmation,
+    });
+    const tool = functionCall.name ? toolsDict[functionCall.name] : undefined;
+
+    if (!tool) {
       functionResponseEvents.push(
-        buildResponseEvent(
-          notFoundTool,
-          onToolErrorResponse ?? {error: e.message},
-          notFoundContext,
+        await answerUnresolvableCall({
           invocationContext,
-        ),
+          functionCall,
+          toolsDict,
+          toolContext,
+        }),
       );
       continue;
     }
@@ -605,38 +645,6 @@ export async function handleFunctionCallList({
     });
   }
   return mergedEvent;
-}
-
-// TODO - b/425992518: consider inline, which is much cleaner.
-function getToolAndContext({
-  invocationContext,
-  functionCall,
-  toolsDict,
-  toolConfirmation,
-}: {
-  invocationContext: InvocationContext;
-  functionCall: FunctionCall;
-  toolsDict: Record<string, BaseTool>;
-  toolConfirmation?: ToolConfirmation;
-}): {tool: BaseTool; toolContext: Context} {
-  if (!functionCall.name || !(functionCall.name in toolsDict)) {
-    const callableTools = Object.keys(toolsDict);
-    throw new Error(
-      `Function ${functionCall.name || '<unnamed>'} is not found in the ` +
-        `toolsDict. Callable tools: ` +
-        `${callableTools.length ? callableTools.join(', ') : '(none)'}.`,
-    );
-  }
-
-  const toolContext = new Context({
-    invocationContext: invocationContext,
-    functionCallId: functionCall.id || undefined,
-    toolConfirmation,
-  });
-
-  const tool = toolsDict[functionCall.name];
-
-  return {tool, toolContext};
 }
 
 /**

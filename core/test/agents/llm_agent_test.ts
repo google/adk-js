@@ -31,7 +31,15 @@ import {
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 import {logger} from '../../src/utils/logger.js';
@@ -1272,6 +1280,8 @@ describe('LlmAgent unresolvable tool calls', () => {
   // `maxLlmCalls` tripped. Assert it here so reintroducing the escape one
   // layer up cannot stay green.
   it('completes the invocation instead of erroring and re-issuing the call', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
     const mockLlm = new GhostCallerLlm();
     const agent = new LlmAgent({
       name: 'ghost_agent',

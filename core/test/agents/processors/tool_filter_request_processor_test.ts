@@ -16,10 +16,11 @@ import {
   ReadonlyContext,
   createSession,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {handleFunctionCallsAsync} from '../../../src/agents/functions.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from '../../../src/agents/processors/tool_filter_request_processor.js';
 import {createEvent} from '../../../src/events/event.js';
+import {logger} from '../../../src/utils/logger.js';
 
 class MockTool extends BaseTool {
   constructor(name: string) {
@@ -166,6 +167,9 @@ describe('ToolFilterRequestProcessor', () => {
   });
 
   it('should answer with an error if model tries to call a filtered tool', async () => {
+    // A filtered tool is an expected resolution failure here; keep the
+    // diagnostic out of the suite output.
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const tool1 = new MockTool('tool1');
     const agent = new LlmAgent({
       name: 'test_agent',
@@ -225,5 +229,6 @@ describe('ToolFilterRequestProcessor', () => {
     expect((functionResponse.response as {error: string}).error).toContain(
       'Function tool1 is not found in the toolsDict.',
     );
+    warnSpy.mockRestore();
   });
 });
