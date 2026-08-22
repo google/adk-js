@@ -29,6 +29,7 @@ import {
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {logger} from '../../src/utils/logger.js';
 
 // Get the test target function
 const {
@@ -405,17 +406,41 @@ describe('handleFunctionCallList', () => {
       'Function google_search is not found in the toolsDict.',
     );
     expect(error).toContain('Callable tools: testTool.');
-    // A built-in tool is registered on the agent yet absent here, so the
-    // message must not pin the blame on the model naming something unknown.
-    expect(error).toContain('runs inside the model');
+    // The enumerated causes are for an operator, not the model — keep them out
+    // of the payload the model pays for on every occurrence.
+    expect(error).not.toContain('Possible causes');
+  });
+
+  it('should warn the operator with the possible causes', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // Without this the only trace of a misconfigured agent is a string the
+    // model sees and the operator never does.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warning = warnSpy.mock.calls[0][0] as string;
+    expect(warning).toContain("Could not resolve tool 'google_search'");
+    expect(warning).toContain('call-1');
+    expect(warning).toContain('Possible causes:');
+    // The cause this PR tripped over in SleepyTool has to be listed.
+    expect(warning).toContain('_getDeclaration()');
+    warnSpy.mockRestore();
   });
 
   it('should answer every call in a batch when one name is unresolvable', async () => {
+    const unresolvableId = randomIdForTestingOnly();
     const event = await handleFunctionCallList({
       invocationContext,
       functionCalls: [
         callFor(testTool),
-        {id: randomIdForTestingOnly(), name: 'google_search', args: {}},
+        {id: unresolvableId, name: 'google_search', args: {}},
         callFor(testTool),
       ],
       toolsDict,
@@ -431,6 +456,10 @@ describe('handleFunctionCallList', () => {
     ]);
     expect(responses[0].response).toEqual({result: 'tool executed'});
     expect(responses[2].response).toEqual({result: 'tool executed'});
+    // The id is what keeps the pairing balanced, so pin it on the
+    // unresolvable slot too — that is the one built off the placeholder.
+    expect(responses[1].id).toBe(unresolvableId);
+    expect(responses[1].response).toHaveProperty('error');
   });
 
   it('should pass abortSignal to tool execution', async () => {

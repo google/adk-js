@@ -259,7 +259,9 @@ function buildResponseEvent(
  * - Iterate through each function call in the `functionCallEvent`:
  *   - Resolve the named tool. If the name is not callable, run the on-tool-
  *     error callbacks and answer the call with their response, or with the
- *     resolution error when none handles it.
+ *     resolution error when none handles it, then move to the next call. That
+ *     answer skips the before/after tool callbacks below, so a plugin auditing
+ *     every response does not observe it — as in Python.
  *   - Execute before tool callbacks !!if a callback provides a response, short
  *     circuit the rest.
  *   - Execute the tool.
@@ -316,17 +318,34 @@ function normalizeCallbackResponse(
 }
 
 /**
- * Stands in for a tool the model named but that the agent does not have, so
- * the on-tool-error callbacks get something to inspect. It is never run.
- * Mirrors the bare `BaseTool` Python builds in the same spot.
+ * Why a name the model called may be missing from `toolsDict`. Operator-facing
+ * only — the model gets the short form, since none of this is actionable to it.
+ */
+const RESOLUTION_FAILURE_CAUSES = `Possible causes:
+  1. The model hallucinated the name.
+  2. The tool is not registered on this agent, or a plugin filtered it out of this request.
+  3. The name does not match the registered tool's name exactly.
+  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined or it is a built-in tool that runs inside the model (\`google_search\`, \`url_context\`, ...).`;
+
+/**
+ * Stands in for a tool the model named but that the agent cannot call, so the
+ * on-tool-error callbacks get something to inspect. Mirrors the bare
+ * `BaseTool` Python builds in the same spot.
+ *
+ * The framework never runs it, but a plugin receiving it as `tool` can, so
+ * `runAsync` rethrows the resolution error rather than inventing a second
+ * message that could drift from the first.
  */
 class ToolNotFoundPlaceholder extends BaseTool {
-  constructor(name: string) {
+  constructor(
+    name: string,
+    private readonly resolutionError: Error,
+  ) {
     super({name, description: 'Tool not found'});
   }
 
-  override async runAsync(): Promise<unknown> {
-    throw new Error(`Function ${this.name} is not found in the toolsDict.`);
+  override async runAsync(): Promise<never> {
+    throw this.resolutionError;
   }
 }
 
@@ -375,15 +394,23 @@ export async function handleFunctionCallList({
         toolConfirmation,
       }));
     } catch (e: unknown) {
+      // `getToolAndContext` has a single throw site and it throws an `Error`,
+      // so this only guards a future one added there.
       if (!(e instanceof Error)) {
         throw e;
       }
+      const toolName = functionCall.name || '<unnamed>';
+      // The model gets a short answer it can act on; the operator gets the
+      // diagnosis. Without this line a misconfigured agent degrades into a
+      // string only the model ever sees.
+      logger.warn(
+        `Could not resolve tool '${toolName}' for function call ` +
+          `'${functionCall.id ?? ''}'. ${e.message}\n${RESOLUTION_FAILURE_CAUSES}`,
+      );
       // Failing to resolve the tool is a tool error, not a model error, so it
       // goes through the same on-tool-error callbacks, and then the same
       // error response, that a registered tool throwing would.
-      const notFoundTool = new ToolNotFoundPlaceholder(
-        functionCall.name || '<unnamed>',
-      );
+      const notFoundTool = new ToolNotFoundPlaceholder(toolName, e);
       const notFoundContext = new Context({
         invocationContext,
         functionCallId: functionCall.id || undefined,
@@ -595,12 +622,9 @@ function getToolAndContext({
   if (!functionCall.name || !(functionCall.name in toolsDict)) {
     const callableTools = Object.keys(toolsDict);
     throw new Error(
-      `Function ${functionCall.name} is not found in the toolsDict. ` +
-        `Callable tools: ${callableTools.length ? callableTools.join(', ') : '(none)'}. ` +
-        'A built-in tool such as `google_search` runs inside the model and is ' +
-        'never callable from here, so a function call naming one lands here ' +
-        'even though the tool is registered; otherwise the model named a tool ' +
-        'this agent does not have.',
+      `Function ${functionCall.name || '<unnamed>'} is not found in the ` +
+        `toolsDict. Callable tools: ` +
+        `${callableTools.length ? callableTools.join(', ') : '(none)'}.`,
     );
   }
 
