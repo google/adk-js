@@ -55,48 +55,41 @@ export async function materializeFiles(
     const ext = path.extname(fullPath);
     const dirName = path.dirname(fullPath);
     const base = path.basename(fullPath, ext);
+    const originalDir = path.dirname(file.name);
 
+    await fs.mkdir(dirName, {recursive: true});
+
+    // Write with `wx` (O_CREAT | O_EXCL): it never overwrites and never follows
+    // a symlink at the final component, so it is both the collision check and
+    // the write in one atomic step. On a collision — a real file, a file that
+    // appeared in a race with a sibling call, or a (possibly dangling) symlink
+    // the `fs.access` probe could not see — it rejects with EEXIST; we then
+    // advance to a suffixed name and retry, rather than aborting. Mirrors
+    // adk-python's version-reservation retry (`FileExistsError` -> bump).
     let finalPath = fullPath;
     let counter = 2;
-
+    const buffer = Buffer.from(file.content, file.contentEncoding);
     while (true) {
+      if (!isInsideDir(finalPath, resolvedBaseDir)) {
+        throw new Error(
+          `Path traversal detected: ${file.name} resolves outside of ${dir}`,
+        );
+      }
       try {
-        await fs.access(finalPath);
-        // File exists, try next name
+        await fs.writeFile(finalPath, buffer, {flag: 'wx'});
+        break;
+      } catch (err) {
+        if ((err as Error & {code?: string}).code !== 'EEXIST') {
+          throw err;
+        }
+        // Name taken — advance to `${base}_${counter}${ext}` and try again.
         const newName = `${base}_${counter}${ext}`;
         finalPath = path.join(dirName, newName);
-        // Update file.name to reflect the actual relative path
-        const originalDir = path.dirname(file.name);
         file.name =
           originalDir === '.' ? newName : path.join(originalDir, newName);
         counter++;
-      } catch {
-        // File does not exist, safe to write
-        break;
       }
     }
-
-    if (!isInsideDir(finalPath, resolvedBaseDir)) {
-      throw new Error(
-        `Path traversal detected: ${file.name} resolves outside of ${dir}`,
-      );
-    }
-
-    await fs.mkdir(path.dirname(finalPath), {recursive: true});
-    // `wx` opens with O_CREAT | O_EXCL, which fails rather than writing when
-    // anything already exists at `finalPath`. That matters for two reasons
-    // beyond the containment check above:
-    //   - A dangling symlink inside `dir` is invisible to the `fs.access`
-    //     collision probe (it reports the link's missing target), so a plain
-    //     write would follow the link and land outside `dir`. O_EXCL refuses
-    //     to follow a symlink at the final path component.
-    //   - It closes the check-then-write race between that probe and this
-    //     write, so a file created in between is never clobbered.
-    await fs.writeFile(
-      finalPath,
-      Buffer.from(file.content, file.contentEncoding),
-      {flag: 'wx'},
-    );
 
     createdFiles.push({
       ...file,

@@ -145,7 +145,10 @@ export class State {
    */
   update(delta: Record<string, unknown>) {
     this.validateDelta(delta);
-    // This should be revised while working on the parallel tool execution.
+    // Shallow assign is deliberate under parallel tool execution: each entry
+    // is a whole-key write, stamped below so a stale commit cannot roll it
+    // back. Deep-merging of sibling writes to the same key happens once, at
+    // event-merge time (`mergeEventActions`), not on every write-through.
     Object.assign(this.delta, delta);
     Object.assign(this.value, delta);
     for (const key of Object.keys(delta)) {

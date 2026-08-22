@@ -42,10 +42,16 @@ function isMissingModule(err: unknown, packageName: string): boolean {
     return false;
   }
   const code = (err as Error & {code?: string}).code;
+  // Match the package as a *bare specifier* — the quoted whole, `'pkg'` — not a
+  // loose substring. Node phrases both the ESM ("Cannot find package 'pkg'")
+  // and CJS ("Cannot find module 'pkg'") forms with the specifier quoted. A
+  // missing subpath of an installed peer ("...'pkg/build/foo'") contains the
+  // name but not the quoted whole, so it is correctly left to propagate rather
+  // than misreported as "install pkg".
   return (
     code !== undefined &&
     MODULE_NOT_FOUND_CODES.has(code) &&
-    err.message.includes(packageName)
+    err.message.includes(`'${packageName}'`)
   );
 }
 

@@ -92,17 +92,16 @@ describe('file_utils', () => {
       await expect(fs.access(siblingPath)).rejects.toThrow();
     });
 
-    it('should not write through a dangling symlink planted in the target directory', async () => {
+    it('should not write through a dangling symlink, and recover to a suffixed name', async () => {
       // Without an exclusive create the write follows the link and lands
       // outside the target directory, bypassing the containment check
       // entirely: the collision probe uses fs.access, which on POSIX reports a
       // *dangling* symlink as "nothing here" (it stats the missing target).
       //
-      // How the write is refused is platform-dependent, so only the property
-      // is asserted here. On POSIX the probe says the path is free and the
-      // `wx` write rejects; on Windows fs.access reports the link itself as
-      // present and the collision branch writes a suffixed name inside the
-      // target directory instead. Both are safe — nothing escapes.
+      // The `wx` open refuses to follow the link (EEXIST), and materializeFiles
+      // must treat that like any other name collision — advance to a suffixed
+      // name inside the target directory — rather than aborting. So: nothing
+      // escapes, the call resolves, and the content lands on a `_N` name.
       const outsidePath = path.join(
         path.dirname(tempDir),
         `${path.basename(tempDir)}_escape.txt`,
@@ -118,9 +117,46 @@ describe('file_utils', () => {
         },
       ];
 
-      await materializeFiles(files, tempDir).catch(() => {});
+      const created = await materializeFiles(files, tempDir);
 
+      // Nothing escaped the target directory.
       await expect(fs.access(outsidePath)).rejects.toThrow();
+      // The write did not abort: it recovered onto a suffixed name in `dir`.
+      expect(created).toHaveLength(1);
+      expect(created[0].name).not.toBe('link.txt');
+      const landed = path.join(tempDir, created[0].name);
+      expect(path.resolve(landed).startsWith(path.resolve(tempDir))).toBe(true);
+      await expect(fs.readFile(landed, 'utf-8')).resolves.toBe('dangerous');
+    });
+
+    it('should not lose a payload when two calls race the same filename into one dir', async () => {
+      // Parallel sibling tool calls share one output directory
+      // (`getScriptOutputDir` is memoized per toolset), so two of them can
+      // materialize the same file name at once. The check-then-write must not
+      // let the later writer clobber or abort — each payload must survive on
+      // its own name.
+      const mk = (content: string) => [
+        {
+          name: 'out.txt',
+          content,
+          contentEncoding: FileContentEncoding.UTF8,
+          mimeType: 'text/plain',
+        },
+      ];
+
+      const [a, b] = await Promise.all([
+        materializeFiles(mk('first'), tempDir),
+        materializeFiles(mk('second'), tempDir),
+      ]);
+
+      // Both resolved and landed on distinct names inside the directory.
+      expect(a[0].name).not.toBe(b[0].name);
+      const contents = await Promise.all(
+        [a[0].name, b[0].name].map((n) =>
+          fs.readFile(path.join(tempDir, n), 'utf-8'),
+        ),
+      );
+      expect(contents.sort()).toEqual(['first', 'second']);
     });
 
     it('should throw an error if file attempts to escape target directory via absolute path', async () => {

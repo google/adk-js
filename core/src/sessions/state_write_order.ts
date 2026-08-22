@@ -119,12 +119,52 @@ export function shouldApplyDeltaWrite(
  * new object, so the stamps have to be carried with it. An entry that arrives
  * at the commit unstamped is applied unconditionally, which is the old
  * behaviour, so a missed hop degrades rather than breaks.
+ *
+ * When the source entry is unstamped, any stamp `to` already holds for the
+ * key is cleared: in a last-writer-wins merge the new value must not inherit
+ * the superseded source's stamp, or the unconditional-apply promise above
+ * breaks and a commit can silently drop the write.
  */
 export function carryDeltaStamp(from: object, to: object, key: string): void {
   const stamp = deltaStamps.get(from)?.get(key);
   if (stamp !== undefined) {
     stampsFor(deltaStamps, to).set(key, stamp);
+  } else {
+    deltaStamps.get(to)?.delete(key);
   }
+}
+
+/**
+ * Carries the stamp for one key onto a merged delta whose value at `key` was
+ * blended from `to`'s existing entry and `from`'s entry (a deep merge of two
+ * parallel writes). The blend subsumes both writes, so it must carry a stamp
+ * at least as new as either — carrying only the later source's stamp could
+ * leave the blend older than a write it contains, and the commit would skip
+ * it. When either contributor is unstamped the blend is left unstamped,
+ * keeping the unconditional-apply behaviour unstamped entries are promised.
+ *
+ * Trade-off: `max` is permissive, not merely order-restoring. The blend
+ * carries the newest contributor's stamp while containing the oldest
+ * contributor's sub-values, so a non-sibling write that landed between the
+ * two contributors and superseded the key wholesale can be resurrected when
+ * the blend commits. That loosens the module invariant above for blended
+ * entries; the alternative — the oldest stamp — would instead drop the whole
+ * blend whenever any contributor was superseded, losing sibling writes that
+ * were never in conflict.
+ */
+export function carryBlendedDeltaStamp(
+  from: object,
+  to: object,
+  key: string,
+): void {
+  const incoming = deltaStamps.get(from)?.get(key);
+  const existing = deltaStamps.get(to)?.get(key);
+  const carried = stampsFor(deltaStamps, to);
+  if (incoming === undefined || existing === undefined) {
+    carried.delete(key);
+    return;
+  }
+  carried.set(key, Math.max(incoming, existing));
 }
 
 /** {@link carryDeltaStamp} for every key `from` carries a stamp for. */

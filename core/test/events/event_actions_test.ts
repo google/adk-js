@@ -97,6 +97,157 @@ describe('mergeEventActions', () => {
     expect(result.stateDelta).toEqual({a: 1, b: 2});
   });
 
+  it('deep-merges plain objects under the same stateDelta key', () => {
+    // Mirrors Python ADK's deep_merge_dicts (functions.py) used by
+    // merge_parallel_function_response_events.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {profile: {name: 'a'}, x: 1}}}),
+      createEventActions({stateDelta: {user: {profile: {age: 2}, y: 3}}}),
+    ]);
+    expect(result.stateDelta).toEqual({
+      user: {profile: {name: 'a', age: 2}, x: 1, y: 3},
+    });
+  });
+
+  it('does not mutate source stateDelta objects when deep-merging', () => {
+    const first = createEventActions({stateDelta: {user: {a: 1}}});
+    const second = createEventActions({stateDelta: {user: {b: 2}}});
+    mergeEventActions([first, second]);
+    expect(first.stateDelta).toEqual({user: {a: 1}});
+    expect(second.stateDelta).toEqual({user: {b: 2}});
+  });
+
+  it('keeps a nested __proto__ own key and does not re-parent the merge', () => {
+    // A tool can legitimately write attacker-shaped JSON into state
+    // (`state.set('user', await res.json())`). The nested merge must store
+    // `__proto__` as an own data property — assigning it through a plain
+    // object would instead invoke the inherited setter, silently dropping
+    // the entry and swapping the merged object's prototype.
+    const poisoned = JSON.parse(
+      '{"__proto__": {"polluted": "yes"}, "ok": 1}',
+    ) as Record<string, unknown>;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {name: 'alice'}}}),
+      createEventActions({stateDelta: {user: poisoned}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.keys(user).sort()).toEqual(['__proto__', 'name', 'ok']);
+    expect(Object.getOwnPropertyDescriptor(user, '__proto__')?.value).toEqual({
+      polluted: 'yes',
+    });
+    expect('polluted' in user).toBe(false);
+  });
+
+  it('keeps a base-side __proto__ own key across the nested merge', () => {
+    const poisoned = JSON.parse('{"__proto__": {"polluted": "yes"}}') as Record<
+      string,
+      unknown
+    >;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: poisoned}}),
+      createEventActions({stateDelta: {user: {name: 'alice'}}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.keys(user).sort()).toEqual(['__proto__', 'name']);
+    expect('polluted' in user).toBe(false);
+  });
+
+  it('merged nested values are ordinary plain objects', () => {
+    // The blend must behave like every other state value: pollution safety
+    // comes from storing own properties, not from a null prototype, which
+    // would break hasOwnProperty and template interpolation downstream.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {user: {a: 1}}}),
+      createEventActions({stateDelta: {user: {b: 2}}}),
+    ]);
+    const user = result.stateDelta.user as Record<string, unknown>;
+    expect(Object.getPrototypeOf(user)).toBe(Object.prototype);
+    expect(typeof user.hasOwnProperty).toBe('function');
+  });
+
+  it('passes a lone top-level __proto__ entry through without phantom-merging', () => {
+    // result.stateDelta starts as a plain {}, so a naive read of
+    // result.stateDelta['__proto__'] resolves Object.prototype through the
+    // prototype chain and takes the deep-merge branch against it. The read
+    // must be own-property-only: with no genuine existing entry the value
+    // passes through unchanged (same reference, prototype intact).
+    const poisoned = JSON.parse('{"__proto__": {"a": 1}}') as Record<
+      string,
+      unknown
+    >;
+    const inner = Object.getOwnPropertyDescriptor(poisoned, '__proto__')!
+      .value as Record<string, unknown>;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: poisoned}),
+    ]);
+    const stored = Object.getOwnPropertyDescriptor(
+      result.stateDelta,
+      '__proto__',
+    )?.value;
+    expect(stored).toBe(inner);
+    expect(Object.getPrototypeOf(result.stateDelta)).toBe(Object.prototype);
+  });
+
+  it('merges self-referencing values without exhausting the call stack', () => {
+    // State is expected to be JSON-serializable, but a cycle must degrade to
+    // last-writer-wins instead of a RangeError deep inside event merging.
+    const first: Record<string, unknown> = {tag: 'first'};
+    first.self = first;
+    const second: Record<string, unknown> = {tag: 'second'};
+    second.self = second;
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {key: first}}),
+      createEventActions({stateDelta: {key: second}}),
+    ]);
+    const merged = result.stateDelta.key as Record<string, unknown>;
+    expect(merged.tag).toBe('second');
+    // The cycle falls back to last-writer-wins for the self-referencing entry.
+    expect(merged.self).toBe(second);
+  });
+
+  it('overwrites arrays under the same stateDelta key (last write wins)', () => {
+    // Python parity: deep_merge_dicts does NOT concatenate lists — upstream
+    // added concatenation in adk-python PR #5191 and reverted it the same day.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {items: [1, 2]}}),
+      createEventActions({stateDelta: {items: [3]}}),
+    ]);
+    expect(result.stateDelta.items).toEqual([3]);
+  });
+
+  it('overwrites when types differ under the same stateDelta key', () => {
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {k: {nested: true}, j: 'scalar'}}),
+      createEventActions({stateDelta: {k: 'scalar', j: {nested: true}}}),
+    ]);
+    expect(result.stateDelta.k).toBe('scalar');
+    expect(result.stateDelta.j).toEqual({nested: true});
+  });
+
+  it('preserves an explicit null/undefined stateDelta entry as a clear', () => {
+    // Python parity: exclude_none drops unset model FIELDS, but None values
+    // inside state_delta survive the merge as explicit clears.
+    const result = mergeEventActions([
+      createEventActions({stateDelta: {a: {keep: 1}}}),
+      createEventActions({stateDelta: {a: null, b: undefined}}),
+    ]);
+    expect(result.stateDelta.a).toBeNull();
+    expect('b' in result.stateDelta).toBe(true);
+    expect(result.stateDelta.b).toBeUndefined();
+  });
+
+  it('keeps the highest version on an artifactDelta filename collision', () => {
+    // Parallel sibling saves to one filename get distinct increasing
+    // versions, but their completion order is arbitrary — input-order
+    // last-writer-wins could record the superseded lower version. The merged
+    // event must point at the surviving (newest) payload.
+    const result = mergeEventActions([
+      createEventActions({artifactDelta: {'report.txt': 1}}),
+      createEventActions({artifactDelta: {'report.txt': 0}}),
+    ]);
+    expect(result.artifactDelta['report.txt']).toBe(1);
+  });
+
   it('merges artifactDelta from multiple sources', () => {
     const result = mergeEventActions([
       {

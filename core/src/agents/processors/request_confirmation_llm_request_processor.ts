@@ -211,10 +211,11 @@ function collectApprovals(
     if (!functionResponse.id || !functionResponse.response) {
       continue;
     }
-    approvals.set(
-      functionResponse.id,
-      parseToolConfirmation(functionResponse.response),
-    );
+    const confirmation = parseToolConfirmation(functionResponse.response);
+    if (!confirmation) {
+      continue;
+    }
+    approvals.set(functionResponse.id, confirmation);
   }
 
   // Plain-text fallback: an interactive user (e.g. `adk run`) can approve or
@@ -238,14 +239,29 @@ function collectApprovals(
  * truthiness, so anything else truthy approves the call — and `"false"` is a
  * string, which is what an HTML form sends for a box the user left unchecked.
  * Approval is the one decision that must never be inferred.
+ *
+ * Returns `undefined` when the payload is unusable — a malformed JSON string in
+ * the single-key `{response: "<json>"}` shape, or a non-object once parsed. The
+ * body is client-authored, so a bad payload must leave the gate pending, never
+ * throw out of the processor and abort the invocation.
  */
 function parseToolConfirmation(
   response: Record<string, unknown>,
-): ToolConfirmation {
-  const fields =
-    Object.keys(response).length === 1 && 'response' in response
-      ? (JSON.parse(response['response'] as string) as Record<string, unknown>)
-      : response;
+): ToolConfirmation | undefined {
+  let fields: Record<string, unknown>;
+  if (Object.keys(response).length === 1 && 'response' in response) {
+    try {
+      const parsed = JSON.parse(response['response'] as string);
+      if (typeof parsed !== 'object' || parsed === null) {
+        return undefined;
+      }
+      fields = parsed as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  } else {
+    fields = response;
+  }
 
   return new ToolConfirmation({
     hint: fields['hint'] as string,

@@ -80,6 +80,12 @@ export interface BaseArtifactService {
    * filename. After saving the artifact, a revision ID is returned to identify
    * the artifact version.
    *
+   * Parallel tool execution can call this concurrently for the SAME
+   * filename. Implementations must tolerate that: concurrent saves must
+   * resolve distinct versions and keep every payload (serialize the
+   * version read-modify-write, or use the backend's own atomic
+   * create-if-absent). See `KeyedMutex` in the bundled implementations.
+   *
    * @param request The request to save an artifact.
    * @return A promise that resolves to The revision ID. The first version of
    * the artifact has a revision ID of 0. This is incremented by 1 after each

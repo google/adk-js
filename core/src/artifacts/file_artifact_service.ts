@@ -9,6 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+import {KeyedMutex} from '../utils/keyed_mutex.js';
 import {logger} from '../utils/logger.js';
 
 import {
@@ -58,6 +59,8 @@ interface FileArtifactVersion extends ArtifactVersion {
  */
 export class FileArtifactService implements BaseArtifactService {
   private readonly rootDir: string;
+  /** Serializes the per-file version read-modify-write in saveArtifact. */
+  private readonly saveMutex = new KeyedMutex();
 
   constructor(rootDirOrUri: string) {
     try {
@@ -87,55 +90,61 @@ export class FileArtifactService implements BaseArtifactService {
       sessionId,
       filename,
     );
-    await fs.mkdir(artifactDir, {recursive: true});
+    // The version read-modify-write below spans several awaits, so two
+    // parallel sibling tool calls saving the same filename would both list
+    // the same versions and draw the same next version, silently losing one
+    // payload. Serialize per artifact path; distinct files stay concurrent.
+    return this.saveMutex.runExclusive(artifactDir, async () => {
+      await fs.mkdir(artifactDir, {recursive: true});
 
-    const versions = await getArtifactVersionsFromDir(artifactDir);
-    const nextVersion =
-      versions.length > 0 ? versions[versions.length - 1] + 1 : 0;
+      const versions = await getArtifactVersionsFromDir(artifactDir);
+      const nextVersion =
+        versions.length > 0 ? versions[versions.length - 1] + 1 : 0;
 
-    const versionsDir = getVersionsDir(artifactDir);
-    const versionDir = path.join(versionsDir, nextVersion.toString());
-    await fs.mkdir(versionDir, {recursive: true});
+      const versionsDir = getVersionsDir(artifactDir);
+      const versionDir = path.join(versionsDir, nextVersion.toString());
+      await fs.mkdir(versionDir, {recursive: true});
 
-    const storedFilename = path.basename(artifactDir); // using the directory name which is the sanitized filename
-    const contentPath = path.join(versionDir, storedFilename);
+      const storedFilename = path.basename(artifactDir); // using the directory name which is the sanitized filename
+      const contentPath = path.join(versionDir, storedFilename);
 
-    let mimeType: string | undefined;
-    let fileUri: string | undefined;
-    if (artifact.inlineData) {
-      const data = artifact.inlineData.data || '';
-      // GenAI SDK Part data is in Base64 format. See https://googleapis.github.io/js-genai/release_docs/interfaces/types.Part.html
-      await fs.writeFile(contentPath, Buffer.from(data, 'base64'));
-      mimeType = artifact.inlineData.mimeType || 'application/octet-stream';
-    } else if (artifact.text !== undefined) {
-      await fs.writeFile(contentPath, artifact.text, 'utf-8');
-    } else {
-      fileUri = artifact.fileData!.fileUri;
-      if (!fileUri) {
-        throw new Error('Artifact fileData must have a fileUri.');
+      let mimeType: string | undefined;
+      let fileUri: string | undefined;
+      if (artifact.inlineData) {
+        const data = artifact.inlineData.data || '';
+        // GenAI SDK Part data is in Base64 format. See https://googleapis.github.io/js-genai/release_docs/interfaces/types.Part.html
+        await fs.writeFile(contentPath, Buffer.from(data, 'base64'));
+        mimeType = artifact.inlineData.mimeType || 'application/octet-stream';
+      } else if (artifact.text !== undefined) {
+        await fs.writeFile(contentPath, artifact.text, 'utf-8');
+      } else {
+        fileUri = artifact.fileData!.fileUri;
+        if (!fileUri) {
+          throw new Error('Artifact fileData must have a fileUri.');
+        }
+        mimeType = artifact.fileData!.mimeType;
       }
-      mimeType = artifact.fileData!.mimeType;
-    }
 
-    const canonicalUri = await getCanonicalUri(
-      this.rootDir,
-      userId,
-      sessionId,
-      filename,
-      nextVersion,
-    );
-    const metadata: FileArtifactVersion = {
-      fileName: filename,
-      mimeType,
-      fileUri,
-      version: nextVersion,
-      canonicalUri,
-      customMetadata,
-    };
+      const canonicalUri = await getCanonicalUri(
+        this.rootDir,
+        userId,
+        sessionId,
+        filename,
+        nextVersion,
+      );
+      const metadata: FileArtifactVersion = {
+        fileName: filename,
+        mimeType,
+        fileUri,
+        version: nextVersion,
+        canonicalUri,
+        customMetadata,
+      };
 
-    await writeMetadata(path.join(versionDir, 'metadata.json'), metadata);
+      await writeMetadata(path.join(versionDir, 'metadata.json'), metadata);
 
-    return nextVersion;
+      return nextVersion;
+    });
   }
 
   async loadArtifact({

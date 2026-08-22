@@ -64,4 +64,20 @@ describe('loadOptionalPeer', () => {
       ),
     ).rejects.toThrow(/Cannot find package '@example\/something-else'/);
   });
+
+  it('rethrows a module-not-found error for a missing SUBPATH of the peer', async () => {
+    // The peer itself IS installed; one of its own deep imports could not be
+    // resolved. The specifier contains the peer's name as a prefix, so a loose
+    // substring match would misreport this as "install the peer" and hide the
+    // real problem. Only a bare-specifier match of the peer must trigger the
+    // friendly message.
+    const subpathMissing = moduleNotFound(
+      '@example/driver/build/internal.js',
+      'ERR_MODULE_NOT_FOUND',
+    );
+
+    await expect(
+      loadOptionalPeer(PEER, () => Promise.reject(subpathMissing)),
+    ).rejects.toBe(subpathMissing);
+  });
 });
