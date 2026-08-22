@@ -123,6 +123,11 @@ export interface RunConfig {
   plainTextToolConfirmation?: boolean;
 
   /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  a2aMetadata?: Record<string, unknown>;
+
+  /**
    * If true, a `requireConfirmation` gate may be answered by a message that
    * arrived over A2A.
    *

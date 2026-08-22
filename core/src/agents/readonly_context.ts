@@ -60,4 +60,11 @@ export class ReadonlyContext {
       {},
     ) as Readonly<State>;
   }
+
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  get a2aMetadata(): Record<string, unknown> | undefined {
+    return this.invocationContext.a2aMetadata;
+  }
 }

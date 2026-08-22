@@ -105,6 +105,11 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
    * Callbacks run after receiving a response chunk or event, before conversion.
    */
   afterRequestCallbacks?: AfterA2ARequestCallback[];
+  /**
+   * Optional request-level metadata to include in the A2A message send request.
+   * If omitted, defaults to `context.a2aMetadata` from the current invocation context.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -195,9 +200,11 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
       if (taskId) message.taskId = taskId;
       if (contextId) message.contextId = contextId;
 
+      const metadata = this.a2aConfig.metadata ?? context.a2aMetadata;
       const params: MessageSendParams = {
         message,
         configuration: this.a2aConfig.messageSendConfig,
+        ...(metadata ? {metadata} : {}),
       };
 
       const processor = new A2ARemoteAgentRunProcessor(params);

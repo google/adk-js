@@ -323,6 +323,7 @@ export class Runner {
             session,
             userContent: newMessage,
             runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
             pluginManager: this.pluginManager,
             abortSignal: params.abortSignal,
           });
@@ -710,6 +711,7 @@ export class Runner {
             agent,
             session,
             runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
             pluginManager: this.pluginManager,
             liveRequestQueue: params.liveRequestQueue,
             abortSignal: params.abortSignal,
