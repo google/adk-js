@@ -1,0 +1,19 @@
+{
+  // This tree is excluded from the root `ts:check` and checked by
+  // `npm run ts:check:parity` instead. It needs `allowImportingTsExtensions`
+  // because everything here is imported with an explicit `.ts` extension: the
+  // harness runs under `node --experimental-strip-types`, which resolves the
+  // real file on disk and will not rewrite a `.js` specifier onto a `.ts`
+  // file. The same specifiers also work under vitest and under the esbuild
+  // bundler the ADK CLI uses to load an agent file.
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["adk-python", ".venv", "runs", "node_modules"]
+}
