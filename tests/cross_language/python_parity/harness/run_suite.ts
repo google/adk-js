@@ -10,7 +10,7 @@ import {execFileSync} from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import {compareTraces} from './compare.ts';
+import {compareTraces, consensusOf, isTransient} from './compare.ts';
 import {renderReport} from './report.ts';
 import {
   PARITY_MODEL,
@@ -40,6 +40,14 @@ export interface SuiteOptions {
   filter?: string;
   /** How many cases to run at once. Each case is two LLM-backed CLI runs. */
   concurrency?: number;
+  /**
+   * How many times to compare each case. A difference has to appear in a
+   * majority of repeats to be reported, which is what makes the result
+   * reproducible; 1 is fast but produces leads, not findings.
+   */
+  repeats?: number;
+  /** Extra attempts for a repeat lost to a transient API failure. */
+  retries?: number;
   onProgress?: (done: number, total: number, result: CaseResult) => void;
 }
 
@@ -50,19 +58,53 @@ export interface SuiteOutcome {
   report: string;
 }
 
-async function runCase(parityCase: ParityCase): Promise<CaseResult> {
+/** One comparison of one case: both CLIs over the same replay file. */
+async function compareOnce(
+  parityCase: ParityCase,
+  runDir: string,
+  replayFile: string,
+): Promise<CaseResult> {
+  // Sequential per case: the two runs write session files into sibling trees
+  // and share a rate limit, and interleaving them makes a timeout ambiguous.
+  const python = await runPython(parityCase, runDir, replayFile);
+  const ts = await runTypeScript(parityCase, runDir, replayFile);
+  return compareTraces(parityCase, python, ts);
+}
+
+async function runCase(
+  parityCase: ParityCase,
+  repeats: number,
+  retries: number,
+): Promise<CaseResult> {
   const runDir = path.join(RUNS, parityCase.id);
   fs.rmSync(runDir, {recursive: true, force: true});
   fs.mkdirSync(runDir, {recursive: true});
 
   const replayFile = writeReplayFile(parityCase, runDir);
 
-  // Sequential per case: the two runs write session files into sibling trees
-  // and share a rate limit, and interleaving them makes a timeout ambiguous.
-  const python = await runPython(parityCase, runDir, replayFile);
-  const ts = await runTypeScript(parityCase, runDir, replayFile);
+  const attempts: CaseResult[] = [];
+  let retried = 0;
 
-  const result = compareTraces(parityCase, python, ts);
+  for (let i = 0; i < repeats; i++) {
+    let result = await compareOnce(parityCase, runDir, replayFile);
+
+    // A repeat lost to a 429/503/empty completion measures the API, not the
+    // frameworks. Re-run it rather than letting it vote.
+    for (
+      let attempt = 0;
+      attempt < retries &&
+      result.python &&
+      result.ts &&
+      isTransient(result.python, result.ts);
+      attempt++
+    ) {
+      retried++;
+      result = await compareOnce(parityCase, runDir, replayFile);
+    }
+    attempts.push(result);
+  }
+
+  const result = {...consensusOf(attempts), retries: retried};
   fs.writeFileSync(
     path.join(runDir, 'diff.json'),
     JSON.stringify(toRecord(result), null, 2),
@@ -76,6 +118,10 @@ interface CaseRecord {
   differences: CaseResult['differences'];
   match: boolean;
   textSimilarity?: number;
+  repeats?: number;
+  flipRate?: number;
+  unstableDimensions?: string[];
+  retries?: number;
   python: SideRecord;
   ts: SideRecord;
 }
@@ -107,6 +153,10 @@ function toRecord(result: CaseResult): CaseRecord {
     differences: result.differences,
     match: result.match,
     textSimilarity: result.textSimilarity,
+    repeats: result.repeats,
+    flipRate: result.flipRate,
+    unstableDimensions: result.unstableDimensions,
+    retries: result.retries,
     python: side(result.python!),
     ts: side(result.ts!),
   };
@@ -144,6 +194,10 @@ function fromRecord(record: CaseRecord): CaseResult {
     differences: record.differences,
     match: record.match,
     textSimilarity: record.textSimilarity,
+    repeats: record.repeats,
+    flipRate: record.flipRate,
+    unstableDimensions: record.unstableDimensions,
+    retries: record.retries,
   };
 }
 
@@ -217,9 +271,12 @@ export async function runSuite(options: SuiteOptions): Promise<SuiteOutcome> {
 
   fs.mkdirSync(RUNS, {recursive: true});
 
+  const repeats = Math.max(1, options.repeats ?? 3);
+  const retries = Math.max(0, options.retries ?? 1);
+
   let done = 0;
   const fresh = await pool(runnable, options.concurrency ?? 3, async (c) => {
-    const result = await runCase(c);
+    const result = await runCase(c, repeats, retries);
     options.onProgress?.(++done, runnable.length, result);
     return result;
   });

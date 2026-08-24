@@ -20,10 +20,13 @@
  * `npm run test:parity` runs the live suite directly, outside vitest.
  */
 
-import {execFileSync} from 'node:child_process';
+import {execFile as execFileCb} from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {promisify} from 'node:util';
 import {describe, expect, it} from 'vitest';
+
+const execFile = promisify(execFileCb);
 
 import {CASES} from './cases.ts';
 import {runSuite} from './harness/run_suite.ts';
@@ -78,28 +81,42 @@ describe('python parity catalogue', () => {
 });
 
 describe.skipIf(!provisioned.ok)('python parity agents load', () => {
-  it('loads every ported agent in both runtimes', () => {
+  it('loads every ported agent in both runtimes', async () => {
     // Runs in a subprocess: it imports agent modules, and a bad one should
     // not take the test runner's process with it.
-    const output = execFileSync(
+    //
+    // Async rather than execFileSync: the check takes ~60s, and blocking the
+    // worker's event loop for that long starves vitest's reporter RPC, which
+    // then fails the run with `Timeout calling "onTaskUpdate"`.
+    const {stdout} = await execFile(
       process.execPath,
       ['--experimental-strip-types', path.join(ROOT, 'harness/load_check.ts')],
-      {encoding: 'utf8', cwd: ROOT},
+      {encoding: 'utf8', cwd: ROOT, maxBuffer: 16 * 1024 * 1024},
     );
-    expect(output).toContain('0 failed');
+    expect(stdout).toContain('0 failed');
   }, 600_000);
 });
 
 describe.skipIf(!provisioned.ok || !LIVE)('python parity behaviour', () => {
   it('behaves the same in both runtimes', async () => {
-    const outcome = await runSuite({cases: CASES, concurrency: 4});
+    // Explicit repeats: a single comparison of an LLM-backed case flips
+    // verdict often enough (~18% measured) that asserting on one would make
+    // this test a coin toss.
+    const outcome = await runSuite({
+      cases: CASES,
+      concurrency: 4,
+      repeats: 3,
+    });
     const diverged = outcome.results
       .filter((r) => !r.match)
       .map(
         (r) =>
           `${r.case.id}: ` +
           r.differences
-            .filter((d) => d.severity !== 'cosmetic')
+            .filter(
+              (d) =>
+                d.severity !== 'cosmetic' && d.severity !== 'infrastructure',
+            )
             .map((d) => `${d.dimension} (py=${d.python} ts=${d.ts})`)
             .join('; '),
       );

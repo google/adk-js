@@ -20,6 +20,7 @@ function truncate(text: string, max = 240): string {
 function severityIcon(differences: Difference[]): string {
   if (differences.some((d) => d.severity === 'blocked')) return '🚫';
   if (differences.some((d) => d.severity === 'structural')) return '❌';
+  if (differences.some((d) => d.severity === 'infrastructure')) return '🛠️';
   if (differences.some((d) => d.severity === 'cosmetic')) return '⚠️';
   return '✅';
 }
@@ -45,13 +46,27 @@ export function renderReport(input: ReportInput): string {
       !blocked.includes(r) &&
       r.differences.some((d) => d.severity === 'structural'),
   );
+  const infrastructure = ran.filter(
+    (r) =>
+      !blocked.includes(r) &&
+      !structural.includes(r) &&
+      r.differences.some((d) => d.severity === 'infrastructure'),
+  );
   const cosmetic = ran.filter(
     (r) =>
       !blocked.includes(r) &&
       !structural.includes(r) &&
+      !infrastructure.includes(r) &&
       r.differences.length > 0,
   );
   const clean = ran.filter((r) => r.differences.length === 0);
+
+  const unstable = ran.filter((r) => (r.flipRate ?? 0) > 0);
+  const withUnstableDims = ran.filter(
+    (r) => (r.unstableDimensions?.length ?? 0) > 0,
+  );
+  const repeats = ran[0]?.repeats ?? 1;
+  const totalRetries = ran.reduce((sum, r) => sum + (r.retries ?? 0), 0);
 
   const lines: string[] = [];
   const push = (s = '') => lines.push(s);
@@ -68,8 +83,19 @@ export function renderReport(input: ReportInput): string {
   push(`| adk-js | \`${input.tsVersion}\` |`);
   push(`| Model (pinned both sides) | \`${input.model}\` |`);
   push(`| Cases run | ${ran.length} |`);
+  push(`| Repeats per case | ${repeats} |`);
   push(`| Cases catalogued but not run | ${skipped.length} |`);
   push();
+
+  if (repeats === 1) {
+    push(
+      '> **Single run — these are leads, not findings.** An LLM-backed case is' +
+        ' not reproducible: across two full runs of this suite, 18% of cases' +
+        ' changed verdict without either framework changing. Re-run with' +
+        ' `--repeats 3` before acting on anything here.',
+    );
+    push();
+  }
 
   push('## Summary');
   push();
@@ -80,6 +106,9 @@ export function renderReport(input: ReportInput): string {
   );
   push(
     `| ⚠️ Cosmetic only | ${cosmetic.length} | Same tools, agents and state; differs in event packaging. |`,
+  );
+  push(
+    `| 🛠️ Infrastructure | ${infrastructure.length} | A model/API failure voided the comparison. Not a parity result. |`,
   );
   push(
     `| ❌ Structural divergence | ${structural.length} | The runtimes did materially different things. |`,
@@ -153,17 +182,79 @@ export function renderReport(input: ReportInput): string {
     push();
   }
 
+  if (repeats > 1 && (unstable.length || withUnstableDims.length)) {
+    push('## ⚡ Reproducibility');
+    push();
+    push(
+      `Each case was compared ${repeats} times and only differences seen in a ` +
+        'majority are reported above. What follows was seen but did not carry ' +
+        '— it is model nondeterminism, not a runtime difference, and it is ' +
+        'listed so the noise stays visible.',
+    );
+    push();
+    if (totalRetries) {
+      push(
+        `${totalRetries} repeat(s) hit a transient API failure and were re-run.`,
+      );
+      push();
+    }
+    push('| Case | Verdict held | Dimensions that did not carry |');
+    push('|---|---|---|');
+    for (const r of ran) {
+      const flip = r.flipRate ?? 0;
+      const dims = r.unstableDimensions ?? [];
+      if (!flip && !dims.length) continue;
+      const held = `${Math.round((1 - flip) * (r.repeats ?? 1))}/${r.repeats ?? 1}`;
+      push(`| \`${r.case.id}\` | ${held} | ${dims.join(', ') || '–'} |`);
+    }
+    push();
+  }
+
+  if (infrastructure.length) {
+    push('## 🛠️ Infrastructure failures');
+    push();
+    push(
+      'The model or the API failed in a way that says nothing about either ' +
+        'framework (429, 503, empty completion, timeout). These are excluded ' +
+        'from the parity verdict. A deterministic 400 that only one runtime ' +
+        'provokes is *not* here — that stays a structural finding.',
+    );
+    push();
+    push('| Case | Python | TypeScript |');
+    push('|---|---|---|');
+    for (const r of infrastructure) {
+      for (const d of r.differences.filter(
+        (x) => x.severity === 'infrastructure',
+      )) {
+        push(
+          `| \`${r.case.id}\` | ${truncate(d.python, 70)} | ${truncate(d.ts, 70)} |`,
+        );
+      }
+    }
+    push();
+  }
+
   push('## All cases');
   push();
-  push('| | Case | Family | Tools (py → ts) | Text overlap | py ms | ts ms |');
-  push('|---|---|---|---|---:|---:|---:|');
+  push(
+    '| | Case | Family | Tools (py → ts) | Text overlap | Stable | py ms | ts ms |',
+  );
+  push('|---|---|---|---|---:|---|---:|---:|');
   for (const r of results) {
     const py = r.python;
     const ts = r.ts;
+    const flip = r.flipRate ?? 0;
+    const stable =
+      r.repeats && r.repeats > 1
+        ? flip === 0
+          ? `${r.repeats}/${r.repeats}`
+          : `⚡ ${Math.round((1 - flip) * r.repeats)}/${r.repeats}`
+        : '–';
     push(
       `| ${severityIcon(r.differences)} | \`${r.case.id}\` | ${r.case.family} | ` +
         `${py?.toolSequence.join(',') || '–'} → ${ts?.toolSequence.join(',') || '–'} | ` +
         `${r.textSimilarity !== undefined ? pct(r.textSimilarity) : '–'} | ` +
+        `${stable} | ` +
         `${py?.durationMs ?? '–'} | ${ts?.durationMs ?? '–'} |`,
     );
   }

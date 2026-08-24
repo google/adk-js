@@ -111,8 +111,20 @@ export interface Trace {
   hadError: boolean;
 }
 
-/** How badly two traces disagree on one dimension. */
-export type DiffSeverity = 'blocked' | 'structural' | 'cosmetic';
+/**
+ * How badly two traces disagree on one dimension.
+ *
+ * `infrastructure` is not a parity verdict: it means the comparison could not
+ * be made because a model call failed in a way that says nothing about either
+ * framework (a 429, a 503, an empty completion). Keeping it out of
+ * `structural` is what stops a bad minute at the API from being reported as a
+ * runtime difference.
+ */
+export type DiffSeverity =
+  | 'blocked'
+  | 'structural'
+  | 'cosmetic'
+  | 'infrastructure';
 
 /** One disagreement between the two runtimes. */
 export interface Difference {
@@ -123,15 +135,42 @@ export interface Difference {
   detail?: string;
 }
 
-/** The verdict for one case. */
+/**
+ * Why a run could not be trusted, when it could not.
+ *
+ * `transient` is retried and never scored. A deterministic 4xx is left alone:
+ * a 400 that only one runtime provokes is exactly the kind of finding this
+ * harness exists to catch (adk-python inlining an `image/bmp` artifact that
+ * Vertex rejects, say), so it must not be swept up with the flaky ones.
+ */
+export type InfraFailureKind = 'transient' | 'deterministic-4xx';
+
+/** The verdict for one case, over one or more repeats. */
 export interface CaseResult {
   case: ParityCase;
   skipped?: SkipReason;
   python?: Trace;
   ts?: Trace;
+  /** Consensus differences: those seen in a majority of repeats. */
   differences: Difference[];
-  /** No structural or blocking differences. */
+  /** No structural or blocking differences in the consensus. */
   match: boolean;
   /** Rough lexical overlap of the two final answers, 0..1. */
   textSimilarity?: number;
+
+  /** How many times the case was compared. */
+  repeats?: number;
+  /**
+   * Share of repeats whose verdict disagreed with the consensus, 0..1. Above
+   * zero means the case is not reproducible and its result is a lead, not a
+   * finding.
+   */
+  flipRate?: number;
+  /**
+   * Dimensions that appeared in at least one repeat but not in a majority —
+   * reported so the noise is visible, but not counted as divergence.
+   */
+  unstableDimensions?: string[];
+  /** Transient failures that were retried away, for the report's footnote. */
+  retries?: number;
 }

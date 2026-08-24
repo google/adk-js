@@ -20,13 +20,13 @@ never scraped stdout.
 differently on two calls, let alone two SDKs. What must agree is everything the
 _framework_ decides:
 
-| Compared, fails the suite (`structural`)            | Compared, reported only (`cosmetic`)          | Not compared               |
-| --------------------------------------------------- | --------------------------------------------- | -------------------------- |
-| tool call sequence and argument names               | event count / how text is split across events | answer wording             |
-| which agents produced events                        | whether thought parts are surfaced            | timestamps, ids            |
-| agent transfer chain                                |                                               | `modelVersion`, `nodeInfo` |
-| session state keys and values                       |                                               | token usage                |
-| artifacts written, escalation, long-running signals |                                               |                            |
+| Compared, fails the suite (`structural`)            | Compared, reported only (`cosmetic` / `infrastructure`) | Not compared               |
+| --------------------------------------------------- | ------------------------------------------------------- | -------------------------- |
+| tool call sequence and argument names               | event count / how text is split across events           | answer wording             |
+| which agents produced events                        | same agents or tools in a different order               | timestamps, ids            |
+| agent transfer chain                                | whether thought parts are surfaced                      | `modelVersion`, `nodeInfo` |
+| session state keys and values                       | a transient model/API failure on one side               | token usage                |
+| artifacts written, escalation, long-running signals |                                                         |                            |
 
 Final answers are put side by side in the report with a token-overlap score so
 a human can spot answers that differ in _substance_, without that ever failing
@@ -36,6 +36,22 @@ the run.
 defaults, so a sample that omits `model=` would compare two different models
 and blame the framework. `ADK_PARITY_MODEL` (default `gemini-2.5-flash`) is
 injected into both.
+
+**One run of an LLM-backed case proves nothing.** Measured across two full runs
+of this suite, with neither framework changing, **18% of cases changed
+verdict**. So each case is compared `--repeats` times (default 3) and a
+difference is reported only if a _majority_ of repeats saw it. Anything seen
+but not carried is listed under "Reproducibility" in the report as noise, which
+keeps it visible without letting it count. `--repeats 1` is fast, and the
+report says in bold that its results are leads rather than findings.
+
+**A failed model call is not a parity result.** A 429, a 503, a timeout or an
+empty completion is classified `infrastructure`: the repeat is retried
+(`--retries`, default 1) and never scored. The one exception is deliberate — a
+_deterministic_ 4xx that only one runtime provokes stays a structural finding,
+because that is exactly the interesting case (adk-python inlining an
+`image/bmp` artifact Vertex rejects, or combining `output_schema` with function
+calling).
 
 ## Setup
 
@@ -53,6 +69,7 @@ via ADC) or `GOOGLE_API_KEY` / `GEMINI_API_KEY`.
 npm run test:parity                       # everything, writes PARITY_REPORT.md
 npm run test:parity -- --filter workflows # one family, or one case id
 npm run test:parity -- --jobs 6           # more concurrency
+npm run test:parity -- --repeats 5        # more confidence (default 3)
 
 npm run ts:check:parity                   # type-check this tree
 node --experimental-strip-types tests/cross_language/python_parity/harness/load_check.ts
