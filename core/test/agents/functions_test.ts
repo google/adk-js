@@ -510,6 +510,38 @@ describe('handleFunctionCallList', () => {
     ).rejects.toThrow('Function google_search is not found in the toolsDict.');
   });
 
+  // `functionCall.name` is model-supplied and `toolsDict` is a plain object, so
+  // an unguarded lookup reaches `Object.prototype`. These names would resolve
+  // to a JS builtin, be treated as found, and skip the whole recovery path —
+  // `constructor` even answers under the name `Object`, breaking the pairing.
+  it.each([
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    '__proto__',
+  ])('should treat the inherited name %s as unresolvable', async (name) => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name, args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    // The response has to name the call, or the pair dangles.
+    expect(functionResponse.name).toBe(name);
+    expect(functionResponse.id).toBe('call-1');
+    expect((functionResponse.response as {error: string}).error).toBe(
+      `Function ${name} is not found in the toolsDict.`,
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('should answer every call in a batch when one name is unresolvable', async () => {
     const unresolvableId = randomIdForTestingOnly();
     const event = await handleFunctionCallList({

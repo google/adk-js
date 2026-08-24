@@ -16,7 +16,7 @@ import {
   ReadonlyContext,
   createSession,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {describe, expect, it, onTestFinished, vi} from 'vitest';
 import {handleFunctionCallsAsync} from '../../../src/agents/functions.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from '../../../src/agents/processors/tool_filter_request_processor.js';
 import {createEvent} from '../../../src/events/event.js';
@@ -168,8 +168,10 @@ describe('ToolFilterRequestProcessor', () => {
 
   it('should answer with an error if model tries to call a filtered tool', async () => {
     // A filtered tool is an expected resolution failure here; keep the
-    // diagnostic out of the suite output.
+    // diagnostic out of the suite output. Restored via `onTestFinished` so a
+    // failing assertion below cannot leave `logger.warn` stubbed.
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
     const tool1 = new MockTool('tool1');
     const agent = new LlmAgent({
       name: 'test_agent',
@@ -229,6 +231,5 @@ describe('ToolFilterRequestProcessor', () => {
     expect((functionResponse.response as {error: string}).error).toContain(
       'Function tool1 is not found in the toolsDict.',
     );
-    warnSpy.mockRestore();
   });
 });

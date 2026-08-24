@@ -388,40 +388,52 @@ async function answerUnresolvableCall({
   toolsDict: Record<string, BaseTool>;
   toolContext: Context;
 }): Promise<Event> {
-  const toolName = functionCall.name || '<unnamed>';
-  const error = new Error(
-    `Function ${toolName} is not found in the toolsDict.`,
-  );
-  const tool = new ToolNotFoundPlaceholder(toolName, error);
+  // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
+  // Without this an unresolvable call is the one tool interaction that
+  // leaves no span, which is the worst case to be missing from a waterfall.
+  return tracer.startActiveSpan(
+    `execute_tool ${functionCall.name || '<unnamed>'}`,
+    async (span) => {
+      try {
+        const toolName = functionCall.name || '<unnamed>';
+        const error = new Error(
+          `Function ${toolName} is not found in the toolsDict.`,
+        );
+        const tool = new ToolNotFoundPlaceholder(toolName, error);
 
-  const onToolErrorResponse =
-    await invocationContext.pluginManager.runOnToolErrorCallback({
-      tool,
-      toolArgs: functionCall.args ?? {},
-      toolContext,
-      error,
-    });
+        const onToolErrorResponse =
+          await invocationContext.pluginManager.runOnToolErrorCallback({
+            tool,
+            toolArgs: functionCall.args ?? {},
+            toolContext,
+            error,
+          });
 
-  if (onToolErrorResponse == null) {
-    // Only an unhandled failure is the operator's problem; a plugin that
-    // answers these has made them an expected condition. The tool inventory
-    // belongs here rather than in the model's payload — the model already has
-    // its declarations, and a large toolset would cost kilobytes per
-    // occurrence.
-    const callableTools = Object.keys(toolsDict);
-    logger.warn(
-      `Could not resolve tool '${toolName}' for function call ` +
-        `'${functionCall.id ?? ''}'. Callable tools: ` +
-        `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
-        RESOLUTION_FAILURE_CAUSES,
-    );
-  }
+        if (onToolErrorResponse == null) {
+          // Only an unhandled failure is the operator's problem; a plugin that
+          // answers these has made them an expected condition. The tool inventory
+          // belongs here rather than in the model's payload — the model already has
+          // its declarations, and a large toolset would cost kilobytes per
+          // occurrence.
+          const callableTools = Object.keys(toolsDict);
+          logger.warn(
+            `Could not resolve tool '${toolName}' for function call ` +
+              `'${functionCall.id ?? ''}'. Callable tools: ` +
+              `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+              RESOLUTION_FAILURE_CAUSES,
+          );
+        }
 
-  return buildResponseEvent(
-    tool,
-    onToolErrorResponse ?? {error: error.message},
-    toolContext,
-    invocationContext,
+        return buildResponseEvent(
+          tool,
+          onToolErrorResponse ?? {error: error.message},
+          toolContext,
+          invocationContext,
+        );
+      } finally {
+        span.end();
+      }
+    },
   );
 }
 
@@ -465,7 +477,13 @@ export async function handleFunctionCallList({
       functionCallId: functionCall.id || undefined,
       toolConfirmation,
     });
-    const tool = functionCall.name ? toolsDict[functionCall.name] : undefined;
+    // `functionCall.name` comes from the model, and `toolsDict` is a plain
+    // object, so an unguarded lookup would resolve `toString` or `constructor`
+    // to a function on `Object.prototype` and treat the call as found.
+    const tool =
+      functionCall.name && Object.hasOwn(toolsDict, functionCall.name)
+        ? toolsDict[functionCall.name]
+        : undefined;
 
     if (!tool) {
       functionResponseEvents.push(
