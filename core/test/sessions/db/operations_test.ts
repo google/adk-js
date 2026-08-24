@@ -84,18 +84,56 @@ describe('operations', () => {
       expect(options.clientUrl).toBe(uri);
     });
 
-    it('should parse postgresql Unix-socket URI with percent-encoded host', async () => {
+    it('should drop query params other than schema for TCP URIs, same as before this change', async () => {
+      const uri =
+        'postgres://user:pass@localhost:5432/db?sslmode=require&connect_timeout=10';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toContain('sslmode=require');
+      expect(options).not.toHaveProperty('sslmode');
+      expect(options).not.toHaveProperty('connect_timeout');
+    });
+
+    it('should resolve a percent-encoded Unix-socket host to a socket path', async () => {
       const uri =
         'postgresql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
-      expect(options.clientUrl).toBe(uri);
+      expect(options.driver).toBeDefined();
+      expect(options).not.toHaveProperty('clientUrl');
+      expect((options as {host?: string}).host).toBe(
+        '/cloudsql/my-project:us-central1:my-instance',
+      );
+      expect((options as {user?: string}).user).toBe('user');
+      expect((options as {password?: string}).password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
     });
 
-    it('should parse postgresql Unix-socket URI with query param host', async () => {
+    it('should resolve a Unix-socket host with unescaped colons in the instance name', async () => {
+      const uri =
+        'postgresql://user:pass@%2Fcloudsql%2Fmy-project:us-central1:my-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect((options as {host?: string}).host).toBe(
+        '/cloudsql/my-project:us-central1:my-instance',
+      );
+      expect(options.dbName).toBe('mydb');
+    });
+
+    it('should resolve a Unix-socket path passed via the host query param', async () => {
       const uri =
         'postgresql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance';
       const options = await getConnectionOptionsFromUri(uri);
-      expect(options.clientUrl).toBe(uri);
+      expect((options as {host?: string}).host).toBe(
+        '/cloudsql/my-project:us-central1:my-instance',
+      );
+      expect((options as {user?: string}).user).toBe('user');
+      expect((options as {password?: string}).password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
+    });
+
+    it('should preserve the schema query param for Unix-socket URIs', async () => {
+      const uri =
+        'postgresql://user:pass@%2Fcloudsql%2Fproj:region:inst/mydb?schema=custom';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect((options as {schema?: string}).schema).toBe('custom');
     });
 
     it('should parse mysql URI', async () => {
