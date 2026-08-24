@@ -22,6 +22,49 @@ function driverPeer(packageName: string, scheme: string) {
   };
 }
 
+interface PostgresSocketUri {
+  host: string;
+  user?: string;
+  password?: string;
+  dbName?: string;
+  schema?: string;
+}
+
+function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
+  const match =
+    /^postgres(?:ql)?:\/\/(?:([^:@/]*)(?::([^@/]*))?@)?([^/?]*)(\/[^?]*)?(?:\?(.*))?$/.exec(
+      uri,
+    );
+  if (!match) {
+    return null;
+  }
+  const [, rawUser, rawPassword, rawAuthority, rawPath, rawQuery] = match;
+
+  const params = new URLSearchParams(rawQuery ?? '');
+  const queryHost = params.get('host') ?? params.get('socket');
+
+  let host: string | undefined;
+  if (queryHost?.startsWith('/')) {
+    host = queryHost;
+  } else {
+    const decodedAuthority = decodeURIComponent(rawAuthority ?? '');
+    if (decodedAuthority.startsWith('/')) {
+      host = decodedAuthority;
+    }
+  }
+  if (!host) {
+    return null;
+  }
+
+  return {
+    host,
+    user: rawUser ? decodeURIComponent(rawUser) : undefined,
+    password: rawPassword ? decodeURIComponent(rawPassword) : undefined,
+    dbName: rawPath ? decodeURIComponent(rawPath.slice(1)) : undefined,
+    schema: params.get('schema') ?? undefined,
+  };
+}
+
 /**
  * Parses a database connection URI and returns MikroORM Options.
  *
@@ -77,6 +120,21 @@ export async function getConnectionOptionsFromUri(
           : uri.substring('sqlite://'.length),
       driver,
     } as MikroORMOptions;
+  }
+
+  if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
+    const socket = parsePostgresSocketUri(uri);
+    if (socket) {
+      return {
+        entities: ENTITIES,
+        driver,
+        host: socket.host,
+        user: socket.user,
+        password: socket.password,
+        dbName: socket.dbName,
+        ...(socket.schema ? {schema: socket.schema} : {}),
+      } as MikroORMOptions;
+    }
   }
 
   return {
