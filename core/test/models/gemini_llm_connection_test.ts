@@ -164,8 +164,6 @@ describe('GeminiLlmConnection', () => {
         parts: [{text: 'progress'}],
       };
 
-      // realtimeInput has no no-response variant, so a partial update has to go
-      // through sendClientContent even on Gemini 3.x.
       await connection.sendContent(content, true);
 
       expect(mockSession.sendRealtimeInput).not.toHaveBeenCalled();
@@ -173,6 +171,28 @@ describe('GeminiLlmConnection', () => {
         turns: [content],
         turnComplete: false,
       });
+    });
+
+    it('should complete the turn on the first non-partial content after a partial', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+
+      await connection.sendContent(
+        {role: 'model', parts: [{text: 'already spoken'}]},
+        true,
+      );
+      await connection.sendContent({role: 'user', parts: [{text: 'and now?'}]});
+
+      expect(mockSession.sendClientContent).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({turnComplete: false}),
+      );
+      expect(mockSession.sendClientContent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({turnComplete: true}),
+      );
     });
 
     it('should send tool response regardless of partial', async () => {

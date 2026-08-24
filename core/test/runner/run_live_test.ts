@@ -697,7 +697,16 @@ describe('Runner.runLive', () => {
 
     const queue = new LiveRequestQueue();
     const content: Content = {role: 'user', parts: [{text: 'hi there'}]};
+    const partialContent: Content = {
+      role: 'model',
+      parts: [{text: 'progress'}],
+    };
+    const rawContent: Content = {role: 'user', parts: [{text: 'raw'}]};
     queue.sendContent(content);
+    queue.sendContent(partialContent, true);
+    // Raw send() leaves partial unset, so it reaches the connection as
+    // undefined and the connection default applies.
+    queue.send({content: rawContent});
     queue.close();
     for await (const _ of runner.runLive({
       userId: TEST_USER_ID,
@@ -707,34 +716,12 @@ describe('Runner.runLive', () => {
       // drain
     }
 
-    expect(llm.connection!.contentCalls).toEqual([content]);
-    expect(llm.connection!.partialFlags).toEqual([false]);
-  });
-
-  it('forwards the partial flag from the queue to the connection', async () => {
-    const llm = new FakeLiveLlm([{turnComplete: true}]);
-    const agent = new LlmAgent({name: 'agent', model: llm});
-    const runner = new Runner({
-      appName: TEST_APP_ID,
-      agent,
-      sessionService,
-      artifactService,
-    });
-
-    const queue = new LiveRequestQueue();
-    const content: Content = {role: 'model', parts: [{text: 'already spoken'}]};
-    queue.sendContent(content, true);
-    queue.close();
-    for await (const _ of runner.runLive({
-      userId: TEST_USER_ID,
-      sessionId: TEST_SESSION_ID,
-      liveRequestQueue: queue,
-    })) {
-      // drain
-    }
-
-    expect(llm.connection!.contentCalls).toEqual([content]);
-    expect(llm.connection!.partialFlags).toEqual([true]);
+    expect(llm.connection!.contentCalls).toEqual([
+      content,
+      partialContent,
+      rawContent,
+    ]);
+    expect(llm.connection!.partialFlags).toEqual([false, true, undefined]);
   });
 
   it('stops early when the abort signal is already aborted', async () => {
