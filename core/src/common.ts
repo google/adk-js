@@ -209,10 +209,29 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
+export {
+  GLOBAL_SCOPE_KEY,
+  REFLECT_AND_RETRY_RESPONSE_TYPE,
+  ScopedFailureTracker,
+  TrackingScope,
+  resolveScopeKey,
+  type PerItemFailuresCounter,
+  type ToolFailureResponse,
+} from './plugins/_reflect_retry_utils.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export {
+  ADK_HANDLE_MODEL_ERROR_TOOL_NAME,
+  RESERVED_TOOL_CALL_ERROR_TYPE,
+  ReflectAndRetryModelPlugin,
+  type ReflectAndRetryModelPluginOptions,
+} from './plugins/reflect_retry_model_plugin.js';
+export {
+  ReflectAndRetryToolPlugin,
+  type ReflectAndRetryToolPluginOptions,
+} from './plugins/reflect_retry_tool_plugin.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
