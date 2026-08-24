@@ -403,8 +403,18 @@ function agentAuthoredCalls(
  *
  * Such a tool answers "no" to {@link BaseTool.checkRequireConfirmation} for the
  * very call it paused, so without this the approval it asked for would be
- * refused as unnecessary. The request is only honoured where the framework
- * records it: an agent-authored event whose own response carries the id.
+ * refused as unnecessary.
+ *
+ * The ids are read straight off `requestedToolConfirmations`, whose keys are
+ * the paused calls. An earlier version also required the same event to carry a
+ * matching function *response* part, which no persisted session satisfies: by
+ * the time the run pauses, the response event has been folded away and the map
+ * survives on the event holding the `adk_request_confirmation` *call*. Nothing
+ * matched, so every dynamically requested confirmation was refused with
+ * `confirmation_not_required` — the CLI asked "approve?", the user said yes,
+ * and the run died. Forgery is already excluded by the author check above: the
+ * map is only ever written by `Context.requestConfirmation()` while a tool of
+ * this agent is executing.
  */
 function dynamicallyRequestedCallIds(
   events: Event[],
@@ -415,11 +425,10 @@ function dynamicallyRequestedCallIds(
     if (event.author !== agentName) {
       continue;
     }
-    const confirmations = event.actions.requestedToolConfirmations;
-    for (const functionResponse of getFunctionResponses(event)) {
-      if (functionResponse.id && functionResponse.id in confirmations) {
-        requested.add(functionResponse.id);
-      }
+    for (const functionCallId of Object.keys(
+      event.actions.requestedToolConfirmations ?? {},
+    )) {
+      requested.add(functionCallId);
     }
   }
   return requested;

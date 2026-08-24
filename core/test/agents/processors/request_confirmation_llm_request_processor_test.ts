@@ -64,6 +64,18 @@ const wireTransferTool = new FunctionTool({
   execute: (input) => `Transferred ${input.amount} to ${input.recipient}`,
 });
 
+/**
+ * Asks for confirmation from inside `execute` instead of declaring
+ * `requireConfirmation`, so `checkRequireConfirmation` answers "no" for the
+ * very call it paused.
+ */
+const runtimeGatedTool = new FunctionTool({
+  name: 'runtime_transfer',
+  description: 'Wires money, asking for confirmation only above a threshold.',
+  parameters: z.object({amount: z.number(), recipient: z.string()}),
+  execute: (input) => `Transferred ${input.amount} to ${input.recipient}`,
+});
+
 class MockRootAgent extends BaseAgent {
   constructor(name: string, subAgents: BaseAgent[] = []) {
     super({name, subAgents});
@@ -816,6 +828,62 @@ describe('RequestConfirmationLlmRequestProcessor approval lifecycle', () => {
     await run([...pausedCallEvents(), approvalEvent(['gate-1'])]);
 
     expect(resumedCalls).toEqual([wireTransferCall]);
+  });
+
+  it('resumes a confirmation the tool asked for at runtime', async () => {
+    // The shape a pause actually persists, taken from a real session: there is
+    // no surviving function-response event, and `requestedToolConfirmations`
+    // rides on the event carrying the `adk_request_confirmation` call.
+    //
+    // The tool does not declare `requireConfirmation`, so that map is the only
+    // record that the gate was legitimate. Requiring a response part to carry
+    // it meant nothing matched, every runtime-requested approval was refused
+    // as `confirmation_not_required`, and the CLI died right after asking the
+    // user to approve.
+    const call: FunctionCall = {
+      id: 'call-1',
+      name: 'runtime_transfer',
+      args: {amount: 200, recipient: 'Bob'},
+    };
+    const toolConfirmation = {hint: 'Approve?', confirmed: false};
+    const common = {invocationId: 'test-invocation'};
+
+    await run(
+      [
+        createEvent({
+          ...common,
+          author: AGENT_NAME,
+          content: {role: 'model', parts: [{functionCall: call}]},
+        }),
+        createEvent({
+          ...common,
+          author: AGENT_NAME,
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionCall: {
+                  id: 'gate-1',
+                  name: REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+                  args: {originalFunctionCall: call, toolConfirmation},
+                },
+              },
+            ],
+          },
+          longRunningToolIds: ['gate-1'],
+          actions: createEventActions({
+            requestedToolConfirmations: {
+              [call.id!]: new ToolConfirmation(toolConfirmation),
+            },
+          }),
+        }),
+        approvalEvent(['gate-1']),
+      ],
+      {tools: [runtimeGatedTool]},
+    );
+
+    expect(resumedCalls).toEqual([call]);
+    expect(decisions['call-1']?.confirmed).toBe(true);
   });
 
   it('spends an approval once, so a replay does not run the tool again', async () => {

@@ -257,11 +257,86 @@ describe('AgentTransferLlmRequestProcessor', () => {
 
     const toolContext = new Context({invocationContext});
     const result = await tool.runAsync({
-      args: {agentName: 'sub_agent'},
+      args: {agent_name: 'sub_agent'},
       toolContext,
     });
 
     expect(result).toEqual('Transfer queued');
     expect(toolContext.actions.transferToAgent).toEqual('sub_agent');
+  });
+
+  it('declares agent_name as an enum of the reachable agents', async () => {
+    const agent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-2.5-flash',
+      subAgents: [
+        new LlmAgent({name: 'sub_a', model: 'gemini-2.5-flash'}),
+        new LlmAgent({name: 'sub_b', model: 'gemini-2.5-flash'}),
+      ],
+    });
+
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    for await (const _ of AGENT_TRANSFER_LLM_REQUEST_PROCESSOR.runAsync(
+      createMockInvocationContext(agent),
+      llmRequest,
+    )) {
+      // Do nothing
+    }
+
+    const declaration = (
+      llmRequest.config?.tools as Array<{
+        functionDeclarations?: Array<{
+          name?: string;
+          parameters?: {properties?: Record<string, {enum?: string[]}>};
+        }>;
+      }>
+    )?.[0];
+    const transfer = declaration?.functionDeclarations?.find(
+      (d) => d.name === 'transfer_to_agent',
+    );
+
+    // `agent_name`, not `agentName`: this is the wire format adk-python uses,
+    // and it is what ends up in persisted events.
+    expect(transfer?.parameters?.properties?.['agent_name']?.enum).toEqual([
+      'sub_a',
+      'sub_b',
+    ]);
+  });
+
+  it('rejects a transfer to an agent that is not reachable', async () => {
+    const agent = new LlmAgent({
+      name: 'root_agent',
+      model: 'gemini-2.5-flash',
+      subAgents: [new LlmAgent({name: 'sub_agent', model: 'gemini-2.5-flash'})],
+    });
+
+    const invocationContext = createMockInvocationContext(agent);
+    const llmRequest: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    for await (const _ of AGENT_TRANSFER_LLM_REQUEST_PROCESSOR.runAsync(
+      invocationContext,
+      llmRequest,
+    )) {
+      // Do nothing
+    }
+
+    const toolContext = new Context({invocationContext});
+    // A hallucinated target must not reach `transferToAgent`. The throw is
+    // caught by the function-call runner and handed back to the model as a
+    // tool error, so the run continues and the model can pick a real agent.
+    await expect(
+      llmRequest.toolsDict['transfer_to_agent'].runAsync({
+        args: {agent_name: 'no_such_agent'},
+        toolContext,
+      }),
+    ).rejects.toThrow();
+    expect(toolContext.actions.transferToAgent).toBeUndefined();
   });
 });
