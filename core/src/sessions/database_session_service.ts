@@ -7,7 +7,6 @@
 import type {
   FilterQuery,
   LockMode as LockModeEnum,
-  Options as MikroDBOptions,
   MikroORM as MikroORMClass,
 } from '@mikro-orm/core';
 
@@ -24,6 +23,7 @@ import {
   mergeStates,
   trimTempDeltaState,
 } from './base_session_service.js';
+import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
 
@@ -527,7 +527,6 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(newStorageEvent);
       }
-      await txEm.commit();
 
       storageSession.updateTime = new Date(event.timestamp);
 

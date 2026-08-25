@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Entity, JsonType, PrimaryKey, Property} from '@mikro-orm/core';
+import {JsonType} from '@mikro-orm/core';
+// The `legacy` barrel re-exports `ReflectMetadataProvider`, whose first
+// statement is a bare `import 'reflect-metadata'`. That makes `reflect-metadata`
+// a hard runtime dependency of this module, even though the decorators below all
+// declare an explicit `type` and never read reflection metadata.
+import {Entity, PrimaryKey, Property} from '@mikro-orm/decorators/legacy';
 import {
   Event,
   transformToCamelCaseEvent,
