@@ -30,18 +30,25 @@ interface PostgresSocketUri {
   schema?: string;
 }
 
+/**
+ * Manually parses a `postgres://`/`postgresql://` URI that `new URL()`
+ * cannot represent at all: an instance connection name with unescaped
+ * colons (`project:region:instance`), or the `?host=/cloudsql/...`
+ * query-param convention `pg`/`libpq` use for sockets, which `URL` has no
+ * concept of. Userinfo is split on the *last* `@` (mirroring the WHATWG
+ * URL algorithm) so a userinfo value that itself contains `@` — e.g. a
+ * Cloud SQL IAM user in `user@project.iam` form — still parses correctly.
+ */
 function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
   const match =
-    /^postgres(?:ql)?:\/\/(?:([^:@/]*)(?::([^@/]*))?@)?([^/?]*)(\/[^?]*)?(?:\?(.*))?$/.exec(
-      uri,
-    );
+    /^postgres(?:ql)?:\/\/(?:(.*)@)?([^/?]*)(\/[^?]*)?(?:\?(.*))?$/.exec(uri);
   if (!match) {
     return null;
   }
-  const [, rawUser, rawPassword, rawAuthority, rawPath, rawQuery] = match;
+  const [, rawUserinfo, rawAuthority, rawPath, rawQuery] = match;
 
   const params = new URLSearchParams(rawQuery ?? '');
-  const queryHost = params.get('host') ?? params.get('socket');
+  const queryHost = params.get('host');
 
   let host: string | undefined;
   if (queryHost?.startsWith('/')) {
@@ -56,13 +63,82 @@ function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
     return null;
   }
 
+  let user: string | undefined;
+  let password: string | undefined;
+  if (rawUserinfo) {
+    const colonIndex = rawUserinfo.indexOf(':');
+    const rawUser =
+      colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
+    const rawPassword =
+      colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
+    user = rawUser ? decodeURIComponent(rawUser) : undefined;
+    password = rawPassword ? decodeURIComponent(rawPassword) : undefined;
+  }
+
   return {
     host,
-    user: rawUser ? decodeURIComponent(rawUser) : undefined,
-    password: rawPassword ? decodeURIComponent(rawPassword) : undefined,
-    dbName: rawPath ? decodeURIComponent(rawPath.slice(1)) : undefined,
+    user,
+    password,
+    dbName: rawPath
+      ? decodeURIComponent(rawPath.slice(1)) || undefined
+      : undefined,
     schema: params.get('schema') ?? undefined,
   };
+}
+
+/**
+ * Builds MikroORM options for a `postgres://`/`postgresql://` URI. A
+ * percent-encoded Unix-socket host already round-trips correctly through
+ * MikroORM's own `clientUrl` handling (`Connection.getConnectionOptions()`
+ * calls `decodeURIComponent(url.hostname)`), so any URI `new URL()` can
+ * parse — including ordinary TCP URIs, and sockets with every colon
+ * percent-encoded — is left as `clientUrl`, unchanged from before this
+ * fix, to avoid diverging from existing port/query-param handling. Only
+ * URIs `new URL()` genuinely can't represent fall back to a manual parse.
+ */
+function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
+  let parsedUrl: URL | null;
+  try {
+    parsedUrl = new URL(uri);
+  } catch {
+    parsedUrl = null;
+  }
+
+  if (parsedUrl) {
+    const queryHost = parsedUrl.searchParams.get('host');
+    if (queryHost?.startsWith('/')) {
+      const schema = parsedUrl.searchParams.get('schema');
+      return {
+        entities: ENTITIES,
+        driver,
+        host: queryHost,
+        user: parsedUrl.username
+          ? decodeURIComponent(parsedUrl.username)
+          : undefined,
+        password: parsedUrl.password
+          ? decodeURIComponent(parsedUrl.password)
+          : undefined,
+        dbName: decodeURIComponent(parsedUrl.pathname.slice(1)) || undefined,
+        ...(schema ? {schema} : {}),
+      } as MikroORMOptions;
+    }
+    return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
+  }
+
+  const socket = parsePostgresSocketUri(uri);
+  if (socket) {
+    return {
+      entities: ENTITIES,
+      driver,
+      host: socket.host,
+      user: socket.user,
+      password: socket.password,
+      dbName: socket.dbName,
+      ...(socket.schema ? {schema: socket.schema} : {}),
+    } as MikroORMOptions;
+  }
+
+  return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
 }
 
 /**
@@ -75,73 +151,66 @@ function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
 export async function getConnectionOptionsFromUri(
   uri: string,
 ): Promise<MikroORMOptions> {
-  let driver: unknown;
-
   if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
     const {PostgreSqlDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/postgresql', 'postgres'),
       () => import('@mikro-orm/postgresql'),
     );
-    driver = PostgreSqlDriver;
-  } else if (uri.startsWith('mysql://')) {
+    return buildPostgresOptions(uri, PostgreSqlDriver);
+  }
+
+  if (uri.startsWith('mysql://')) {
     const {MySqlDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/mysql', 'mysql'),
       () => import('@mikro-orm/mysql'),
     );
-    driver = MySqlDriver;
-  } else if (uri.startsWith('mariadb://')) {
+    return {
+      entities: ENTITIES,
+      clientUrl: uri,
+      driver: MySqlDriver,
+    } as MikroORMOptions;
+  }
+
+  if (uri.startsWith('mariadb://')) {
     const {MariaDbDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/mariadb', 'mariadb'),
       () => import('@mikro-orm/mariadb'),
     );
-    driver = MariaDbDriver;
-  } else if (uri.startsWith('sqlite://')) {
+    return {
+      entities: ENTITIES,
+      clientUrl: uri,
+      driver: MariaDbDriver,
+    } as MikroORMOptions;
+  }
+
+  if (uri.startsWith('sqlite://')) {
     const {SqliteDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/sqlite', 'sqlite'),
       () => import('@mikro-orm/sqlite'),
     );
-    driver = SqliteDriver;
-  } else if (uri.startsWith('mssql://')) {
-    const {MsSqlDriver} = await loadOptionalPeer(
-      driverPeer('@mikro-orm/mssql', 'mssql'),
-      () => import('@mikro-orm/mssql'),
-    );
-    driver = MsSqlDriver;
-  } else {
-    throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
-  }
-
-  if (uri.startsWith('sqlite://')) {
     return {
       entities: ENTITIES,
       dbName:
         uri === 'sqlite://:memory:'
           ? ':memory:'
           : uri.substring('sqlite://'.length),
-      driver,
+      driver: SqliteDriver,
     } as MikroORMOptions;
   }
 
-  if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
-    const socket = parsePostgresSocketUri(uri);
-    if (socket) {
-      return {
-        entities: ENTITIES,
-        driver,
-        host: socket.host,
-        user: socket.user,
-        password: socket.password,
-        dbName: socket.dbName,
-        ...(socket.schema ? {schema: socket.schema} : {}),
-      } as MikroORMOptions;
-    }
+  if (uri.startsWith('mssql://')) {
+    const {MsSqlDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/mssql', 'mssql'),
+      () => import('@mikro-orm/mssql'),
+    );
+    return {
+      entities: ENTITIES,
+      clientUrl: uri,
+      driver: MsSqlDriver,
+    } as MikroORMOptions;
   }
 
-  return {
-    entities: ENTITIES,
-    clientUrl: uri,
-    driver,
-  } as MikroORMOptions;
+  throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
 }
 
 /**
