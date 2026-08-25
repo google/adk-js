@@ -25,12 +25,13 @@ import {MessageRole} from './a2a_event.js';
 import {A2ARemoteAgentRunProcessor} from './a2a_remote_agent_run_processor.js';
 import {
   getUserFunctionCallAt,
+  peerRequestedCallIds,
+  toForwardableA2AParts,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
 import {resolveAgentCard} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
-import {toA2AParts} from './part_converter_utils.js';
 
 export {AGENT_CARD_PATH};
 
@@ -174,9 +175,18 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
 
       if (userFnCall) {
         const event = userFnCall.response;
-        parts = toA2AParts(
-          event.content?.parts || [],
+        // Route through the shared scrub: this credential response must not
+        // cross the trust boundary unless its id is one the peer itself
+        // exclusively requested. Computed over the full session, not just
+        // this one response event: an id counts as peer-requested only if
+        // EVERY event that issued a call for it was authored by the peer,
+        // so the check needs the whole history to catch a local request
+        // whose id the peer's own event reuses.
+        const peerRequestedIds = peerRequestedCallIds(events, this.name);
+        parts = toForwardableA2AParts(
+          event.content,
           event.longRunningToolIds,
+          peerRequestedIds,
         );
         taskId = userFnCall.taskId;
         contextId = userFnCall.contextId;
