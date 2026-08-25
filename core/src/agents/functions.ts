@@ -260,6 +260,11 @@ function buildResponseEvent(
  * Handles function calls.
  * Runtime behavior to pay attention to:
  * - Iterate through each function call in the `functionCallEvent`:
+ *   - Resolve the named tool. If the name is not callable, run the on-tool-
+ *     error callbacks and answer the call with their response, or with the
+ *     resolution error when none handles it, then move to the next call. That
+ *     answer skips the before/after tool callbacks below, so a plugin auditing
+ *     every response does not observe it — as in Python.
  *   - Execute before tool callbacks !!if a callback provides a response, short
  *     circuit the rest.
  *   - Execute the tool.
@@ -316,6 +321,126 @@ function normalizeCallbackResponse(
 }
 
 /**
+ * Why a name the model called may be missing from `toolsDict`. Operator-facing
+ * only — the model gets the short form, since none of this is actionable to it.
+ */
+const RESOLUTION_FAILURE_CAUSES = `Possible causes:
+  1. The model hallucinated the name.
+  2. The tool is not registered on this agent, or a plugin filtered it out of this request.
+  3. The name does not match the registered tool's name exactly.
+  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined or it is a built-in tool that runs inside the model (\`google_search\`, \`url_context\`, ...).`;
+
+const TOOL_NOT_FOUND_SYMBOL = Symbol.for('google.adk.toolNotFound');
+
+/**
+ * Whether `tool` is the placeholder handed to the on-tool-error callbacks for a
+ * function call naming a tool this agent cannot call.
+ *
+ * Lets a plugin tell an unresolvable name from a registered tool that threw
+ * without matching on the error message.
+ */
+export function isToolNotFound(tool: unknown): boolean {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    (tool as Record<symbol, unknown>)[TOOL_NOT_FOUND_SYMBOL] === true
+  );
+}
+
+/**
+ * Stands in for a tool the model named but that the agent cannot call, so the
+ * on-tool-error callbacks get something to inspect. Mirrors the bare
+ * `BaseTool` Python builds in the same spot.
+ *
+ * The framework never runs it, but a plugin receiving it as `tool` can, so
+ * `runAsync` rethrows the resolution error rather than inventing a second
+ * message that could drift from the first.
+ */
+class ToolNotFoundPlaceholder extends BaseTool {
+  readonly [TOOL_NOT_FOUND_SYMBOL] = true;
+
+  constructor(
+    name: string,
+    private readonly resolutionError: Error,
+  ) {
+    super({name, description: 'Tool not found'});
+  }
+
+  override async runAsync(): Promise<never> {
+    throw this.resolutionError;
+  }
+}
+
+/**
+ * Answers a function call naming a tool this agent cannot call.
+ *
+ * Failing to resolve the tool is a tool error, not a model error, so it runs
+ * through the same on-tool-error callbacks a registered tool that throws does.
+ * With no plugin response the model is handed the error as the call's result:
+ * leaving the call unanswered makes the next request identical to this one, and
+ * the model re-issues it until `maxLlmCalls` trips.
+ */
+async function answerUnresolvableCall({
+  invocationContext,
+  functionCall,
+  toolsDict,
+  toolContext,
+}: {
+  invocationContext: InvocationContext;
+  functionCall: FunctionCall;
+  toolsDict: Record<string, BaseTool>;
+  toolContext: Context;
+}): Promise<Event> {
+  // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
+  // Without this an unresolvable call is the one tool interaction that
+  // leaves no span, which is the worst case to be missing from a waterfall.
+  return tracer.startActiveSpan(
+    `execute_tool ${functionCall.name || '<unnamed>'}`,
+    async (span) => {
+      try {
+        const toolName = functionCall.name || '<unnamed>';
+        const error = new Error(
+          `Function ${toolName} is not found in the toolsDict.`,
+        );
+        const tool = new ToolNotFoundPlaceholder(toolName, error);
+
+        const onToolErrorResponse =
+          await invocationContext.pluginManager.runOnToolErrorCallback({
+            tool,
+            toolArgs: functionCall.args ?? {},
+            toolContext,
+            error,
+          });
+
+        if (onToolErrorResponse == null) {
+          // Only an unhandled failure is the operator's problem; a plugin that
+          // answers these has made them an expected condition. The tool inventory
+          // belongs here rather than in the model's payload — the model already has
+          // its declarations, and a large toolset would cost kilobytes per
+          // occurrence.
+          const callableTools = Object.keys(toolsDict);
+          logger.warn(
+            `Could not resolve tool '${toolName}' for function call ` +
+              `'${functionCall.id ?? ''}'. Callable tools: ` +
+              `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+              RESOLUTION_FAILURE_CAUSES,
+          );
+        }
+
+        return buildResponseEvent(
+          tool,
+          onToolErrorResponse ?? {error: error.message},
+          toolContext,
+          invocationContext,
+        );
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
+/**
  * The underlying implementation of handleFunctionCalls, but takes a list of
  * function calls instead of an event.
  * This is also used by llm_agent execution flow in preprocessing.
@@ -350,12 +475,30 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
-    const {tool, toolContext} = getToolAndContext({
+    const toolContext = new Context({
       invocationContext,
-      functionCall,
-      toolsDict,
+      functionCallId: functionCall.id || undefined,
       toolConfirmation,
     });
+    // `functionCall.name` comes from the model, and `toolsDict` is a plain
+    // object, so an unguarded lookup would resolve `toString` or `constructor`
+    // to a function on `Object.prototype` and treat the call as found.
+    const tool =
+      functionCall.name && Object.hasOwn(toolsDict, functionCall.name)
+        ? toolsDict[functionCall.name]
+        : undefined;
+
+    if (!tool) {
+      functionResponseEvents.push(
+        await answerUnresolvableCall({
+          invocationContext,
+          functionCall,
+          toolsDict,
+          toolContext,
+        }),
+      );
+      continue;
+    }
 
     // TODO - b/436079721: implement [tracer.start_as_current_span]
     logger.debug(`execute_tool ${tool.name}`);
@@ -536,35 +679,6 @@ export async function handleFunctionCallList({
     });
   }
   return mergedEvent;
-}
-
-// TODO - b/425992518: consider inline, which is much cleaner.
-function getToolAndContext({
-  invocationContext,
-  functionCall,
-  toolsDict,
-  toolConfirmation,
-}: {
-  invocationContext: InvocationContext;
-  functionCall: FunctionCall;
-  toolsDict: Record<string, BaseTool>;
-  toolConfirmation?: ToolConfirmation;
-}): {tool: BaseTool; toolContext: Context} {
-  if (!functionCall.name || !(functionCall.name in toolsDict)) {
-    throw new Error(
-      `Function ${functionCall.name} is not found in the toolsDict.`,
-    );
-  }
-
-  const toolContext = new Context({
-    invocationContext: invocationContext,
-    functionCallId: functionCall.id || undefined,
-    toolConfirmation,
-  });
-
-  const tool = toolsDict[functionCall.name];
-
-  return {tool, toolContext};
 }
 
 /**
