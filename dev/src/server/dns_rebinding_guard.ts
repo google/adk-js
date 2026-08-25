@@ -74,21 +74,38 @@ export function isLoopbackAddress(host: string): boolean {
  *
  * A loopback bind behind a same-machine proxy sees the proxy's hostname in
  * Host, so an operator naming an origin in --allow_origins vouches for that
- * origin's host. Only "*" opts out of the guard entirely.
+ * origin's host, and *extraAllowedHosts* (ServerOptions.allowedHosts /
+ * --allowed_hosts) vouches for any host explicitly listed there -- the
+ * latter exists so an embedder behind a proxy can widen the guard without
+ * having to open CORS to every origin on the internet just to get a Host
+ * header through. Only "*" in allowOrigins opts out of the guard entirely.
  */
 export function getAllowedRequestHosts(
   allowOrigins: string | undefined,
+  extraAllowedHosts?: readonly string[],
 ): Set<string> | null {
   const origin = (allowOrigins ?? '').trim();
-  if (!origin || origin === '*') {
-    return origin === '*' ? null : new Set<string>();
+  if (origin === '*') {
+    return null;
   }
-  try {
-    const host = new URL(origin).hostname;
-    return host ? new Set([host.toLowerCase()]) : new Set<string>();
-  } catch {
-    return new Set<string>(); // A malformed origin vouches for no host.
+  const hosts = new Set<string>();
+  if (origin) {
+    try {
+      const host = new URL(origin).hostname;
+      if (host) {
+        hosts.add(host.toLowerCase());
+      }
+    } catch {
+      // A malformed origin vouches for no host.
+    }
   }
+  for (const rawHost of extraAllowedHosts ?? []) {
+    const host = rawHost.trim().toLowerCase();
+    if (host) {
+      hosts.add(host);
+    }
+  }
+  return hosts;
 }
 
 /**
