@@ -32,8 +32,10 @@ vi.mock('nodejs-vertexai', () => ({
 
 const clientConstructor = vi.hoisted(() => vi.fn());
 
-// The service imports Client from this deep path, so the mock must target it.
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+// The service imports Client from the package root, so the mock must target
+// the root. Keep the other root exports for the rest of the module graph.
+vi.mock('@google-cloud/vertexai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@google-cloud/vertexai')>()),
   Client: class {
     readonly agentEnginesInternal = {sessions: {}};
 
