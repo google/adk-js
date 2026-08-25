@@ -1361,4 +1361,47 @@ describe('convertForeignEvent fencing', () => {
     expect(dumped).not.toContain('plotting');
     expect(dumped).toContain('benign answer');
   });
+
+  it('relays nothing for a foreign event whose only surviving part was the preamble', () => {
+    // A foreign event that is ALL thoughts has every part excluded by the
+    // thought skip above, leaving only the preamble -- a "For context:
+    // below is a transcript..." announcement with no transcript behind it.
+    // Reachable, not theoretical: streaming_utils.ts flushes a buffered
+    // thought as its own non-partial event ({parts: [{text, thought:
+    // true}]}) both when a thinking model's thought is flushed ahead of
+    // non-text parts and when the stream closes on a thought, and
+    // appendEvent persists any non-partial event -- so this recurs on
+    // every later request in that session once it happens once. Matches
+    // upstream _fencing.py's `return None` in this situation, and this
+    // file's own presentAsUserMessage, which already leaves event.content
+    // unset via its own parts.length > 1 guard.
+    const events = [
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'first user turn'}]},
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [{text: 'deliberating about the request', thought: true}],
+        },
+      }),
+      createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'second user turn'}]},
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+
+    expect(contents).toHaveLength(2);
+    expect(JSON.stringify(contents[0].parts)).toContain('first user turn');
+    expect(JSON.stringify(contents[1].parts)).toContain('second user turn');
+    // No relayed event at all for the thought-only turn -- not a bare
+    // preamble with nothing behind it.
+    for (const content of contents) {
+      expect(JSON.stringify(content.parts)).not.toContain('For context:');
+    }
+  });
 });

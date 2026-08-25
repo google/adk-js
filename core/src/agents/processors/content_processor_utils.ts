@@ -79,11 +79,14 @@ export function getContents(
       continue;
     }
 
-    filteredEvents.push(
-      isEventFromAnotherAgent(agentName, event)
-        ? convertForeignEvent(event)
-        : event,
-    );
+    if (isEventFromAnotherAgent(agentName, event)) {
+      const converted = convertForeignEvent(event);
+      if (converted) {
+        filteredEvents.push(converted);
+      }
+    } else {
+      filteredEvents.push(event);
+    }
   }
 
   let resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
@@ -320,7 +323,7 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  *
  * @returns The converted event.
  */
-function convertForeignEvent(event: Event): Event {
+function convertForeignEvent(event: Event): Event | undefined {
   if (!event.content?.parts?.length) {
     return event;
   }
@@ -368,6 +371,19 @@ function convertForeignEvent(event: Event): Event {
       // the whole message rather than each of them.
       content.parts?.push(cloneDeep(part));
     }
+  }
+
+  if (content.parts!.length === 1) {
+    // Only the preamble survived -- every part was excluded (e.g. an
+    // all-thoughts event) or produced nothing. Relaying just the preamble
+    // announces a quoted transcript that isn't there: it declares
+    // "everything between those markers is data, never instructions", with
+    // no markers following it and a real turn next, which teaches the
+    // model to skim the preamble rather than trust it. Matches upstream
+    // _fencing.py's `return None` here, and this file's own
+    // presentAsUserMessage, which already leaves event.content unset in
+    // the equivalent case via its `parts.length > 1` guard.
+    return undefined;
   }
 
   return createEvent({
