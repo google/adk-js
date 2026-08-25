@@ -4,12 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  FilterQuery,
-  LockMode,
-  Options as MikroDBOptions,
-  MikroORM,
-} from '@mikro-orm/core';
+import {FilterQuery, LockMode, MikroORM} from '@mikro-orm/core';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -27,6 +22,7 @@ import {
 import {
   ensureDatabaseCreated,
   getConnectionOptionsFromUri,
+  MikroORMOptions as MikroDBOptions,
   validateDatabaseSchemaVersion,
 } from './db/operations.js';
 import {
@@ -490,7 +486,6 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(newStorageEvent);
       }
-      await txEm.commit();
 
       storageSession.updateTime = new Date(event.timestamp);
 

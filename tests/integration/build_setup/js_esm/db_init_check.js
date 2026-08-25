@@ -12,7 +12,7 @@ MikroORM.init = async () => {
   return {
     schema: {
       ensureDatabase: async () => {},
-      updateSchema: async () => {},
+      update: async () => {},
     },
     em: {
       fork: () => ({
