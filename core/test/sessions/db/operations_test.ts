@@ -110,7 +110,7 @@ describe('operations', () => {
             }
           },
           discovery: {},
-        } as unknown as Parameters<typeof Configuration>[0],
+        } as unknown as ConstructorParameters<typeof Configuration>[0],
         false,
       );
       const driver = new PostgreSqlDriver(config);
