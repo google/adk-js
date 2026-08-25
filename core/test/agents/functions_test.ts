@@ -1225,4 +1225,99 @@ describe('findMatchingFunctionCall', () => {
     expect(findMatchingFunctionCall([callEvent])).toBeUndefined();
     expect(findMatchingFunctionCall([])).toBeUndefined();
   });
+
+  it('checks every function response in the last event, not just the first', () => {
+    // Two sibling agents each made their own long-running call; a single
+    // resuming event answers both at once (e.g. two LROs completing
+    // together). Resolving from responses[0] alone would silently
+    // attribute agent_b's response to agent_a's invocation -- exactly the
+    // ambiguity this must refuse to guess through.
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() =>
+      findMatchingFunctionCall([callA, callB, bothResponses]),
+    ).toThrow(/more than one agent/);
+  });
+
+  it('resolves multiple responses from the same agent without conflict', () => {
+    // Two responses in one event answering two calls from the SAME agent
+    // (parallel tool calls within a single invocation) must still resolve
+    // normally -- only responses that disagree on author should throw.
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callEvent, bothResponses])).toBe(
+      callEvent,
+    );
+  });
 });
