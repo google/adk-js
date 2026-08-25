@@ -19,14 +19,6 @@ export interface UserFunctionCall {
   response: AdkEvent;
   taskId: string;
   contextId: string;
-  /**
-   * Author of the FunctionCall event this response answers. Distinguishes a
-   * credential this local agent requested (must never cross the trust
-   * boundary to the remote peer) from one the remote peer itself requested
-   * (the peer's own name, per toMissingRemoteSessionParts) -- the answer to
-   * that one IS what the peer is waiting for.
-   */
-  requestAuthor: string;
 }
 
 /**
@@ -71,7 +63,6 @@ export function getUserFunctionCallAt(
       response: candidate,
       taskId,
       contextId,
-      requestAuthor: request.author ?? '',
     };
   }
 
@@ -119,6 +110,9 @@ export function getFunctionResponseCallId(event: AdkEvent): string | undefined {
 // down, under `authConfig`) and its response (flat) both carry.
 const AUTH_CONFIG_SCHEME_KEY = 'authScheme';
 const AUTH_CONFIG_CREDENTIAL_KEYS: ReadonlyArray<string> = [
+  // camelCase only by design: callers normalise the payload with
+  // camelCaseKeys() before these keys are looked up, so the snake_case
+  // spellings (raw_auth_credential, exchanged_auth_credential) are covered.
   'rawAuthCredential',
   'exchangedAuthCredential',
 ];
@@ -190,34 +184,51 @@ function isCredentialFunctionResponse(functionResponse: {
 }
 
 /**
- * Builds a map from FunctionCall id to the author of the event that issued
- * it, across every event in `events`. Used to decide whether a credential
- * response answers a request this local agent raised (scrub) or one the
- * remote peer itself raised (forward -- see withoutCredentialParts).
+ * Ids of credential requests the remote peer raised itself. An id that ANY
+ * non-peer event also issued a call for is excluded: the peer authors its
+ * own session events under its own name (`toAdkEvent` forces
+ * `author = this.name`) and controls `functionCall.id` verbatim, so a bare
+ * id match -- without checking whether some OTHER event also issued a call
+ * for that same id -- would let a peer re-label this agent's own pending
+ * credential request as one the peer had asked for, by sending an
+ * unrelated reply that happens to carry a function_call part whose id
+ * collides with it.
  */
-export function buildFunctionCallAuthors(
+export function peerRequestedCallIds(
   events: readonly AdkEvent[],
-): Map<string, string> {
-  const authors = new Map<string, string>();
+  peerName: string,
+): ReadonlySet<string> {
+  const peer = new Set<string>();
+  const local = new Set<string>();
   for (const event of events) {
     for (const part of event.content?.parts ?? []) {
-      if (part.functionCall?.id) {
-        authors.set(part.functionCall.id, event.author ?? '');
+      const id = part.functionCall?.id;
+      if (!id) {
+        continue;
       }
+      (event.author === peerName ? peer : local).add(id);
     }
   }
-  return authors;
+  return new Set([...peer].filter((id) => !local.has(id)));
 }
 
 /**
  * Returns `content` with any credential-bearing function_call or
- * function_response part removed, except a function_response whose matching
- * request was authored by `peerName` -- that credential was requested BY the
- * remote peer, so withholding it would silently strand the peer's pending
- * request forever with nothing logged to explain why. Every other
- * credential-bearing part is a request this local agent raised for its own
- * tools, or an answer to one, and must never cross the trust boundary to the
- * peer.
+ * function_response part removed, except a function_response whose id is
+ * in `peerRequestedIds` -- that credential was requested BY the remote
+ * peer, so withholding it would silently strand the peer's pending request
+ * forever with nothing logged to explain why. Every other credential-
+ * bearing part is a request this local agent raised for its own tools, or
+ * an answer to one, and must never cross the trust boundary to the peer.
+ *
+ * The peer-requested exception only applies when the peer's own request
+ * event was authored under a non-'user' role: `messageToAdkEvent` sets
+ * `author: msg.role === 'user' ? 'user' : agentName`, so a peer that sends
+ * its own `adk_request_credential` inside a `role: 'user'` message is
+ * classified the same as a local request, and its answer is withheld --
+ * the handshake stalls (logged via the drop warning below, not silent),
+ * rather than leaking. Nothing in the A2A spec obliges a peer to use a
+ * non-user role.
  *
  * An adk_request_credential call carries a serialized AuthConfig in its
  * arguments -- including rawAuthCredential, an OAuth2 client secret or a
@@ -228,8 +239,7 @@ export function buildFunctionCallAuthors(
  */
 function withoutCredentialParts(
   content: Content | undefined,
-  callAuthors: ReadonlyMap<string, string>,
-  peerName: string,
+  peerRequestedIds: ReadonlySet<string>,
 ): Content | undefined {
   if (!content || !content.parts) {
     return content;
@@ -244,8 +254,7 @@ function withoutCredentialParts(
       isCredentialFunctionResponse(part.functionResponse)
     ) {
       const id = part.functionResponse.id;
-      const requestAuthor = id ? callAuthors.get(id) : undefined;
-      return requestAuthor !== peerName;
+      return !(id && peerRequestedIds.has(id));
     }
     return false;
   };
@@ -263,19 +272,21 @@ function withoutCredentialParts(
 
 /**
  * Converts genai parts to A2A parts for forwarding to the remote peer,
- * scrubbing credential material the peer did not itself request. The single
- * point both session-forwarding paths (toMissingRemoteSessionParts and the
- * getUserFunctionCallAt short-circuit in RemoteA2AAgent) converge on, so the
- * scrubbing guarantee holds by construction rather than by both call sites
- * remembering to apply it separately.
+ * scrubbing credential material the peer did not itself request.
+ *
+ * NOT the single point both session-forwarding paths converge on:
+ * `toMissingRemoteSessionParts` calls `withoutCredentialParts` directly,
+ * since it has to interleave `presentAsUserMessage` between the scrub and
+ * `toA2AParts`. The shared guarantee lives one level down, in
+ * `withoutCredentialParts` -- a third path calling `toA2AParts` directly
+ * would still bypass it.
  */
 export function toForwardableA2AParts(
   content: Content | undefined,
   longRunningToolIds: string[] | undefined,
-  callAuthors: ReadonlyMap<string, string>,
-  peerName: string,
+  peerRequestedIds: ReadonlySet<string>,
 ): A2APart[] {
-  const scrubbed = withoutCredentialParts(content, callAuthors, peerName);
+  const scrubbed = withoutCredentialParts(content, peerRequestedIds);
   if (!scrubbed?.parts) {
     return [];
   }
@@ -310,7 +321,7 @@ export function toMissingRemoteSessionParts(
     }
   }
 
-  const callAuthors = buildFunctionCallAuthors(events);
+  const peerRequestedIds = peerRequestedCallIds(events, peerName);
   const missingParts: A2APart[] = [];
 
   for (let i = lastRemoteResponseIndex + 1; i < events.length; i++) {
@@ -321,8 +332,7 @@ export function toMissingRemoteSessionParts(
     // which would embed the secret in a string no shape check can catch.
     const scrubbedContent = withoutCredentialParts(
       event.content,
-      callAuthors,
-      peerName,
+      peerRequestedIds,
     );
     if (scrubbedContent !== event.content) {
       event = {...event, content: scrubbedContent};

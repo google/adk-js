@@ -434,6 +434,96 @@ describe('remote_agent_utils', () => {
       expect(dumped).not.toContain('SNAKE_CASE_SECRET');
     });
 
+    it('matches a differently-named credential response in snake_case', () => {
+      // Response-side counterpart to the call-side test above: the
+      // structural fallback in isCredentialFunctionResponse (payloadIsAuthConfig
+      // via camelCaseKeys) is what makes fix 3 work for a renamed response,
+      // but nothing in this file's fixtures exercised it -- every existing
+      // credential-response fixture uses the canonical
+      // adk_request_credential name, which returns before this code path is
+      // ever reached.
+      const credentialRequest = createEvent({
+        author: 'root_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-1',
+                name: 'adk_request_credential',
+                args: {functionCallId: 'toolFc1', authConfig: {}},
+              },
+            },
+          ],
+        },
+      });
+      const renamedResponse = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'fc-1',
+                name: 'some_other_tool_name',
+                response: {
+                  auth_scheme: {type: 'oauth2'},
+                  credential_key: 'k',
+                  exchanged_auth_credential: {
+                    oauth2: {accessToken: 'SNAKE_CASE_RESPONSE_SECRET'},
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {
+        events: [credentialRequest, renamedResponse],
+      } as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).not.toContain('SNAKE_CASE_RESPONSE_SECRET');
+    });
+
+    it('drops a credential response with no id, rather than forwarding it', () => {
+      // The fail-safe for a response with no id: id is undefined, so
+      // peerRequestedIds.has(id) can never be true, and the response is
+      // dropped rather than forwarded. Security-relevant (an id-less
+      // response must never be treated as ambiguously safe to forward), so
+      // it deserves an assertion rather than being correct by accident.
+      const noIdResponse = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'adk_request_credential',
+                response: {
+                  authScheme: {type: 'oauth2'},
+                  credentialKey: 'k',
+                  exchangedAuthCredential: {
+                    oauth2: {accessToken: 'NO_ID_SECRET'},
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+
+      const session = {events: [noIdResponse]} as unknown as Session;
+
+      const result = toMissingRemoteSessionParts(mockCtx, session);
+      const dumped = JSON.stringify(result.parts);
+
+      expect(dumped).not.toContain('NO_ID_SECRET');
+    });
+
     it('does not drop a non-credential function_call', () => {
       // The shape probe must not over-match: unrelated tool history should
       // survive forwarding intact.
