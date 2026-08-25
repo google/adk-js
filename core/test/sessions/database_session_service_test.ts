@@ -16,6 +16,11 @@ import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 import {validateDatabaseSchemaVersion} from '../../src/sessions/db/operations.js';
+import {
+  StorageEvent,
+  StorageMetadata,
+  StorageSession,
+} from '../../src/sessions/db/schema.js';
 
 describe('DatabaseSessionService', () => {
   let service: DatabaseSessionService;
@@ -375,8 +380,8 @@ describe('DatabaseSessionService', () => {
 
     // Manually insert bad version
     const em = orm.em.fork();
-    await em.nativeDelete('StorageMetadata', {key: 'schema_version'});
-    await em.insert('StorageMetadata', {
+    await em.nativeDelete(StorageMetadata, {key: 'schema_version'});
+    await em.insert(StorageMetadata, {
       key: 'schema_version',
       value: '999',
     });
@@ -669,9 +674,9 @@ describe('DatabaseSessionService', () => {
       await service.appendEvent({session, event});
 
       const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
-      const storedEvents = (await em.find('StorageEvent', {
+      const storedEvents = await em.find(StorageEvent, {
         sessionId: 's-temp',
-      })) as {sessionId: string; eventData: Event}[];
+      });
       const eventData = storedEvents[0].eventData;
 
       expect(eventData.actions?.stateDelta?.['keep']).toBe('me');
@@ -695,11 +700,9 @@ describe('DatabaseSessionService', () => {
       expect(session.lastUpdateTime).toBe(timestamp);
 
       const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
-      const storedSession = (await em.findOne('StorageSession', {
-        id: 's-time',
-      })) as {id: string; updateTime: Date};
+      const storedSession = await em.findOne(StorageSession, {id: 's-time'});
 
-      expect(storedSession.updateTime.getTime()).toBe(timestamp);
+      expect(storedSession?.updateTime.getTime()).toBe(timestamp);
     });
   });
 });
