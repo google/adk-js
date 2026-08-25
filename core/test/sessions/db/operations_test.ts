@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MikroORM} from '@mikro-orm/core';
+import {Configuration, MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -84,48 +84,99 @@ describe('operations', () => {
       expect(options.clientUrl).toBe(uri);
     });
 
-    it('should drop query params other than schema for TCP URIs, same as before this change', async () => {
+    it('should keep the full URI, including extra query params, intact in clientUrl for TCP URIs', async () => {
       const uri =
         'postgres://user:pass@localhost:5432/db?sslmode=require&connect_timeout=10';
       const options = await getConnectionOptionsFromUri(uri);
-      expect(options.clientUrl).toContain('sslmode=require');
-      expect(options).not.toHaveProperty('sslmode');
-      expect(options).not.toHaveProperty('connect_timeout');
+      expect(options.clientUrl).toBe(uri);
+      expect(options).not.toHaveProperty('host');
     });
 
-    it('should resolve a percent-encoded Unix-socket host to a socket path', async () => {
+    it('should drop query params other than schema when MikroORM resolves the real driver connection options', async () => {
+      const {PostgreSqlDriver} = await vi.importActual<
+        typeof import('@mikro-orm/postgresql')
+      >('@mikro-orm/postgresql');
+      const uri =
+        'postgres://user:pass@localhost:5432/db?sslmode=require&connect_timeout=10';
+      const options = await getConnectionOptionsFromUri(uri);
+      const config = new Configuration(
+        {
+          ...options,
+          driver: PostgreSqlDriver,
+          entities: [],
+          metadataProvider: class {
+            useCache() {
+              return false;
+            }
+          },
+          discovery: {},
+        } as unknown as Parameters<typeof Configuration>[0],
+        false,
+      );
+      const driver = new PostgreSqlDriver(config);
+      const resolved = driver.getConnection().getConnectionOptions();
+      expect(resolved.port).toBe(5432);
+      expect(resolved).not.toHaveProperty('sslmode');
+      expect(resolved).not.toHaveProperty('connect_timeout');
+    });
+
+    it('should leave a percent-encoded Unix-socket host with escaped colons as clientUrl, since MikroORM already decodes it correctly', async () => {
       const uri =
         'postgresql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driver).toBeDefined();
-      expect(options).not.toHaveProperty('clientUrl');
-      expect((options as {host?: string}).host).toBe(
-        '/cloudsql/my-project:us-central1:my-instance',
-      );
-      expect((options as {user?: string}).user).toBe('user');
-      expect((options as {password?: string}).password).toBe('pass');
-      expect(options.dbName).toBe('mydb');
+      expect(options.clientUrl).toBe(uri);
+      expect(options).not.toHaveProperty('host');
+    });
+
+    it('should leave a Unix-socket host with an explicit pg port as clientUrl, preserving the port MikroORM already resolves', async () => {
+      const uri = 'postgresql://user:pass@%2Fvar%2Frun%2Fpostgresql:5433/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
+      expect(options).not.toHaveProperty('host');
     });
 
     it('should resolve a Unix-socket host with unescaped colons in the instance name', async () => {
       const uri =
         'postgresql://user:pass@%2Fcloudsql%2Fmy-project:us-central1:my-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
-      expect((options as {host?: string}).host).toBe(
-        '/cloudsql/my-project:us-central1:my-instance',
-      );
+      expect(options).not.toHaveProperty('clientUrl');
+      expect(options.host).toBe('/cloudsql/my-project:us-central1:my-instance');
+      expect(options.user).toBe('user');
+      expect((options as {password?: string}).password).toBe('pass');
       expect(options.dbName).toBe('mydb');
+    });
+
+    it('should split userinfo on the last @ so a password containing @ (e.g. a Cloud SQL IAM user) still parses', async () => {
+      const uri =
+        'postgresql://svc@project.iam:pass@%2Fcloudsql%2Fproj:region:inst/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.user).toBe('svc@project.iam');
+      expect((options as {password?: string}).password).toBe('pass');
+      expect(options.host).toBe('/cloudsql/proj:region:inst');
+    });
+
+    it('should treat an empty database path as no dbName for Unix-socket URIs', async () => {
+      const uri = 'postgresql://u:p@%2Fcloudsql%2Fproj:region:inst/';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.dbName).toBeUndefined();
     });
 
     it('should resolve a Unix-socket path passed via the host query param', async () => {
       const uri =
         'postgresql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance';
       const options = await getConnectionOptionsFromUri(uri);
-      expect((options as {host?: string}).host).toBe(
-        '/cloudsql/my-project:us-central1:my-instance',
-      );
-      expect((options as {user?: string}).user).toBe('user');
+      expect(options.host).toBe('/cloudsql/my-project:us-central1:my-instance');
+      expect(options.user).toBe('user');
       expect((options as {password?: string}).password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
+    });
+
+    it('should resolve the host query param even when new URL() otherwise succeeds', async () => {
+      const uri =
+        'postgresql://user:pass@localhost/mydb?host=/cloudsql/proj:region:inst';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.host).toBe('/cloudsql/proj:region:inst');
       expect(options.dbName).toBe('mydb');
     });
 
@@ -133,7 +184,7 @@ describe('operations', () => {
       const uri =
         'postgresql://user:pass@%2Fcloudsql%2Fproj:region:inst/mydb?schema=custom';
       const options = await getConnectionOptionsFromUri(uri);
-      expect((options as {schema?: string}).schema).toBe('custom');
+      expect(options.schema).toBe('custom');
     });
 
     it('should parse mysql URI', async () => {
