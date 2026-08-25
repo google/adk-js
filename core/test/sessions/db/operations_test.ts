@@ -52,7 +52,7 @@ describe('operations', () => {
         entities: ENTITIES,
       });
 
-      const eventProperties = orm.getMetadata().get(StorageEvent.name)
+      const eventProperties = orm.getMetadata().get(StorageEvent)
         .properties as Record<string, {length?: number}>;
       const keyProperties = ['id', 'appName', 'userId', 'sessionId'];
 
@@ -174,7 +174,7 @@ describe('operations', () => {
         entities: [StorageMetadata],
       });
       // Ensure schema is updated so StorageMetadata table exists
-      await orm.schema.updateSchema();
+      await orm.schema.update();
     });
 
     afterEach(async () => {
