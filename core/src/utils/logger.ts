@@ -3,7 +3,6 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import * as winston from 'winston';
 
 /** Log levels for the logger. */
 export enum LogLevel {
@@ -30,34 +29,23 @@ export interface Logger {
   setLogLevel(level: LogLevel): void;
 }
 
-class SimpleLogger implements Logger {
-  private readonly logger: winston.Logger;
-  private logLevel: LogLevel = LogLevel.INFO;
+/** The `console` method each level is written with. */
+const CONSOLE_METHOD = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+} as const;
 
-  constructor() {
-    this.logger = winston.createLogger({
-      levels: {
-        'debug': LogLevel.DEBUG,
-        'info': LogLevel.INFO,
-        'warn': LogLevel.WARN,
-        'error': LogLevel.ERROR,
-      },
-      level: 'error',
-      format: winston.format.combine(
-        winston.format.label({label: 'ADK'}),
-        winston.format((info) => {
-          info.level = info.level.toUpperCase();
-          return info;
-        })(),
-        winston.format.colorize(),
-        winston.format.timestamp(),
-        winston.format.printf((info) => {
-          return `${info.level}: [${info.label}] ${info.timestamp} ${info.message}`;
-        }),
-      ),
-      transports: [new winston.transports.Console()],
-    });
-  }
+/**
+ * The default logger. Writes through `console` so that it works unchanged in
+ * Node and in the browser. This module is reachable from the browser entry
+ * point, so it must not name a Node-only package; the Node entry point
+ * installs the winston-backed logger instead.
+ * See https://github.com/google/adk-js/issues/611.
+ */
+class SimpleLogger implements Logger {
+  private logLevel: LogLevel = LogLevel.INFO;
 
   setLogLevel(level: LogLevel): void {
     this.logLevel = level;
@@ -68,39 +56,26 @@ class SimpleLogger implements Logger {
       return;
     }
 
-    this.logger.log(level.toString(), messages.join(' '));
+    const timestamp = new Date().toISOString();
+    const line = `${LogLevel[level]}: [ADK] ${timestamp} ${messages.join(' ')}`;
+
+    console[CONSOLE_METHOD[level]](line);
   }
 
   debug(...messages: unknown[]): void {
-    if (this.logLevel > LogLevel.DEBUG) {
-      return;
-    }
-
-    this.logger.debug(messages.join(' '));
+    this.log(LogLevel.DEBUG, ...messages);
   }
 
   info(...messages: unknown[]): void {
-    if (this.logLevel > LogLevel.INFO) {
-      return;
-    }
-
-    this.logger.info(messages.join(' '));
+    this.log(LogLevel.INFO, ...messages);
   }
 
   warn(...messages: unknown[]): void {
-    if (this.logLevel > LogLevel.WARN) {
-      return;
-    }
-
-    this.logger.warn(messages.join(' '));
+    this.log(LogLevel.WARN, ...messages);
   }
 
   error(...messages: unknown[]): void {
-    if (this.logLevel > LogLevel.ERROR) {
-      return;
-    }
-
-    this.logger.error(messages.join(' '));
+    this.log(LogLevel.ERROR, ...messages);
   }
 }
 
@@ -133,7 +108,8 @@ export function getLogger(): Logger {
 }
 
 /**
- * Resets the logger to the default SimpleLogger.
+ * Resets the logger to the built-in console logger. On Node this replaces the
+ * winston-backed logger that the Node entry point installs.
  */
 export function resetLogger(): void {
   currentLogger = new SimpleLogger();
