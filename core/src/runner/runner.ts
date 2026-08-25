@@ -543,8 +543,7 @@ export class Runner {
       try {
         const inlineData = part.inlineData;
         const fileName =
-          (inlineData as {displayName?: string}).displayName ||
-          `artifact_${invocationId}_${i}`;
+          inlineData.displayName || `artifact_${invocationId}_${i}`;
 
         const version = await this.artifactService.saveArtifact({
           ...sessionKey,
