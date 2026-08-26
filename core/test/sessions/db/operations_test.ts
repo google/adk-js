@@ -174,10 +174,11 @@ describe('operations', () => {
 
     it('should resolve the host query param even when new URL() otherwise succeeds', async () => {
       const uri =
-        'postgresql://user:pass@localhost/mydb?host=/cloudsql/proj:region:inst';
+        'postgresql://user:pass@localhost:5433/mydb?host=/cloudsql/proj:region:inst';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.host).toBe('/cloudsql/proj:region:inst');
       expect(options.dbName).toBe('mydb');
+      expect(options.port).toBe(5433);
     });
 
     it('should preserve the schema query param for Unix-socket URIs', async () => {

@@ -119,6 +119,7 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
           ? decodeURIComponent(parsedUrl.password)
           : undefined,
         dbName: decodeURIComponent(parsedUrl.pathname.slice(1)) || undefined,
+        ...(parsedUrl.port ? {port: Number(parsedUrl.port)} : {}),
         ...(schema ? {schema} : {}),
       } as MikroORMOptions;
     }
