@@ -9,7 +9,6 @@ import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
-
 import {
   InvocationContext,
   InvocationContextParams,
@@ -58,8 +57,9 @@ export async function resolveAgentCard(
 
   const url = parseCardUrl(agentCard);
   if (url && isHttpUrl(url)) {
+    await assertHostAllowed(url);
     const resolver = new DefaultAgentCardResolver({
-      fetchImpl: guardedAgentCardFetch,
+      fetchImpl: noRedirectFetch(agentCard),
     });
     return resolver.resolve(agentCard);
   }
@@ -103,26 +103,23 @@ async function readAgentCardFile(
 }
 
 /**
- * Fetches the agent card, refusing a link-local host and any redirect.
- *
- * The guard lives here rather than before {@link DefaultAgentCardResolver} runs
- * because this is the single point where the resolver reaches the network, and
- * the only place a URL the developer did not write can appear.
+ * Builds the `fetch` the card resolver uses, which refuses a redirect instead
+ * of following it. A redirect is the only way the card host, rather than the
+ * developer, picks where the request lands.
  */
-const guardedAgentCardFetch: typeof fetch = async (input, init) => {
-  // `Request` normalizes every form `fetch` accepts: a string, a URL, a Request.
-  const url = new URL(new Request(input).url);
-  await assertHostAllowed(url);
-  const response = await fetch(url, {...init, redirect: 'manual'});
-  if (isRedirect(response.status)) {
-    throw new Error(
-      `Refusing to follow a redirect while fetching the agent card from ${url} ` +
-        `(status ${response.status}, location ${response.headers.get('location')}). ` +
-        'Configure the final URL instead.',
-    );
-  }
-  return response;
-};
+function noRedirectFetch(source: string): typeof fetch {
+  return async (input, init) => {
+    const response = await fetch(input, {...init, redirect: 'manual'});
+    if (isRedirect(response.status)) {
+      throw new Error(
+        `Refusing to follow a redirect while fetching the agent card from ${source} ` +
+          `(status ${response.status}, location ${response.headers.get('location')}). ` +
+          'Configure the final URL instead.',
+      );
+    }
+    return response;
+  };
+}
 
 /**
  * Returns `true` for a redirect response, including the opaque one a `manual`
@@ -132,7 +129,13 @@ function isRedirect(status: number): boolean {
   return status === 0 || (status >= 300 && status < 400);
 }
 
-/** Throws when the URL's host is, or resolves to, a link-local address. */
+/**
+ * Throws when the URL's host is, or resolves to, a link-local address.
+ *
+ * Checking the configured URL covers the whole fetch: the resolver appends a
+ * relative well-known path, which cannot change the origin, and a redirect is
+ * refused rather than followed.
+ */
 async function assertHostAllowed(url: URL): Promise<void> {
   const host = normalizeHost(url.hostname);
   const addresses = await resolveHostAddresses(host);
