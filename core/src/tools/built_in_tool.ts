@@ -55,7 +55,9 @@ export abstract class BuiltInTool extends BaseTool {
     // won before this registration existed. `BaseTool.processLlmRequest`
     // handles the reverse order, letting a callable tool replace this entry
     // instead of reporting a duplicate.
-    if (!(this.name in request.llmRequest.toolsDict)) {
+    // `Object.hasOwn` rather than `in`, so a tool named after an
+    // `Object.prototype` member is not read as already registered.
+    if (!Object.hasOwn(request.llmRequest.toolsDict, this.name)) {
       request.llmRequest.toolsDict[this.name] = this;
     }
   }

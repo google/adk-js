@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as adk from '@google/adk';
 import {
   BaseLlm,
+  BaseLlmConnection,
   BaseTool,
   BuiltInTool,
   ENTERPRISE_WEB_SEARCH,
@@ -167,6 +169,49 @@ describe('BuiltInTool', () => {
     });
   });
 
+  // `toolsDict` is a plain object, so a lookup by name walks
+  // `Object.prototype`. Both registration paths ask `Object.hasOwn` instead,
+  // matching how `functions.ts` resolves a call.
+  describe('a tool named after an Object.prototype member', () => {
+    class ToStringBuiltIn extends BuiltInTool {
+      constructor() {
+        super({name: 'toString', description: 'Shares an inherited name.'});
+      }
+
+      protected override async applyBuiltInConfig(): Promise<void> {}
+    }
+
+    it('registers rather than reading the inherited value as taken', async () => {
+      const llmRequest = requestFor('gemini-2.5-flash');
+      const tool = new ToStringBuiltIn();
+
+      await tool.processLlmRequest({
+        llmRequest,
+        toolContext: undefined as never,
+      });
+
+      expect(Object.hasOwn(llmRequest.toolsDict, 'toString')).toBe(true);
+      expect(llmRequest.toolsDict['toString']).toBe(tool);
+    });
+
+    it('does not report a duplicate for a callable tool', async () => {
+      const llmRequest = requestFor('gemini-2.5-flash');
+      const local = new FunctionTool({
+        name: 'toString',
+        description: 'Shares an inherited name.',
+        parameters: z.object({}),
+        execute: async () => ({result: 'local'}),
+      });
+
+      await local.processLlmRequest({
+        llmRequest,
+        toolContext: undefined as never,
+      });
+
+      expect(llmRequest.toolsDict['toString']).toBe(local);
+    });
+  });
+
   it('does not register a name when the tool rejects the model', async () => {
     const llmRequest = requestFor('not-a-gemini-model');
 
@@ -179,6 +224,82 @@ describe('BuiltInTool', () => {
       }),
     ).rejects.toThrow();
     expect(llmRequest.toolsDict).toEqual({});
+  });
+});
+
+/**
+ * `BUILT_IN_TOOLS` above is hand-maintained, so it can only test the tools
+ * that exist today. This checks the invariant itself: a tool that can never
+ * produce a function declaration cannot enter `toolsDict` through
+ * `BaseTool.processLlmRequest`, so a call naming it cannot resolve — the #789
+ * failure. Such a tool must be a `BuiltInTool`, which registers itself, or be
+ * listed below with the reason it is safe. A seventh built-in written the way
+ * the first six were then fails here instead of shipping.
+ */
+describe('the declaration-less tool surface', () => {
+  // Prompt mutators: they inject into the prompt and the model never sees a
+  // name for them, so no function call can come back naming one.
+  const NOT_MODEL_ADDRESSABLE = new Set(['ExampleTool', 'PreloadMemoryTool']);
+
+  type ToolClass = (abstract new (...args: never[]) => BaseTool) & {
+    name: string;
+  };
+
+  /**
+   * Whether the class overrides `_getDeclaration`. `BaseTool`'s own
+   * implementation returns undefined, so a subclass that never overrides it
+   * has no declaration whatever its arguments are.
+   */
+  function declaresAFunction(ctor: ToolClass): boolean {
+    for (
+      let proto: object | null = ctor.prototype;
+      proto && proto !== BaseTool.prototype;
+      proto = Object.getPrototypeOf(proto)
+    ) {
+      if (Object.hasOwn(proto, '_getDeclaration')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isBuiltIn(ctor: ToolClass): boolean {
+    return ctor.prototype instanceof BuiltInTool;
+  }
+
+  /** Every exported tool class, including the ones behind a singleton. */
+  function exportedToolClasses(): Map<string, ToolClass> {
+    const classes = new Map<string, ToolClass>();
+    for (const value of Object.values(adk as Record<string, unknown>)) {
+      const ctor =
+        typeof value === 'function' && value.prototype instanceof BaseTool
+          ? (value as ToolClass)
+          : value instanceof BaseTool
+            ? (value.constructor as ToolClass)
+            : undefined;
+      // `BuiltInTool` itself is abstract, so it holds neither side of the
+      // invariant.
+      if (ctor && (ctor as unknown) !== BuiltInTool) {
+        classes.set(ctor.name, ctor);
+      }
+    }
+    return classes;
+  }
+
+  it('is BuiltInTool subclasses plus the documented exemptions', () => {
+    const unaddressable = [...exportedToolClasses()]
+      .filter(([, ctor]) => !declaresAFunction(ctor) && !isBuiltIn(ctor))
+      .map(([name]) => name);
+
+    expect(new Set(unaddressable)).toEqual(NOT_MODEL_ADDRESSABLE);
+  });
+
+  it('finds the built-in tools it is meant to be checking', () => {
+    // Guards the sweep itself: if the barrel stopped exporting tools, or
+    // `_getDeclaration` were renamed, the assertion above would pass empty.
+    const builtIns = [...exportedToolClasses().values()].filter(isBuiltIn);
+
+    expect(builtIns.length).toBe(BUILT_IN_TOOLS.length);
   });
 });
 
@@ -212,6 +333,10 @@ describe('a built-in tool called as a function', () => {
               ],
             },
           };
+    }
+
+    async connect(): Promise<BaseLlmConnection> {
+      throw new Error('not used in this test');
     }
   }
 

@@ -328,7 +328,7 @@ const RESOLUTION_FAILURE_CAUSES = `Possible causes:
   1. The model hallucinated the name.
   2. The tool is not registered on this agent, or a plugin filtered it out of this request.
   3. The name does not match the registered tool's name exactly.
-  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined (as \`ExampleTool\` does).`;
+  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined (as prompt-injecting tools like \`ExampleTool\` and \`PreloadMemoryTool\` do).`;
 
 const TOOL_NOT_FOUND_SYMBOL = Symbol.for('google.adk.toolNotFound');
 

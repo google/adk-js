@@ -165,7 +165,11 @@ export abstract class BaseTool {
 
     // An in-model tool holds the name only so a call naming it can be routed;
     // a callable tool of the same name displaces it rather than colliding.
-    const registered = llmRequest.toolsDict[this.name];
+    // `Object.hasOwn` rather than a plain lookup, so a tool named after an
+    // `Object.prototype` member does not collide with the inherited value.
+    const registered = Object.hasOwn(llmRequest.toolsDict, this.name)
+      ? llmRequest.toolsDict[this.name]
+      : undefined;
     if (registered && !isInModelTool(registered)) {
       throw new Error(`Duplicate tool name: ${this.name}`);
     }
