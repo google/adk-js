@@ -31,6 +31,8 @@ import {
   A2A_AUTH_TOKEN_ENV_VAR,
   AdkApiServer,
   ENFORCE_USER_IDENTITY_ENV_VAR,
+  IAP_AUTHENTICATED_USER_EMAIL_HEADER,
+  IAP_JWT_ASSERTION_HEADER,
   iapUserIdResolver,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
@@ -1610,6 +1612,7 @@ describe('AdkWebServer', () => {
     const CALLER = 'caller@example.com';
     const VICTIM = 'victim@example.com';
     const IAP_HEADER = 'X-Goog-Authenticated-User-Email';
+    const IAP_ASSERTION = 'X-Goog-Iap-Jwt-Assertion';
 
     let identityServer: AdkApiServer | undefined;
 
@@ -1637,13 +1640,27 @@ describe('AdkWebServer', () => {
         method = 'GET',
         caller,
         body,
-      }: {method?: string; caller?: string; body?: unknown} = {},
+        headers = {},
+      }: {
+        method?: string;
+        caller?: string;
+        body?: unknown;
+        headers?: Record<string, string>;
+      } = {},
     ) => {
       const response = await fetch(`${baseUrl}${path}`, {
         method,
         headers: {
           ...(body ? {'Content-Type': 'application/json'} : {}),
-          ...(caller ? {[IAP_HEADER]: `accounts.google.com:${caller}`} : {}),
+          // IAP attaches the signed assertion to everything it forwards, so a
+          // caller these cases treat as authenticated carries both headers.
+          ...(caller
+            ? {
+                [IAP_HEADER]: `accounts.google.com:${caller}`,
+                [IAP_ASSERTION]: 'signed.assertion.stub',
+              }
+            : {}),
+          ...headers,
         },
         body: body ? JSON.stringify(body) : undefined,
       });
@@ -1662,12 +1679,17 @@ describe('AdkWebServer', () => {
     });
 
     describe('iapUserIdResolver', () => {
-      const resolverFor = (header?: string) =>
+      const resolverFor = (header?: string, withAssertion = true) =>
         iapUserIdResolver({
-          get: (name: string) =>
-            name.toLowerCase() === IAP_HEADER.toLowerCase()
-              ? header
-              : undefined,
+          get: (name: string) => {
+            const wanted = name.toLowerCase();
+            if (wanted === IAP_AUTHENTICATED_USER_EMAIL_HEADER) {
+              return header;
+            }
+            return wanted === IAP_JWT_ASSERTION_HEADER && withAssertion
+              ? 'signed.assertion.stub'
+              : undefined;
+          },
         } as unknown as Parameters<typeof iapUserIdResolver>[0]);
 
       it('reads the email out of the provider-prefixed header', () => {
@@ -1682,6 +1704,54 @@ describe('AdkWebServer', () => {
         expect(resolverFor(undefined)).toBeUndefined();
         expect(resolverFor('accounts.google.com:')).toBeUndefined();
       });
+
+      it('reports no identity when the header carries more than one value', () => {
+        // Node joins duplicate headers with `, `. IAP overwrites rather than
+        // appends, so two values mean something else in front appended and
+        // there is no way to tell which one it vouched for. Taking the last
+        // would hand the request to whoever appended.
+        expect(
+          resolverFor(
+            `accounts.google.com:${VICTIM}, accounts.google.com:${CALLER}`,
+          ),
+        ).toBeUndefined();
+      });
+
+      it('reports no identity when the IAP assertion is missing', () => {
+        expect(
+          resolverFor(`accounts.google.com:${CALLER}`, false),
+        ).toBeUndefined();
+      });
+    });
+
+    it('refuses a caller whose IAP header carries a second appended value', async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await request(
+        baseUrl,
+        `/apps/testApp/users/${CALLER}/sessions`,
+        {
+          caller: VICTIM,
+          headers: {
+            [IAP_HEADER]: `accounts.google.com:${VICTIM}, accounts.google.com:${CALLER}`,
+          },
+        },
+      );
+
+      // The appended value does not win: the request is refused outright
+      // rather than served as the caller named last.
+      expect(response.status).toBe(401);
+    });
+
+    it('refuses a caller that sends the email header without the IAP assertion', async () => {
+      const baseUrl = await startIdentityServer();
+
+      const response = await fetch(
+        `${baseUrl}/apps/testApp/users/${CALLER}/sessions`,
+        {headers: {[IAP_HEADER]: `accounts.google.com:${CALLER}`}},
+      );
+
+      expect(response.status).toBe(401);
     });
 
     it('leaves userId unchecked when no resolver is configured', async () => {
@@ -1838,6 +1908,183 @@ describe('AdkWebServer', () => {
       });
 
       expect(response.status).toBe(403);
+    });
+
+    describe('Trace endpoints', () => {
+      // The trace stores carry `llm_request`, `llm_response`, `tool_call_args`
+      // and `tool_response` for every session in the process and are keyed by
+      // session and event id alone, so they need the same ownership check as
+      // the routes that name a user in the path.
+      const OWNED_SESSION = 'ownedTraceSession';
+      const VICTIM_SESSION = 'victimTraceSession';
+      const TRACE_ID = 'trace-of-the-victims-session';
+      const EVENT_ID = 'event-in-the-victims-session';
+
+      /**
+       * Writes into the exporters' stores directly. Traces are recorded from
+       * span export, which needs a model call the test agent does not make, so
+       * the stores are seeded to exercise the lookup these routes perform.
+       */
+      const seedTrace = (
+        target: AdkApiServer,
+        {sessionId, traceId}: {sessionId: string; traceId: string},
+      ) => {
+        const stores = target as unknown as {
+          traceDict: Record<string, Record<string, unknown>>;
+          sessionTraceDict: Record<string, string[]>;
+        };
+        stores.traceDict[EVENT_ID] = {
+          trace_id: traceId,
+          'gcp.vertex.agent.llm_request': '{"contents":"the victim prompt"}',
+          'gcp.vertex.agent.tool_response': '{"result":"the victim secret"}',
+        };
+        stores.sessionTraceDict[sessionId] = [traceId];
+      };
+
+      beforeEach(async () => {
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: CALLER,
+          sessionId: OWNED_SESSION,
+        });
+        await sessionService.createSession({
+          appName: 'testApp',
+          userId: VICTIM,
+          sessionId: VICTIM_SESSION,
+        });
+      });
+
+      it('serves session traces unchecked when no resolver is configured', async () => {
+        const response = await client.get(
+          `/debug/trace/session/${VICTIM_SESSION}`,
+        );
+
+        expect(response.status).toBe(200);
+      });
+
+      it('refuses session traces to a request with no caller identity', async () => {
+        const baseUrl = await startIdentityServer();
+
+        const response = await request(
+          baseUrl,
+          `/debug/trace/session/${VICTIM_SESSION}`,
+        );
+
+        expect(response.status).toBe(401);
+      });
+
+      it("refuses another user's session traces", async () => {
+        const baseUrl = await startIdentityServer();
+
+        const response = await request(
+          baseUrl,
+          `/debug/trace/session/${VICTIM_SESSION}`,
+          {caller: CALLER},
+        );
+
+        expect(response.status).toBe(403);
+      });
+
+      it("refuses another user's session traces under the app-prefixed route", async () => {
+        // The dev UI asks under `/dev/apps/<app>/`, which is a separate mount
+        // of the same store and so needs the same refusal.
+        const baseUrl = await startIdentityServer();
+
+        const response = await request(
+          baseUrl,
+          `/dev/apps/testApp/debug/trace/session/${VICTIM_SESSION}`,
+          {caller: CALLER},
+        );
+
+        expect(response.status).toBe(403);
+      });
+
+      it('serves a caller the traces of their own session', async () => {
+        const baseUrl = await startIdentityServer();
+
+        const response = await request(
+          baseUrl,
+          `/debug/trace/session/${OWNED_SESSION}`,
+          {caller: CALLER},
+        );
+
+        expect(response.status).toBe(200);
+      });
+
+      it('refuses an event trace to a request with no caller identity', async () => {
+        const baseUrl = await startIdentityServer();
+        seedTrace(identityServer!, {
+          sessionId: VICTIM_SESSION,
+          traceId: TRACE_ID,
+        });
+
+        const response = await request(baseUrl, `/debug/trace/${EVENT_ID}`);
+
+        // 401 rather than the handler's 404, so an unidentified caller cannot
+        // tell an event id that exists from one that does not.
+        expect(response.status).toBe(401);
+      });
+
+      it("refuses an event trace belonging to another user's session", async () => {
+        const baseUrl = await startIdentityServer();
+        seedTrace(identityServer!, {
+          sessionId: VICTIM_SESSION,
+          traceId: TRACE_ID,
+        });
+
+        const response = await request(baseUrl, `/debug/trace/${EVENT_ID}`, {
+          caller: CALLER,
+        });
+
+        expect(response.status).toBe(403);
+        expect(JSON.stringify(response.body)).not.toContain('victim secret');
+      });
+
+      it('refuses an event trace that cannot be tied back to a session', async () => {
+        const baseUrl = await startIdentityServer();
+        // A trace whose session was never recorded has no owner to check
+        // against, so it is refused rather than served.
+        seedTrace(identityServer!, {
+          sessionId: VICTIM_SESSION,
+          traceId: TRACE_ID,
+        });
+        (
+          identityServer as unknown as {
+            sessionTraceDict: Record<string, string[]>;
+          }
+        ).sessionTraceDict[VICTIM_SESSION] = [];
+
+        const response = await request(baseUrl, `/debug/trace/${EVENT_ID}`, {
+          caller: CALLER,
+        });
+
+        expect(response.status).toBe(403);
+      });
+
+      it('serves a caller an event trace from their own session', async () => {
+        const baseUrl = await startIdentityServer();
+        seedTrace(identityServer!, {
+          sessionId: OWNED_SESSION,
+          traceId: TRACE_ID,
+        });
+
+        const response = await request(baseUrl, `/debug/trace/${EVENT_ID}`, {
+          caller: CALLER,
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body?.['trace_id']).toBe(TRACE_ID);
+      });
+
+      it('still reports an unknown event as not found to an identified caller', async () => {
+        const baseUrl = await startIdentityServer();
+
+        const response = await request(baseUrl, '/debug/trace/no-such-event', {
+          caller: CALLER,
+        });
+
+        expect(response.status).toBe(404);
+      });
     });
   });
 });
