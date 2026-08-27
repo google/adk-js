@@ -55,7 +55,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -83,7 +86,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {

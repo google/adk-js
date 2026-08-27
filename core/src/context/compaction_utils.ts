@@ -18,16 +18,27 @@ import {
  * @param events The full history of events.
  * @returns The active events, starting with the latest CompactedEvent if present.
  */
-export function getActiveEvents(events: Event[]): Event[] {
-  const latest = events.filter(isCompactedEvent).pop();
+export function getActiveEvents(
+  events: Event[],
+  currentIsolationScope?: string,
+): Event[] {
+  const visibleEvents =
+    currentIsolationScope !== undefined
+      ? events.filter(
+          (event) =>
+            event.isolationScope === undefined ||
+            event.isolationScope === currentIsolationScope,
+        )
+      : events;
+  const latest = visibleEvents.filter(isCompactedEvent).pop();
   return latest
     ? [
         latest,
-        ...events.filter(
+        ...visibleEvents.filter(
           (e) => !isCompactedEvent(e) && e.timestamp > latest.endTime,
         ),
       ]
-    : events;
+    : visibleEvents;
 }
 
 /**
