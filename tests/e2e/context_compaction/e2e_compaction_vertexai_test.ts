@@ -57,7 +57,7 @@ describe('E2e Context Compaction (Vertex AI)', () => {
       const agent = createVertexAICompactionAgent();
 
       const projectId = process.env.GOOGLE_CLOUD_PROJECT!;
-      const location = process.env.LOCATION || 'us-west1';
+      const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
       const agentEngineId = process.env.REASONING_ENGINE_ID!;
 
       const sessionService = new VertexAiSessionService({
