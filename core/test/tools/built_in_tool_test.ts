@@ -212,6 +212,44 @@ describe('BuiltInTool', () => {
     });
   });
 
+  // `BuiltInTool.processLlmRequest` never forwards a declaration, so a
+  // subclass that returns one would be registered as in-model with its
+  // function invisible to the model. The class is exported, so the mistake is
+  // reachable from outside this repo.
+  describe('a subclass that declares a function', () => {
+    let configured = false;
+
+    class DeclaringBuiltIn extends BuiltInTool {
+      constructor() {
+        super({name: 'declaring_built_in', description: 'Declares one.'});
+      }
+
+      protected override async applyBuiltInConfig(): Promise<void> {
+        configured = true;
+      }
+
+      override _getDeclaration() {
+        return {name: this.name, description: this.description};
+      }
+    }
+
+    it('is reported rather than silently dropped', async () => {
+      const llmRequest = requestFor('gemini-2.5-flash');
+      configured = false;
+
+      await expect(
+        new DeclaringBuiltIn().processLlmRequest({
+          llmRequest,
+          toolContext: undefined as never,
+        }),
+      ).rejects.toThrow('cannot declare a callable function');
+
+      expect(configured).toBe(false);
+      expect(llmRequest.toolsDict).toEqual({});
+      expect(llmRequest.config?.tools).toBeUndefined();
+    });
+  });
+
   it('does not register a name when the tool rejects the model', async () => {
     const llmRequest = requestFor('not-a-gemini-model');
 

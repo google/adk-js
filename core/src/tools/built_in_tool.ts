@@ -45,6 +45,18 @@ export abstract class BuiltInTool extends BaseTool {
   override async processLlmRequest(
     request: ToolProcessLlmRequest,
   ): Promise<void> {
+    // This override never forwards a declaration to `llmRequest.config.tools`,
+    // because a tool the model runs itself has none. A subclass that returns
+    // one would have it dropped here while the name still registered as
+    // in-model, leaving the model unable to see the function and told the tool
+    // is not callable if it guessed the name. Say so rather than swallow it.
+    if (this._getDeclaration()) {
+      throw new Error(
+        `${this.name} extends BuiltInTool but returns a function ` +
+          'declaration. A tool the model runs itself cannot declare a ' +
+          'callable function; extend BaseTool instead.',
+      );
+    }
     await this.applyBuiltInConfig(request);
     // Registered only after the configuration lands, so a tool that rejects
     // the model and throws does not leave behind a name claiming it is
