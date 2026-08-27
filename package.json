@@ -76,5 +76,8 @@
     "**/*.{json,md}": [
       "prettier --write"
     ]
+  },
+  "overrides": {
+    "node-gyp": "^12.4.0"
   }
 }
