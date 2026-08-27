@@ -32,7 +32,7 @@ const toolContext = {} as unknown as Context;
 
 /** Builds a bare LlmRequest suitable for `processLlmRequest`. */
 function makeLlmRequest(contents: Content[] = []): LlmRequest {
-  return {contents, toolsDict: {}} as unknown as LlmRequest;
+  return {contents, toolsDict: {}, liveConnectConfig: {}};
 }
 
 /** Builds a content whose first part is a `load_mcp_resource` function response. */

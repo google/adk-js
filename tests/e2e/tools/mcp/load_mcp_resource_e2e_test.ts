@@ -50,7 +50,8 @@ function functionResponseRequest(resourceNames: string[]): LlmRequest {
       },
     ],
     toolsDict: {},
-  } as unknown as LlmRequest;
+    liveConnectConfig: {},
+  };
 }
 
 describe('LoadMcpResourceTool (e2e, real MCP server over stdio)', () => {
