@@ -8,7 +8,13 @@ import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
-  'browser': ['chrome58', 'firefox57', 'safari11'],
+  // Safari 12, not 11: the library uses async generators throughout, and they
+  // are ES2018. Targeting Safari 11 asked esbuild to lower them, and its
+  // lowering of `yield* super.method()` emits `__yieldStar(super.method())` in
+  // a scope where `super` is a syntax error — so `models/apigee_llm.js` in the
+  // web build did not parse at all. Safari 11 was never really supported; the
+  // target only said it was.
+  'browser': ['chrome63', 'firefox57', 'safari12'],
 };
 
 const licenseHeaderText = `/**
@@ -75,7 +81,13 @@ function build({
     buildOptions.outdir = `./dist/${targetDir}`;
   }
 
-  if (format === 'esm') {
+  // Node ESM only. The shim exists so an ESM build can reach a CommonJS
+  // dependency, which is a Node concern — and adding it to the *browser* ESM
+  // build put `import {createRequire} from 'module'` at the top of every file
+  // in `dist/web`, so the browser build could only be loaded by Node. Bundlers
+  // targeting a browser, a worker or any edge runtime failed to resolve
+  // 'module' and stopped.
+  if (format === 'esm' && platform !== 'browser') {
     buildOptions.banner = {
       js:
         (buildOptions.banner?.js || '') +
