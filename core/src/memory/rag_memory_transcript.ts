@@ -7,8 +7,9 @@
 import {Session} from '../sessions/session.js';
 
 /**
- * Marks a display name whose segments are base64url-encoded. Names without it
- * are the legacy dot-delimited form.
+ * Marks a display name whose segments are base64url-encoded. This service and
+ * adk-python both write this form. Names without it are the older
+ * dot-delimited form, which this service reads but never writes.
  */
 const SOURCE_DISPLAY_NAME_PREFIX = 'adk-memory-v1.';
 
@@ -70,9 +71,14 @@ export function buildSourceDisplayName(
  * Recovers the identifiers from a `displayName`, or returns `undefined` when
  * the name is malformed or ambiguous.
  *
- * A legacy name with four or more parts is ambiguous: `demo.alice.smith.s1`
- * names either user `alice` or user `alice.smith`. Accepting it would hand one
- * user another user's memories, so it is rejected.
+ * Two forms are read. The prefixed form is the one both this service and
+ * adk-python write, so a corpus either writes stays readable by the other. The
+ * unprefixed `{app}.{user}.{session}` form is read only: adk-python wrote it
+ * before it adopted the prefix, and no writer here emits it.
+ *
+ * A dot-delimited name with four or more parts is ambiguous:
+ * `demo.alice.smith.s1` names either user `alice` or user `alice.smith`.
+ * Accepting it would hand one user another user's memories, so it is rejected.
  */
 export function parseSourceDisplayName(
   displayName: string,
