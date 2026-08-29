@@ -51,6 +51,10 @@ describe('buildSourceDisplayName and parseSourceDisplayName', () => {
     );
   });
 
+  it('rejects a prefixed name whose segment is empty', () => {
+    expect(parseSourceDisplayName('adk-memory-v1..YWxpY2U.cw')).toBe(undefined);
+  });
+
   it('rejects a prefixed name whose segment is non-canonical base64url', () => {
     // 'ZGVtbx' decodes to 'demo' as well, but re-encodes to 'ZGVtbw'.
     expect(parseSourceDisplayName('adk-memory-v1.ZGVtbx.YWxpY2U.cw')).toBe(

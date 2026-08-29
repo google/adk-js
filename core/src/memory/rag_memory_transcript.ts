@@ -15,9 +15,6 @@ const SOURCE_DISPLAY_NAME_PREFIX = 'adk-memory-v1.';
 /** Number of segments in a source display name. */
 const SOURCE_DISPLAY_NAME_SEGMENTS = 3;
 
-/** The base64url alphabet, without padding. */
-const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
-
 const MILLISECONDS_PER_SECOND = 1000;
 
 /** The RAG file a chunk came from, identified by its display name. */
@@ -46,7 +43,8 @@ function encodeSegment(value: string): string {
  * and let a malformed name match a tenant.
  */
 function decodeSegment(segment: string): string | undefined {
-  if (!BASE64URL_PATTERN.test(segment)) {
+  // An empty segment is the one input that survives the round trip below.
+  if (!segment) {
     return undefined;
   }
   const decoded = Buffer.from(segment, 'base64url').toString('utf-8');
