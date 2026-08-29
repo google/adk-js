@@ -352,14 +352,14 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
-export {VertexRagApiClient} from './utils/vertex_rag_api.js';
+// The satellite types are named in `RagApiClient`'s signature, so `docs:check`
+// requires them here too.
 export type {
   ListRagFilesParams,
   ListRagFilesResponse,
   RagApiClient,
   RagContext,
   RagFile,
-  RagQuery,
   RetrieveContextsParams,
   RetrieveContextsResponse,
   UploadRagFileParams,

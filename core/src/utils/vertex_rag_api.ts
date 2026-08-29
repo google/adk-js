@@ -21,33 +21,22 @@ export interface RagFile {
   displayName?: string;
 }
 
-/** One page of {@link VertexRagApiClient.listRagFiles}. */
+/** One page of a `ragFiles` listing. */
 export interface ListRagFilesResponse {
   ragFiles?: RagFile[];
   nextPageToken?: string;
 }
 
-/** One chunk returned by {@link VertexRagApiClient.retrieveContexts}. */
+/** One chunk returned by a retrieval query. */
 export interface RagContext {
   /** The `displayName` of the RAG file this chunk came from. */
   sourceDisplayName?: string;
   text?: string;
 }
 
-/** The response of {@link VertexRagApiClient.retrieveContexts}. */
+/** The response of a retrieval query. */
 export interface RetrieveContextsResponse {
   contexts?: {contexts?: RagContext[]};
-}
-
-/**
- * The query part of a `retrieveContexts` request.
- *
- * `@google/genai` exports `VertexRagStore` and `RagRetrievalConfig` but no
- * query type, so this one is declared here.
- */
-export interface RagQuery {
-  text: string;
-  ragRetrievalConfig?: RagRetrievalConfig;
 }
 
 /** The response of a `ragFiles:upload` request. */
@@ -76,13 +65,14 @@ export interface RetrieveContextsParams {
   /** `projects/{project}/locations/{location}`. */
   parent: string;
   vertexRagStore: VertexRagStore;
-  query: RagQuery;
+  /** `@google/genai` models the store and the config, but not the query. */
+  query: {text: string; ragRetrievalConfig?: RagRetrievalConfig};
 }
 
 /**
- * The Vertex AI RAG Engine calls that back `VertexAiRagMemoryService`.
+ * The file and retrieval calls of the Vertex AI RAG Engine.
  *
- * {@link VertexRagApiClient} is the implementation; the interface is the seam
+ * `VertexRagApiClient` is the implementation; the interface is the seam
  * a test substitutes.
  */
 export interface RagApiClient {
@@ -140,7 +130,7 @@ export class VertexRagApiClient implements RagApiClient {
     body.append(
       'file',
       new Blob([params.content], {type: 'text/plain; charset=UTF-8'}),
-      'transcript.txt',
+      'content.txt',
     );
 
     const headers = await this.authHeaders(url);

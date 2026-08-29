@@ -8,16 +8,11 @@ import {
   createEvent,
   createSession,
   InMemorySessionService,
-  ListRagFilesParams,
-  ListRagFilesResponse,
   LlmAgent,
   LOAD_MEMORY,
   RagApiClient,
-  RetrieveContextsParams,
-  RetrieveContextsResponse,
   Runner,
   Session,
-  UploadRagFileParams,
   VertexAiRagMemoryService,
 } from '@google/adk';
 import {createUserContent} from '@google/genai';
@@ -30,45 +25,46 @@ const CORPUS = 'projects/test-project/locations/us-central1/ragCorpora/1';
  * A RAG corpus that keeps its files in memory and answers a retrieval query
  * with every chunk whose text contains a word of the query.
  */
-class FakeRagCorpus implements RagApiClient {
+function fakeRagCorpus(): RagApiClient {
   /** Bare file id -> display name. */
-  private readonly files = new Map<string, string>();
+  const files = new Map<string, string>();
   /** Display name -> transcript. */
-  private readonly contents = new Map<string, string>();
-  private nextFileId = 1;
+  const contents = new Map<string, string>();
+  let nextFileId = 1;
 
-  async uploadRagFile(params: UploadRagFileParams): Promise<void> {
-    this.files.set(`file-${this.nextFileId++}`, params.displayName);
-    this.contents.set(params.displayName, params.content);
-  }
+  return {
+    async uploadRagFile(params) {
+      files.set(`file-${nextFileId++}`, params.displayName);
+      contents.set(params.displayName, params.content);
+    },
 
-  async listRagFiles(
-    params: ListRagFilesParams,
-  ): Promise<ListRagFilesResponse> {
-    return {
-      ragFiles: [...this.files].map(([fileId, displayName]) => ({
-        name: `${params.ragCorpus}/ragFiles/${fileId}`,
-        displayName,
-      })),
-    };
-  }
+    async listRagFiles(params) {
+      return {
+        ragFiles: [...files].map(([fileId, displayName]) => ({
+          name: `${params.ragCorpus}/ragFiles/${fileId}`,
+          displayName,
+        })),
+      };
+    },
 
-  async retrieveContexts(
-    params: RetrieveContextsParams,
-  ): Promise<RetrieveContextsResponse> {
-    const ragFileIds = params.vertexRagStore.ragResources?.[0].ragFileIds;
-    const words = params.query.text.toLowerCase().split(/\W+/).filter(Boolean);
-    const contexts = [...this.files]
-      .filter(([fileId]) => !ragFileIds || ragFileIds.includes(fileId))
-      .map(([, displayName]) => ({
-        sourceDisplayName: displayName,
-        text: this.contents.get(displayName) ?? '',
-      }))
-      .filter((context) =>
-        words.some((word) => context.text.toLowerCase().includes(word)),
-      );
-    return {contexts: {contexts}};
-  }
+    async retrieveContexts(params) {
+      const ragFileIds = params.vertexRagStore.ragResources?.[0].ragFileIds;
+      const words = params.query.text
+        .toLowerCase()
+        .split(/\W+/)
+        .filter(Boolean);
+      const contexts = [...files]
+        .filter(([fileId]) => !ragFileIds || ragFileIds.includes(fileId))
+        .map(([, displayName]) => ({
+          sourceDisplayName: displayName,
+          text: contents.get(displayName) ?? '',
+        }))
+        .filter((context) =>
+          words.some((word) => context.text.toLowerCase().includes(word)),
+        );
+      return {contexts: {contexts}};
+    },
+  };
 }
 
 function conversation(
@@ -91,7 +87,7 @@ describe('VertexAiRagMemoryService integration', () => {
   it('recalls one user of a shared corpus and never the other', async () => {
     const memoryService = new VertexAiRagMemoryService({
       ragCorpus: CORPUS,
-      ragApiClient: new FakeRagCorpus(),
+      ragApiClient: fakeRagCorpus(),
     });
 
     await memoryService.addSessionToMemory(
@@ -154,14 +150,15 @@ describe('VertexAiRagMemoryService integration', () => {
       },
     ]);
 
+    const memoryService = new VertexAiRagMemoryService({
+      ragCorpus: CORPUS,
+      ragApiClient: fakeRagCorpus(),
+    });
     const runner = new Runner({
       appName: 'test_rag_memory_app',
       agent,
       sessionService: new InMemorySessionService(),
-      memoryService: new VertexAiRagMemoryService({
-        ragCorpus: CORPUS,
-        ragApiClient: new FakeRagCorpus(),
-      }),
+      memoryService,
     });
 
     const pastSession = await runner.sessionService.createSession({
@@ -175,7 +172,7 @@ describe('VertexAiRagMemoryService integration', () => {
         content: createUserContent('My favorite colour is green.'),
       }),
     });
-    await runner.memoryService!.addSessionToMemory(pastSession);
+    await memoryService.addSessionToMemory(pastSession);
 
     const session = await runner.sessionService.createSession({
       appName: 'test_rag_memory_app',

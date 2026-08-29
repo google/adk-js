@@ -55,7 +55,7 @@ export interface VertexAiRagMemoryServiceOptions {
   projectId?: string;
   /** Defaults to `process.env.GOOGLE_CLOUD_LOCATION`. */
   location?: string;
-  /** Defaults to a {@link VertexRagApiClient} for the resolved location. */
+  /** Defaults to a REST client for the resolved location. */
   ragApiClient?: RagApiClient;
 }
 
@@ -68,7 +68,10 @@ interface ResolvedRagCorpus {
 function resolveRagCorpus(
   options: VertexAiRagMemoryServiceOptions,
 ): ResolvedRagCorpus {
-  const ragCorpus = options.ragCorpus.trim();
+  const ragCorpus = options.ragCorpus?.trim();
+  if (!ragCorpus) {
+    throw new Error('ragCorpus is required for VertexAiRagMemoryService.');
+  }
   const isResourceName = ragCorpus.startsWith('projects/');
   const segments = ragCorpus.split('/');
   const projectId =
@@ -191,9 +194,6 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
   private readonly ragApiClient: RagApiClient;
 
   constructor(options: VertexAiRagMemoryServiceOptions) {
-    if (!options.ragCorpus || !options.ragCorpus.trim()) {
-      throw new Error('ragCorpus is required for VertexAiRagMemoryService.');
-    }
     const resolved = resolveRagCorpus(options);
     this.ragCorpus = resolved.ragCorpus;
     this.projectId = resolved.projectId;

@@ -9,8 +9,6 @@ import {
   createSession,
   getLogger,
   RagApiClient,
-  RagContext,
-  RagFile,
   SearchMemoryResponse,
   Session,
   VertexAiRagMemoryService,
@@ -59,7 +57,7 @@ function ragContext(
   sourceDisplayName: string,
   text: string,
   timestampSeconds = 1,
-): RagContext {
+) {
   return {
     sourceDisplayName,
     text: JSON.stringify({
@@ -71,7 +69,7 @@ function ragContext(
 }
 
 /** A listing entry reports the full resource name, not the bare file id. */
-function ragFile(ragFileId: string, displayName: string): RagFile {
+function ragFile(ragFileId: string, displayName: string) {
   return {name: `${CORPUS}/ragFiles/${ragFileId}`, displayName};
 }
 
