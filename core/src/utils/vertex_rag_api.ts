@@ -129,6 +129,8 @@ export class VertexRagApiClient implements RagApiClient {
     const url = `${this.host}/upload/v1/${params.ragCorpus}/ragFiles:upload`;
     const metadata = JSON.stringify({
       ragFile: {displayName: params.displayName},
+      // Required by ragFiles:upload. Empty selects the corpus default chunking.
+      uploadRagFileConfig: {},
     });
     const body = new FormData();
     body.append(

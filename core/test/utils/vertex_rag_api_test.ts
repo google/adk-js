@@ -113,6 +113,7 @@ describe('VertexRagApiClient', () => {
     expect(metadata.type).toBe('application/json; charset=utf-8');
     expect(JSON.parse(await metadata.text())).toEqual({
       ragFile: {displayName: 'adk-memory-v1.ZGVtbw.YWxpY2U.cw'},
+      uploadRagFileConfig: {},
     });
     expect(await file.text()).toBe('transcript line');
   });
