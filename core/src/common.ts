@@ -206,6 +206,8 @@ export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
 export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.js';
 export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
+export {VertexAiRagMemoryService} from './memory/vertex_ai_rag_memory_service.js';
+export type {VertexAiRagMemoryServiceOptions} from './memory/vertex_ai_rag_memory_service.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
@@ -350,6 +352,18 @@ export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
 export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
+export {VertexRagApiClient} from './utils/vertex_rag_api.js';
+export type {
+  ListRagFilesParams,
+  ListRagFilesResponse,
+  RagApiClient,
+  RagContext,
+  RagFile,
+  RagQuery,
+  RetrieveContextsParams,
+  RetrieveContextsResponse,
+  UploadRagFileParams,
+} from './utils/vertex_rag_api.js';
 export {version} from './version.js';
 
 export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
