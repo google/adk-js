@@ -157,11 +157,7 @@ function parseTranscriptLine(line: string): TranscriptEvent | undefined {
  */
 export function parseTranscriptEvents(text: string): TranscriptEvent[] {
   const events: TranscriptEvent[] = [];
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
+  for (const line of text.split('\n')) {
     const event = parseTranscriptLine(line);
     if (event) {
       events.push(event);
