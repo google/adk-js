@@ -129,7 +129,6 @@ export class VertexRagApiClient implements RagApiClient {
     const url = `${this.host}/upload/v1/${params.ragCorpus}/ragFiles:upload`;
     const metadata = JSON.stringify({
       ragFile: {displayName: params.displayName},
-      uploadRagFileConfig: {},
     });
     const body = new FormData();
     body.append(
