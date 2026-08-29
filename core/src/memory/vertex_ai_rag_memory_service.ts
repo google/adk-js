@@ -20,7 +20,6 @@ import {
 import {MemoryEntry} from './memory_entry.js';
 import {
   buildSourceDisplayName,
-  mergeOverlappingEventLists,
   parseSourceDisplayName,
   parseTranscriptEvents,
   serializeSessionTranscript,
@@ -125,16 +124,19 @@ function tenantSource(
   return source;
 }
 
-/** Returns the bare file id of a full RAG file resource name. */
-function bareRagFileId(name: string): string {
-  return name.slice(name.lastIndexOf('/') + 1);
-}
-
+/**
+ * Rebuilds the retrieved chunks into one chronological run of events per
+ * session.
+ *
+ * Chunks of a session overlap, so a turn arrives more than once. Keying on the
+ * timestamp keeps the first copy and drops the rest. Sessions stay apart, in
+ * the order the corpus returned them.
+ */
 function toMemoryEntries(
   contexts: RagContext[],
   request: SearchMemoryRequest,
 ): MemoryEntry[] {
-  const eventListsBySession = new Map<string, TranscriptEvent[][]>();
+  const eventsBySession = new Map<string, Map<number, TranscriptEvent>>();
   for (const context of contexts) {
     const source = tenantSource(
       context.sourceDisplayName,
@@ -144,26 +146,29 @@ function toMemoryEntries(
     if (!source) {
       continue;
     }
-    const events = parseTranscriptEvents(context.text ?? '');
-    const eventLists = eventListsBySession.get(source.sessionId);
-    if (eventLists) {
-      eventLists.push(events);
-    } else {
-      eventListsBySession.set(source.sessionId, [events]);
+    let events = eventsBySession.get(source.sessionId);
+    if (!events) {
+      events = new Map<number, TranscriptEvent>();
+      eventsBySession.set(source.sessionId, events);
+    }
+    for (const event of parseTranscriptEvents(context.text ?? '')) {
+      if (!events.has(event.timestamp)) {
+        events.set(event.timestamp, event);
+      }
     }
   }
 
   const memories: MemoryEntry[] = [];
-  for (const eventLists of eventListsBySession.values()) {
-    for (const events of mergeOverlappingEventLists(eventLists)) {
-      const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
-      for (const event of sorted) {
-        memories.push({
-          author: event.author,
-          content: {parts: [{text: event.text}]},
-          timestamp: new Date(event.timestamp).toISOString(),
-        });
-      }
+  for (const events of eventsBySession.values()) {
+    const sorted = [...events.values()].sort(
+      (a, b) => a.timestamp - b.timestamp,
+    );
+    for (const event of sorted) {
+      memories.push({
+        author: event.author,
+        content: {parts: [{text: event.text}]},
+        timestamp: new Date(event.timestamp).toISOString(),
+      });
     }
   }
   return memories;
@@ -241,7 +246,6 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
         },
       },
     });
-    logger.debug('Search memory response received.');
 
     return {
       memories: toMemoryEntries(response.contexts?.contexts ?? [], request),
@@ -276,7 +280,8 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
             request.userId,
           );
           if (source && ragFile.name) {
-            ragFileIds.push(bareRagFileId(ragFile.name));
+            const name = ragFile.name;
+            ragFileIds.push(name.slice(name.lastIndexOf('/') + 1));
           }
         }
         pageToken = response.nextPageToken;

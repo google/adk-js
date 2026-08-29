@@ -25,6 +25,10 @@ const MAX_RAG_FILE_PAGES = 10;
 /** `adk-memory-v1.` + base64url of `demo`, `alice` and `session-1`. */
 const ALICE_DISPLAY_NAME = 'adk-memory-v1.ZGVtbw.YWxpY2U.c2Vzc2lvbi0x';
 
+/** The same app and user as {@link ALICE_DISPLAY_NAME}, a second session. */
+const ALICE_SESSION_2_DISPLAY_NAME =
+  'adk-memory-v1.ZGVtbw.YWxpY2U.c2Vzc2lvbi0y';
+
 function fakeRagApiClient() {
   return {
     listRagFiles: vi
@@ -65,6 +69,18 @@ function ragContext(
       timestamp: timestampSeconds,
       text,
     }),
+  };
+}
+
+/** A retrieved chunk holding several `[timestampSeconds, text]` lines. */
+function ragChunk(sourceDisplayName: string, lines: Array<[number, string]>) {
+  return {
+    sourceDisplayName,
+    text: lines
+      .map(([timestamp, text]) =>
+        JSON.stringify({author: 'user', timestamp, text}),
+      )
+      .join('\n'),
   };
 }
 
@@ -456,6 +472,61 @@ describe('VertexAiRagMemoryService searchMemory', () => {
     expect(memoryTexts(response)).toEqual(['first', 'second', 'third']);
     expect(response.memories[0].timestamp).toBe('1970-01-01T00:00:01.000Z');
     expect(response.memories[2].author).toBe('model');
+  });
+
+  it('orders chunks of one session by time even when they never overlap', async () => {
+    const client = fakeRagApiClient();
+    client.retrieveContexts.mockResolvedValue({
+      contexts: {
+        contexts: [
+          ragChunk(ALICE_DISPLAY_NAME, [[5, 'later']]),
+          ragChunk(ALICE_DISPLAY_NAME, [[1, 'earlier']]),
+        ],
+      },
+    });
+
+    expect(memoryTexts(await searchAsAlice(service(client)))).toEqual([
+      'earlier',
+      'later',
+    ]);
+  });
+
+  it('reports a turn once when a third chunk repeats two others', async () => {
+    const client = fakeRagApiClient();
+    client.retrieveContexts.mockResolvedValue({
+      contexts: {
+        contexts: [
+          ragChunk(ALICE_DISPLAY_NAME, [[1, 'first']]),
+          ragChunk(ALICE_DISPLAY_NAME, [[3, 'third']]),
+          ragChunk(ALICE_DISPLAY_NAME, [
+            [1, 'first'],
+            [3, 'third'],
+          ]),
+        ],
+      },
+    });
+
+    expect(memoryTexts(await searchAsAlice(service(client)))).toEqual([
+      'first',
+      'third',
+    ]);
+  });
+
+  it('keeps two sessions apart in the order the corpus returned them', async () => {
+    const client = fakeRagApiClient();
+    client.retrieveContexts.mockResolvedValue({
+      contexts: {
+        contexts: [
+          ragChunk(ALICE_SESSION_2_DISPLAY_NAME, [[9, 'from session two']]),
+          ragChunk(ALICE_DISPLAY_NAME, [[1, 'from session one']]),
+        ],
+      },
+    });
+
+    expect(memoryTexts(await searchAsAlice(service(client)))).toEqual([
+      'from session two',
+      'from session one',
+    ]);
   });
 
   it('rejects when retrieval fails', async () => {

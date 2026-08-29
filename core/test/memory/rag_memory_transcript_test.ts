@@ -8,20 +8,10 @@ import {createEvent, createSession} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {
   buildSourceDisplayName,
-  mergeOverlappingEventLists,
   parseSourceDisplayName,
   parseTranscriptEvents,
   serializeSessionTranscript,
-  TranscriptEvent,
 } from '../../src/memory/rag_memory_transcript.js';
-
-function transcriptEvent(timestamp: number, text: string): TranscriptEvent {
-  return {author: 'user', timestamp, text};
-}
-
-function timestampsOf(eventLists: TranscriptEvent[][]): number[][] {
-  return eventLists.map((events) => events.map((event) => event.timestamp));
-}
 
 describe('buildSourceDisplayName and parseSourceDisplayName', () => {
   it('round-trips identifiers containing dots, slashes and non-ASCII', () => {
@@ -191,39 +181,5 @@ describe('parseTranscriptEvents', () => {
 
   it('returns no events for an empty transcript', () => {
     expect(parseTranscriptEvents('')).toEqual([]);
-  });
-});
-
-describe('mergeOverlappingEventLists', () => {
-  it('fuses lists that share a timestamp and keeps the shared event once', () => {
-    const merged = mergeOverlappingEventLists([
-      [transcriptEvent(1000, 'a'), transcriptEvent(2000, 'b')],
-      [transcriptEvent(2000, 'b'), transcriptEvent(3000, 'c')],
-    ]);
-
-    expect(timestampsOf(merged)).toEqual([[1000, 2000, 3000]]);
-  });
-
-  it('keeps lists with disjoint timestamps separate', () => {
-    const merged = mergeOverlappingEventLists([
-      [transcriptEvent(1000, 'a')],
-      [transcriptEvent(5000, 'e')],
-    ]);
-
-    expect(timestampsOf(merged)).toEqual([[1000], [5000]]);
-  });
-
-  it('re-checks earlier lists after a merge widens the timestamps', () => {
-    const merged = mergeOverlappingEventLists([
-      [transcriptEvent(1000, 'a')],
-      [transcriptEvent(3000, 'c')],
-      [transcriptEvent(1000, 'a'), transcriptEvent(3000, 'c')],
-    ]);
-
-    expect(timestampsOf(merged)).toEqual([[1000, 3000]]);
-  });
-
-  it('returns nothing for no lists', () => {
-    expect(mergeOverlappingEventLists([])).toEqual([]);
   });
 });
