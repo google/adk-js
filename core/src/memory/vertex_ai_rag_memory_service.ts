@@ -108,11 +108,11 @@ function resolveRagCorpus(
  * the contexts of a retrieval that could not be narrowed beforehand.
  */
 function tenantSource(
-  displayName: unknown,
+  displayName: string | undefined,
   appName: string,
   userId: string,
 ): SourceIdentity | undefined {
-  if (typeof displayName !== 'string') {
+  if (!displayName) {
     return undefined;
   }
   const source = parseSourceDisplayName(displayName);

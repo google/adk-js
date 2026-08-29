@@ -10,15 +10,6 @@ import {GoogleAuth} from 'google-auth-library';
 /** OAuth scope every Vertex AI RAG Engine call needs. */
 const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
-/** Content type of the metadata part of a `ragFiles:upload` request. */
-const UPLOAD_METADATA_CONTENT_TYPE = 'application/json; charset=UTF-8';
-
-/** Content type of the payload part of a `ragFiles:upload` request. */
-const UPLOAD_FILE_CONTENT_TYPE = 'text/plain; charset=UTF-8';
-
-/** File name the upload endpoint records for the payload part. */
-const UPLOAD_FILE_NAME = 'transcript.txt';
-
 /** One file in a RAG corpus. */
 export interface RagFile {
   /**
@@ -41,7 +32,6 @@ export interface RagContext {
   /** The `displayName` of the RAG file this chunk came from. */
   sourceDisplayName?: string;
   text?: string;
-  score?: number;
 }
 
 /** The response of {@link VertexRagApiClient.retrieveContexts}. */
@@ -144,12 +134,12 @@ export class VertexRagApiClient implements RagApiClient {
     const body = new FormData();
     body.append(
       'metadata',
-      new Blob([metadata], {type: UPLOAD_METADATA_CONTENT_TYPE}),
+      new Blob([metadata], {type: 'application/json; charset=UTF-8'}),
     );
     body.append(
       'file',
-      new Blob([params.content], {type: UPLOAD_FILE_CONTENT_TYPE}),
-      UPLOAD_FILE_NAME,
+      new Blob([params.content], {type: 'text/plain; charset=UTF-8'}),
+      'transcript.txt',
     );
 
     const headers = await this.authHeaders(url);
