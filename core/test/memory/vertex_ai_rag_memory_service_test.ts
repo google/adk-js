@@ -246,6 +246,10 @@ describe('VertexAiRagMemoryService addSessionToMemory', () => {
 });
 
 describe('VertexAiRagMemoryService searchMemory', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it.each([7, undefined])(
     'sends similarityTopK %s on the query, not on the store',
     async (configuredTopK) => {
