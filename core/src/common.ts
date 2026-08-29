@@ -147,6 +147,14 @@ export {TruncatingContextCompactor} from './context/truncating_context_compactor
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {BaseEnvironment} from './environment/base_environment.js';
 export type {ExecutionResult} from './environment/base_environment.js';
+export {AlreadyExistsError} from './errors/already_exists_error.js';
+export {InputValidationError} from './errors/input_validation_error.js';
+export {NotFoundError} from './errors/not_found_error.js';
+export {SessionNotFoundError} from './errors/session_not_found_error.js';
+export {
+  ToolErrorType,
+  ToolExecutionError,
+} from './errors/tool_execution_error.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {

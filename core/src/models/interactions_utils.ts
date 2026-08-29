@@ -905,13 +905,12 @@ export async function* generateContentViaInteractions(
 
     const aggregatedParts: Part[] = [];
     for await (const event of responses) {
-      const sseEvent = event as ExtendedInteractionSSEEvent;
-      const interactionId = extractStreamInteractionId(sseEvent);
+      const interactionId = extractStreamInteractionId(event);
       if (interactionId) {
         currentInteractionId = interactionId;
       }
       const llmResponse = convertInteractionEventToLlmResponse(
-        sseEvent,
+        event,
         aggregatedParts,
         currentInteractionId,
       );
