@@ -88,8 +88,7 @@ export function parseSourceDisplayName(
   if (!isPrefixed) {
     return {appName: parts[0], userId: parts[1], sessionId: parts[2]};
   }
-  const decoded = parts.map(decodeSegment);
-  const [appName, userId, sessionId] = decoded;
+  const [appName, userId, sessionId] = parts.map(decodeSegment);
   if (
     appName === undefined ||
     userId === undefined ||

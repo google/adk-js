@@ -280,8 +280,9 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
             request.userId,
           );
           if (source && ragFile.name) {
-            const name = ragFile.name;
-            ragFileIds.push(name.slice(name.lastIndexOf('/') + 1));
+            ragFileIds.push(
+              ragFile.name.slice(ragFile.name.lastIndexOf('/') + 1),
+            );
           }
         }
         pageToken = response.nextPageToken;

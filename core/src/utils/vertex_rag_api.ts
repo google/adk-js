@@ -41,7 +41,6 @@ export interface RetrieveContextsResponse {
 
 /** The response of a `ragFiles:upload` request. */
 interface UploadRagFileResponse {
-  ragFile?: RagFile;
   /** The upload endpoint reports a rejected file here, with HTTP 200. */
   error?: unknown;
 }
