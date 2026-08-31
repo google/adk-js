@@ -20,6 +20,7 @@ import {
   StorageEvent,
   StorageMetadata,
 } from '../../../src/sessions/db/schema.js';
+import {logger} from '../../../src/utils/logger.js';
 
 // Mock dynamic imports for drivers that might not be installed in dev
 vi.mock('@mikro-orm/postgresql', () => ({
@@ -186,6 +187,26 @@ describe('operations', () => {
         'postgresql://user:pass@%2Fcloudsql%2Fproj:region:inst/mydb?schema=custom';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.schema).toBe('custom');
+    });
+
+    it('should bound userinfo to the authority so an @ later in the query does not get swallowed into it', async () => {
+      const uri = 'postgresql://%2Fcloudsql%2Fproj:region:inst/db?opt=x@y';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.host).toBe('/cloudsql/proj:region:inst');
+      expect(options.user).toBeUndefined();
+      expect(options.dbName).toBe('db');
+    });
+
+    it('should warn when ?host= overrides a real TCP hostname', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const uri =
+        'postgresql://u:secret@real-db.example.com:5432/db?host=/tmp/evil';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.host).toBe('/tmp/evil');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('real-db.example.com'),
+      );
+      warnSpy.mockRestore();
     });
 
     it('should parse mysql URI', async () => {
