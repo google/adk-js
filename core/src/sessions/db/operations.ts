@@ -5,6 +5,7 @@
  */
 
 import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
+import {logger} from '../../utils/logger.js';
 import {loadOptionalPeer} from '../../utils/optional_peer.js';
 import {redactUriPassword} from '../../utils/redact_uri.js';
 import {
@@ -35,17 +36,34 @@ interface PostgresSocketUri {
  * cannot represent at all: an instance connection name with unescaped
  * colons (`project:region:instance`), or the `?host=/cloudsql/...`
  * query-param convention `pg`/`libpq` use for sockets, which `URL` has no
- * concept of. Userinfo is split on the *last* `@` (mirroring the WHATWG
- * URL algorithm) so a userinfo value that itself contains `@` — e.g. a
- * Cloud SQL IAM user in `user@project.iam` form — still parses correctly.
+ * concept of. Any authority or `?host=` value beginning with `/` is
+ * treated as a Unix socket path, not only `/cloudsql/...`. Userinfo is
+ * split on the *last* `@` within the authority region (mirroring the
+ * WHATWG URL algorithm), so a userinfo value that itself contains `@` —
+ * e.g. a Cloud SQL IAM user in `user@project.iam` form — still parses
+ * correctly, while an unrelated `@` later in the path or query no longer
+ * gets swallowed into it.
  */
 function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
-  const match =
-    /^postgres(?:ql)?:\/\/(?:(.*)@)?([^/?]*)(\/[^?]*)?(?:\?(.*))?$/.exec(uri);
-  if (!match) {
+  const schemeEnd = uri.indexOf('://');
+  if (schemeEnd === -1) {
     return null;
   }
-  const [, rawUserinfo, rawAuthority, rawPath, rawQuery] = match;
+  const afterScheme = uri.slice(schemeEnd + 3);
+  const authorityEnd = afterScheme.search(/[/?#]/);
+  const authorityRegion =
+    authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  const rest = authorityEnd === -1 ? '' : afterScheme.slice(authorityEnd);
+
+  const atIndex = authorityRegion.lastIndexOf('@');
+  const rawUserinfo =
+    atIndex === -1 ? undefined : authorityRegion.slice(0, atIndex);
+  const rawAuthority =
+    atIndex === -1 ? authorityRegion : authorityRegion.slice(atIndex + 1);
+
+  const restMatch = /^(\/[^?#]*)?(?:\?([^#]*))?/.exec(rest);
+  const rawPath = restMatch?.[1];
+  const rawQuery = restMatch?.[2];
 
   const params = new URLSearchParams(rawQuery ?? '');
   const queryHost = params.get('host');
@@ -54,7 +72,7 @@ function parsePostgresSocketUri(uri: string): PostgresSocketUri | null {
   if (queryHost?.startsWith('/')) {
     host = queryHost;
   } else {
-    const decodedAuthority = decodeURIComponent(rawAuthority ?? '');
+    const decodedAuthority = decodeURIComponent(rawAuthority);
     if (decodedAuthority.startsWith('/')) {
       host = decodedAuthority;
     }
@@ -107,6 +125,12 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
   if (parsedUrl) {
     const queryHost = parsedUrl.searchParams.get('host');
     if (queryHost?.startsWith('/')) {
+      if (parsedUrl.hostname) {
+        logger.warn(
+          `Connection URI names host '${parsedUrl.hostname}' but the ?host= parameter ` +
+            `overrides it with the Unix socket '${queryHost}'; connecting to the socket.`,
+        );
+      }
       const schema = parsedUrl.searchParams.get('schema');
       return {
         entities: ENTITIES,
