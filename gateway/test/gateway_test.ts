@@ -326,10 +326,12 @@ describe('Gateway', () => {
   });
 
   describe('lifecycle', () => {
-    it('refuses to build without a channel', () => {
-      expect(() =>
-        createGateway({agent: new EchoAgent(), channels: []}),
-      ).toThrow(/at least one channel/);
+    it('builds with no channels at all', async () => {
+      // A gateway that only serves HTTP has none, and requiring a dummy
+      // channel to get endpoints would be silly.
+      const httpOnly = createGateway({agent: new EchoAgent(), channels: []});
+      await httpOnly.start();
+      await httpOnly.stop();
     });
 
     it('refuses to build without something to run', () => {

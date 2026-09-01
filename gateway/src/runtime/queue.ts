@@ -66,6 +66,39 @@ interface Lane {
 
 const DEFAULT_MAX_QUEUED = 8;
 
+/**
+ * One signal that aborts when any of its inputs does.
+ *
+ * `AbortSignal.any` would do this, but it is only available from Node 20 and
+ * this package does not otherwise require it. `dispose` must be called or the
+ * listeners keep the inputs alive.
+ */
+function combineSignals(inputs: ReadonlyArray<AbortSignal | undefined>): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const present = inputs.filter((s): s is AbortSignal => s !== undefined);
+
+  const abort = () => controller.abort();
+  for (const input of present) {
+    if (input.aborted) {
+      controller.abort();
+      break;
+    }
+    input.addEventListener('abort', abort, {once: true});
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const input of present) {
+        input.removeEventListener('abort', abort);
+      }
+    },
+  };
+}
+
 /** A set of FIFO lanes, one per key, each running at most one task at a time. */
 export class SessionQueue {
   private readonly lanes = new Map<string, Lane>();
@@ -133,6 +166,87 @@ export class SessionQueue {
       laneRef.pending.push({task, resolve, reject});
       this.pump(key);
     });
+  }
+
+  /**
+   * Runs a generator inside a lane and streams what it yields.
+   *
+   * The lane is held for the whole generator, so a streamed turn is serialized
+   * against other work on the same session exactly as {@link run} is. The
+   * caller may stop reading at any point — abandoning the returned iterator
+   * aborts the task and frees the lane, which is what an HTTP client
+   * disconnecting looks like.
+   *
+   * Items are buffered rather than handed over one at a time: a slow reader
+   * must not be able to stall a turn that is holding a lane.
+   */
+  async *stream<T>(
+    key: string,
+    task: (signal: AbortSignal) => AsyncIterable<T>,
+    externalSignal?: AbortSignal,
+  ): AsyncGenerator<T, void, void> {
+    const buffer: T[] = [];
+    let finished = false;
+    let failure: unknown;
+    let wake: (() => void) | undefined;
+
+    const notify = () => {
+      wake?.();
+      wake = undefined;
+    };
+
+    // Aborted when the consumer stops reading, so abandoning the iterator
+    // stops the work rather than leaving it to finish into a buffer nobody
+    // will read.
+    const consumerGone = new AbortController();
+
+    const running = this.run(key, async (laneSignal) => {
+      const combined = combineSignals([
+        laneSignal,
+        consumerGone.signal,
+        externalSignal,
+      ]);
+      try {
+        for await (const item of task(combined.signal)) {
+          buffer.push(item);
+          notify();
+        }
+      } finally {
+        combined.dispose();
+      }
+    })
+      // Completion is recorded only once the task's promise settles. Marking it
+      // inside the task's own `finally` would let the consumer see "finished"
+      // in the window before a rejection reaches the handler below, and report
+      // a failed turn as a clean one.
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        failure = error;
+      })
+      .finally(() => {
+        finished = true;
+        notify();
+      });
+
+    try {
+      while (true) {
+        while (buffer.length > 0) {
+          yield buffer.shift() as T;
+        }
+        if (finished) {
+          break;
+        }
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+      if (failure) {
+        throw failure;
+      }
+    } finally {
+      consumerGone.abort();
+      await running;
+    }
   }
 
   /** Resolves once every lane is empty. */

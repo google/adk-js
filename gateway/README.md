@@ -40,6 +40,71 @@ transcription service in the path), send a photo and ask about it, send a sticke
 something long enough to be split, and say "delete order 4711" to hit a tool that stops and asks
 for confirmation.
 
+## Two surfaces, one engine
+
+The same gateway serves messengers and HTTP. Both sit on one turn engine —
+`gateway.run()` — which resolves the session, serializes work on it, runs the agent and streams
+events.
+
+```ts
+import express from 'express';
+
+const gateway = createGateway({agent, channels: [telegram({token})]});
+
+const app = express();
+app.use(express.json()); // the gateway reads req.body
+app.use(myAuthMiddleware); // yours runs first
+app.use(gateway.router()); // channel webhooks
+app.use(gateway.endpoints({resolveUser: myAuth})); // HTTP chat API
+app.listen(8080);
+
+await gateway.start(); // channel polling
+```
+
+Both are plain middleware typed against the parts of a request and response they touch, so they
+drop into Express without casts and work equally with a bare `node:http` server or any framework
+exposing the same shape. Express stays an optional peer dependency.
+
+`channels` is optional: a gateway that only serves HTTP has none. A runnable version of the above
+is in [`samples/gateway/universal`](../samples/gateway/universal/server.ts).
+
+```
+POST   /sessions                  create a conversation
+GET    /sessions/:id              its history
+DELETE /sessions/:id              start over
+POST   /sessions/:id/messages     say something; streams the reply as SSE
+GET    /health
+```
+
+`POST /messages` streams server-sent events, or returns one JSON body for `Accept:
+application/json`. The session is created on first use, the turn is serialized against other work
+on it, and a client hanging up aborts the run instead of paying for a reply nobody will read.
+
+### Who is calling
+
+`resolveUser` is required. Sessions are keyed by user, so reading the id from the request body
+would let any caller fetch anyone's conversation by changing a string:
+
+```ts
+gateway.endpoints({resolveUser: (req) => req.session.user.id});
+```
+
+Because this mounts into a server you already have, your existing authentication runs in front of
+it — the hook just connects that to session keys. `trustClientUserId: true` takes the id from the
+body instead, for local development only.
+
+### Which events a client sees
+
+```ts
+gateway.endpoints({filter: 'final'}); // the answer. Default.
+gateway.endpoints({filter: 'all'}); // everything, as the debug server does
+gateway.endpoints({filter: (e) => redact(e)}); // transform, or drop by returning undefined
+```
+
+`'final'` means the answer **plus anything the client must act on** — interrupts and errors — not
+"the last event". Filtering an interrupt out is how a UI ends up waiting forever on a question it
+was never shown.
+
 ## What it does for you
 
 |                   |                                                                                                                 |

@@ -26,6 +26,7 @@ import type {
 } from '@google/adk';
 
 import type {MediaPolicy} from './media/parts.js';
+import type {EventFilter} from './render/filter.js';
 import type {Renderer} from './render/renderer.js';
 import type {BusyPolicy} from './runtime/queue.js';
 import type {ActionTokenStore} from './runtime/tokens.js';
@@ -80,8 +81,12 @@ export interface GatewayConfig {
   // Where to run it.
   // ---------------------------------------------------------------------------
 
-  /** The messengers to serve. At least one. */
-  channels: ChannelAdapter[];
+  /**
+   * The messengers to serve.
+   *
+   * Optional: a gateway that only exposes {@link Gateway.endpoints} has none.
+   */
+  channels?: ChannelAdapter[];
 
   // ---------------------------------------------------------------------------
   // Behavior.
@@ -95,6 +100,14 @@ export interface GatewayConfig {
 
   /** Replaces the default event-to-message rendering wholesale. */
   render?: Renderer;
+
+  /**
+   * Which events {@link Gateway.run} passes to a caller. Defaults to `'final'`.
+   *
+   * Applies to the HTTP surface. The channel surface renders events into
+   * messages instead, which is its own kind of filtering.
+   */
+  filter?: EventFilter;
 
   /** Turns a failed turn into something worth showing the user. */
   formatError?: (error: unknown) => string;

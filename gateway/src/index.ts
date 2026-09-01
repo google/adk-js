@@ -16,6 +16,8 @@ export type {
 export {toContent} from './content.js';
 export type {ToContentOptions} from './content.js';
 export {Gateway, createGateway} from './gateway.js';
+export {createEndpoints} from './http/endpoints.js';
+export type {EndpointOptions, ResolveUser} from './http/endpoints.js';
 export {createRouter} from './http/router.js';
 export type {
   RouterMiddleware,
@@ -31,6 +33,8 @@ export {
 } from './media/parts.js';
 export type {MediaPolicy} from './media/parts.js';
 export {chunkText} from './render/chunk.js';
+export {applyFilter, filterEvents, isFinalEvent} from './render/filter.js';
+export type {EventFilter} from './render/filter.js';
 export {
   actionsFor,
   answerPart,

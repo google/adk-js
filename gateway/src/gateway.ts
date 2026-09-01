@@ -23,6 +23,8 @@ import {
   type BaseSessionService,
   type Event,
   type Logger,
+  type RunConfig,
+  type Session,
 } from '@google/adk';
 
 import type {Content} from '@google/genai';
@@ -36,7 +38,9 @@ import {
   type GatewayConfig,
 } from './config.js';
 import {toContent} from './content.js';
+import {createEndpoints, type EndpointOptions} from './http/endpoints.js';
 import {createRouter, type RouterMiddleware} from './http/router.js';
+import {filterEvents, type EventFilter} from './render/filter.js';
 import {answerPart, isInterruptAnswer} from './render/interrupts.js';
 import {defaultRenderer, type Renderer} from './render/renderer.js';
 import {SessionQueue} from './runtime/queue.js';
@@ -50,6 +54,20 @@ import type {
   InboundMessage,
   OutboundMessage,
 } from './types.js';
+
+/** What {@link Gateway.run} needs. */
+export interface RunParams {
+  userId: string;
+  sessionId: string;
+  content: Content;
+  /** State to apply alongside the message. */
+  stateDelta?: Record<string, unknown>;
+  /** Overrides the gateway's default filter for this turn. */
+  filter?: EventFilter;
+  /** Aborts the run — an HTTP client disconnecting, for instance. */
+  signal?: AbortSignal;
+  runConfig?: Partial<RunConfig>;
+}
 
 /** Serves one or more messengers with an ADK agent. */
 export class Gateway {
@@ -67,9 +85,7 @@ export class Gateway {
   private running = false;
 
   constructor(config: GatewayConfig) {
-    if (!config.channels?.length) {
-      throw new Error('Gateway needs at least one channel.');
-    }
+    // Zero channels is valid: a gateway serving only HTTP has none.
     if (!config.app && !config.agent) {
       throw new Error('Gateway needs an `app` or an `agent` to run.');
     }
@@ -97,7 +113,7 @@ export class Gateway {
 
     this.commands = buildCommands(config.commands);
 
-    for (const channel of config.channels) {
+    for (const channel of config.channels ?? []) {
       if (this.channels.has(channel.name)) {
         throw new Error(`Duplicate channel name: '${channel.name}'.`);
       }
@@ -184,6 +200,130 @@ export class Gateway {
     await this.runTurn(channel, message);
   }
 
+  /**
+   * Runs one turn and streams the events it produces.
+   *
+   * The primitive both surfaces are built on: the channel path renders these
+   * into messages, and the HTTP path serializes them to a response. Callers
+   * that already know their session coordinates — an HTTP handler, a scheduled
+   * job — can use it directly.
+   *
+   * The session is created when it does not exist, the turn is serialized
+   * against other work on the same session, and abandoning the iterator aborts
+   * the run.
+   */
+  async *run(params: RunParams): AsyncGenerator<Event, void, void> {
+    const {userId, sessionId} = params;
+
+    await this.ensureSession(userId, sessionId);
+
+    const filter = params.filter ?? this.config.filter ?? 'final';
+
+    const events = this.queue.stream(
+      sessionId,
+      (signal) =>
+        this.runner.runAsync({
+          userId,
+          sessionId,
+          newMessage: params.content,
+          stateDelta: params.stateDelta,
+          abortSignal: signal,
+          runConfig: {
+            // Lets a user answer a confirmation by typing "yes" as well as by
+            // pressing a button. ADK gates this tightly: only the single most
+            // recent pending confirmation, only when the reply immediately
+            // follows it, and only for recognized yes/no words.
+            plainTextToolConfirmation:
+              this.config.plainTextConfirmation ?? true,
+            ...params.runConfig,
+          },
+        }),
+      params.signal,
+    );
+
+    yield* filterEvents(events, filter);
+  }
+
+  /**
+   * Creates a conversation.
+   *
+   * An explicit `sessionId` is adopted if free and returned as-is if it already
+   * exists, so a client that keeps its own conversation ids does not have to
+   * check first.
+   */
+  async createSession(params: {
+    userId: string;
+    sessionId?: string;
+    state?: Record<string, unknown>;
+  }): Promise<Session> {
+    if (params.sessionId) {
+      const existing = await this.sessionService.getSession({
+        appName: this.appName,
+        userId: params.userId,
+        sessionId: params.sessionId,
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+    return this.sessionService.createSession({
+      appName: this.appName,
+      userId: params.userId,
+      sessionId: params.sessionId,
+      state: params.state,
+    });
+  }
+
+  /** Reads a conversation, or `undefined` when there is none. */
+  async getSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<Session | undefined> {
+    return this.sessionService.getSession({
+      appName: this.appName,
+      userId,
+      sessionId,
+    });
+  }
+
+  /** Discards a conversation. */
+  async deleteSession(userId: string, sessionId: string): Promise<void> {
+    await this.sessionService.deleteSession({
+      appName: this.appName,
+      userId,
+      sessionId,
+    });
+  }
+
+  /**
+   * HTTP endpoints for talking to this agent, to mount on your own server.
+   *
+   * Separate from {@link router}, which serves channel webhooks — you may want
+   * one, the other, or both, and they belong at different paths.
+   */
+  endpoints(options: EndpointOptions = {}): RouterMiddleware {
+    return createEndpoints(this, options);
+  }
+
+  /** Creates the session if it is not there yet. */
+  private async ensureSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<Session> {
+    const key = {appName: this.appName, userId, sessionId};
+    const existing = await this.sessionService.getSession(key);
+    if (existing) {
+      return existing;
+    }
+    // `runAsync` throws on a missing session rather than creating one, so
+    // every caller would otherwise have to do this.
+    return this.sessionService.createSession({
+      appName: this.appName,
+      userId,
+      sessionId,
+    });
+  }
+
   /** Resolves a session, runs the agent, and sends whatever comes back. */
   private async runTurn(
     channel: ChannelAdapter,
@@ -216,10 +356,6 @@ export class Gateway {
           newMessage: content,
           abortSignal: signal,
           runConfig: {
-            // Lets a user answer a confirmation by typing "yes" as well as by
-            // pressing a button. ADK gates this tightly: only the single most
-            // recent pending confirmation, only when the reply immediately
-            // follows it, and only for recognized yes/no words.
             plainTextToolConfirmation:
               this.config.plainTextConfirmation ?? true,
           },

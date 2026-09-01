@@ -21,6 +21,11 @@ export interface RouterRequest {
   headers: Record<string, string | string[] | undefined>;
   /** Parsed JSON body. Mount a JSON body parser ahead of this. */
   body?: unknown;
+  /**
+   * Connection events, when the server offers them. Used to abort a run whose
+   * client has hung up, so a closed tab stops costing tokens.
+   */
+  on?(event: string, listener: () => void): unknown;
 }
 
 /** The bits of a response this router writes. */
@@ -28,6 +33,12 @@ export interface RouterResponse {
   statusCode: number;
   end(body?: string): void;
   setHeader(name: string, value: string): void;
+  /** Present on any streaming-capable server; required for server-sent events. */
+  write?(chunk: string): unknown;
+  /** Sends headers before the first chunk, so a stream starts promptly. */
+  flushHeaders?(): void;
+  /** Whether the status line has already gone out. */
+  headersSent?: boolean;
 }
 
 /** An Express-compatible middleware. */
