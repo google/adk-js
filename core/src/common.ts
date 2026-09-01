@@ -216,11 +216,14 @@ export {
   stripAdkIdentityPreamble,
 } from './models/chrome_prompt_llm.js';
 export type {
+  ChromeCreateCoreOptions,
+  ChromeCreateMonitor,
   ChromeCreateOptions,
   ChromeExpectedModality,
   ChromeLanguageModelFactory,
   ChromeLanguageModelSession,
   ChromeMessage,
+  ChromeMessageContent,
   ChromeModelAvailability,
   ChromePromptApiDiagnostic,
   ChromePromptApiLlmParams,
