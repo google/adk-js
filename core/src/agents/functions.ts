@@ -20,8 +20,8 @@ import {
   mergeEventActions,
 } from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
-import {ToolResumePayload} from '../tools/tool_resume_payload.js';
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
 import {
@@ -282,7 +282,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
-  toolResumePayloadDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCallEvent: Event;
@@ -291,7 +291,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
-  toolResumePayloadDict?: Record<string, ToolResumePayload>;
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionCalls = getFunctionCalls(functionCallEvent);
   return await handleFunctionCallList({
@@ -302,7 +302,7 @@ export async function handleFunctionCallsAsync({
     afterToolCallbacks: afterToolCallbacks,
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
-    toolResumePayloadDict: toolResumePayloadDict,
+    resumeInputsDict: resumeInputsDict,
   });
 }
 
@@ -457,7 +457,7 @@ export async function handleFunctionCallList({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
-  toolResumePayloadDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCalls: FunctionCall[];
@@ -467,11 +467,12 @@ export async function handleFunctionCallList({
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
   /**
-   * Inputs to resume a paused tool call with, keyed by function call id. Kept
-   * apart from `toolConfirmationDict` so resume inputs can never be mistaken
-   * for a human approval; see {@link ToolResumePayload}.
+   * Inputs to resume a paused tool call with, keyed by function call id. Each
+   * value is itself keyed by interrupt id. Kept apart from
+   * `toolConfirmationDict` so resume inputs can never be mistaken for a human
+   * approval; see {@link ResumeInputs}.
    */
-  toolResumePayloadDict?: Record<string, ToolResumePayload>;
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionResponseEvents: Event[] = [];
 
@@ -486,16 +487,16 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
-    let toolResumePayload = undefined;
-    if (toolResumePayloadDict && functionCall.id) {
-      toolResumePayload = toolResumePayloadDict[functionCall.id];
+    let resumeInputs = undefined;
+    if (resumeInputsDict && functionCall.id) {
+      resumeInputs = resumeInputsDict[functionCall.id];
     }
 
     const toolContext = new Context({
       invocationContext,
       functionCallId: functionCall.id || undefined,
       toolConfirmation,
-      toolResumePayload,
+      resumeInputs,
     });
     // `functionCall.name` comes from the model, and `toolsDict` is a plain
     // object, so an unguarded lookup would resolve `toString` or `constructor`

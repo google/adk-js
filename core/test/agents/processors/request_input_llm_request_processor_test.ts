@@ -209,7 +209,7 @@ describe('RequestInputLlmRequestProcessor resume inputs', () => {
       override async beforeToolCallback({toolContext}: {toolContext: Context}) {
         seen.push({
           confirmation: toolContext.toolConfirmation,
-          inputs: toolContext.toolResumePayload?.inputs,
+          inputs: toolContext.resumeInputs,
         });
         return undefined;
       }

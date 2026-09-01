@@ -316,13 +316,13 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
+export type {ResumeInputs} from './tools/resume_inputs.js';
 export {
   IntentMismatchError,
   ToolConfirmation,
   isIntentMismatchError,
 } from './tools/tool_confirmation.js';
 export type {IntentMismatchReason} from './tools/tool_confirmation.js';
-export type {ToolResumePayload} from './tools/tool_resume_payload.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {

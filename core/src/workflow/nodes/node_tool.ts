@@ -158,7 +158,7 @@ export class NodeTool extends BaseTool {
       // not the node name doubled.
       nodePath: '',
       runId,
-      resumeInputs: toolContext.toolResumePayload?.inputs ?? {},
+      resumeInputs: toolContext.resumeInputs,
     });
 
     const base = childIc.branch;
