@@ -18,13 +18,15 @@
       "@google/adk": ["./core/src/index.ts"],
       "@google/adk/*": ["./core/src/*"],
       "@google/adk-integrations": ["./integrations/src/index.ts"],
-      "@google/adk-integrations/*": ["./integrations/src/*"]
+      "@google/adk-integrations/*": ["./integrations/src/*"],
+      "@google/adk-gateway": ["./gateway/src/index.ts"],
+      "@google/adk-gateway/*": ["./gateway/src/*"]
     }
   },
   // gts' `exclude` resolves relative to gts itself, so it excludes nothing
   // here. Without this, the check picks up every `*/dist/**/*.d.ts` emitted by
   // the preceding build step, so CI and a fresh clone check different files.
-  // The three workspace configs set their own `exclude`, so this does not
+  // The four workspace configs set their own `exclude`, so this does not
   // reach them.
   //
   // `samples` is excluded because the `paths` above are wrong for it: a sample

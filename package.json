@@ -26,8 +26,8 @@
     "docs:generate": "typedoc",
     "docs:serve": "http-server api-reference/typescript",
     "docs:check": "typedoc --emit none --treatWarningsAsErrors",
-    "test": "vitest --project unit:core --project unit:dev --project integration --project e2e",
-    "test:unit": "vitest --project unit:core --project unit:dev",
+    "test": "vitest --project unit:core --project unit:dev --project unit:gateway --project integration --project e2e",
+    "test:unit": "vitest --project unit:core --project unit:dev --project unit:gateway",
     "test:integration": "vitest --project integration",
     "record:samples": "RECORD_MODEL_RESPONSES=1 vitest run --project integration tests/integration/workflows/*/*_test.ts",
     "test:e2e": "vitest --project e2e",
@@ -38,7 +38,8 @@
   "workspaces": [
     "core",
     "dev",
-    "integrations"
+    "integrations",
+    "gateway"
   ],
   "devDependencies": {
     "@eslint/js": "^9.37.0",
