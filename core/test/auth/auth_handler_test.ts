@@ -193,7 +193,49 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request).toBe(authConfig);
+      expect(request).toEqual(authConfig);
+    });
+
+    it('strips a non-oauth api key from the request', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {type: 'apiKey', name: 'testKey', in: 'header'},
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.API_KEY,
+          apiKey: 'super-secret-api-key',
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const request = handler.generateAuthRequest();
+
+      expect(request.rawAuthCredential?.apiKey).toBeUndefined();
+    });
+
+    it('strips the oauth2 client secret from the request', () => {
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {clientId: 'cid', clientSecret: 'super-secret'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+
+      const request = handler.generateAuthRequest();
+
+      expect(request.rawAuthCredential?.oauth2?.clientSecret).toBeUndefined();
+      expect(request.rawAuthCredential?.oauth2?.clientId).toBe('cid');
     });
 
     it('returns original config if exchangedAuthCredential.oauth2.authUri is present', () => {
@@ -218,7 +260,7 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request).toBe(authConfig);
+      expect(request).toEqual(authConfig);
     });
 
     it('throws if rawAuthCredential is missing for oauth2', () => {
@@ -289,7 +331,7 @@ describe('AuthHandler', () => {
 
       const request = handler.generateAuthRequest();
 
-      expect(request.exchangedAuthCredential).toBe(
+      expect(request.exchangedAuthCredential).toEqual(
         authConfig.rawAuthCredential,
       );
     });
