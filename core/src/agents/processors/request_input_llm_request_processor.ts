@@ -11,7 +11,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
-import {ToolConfirmation} from '../../tools/tool_confirmation.js';
+import {ResumeInputs} from '../../tools/resume_inputs.js';
 import {AsyncQueue} from '../../utils/async_queue.js';
 import {isNodeTool} from '../../workflow/nodes/node_tool.js';
 import {
@@ -102,14 +102,16 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    // 4. Re-run each pending node-tool, threading the resume inputs through the
-    //    tool confirmation payload (read by NodeTool as the node's resumeInputs).
-    const toolConfirmationDict: Record<string, ToolConfirmation> = {};
+    // 4. Re-run each pending node-tool, threading the resume inputs through
+    //    their own mapping (read by NodeTool as the node's resumeInputs).
+    //
+    //    Deliberately NOT a ToolConfirmation: answering a node's question is
+    //    not approving an action, and the two must not be interchangeable. A
+    //    node tool that gates on confirmation therefore still gates here, and
+    //    the only thing that can open that gate is an approval a human gave.
+    const resumeInputsDict: Record<string, ResumeInputs> = {};
     for (const id of Object.keys(pending)) {
-      toolConfirmationDict[id] = new ToolConfirmation({
-        confirmed: true,
-        payload: resumeInputs,
-      });
+      resumeInputsDict[id] = resumeInputs;
     }
 
     const eventQueue = new AsyncQueue<Event>();
@@ -123,7 +125,7 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
           beforeToolCallbacks: agent.canonicalBeforeToolCallbacks,
           afterToolCallbacks: agent.canonicalAfterToolCallbacks,
           filters: new Set(Object.keys(pending)),
-          toolConfirmationDict,
+          resumeInputsDict,
         });
       } finally {
         eventQueue.close();
