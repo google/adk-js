@@ -25,7 +25,17 @@ export class AuthHandler {
     return state.get<AuthCredential>(credentialKey);
   }
 
+  /**
+   * Stores the exchanged credential in the session state.
+   *
+   * @param state The session state to store the credential in.
+   * @throws Error: If the auth config has no credentialKey.
+   */
   async parseAndStoreAuthResponse(state: State): Promise<void> {
+    if (!this.authConfig.credentialKey) {
+      throw new Error('credentialKey is empty.');
+    }
+
     const credentialKey = 'temp:' + this.authConfig.credentialKey;
 
     const authSchemeType = this.authConfig.authScheme.type;
