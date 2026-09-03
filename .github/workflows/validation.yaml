@@ -47,6 +47,9 @@ jobs:
       - name: Type check samples
         run: npm run ts:check:samples
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
       - name: Run tests and check code coverage
         run: npm run test:coverage
 
