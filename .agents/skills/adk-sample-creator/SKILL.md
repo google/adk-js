@@ -2,8 +2,8 @@
 name: adk-sample-creator
 description: >-
   Creates a new sample agent in the ADK TypeScript repository — the sample
-  directory, its `agent.ts`, and its row in the category `README.md` —
-  following the conventions the existing samples already use. Use when the user
+  directory, its `agent.ts`, its `README.md`, and its row in the category
+  `README.md` — following the conventions the samples use. Use when the user
   wants to add a sample or example demonstrating a feature or agent pattern
   (a dynamic orchestrator, fan-out/fan-in, a standalone tool-using agent), asks
   where a new sample belongs under `samples/`, or wants an existing sample's
@@ -50,10 +50,13 @@ every sample is an agent, and the category is already in the path.
 
 A new category is four things, and skipping any of them is the usual mistake:
 
-1.  `samples/{category}/` holding the sample directories.
-2.  `samples/{category}/README.md`, following
-    [readme-template.md](references/readme-template.md). Nothing generates it
-    and no other README links it, so a category without one is undiscoverable.
+1.  `samples/{category}/` holding the sample directories, each with its own
+    `README.md`.
+2.  `samples/{category}/README.md` — the category's own README, which is a
+    different document from the per-sample ones and follows
+    [the category section of readme-template.md](references/readme-template.md#category-readme).
+    Nothing generates it and no other README links it, so a category without
+    one is undiscoverable.
 3.  A link from the top-level `README.md` or from the guide the samples
     support, so a reader arrives at the new README from somewhere.
 4.  A decision about execution coverage, recorded in the category README.
@@ -64,20 +67,30 @@ A new category is four things, and skipping any of them is the usual mistake:
     construction or execution coverage until someone widens that test. Say
     which of the two the category has.
 
-## 2. Write `agent.ts`
+## 2. Write the sample directory
 
-A sample directory holds one file:
+A sample directory holds two files:
 
-| File       | Required | Purpose                                               |
-| ---------- | -------- | ----------------------------------------------------- |
-| `agent.ts` | yes      | The agent or workflow. Must `export const rootAgent`. |
+| File        | Required | Purpose                                                            |
+| ----------- | -------- | ------------------------------------------------------------------ |
+| `agent.ts`  | yes      | The agent or workflow. Must `export const rootAgent`.              |
+| `README.md` | yes      | What the sample shows, prompts to drive it, and what to read next. |
 
-There is no per-sample `README.md`, unlike adk-python. All 26 existing samples
-have a header comment in `agent.ts` and a row in their category README, and
-nothing else; a lone sample carrying its own README would be the odd one out,
-and the two places would drift. Everything the Python per-sample README held
-lives in one of those two places — see
-[readme-template.md](references/readme-template.md) for which goes where.
+`samples/{category}/{name}/README.md` follows
+[the per-sample section of readme-template.md](references/readme-template.md#per-sample-readme).
+
+This diverges from what is on disk. None of the 26 samples that predate this
+skill has a README: each carries a header comment in `agent.ts` and a row in
+its category table and nothing else. New samples set the convention rather than
+follow it, so there is no neighbouring directory to copy — the template is the
+reference. Adding a sample does not oblige you to retrofit the existing 26.
+
+The README and the header comment overlap, and both stay. The header is what a
+reader sees having already opened the code, so it keeps carrying the run
+command and the behaviour that is easy to get wrong. The README is what a
+reader sees when they arrive at the directory from GitHub or from a guide,
+before they have opened anything, and it is the only one of the two with room
+for the prompts to try, the topology diagram, and the links out to the guides.
 
 ### The header
 
@@ -194,7 +207,10 @@ export const rootAgent = new LlmAgent({
 ## 3. Register the sample
 
 Add a row to the category `README.md`, following
-[readme-template.md](references/readme-template.md).
+[the category section of readme-template.md](references/readme-template.md#category-readme).
+That row is in addition to the sample's own `README.md`, not instead of it: the
+row is how a reader browsing the category finds the sample, and the README is
+what they get when they follow it.
 
 For a sample under `samples/workflows/`, also add it to
 `tests/integration/docs_samples/docs_samples_test.ts` — to `OFFLINE` with the
@@ -211,6 +227,10 @@ npm run lint
 npm run format:check
 bash scripts/check_license.sh
 ```
+
+Then resolve every relative link the new `README.md` adds and confirm the target
+exists. Nothing in CI reads a Markdown link, so a wrong number of `../` ships
+silently.
 
 For a `samples/workflows/` sample, also run the integration test, which
 constructs every sample and runs the offline ones against a stubbed model:
@@ -252,9 +272,6 @@ agent with a tool.
   file, and no sample directory carries a recorded eval set. The record and
   replay fixtures live with the integration tests under
   `tests/integration/workflows/`, not with the samples.
-- **The Mermaid topology diagram.** No adk-js sample has one, because the
-  per-sample README that held it does not exist here. A graph small enough to
-  draw is already legible in the `edges` array.
 - **"Read the `adk-style` skill first".** adk-js has no `adk-style` skill;
   `eslint.config.js`, `.prettierrc.js`, and the root `tsconfig.json` are the
   style authority, and CI enforces all three.

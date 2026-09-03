@@ -1,22 +1,129 @@
-# Sample category README structure
+# Sample README structure
 
-adk-js has no per-sample `README.md`. Each category directory has one
-`README.md` covering every sample in it, and each sample contributes a row to
-its table. The content adk-python put in a per-sample README is split between
-two places here:
+Two kinds of README, with different readers. Every sample directory has one, and
+every category directory has one.
 
-| adk-python per-sample README | adk-js home                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------- |
-| Overview                     | The `Shows` column of the category table, plus the sample's header comment. |
-| Sample Inputs                | The header comment, as a `Try "…"` line, when the sample parses its input.  |
-| Graph                        | Dropped. The `edges` array is the diagram.                                  |
-| How To                       | The header comment.                                                         |
-| Related Guides               | The category README's own links, so one list serves every sample.           |
+| README                                | Reader                                                                           |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `samples/{category}/{name}/README.md` | Someone who has landed on this one sample and wants to run it and understand it. |
+| `samples/{category}/README.md`        | Someone browsing the category, deciding which sample to open.                    |
 
-## Sections
+The per-sample README is new. None of the 26 samples that predate this skill has
+one, so this file is the reference and the neighbouring directories are not. The
+category README already exists for `samples/workflows/`, which is the worked
+example for the second half of this file.
 
-Write the category README in this order. `samples/workflows/README.md` is the
-worked example for all of it.
+## Per-sample README
+
+Sections in this order. Omit one only when the sample gives you nothing to put
+in it.
+
+### Overview
+
+What the sample does and which feature or pattern it exists to demonstrate. Two
+or three sentences. This repeats the first stanza of the `agent.ts` header
+comment on purpose, because a reader who arrived at the directory has not opened
+the code yet.
+
+### Sample Inputs
+
+Prompts a reader can paste in to exercise the sample. Wrap each prompt in
+backticks. If a prompt needs an explanation, leave a blank line between the
+prompt and the explanation and indent the explanation by two spaces — without
+the blank line Markdown folds them into one list item.
+
+Pick prompts that reach the feature the sample is about. A prompt the agent
+answers without calling the tool teaches the reader nothing about the tool.
+
+### Graph
+
+A Mermaid diagram of the structure, not of the request and response flow.
+
+- For a `Workflow` root agent, draw the nodes and the edges.
+- For an agent that orchestrates tools or sub-agents, draw the topology of the
+  agent and what hangs off it.
+
+Include the diagram when the topology is not already obvious from the code. A
+`Workflow` whose `edges` array reads as the picture does not need one — the
+array is the diagram, and a second copy of it drifts. An `LlmAgent` with tools
+or sub-agents has no `edges` array at all, so its topology is written down
+nowhere else, and the diagram is the only place a reader sees it whole.
+
+Keep it to a few nodes and edges. A `user -> agent -> API -> tool -> user`
+sequence diagram is noise: it says nothing the topology does not.
+
+### How To
+
+The key techniques the sample uses, with the few lines of code that show each
+one. This is the section that answers "what do I copy into my own project", so
+name the technique, then show it in the sample's own code rather than in a
+paraphrase of it.
+
+### Related Guides
+
+Links to the guides under `docs/guides/` that explain the classes the sample
+uses, each with a one-line summary. Link by relative path, and count the `../`
+from the sample's own directory: from `samples/{category}/{name}/README.md` the
+repository root is three levels up, and from a sample in a nested category such
+as `samples/workflows/{group}/{name}/README.md` it is four.
+
+```markdown
+- [FilesRetrieval](../../../docs/guides/tools/retrieval/files_retrieval/index.md) - Indexing a local directory of documents into a retrieval tool.
+```
+
+Confirm each file exists before linking it.
+
+### Template
+
+````markdown
+# {Sample name}
+
+## Overview
+
+What the sample does and the feature it exists to demonstrate.
+
+## Sample Inputs
+
+- `A prompt that exercises the feature`
+
+- `A prompt that needs a note`
+
+  _What the agent does with it, or what to watch for in the output._
+
+## Graph
+
+For a `Workflow` root agent:
+
+```mermaid
+graph TD
+    START --> my_node
+    my_node --> END
+```
+
+For an agent orchestrating tools or sub-agents:
+
+```mermaid
+graph TD
+    MyAgent[my_agent] -->|calls| MyTool(my_tool)
+```
+
+## How To
+
+**The technique.** Why the sample does it this way.
+
+```ts
+const example = someCall();
+```
+
+## Related Guides
+
+- [Guide Title](../../../docs/guides/path/to/index.md) - What the guide covers.
+````
+
+## Category README
+
+One README per category directory, covering every sample in it, with a row per
+sample in its table.
 
 ### Title and scope
 
@@ -61,8 +168,8 @@ deciding whether to trust a sample needs to know which of the two it is.
 
 What a sample in this category needs beyond the repository: an API key, an
 optional npm package, a corpus, a local service. Name the environment variables
-and the exact install command. The per-sample header repeats the ones that
-sample needs, and this section is where the reader finds the whole set.
+and the exact install command. The per-sample header and README repeat the ones
+that sample needs, and this section is where the reader finds the whole set.
 
 ### Samples
 
@@ -70,7 +177,7 @@ One table per group, or a single table for a flat category. Columns:
 
 | Column         | Contents                                                                                 |
 | -------------- | ---------------------------------------------------------------------------------------- |
-| `Sample`       | The directory name in backticks.                                                         |
+| `Sample`       | The directory name in backticks, linked to that sample's own `README.md`.                |
 | `Docs section` | A link to the adk.dev section, for a category that ports one. Omit the column otherwise. |
 | `Shows`        | One line naming the one or two features the sample exists to demonstrate.                |
 | `Key`          | `✅` when it calls a live model, `—` when it runs offline.                               |
@@ -98,10 +205,10 @@ relative path. From `samples/{category}/README.md` the repository root is two
 levels up:
 
 ```markdown
-- [Retrieval tools](../../docs/guides/tools/retrieval/index.md) - Choosing between client-side retrieval and Vertex AI RAG.
+- [BaseRetrievalTool](../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - Choosing between client-side retrieval and Vertex AI RAG.
 ```
 
-## Template
+### Template
 
 ````markdown
 # {Category} samples
@@ -136,9 +243,9 @@ What these samples need beyond the repository, with the exact commands.
 
 ## Samples
 
-| Sample   | Shows                         | Key |
-| -------- | ----------------------------- | --- |
-| `{name}` | One line on what it exercises | —   |
+| Sample                       | Shows                         | Key |
+| ---------------------------- | ----------------------------- | --- |
+| [`{name}`]({name}/README.md) | One line on what it exercises | —   |
 
 ## Worth knowing
 

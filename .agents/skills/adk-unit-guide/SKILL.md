@@ -109,25 +109,22 @@ you an example to adapt and they pin the behavior the guide is allowed to claim.
 ## Where the guide goes
 
 Mirror the source path under `docs/guides/`, dropping the `core/src/` prefix and
-the `.ts` extension, one directory per unit, guide named `index.md`:
+the `.ts` extension. One source file is one unit, one unit is one directory, and
+the guide is that directory's `index.md`:
 
-| Source                                          | Guide                                                    |
-| :---------------------------------------------- | :------------------------------------------------------- |
-| `core/src/tools/mcp/mcp_toolset.ts`             | `docs/guides/tools/mcp_toolset/index.md`                 |
-| `core/src/plugins/reflect_retry_tool_plugin.ts` | `docs/guides/plugins/reflect_retry_tool_plugin/index.md` |
+| Source                                              | Guide                                                        |
+| :-------------------------------------------------- | :----------------------------------------------------------- |
+| `core/src/tools/mcp/mcp_toolset.ts`                 | `docs/guides/tools/mcp/mcp_toolset/index.md`                 |
+| `core/src/plugins/reflect_retry_tool_plugin.ts`     | `docs/guides/plugins/reflect_retry_tool_plugin/index.md`     |
+| `core/src/tools/retrieval/base_retrieval_tool.ts`   | `docs/guides/tools/retrieval/base_retrieval_tool/index.md`   |
+| `core/src/tools/retrieval/llama_index_retrieval.ts` | `docs/guides/tools/retrieval/llama_index_retrieval/index.md` |
+| `core/src/tools/retrieval/files_retrieval.ts`       | `docs/guides/tools/retrieval/files_retrieval/index.md`       |
 
-adk-js splits a module that adk-python keeps in one file, so a "unit" is
-sometimes a source directory rather than a source file. When a directory holds
-one base class and the implementations that only exist to subclass it, write one
-guide for the directory at that directory's `index.md`:
-
-| Source                      | Guide                                  |
-| :-------------------------- | :------------------------------------- |
-| `core/src/tools/retrieval/` | `docs/guides/tools/retrieval/index.md` |
-
-Splitting those three files into three guides would produce three pages that
-each say "see the other two", and a reader choosing between the implementations
-has to see them side by side to choose.
+The rule does not bend for a directory that holds a base class and the
+implementations that subclass it, which is the last three rows. Each file is
+still a unit and still gets its own guide. A reader looking up `FilesRetrieval`
+has a page named after the class they are holding, and the guide for a class
+they are not using does not grow to cover them.
 
 Use named files instead of `index.md` only when one source file has genuinely
 separate usage modes.
@@ -138,6 +135,29 @@ code has not changed, so the diff shows only what the change actually altered.
 Then add the guide to `docs/guides/README.md` under the right category heading,
 as `* [Title](path/index.md) - one-line summary.` That index is the only table
 of contents; a guide missing from it is unreachable.
+
+### Guides for a set of siblings
+
+Splitting a base class and its implementations across guides costs the reader
+something real, and the split does not pay for itself unless you buy it back. A
+reader arrives at one page from search, not at the set, so they need to be able
+to tell from the first paragraph whether they are on the right page — and if
+they are not, which sibling is. Two things carry the set:
+
+- **Each guide opens by naming its siblings**, one line each, giving the reason
+  to pick that one rather than a description of what it is. Put this before the
+  guide explains its own class, because it is what tells the reader to keep
+  reading or to leave. Link siblings by relative path from one guide directory
+  to the next: `[FilesRetrieval](../files_retrieval/index.md)`.
+- **`docs/guides/README.md` lists the set under one shared heading**, with a
+  sentence above the list saying what the set is for. A reader scanning the
+  index sees a family and its entry point, rather than three entries that look
+  unrelated because they sort apart.
+
+Put a comparison that decides between the siblings, or between the family and
+something outside it, in the guide for the class where that decision is made —
+usually the base class, since that is where a reader lands before they have
+chosen an implementation. The other guides link to it rather than repeat it.
 
 ## Code examples
 
@@ -176,10 +196,13 @@ of contents; a guide missing from it is unreachable.
 
 ## Link related samples
 
-Link samples by repo-relative path from the guide, not by GitHub URL. From
-`docs/guides/{topic}/{unit}/index.md` the repository root is four levels up:
-`[Retrieval tools](../../../../samples/tools/retrieval/agent.ts)`. Confirm the
-file exists before linking it.
+Link samples by repo-relative path from the guide, not by GitHub URL. Count the
+`../` from the guide's own directory rather than reusing a depth from another
+guide, because a guide that mirrors a nested source directory sits deeper. From
+`docs/guides/{topic}/{unit}/index.md` the repository root is four levels up, and
+from `docs/guides/tools/retrieval/files_retrieval/index.md` it is five:
+`[Retrieval tools](../../../../../samples/tools/retrieval/agent.ts)`. Confirm
+the file exists before linking it.
 
 ## Structure
 
