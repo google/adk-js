@@ -36,6 +36,11 @@ export {
   loadSkillFromDir,
   validateSkillDir,
 } from './skills/loader.js';
+export {FilesRetrieval} from './tools/retrieval/files_retrieval.js';
+export type {
+  FilesRetrievalConstructorParams,
+  FilesRetrievalParams,
+} from './tools/retrieval/files_retrieval.js';
 export {
   RunSkillInlineScriptErrorCode,
   RunSkillInlineScriptTool,
