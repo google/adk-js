@@ -6,7 +6,7 @@
 
 /**
  * Retrieval tools
- * ../../../docs/guides/tools/retrieval/index.md
+ * ../../../docs/guides/tools/retrieval/llama_index_retrieval/index.md
  *
  * A grounded question-answering agent built on `LlamaIndexRetrieval`. The tool
  * turns one natural-language `query` into one string of retrieved text, and the

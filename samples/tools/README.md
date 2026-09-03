@@ -86,4 +86,6 @@ Left unset, the sample runs on the corpus written into the file.
 
 ## See also
 
-- [Retrieval tools](../../docs/guides/tools/retrieval/index.md) - `BaseRetrievalTool`, `LlamaIndexRetrieval`, `FilesRetrieval`, and how they differ from `VertexRagRetrievalTool`.
+- [BaseRetrievalTool](../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - The abstract base, and how client-side retrieval differs from `VertexRagRetrievalTool`.
+- [LlamaIndexRetrieval](../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - Answers from any object with a `retrieve` method.
+- [FilesRetrieval](../../docs/guides/tools/retrieval/files_retrieval/index.md) - Builds the retriever from a directory of documents.
