@@ -58,7 +58,9 @@ A new category is four things, and skipping any of them is the usual mistake:
     Nothing generates it and no other README links it, so a category without
     one is undiscoverable.
 3.  A link from the top-level `README.md` or from the guide the samples
-    support, so a reader arrives at the new README from somewhere.
+    support, so a reader arrives at the new category README from somewhere.
+    The per-sample READMEs are reached from that category README's table, not
+    linked from outside.
 4.  A decision about execution coverage, recorded in the category README.
     `tests/integration/docs_samples/docs_samples_test.ts` resolves
     `SAMPLES_ROOT` to `samples/workflows` specifically, so it neither runs nor

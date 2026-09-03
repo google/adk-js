@@ -199,10 +199,11 @@ chosen an implementation. The other guides link to it rather than repeat it.
 Link samples by repo-relative path from the guide, not by GitHub URL. Count the
 `../` from the guide's own directory rather than reusing a depth from another
 guide, because a guide that mirrors a nested source directory sits deeper. From
-`docs/guides/{topic}/{unit}/index.md` the repository root is four levels up, and
-from `docs/guides/tools/retrieval/files_retrieval/index.md` it is five:
-`[Retrieval tools](../../../../../samples/tools/retrieval/agent.ts)`. Confirm
-the file exists before linking it.
+`docs/guides/{topic}/{unit}/index.md` the repository root is four levels up:
+`[Fan-out and join](../../../../samples/workflows/routes/fan_out_join/agent.ts)`.
+From `docs/guides/tools/retrieval/files_retrieval/index.md` it is five. Confirm
+the file exists before linking it. Every sample on disk today sits under
+`samples/workflows/`, so a path under any other category is one you invented.
 
 ## Structure
 
