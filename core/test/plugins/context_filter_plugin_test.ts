@@ -14,11 +14,7 @@ import {LlmRequest} from '../../src/models/llm_request.js';
 import {LlmResponse} from '../../src/models/llm_response.js';
 import {
   ContextFilterPlugin,
-  adjustSplitIndexToAvoidOrphanedFunctionResponses,
-  getInvocationStartIndices,
   isContextFilterPlugin,
-  isFunctionResponseContent,
-  isHumanUserContent,
 } from '../../src/plugins/context_filter_plugin.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {InMemoryRunner} from '../../src/runner/in_memory_runner.js';
@@ -452,11 +448,11 @@ describe('ContextFilterPlugin', () => {
   it('should throw an error when removeAmount is less than 1', () => {
     expect(() => {
       new ContextFilterPlugin({numInvocationsToKeep: 1, removeAmount: 0});
-    }).toThrow('remove_amount must be at least 1');
+    }).toThrow('removeAmount must be at least 1');
 
     expect(() => {
       new ContextFilterPlugin({numInvocationsToKeep: 1, removeAmount: -1});
-    }).toThrow('remove_amount must be at least 1');
+    }).toThrow('removeAmount must be at least 1');
   });
 
   it('should support positional constructor parameters', async () => {
@@ -488,43 +484,22 @@ describe('ContextFilterPlugin', () => {
     expect(llmRequest.contents[0].parts?.[0]?.text).toBe('model_response_2');
   });
 
-  it('should correctly evaluate helper functions', () => {
-    const userContent = createContent('user', 'Hello');
-    const modelContent = createContent('model', 'Hi');
-    const funcResponseContent = createFunctionResponseContent('tool', 'id-1');
-    const funcCallContent = createFunctionCallContent('tool', 'id-1');
-
-    expect(isFunctionResponseContent(funcResponseContent)).toBe(true);
-    expect(isFunctionResponseContent(userContent)).toBe(false);
-    expect(isFunctionResponseContent(modelContent)).toBe(false);
-
-    expect(isHumanUserContent(userContent)).toBe(true);
-    expect(isHumanUserContent(funcResponseContent)).toBe(false);
-    expect(isHumanUserContent(modelContent)).toBe(false);
-
-    const contents = [
-      userContent,
-      modelContent,
-      funcCallContent,
-      funcResponseContent,
-    ];
-    const startIndices = getInvocationStartIndices(contents);
-    expect(startIndices).toEqual([0]);
-
-    // Test adjustSplitIndexToAvoidOrphanedFunctionResponses
-    const adjustedIndex = adjustSplitIndexToAvoidOrphanedFunctionResponses(
-      contents,
-      3,
-    );
-    expect(adjustedIndex).toBe(2); // Goes back to include funcCallContent at index 2
-  });
-
-  it('should support isContextFilterPlugin type guard', () => {
+  it('should support isContextFilterPlugin brand-symbol guard', () => {
     const plugin = new ContextFilterPlugin();
     expect(isContextFilterPlugin(plugin)).toBe(true);
     expect(isContextFilterPlugin({})).toBe(false);
     expect(isContextFilterPlugin(null)).toBe(false);
     expect(isContextFilterPlugin(undefined)).toBe(false);
+    expect(
+      isContextFilterPlugin({
+        [Symbol.for('google.adk.contextFilterPlugin')]: true,
+      }),
+    ).toBe(true);
+    expect(
+      isContextFilterPlugin({
+        [Symbol.for('google.adk.contextFilterPlugin')]: false,
+      }),
+    ).toBe(false);
   });
 
   it('should work seamlessly when registered in PluginManager', async () => {

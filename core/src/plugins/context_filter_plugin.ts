@@ -12,6 +12,13 @@ import {logger} from '../utils/logger.js';
 import {BasePlugin} from './base_plugin.js';
 
 /**
+ * A unique symbol to identify ADK ContextFilterPlugin instances.
+ */
+const CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.contextFilterPlugin',
+);
+
+/**
  * Moves `splitIndex` left until function calls and responses stay paired.
  *
  * When truncating context, we must avoid keeping a `functionResponse` while
@@ -21,7 +28,7 @@ import {BasePlugin} from './base_plugin.js';
  * @param splitIndex Candidate split index (keep `contents.slice(splitIndex)`).
  * @returns A (possibly smaller) split index that preserves call/response pairs.
  */
-export function adjustSplitIndexToAvoidOrphanedFunctionResponses(
+function _adjustSplitIndexToAvoidOrphanedFunctionResponses(
   contents: Content[],
   splitIndex: number,
 ): number {
@@ -31,10 +38,10 @@ export function adjustSplitIndexToAvoidOrphanedFunctionResponses(
     if (parts) {
       for (let j = parts.length - 1; j >= 0; j--) {
         const part = parts[j];
-        if (part.functionResponse && part.functionResponse.id) {
+        if (part.functionResponse?.id) {
           neededCallIds.add(part.functionResponse.id);
         }
-        if (part.functionCall && part.functionCall.id) {
+        if (part.functionCall?.id) {
           neededCallIds.delete(part.functionCall.id);
         }
       }
@@ -54,17 +61,8 @@ export function adjustSplitIndexToAvoidOrphanedFunctionResponses(
  * @param content The Content to inspect.
  * @returns True if any part in the content has a functionResponse.
  */
-export function isFunctionResponseContent(content: Content): boolean {
-  const parts = content.parts;
-  return (
-    parts !== undefined &&
-    parts !== null &&
-    Array.isArray(parts) &&
-    parts.some(
-      (part) =>
-        part.functionResponse !== undefined && part.functionResponse !== null,
-    )
-  );
+function _isFunctionResponseContent(content: Content): boolean {
+  return content.parts?.some((part) => part.functionResponse != null) ?? false;
 }
 
 /**
@@ -73,8 +71,8 @@ export function isFunctionResponseContent(content: Content): boolean {
  * @param content The Content to inspect.
  * @returns True if role is 'user' and content is not a function response.
  */
-export function isHumanUserContent(content: Content): boolean {
-  return content.role === 'user' && !isFunctionResponseContent(content);
+function _isHumanUserContent(content: Content): boolean {
+  return content.role === 'user' && !_isFunctionResponseContent(content);
 }
 
 /**
@@ -86,11 +84,11 @@ export function isHumanUserContent(content: Content): boolean {
  * @param contents Full conversation contents in chronological order.
  * @returns A list of indices where each index marks the beginning of an invocation.
  */
-export function getInvocationStartIndices(contents: Content[]): number[] {
+function _getInvocationStartIndices(contents: Content[]): number[] {
   const invocationStartIndices: number[] = [];
   let previousWasHumanUser = false;
   for (let i = 0; i < contents.length; i++) {
-    const isHumanUser = isHumanUserContent(contents[i]);
+    const isHumanUser = _isHumanUserContent(contents[i]);
     if (isHumanUser && !previousWasHumanUser) {
       invocationStartIndices.push(i);
     }
@@ -145,6 +143,9 @@ export interface ContextFilterPluginOptions {
  * - Safe error handling: catches errors during filtering and preserves original context.
  */
 export class ContextFilterPlugin extends BasePlugin {
+  /** A unique symbol to identify ADK ContextFilterPlugin instances. */
+  readonly [CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL] = true;
+
   readonly numInvocationsToKeep?: number;
   readonly customFilter?: CustomFilterFunction;
   readonly removeAmount: number;
@@ -163,20 +164,24 @@ export class ContextFilterPlugin extends BasePlugin {
     name = 'context_filter_plugin',
     removeAmount = 1,
   ) {
+    const pluginName =
+      typeof options === 'object' && options !== null
+        ? (options.name ?? 'context_filter_plugin')
+        : name;
+    super(pluginName);
+
     if (typeof options === 'object' && options !== null) {
-      super(options.name ?? 'context_filter_plugin');
       this.numInvocationsToKeep = options.numInvocationsToKeep;
       this.customFilter = options.customFilter;
       this.removeAmount = options.removeAmount ?? 1;
     } else {
-      super(name);
       this.numInvocationsToKeep = options;
       this.customFilter = customFilter;
       this.removeAmount = removeAmount;
     }
 
     if (this.removeAmount < 1) {
-      throw new Error('remove_amount must be at least 1');
+      throw new Error('removeAmount must be at least 1');
     }
   }
 
@@ -196,7 +201,7 @@ export class ContextFilterPlugin extends BasePlugin {
         this.numInvocationsToKeep !== null &&
         this.numInvocationsToKeep > 0
       ) {
-        const invocationStartIndices = getInvocationStartIndices(contents);
+        const invocationStartIndices = _getInvocationStartIndices(contents);
         if (
           invocationStartIndices.length >=
           this.numInvocationsToKeep + this.removeAmount
@@ -206,7 +211,7 @@ export class ContextFilterPlugin extends BasePlugin {
               invocationStartIndices.length - this.numInvocationsToKeep
             ];
 
-          splitIndex = adjustSplitIndexToAvoidOrphanedFunctionResponses(
+          splitIndex = _adjustSplitIndexToAvoidOrphanedFunctionResponses(
             contents,
             splitIndex,
           );
@@ -231,10 +236,18 @@ export class ContextFilterPlugin extends BasePlugin {
 }
 
 /**
- * Type guard for {@link ContextFilterPlugin}.
+ * Type guard to check if an object is an instance of ContextFilterPlugin.
+ *
+ * @param obj The object to check.
+ * @returns True if the object is an instance of ContextFilterPlugin, false otherwise.
  */
 export function isContextFilterPlugin(
-  plugin: unknown,
-): plugin is ContextFilterPlugin {
-  return plugin instanceof ContextFilterPlugin;
+  obj: unknown,
+): obj is ContextFilterPlugin {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL in obj &&
+    obj[CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL] === true
+  );
 }
