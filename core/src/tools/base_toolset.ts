@@ -105,11 +105,11 @@ export abstract class BaseToolset {
    *   process the llm request. e.g. ComputerUseToolset can add computer use
    *   tool to the llm request.
    *
-   * @param toolContext The context of the tool.
-   * @param llmRequest The outgoing LLM request, mutable this method.
+   * @param _toolContext The context of the tool.
+   * @param _llmRequest The outgoing LLM request, mutable this method.
    */
   async processLlmRequest(
-    toolContext: Context, // eslint-disable-line @typescript-eslint/no-unused-vars
-    llmRequest: LlmRequest, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _toolContext: Context,
+    _llmRequest: LlmRequest,
   ): Promise<void> {}
 }
