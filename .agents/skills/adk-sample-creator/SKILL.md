@@ -6,8 +6,9 @@ description: >-
   `README.md` — following the conventions the samples use. Use when the user
   wants to add a sample or example demonstrating a feature or agent pattern
   (a dynamic orchestrator, fan-out/fan-in, a standalone tool-using agent), asks
-  where a new sample belongs under `samples/`, or wants an existing sample's
-  header comment or README row brought up to the standard structure. Don't use
+  where a new sample belongs under `samples/`, wants to backfill a `README.md`
+  for a sample that has none, or wants an existing sample's header comment or
+  README brought up to the standard structure. Don't use
   for building a real working agent for the user's own project, or for writing
   usage documentation for a class (use `adk-unit-guide`).
 ---
@@ -81,17 +82,31 @@ A sample directory holds two files:
 `samples/{category}/{name}/README.md` follows
 [the per-sample section of readme-template.md](references/readme-template.md#per-sample-readme).
 
-This diverges from what is on disk. None of the 26 samples that predate this
-skill has a README: each carries a header comment in `agent.ts` and a row in
-its category table and nothing else. New samples set the convention rather than
-follow it, so there is no neighbouring directory to copy — the template is the
-reference. Adding a sample does not oblige you to retrofit the existing 26.
+The README is not only for people reading the repository. **`adk web` renders
+it in the UI when a sample is selected**, so it is the description a developer
+reads while deciding whether to run the sample, without leaving the browser.
+That is why every sample needs one and why the file is required rather than
+encouraged.
+
+Two notes on the state of that in adk-js, because both affect what you should
+expect:
+
+- None of the 26 samples that predate this skill has a README yet. They are
+  being backfilled. Until that finishes there is no neighbouring directory to
+  copy, so the template is the reference.
+- adk-js declares the field but does not fill it. `AppInfo` in
+  `dev/src/server/app_info.ts` carries an optional `readme`, and
+  `adk_api_server.ts` calls `serializeAppInfo(appName, rootAgent)` without it,
+  so nothing reads the file from disk. adk-python does:
+  `cli/dev_server.py` opens `README.md` in the agent directory and returns its
+  contents. Closing that gap is a change to the dev server, not to a sample.
+  Write the README as though it were already rendered, because it will be.
 
 The README and the header comment overlap, and both stay. The header is what a
 reader sees having already opened the code, so it keeps carrying the run
 command and the behaviour that is easy to get wrong. The README is what a
-reader sees when they arrive at the directory from GitHub or from a guide,
-before they have opened anything, and it is the only one of the two with room
+reader sees before they open anything — in the `adk web` UI, or arriving at the
+directory from GitHub or a guide — and it is the only one of the two with room
 for the prompts to try, the topology diagram, and the links out to the guides.
 
 ### The header

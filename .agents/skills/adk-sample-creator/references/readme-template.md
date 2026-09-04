@@ -3,14 +3,23 @@
 Two kinds of README, with different readers. Every sample directory has one, and
 every category directory has one.
 
-| README                                | Reader                                                                           |
-| ------------------------------------- | -------------------------------------------------------------------------------- |
-| `samples/{category}/{name}/README.md` | Someone who has landed on this one sample and wants to run it and understand it. |
-| `samples/{category}/README.md`        | Someone browsing the category, deciding which sample to open.                    |
+| README                                | Reader                                                                                          |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `samples/{category}/{name}/README.md` | Someone who selected this sample in `adk web`, or landed on the directory, and wants to run it. |
+| `samples/{category}/README.md`        | Someone browsing the category, deciding which sample to open.                                   |
 
-The per-sample README is new. None of the 26 samples that predate this skill has
-one, so this file is the reference and the neighbouring directories are not. The
-category README already exists for `samples/workflows/`, which is the worked
+`adk web` renders the per-sample README in the UI when a sample is selected, so
+it is read in a browser far more often than in the repository. Write it for
+someone deciding whether to run the sample, who cannot see the code yet.
+
+Two notes on the current state. None of the 26 samples that predate this skill
+has a README yet — they are being backfilled, so this file is the reference and
+the neighbouring directories are not. And adk-js does not yet populate the field
+it declares: `AppInfo.readme` exists in `dev/src/server/app_info.ts`, and
+`adk_api_server.ts` never passes it, where adk-python's `cli/dev_server.py`
+reads `README.md` from the agent directory. Write for the rendered case anyway.
+
+The category README already exists for `samples/workflows/`, which is the worked
 example for the second half of this file.
 
 ## Per-sample README
