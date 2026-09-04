@@ -7,14 +7,23 @@
 import {AuthConfig, AuthCredentialTypes, AuthHandler, State} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 
+/** Credentials the mocked exchanger was asked to exchange, most recent last. */
+const exchangeCalls: Array<{clientId?: string; clientSecret?: string}> = [];
+
 vi.mock('../../src/auth/oauth2/oauth2_credential_exchanger.js', () => ({
   OAuth2CredentialExchanger: class {
-    exchange = vi.fn().mockResolvedValue({
-      credential: {
-        authType: 'oauth2',
-        oauth2: {accessToken: 'mockAccessToken'},
-      },
-      wasExchanged: true,
+    exchange = vi.fn().mockImplementation(({authCredential}) => {
+      exchangeCalls.push({
+        clientId: authCredential?.oauth2?.clientId,
+        clientSecret: authCredential?.oauth2?.clientSecret,
+      });
+      return Promise.resolve({
+        credential: {
+          authType: 'oauth2',
+          oauth2: {accessToken: 'mockAccessToken'},
+        },
+        wasExchanged: true,
+      });
     });
   },
 }));
@@ -102,7 +111,11 @@ describe('AuthHandler', () => {
         },
         exchangedAuthCredential: {
           authType: AuthCredentialTypes.OAUTH2,
-          oauth2: {authCode: '123'},
+          oauth2: {
+            authCode: '123',
+            clientId: 'client-id',
+            clientSecret: 'client-secret',
+          },
         },
       };
       const handler = new AuthHandler(authConfig);
@@ -180,6 +193,86 @@ describe('AuthHandler', () => {
         'credentialKey is empty.',
       );
       expect(state.hasDelta()).toBe(false);
+    });
+
+    it('stores the credential unexchanged for oauth2 when no client secret is available', async () => {
+      // The config read back off a redacted request event. There is nothing to
+      // authenticate a token request with, so the exchange waits for the tool
+      // rather than being attempted and failing.
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {authCode: '123', clientId: 'client-id'},
+        },
+      };
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await handler.parseAndStoreAuthResponse(state);
+
+      expect(state.get('temp:testKey')).toEqual({
+        authType: 'oauth2',
+        oauth2: {authCode: '123', clientId: 'client-id'},
+      });
+    });
+
+    it('restores the configured client identity before exchanging', async () => {
+      // The client identity is the agent's, so it comes from the raw
+      // credential the tool holds and never from the response.
+      const authConfig: AuthConfig = {
+        credentialKey: 'testKey',
+        authScheme: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.com',
+              tokenUrl: 'https://token.com',
+              scopes: {},
+            },
+          },
+        },
+        rawAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {
+            clientId: 'configured-id',
+            clientSecret: 'configured-secret',
+          },
+        },
+        exchangedAuthCredential: {
+          authType: AuthCredentialTypes.OAUTH2,
+          oauth2: {
+            authCode: '123',
+            clientId: 'response-id',
+            clientSecret: 'response-secret',
+          },
+        },
+      };
+      exchangeCalls.length = 0;
+      const handler = new AuthHandler(authConfig);
+      const state = new State();
+
+      await handler.parseAndStoreAuthResponse(state);
+
+      // The secret is posted to the token endpoint, so a response that could
+      // substitute its own would choose which client the code is redeemed as.
+      expect(exchangeCalls).toEqual([
+        {clientId: 'configured-id', clientSecret: 'configured-secret'},
+      ]);
+      expect(state.get('temp:testKey')).toEqual({
+        authType: 'oauth2',
+        oauth2: {accessToken: 'mockAccessToken'},
+      });
     });
   });
 
