@@ -12,10 +12,7 @@ import {BaseLlm} from '../../src/models/base_llm.js';
 import {BaseLlmConnection} from '../../src/models/base_llm_connection.js';
 import {LlmRequest} from '../../src/models/llm_request.js';
 import {LlmResponse} from '../../src/models/llm_response.js';
-import {
-  ContextFilterPlugin,
-  isContextFilterPlugin,
-} from '../../src/plugins/context_filter_plugin.js';
+import {ContextFilterPlugin} from '../../src/plugins/context_filter_plugin.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {InMemoryRunner} from '../../src/runner/in_memory_runner.js';
 
@@ -453,53 +450,6 @@ describe('ContextFilterPlugin', () => {
     expect(() => {
       new ContextFilterPlugin({numInvocationsToKeep: 1, removeAmount: -1});
     }).toThrow('removeAmount must be at least 1');
-  });
-
-  it('should support positional constructor parameters', async () => {
-    const plugin = new ContextFilterPlugin(
-      1,
-      (contents) => contents.filter((c) => c.role === 'model'),
-      'custom_named_filter',
-      1,
-    );
-
-    expect(plugin.name).toBe('custom_named_filter');
-    expect(plugin.numInvocationsToKeep).toBe(1);
-    expect(plugin.removeAmount).toBe(1);
-
-    const contents = [
-      createContent('user', 'user_prompt_1'),
-      createContent('model', 'model_response_1'),
-      createContent('user', 'user_prompt_2'),
-      createContent('model', 'model_response_2'),
-    ];
-    const llmRequest = createMockLlmRequest(contents);
-
-    await plugin.beforeModelCallback({
-      callbackContext: createMockContext(),
-      llmRequest,
-    });
-
-    expect(llmRequest.contents.length).toBe(1);
-    expect(llmRequest.contents[0].parts?.[0]?.text).toBe('model_response_2');
-  });
-
-  it('should support isContextFilterPlugin brand-symbol guard', () => {
-    const plugin = new ContextFilterPlugin();
-    expect(isContextFilterPlugin(plugin)).toBe(true);
-    expect(isContextFilterPlugin({})).toBe(false);
-    expect(isContextFilterPlugin(null)).toBe(false);
-    expect(isContextFilterPlugin(undefined)).toBe(false);
-    expect(
-      isContextFilterPlugin({
-        [Symbol.for('google.adk.contextFilterPlugin')]: true,
-      }),
-    ).toBe(true);
-    expect(
-      isContextFilterPlugin({
-        [Symbol.for('google.adk.contextFilterPlugin')]: false,
-      }),
-    ).toBe(false);
   });
 
   it('should work seamlessly when registered in PluginManager', async () => {

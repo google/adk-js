@@ -230,7 +230,6 @@ export {
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {
   ContextFilterPlugin,
-  isContextFilterPlugin,
   type ContextFilterPluginOptions,
   type CustomFilterFunction,
 } from './plugins/context_filter_plugin.js';

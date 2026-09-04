@@ -12,13 +12,6 @@ import {logger} from '../utils/logger.js';
 import {BasePlugin} from './base_plugin.js';
 
 /**
- * A unique symbol to identify ADK ContextFilterPlugin instances.
- */
-const CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL = Symbol.for(
-  'google.adk.contextFilterPlugin',
-);
-
-/**
  * Moves `splitIndex` left until function calls and responses stay paired.
  *
  * When truncating context, we must avoid keeping a `functionResponse` while
@@ -143,9 +136,6 @@ export interface ContextFilterPluginOptions {
  * - Safe error handling: catches errors during filtering and preserves original context.
  */
 export class ContextFilterPlugin extends BasePlugin {
-  /** A unique symbol to identify ADK ContextFilterPlugin instances. */
-  readonly [CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL] = true;
-
   readonly numInvocationsToKeep?: number;
   readonly customFilter?: CustomFilterFunction;
   readonly removeAmount: number;
@@ -153,32 +143,13 @@ export class ContextFilterPlugin extends BasePlugin {
   /**
    * Initializes the ContextFilterPlugin.
    *
-   * @param options Configuration options, or the number of invocations to keep.
-   * @param customFilter Optional custom filter function (when using positional args).
-   * @param name Optional plugin name (when using positional args).
-   * @param removeAmount Optional remove amount (when using positional args).
+   * @param options Configuration options.
    */
-  constructor(
-    options?: ContextFilterPluginOptions | number,
-    customFilter?: CustomFilterFunction,
-    name = 'context_filter_plugin',
-    removeAmount = 1,
-  ) {
-    const pluginName =
-      typeof options === 'object' && options !== null
-        ? (options.name ?? 'context_filter_plugin')
-        : name;
-    super(pluginName);
-
-    if (typeof options === 'object' && options !== null) {
-      this.numInvocationsToKeep = options.numInvocationsToKeep;
-      this.customFilter = options.customFilter;
-      this.removeAmount = options.removeAmount ?? 1;
-    } else {
-      this.numInvocationsToKeep = options;
-      this.customFilter = customFilter;
-      this.removeAmount = removeAmount;
-    }
+  constructor(options: ContextFilterPluginOptions = {}) {
+    super(options.name ?? 'context_filter_plugin');
+    this.numInvocationsToKeep = options.numInvocationsToKeep;
+    this.customFilter = options.customFilter;
+    this.removeAmount = options.removeAmount ?? 1;
 
     if (this.removeAmount < 1) {
       throw new Error('removeAmount must be at least 1');
@@ -233,21 +204,4 @@ export class ContextFilterPlugin extends BasePlugin {
 
     return;
   }
-}
-
-/**
- * Type guard to check if an object is an instance of ContextFilterPlugin.
- *
- * @param obj The object to check.
- * @returns True if the object is an instance of ContextFilterPlugin, false otherwise.
- */
-export function isContextFilterPlugin(
-  obj: unknown,
-): obj is ContextFilterPlugin {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL in obj &&
-    obj[CONTEXT_FILTER_PLUGIN_SIGNATURE_SYMBOL] === true
-  );
 }
