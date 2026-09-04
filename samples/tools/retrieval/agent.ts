@@ -28,10 +28,12 @@
  *   npm run sample -- samples/tools/retrieval/agent.ts
  * Try "how long do I have to file an expense report?".
  *
- * OPTIONAL, for the `FilesRetrieval` half: `npm install llamaindex
- * @llamaindex/readers`, configure a LlamaIndex embedding model, and set
- * ADK_SAMPLE_DOCS_DIR to a directory of documents to index. Left unset, the
- * agent runs with the in-file corpus alone.
+ * The `FilesRetrieval` half indexes `documents/`, which ships with the sample,
+ * so there is nothing to set up. It needs two optional peer dependencies and
+ * an embedding model; without them it is skipped with a note and the rest of
+ * the sample still runs:
+ *   npm install llamaindex @llamaindex/readers
+ * Point ADK_SAMPLE_DOCS_DIR elsewhere to index your own files instead.
  */
 
 import {
@@ -42,6 +44,8 @@ import {
   LlmAgent,
   ToolUnion,
 } from '@google/adk';
+import * as path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 /** Stands in for an indexed corpus, so the sample needs no vector store. */
 const HANDBOOK: readonly string[] = [
@@ -91,17 +95,32 @@ const tools: ToolUnion[] = [handbookRetrieval];
 
 // `FilesRetrieval.create` reads a directory and builds the index, both of which
 // are asynchronous in LlamaIndexTS — hence the static factory rather than the
-// constructor adk-python uses. It throws a message naming the missing package
-// when `llamaindex` or `@llamaindex/readers` is not installed, so this stays
-// opt-in.
-const docsDir = process.env.ADK_SAMPLE_DOCS_DIR;
-if (docsDir) {
+// constructor adk-python uses.
+//
+// The directory ships with the sample, so there is nothing to set up. Point
+// ADK_SAMPLE_DOCS_DIR somewhere else to index your own files instead.
+const docsDir =
+  process.env.ADK_SAMPLE_DOCS_DIR ??
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'documents');
+
+// Optional, and the sample runs either way. `llamaindex` and
+// `@llamaindex/readers` are peer dependencies of `FilesRetrieval` rather than
+// of `@google/adk`, so this half activates when they are installed and is
+// skipped with a note when they are not. Failing the whole sample over an
+// optional package would make the interesting half unreachable.
+try {
   tools.push(
     await FilesRetrieval.create({
       name: 'local_docs',
-      description: `Searches the documents stored in ${docsDir}.`,
+      description:
+        'Searches the onboarding, remote work, and security documents.',
       inputDir: docsDir,
     }),
+  );
+} catch (e) {
+  console.log(
+    `[sample] local_docs is off: ${(e as Error).message}\n` +
+      '[sample] install it with: npm install llamaindex @llamaindex/readers',
   );
 }
 

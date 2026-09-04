@@ -140,5 +140,5 @@ only the first node is used, and an empty retrieval throws.
 
 ## Related samples
 
-- [Retrieval tools](../../../../../samples/tools/retrieval/agent.ts) - Includes
+- [Retrieval tools](../../../../../samples/tools/retrieval/README.md) - Includes
   an optional `FilesRetrieval` tool over a real directory.

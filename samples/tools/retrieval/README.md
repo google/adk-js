@@ -63,23 +63,54 @@ than naming the tool again.
 
 ## How To Run
 
-Requires an API key, because the agent calls a live model.
+Requires an API key, because the agent calls a live model. Nothing else.
 
 ```bash
 export GEMINI_API_KEY=...
 npm run sample -- samples/tools/retrieval/agent.ts
 ```
 
-For the `FilesRetrieval` half, which is optional:
+## Configuration
+
+The sample is self-contained. `employee_handbook` reads a corpus declared in
+`agent.ts`, and `local_docs` indexes `documents/`, which ships beside the
+agent. Both work out of the box.
+
+| Setting               | Default                       | What it changes                                                                        |
+| --------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`      | none, required                | The model the agent calls.                                                             |
+| `ADK_SAMPLE_DOCS_DIR` | `documents/` beside the agent | The directory `local_docs` indexes. Point it at your own files to search them instead. |
+
+### The two tools, and why there are two
+
+`employee_handbook` uses `LlamaIndexRetrieval` over a hand-written retriever,
+so it demonstrates the interface without any index at all. `local_docs` uses
+`FilesRetrieval`, which builds a real vector index from a directory.
+
+Only the second needs anything installed:
 
 ```bash
 npm install llamaindex @llamaindex/readers
-export ADK_SAMPLE_DOCS_DIR=/path/to/documents
 ```
 
-`FilesRetrieval.create` also needs a configured LlamaIndex embedding model;
-`VectorStoreIndex.fromDocuments` fails without one. Left unset, the agent runs
-with the in-file corpus alone.
+Those are peer dependencies of `FilesRetrieval`, not of `@google/adk`. Without
+them the sample prints a line saying `local_docs` is off and runs with
+`employee_handbook` alone, so the interesting half is never blocked by a
+package you have not installed. `FilesRetrieval.create` also needs a configured
+LlamaIndex embedding model; `VectorStoreIndex.fromDocuments` fails without one,
+and that failure is caught the same way.
+
+### Changing the corpus
+
+To search your own documents, point `ADK_SAMPLE_DOCS_DIR` at a directory:
+
+```bash
+export ADK_SAMPLE_DOCS_DIR=/path/to/your/docs
+```
+
+To change what `employee_handbook` knows, edit the `HANDBOOK` array in
+`agent.ts`. It is deliberately three strings rather than a file, so the
+retriever interface stays the subject.
 
 ## Related Guides
 

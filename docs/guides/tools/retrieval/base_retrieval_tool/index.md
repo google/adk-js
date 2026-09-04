@@ -179,5 +179,5 @@ absent case itself.
 
 ## Related samples
 
-- [Retrieval tools](../../../../../samples/tools/retrieval/agent.ts) - An agent
+- [Retrieval tools](../../../../../samples/tools/retrieval/README.md) - An agent
   with a `LlamaIndexRetrieval` tool over a hand-written retriever.
