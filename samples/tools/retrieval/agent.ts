@@ -28,10 +28,12 @@
  *   npm run sample -- samples/tools/retrieval/agent.ts
  * Try "how long do I have to file an expense report?".
  *
- * The `FilesRetrieval` half indexes `documents/`, which ships with the sample,
- * so there is nothing to set up. It needs two optional peer dependencies and
- * an embedding model; without them it is skipped with a note and the rest of
- * the sample still runs:
+ * The `FilesRetrieval` half indexes `data/`, which ships with the sample, so
+ * there is nothing to set up. Those are the same two documents adk-python's
+ * `contributing/samples/integrations/files_retrieval_agent` indexes, with the
+ * statements that named Python corrected. It needs two optional peer
+ * dependencies and an embedding model; without them it is skipped with a note
+ * and the rest of the sample still runs:
  *   npm install llamaindex @llamaindex/readers
  * Point ADK_SAMPLE_DOCS_DIR elsewhere to index your own files instead.
  */
@@ -101,7 +103,7 @@ const tools: ToolUnion[] = [handbookRetrieval];
 // ADK_SAMPLE_DOCS_DIR somewhere else to index your own files instead.
 const docsDir =
   process.env.ADK_SAMPLE_DOCS_DIR ??
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'documents');
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
 
 // Optional, and the sample runs either way. `llamaindex` and
 // `@llamaindex/readers` are peer dependencies of `FilesRetrieval` rather than
@@ -111,15 +113,19 @@ const docsDir =
 try {
   tools.push(
     await FilesRetrieval.create({
-      name: 'local_docs',
+      // Named as adk-python's files_retrieval_agent names it, over the same
+      // two documents, so the two samples line up.
+      name: 'search_documents',
       description:
-        'Searches the onboarding, remote work, and security documents.',
+        'Search through local ADK documentation files to find relevant ' +
+        'information. Use this tool when the user asks questions about ADK ' +
+        'features, architecture, or tools.',
       inputDir: docsDir,
     }),
   );
 } catch (e) {
   console.log(
-    `[sample] local_docs is off: ${(e as Error).message}\n` +
+    `[sample] search_documents is off: ${(e as Error).message}\n` +
       '[sample] install it with: npm install llamaindex @llamaindex/readers',
   );
 }
@@ -127,10 +133,12 @@ try {
 export const rootAgent = new LlmAgent({
   name: 'handbook_assistant',
   model: 'gemini-flash-latest',
-  description: 'Answers policy questions from retrieved documents.',
+  description: 'Answers questions from retrieved documents.',
   instruction:
-    'Answer questions about company policy. Call a retrieval tool before ' +
-    'answering, and base the answer only on the text it returns. Say that you ' +
-    'do not know when the retrieved text does not cover the question.',
+    'Answer questions about company policy, using employee_handbook, and ' +
+    'about the Agent Development Kit, using search_documents. Call the ' +
+    'matching retrieval tool before answering, and base the answer only on ' +
+    'the text it returns. Say that you do not know when the retrieved text ' +
+    'does not cover the question.',
   tools,
 });
