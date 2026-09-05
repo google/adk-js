@@ -345,7 +345,10 @@ describe('RestApiTool', () => {
       expect.stringContaining('http://api.example.com/test'),
       expect.anything(),
     );
-    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0][0] as string;
+    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0][0];
+    if (typeof calledUrl !== 'string') {
+      expect.fail('fetch was not called with a URL string');
+    }
     expect(calledUrl).toContain('existing=param');
     expect(calledUrl).toContain('new_param=value');
   });
@@ -397,8 +400,10 @@ describe('RestApiTool', () => {
         body: expect.any(URLSearchParams),
       }),
     );
-    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
-      .body as URLSearchParams;
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!.body;
+    if (!(calledBody instanceof URLSearchParams)) {
+      expect.fail('the request body was not a URLSearchParams');
+    }
     expect(calledBody.get('foo')).toBe('bar');
     expect(calledBody.get('baz')).toBe('qux');
   });
@@ -450,8 +455,10 @@ describe('RestApiTool', () => {
         body: expect.any(FormData),
       }),
     );
-    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
-      .body as FormData;
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!.body;
+    if (!(calledBody instanceof FormData)) {
+      expect.fail('the request body was not a FormData');
+    }
     expect(calledBody.get('foo')).toBe('bar');
     expect(calledBody.get('file')).toBe('content');
   });
@@ -1139,7 +1146,11 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should fallback to JSON if requestBody has no content', () => {
-      const requestBody = {} as OpenAPIV3.RequestBodyObject; // defined but no content
+      // An unresolved $ref is how a defined-but-contentless request body
+      // actually reaches prepareRequestBody.
+      const requestBody: OpenAPIV3.ReferenceObject = {
+        $ref: '#/components/requestBodies/Pet',
+      };
       const body = {foo: 'bar'};
       const bodyData = {};
       const headers = {};
