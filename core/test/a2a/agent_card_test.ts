@@ -4,11 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as http from 'node:http';
+import type {AddressInfo} from 'node:net';
 import {describe, expect, it, vi} from 'vitest';
-import {buildAgentSkills} from '../../src/a2a/agent_card.js';
+import {buildAgentSkills, resolveAgentCard} from '../../src/a2a/agent_card.js';
 import {node} from '../../src/workflow/node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 
+import type {AgentCard} from '@a2a-js/sdk';
 import {
   BaseAgent,
   BaseTool,
@@ -136,6 +139,112 @@ describe('Agent Card', () => {
       );
       expect(orchestrationSkill).toBeDefined();
       expect(orchestrationSkill?.description).toContain('fetch data');
+    });
+  });
+
+  describe('resolveAgentCard', () => {
+    // Card responses in this suite are served by a real local http server so
+    // resolveAgentCard's actual network fetch path is exercised, not a mock
+    // of the SDK's resolver -- the vulnerability this suite pins was in how
+    // a genuinely-fetched card's contents were (not) checked.
+
+    function baseCard(url: string, extra: Partial<AgentCard> = {}) {
+      return {
+        name: 'test-agent',
+        description: '',
+        protocolVersion: '0.3.0',
+        version: '1.0.0',
+        url,
+        preferredTransport: 'JSONRPC',
+        capabilities: {},
+        skills: [],
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        ...extra,
+      };
+    }
+
+    async function withCardServer<T>(
+      cardFactory: (port: number) => object,
+      fn: (source: string) => Promise<T>,
+    ): Promise<T> {
+      const server = http.createServer((req, res) => {
+        const port = (server.address() as AddressInfo).port;
+        res.writeHead(200, {'Content-Type': 'application/json'});
+        res.end(JSON.stringify(cardFactory(port)));
+      });
+      await new Promise<void>((resolve) =>
+        server.listen(0, '127.0.0.1', resolve),
+      );
+      try {
+        const port = (server.address() as AddressInfo).port;
+        return await fn(`http://127.0.0.1:${port}`);
+      } finally {
+        server.close();
+      }
+    }
+
+    it('accepts a card whose RPC url shares the fetch origin', async () => {
+      await withCardServer(
+        (port) => baseCard(`http://127.0.0.1:${port}/rpc`),
+        async (source) => {
+          const card = await resolveAgentCard(source);
+          expect(card.url).toBe(`${source}/rpc`);
+        },
+      );
+    });
+
+    it('accepts a same-origin additionalInterfaces entry', async () => {
+      await withCardServer(
+        (port) =>
+          baseCard(`http://127.0.0.1:${port}/rpc`, {
+            additionalInterfaces: [
+              {transport: 'JSONRPC', url: `http://127.0.0.1:${port}/rpc2`},
+            ],
+          }),
+        async (source) => {
+          const card = await resolveAgentCard(source);
+          expect(card.url).toBe(`${source}/rpc`);
+        },
+      );
+    });
+
+    it('rejects an off-origin RPC url on a fetched card', async () => {
+      // The reported vulnerability: a card fetched from a trusted,
+      // configured source can declare an RPC url pointing anywhere at
+      // all, and it was followed with no check that it matched where the
+      // card actually came from.
+      await withCardServer(
+        () => baseCard('https://attacker.example.net/rpc'),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(/same origin/);
+        },
+      );
+    });
+
+    it('rejects an off-origin additionalInterfaces entry even when the primary url is same-origin', async () => {
+      // Every url the card offers must be checked, not only the one a
+      // particular transport negotiation would pick.
+      await withCardServer(
+        (port) =>
+          baseCard(`http://127.0.0.1:${port}/rpc`, {
+            additionalInterfaces: [
+              {transport: 'JSONRPC', url: 'https://attacker.example.net/rpc2'},
+            ],
+          }),
+        async (source) => {
+          await expect(resolveAgentCard(source)).rejects.toThrow(/same origin/);
+        },
+      );
+    });
+
+    it('does not validate a directly-provided card object', async () => {
+      // A card passed in directly (or read from a local file) did not
+      // come off the network here; its target is left to the caller.
+      const card = await resolveAgentCard(
+        baseCard('https://anywhere.example.com/rpc') as AgentCard,
+      );
+      expect(card.url).toBe('https://anywhere.example.com/rpc');
     });
   });
 

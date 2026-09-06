@@ -36,7 +36,9 @@ export async function resolveAgentCard(
   const source = agentCard as string;
   if (source.startsWith('http://') || source.startsWith('https://')) {
     const resolver = new DefaultAgentCardResolver();
-    return await resolver.resolve(source);
+    const card = await resolver.resolve(source);
+    validateCardRpcTargets(card, source);
+    return card;
   }
 
   try {
@@ -47,6 +49,89 @@ export async function resolveAgentCard(
       `Failed to read agent card from file ${source}: ${(err as Error).message}`,
     );
   }
+}
+
+/**
+ * Constrains where a card fetched over the network may aim RPC traffic.
+ *
+ * A card served from a trusted, configured source URL is not itself
+ * trusted content: the response is JSON from whatever answered that
+ * request, which could be a compromised or misconfigured server, a MITM
+ * on the fetch, or a domain that has since changed hands. Without this
+ * check, that response's declared RPC url(s) are followed with no
+ * verification at all -- every subsequent A2A request for this agent,
+ * including whatever credential material the request-forwarding path
+ * carries, would go to wherever the card says, not wherever it was
+ * actually fetched from.
+ *
+ * Every URL the card offers is checked (the primary `url` and each of
+ * `additionalInterfaces`), not only whichever one a given transport
+ * negotiation would select, since any of them could end up being used.
+ * Each must be https, or http on a loopback host (the shape adk-js's own
+ * local-development tooling emits, and a host an attacker who does not
+ * already control this machine cannot redirect a fetch to), and must
+ * share the origin the card was fetched from.
+ *
+ * Only applies when the card was fetched over http(s); a card provided
+ * directly as an object, or read from a local file, did not come off the
+ * network here, and its target is left to the caller.
+ */
+function validateCardRpcTargets(card: AgentCard, source: string): void {
+  let sourceOrigin: string;
+  try {
+    sourceOrigin = urlOrigin(source);
+  } catch (err: unknown) {
+    throw new Error(
+      `Invalid agent card source URL: ${source}: ${(err as Error).message}`,
+    );
+  }
+
+  const rpcUrls: string[] = [
+    card.url,
+    ...(card.additionalInterfaces ?? []).map((i: AgentInterface) => i.url),
+  ];
+
+  for (const rpcUrl of rpcUrls) {
+    let parsed: URL;
+    try {
+      parsed = new URL(rpcUrl);
+    } catch (err: unknown) {
+      throw new Error(
+        `Invalid RPC URL in agent card: ${rpcUrl}: ${(err as Error).message}`,
+      );
+    }
+
+    if (parsed.protocol !== 'https:' && !isLoopbackHost(parsed.hostname)) {
+      throw new Error(
+        `Agent card RPC URL must use https, or http on a loopback host: ${rpcUrl}`,
+      );
+    }
+
+    const rpcOrigin = urlOrigin(rpcUrl);
+    if (rpcOrigin !== sourceOrigin) {
+      throw new Error(
+        'Agent card RPC URL must have the same origin as the location the ' +
+          `card was fetched from (${source}): ${rpcUrl}`,
+      );
+    }
+  }
+}
+
+/** Returns `scheme://host:port` (the origin) for a well-formed absolute URL. */
+function urlOrigin(url: string): string {
+  const parsed = new URL(url);
+  return parsed.origin;
+}
+
+/** Whether `hostname` names this machine itself (loopback), not a remote host. */
+function isLoopbackHost(hostname: string): boolean {
+  const bare = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return (
+    bare === 'localhost' ||
+    bare === '127.0.0.1' ||
+    bare === '::1' ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare)
+  );
 }
 
 /**
