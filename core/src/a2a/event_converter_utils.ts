@@ -125,7 +125,12 @@ function messageToAdkEvent(
   return {
     ...createAdkEventFromMetadata(msg),
     invocationId,
-    author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
+    // The role on a peer's message is the peer's own claim and must not decide
+    // authorship: letting `user` through here lets a remote agent post events
+    // that read as the local user's, which is a trust anchor elsewhere (tool
+    // confirmations are approved only from user-authored events). Attribute the
+    // event to the peer, the same way the task and status converters below do.
+    author: agentName,
     branch,
     content,
     turnComplete: true,
