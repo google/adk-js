@@ -6,7 +6,7 @@
 
 import {GenerateContentConfig, Tool} from '@google/genai';
 import {ReadonlyContext} from '../agents/readonly_context.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 import {
   isGemini1Model,
   isGeminiModel,
@@ -14,8 +14,6 @@ import {
 } from '../utils/model_name.js';
 import {ToolProcessLlmRequest} from './base_tool.js';
 import {BuiltInTool} from './built_in_tool.js';
-
-const logger = getLogger();
 
 export interface VertexAISearchDataStoreSpec {
   dataStore?: string;
