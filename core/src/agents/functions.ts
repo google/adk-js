@@ -761,8 +761,29 @@ export function findEventByFunctionCallId(
 }
 
 /**
- * Finds the function call event that matches the function response ID of the last event.
- * Mirrors Python ADK's `find_matching_function_call`.
+ * Returns the event containing the function call that the last event's
+ * function response(s) answer, by matching functionCall.id to
+ * functionResponse.id.
+ *
+ * Every function response in the last event is checked, not just the
+ * first one. A single event can carry responses answering calls from
+ * different agents at once -- for example two long-running operations
+ * from sibling sub-agents completing together and being resumed in one
+ * message. Resolving from only `functionResponses[0]` would silently
+ * attribute the rest to whichever agent's call happened to come first,
+ * which is the wrong agent for any response that isn't the first one:
+ * that response would then be processed under a resumed agent's context
+ * it was never meant for, and the agent it actually answers would never
+ * be correctly resumed at all.
+ *
+ * When the responses present resolve to calls from more than one
+ * distinct author, this throws rather than picking one: the caller
+ * (determineAgentForResumption) can only resume a single agent, so an
+ * event answering calls from two different agents at once has no single
+ * correct answer to fail open with.
+ *
+ * @throws {Error} If the function responses in the last event resolve to
+ *   function calls authored by more than one distinct agent.
  */
 export function findMatchingFunctionCall(events: Event[]): Event | undefined {
   if (!events.length) {
@@ -770,12 +791,31 @@ export function findMatchingFunctionCall(events: Event[]): Event | undefined {
   }
   const lastEvent = events[events.length - 1];
   const functionResponses = getFunctionResponses(lastEvent);
-  if (!functionResponses.length || !functionResponses[0].id) {
+  if (!functionResponses.length) {
     return undefined;
   }
-  return findEventByFunctionCallId(
-    events,
-    functionResponses[0].id,
-    events.length - 1,
-  );
+
+  let resolved: Event | undefined;
+  for (const functionResponse of functionResponses) {
+    if (!functionResponse.id) {
+      continue;
+    }
+    const match = findEventByFunctionCallId(
+      events,
+      functionResponse.id,
+      events.length - 1,
+    );
+    if (!match) {
+      continue;
+    }
+    if (resolved && resolved.author !== match.author) {
+      throw new Error(
+        'Function responses in the last event resolve to function calls ' +
+          `from more than one agent (at least "${resolved.author}" and ` +
+          `"${match.author}"); cannot determine a single agent to resume.`,
+      );
+    }
+    resolved = match;
+  }
+  return resolved;
 }
