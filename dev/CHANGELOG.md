@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0](https://github.com/google/adk-js/compare/devtools-v2.0.0...devtools-v2.1.0) (2026-09-06)
+
+
+### Bug Fixes
+
+* **build:** stop compiling the dev CLI entrypoint into dist/cjs ([#861](https://github.com/google/adk-js/issues/861)) ([da9a492](https://github.com/google/adk-js/commit/da9a4923b5ed44a2123541e3d7864920cc23ffa6))
+* **dev:** let --bundle false actually load an agent ([#791](https://github.com/google/adk-js/issues/791)) ([91357fd](https://github.com/google/adk-js/commit/91357fdf9a1f93adf089db91f407a840a27f27f6)), closes [#714](https://github.com/google/adk-js/issues/714)
+* guard reads in the dev server against DNS rebinding ([#744](https://github.com/google/adk-js/issues/744)) ([0fe9581](https://github.com/google/adk-js/commit/0fe958137e9c4b5211651f62609ca95933809eb5))
+* remove the no-op [@ts-ignore](https://github.com/ts-ignore) on the esbuild-shim-plugin import ([#805](https://github.com/google/adk-js/issues/805)) ([9566743](https://github.com/google/adk-js/commit/9566743ffaa5fcc29b5a97d2a823837fa8319627))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.0.0 to ^2.1.0
+
 ## [2.0.0](https://github.com/google/adk-js/compare/devtools-v1.6.0...devtools-v2.0.0) (2026-08-20)
 
 
