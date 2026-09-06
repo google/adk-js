@@ -88,8 +88,7 @@ export class AgentTool extends BaseTool {
         name: this.name,
         description: this.description,
         // TODO(b/425992518): We should not use the agent's input schema as is.
-        // It should be validated and possibly transformed. Consider similar
-        // logic to one we have in Python ADK.
+        // It should be validated and possibly transformed first.
         parameters: this.agent.inputSchema,
       };
     } else {
@@ -135,8 +134,8 @@ export class AgentTool extends BaseTool {
       role: 'user',
       parts: [
         {
-          // TODO(b/425992518): Should be validated. Consider similar
-          // logic to one we have in Python ADK.
+          // TODO(b/425992518): Args should be validated against the agent's
+          // input schema before being forwarded.
           text: hasInputSchema
             ? JSON.stringify(args)
             : (args['request'] as string),
@@ -206,7 +205,7 @@ export class AgentTool extends BaseTool {
       .join('\n');
 
     // TODO - b/425992518: In case of output schema, the output should be
-    // validated. Consider similar logic to one we have in Python ADK.
+    // validated against that schema before being returned.
     return hasOutputSchema ? JSON.parse(mergedText) : mergedText;
   }
 }

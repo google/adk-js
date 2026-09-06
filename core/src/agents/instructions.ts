@@ -279,7 +279,7 @@ const VALID_PREFIXES = [State.APP_PREFIX, State.USER_PREFIX, State.TEMP_PREFIX];
  *   - <prefix>:<identifier>
  *
  * @param variableName The variable name to check.
- * @returns True if the variable name is valid, False otherwise.
+ * @returns True if the variable name is valid, false otherwise.
  */
 function isValidStateName(variableName: string): boolean {
   const parts = variableName.split(':');

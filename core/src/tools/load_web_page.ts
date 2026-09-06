@@ -25,8 +25,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * IPv4 ranges that are not globally routable and therefore blocked to defeat
- * SSRF. Mirrors the non-global ranges rejected by Python's
- * `ipaddress.is_global`.
+ * SSRF. "Not globally routable" is used in the sense of RFC 6890 and the IANA
+ * special-purpose address registry it establishes; consult those before adding
+ * to or removing from this list.
  */
 const BLOCKED_IPV4_CIDRS = [
   '0.0.0.0/8', // "this host on this network"
@@ -62,14 +63,17 @@ const BLOCKED_IPV6_CIDRS = [
   'ff00::/8', // multicast
 ].map(parseIpv6Cidr);
 
-/** Builds the parity failure message for a URL. */
+/**
+ * Builds the single failure message returned for every unsuccessful fetch, so
+ * the caller cannot tell which check rejected the URL.
+ */
 function failedToFetchMessage(url: string): string {
   return `Failed to fetch url: ${url}`;
 }
 
 /**
  * Returns `true` for `localhost` and any `*.localhost` name (case-insensitive,
- * ignoring a trailing dot), matching the Python `_is_blocked_hostname` helper.
+ * ignoring a trailing dot).
  */
 function isBlockedHostname(hostname: string): boolean {
   const normalized = hostname.replace(/\.+$/, '').toLowerCase();
@@ -252,7 +256,7 @@ function decodeHtmlEntities(text: string): string {
 /**
  * Extracts readable text from an HTML document. Removes `<script>`/`<style>`
  * blocks and comments, strips remaining tags, decodes common entities, and
- * keeps only lines with more than three words (parity with the Python tool).
+ * keeps only lines with more than three words.
  */
 function htmlToText(html: string): string {
   const withoutCode = html

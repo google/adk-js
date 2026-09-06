@@ -65,38 +65,40 @@ export enum ContextCompactionTrigger {
  * Example:
  * A simple plugin that logs every tool call.
  * ```typescript
+ * import {BasePlugin, BaseTool, Context, getLogger} from '@google/adk';
+ *
+ * const logger = getLogger();
+ *
  * class ToolLoggerPlugin extends BasePlugin {
  *   constructor() {
  *     super('tool_logger');
  *   }
  *
  *   override async beforeToolCallback(
- *     {tool, toolArgs, toolContext}: {
+ *     {tool, toolArgs}: {
  *       tool: BaseTool,
  *       toolArgs: Record<string, unknown>,
  *       toolContext: Context,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
- *     this.logger.info(
- *       `[${this.name}] Calling tool '${tool.name}' with args:
- * ${JSON.stringify( toolArgs,
- *       )}`,
+ *     logger.info(
+ *       `[${this.name}] calling tool '${tool.name}' with args: ` +
+ *         JSON.stringify(toolArgs),
  *     );
  *     return;
  *   }
  *
  *   override async afterToolCallback(
- *     {tool, toolArgs, toolContext, result}: {
+ *     {tool, result}: {
  *       tool: BaseTool,
  *       toolArgs: Record<string, unknown>,
  *       toolContext: Context,
  *       result: Record<string, unknown>,
  *     },
  *   ): Promise<Record<string, unknown> | undefined> {
- *     this.logger.info(
- *       `[${this.name}] Tool '${tool.name}' finished with result:
- * ${JSON.stringify( result,
- *       )}`,
+ *     logger.info(
+ *       `[${this.name}] tool '${tool.name}' finished with result: ` +
+ *         JSON.stringify(result),
  *     );
  *     return;
  *   }

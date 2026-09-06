@@ -190,7 +190,7 @@ export type SingleBeforeModelCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeModelCallback =
   | SingleBeforeModelCallback
@@ -214,7 +214,7 @@ export type SingleAfterModelCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type AfterModelCallback =
   | SingleAfterModelCallback
@@ -242,7 +242,7 @@ export type SingleBeforeToolCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeToolCallback =
   | SingleBeforeToolCallback
@@ -271,7 +271,7 @@ export type SingleAfterToolCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until acallback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type AfterToolCallback =
   | SingleAfterToolCallback
@@ -315,8 +315,10 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /**
    * The additional content generation configurations.
    *
-   * NOTE: not all fields are usable, e.g. tools must be configured via
-   * `tools`, thinking_config must be configured via `planner` in LlmAgent.
+   * Three fields are rejected by the constructor, because the agent owns them:
+   * `tools` (set them through `tools`), `systemInstruction` (through
+   * `instruction`) and `responseSchema` (through `outputSchema`). Every other
+   * field is forwarded to the model as given — `thinkingConfig` included.
    *
    * For example: use this config to adjust model temperature, configure safety
    * settings, etc.
@@ -326,7 +328,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /**
    * Disallows LLM-controlled transferring to the parent agent.
    *
-   * NOTE: Setting this as True also prevents this agent to continue reply to
+   * NOTE: Setting this to `true` also prevents this agent to continue reply to
    * the end-user. This behavior prevents one-way transfer, in which end-user
    * may be stuck with one agent that cannot transfer to other agents in the
    * agent tree.
@@ -2025,7 +2027,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   // #END LlmFlow Logic
   // --------------------------------------------------------------------------
 
-  // TODO - b/425992518: omitted Py LlmAgent features.
-  // - code_executor
-  // - configurable agents by yaml config
+  // TODO - b/425992518: LlmAgent features not implemented yet.
+  // - codeExecutor
+  // - configuring agents from a YAML file
 }

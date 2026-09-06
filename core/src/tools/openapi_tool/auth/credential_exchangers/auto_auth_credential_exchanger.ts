@@ -19,7 +19,6 @@ import {ServiceAccountCredentialExchanger} from './service_account_exchanger.js'
 
 /**
  * Automatically selects the appropriate credential exchanger based on the auth scheme.
- * Ported from Python implementation.
  */
 @experimental
 export class AutoAuthCredentialExchanger implements BaseCredentialExchanger {

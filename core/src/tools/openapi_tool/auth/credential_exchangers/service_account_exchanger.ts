@@ -22,7 +22,6 @@ const DEFAULT_SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
 
 /**
  * Fetches credentials for Google Service Account.
- * Ported from Python implementation.
  */
 @experimental
 export class ServiceAccountCredentialExchanger implements BaseCredentialExchanger {

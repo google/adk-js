@@ -19,12 +19,17 @@ import {logger} from '../utils/logger.js';
  * The streaming mode for the run config.
  */
 export enum StreamingMode {
+  /** Deliver the response as a single event once the turn completes. */
   NONE = 'none',
+  /**
+   * Deliver the response incrementally, as a series of partial events
+   * followed by a final event carrying the complete text.
+   */
   SSE = 'sse',
   /**
-   * Bidirectional streaming. Not yet supported; passing this value to
-   * `createRunConfig` throws. Use {@link StreamingMode.SSE} for token
-   * streaming.
+   * Reserved for bidirectional streaming, which is not implemented. Passing
+   * this value to `createRunConfig` throws. Use {@link StreamingMode.SSE} for
+   * incremental responses.
    */
   BIDI = 'bidi',
 }
@@ -59,9 +64,11 @@ export interface RunConfig {
   supportCfc?: boolean;
 
   /**
-   * Streaming mode. Supported values are {@link StreamingMode.NONE} and
-   * {@link StreamingMode.SSE}. {@link StreamingMode.BIDI} is not yet
-   * supported and is rejected by `createRunConfig`.
+   * How the response is delivered. Defaults to {@link StreamingMode.NONE},
+   * which emits one event when the turn completes; set
+   * {@link StreamingMode.SSE} to receive partial events as the response is
+   * produced. {@link StreamingMode.BIDI} is not implemented and is rejected by
+   * `createRunConfig`.
    */
   streamingMode?: StreamingMode;
 
@@ -102,8 +109,9 @@ export interface RunConfig {
    * A limit on the total number of llm calls for a given run.
    *
    * Valid Values:
-   *   - More than 0 and less than sys.maxsize: The bound on the number of llm
-   *     calls is enforced, if the value is set in this range.
+   *   - More than 0 and at most `Number.MAX_SAFE_INTEGER`: The bound on the
+   *     number of llm calls is enforced. `createRunConfig()` throws for
+   *     anything larger.
    *   - Less than or equal to 0: This allows for unbounded number of llm calls.
    */
   maxLlmCalls?: number;

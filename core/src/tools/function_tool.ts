@@ -57,11 +57,31 @@ export type RequireConfirmation<TParameters extends ToolInputParameters> =
 
 /**
  * The configuration options for creating a function-based tool.
- * The `name`, `description` and `parameters` fields are used to generate the
- * tool definition that is passed to the LLM prompt.
  *
- * Note: Unlike Python's ADK, JSDoc on the `execute` function is ignored
- * for tool definition generation.
+ * What the model is shown about the tool is built from these options: `name`,
+ * `description` and the `parameters` schema become its function declaration.
+ * TypeScript types and JSDoc are erased at runtime and cannot be read back, so
+ * `description` is required and per-argument descriptions have to live in the
+ * schema — typically as Zod `.describe()` calls.
+ *
+ * ```ts
+ * new FunctionTool({
+ *   name: 'get_weather',
+ *   description: 'Returns the current weather for a city.',
+ *   parameters: z.object({
+ *     city: z.string().describe('City name, e.g. "San Francisco".'),
+ *   }),
+ *   execute: async ({city}) => fetchWeather(city),
+ * });
+ * ```
+ *
+ * A subclass may add to the declaration it derives from these options: given
+ * the identical options, {@link LongRunningFunctionTool} appends a sentence to
+ * `description` telling the model not to re-invoke a call that is still in
+ * flight.
+ *
+ * `parameters` is a description for the model, and only a Zod object schema is
+ * additionally enforced at call time — see {@link FunctionTool.runAsync}.
  */
 export type ToolOptions<TParameters extends ToolInputParameters> = {
   name?: string;
@@ -126,10 +146,20 @@ export function isFunctionTool(obj: unknown): obj is FunctionTool {
 /**
  * A tool that wraps a user-defined function, making it callable by an LLM.
  *
- * The function's name, description, and parameter schema are exposed to the
+ * The tool's name, description, and parameter schema are exposed to the
  * model as a function declaration. When the model requests a call, the
- * framework validates the arguments and invokes the user-provided `execute`
- * callback.
+ * framework invokes the user-provided `execute` callback with the arguments
+ * the model produced.
+ *
+ * Those arguments are checked only when `parameters` is a Zod object schema:
+ * it is applied with `parse()`, so a call that does not match is rejected and
+ * `execute` receives the parsed value. Keys the schema does not declare are
+ * handled however that schema says: a plain `z.object()` drops them,
+ * `.passthrough()` forwards them, `.strict()` rejects the call. A plain
+ * genai `Schema`, or no `parameters` at all, is shown to the model but is not
+ * a runtime guard — the arguments reach `execute` exactly as the model
+ * produced them, wrong types and extra keys included. Validate them inside
+ * `execute` on that path.
  */
 export class FunctionTool<
   TParameters extends ToolInputParameters = undefined,
@@ -178,11 +208,14 @@ export class FunctionTool<
   }
 
   /**
-   * Validates the model-provided arguments against the parameter schema and
-   * invokes the user-defined `execute` function.
+   * Invokes the user-defined `execute` function with the model-provided
+   * arguments, after parsing them when `parameters` is a Zod object schema.
+   * Any other `parameters` value is passed through unchecked.
    *
    * @param req The tool request containing arguments and tool context.
    * @returns A promise resolving to the function's return value.
+   * @throws {Error} Wrapped as `Error in tool '<name>': …` when a Zod
+   *     `parameters` schema rejects the arguments or `execute` throws.
    */
   override async runAsync(req: RunAsyncToolRequest): Promise<unknown> {
     try {
