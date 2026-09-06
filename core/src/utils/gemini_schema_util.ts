@@ -5,15 +5,12 @@
  */
 
 import {Schema, Type} from '@google/genai';
-import {z} from 'zod';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const MCPToolSchemaObject = z.object({
-  type: z.literal('object'),
-  properties: z.record(z.string(), z.unknown()).optional(),
-  required: z.string().array().optional(),
-});
-type MCPToolSchema = z.infer<typeof MCPToolSchemaObject>;
+type MCPToolSchema = {
+  type: 'object';
+  properties?: Record<string, unknown>;
+  required?: string[];
+};
 type MCPTypeArrayItem = string | {type: string};
 
 function toGeminiType(mcpType: string | undefined): Type {
