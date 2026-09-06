@@ -63,7 +63,7 @@ export class Context extends ReadonlyContext {
     super(options.invocationContext);
     this.eventActions = options.eventActions || createEventActions();
     this._state = new State(
-      options.invocationContext.session.state,
+      options.invocationContext.session?.state,
       this.eventActions.stateDelta,
     );
     this.functionCallId = options.functionCallId;

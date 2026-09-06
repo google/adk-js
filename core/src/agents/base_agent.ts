@@ -448,32 +448,57 @@ export abstract class BaseAgent<
   protected async handleBeforeAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.beforeAgentCallback.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (this.beforeAgentCallback.length === 0 && !hasPlugins) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.beforeAgentCallback) {
-      const content = await callback(callbackContext);
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
-      }
-
-      if (content) {
-        invocationContext.endInvocation = true;
-
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
+    let beforeAgentCallbackContent: Content | undefined;
+    if (hasPlugins) {
+      beforeAgentCallbackContent =
+        await invocationContext.pluginManager.runBeforeAgentCallback({
+          agent: this,
+          callbackContext,
         });
+    }
+
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
+    if (!beforeAgentCallbackContent && this.beforeAgentCallback.length > 0) {
+      for (const callback of this.beforeAgentCallback) {
+        beforeAgentCallbackContent = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return undefined;
+        }
+
+        if (beforeAgentCallbackContent) {
+          break;
+        }
       }
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (beforeAgentCallbackContent) {
+      invocationContext.endInvocation = true;
+
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content: beforeAgentCallbackContent,
+        actions: callbackContext.eventActions,
+      });
+    }
+
+    if (
+      callbackContext.state.hasDelta() ||
+      (callbackContext.eventActions.artifactDelta &&
+        Object.keys(callbackContext.eventActions.artifactDelta).length > 0)
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
@@ -495,30 +520,55 @@ export abstract class BaseAgent<
   protected async handleAfterAgentCallback(
     invocationContext: InvocationContext,
   ): Promise<Event | undefined> {
-    if (this.afterAgentCallback.length === 0) {
+    const hasPlugins = Boolean(invocationContext.pluginManager?.hasPlugins);
+    if (this.afterAgentCallback.length === 0 && !hasPlugins) {
       return undefined;
     }
 
     const callbackContext = new Context({invocationContext});
-    for (const callback of this.afterAgentCallback) {
-      const content = await callback(callbackContext);
 
-      if (invocationContext.abortSignal?.aborted) {
-        return;
-      }
-
-      if (content) {
-        return createEvent({
-          invocationId: invocationContext.invocationId,
-          author: this.name,
-          branch: invocationContext.branch,
-          content,
-          actions: callbackContext.eventActions,
+    let afterAgentCallbackContent: Content | undefined;
+    if (hasPlugins) {
+      afterAgentCallbackContent =
+        await invocationContext.pluginManager.runAfterAgentCallback({
+          agent: this,
+          callbackContext,
         });
+    }
+
+    if (invocationContext.abortSignal?.aborted) {
+      return undefined;
+    }
+
+    if (!afterAgentCallbackContent && this.afterAgentCallback.length > 0) {
+      for (const callback of this.afterAgentCallback) {
+        afterAgentCallbackContent = await callback(callbackContext);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return undefined;
+        }
+
+        if (afterAgentCallbackContent) {
+          break;
+        }
       }
     }
 
-    if (callbackContext.state.hasDelta()) {
+    if (afterAgentCallbackContent) {
+      return createEvent({
+        invocationId: invocationContext.invocationId,
+        author: this.name,
+        branch: invocationContext.branch,
+        content: afterAgentCallbackContent,
+        actions: callbackContext.eventActions,
+      });
+    }
+
+    if (
+      callbackContext.state.hasDelta() ||
+      (callbackContext.eventActions.artifactDelta &&
+        Object.keys(callbackContext.eventActions.artifactDelta).length > 0)
+    ) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
