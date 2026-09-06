@@ -11,6 +11,76 @@ import {AuthCredential} from './auth_credential.js';
 import {AuthConfig} from './auth_tool.js';
 import {OAuth2CredentialExchanger} from './oauth2/oauth2_credential_exchanger.js';
 
+// The auth request is sent to the client and stored in the session, so the
+// agent's own secrets must not travel in it. They are re-supplied from the
+// tool config when the credential is exchanged.
+export function credentialWithoutSecrets(
+  credential: AuthCredential | undefined,
+): AuthCredential | undefined {
+  if (!credential) {
+    return credential;
+  }
+  const redacted = structuredClone(credential);
+  if (redacted.oauth2) {
+    redacted.oauth2.clientSecret = undefined;
+  }
+  if (redacted.apiKey !== undefined) {
+    redacted.apiKey = undefined;
+  }
+  if (redacted.http?.credentials) {
+    redacted.http.credentials.password = undefined;
+  }
+  if (redacted.serviceAccount?.serviceAccountCredential) {
+    redacted.serviceAccount.serviceAccountCredential.privateKey = '';
+  }
+  return redacted;
+}
+
+/**
+ * Restores the configured OAuth2 client identity onto a credential.
+ *
+ * The credential comes back from the client, which must not get to choose
+ * which OAuth2 client the token is exchanged for, or where the secret that
+ * exchange posts is sent. `configured` is the credential the agent holds, and
+ * it wins on both fields. Only fills them in when the caller actually has a
+ * configured client, so the redacted config read back off the request event
+ * leaves the credential as it found it.
+ */
+export function withConfiguredClient(
+  credential: AuthCredential | undefined,
+  configured: AuthCredential | undefined,
+): AuthCredential | undefined {
+  if (!credential?.oauth2 || !configured?.oauth2) {
+    return credential;
+  }
+  const restored = structuredClone(credential);
+  restored.oauth2 = {
+    ...restored.oauth2,
+    clientId: configured.oauth2.clientId ?? restored.oauth2!.clientId,
+    clientSecret:
+      configured.oauth2.clientSecret ?? restored.oauth2!.clientSecret,
+  };
+  return restored;
+}
+
+/** Whether credential still needs, and is able to do, a token exchange. */
+function isExchangeable(credential: AuthCredential): boolean {
+  const oauth2 = credential.oauth2;
+  return Boolean(
+    oauth2 && !oauth2.accessToken && oauth2.clientId && oauth2.clientSecret,
+  );
+}
+
+function authConfigWithoutSecrets(config: AuthConfig): AuthConfig {
+  return {
+    ...config,
+    rawAuthCredential: credentialWithoutSecrets(config.rawAuthCredential),
+    exchangedAuthCredential: credentialWithoutSecrets(
+      config.exchangedAuthCredential,
+    ),
+  };
+}
+
 /**
  * A handler that handles the auth flow in Agent Development Kit to help
  * orchestrates the credential request and response flow (e.g. OAuth flow)
@@ -45,17 +115,44 @@ export class AuthHandler {
       return;
     }
 
-    if (this.authConfig.exchangedAuthCredential) {
-      const exchanger = new OAuth2CredentialExchanger();
-      const exchangedCredential = await exchanger.exchange({
-        authCredential: this.authConfig.exchangedAuthCredential,
-        authScheme: this.authConfig.authScheme,
-      });
-      state.set(credentialKey, exchangedCredential.credential);
+    const credential = withConfiguredClient(
+      this.authConfig.exchangedAuthCredential,
+      this.authConfig.rawAuthCredential,
+    );
+    if (!credential) {
+      return;
     }
+
+    // Without a client secret there is nothing to authenticate the token
+    // request with, so the exchange would fail rather than merely be
+    // unauthenticated. That is the normal case here: the request event is
+    // redacted, so the config read back off it carries no secret. Store the
+    // authorization code and let the tool, which still holds the configured
+    // credential, complete the exchange.
+    if (!isExchangeable(credential)) {
+      state.set(credentialKey, credential);
+
+      return;
+    }
+
+    const exchanger = new OAuth2CredentialExchanger();
+    const exchangedCredential = await exchanger.exchange({
+      authCredential: credential,
+      authScheme: this.authConfig.authScheme,
+    });
+    // The result goes into session state, which the client can read, so it
+    // keeps no secret either.
+    state.set(
+      credentialKey,
+      credentialWithoutSecrets(exchangedCredential.credential),
+    );
   }
 
   generateAuthRequest(): AuthConfig {
+    return authConfigWithoutSecrets(this.buildAuthRequest());
+  }
+
+  private buildAuthRequest(): AuthConfig {
     const authSchemeType = this.authConfig.authScheme.type;
 
     if (!['oauth2', 'openIdConnect'].includes(authSchemeType)) {
