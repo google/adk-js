@@ -42,6 +42,7 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
 import type {RunnableNode} from '../workflow/graph.js';
 import {
   asRunnableRoot,
@@ -844,7 +845,7 @@ export function determineAgentForResumption(
   // =========================================================================
   // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
   for (let i = session.events.length - 1; i >= 0; i--) {
-    logger.debug('event:', JSON.stringify(session.events[i]));
+    logger.debug('event:', stringifyWithRedactedInlineData(session.events[i]));
     const event = session.events[i];
     if (event.author === 'user' || !event.author) {
       continue;
