@@ -48,6 +48,11 @@ export interface OAuth2Auth {
   state?: string;
   codeVerifier?: string;
   /**
+   * The PKCE code challenge method. Only 'S256' is supported; any other value
+   * is rejected when the authorization URI is generated.
+   */
+  codeChallengeMethod?: string;
+  /**
    * tool or adk can decide the redirect_uri if they don't want client to decide
    */
   redirectUri?: string;

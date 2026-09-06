@@ -10,6 +10,13 @@ import {randomUUID} from '../utils/env_aware_utils.js';
 import {AuthCredential} from './auth_credential.js';
 import {AuthConfig} from './auth_tool.js';
 import {OAuth2CredentialExchanger} from './oauth2/oauth2_credential_exchanger.js';
+import {
+  createS256CodeChallenge,
+  generateCodeVerifier,
+} from './oauth2/oauth2_utils.js';
+
+/** The only PKCE code challenge method this handler supports. */
+const S256_CODE_CHALLENGE_METHOD = 'S256';
 
 /**
  * A handler that handles the auth flow in Agent Development Kit to help
@@ -105,9 +112,14 @@ export class AuthHandler {
   /**
    * Generates an response containing the auth uri for user to sign in.
    *
+   * When the credential requests PKCE, the URI also carries the S256 code
+   * challenge derived from the credential's code verifier, and the returned
+   * credential carries the verifier the later token exchange must send.
+   *
    * @return An AuthCredential object containing the auth URI and state.
    * @throws Error: If the authorization endpoint is not configured in the
-   *     auth scheme.
+   *     auth scheme, or the credential requests a code challenge method other
+   *     than 'S256'.
    */
   generateAuthUri(): AuthCredential | undefined {
     const authScheme = this.authConfig.authScheme;
@@ -115,6 +127,17 @@ export class AuthHandler {
 
     if (!authCredential || !authCredential.oauth2) {
       return authCredential;
+    }
+
+    const oauth2 = authCredential.oauth2;
+    const codeChallengeMethod = oauth2.codeChallengeMethod;
+    if (
+      codeChallengeMethod &&
+      codeChallengeMethod !== S256_CODE_CHALLENGE_METHOD
+    ) {
+      throw new Error(
+        `Unsupported codeChallengeMethod: ${codeChallengeMethod}. Only '${S256_CODE_CHALLENGE_METHOD}' is supported.`,
+      );
     }
 
     let authorizationEndpoint = '';
@@ -150,23 +173,40 @@ export class AuthHandler {
 
     const state = randomUUID();
     const url = new URL(authorizationEndpoint);
-    url.searchParams.set('client_id', authCredential.oauth2.clientId || '');
-    url.searchParams.set(
-      'redirect_uri',
-      authCredential.oauth2.redirectUri || '',
-    );
+    url.searchParams.set('client_id', oauth2.clientId || '');
+    url.searchParams.set('redirect_uri', oauth2.redirectUri || '');
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', scopes.join(' '));
     url.searchParams.set('state', state);
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
 
+    if (oauth2.audience) {
+      url.searchParams.set('audience', oauth2.audience);
+    }
+    if (oauth2.nonce) {
+      url.searchParams.set('nonce', oauth2.nonce);
+    }
+
+    // A verifier without a requested method stays off the URI: the provider
+    // has no challenge to bind it to, so advertising one would be a lie.
+    let codeVerifier = oauth2.codeVerifier;
+    if (codeChallengeMethod) {
+      codeVerifier ??= generateCodeVerifier();
+      url.searchParams.set(
+        'code_challenge',
+        createS256CodeChallenge(codeVerifier),
+      );
+      url.searchParams.set('code_challenge_method', codeChallengeMethod);
+    }
+
     const exchangedAuthCredential: AuthCredential = {
       ...authCredential,
       oauth2: {
-        ...authCredential.oauth2,
+        ...oauth2,
         authUri: url.toString(),
         state,
+        codeVerifier,
       },
     };
 

@@ -4,12 +4,36 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {createHash, randomBytes} from 'node:crypto';
+
 import {logger} from '../../utils/logger.js';
 import {redactUriPassword} from '../../utils/redact_uri.js';
 import {OAuth2Auth} from '../auth_credential.js';
 
 import {AuthScheme, OpenIdConnectWithConfig} from '../auth_schemes.js';
 import {validateDiscoveryUrl} from './oauth2_discovery.js';
+
+/**
+ * Bytes of entropy behind a generated PKCE code verifier. 36 bytes is a whole
+ * number of base64 groups, so it encodes to exactly 48 unreserved characters,
+ * inside the 43-128 range RFC 7636 requires, with no modulo bias.
+ */
+const CODE_VERIFIER_BYTES = 36;
+
+/**
+ * Generates a cryptographically secure PKCE code verifier (RFC 7636).
+ */
+export function generateCodeVerifier(): string {
+  return randomBytes(CODE_VERIFIER_BYTES).toString('base64url');
+}
+
+/**
+ * Derives the S256 PKCE code challenge for a code verifier (RFC 7636): the
+ * unpadded base64url encoding of the verifier's SHA-256 digest.
+ */
+export function createS256CodeChallenge(codeVerifier: string): string {
+  return createHash('sha256').update(codeVerifier).digest('base64url');
+}
 
 /**
  * Returns the token endpoint for the given auth scheme.
