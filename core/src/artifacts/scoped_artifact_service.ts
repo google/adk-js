@@ -13,9 +13,25 @@ import {
 } from './session_artifact_service.js';
 
 /**
+ * A unique symbol to identify session-scoped artifact services.
+ *
+ * Resolves to the same symbol as the one used by `isSessionArtifactService` in
+ * `session_artifact_service.ts` because `Symbol.for` looks up the global
+ * symbol registry.
+ */
+const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.sessionArtifactService',
+);
+
+/**
  * A wrapper that scopes a BaseArtifactService to a specific session.
  */
 export class ScopedArtifactService implements SessionArtifactService {
+  /**
+   * Brands this class as a session-scoped artifact service.
+   */
+  readonly [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL] = true;
+
   constructor(
     private readonly delegate: BaseArtifactService,
     private readonly appName: string,
