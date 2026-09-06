@@ -1,0 +1,23 @@
+# The adk-python checkout and its virtualenv are provisioned by setup.sh.
+adk-python/
+.venv/
+
+# Per-run output: replay files, saved sessions, stdout logs, diffs, and the
+# rendered report. The report is a snapshot of one run against one pair of
+# versions — committing it means every run shows up as a diff, and a stale one
+# is worse than none. Generate your own with `npm run test:parity`.
+runs/
+PARITY_REPORT.md
+
+__pycache__/
+*.pyc
+
+# adk-python's CLI defaults to local storage and writes a SQLite session db
+# and saved artifacts into a `.adk/` directory beside the agent it runs. The
+# TS CLI keeps both in memory. Run droppings either way.
+.adk/
+
+# Both CLIs write `<session_id>.session.json` next to the agent on
+# --save_session; the harness moves them into runs/, but a killed run can
+# leave one behind.
+*.session.json

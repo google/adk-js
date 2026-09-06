@@ -32,5 +32,15 @@
   // to resolve `@google/adk` through `node_modules` the way a user's project
   // does. It is type-checked by `npm run ts:check:samples`, against
   // `samples/tsconfig.json`, which resets `paths` for exactly that reason.
-  "exclude": ["node_modules", "**/dist", "samples"]
+  //
+  // `tests/cross_language/python_parity` is excluded for a similar reason: it
+  // imports with explicit `.ts` extensions so the harness can run under Node's
+  // type stripping, and it vendors an adk-python checkout. It is type-checked
+  // by `npm run ts:check:parity`.
+  "exclude": [
+    "node_modules",
+    "**/dist",
+    "samples",
+    "tests/cross_language/python_parity"
+  ]
 }

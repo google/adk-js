@@ -1,6 +1,6 @@
 {
   "name": "adk",
-  "version": "2.0.0",
+  "version": "1.6.0",
   "description": "Google ADK JS",
   "author": "Google",
   "license": "Apache-2.0",
@@ -17,6 +17,7 @@
     "rebuild": "npm run clean:all && npm install && npm run build",
     "ts:check": "tsc --noEmit",
     "ts:check:samples": "tsc --noEmit -p samples",
+    "ts:check:parity": "tsc --noEmit -p tests/cross_language/python_parity",
     "lint": "eslint \"**/*.ts\"",
     "lint:fix": "eslint --fix \"**/*.ts\"",
     "format": "prettier \"**/*.ts\" --write",
@@ -32,6 +33,7 @@
     "record:samples": "RECORD_MODEL_RESPONSES=1 vitest run --project integration tests/integration/workflows/*/*_test.ts",
     "test:e2e": "vitest --project e2e",
     "test:cross-language": "vitest --project cross-language",
+    "test:parity": "node --experimental-strip-types tests/cross_language/python_parity/parity_cli.ts",
     "test:coverage": "vitest run --project unit:core --project unit:dev --project integration --project e2e --coverage",
     "prepare": "husky"
   },
