@@ -326,6 +326,14 @@ export {
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
 export type {ResumeInputs} from './tools/resume_inputs.js';
+export {BaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
+export {LlamaIndexRetrieval} from './tools/retrieval/llama_index_retrieval.js';
+export type {
+  LlamaIndexNode,
+  LlamaIndexNodeWithScore,
+  LlamaIndexRetrievalParams,
+  LlamaIndexRetriever,
+} from './tools/retrieval/llama_index_retrieval.js';
 export {
   IntentMismatchError,
   ToolConfirmation,
