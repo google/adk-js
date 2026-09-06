@@ -63,6 +63,97 @@ import {renderStructureGraphAsDot} from './structure_graph.js';
  */
 export const A2A_AUTH_TOKEN_ENV_VAR = 'ADK_A2A_AUTH_TOKEN';
 
+/**
+ * Environment variable that turns on caller identity enforcement using the
+ * built-in {@link iapUserIdResolver}, for operators who deploy behind
+ * Identity-Aware Proxy and do not construct the server themselves.
+ *
+ * Setting this asserts that Identity-Aware Proxy terminates authentication in
+ * front of this server. It does not establish that, and it cannot check it:
+ * the resolver reads a request header, which is trustworthy only because IAP
+ * overwrites it. On a deployment IAP does not front, setting this provides no
+ * protection at all -- a client simply sends the header itself -- while the
+ * server stops warning and starts answering `401` and `403`, so every signal
+ * an operator would read says "protected". Deployments that terminate identity
+ * some other way should pass their own {@link UserIdResolver} instead.
+ */
+export const ENFORCE_USER_IDENTITY_ENV_VAR = 'ADK_ENFORCE_USER_IDENTITY';
+
+/**
+ * Header Identity-Aware Proxy sets on requests it has already authenticated.
+ * The value is prefixed with the identity provider, for example
+ * `accounts.google.com:user@example.com`.
+ */
+export const IAP_AUTHENTICATED_USER_EMAIL_HEADER =
+  'x-goog-authenticated-user-email';
+
+/**
+ * Header carrying the signed assertion Identity-Aware Proxy attaches to every
+ * request it forwards. {@link iapUserIdResolver} checks only that it is
+ * present, never its signature.
+ */
+export const IAP_JWT_ASSERTION_HEADER = 'x-goog-iap-jwt-assertion';
+
+/**
+ * Derives the caller's identity from a request whose credentials the front
+ * door has already verified. Returning `undefined` means the request carries
+ * no identity, which the server answers with `401`.
+ *
+ * A resolver must only read material the deployment's front door guarantees,
+ * such as a header the proxy sets and strips from client input. Reading an
+ * unverified request field would reintroduce the spoofing this check exists
+ * to prevent.
+ */
+export type UserIdResolver = (req: Request) => string | undefined;
+
+/**
+ * Reads the caller's email from the Identity-Aware Proxy header. IAP verifies
+ * the caller before the request reaches the container and overwrites this
+ * header on every request, so a client cannot set it.
+ *
+ * This is only sound where IAP genuinely fronts the server. The two shape
+ * checks below narrow what an unfronted deployment gives away, but nothing
+ * here verifies a signature, so they do not make the resolver safe to use
+ * without IAP.
+ *
+ * Identity is compared exactly, letter case included, so a caller IAP reports
+ * as `Alice@example.com` may not act as `alice@example.com`. That is the
+ * fail-closed direction and deliberate: a resolver may return an opaque
+ * subject id where case is meaningful, so the comparison cannot assume email
+ * semantics.
+ */
+export function iapUserIdResolver(req: Request): string | undefined {
+  const header = req.get(IAP_AUTHENTICATED_USER_EMAIL_HEADER);
+  if (!header) {
+    return undefined;
+  }
+
+  // IAP sets exactly one value and overwrites whatever the client sent. Node
+  // joins duplicate headers with `, ` before this reads them, so more than one
+  // value means something in front appended instead of replacing, and there is
+  // no way to tell which value it vouched for. An address cannot contain a
+  // comma unquoted, so this rejects nothing IAP would have produced.
+  if (header.includes(',')) {
+    return undefined;
+  }
+
+  // IAP attaches a signed assertion to every request it forwards. Requiring it
+  // to be present costs nothing and catches a client that reached the server
+  // directly and set only the email header. It is not verification: a caller
+  // who knows to send this header too still gets past it, which is why the
+  // header is trustworthy only when IAP actually fronts the deployment.
+  if (!req.get(IAP_JWT_ASSERTION_HEADER)) {
+    return undefined;
+  }
+
+  // Strip the `accounts.google.com:` provider prefix. An email address cannot
+  // contain a colon, so the last one separates provider from identity.
+  const separator = header.lastIndexOf(':');
+  const identity = separator === -1 ? header : header.slice(separator + 1);
+
+  return identity.trim() || undefined;
+}
+
 interface ServerOptions {
   agentsDir?: string;
   host?: string;
@@ -93,6 +184,15 @@ interface ServerOptions {
    * `a2a` is enabled, the A2A surface is mounted WITHOUT authentication.
    */
   a2aAuthToken?: string;
+  /**
+   * Derives the caller's verified identity from a request. When set, the
+   * session, artifact and run endpoints refuse a request whose `userId` names
+   * anyone other than the caller. When unset, `userId` is taken from the
+   * request as before and no identity check is performed, which is only safe
+   * for a single-user local server. Defaults to {@link iapUserIdResolver} when
+   * `ADK_ENFORCE_USER_IDENTITY` is set.
+   */
+  resolveUserId?: UserIdResolver;
   reloadAgents?: boolean;
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
@@ -141,6 +241,8 @@ export class AdkApiServer {
   private readonly logger: Logger;
   private readonly a2a: boolean;
   private readonly a2aAuthToken?: string;
+  private readonly resolveUserId?: UserIdResolver;
+  private readonly identityEnforcedFromEnv: boolean;
 
   constructor(options: ServerOptions) {
     this.host = options.host ?? 'localhost';
@@ -179,6 +281,13 @@ export class AdkApiServer {
     // to the authenticator, which rejects a token that is not usable.
     this.a2aAuthToken =
       options.a2aAuthToken || process.env[A2A_AUTH_TOKEN_ENV_VAR] || undefined;
+    // An explicit resolver wins. Otherwise the environment variable opts a
+    // deployment into the Identity-Aware Proxy header without needing code.
+    this.identityEnforcedFromEnv =
+      !options.resolveUserId && !!process.env[ENFORCE_USER_IDENTITY_ENV_VAR];
+    this.resolveUserId =
+      options.resolveUserId ??
+      (this.identityEnforcedFromEnv ? iapUserIdResolver : undefined);
     this.app = express();
   }
 
@@ -227,6 +336,201 @@ export class AdkApiServer {
         allowUnauthenticated: authentication === undefined,
       });
     }
+  }
+
+  /**
+   * Checks the `userId` a request asked for against the caller's verified
+   * identity and reports the identity the request must run as.
+   *
+   * With no resolver configured this keeps the historical behaviour and hands
+   * back the requested `userId` unchanged. With a resolver configured an
+   * unidentified caller is answered `401` and a caller naming somebody else is
+   * answered `403`, in both cases without reaching the session service.
+   */
+  private authorizeUserId(
+    req: Request,
+    res: Response,
+    requestedUserId?: string,
+  ): {allowed: boolean; userId?: string} {
+    if (!this.resolveUserId) {
+      return {allowed: true, userId: requestedUserId};
+    }
+
+    const callerId = this.resolveUserId(req);
+    if (!callerId) {
+      res
+        .status(401)
+        .json({error: 'Request carries no verified caller identity'});
+      return {allowed: false};
+    }
+
+    if (requestedUserId !== undefined && requestedUserId !== callerId) {
+      // Naming the compared values would put an identity the caller does not
+      // own into a log an operator may share, so the log says which caller was
+      // refused and leaves the requested id to the access log.
+      this.logger.warn(
+        `Refused ${req.method} ${req.originalUrl}: the authenticated caller ` +
+          `may not act as another user. Identities are compared exactly, so a ` +
+          `userId differing only in letter case is refused here too.`,
+      );
+      res.status(403).json({
+        error:
+          'userId does not match the authenticated caller (compared exactly, including letter case)',
+      });
+      return {allowed: false};
+    }
+
+    // A request that named nobody still runs as the caller, never as a
+    // fallback identity that a second caller could also reach.
+    return {allowed: true, userId: callerId};
+  }
+
+  /**
+   * Rejects requests that ask to act as a user other than the caller, before
+   * any handler reads `userId`.
+   *
+   * The session, artifact and event endpoints carry `userId` in the path, so
+   * the check is mounted on their shared prefix. `/run` and `/run_sse` carry
+   * it in the JSON body, so those are matched by path and read from the body
+   * that `express.json()` has already parsed. `/api/reasoning_engine` accepts
+   * an unparsed body and is checked inside its own handler instead.
+   */
+  private mountUserIdentityChecks(app: express.Application) {
+    app.use(
+      '/apps/:appName/users/:userId',
+      (req: Request, res: Response, next: express.NextFunction) => {
+        if (this.authorizeUserId(req, res, req.params['userId']).allowed) {
+          next();
+        }
+      },
+    );
+
+    app.use(
+      ['/run', '/run_sse'],
+      (req: Request, res: Response, next: express.NextFunction) => {
+        const body = req.body as {userId?: string} | undefined;
+        const {allowed, userId} = this.authorizeUserId(req, res, body?.userId);
+        if (!allowed) {
+          return;
+        }
+
+        // Pin the body to the verified identity so a handler that reads
+        // `req.body.userId` cannot see an absent or stale value.
+        if (body && userId !== undefined) {
+          body.userId = userId;
+        }
+        next();
+      },
+    );
+  }
+
+  /**
+   * Finds the session a recorded trace belongs to.
+   *
+   * `call_llm` spans register their trace id against the session they ran in,
+   * and every other span of the same invocation shares that trace id, so a
+   * tool span reached by event id resolves through the same map. A trace with
+   * no `call_llm` span has no session recorded and resolves to `undefined`,
+   * which the caller treats as unattributable rather than as public.
+   */
+  private findSessionIdForTrace(traceId?: string): string | undefined {
+    if (!traceId) {
+      return undefined;
+    }
+
+    for (const [sessionId, traceIds] of Object.entries(this.sessionTraceDict)) {
+      if (traceIds.includes(traceId)) {
+        return sessionId;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Resolves the caller for a request to the trace stores, answering `401`
+   * when enforcement is on and the request carries no identity.
+   *
+   * This runs before the store is read so that an unidentified caller cannot
+   * tell an event id that exists from one that does not, and so the trace
+   * routes answer the same `401` as every other enforced route. A `callerId`
+   * of `undefined` on an allowed result means no resolver is configured and
+   * the historical behaviour applies.
+   */
+  private resolveTraceCaller(
+    req: Request,
+    res: Response,
+  ): {allowed: boolean; callerId?: string} {
+    if (!this.resolveUserId) {
+      return {allowed: true};
+    }
+
+    const callerId = this.resolveUserId(req);
+    if (!callerId) {
+      res
+        .status(401)
+        .json({error: 'Request carries no verified caller identity'});
+      return {allowed: false};
+    }
+
+    return {allowed: true, callerId};
+  }
+
+  /**
+   * Reports whether a session belongs to the caller.
+   *
+   * The trace stores hold every user's spans in one process and are keyed by
+   * session and event id alone, so there is no `userId` in the path to compare
+   * against. Ownership is established by reading the session back as the
+   * caller: a session the caller does not own is not returned to them, so a
+   * miss is a refusal. When the route carries no app name the loaded apps are
+   * tried in turn, since these routes are mounted both with and without an app
+   * prefix.
+   */
+  private async callerOwnsSession(
+    req: Request,
+    callerId: string,
+    sessionId: string | undefined,
+  ): Promise<boolean> {
+    if (!sessionId) {
+      return false;
+    }
+
+    const appName = req.params['appName'];
+    const appNames = appName ? [appName] : await this.agentLoader.listAgents();
+
+    for (const candidate of appNames) {
+      // A session service that rejects an unknown app should not decide the
+      // whole lookup, so a throw is treated as "not this app" and the
+      // remaining candidates still get their turn.
+      const session = await this.sessionService
+        .getSession({appName: candidate, userId: callerId, sessionId})
+        .catch(() => undefined);
+      if (session) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Refuses a trace the caller cannot be shown to own.
+   *
+   * A trace whose session cannot be resolved is refused rather than served,
+   * which costs the owner their traces once the session is deleted. That is
+   * the right way round for a store that answers with the prompts, model
+   * responses and tool arguments of a conversation.
+   */
+  private refuseTrace(req: Request, res: Response) {
+    this.logger.warn(
+      `Refused ${req.method} ${req.originalUrl}: traces are served only to ` +
+        `the owner of the session they belong to`,
+    );
+
+    return res
+      .status(403)
+      .json({error: 'Traces are served only to the session owner'});
   }
 
   private async init() {
@@ -308,6 +612,8 @@ export class AdkApiServer {
       next();
     });
 
+    this.mountUserIdentityChecks(app);
+
     app.get('/list-apps', async (req: Request, res: Response) => {
       try {
         const apps = await this.agentLoader.listAgents();
@@ -328,13 +634,29 @@ export class AdkApiServer {
     // UI's path is not needed to answer.
     app.get(
       ['/debug/trace/:eventId', '/dev/apps/:appName/debug/trace/:eventId'],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
+          const {allowed, callerId} = this.resolveTraceCaller(req, res);
+          if (!allowed) {
+            return;
+          }
+
           const eventId = req.params['eventId'];
           const eventDict = this.traceDict[eventId];
 
           if (!eventDict) {
             return res.status(404).json({error: 'Trace not found'});
+          }
+
+          if (callerId) {
+            // The stored attributes carry the trace id, which is what ties
+            // this event back to a session and so to an owner.
+            const sessionId = this.findSessionIdForTrace(
+              eventDict['trace_id'] as string | undefined,
+            );
+            if (!(await this.callerOwnsSession(req, callerId, sessionId))) {
+              return this.refuseTrace(req, res);
+            }
           }
 
           return res.json(eventDict);
@@ -354,9 +676,21 @@ export class AdkApiServer {
         '/debug/trace/session/:sessionId',
         '/dev/apps/:appName/debug/trace/session/:sessionId',
       ],
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         try {
+          const {allowed, callerId} = this.resolveTraceCaller(req, res);
+          if (!allowed) {
+            return;
+          }
+
           const sessionId = req.params['sessionId'];
+          if (
+            callerId &&
+            !(await this.callerOwnsSession(req, callerId, sessionId))
+          ) {
+            return this.refuseTrace(req, res);
+          }
+
           const spans = this.memoryExporter.getFinishedSpans(sessionId);
           if (spans.length === 0) {
             return res.json([]);
@@ -867,6 +1201,11 @@ export class AdkApiServer {
     app.post(
       '/apps/:appName/eval_sets/:evalSetId/add_session',
       (req: Request, res: Response) => {
+        // When this lands it will take a `userId` and `sessionId` in its body,
+        // and it sits outside every prefix `mountUserIdentityChecks` covers, so
+        // it must run its own `authorizeUserId` on the body's `userId` before
+        // reading the named session. The eval routes under this prefix are the
+        // only place left where a `userId` arrives unchecked.
         return res.status(501).json({error: 'Not implemented'});
       },
     );
@@ -981,7 +1320,15 @@ export class AdkApiServer {
       const executeQuery = async (body: any) => {
         const input = body.input || {};
         const appName = input.appName || body.appName;
-        const userId = input.userId || body.userId || 'default-user';
+        const authorized = this.authorizeUserId(
+          req,
+          res,
+          input.userId || body.userId || undefined,
+        );
+        if (!authorized.allowed) {
+          return;
+        }
+        const userId = authorized.userId || 'default-user';
         const sessionId =
           input.sessionId || body.sessionId || 'default-session';
         const newMessage = input.newMessage || body.newMessage;
@@ -1121,8 +1468,54 @@ export class AdkApiServer {
     });
   }
 
+  /**
+   * Warns when the server is reachable beyond this machine and still trusts
+   * the `userId` the client sends. `adk deploy` binds to `0.0.0.0`, so this
+   * fires exactly on the deployments where a second user can reach the API.
+   */
+  private warnIfUserIdIsUnverified() {
+    const loopbackHosts = ['localhost', '127.0.0.1', '::1'];
+    if (this.resolveUserId || loopbackHosts.includes(this.host)) {
+      return;
+    }
+
+    this.logger.warn(
+      `Serving on ${this.host} without caller identity enforcement. Sessions ` +
+        `are separated only by the userId each request sends, so any caller ` +
+        `that reaches this server can read, run as, or delete another user's ` +
+        `sessions. Set ${ENFORCE_USER_IDENTITY_ENV_VAR} when deploying behind ` +
+        `Identity-Aware Proxy, or pass a resolveUserId resolver.`,
+    );
+  }
+
+  /**
+   * Reports that enforcement rests on a header, on the path that can be turned
+   * on without writing any code.
+   *
+   * An embedder passing an explicit resolver has already decided where
+   * identity comes from. The environment variable has no such step, so the
+   * assumption it makes is stated once at startup rather than left to whoever
+   * later reads a `401` and concludes the server is protected.
+   */
+  private warnIfIdentityIsAssumedFromEnv() {
+    if (!this.identityEnforcedFromEnv) {
+      return;
+    }
+
+    this.logger.warn(
+      `${ENFORCE_USER_IDENTITY_ENV_VAR} is set, so callers are identified ` +
+        `from the ${IAP_AUTHENTICATED_USER_EMAIL_HEADER} header. That header ` +
+        `is only trustworthy where Identity-Aware Proxy fronts this server ` +
+        `and overwrites it; reached directly, any client can send it and be ` +
+        `any user. Pass a resolveUserId resolver if identity is terminated ` +
+        `some other way.`,
+    );
+  }
+
   async start(): Promise<void> {
     await this.init();
+    this.warnIfUserIdIsUnverified();
+    this.warnIfIdentityIsAssumedFromEnv();
 
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, this.host, async () => {
