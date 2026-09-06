@@ -346,6 +346,21 @@ export class AgentFile {
     return this.cleanupFilePath || this.filePath;
   }
 
+  /**
+   * The path the agent was discovered at, before any bundling.
+   *
+   * Distinct from {@link getFilePath}, which returns the temporary bundle when
+   * one exists. A caller looking for files that sit *beside* the agent — its
+   * README, its fixtures — needs the original directory, and the bundle lives
+   * somewhere else entirely.
+   *
+   * Available before the agent loads, because it is only ever the path the
+   * loader already resolved.
+   */
+  getSourceFilePath(): string {
+    return this.filePath;
+  }
+
   async [Symbol.asyncDispose](): Promise<void> {
     return this.dispose();
   }

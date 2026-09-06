@@ -30,6 +30,7 @@ import {trace, TracerProvider} from '@opentelemetry/api';
 import {SimpleSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import cors from 'cors';
 import express, {Request, Response} from 'express';
+import * as fsPromises from 'node:fs/promises';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import {version} from '../version.js';
@@ -133,6 +134,40 @@ export class AdkApiServer {
     tracerProvider: TracerProvider,
   ) => void;
   private server?: http.Server;
+  /**
+   * The sample's `README.md`, for the UI to render beside it.
+   *
+   * Resolved from the path the loader discovered the agent at, never from
+   * `appName`. `appName` arrives from the URL, so building a path out of it
+   * would be a traversal hole; adk-python defends that with an identifier
+   * check and a `is_relative_to` assertion on the resolved path. Asking the
+   * loader instead removes the class of bug rather than guarding it, because
+   * the only paths reachable are ones the loader already resolved itself.
+   *
+   * Note this is deliberately NOT `AgentFile.getFilePath()`, which returns the
+   * temporary bundle when one exists. The README sits beside the source.
+   *
+   * A missing README is the normal case and returns undefined. Any other read
+   * error is logged and also returns undefined: app info is what draws the
+   * graph, and failing the whole endpoint over a documentation file would take
+   * the UI down for a cosmetic reason.
+   */
+  private async readAppReadme(appName: string): Promise<string | undefined> {
+    try {
+      const agentFile = await this.agentLoader.getAgentFile(appName);
+      const readmePath = path.join(
+        path.dirname(agentFile.getSourceFilePath()),
+        'README.md',
+      );
+      return await fsPromises.readFile(readmePath, 'utf-8');
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        this.logger.warn(`Could not read README.md for ${appName}: ${e}`);
+      }
+      return undefined;
+    }
+  }
+
   private readonly traceDict: Record<string, Record<string, unknown>> =
     Object.create(null);
   private readonly sessionTraceDict: Record<string, string[]> =
@@ -486,7 +521,13 @@ export class AdkApiServer {
             return res.status(404).json({error: `App not found: ${appName}`});
           }
 
-          return res.json(serializeAppInfo(appName, rootAgent));
+          return res.json(
+            serializeAppInfo(
+              appName,
+              rootAgent,
+              await this.readAppReadme(appName),
+            ),
+          );
         } catch (e) {
           const error = `Failed to get app info: ${e}`;
 
