@@ -358,7 +358,10 @@ describe('AgentLoader', () => {
       const agentFile = new AgentFile(agentPath);
       await agentFile.load();
 
-      expect(fileUtils.createTempDir).toHaveBeenCalledWith('adk_agent_loader');
+      expect(fileUtils.createTempDir).toHaveBeenCalledWith(
+        'adk_agent_loader',
+        path.join(tempAgentsDir, '.adk_build_cache'),
+      );
       expect(
         (esbuild.build as Mock).mock.calls[0][0].allowOverwrite,
       ).toBeUndefined();

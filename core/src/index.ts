@@ -45,6 +45,7 @@ export {RunSkillScriptTool} from './tools/skill/run_skill_script_tool.js';
 export * from './integrations/agent_registry/agent_registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';
+export * from './tools/environment/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
 export * from './tools/mcp/index.js';
