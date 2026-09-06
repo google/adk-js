@@ -7,6 +7,13 @@
 // Also available as `@google/adk/a2a`, which does not evaluate the rest of
 // this barrel.
 export * from './a2a/index.js';
+export {
+  AgentEngineClient,
+  AgentExecutionError,
+  type AgentEngineConfig,
+  type QueryConfig,
+  type SessionConfig,
+} from './agents/agent_engine_client.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export type {WorkflowInstructionScope} from './agents/invocation_context.js';
 export {FileArtifactService} from './artifacts/file_artifact_service.js';

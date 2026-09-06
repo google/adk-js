@@ -7,6 +7,7 @@
 import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
 import {shimPlugin} from 'esbuild-shim-plugin';
+import {randomUUID} from 'node:crypto';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -14,7 +15,6 @@ import * as path from 'node:path';
 import {pathToFileURL} from 'node:url';
 
 import {
-  createTempDir,
   isFile,
   isFileExists,
   isFolderExists,
@@ -30,6 +30,20 @@ const logger = new AdkLogger({label: 'AgentLoader', colorize: {all: true}});
  * Supported file extensions for JavaScript and TypeScript.
  */
 const JS_FILES_EXTENSIONS = ['.js', '.cjs', '.mjs', '.ts', '.mts', '.cts'];
+
+/**
+ * Directory, created next to the agent source, that holds esbuild's output.
+ *
+ * The build output lives inside the project rather than in the OS temp dir so
+ * that packages kept `external` from the bundle (`@google-cloud/aiplatform`,
+ * `google-gax`, `@grpc/*`) resolve through the project's own `node_modules`
+ * lookup chain. A symlinked `node_modules` in a temp dir only covers hoisted
+ * layouts; walking up from inside the project also covers nested ones.
+ *
+ * Because it sits inside the tree the dev server watches, it must be skipped
+ * by the watcher — see `AgentLoader.startWatching`.
+ */
+const BUILD_CACHE_DIR_NAME = '.adk_build_cache';
 
 /**
  * Supported JS/TS file module types.
@@ -181,12 +195,18 @@ export class AgentFile {
       const moduleType =
         this.options.moduleType || (await getFileModuleType(filePath));
       const parsedPath = path.parse(filePath);
-      const outputDir = await createTempDir('adk_agent_loader');
+      const outputDir = path.join(
+        parsedPath.dir,
+        BUILD_CACHE_DIR_NAME,
+        'adk_agent_loader',
+        randomUUID(),
+      );
       const compiledFilePath = path.join(
         outputDir,
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
       const originalDir = path.dirname(filePath);
+      await fsPromises.mkdir(outputDir, {recursive: true});
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       await esbuild.build({
@@ -224,6 +244,12 @@ export class AgentFile {
                 'lightningcss',
                 'jiti',
                 'jiti/package.json',
+                // @google-cloud/aiplatform contains gRPC native bindings
+                '@google-cloud/aiplatform',
+                '@google-cloud/vertexai',
+                'google-gax',
+                '@grpc/grpc-js',
+                '@grpc/proto-loader',
               ],
             }
           : {}),
@@ -426,7 +452,11 @@ export class AgentLoader {
         this.agentsDirPath,
         {recursive: true},
         (_event, filename) => {
-          if (filename && isJsFile(path.extname(filename))) {
+          if (
+            filename &&
+            !isBuildCacheFile(filename) &&
+            isJsFile(path.extname(filename))
+          ) {
             logger.info(`Detected change in ${filename}, reloading agents...`);
             this.invalidateAll();
           }
@@ -617,6 +647,17 @@ export class AgentLoader {
 
 function isJsFile(fileExt?: string): boolean {
   return !!fileExt && JS_FILES_EXTENSIONS.includes(fileExt);
+}
+
+/**
+ * Returns whether a watched path points inside the compiler's own output
+ * directory. Compiling an agent writes a `.cjs`/`.mjs` there, so without this
+ * check every compile would invalidate the cache that the compile just filled.
+ */
+export function isBuildCacheFile(relativePath: string): boolean {
+  return relativePath
+    .split(/[\\/]/)
+    .some((segment) => segment === BUILD_CACHE_DIR_NAME);
 }
 
 async function getDirFiles(dir: string): Promise<FileMetadata[]> {

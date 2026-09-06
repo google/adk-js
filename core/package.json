@@ -77,6 +77,7 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
+    "@google-cloud/aiplatform": "^6.10.0",
     "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^2.9.0",
     "@mikro-orm/core": "^6.6.10",
