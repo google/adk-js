@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
+import type {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
 import {loadOptionalPeer} from '../../utils/optional_peer.js';
 import {redactUriPassword} from '../../utils/redact_uri.js';
 import {
