@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.1.0](https://github.com/google/adk-js/compare/adk-v2.0.0...adk-v2.1.0) (2026-09-06)
+
+
+### Features
+
+* **plugins:** add ReflectAndRetryToolPlugin and ReflectAndRetryModelPlugin for self-healing error recovery ([#631](https://github.com/google/adk-js/issues/631)) ([1b6ea6d](https://github.com/google/adk-js/commit/1b6ea6db46597abb17ccbcdc948fcc4ed6cb20e0))
+* Port the typed-errors module (errors/) from adk-python ([#583](https://github.com/google/adk-js/issues/583)) ([fab19d0](https://github.com/google/adk-js/commit/fab19d04cd1231567d363b49f5c657223e6842ba))
+
+
+### Bug Fixes
+
+* **a2a:** propagate request metadata to agent execution ([#752](https://github.com/google/adk-js/issues/752)) ([#768](https://github.com/google/adk-js/issues/768)) ([bb2dd8f](https://github.com/google/adk-js/commit/bb2dd8f285e3360d5284a29756e9c06afcc3b4ce))
+* **agents:** carry request-input resume inputs in their own type ([#822](https://github.com/google/adk-js/issues/822)) ([8664b6e](https://github.com/google/adk-js/commit/8664b6e4937958a6faee79c20a0299ee3683dac6))
+* **artifacts:** list artifacts nested under another artifact ([#858](https://github.com/google/adk-js/issues/858)) ([caa2b4d](https://github.com/google/adk-js/commit/caa2b4d9d084ad7e0979fb1a6e7f07d786911ee3))
+* **auth:** redact OAuth2 authorization code from malformed-callback-URI log ([#640](https://github.com/google/adk-js/issues/640)) ([08f4f24](https://github.com/google/adk-js/commit/08f4f24c45b31a1bc0d69fb464bdc4d3c2e6c67a))
+* **auth:** reject an empty credentialKey before storing the credential ([#818](https://github.com/google/adk-js/issues/818)) ([8f792bb](https://github.com/google/adk-js/commit/8f792bbb98e8f360085b69a0dbafb3c1a071a4a4))
+* **build:** make the web build loadable outside Node ([#837](https://github.com/google/adk-js/issues/837)) ([5b9c306](https://github.com/google/adk-js/commit/5b9c306ac99cf29bb63975fdd9fac977e79146c3))
+* close two remaining author-blind confirmation-resolution paths ([#755](https://github.com/google/adk-js/issues/755)) ([f9d6d91](https://github.com/google/adk-js/commit/f9d6d914bbe33436d075bde798c99df5b26293ab))
+* **core:** gracefully handle unregistered tool calls ([#790](https://github.com/google/adk-js/issues/790)) ([6be4195](https://github.com/google/adk-js/commit/6be4195aeee9fda7a7346607f2fa879d101f76a0))
+* **core:** load artifacts and MCP resources when other tools are call… ([#639](https://github.com/google/adk-js/issues/639)) ([b723201](https://github.com/google/adk-js/commit/b72320146c2352b13d0e92ba8b33e96fb00945cb))
+* **core:** make built-in tools resolvable by name ([#811](https://github.com/google/adk-js/issues/811)) ([e7fab37](https://github.com/google/adk-js/commit/e7fab3763f1bb8e072edf8f4753e8103838d95cb))
+* **core:** stop a surviving grandchild from hanging code execution ([#793](https://github.com/google/adk-js/issues/793)) ([173462a](https://github.com/google/adk-js/commit/173462ae07bcfa1155f8acdb96e71d49d2470b0c)), closes [#622](https://github.com/google/adk-js/issues/622)
+* **core:** type the live session mock in gemini_llm_connection_test ([#849](https://github.com/google/adk-js/issues/849)) ([bfe904e](https://github.com/google/adk-js/commit/bfe904ee99b5de6e214d9eb67fa6c97dd355a06c))
+* drop the redundant ExtendedInteractionSSEEvent self-cast in the streaming loop ([#827](https://github.com/google/adk-js/issues/827)) ([e9f187f](https://github.com/google/adk-js/commit/e9f187fc54bf1f26397d0dbd476b68d15a38e4f5))
+* preserve EventActions when a long-running tool returns no response ([#571](https://github.com/google/adk-js/issues/571)) ([c6ad9c2](https://github.com/google/adk-js/commit/c6ad9c277253fb07076f1180169679810b922efd))
+* scrub credential material before forwarding to a remote A2A peer ([#767](https://github.com/google/adk-js/issues/767)) ([f3c27fd](https://github.com/google/adk-js/commit/f3c27fde193a1c095f3fb358b9304ce66d954ee3))
+* **sessions:** import Client from the @google-cloud/vertexai package root ([#801](https://github.com/google/adk-js/issues/801)) ([3aaf49b](https://github.com/google/adk-js/commit/3aaf49bbd22eadc5dbfd6b957623598e4d3f7def))
+* **tools:** drop no-unused-vars suppressions in BaseToolset.processLlmRequest ([#851](https://github.com/google/adk-js/issues/851)) ([1a699f4](https://github.com/google/adk-js/commit/1a699f4e1ba4ab6b0cc2c08607ef8363c0ecd434))
+* type the load_mcp_resource LlmRequest fixtures instead of double-casting ([#836](https://github.com/google/adk-js/issues/836)) ([071f795](https://github.com/google/adk-js/commit/071f795b9dc57449f95e8cba51615d75566cf02e))
+* **utils:** drop the unused zod value behind MCPToolSchema instead of disabling the lint rule ([#860](https://github.com/google/adk-js/issues/860)) ([b4391ca](https://github.com/google/adk-js/commit/b4391ca833a570af81fa92c415801f4d7c5188d0))
+
 ## [2.0.0](https://github.com/google/adk-js/compare/adk-v1.6.0...adk-v2.0.0) (2026-08-20)
 
 
