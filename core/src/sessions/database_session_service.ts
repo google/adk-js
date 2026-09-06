@@ -378,6 +378,7 @@ export class DatabaseSessionService extends BaseSessionService {
     }
 
     const trimmedEvent = trimTempDeltaState(event);
+    let sessionWasStale = false;
 
     await em.transactional(async (txEm) => {
       const storageSession = await txEm.findOne(
@@ -419,26 +420,17 @@ export class DatabaseSessionService extends BaseSessionService {
         txEm.persist(userStateModel);
       }
 
-      // Stale session check
+      // Stale session check. The event reload itself happens after the
+      // transaction: this transaction holds a PESSIMISTIC_WRITE lock on the
+      // session row, and reloading the full event history is the most
+      // expensive query in this method, so running it here would make every
+      // concurrent appendEvent on the session wait for an
+      // O(session history) read. Only the in-memory `session` object depends
+      // on the reload — the writes below never read `session.events` — and
+      // `session.state` is unconditionally recomputed after the commit, so
+      // deferring the reload is observationally equivalent.
       if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
-        // Reload state
-        const events = await txEm.find(
-          StorageEvent,
-          {
-            appName: session.appName,
-            userId: session.userId,
-            sessionId: session.id,
-          },
-          {orderBy: {timestamp: 'ASC'}},
-        );
-
-        const mergedState = mergeStates(
-          appStateModel.state,
-          userStateModel.state,
-          storageSession.state,
-        );
-        session.state = mergedState;
-        session.events = events.map((e) => e.eventData);
+        sessionWasStale = true;
       }
 
       if (event.actions && event.actions.stateDelta) {
@@ -509,6 +501,27 @@ export class DatabaseSessionService extends BaseSessionService {
       }
       session.lastUpdateTime = storageSession.updateTime.getTime();
     });
+
+    if (sessionWasStale) {
+      const storageEvents = await em.find(
+        StorageEvent,
+        {
+          appName: session.appName,
+          userId: session.userId,
+          sessionId: session.id,
+        },
+        {orderBy: {timestamp: 'ASC'}},
+      );
+      session.events = storageEvents.map((se) => se.eventData);
+      // The reload sees the committed (trimmed) copy of the current event;
+      // put the caller's in-memory event back, as the pre-reload push did.
+      const index = session.events.findIndex((e) => e.id === event.id);
+      if (index >= 0) {
+        session.events[index] = event;
+      } else {
+        session.events.push(event);
+      }
+    }
 
     return event;
   }

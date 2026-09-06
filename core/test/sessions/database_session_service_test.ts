@@ -294,6 +294,36 @@ describe('DatabaseSessionService', () => {
     expect(after2?.events[0].id).toBe(e3.id);
   });
 
+  it('should refresh events on a stale session object in appendEvent', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+
+    // A second handle on the same session appends an event, making the
+    // first handle stale.
+    const otherHandle = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    const now = Date.now();
+    const concurrentEvent = createEvent({timestamp: now + 10});
+    await service.appendEvent({session: otherHandle!, event: concurrentEvent});
+
+    const ownEvent = createEvent({timestamp: now + 20});
+    await service.appendEvent({session, event: ownEvent});
+
+    // The stale handle must see both the concurrently appended event and its
+    // own, in timestamp order, without duplicates.
+    expect(session.events.map((e) => e.id)).toEqual([
+      concurrentEvent.id,
+      ownEvent.id,
+    ]);
+    expect(session.events[1]).toBe(ownEvent);
+  });
+
   it('should filter sessions by userId in listSessions', async () => {
     await service.createSession({
       appName: 'app1',
