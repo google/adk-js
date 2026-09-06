@@ -5,16 +5,24 @@
  */
 
 import {OpenAPIV3} from 'openapi-types';
-import {AuthCredential} from '../../../auth/auth_credential.js';
+import {
+  AuthCredential,
+  AuthCredentialTypes,
+} from '../../../auth/auth_credential.js';
 
 /**
  * Applies the given credential to the request headers and URL.
+ *
+ * An HTTP credential that carries no usable token throws, so the caller never
+ * sends an unauthenticated request in place of an authenticated one.
  *
  * @param url The target URL.
  * @param headers The request headers.
  * @param credential The auth credential.
  * @param authScheme The auth scheme from OpenAPI spec.
  * @returns The updated URL (if modified by query params).
+ * @throws {Error} If an HTTP credential holds basic credentials, or holds no
+ *   credentials at all.
  */
 export function applyCredential(
   url: string,
@@ -44,11 +52,21 @@ export function applyCredential(
       headers['Authorization'] = credential.apiKey;
     }
   } else if (
-    credential.http &&
-    credential.http.credentials &&
-    credential.http.credentials.token
+    credential.authType === AuthCredentialTypes.HTTP ||
+    credential.http
   ) {
-    headers['Authorization'] = `Bearer ${credential.http.credentials.token}`;
+    const httpCredentials = credential.http?.credentials;
+    if (httpCredentials?.token) {
+      // The 'Bearer' prefix is hardcoded, and http.scheme is ignored, to match
+      // adk-python's credential_to_param. Every exchanger in this repo mints
+      // scheme 'bearer', and any other scheme arrives without a token and
+      // throws below, so no mislabelled header reaches the wire.
+      headers['Authorization'] = `Bearer ${httpCredentials.token}`;
+    } else if (httpCredentials?.username || httpCredentials?.password) {
+      throw new Error('Basic Authentication is not supported.');
+    } else {
+      throw new Error('Invalid HTTP auth credentials');
+    }
   }
 
   return url;
