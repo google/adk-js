@@ -7,6 +7,7 @@
 import {AgentCard, AgentInterface, AgentSkill} from '@a2a-js/sdk';
 import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
 import {
   InvocationContext,
@@ -20,11 +21,32 @@ import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
+import {
+  isHttpUrl,
+  isLinkLocalAddress,
+  normalizeHost,
+  resolveHostAddresses,
+} from '../utils/ssrf_guard.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
 import {isWorkflow} from '../workflow/workflow.js';
 
 /**
+ * A single-letter URL protocol, which is a Windows drive letter rather than a
+ * scheme: `new URL('C:\\cards\\card.json')` parses with `protocol === 'c:'`.
+ */
+const WINDOWS_DRIVE_PROTOCOL = /^[a-z]:$/i;
+
+/**
  * Resolves the AgentCard from the provided source.
+ *
+ * A source is either an {@link AgentCard}, an `http(s)://` URL to fetch it
+ * from, a `file://` URL, or a filesystem path. Any other URL scheme throws: a
+ * source that looks like a URL is never read off the local filesystem.
+ *
+ * The card host must not be, or resolve to, a link-local address, and a
+ * redirect from the card endpoint is refused rather than followed. Loopback and
+ * private addresses stay allowed: they are where a locally served or
+ * VPC-internal peer agent lives.
  */
 export async function resolveAgentCard(
   agentCard: AgentCard | string,
@@ -33,18 +55,93 @@ export async function resolveAgentCard(
     return agentCard;
   }
 
-  const source = agentCard as string;
-  if (source.startsWith('http://') || source.startsWith('https://')) {
-    const resolver = new DefaultAgentCardResolver();
-    return await resolver.resolve(source);
+  const url = parseCardUrl(agentCard);
+  if (url && isHttpUrl(url)) {
+    await assertHostAllowed(url);
+    const resolver = new DefaultAgentCardResolver({
+      fetchImpl: noRedirectFetch(agentCard),
+    });
+    return resolver.resolve(agentCard);
   }
+  if (url && url.protocol !== 'file:') {
+    throw new Error(
+      `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
+        'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
+    );
+  }
+  return readAgentCardFile(agentCard, url);
+}
 
+/**
+ * Parses an absolute URL out of a card source, or returns `null` when the
+ * source names a filesystem path.
+ */
+function parseCardUrl(source: string): URL | null {
+  let url: URL;
   try {
-    const content = await fs.readFile(source, 'utf-8');
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  return WINDOWS_DRIVE_PROTOCOL.test(url.protocol) ? null : url;
+}
+
+/** Reads and parses a card from `url` when it is a `file:` URL, else from `source`. */
+async function readAgentCardFile(
+  source: string,
+  url: URL | null,
+): Promise<AgentCard> {
+  try {
+    const path = url ? fileURLToPath(url) : source;
+    const content = await fs.readFile(path, 'utf-8');
     return JSON.parse(content) as AgentCard;
   } catch (err: unknown) {
     throw new Error(
       `Failed to read agent card from file ${source}: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * Builds the `fetch` the card resolver uses, which refuses a redirect instead
+ * of following it. A redirect is the only way the card host, rather than the
+ * developer, picks where the request lands.
+ */
+function noRedirectFetch(source: string): typeof fetch {
+  return async (input, init) => {
+    const response = await fetch(input, {...init, redirect: 'manual'});
+    if (isRedirect(response.status)) {
+      throw new Error(
+        `Refusing to follow a redirect while fetching the agent card from ${source} ` +
+          `(status ${response.status}, location ${response.headers.get('location')}). ` +
+          'Configure the final URL instead.',
+      );
+    }
+    return response;
+  };
+}
+
+/**
+ * Returns `true` for a redirect response, including the opaque one a `manual`
+ * redirect produces on platforms that hide the status.
+ */
+function isRedirect(status: number): boolean {
+  return status === 0 || (status >= 300 && status < 400);
+}
+
+/**
+ * Throws when the URL's host is, or resolves to, a link-local address.
+ *
+ * Checking the configured URL covers the whole fetch: the resolver appends a
+ * relative well-known path, which cannot change the origin, and a redirect is
+ * refused rather than followed.
+ */
+async function assertHostAllowed(url: URL): Promise<void> {
+  const host = normalizeHost(url.hostname);
+  const addresses = await resolveHostAddresses(host);
+  if (addresses.some(isLinkLocalAddress)) {
+    throw new Error(
+      `Refusing to fetch agent card from a link-local address: ${host}`,
     );
   }
 }
