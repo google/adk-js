@@ -42,6 +42,10 @@ class SimpleLogger implements Logger {
         'warn': LogLevel.WARN,
         'error': LogLevel.ERROR,
       },
+      // `levels` above inverts winston's npm ordering, so `error` (3) is the
+      // most permissive and leaves winston pass-through. Every method already
+      // gates on `this.logLevel`; a lower value here would double-gate and
+      // drop records.
       level: 'error',
       format: winston.format.combine(
         winston.format.label({label: 'ADK'}),
