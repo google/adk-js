@@ -26,13 +26,18 @@ export interface BaseLlmConnection {
   /**
    * Sends the content to the model.
    *
-   * The model will respond immediately upon receiving the content.
+   * Unless `partial` is set, the model will respond immediately upon receiving
+   * the content.
    * If you send function responses, all parts in the content should be function
    * responses.
    *
    * @param content The content to send to the model.
+   * @param partial Whether the content is a partial turn update that does not
+   *     complete the model turn. Implementations that do not support partial
+   *     updates may ignore it and complete the turn as usual. Ignored when the
+   *     content carries function responses.
    */
-  sendContent(content: Content): Promise<void>;
+  sendContent(content: Content, partial?: boolean): Promise<void>;
 
   /**
    * Sends a chunk of audio or a frame of video to the model in realtime.

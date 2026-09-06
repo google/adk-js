@@ -1218,7 +1218,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
     if (liveRequest.content) {
-      await connection.sendContent(liveRequest.content);
+      await connection.sendContent(liveRequest.content, liveRequest.partial);
     }
   }
 

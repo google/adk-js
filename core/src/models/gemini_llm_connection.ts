@@ -58,13 +58,18 @@ export class GeminiLlmConnection implements BaseLlmConnection {
   /**
    * Sends a user content to the gemini model.
    *
-   * The model will respond immediately upon receiving the content.
+   * Unless `partial` is set, the model will respond immediately upon receiving
+   * the content.
    * If you send function responses, all parts in the content should be function
    * responses.
    *
    * @param content The content to send to the model.
+   * @param partial Whether the content is a partial turn update that does not
+   *     complete the model turn. The model folds it into the conversation and
+   *     keeps waiting instead of responding. Ignored when the content carries
+   *     function responses, which never complete a turn on their own.
    */
-  async sendContent(content: Content): Promise<void> {
+  async sendContent(content: Content, partial = false): Promise<void> {
     if (!content.parts) {
       throw new Error('Content must have parts.');
     }
@@ -80,13 +85,24 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     } else {
       logger.debug('Sending LLM new content', content);
       const isGemini3x = isGemini3xFlashLive(this.modelVersion);
-      if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
+      // realtimeInput has no no-response variant, so a partial update has to go
+      // through sendClientContent. On Gemini 3.x this splits the transport:
+      // partials go over sendClientContent (added to the context in order)
+      // while plain text turns go over sendRealtimeInput (optimized for
+      // responsiveness, no ordering guarantee). A partial immediately followed
+      // by a normal turn may therefore reach the model out of order.
+      if (
+        !partial &&
+        isGemini3x &&
+        content.parts.length === 1 &&
+        content.parts[0].text
+      ) {
         logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
       } else {
         this.geminiSession.sendClientContent({
           turns: [content],
-          turnComplete: true,
+          turnComplete: !partial,
         });
       }
     }

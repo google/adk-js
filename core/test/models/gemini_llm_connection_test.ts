@@ -137,6 +137,89 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
+    it('should keep the turn open when partial is set', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+      const content: Content = {
+        role: 'model',
+        parts: [{text: 'already spoken'}],
+      };
+
+      await connection.sendContent(content, true);
+
+      expect(mockSession.sendClientContent).toHaveBeenCalledWith({
+        turns: [content],
+        turnComplete: false,
+      });
+    });
+
+    it('should not use sendRealtimeInput for Gemini 3.x when partial is set', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-3.1-flash-live',
+      );
+      const content: Content = {
+        parts: [{text: 'progress'}],
+      };
+
+      await connection.sendContent(content, true);
+
+      expect(mockSession.sendRealtimeInput).not.toHaveBeenCalled();
+      expect(mockSession.sendClientContent).toHaveBeenCalledWith({
+        turns: [content],
+        turnComplete: false,
+      });
+    });
+
+    it('should complete the turn on the first non-partial content after a partial', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+
+      await connection.sendContent(
+        {role: 'model', parts: [{text: 'already spoken'}]},
+        true,
+      );
+      await connection.sendContent({role: 'user', parts: [{text: 'and now?'}]});
+
+      expect(mockSession.sendClientContent).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({turnComplete: false}),
+      );
+      expect(mockSession.sendClientContent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({turnComplete: true}),
+      );
+    });
+
+    it('should send tool response regardless of partial', async () => {
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-2.5-flash',
+      );
+      const content: Content = {
+        parts: [
+          {
+            functionResponse: {
+              name: 'tool_a',
+              response: {result: 'ok'},
+              id: '1',
+            },
+          },
+        ],
+      };
+
+      await connection.sendContent(content, true);
+
+      expect(mockSession.sendToolResponse).toHaveBeenCalledWith({
+        functionResponses: [content.parts![0].functionResponse],
+      });
+      expect(mockSession.sendClientContent).not.toHaveBeenCalled();
+    });
+
     it('should throw error if content has no parts', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
