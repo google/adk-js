@@ -210,6 +210,25 @@ export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
 export type {BaseLlmConnection} from './models/base_llm_connection.js';
+export {
+  ChromeModelUnavailableError,
+  ChromePromptApiLlm,
+  stripAdkIdentityPreamble,
+} from './models/chrome_prompt_llm.js';
+export type {
+  ChromeCreateCoreOptions,
+  ChromeCreateMonitor,
+  ChromeCreateOptions,
+  ChromeExpectedModality,
+  ChromeLanguageModelFactory,
+  ChromeLanguageModelSession,
+  ChromeMessage,
+  ChromeMessageContent,
+  ChromeModelAvailability,
+  ChromePromptApiDiagnostic,
+  ChromePromptApiLlmParams,
+  ChromePromptOptions,
+} from './models/chrome_prompt_llm.js';
 export {Gemini, geminiInitParams} from './models/google_llm.js';
 export type {GeminiParams} from './models/google_llm.js';
 export type {LlmRequest} from './models/llm_request.js';
