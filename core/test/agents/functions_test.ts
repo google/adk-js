@@ -10,7 +10,6 @@ import {
   createEvent,
   createEventActions,
   Event,
-  functionsExportedForTestingOnly,
   FunctionTool,
   InvocationContext,
   isToolNotFound,
@@ -29,6 +28,7 @@ import {z} from 'zod';
 import {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
+  functionsExportedForTestingOnly,
   generateClientFunctionCallId,
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
