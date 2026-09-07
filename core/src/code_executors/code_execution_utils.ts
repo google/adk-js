@@ -147,7 +147,7 @@ export function extractCodeAndTruncateContent(
         !content.parts[i + 1].codeExecutionResult)
     ) {
       content.parts = content.parts.slice(0, i + 1);
-      return part.executableCode.code!;
+      return part.executableCode.code || '';
     }
   }
 

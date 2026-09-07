@@ -152,6 +152,13 @@ describe('extractCodeAndTruncateContent', () => {
     expect(content.parts).toHaveLength(1);
   });
 
+  it('returns empty string for an executableCode part without code', () => {
+    const parts: Part[] = [{executableCode: {language: Language.PYTHON}}];
+    const content = {parts, role: 'model'};
+
+    expect(extractCodeAndTruncateContent(content, PYTHON_DELIMITERS)).toBe('');
+  });
+
   it('skips executableCode part when followed by codeExecutionResult', () => {
     const code = 'print("hi")';
     const content = {
@@ -280,7 +287,6 @@ describe('convertCodeExecutionParts', () => {
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
 
     expect(content.parts[0].text).toBe('```python\n\n```');
-    expect(content.parts[0].text).not.toContain('undefined');
     expect(content.parts[0].executableCode).toBeUndefined();
     expect(content.role).toBe('model');
   });
@@ -289,15 +295,13 @@ describe('convertCodeExecutionParts', () => {
     // An A2A data part or a persisted event is deserialized straight into the
     // part, so an explicit null reaches the converter even though the SDK types
     // code as string | undefined.
-    const nullCode = {
-      executableCode: {language: Language.PYTHON, code: null},
-    } as unknown as Part;
-    const content = {parts: [nullCode], role: 'model'};
+    const content: Content = JSON.parse(
+      '{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":null}}]}',
+    );
 
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
 
-    expect(content.parts[0].text).toBe('```python\n\n```');
-    expect(content.parts[0].text).not.toContain('undefined');
+    expect(content.parts![0].text).toBe('```python\n\n```');
   });
 
   it('converts single codeExecutionResult part to text and sets role to user', () => {
