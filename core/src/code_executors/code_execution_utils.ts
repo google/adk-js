@@ -267,7 +267,7 @@ export function convertCodeExecutionParts(
     content.parts[content.parts.length - 1] = {
       text:
         codeBlockDelimiter[0] +
-        lastPart.executableCode.code +
+        (lastPart.executableCode.code || '') +
         codeBlockDelimiter[1],
     };
   } else if (content.parts.length == 1 && lastPart.codeExecutionResult) {
