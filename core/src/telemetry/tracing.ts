@@ -392,8 +392,7 @@ function buildLlmRequestForTrace(
 
   if (llmRequest.config) {
     // Create a clean config object, pruning responseSchema to reduce noise size
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {responseSchema, ...cleanConfig} = llmRequest.config;
+    const {responseSchema: _responseSchema, ...cleanConfig} = llmRequest.config;
     result.config = cleanConfig;
   }
 
