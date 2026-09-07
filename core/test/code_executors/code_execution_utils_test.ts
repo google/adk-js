@@ -301,7 +301,7 @@ describe('convertCodeExecutionParts', () => {
 
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
 
-    expect(content.parts![0].text).toBe('```python\n\n```');
+    expect(content.parts?.[0].text).toBe('```python\n\n```');
   });
 
   it('converts single codeExecutionResult part to text and sets role to user', () => {
