@@ -973,6 +973,31 @@ describe('Runner error handling', () => {
       `Session not found: ${nonExistentSessionId}`,
     );
   });
+
+  it('should name the searched app and user in the session not found error', async () => {
+    const agent = new MockLlmAgent('test_agent');
+
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+
+    // The session exists, but under a different app namespace.
+    const session = await sessionService.createSession({
+      appName: 'other_app_id',
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const error = await runTestExpectingError(runner, session.id, TEST_USER_ID);
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(`Session not found: ${session.id}`);
+    expect(error?.message).toContain(`appName=${TEST_APP_ID}`);
+    expect(error?.message).toContain(`userId=${TEST_USER_ID}`);
+  });
 });
 
 describe('Runner customMetadata support', () => {
