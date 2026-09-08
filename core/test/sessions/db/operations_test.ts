@@ -20,6 +20,7 @@ import {
   StorageEvent,
   StorageMetadata,
 } from '../../../src/sessions/db/schema.js';
+import {logger} from '../../../src/utils/logger.js';
 
 // Mock dynamic imports for drivers that might not be installed in dev
 vi.mock('@mikro-orm/postgresql', () => ({
@@ -110,6 +111,137 @@ describe('operations', () => {
         'mariadb://user:pass@localhost:3306/db',
       );
       expect(options.driver).toBeDefined();
+    });
+
+    it('should parse mysql Unix-socket URI with unescaped colons', async () => {
+      const options = await getConnectionOptionsFromUri(
+        'mysql://user:pass@%2Fcloudsql%2Fmy-project:us-central1:my-instance/mydb',
+      );
+      expect(options.driver).toBeDefined();
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.user).toBe('user');
+      expect(options.password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
+      expect(options).not.toHaveProperty('clientUrl');
+      expect(options).not.toHaveProperty('socketPath');
+    });
+
+    it('should parse mysql Unix-socket URI with query param host', async () => {
+      const options = await getConnectionOptionsFromUri(
+        'mysql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
+      );
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.dbName).toBe('mydb');
+    });
+
+    it('should parse mariadb Unix-socket URI with unescaped colons', async () => {
+      const options = await getConnectionOptionsFromUri(
+        'mariadb://user:pass@%2Fcloudsql%2Fmy-project:us-central1:my-instance/mydb',
+      );
+      expect(options.driver).toBeDefined();
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.user).toBe('user');
+      expect(options.password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
+      expect(options).not.toHaveProperty('clientUrl');
+      expect(options).not.toHaveProperty('socketPath');
+    });
+
+    it('should parse mariadb Unix-socket URI with query param host', async () => {
+      const options = await getConnectionOptionsFromUri(
+        'mariadb://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
+      );
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.dbName).toBe('mydb');
+    });
+
+    it('should warn and prefer the socket for mariadb when ?host= overrides a real TCP authority with a valid port', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const options = await getConnectionOptionsFromUri(
+          'mariadb://user:secret@real-db.example.com:3306/db?host=/tmp/evil',
+        );
+        expect(options.driverOptions).toEqual({
+          connection: {socketPath: '/tmp/evil'},
+        });
+        expect(options).not.toHaveProperty('clientUrl');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('should leave ordinary mysql TCP URIs unchanged as clientUrl', async () => {
+      const uri = 'mysql://user:pass@localhost:3306/db';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
+      expect(options).not.toHaveProperty('driverOptions');
+    });
+
+    it('should leave percent-encoded mysql socket host unchanged as clientUrl', async () => {
+      // A fully percent-encoded authority still parses via new URL(), so it
+      // keeps going through the existing clientUrl path unchanged.
+      const uri =
+        'mysql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.clientUrl).toBe(uri);
+    });
+
+    it('should warn and prefer the socket when ?host= overrides a real TCP authority with a valid port', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        // Ensure ?host= is honored even when the TCP authority is valid.
+        const options = await getConnectionOptionsFromUri(
+          'mysql://user:secret@real-db.example.com:3306/db?host=/tmp/evil',
+        );
+        expect(options.driverOptions).toEqual({
+          connection: {socketPath: '/tmp/evil'},
+        });
+        expect(options).not.toHaveProperty('clientUrl');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [message] = warnSpy.mock.calls[0];
+        expect(message).toContain('real-db.example.com');
+        expect(message).toContain('/tmp/evil');
+        expect(message).not.toContain('secret');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('should warn and prefer the socket when ?host= overrides a real TCP authority (unescaped-colon fallback path)', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        // Invalid port forces the manual parseSocketUri() fallback.
+        const options = await getConnectionOptionsFromUri(
+          'mysql://user:secret@real-db.example.com:notaport/db?host=/tmp/evil',
+        );
+        expect(options.driverOptions).toEqual({
+          connection: {socketPath: '/tmp/evil'},
+        });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [message] = warnSpy.mock.calls[0];
+        expect(message).toContain('real-db.example.com');
+        expect(message).toContain('/tmp/evil');
+        expect(message).not.toContain('secret');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('should not warn when ?host= is the only host present', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        await getConnectionOptionsFromUri(
+          'mysql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
+        );
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it('should parse mssql URI', async () => {
