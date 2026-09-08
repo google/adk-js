@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MikroORM} from '@mikro-orm/core';
+import {Configuration, MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -182,13 +182,61 @@ describe('operations', () => {
       expect(options).not.toHaveProperty('driverOptions');
     });
 
-    it('should leave percent-encoded mysql socket host unchanged as clientUrl', async () => {
-      // A fully percent-encoded authority still parses via new URL(), so it
-      // keeps going through the existing clientUrl path unchanged.
+    it('should parse a fully percent-encoded mysql socket URI into socketPath', async () => {
+      // new URL() parses this fine, but mysql2 won't auto-detect it as a socket.
       const uri =
         'mysql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
-      expect(options.clientUrl).toBe(uri);
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.user).toBe('user');
+      expect(options.password).toBe('pass');
+      expect(options.dbName).toBe('mydb');
+      expect(options).not.toHaveProperty('clientUrl');
+    });
+
+    it('should parse a fully percent-encoded mariadb socket URI into socketPath', async () => {
+      const uri =
+        'mariadb://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      const socketPath = '/cloudsql/my-project:us-central1:my-instance';
+      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options).not.toHaveProperty('clientUrl');
+    });
+
+    it('should route the real MySqlDriver at a Unix socket for a percent-encoded URI, not a DNS host', async () => {
+      const {MySqlDriver} =
+        await vi.importActual<typeof import('@mikro-orm/mysql')>(
+          '@mikro-orm/mysql',
+        );
+      const uri =
+        'mysql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      const config = new Configuration(
+        {
+          ...options,
+          driver: MySqlDriver,
+          entities: [],
+          metadataProvider: class {
+            useCache() {
+              return false;
+            }
+          },
+          discovery: {},
+        } as unknown as ConstructorParameters<typeof Configuration>[0],
+        false,
+      );
+      const driver = new MySqlDriver(config);
+      const knexOptions = (
+        driver.getConnection() as unknown as {
+          getKnexOptions: (type: string) => {
+            connection: Record<string, unknown>;
+          };
+        }
+      ).getKnexOptions('mysql2');
+      expect(knexOptions.connection.socketPath).toBe(
+        '/cloudsql/my-project:us-central1:my-instance',
+      );
     });
 
     it('should warn and prefer the socket when ?host= overrides a real TCP authority with a valid port', async () => {

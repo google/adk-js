@@ -30,9 +30,7 @@ interface SocketUri {
   dbName?: string;
 }
 
-/**
- * Parses Unix-socket URIs that `new URL()` cannot represent.
- */
+/** Parses Unix-socket URIs that `new URL()` cannot represent. */
 function parseSocketUri(uri: string): SocketUri | null {
   const schemeEnd = uri.indexOf('://');
   if (schemeEnd === -1) {
@@ -57,51 +55,54 @@ function parseSocketUri(uri: string): SocketUri | null {
   const params = new URLSearchParams(rawQuery ?? '');
   const queryHost = params.get('host');
 
-  const decodedAuthority = decodeURIComponent(rawAuthority);
+  // Malformed percent-encoding falls back to null instead of throwing.
+  try {
+    const decodedAuthority = decodeURIComponent(rawAuthority);
 
-  let socketPath: string | undefined;
-  if (queryHost?.startsWith('/')) {
-    socketPath = queryHost;
-    // Warn when ?host= overrides a real host.
-    if (decodedAuthority && !decodedAuthority.startsWith('/')) {
-      logger.warn(
-        `Connection URI names host "${decodedAuthority}" but the ?host= ` +
-          `parameter overrides it with the Unix socket "${queryHost}"; ` +
-          `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
-      );
+    let socketPath: string | undefined;
+    if (queryHost?.startsWith('/')) {
+      socketPath = queryHost;
+      // Warn when ?host= overrides a real host.
+      if (decodedAuthority && !decodedAuthority.startsWith('/')) {
+        logger.warn(
+          `Connection URI names host "${decodedAuthority}" but the ?host= ` +
+            `parameter overrides it with the Unix socket "${queryHost}"; ` +
+            `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
+        );
+      }
+    } else if (decodedAuthority.startsWith('/')) {
+      socketPath = decodedAuthority;
     }
-  } else if (decodedAuthority.startsWith('/')) {
-    socketPath = decodedAuthority;
-  }
-  if (!socketPath) {
+    if (!socketPath) {
+      return null;
+    }
+
+    let user: string | undefined;
+    let password: string | undefined;
+    if (rawUserinfo) {
+      const colonIndex = rawUserinfo.indexOf(':');
+      const rawUser =
+        colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
+      const rawPassword =
+        colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
+      user = rawUser ? decodeURIComponent(rawUser) : undefined;
+      password = rawPassword ? decodeURIComponent(rawPassword) : undefined;
+    }
+
+    return {
+      socketPath,
+      user,
+      password,
+      dbName: rawPath
+        ? decodeURIComponent(rawPath.slice(1)) || undefined
+        : undefined,
+    };
+  } catch {
     return null;
   }
-
-  let user: string | undefined;
-  let password: string | undefined;
-  if (rawUserinfo) {
-    const colonIndex = rawUserinfo.indexOf(':');
-    const rawUser =
-      colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
-    const rawPassword =
-      colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
-    user = rawUser ? decodeURIComponent(rawUser) : undefined;
-    password = rawPassword ? decodeURIComponent(rawPassword) : undefined;
-  }
-
-  return {
-    socketPath,
-    user,
-    password,
-    dbName: rawPath
-      ? decodeURIComponent(rawPath.slice(1)) || undefined
-      : undefined,
-  };
 }
 
-/**
- * Builds MikroORM options for MySQL/MariaDB connection URIs.
- */
+/** Builds MikroORM options for MySQL/MariaDB connection URIs. */
 function buildMySqlFamilyOptions(uri: string, driver: unknown) {
   let parsedUrl: URL | null = null;
   try {
@@ -113,14 +114,23 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
   // ?host= must win even when the rest of the authority parses fine.
   if (parsedUrl) {
     const queryHost = parsedUrl.searchParams.get('host');
+    // Ignore malformed percent-encoding when checking for a socket path.
+    let decodedHost = '';
+    if (parsedUrl.hostname) {
+      try {
+        decodedHost = decodeURIComponent(parsedUrl.hostname);
+      } catch {
+        decodedHost = '';
+      }
+    }
+
     if (queryHost?.startsWith('/')) {
-      // Warn when ?host= overrides a real host.
-      if (parsedUrl.hostname) {
+      // Warn only when ?host= overrides a genuine TCP host.
+      if (decodedHost && !decodedHost.startsWith('/')) {
         logger.warn(
-          `Connection URI names host "${parsedUrl.hostname}" but the ` +
-            `?host= parameter overrides it with the Unix socket ` +
-            `"${queryHost}"; connecting to the socket instead. URI: ` +
-            `${redactUriPassword(uri)}`,
+          `Connection URI names host "${decodedHost}" but the ?host= ` +
+            `parameter overrides it with the Unix socket "${queryHost}"; ` +
+            `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
         );
       }
       return {
@@ -138,6 +148,25 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
         },
       } as MikroORMOptions;
     }
+
+    // Route percent-encoded socket authorities through socketPath.
+    if (decodedHost.startsWith('/')) {
+      return {
+        entities: ENTITIES,
+        driver,
+        user: parsedUrl.username
+          ? decodeURIComponent(parsedUrl.username)
+          : undefined,
+        password: parsedUrl.password
+          ? decodeURIComponent(parsedUrl.password)
+          : undefined,
+        dbName: decodeURIComponent(parsedUrl.pathname.slice(1)) || undefined,
+        driverOptions: {
+          connection: {socketPath: decodedHost},
+        },
+      } as MikroORMOptions;
+    }
+
     return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
   }
 
