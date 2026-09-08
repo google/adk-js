@@ -271,19 +271,16 @@ export function prepareRequestBody(
   if (requestBody && 'content' in requestBody) {
     const content = requestBody.content;
     // Process only the first mime type
-    const firstMimeType = Object.keys(content)[0];
-    if (firstMimeType && finalData !== undefined) {
-      if (
-        firstMimeType === 'application/json' ||
-        firstMimeType.endsWith('+json')
-      ) {
-        headers['Content-Type'] = firstMimeType;
+    const mimeType = Object.keys(content)[0];
+    if (mimeType && finalData !== undefined) {
+      if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
+        headers['Content-Type'] = mimeType;
         return typeof finalData === 'string'
           ? finalData
           : JSON.stringify(finalData);
-      } else if (firstMimeType === 'application/x-www-form-urlencoded') {
+      } else if (mimeType === 'application/x-www-form-urlencoded') {
         return new URLSearchParams(finalData as Record<string, string>);
-      } else if (firstMimeType === 'multipart/form-data') {
+      } else if (mimeType === 'multipart/form-data') {
         const formData = new FormData();
         if (typeof finalData === 'object' && finalData !== null) {
           for (const [key, value] of Object.entries(finalData)) {
@@ -291,8 +288,8 @@ export function prepareRequestBody(
           }
         }
         return formData;
-      } else if (firstMimeType === 'text/plain') {
-        headers['Content-Type'] = firstMimeType;
+      } else if (mimeType === 'text/plain') {
+        headers['Content-Type'] = mimeType;
         return String(finalData);
       }
     }
