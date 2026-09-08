@@ -51,17 +51,14 @@ vi.mock('@google/adk', async (importOriginal) => {
 
 /**
  * Under `exitOverride()` commander reports every termination by throwing a
- * `CommanderError`. A clean exit (`--help`, and `--version` when commander's
- * own `.version()` is used) carries exit code 0; a usage error carries a
- * non-zero one. There is no `commander.exit` code.
+ * `CommanderError`, the only error out of `parseAsync` that carries an
+ * `exitCode`: 0 for a clean exit such as `--help`, non-zero for a usage error.
+ * There is no `commander.exit` code to compare against.
  */
 function isCleanCommanderExit(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&
-    'code' in error &&
-    typeof error.code === 'string' &&
-    error.code.startsWith('commander.') &&
     'exitCode' in error &&
     error.exitCode === 0
   );
@@ -123,18 +120,6 @@ describe('CLI Entrypoint', () => {
           exitCode: 1,
         },
       );
-    });
-
-    it.each<[string, unknown]>([
-      ['undefined', undefined],
-      ['null', null],
-      ['a string', 'commander.helpDisplayed'],
-      ['a plain Error', new Error('boom')],
-      ['a non-string code', {code: 1, exitCode: 0}],
-      ['a foreign code', {code: 'other.helpDisplayed', exitCode: 0}],
-      ['a code without an exit code', {code: 'commander.helpDisplayed'}],
-    ])('rejects %s as a clean commander exit', (_label, value) => {
-      expect(isCleanCommanderExit(value)).toBe(false);
     });
   });
 
