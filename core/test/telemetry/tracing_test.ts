@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Type} from '@google/genai';
 import {trace} from '@opentelemetry/api';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -287,6 +288,37 @@ describe('Telemetry Tracing Functions', () => {
         'gen_ai.request.max_tokens',
         expect.anything(),
       );
+    });
+
+    it('should omit responseSchema from the traced request config', () => {
+      // Arrange
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const requestWithSchema = {
+        ...mockLlmRequest,
+        config: {
+          ...mockLlmRequest.config,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {answer: {type: Type.STRING}},
+          },
+        },
+      };
+
+      // Act
+      traceCallLlm({
+        invocationContext: mockInvocationContext,
+        eventId: 'test-event-id',
+        llmRequest: requestWithSchema,
+        llmResponse: mockLlmResponse,
+      });
+
+      // Assert
+      const attributes = mockSpan.setAttributes.mock.calls[0][0];
+      const tracedRequest = JSON.parse(
+        attributes['gcp.vertex.agent.llm_request'],
+      );
+      expect(tracedRequest.config).not.toHaveProperty('responseSchema');
+      expect(tracedRequest.config).toEqual({topP: 0.8, maxOutputTokens: 100});
     });
   });
 });
