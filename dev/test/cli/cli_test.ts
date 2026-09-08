@@ -49,6 +49,24 @@ vi.mock('@google/adk', async (importOriginal) => {
   };
 });
 
+/**
+ * Under `exitOverride()` commander reports every termination by throwing a
+ * `CommanderError`. A clean exit (`--help`, and `--version` when commander's
+ * own `.version()` is used) carries exit code 0; a usage error carries a
+ * non-zero one. There is no `commander.exit` code.
+ */
+function isCleanCommanderExit(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    error.code.startsWith('commander.') &&
+    'exitCode' in error &&
+    error.exitCode === 0
+  );
+}
+
 describe('CLI Entrypoint', () => {
   let program: ReturnType<typeof createProgram>;
 
@@ -67,7 +85,7 @@ describe('CLI Entrypoint', () => {
       process.argv = args;
       await program.parseAsync(['node', 'cli_entrypoint.js', ...args]);
     } catch (e: unknown) {
-      if ((e as {code: string}).code !== 'commander.exit') {
+      if (!isCleanCommanderExit(e)) {
         throw e;
       }
     }
@@ -81,6 +99,42 @@ describe('CLI Entrypoint', () => {
 
       await parse(['-v']);
       expect(logSpy).toHaveBeenCalledWith('1.0.0-test');
+    });
+  });
+
+  describe('parse helper: commander exits', () => {
+    beforeEach(() => {
+      // Commander writes help to stdout and usage errors to stderr; keep the
+      // suite silent.
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+    });
+
+    it('treats a clean commander exit as success', async () => {
+      await expect(parse(['--help'])).resolves.toBeUndefined();
+    });
+
+    it('surfaces a non-zero commander exit for an unknown option', async () => {
+      await expect(parse(['--definitely-not-an-option'])).rejects.toMatchObject(
+        {
+          code: 'commander.unknownOption',
+          exitCode: 1,
+        },
+      );
+    });
+
+    it.each<[string, unknown]>([
+      ['undefined', undefined],
+      ['null', null],
+      ['a string', 'commander.helpDisplayed'],
+      ['a plain Error', new Error('boom')],
+      ['a non-string code', {code: 1, exitCode: 0}],
+      ['a foreign code', {code: 'other.helpDisplayed', exitCode: 0}],
+      ['a code without an exit code', {code: 'commander.helpDisplayed'}],
+    ])('rejects %s as a clean commander exit', (_label, value) => {
+      expect(isCleanCommanderExit(value)).toBe(false);
     });
   });
 
