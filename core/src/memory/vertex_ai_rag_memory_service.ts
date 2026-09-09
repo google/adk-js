@@ -8,11 +8,6 @@ import {Session} from '../sessions/session.js';
 import {formatError} from '../utils/error_utils.js';
 import {logger} from '../utils/logger.js';
 import {
-  RagApiClient,
-  RagContext,
-  VertexRagApiClient,
-} from '../utils/vertex_rag_api.js';
-import {
   BaseMemoryService,
   SearchMemoryRequest,
   SearchMemoryResponse,
@@ -26,6 +21,11 @@ import {
   SourceIdentity,
   TranscriptEvent,
 } from './rag_memory_transcript.js';
+import {
+  RagApiClient,
+  RagContext,
+  VertexRagApiClient,
+} from './vertex_ai_rag_api.js';
 
 /** Files requested per corpus listing page. The API caps this at 100. */
 const RAG_FILE_PAGE_SIZE = 100;
@@ -54,8 +54,6 @@ export interface VertexAiRagMemoryServiceOptions {
   projectId?: string;
   /** Defaults to `process.env.GOOGLE_CLOUD_LOCATION`. */
   location?: string;
-  /** Defaults to a REST client for the resolved location. */
-  ragApiClient?: RagApiClient;
 }
 
 interface ResolvedRagCorpus {
@@ -71,8 +69,16 @@ function resolveRagCorpus(
   if (!ragCorpus) {
     throw new Error('ragCorpus is required for VertexAiRagMemoryService.');
   }
-  const isResourceName = ragCorpus.startsWith('projects/');
+  // A resource name must match the full shape, not merely start with
+  // `projects/`. A malformed value like `projects/my-proj` is treated as a bare
+  // id so the project and the location fall back to the environment, as
+  // adk-python does (`len(parts) >= 4 and parts[0] == 'projects' and
+  // parts[2] == 'locations'`).
   const segments = ragCorpus.split('/');
+  const isResourceName =
+    segments.length >= 4 &&
+    segments[0] === 'projects' &&
+    segments[2] === 'locations';
   const projectId =
     options.projectId ??
     (isResourceName ? segments[1] : process.env['GOOGLE_CLOUD_PROJECT']);
@@ -198,7 +204,16 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
   private readonly vectorDistanceThreshold: number;
   private readonly ragApiClient: RagApiClient;
 
-  constructor(options: VertexAiRagMemoryServiceOptions) {
+  /**
+   * @param ragApiClient An internal seam for tests to substitute a fake REST
+   *     client. Production callers omit it and get a client for the resolved
+   *     location.
+   * @internal
+   */
+  constructor(
+    options: VertexAiRagMemoryServiceOptions,
+    ragApiClient?: RagApiClient,
+  ) {
     const resolved = resolveRagCorpus(options);
     this.ragCorpus = resolved.ragCorpus;
     this.projectId = resolved.projectId;
@@ -207,7 +222,7 @@ export class VertexAiRagMemoryService implements BaseMemoryService {
     this.vectorDistanceThreshold =
       options.vectorDistanceThreshold ?? DEFAULT_VECTOR_DISTANCE_THRESHOLD;
     this.ragApiClient =
-      options.ragApiClient ?? new VertexRagApiClient({location: this.location});
+      ragApiClient ?? new VertexRagApiClient({location: this.location});
   }
 
   /** Uploads the session's transcript into the corpus as one RAG file. */

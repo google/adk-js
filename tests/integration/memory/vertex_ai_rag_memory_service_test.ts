@@ -10,13 +10,13 @@ import {
   InMemorySessionService,
   LlmAgent,
   LOAD_MEMORY,
-  RagApiClient,
   Runner,
   Session,
   VertexAiRagMemoryService,
 } from '@google/adk';
 import {createUserContent} from '@google/genai';
 import {describe, expect, it} from 'vitest';
+import {RagApiClient} from '../../../core/src/memory/vertex_ai_rag_api.js';
 import {GeminiWithMockResponses} from '../test_case_utils.js';
 
 const CORPUS = 'projects/test-project/locations/us-central1/ragCorpora/1';
@@ -85,10 +85,10 @@ function conversation(
 
 describe('VertexAiRagMemoryService integration', () => {
   it('recalls one user of a shared corpus and never the other', async () => {
-    const memoryService = new VertexAiRagMemoryService({
-      ragCorpus: CORPUS,
-      ragApiClient: fakeRagCorpus(),
-    });
+    const memoryService = new VertexAiRagMemoryService(
+      {ragCorpus: CORPUS},
+      fakeRagCorpus(),
+    );
 
     await memoryService.addSessionToMemory(
       conversation('demo', 'alice', 'alice-session', [
@@ -150,10 +150,10 @@ describe('VertexAiRagMemoryService integration', () => {
       },
     ]);
 
-    const memoryService = new VertexAiRagMemoryService({
-      ragCorpus: CORPUS,
-      ragApiClient: fakeRagCorpus(),
-    });
+    const memoryService = new VertexAiRagMemoryService(
+      {ragCorpus: CORPUS},
+      fakeRagCorpus(),
+    );
     const runner = new Runner({
       appName: 'test_rag_memory_app',
       agent,

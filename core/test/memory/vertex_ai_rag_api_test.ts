@@ -5,7 +5,7 @@
  */
 
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {VertexRagApiClient} from '../../src/utils/vertex_rag_api.js';
+import {VertexRagApiClient} from '../../src/memory/vertex_ai_rag_api.js';
 
 const CORPUS = 'projects/test-project/locations/us-central1/ragCorpora/1';
 const HOST = 'https://us-central1-aiplatform.googleapis.com';

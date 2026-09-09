@@ -8,13 +8,13 @@ import {
   createEvent,
   createSession,
   getLogger,
-  RagApiClient,
   SearchMemoryResponse,
   Session,
   VertexAiRagMemoryService,
   VertexAiRagMemoryServiceOptions,
 } from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {RagApiClient} from '../../src/memory/vertex_ai_rag_api.js';
 
 const CORPUS = 'projects/test-project/locations/us-central1/ragCorpora/1';
 const PARENT = 'projects/test-project/locations/us-central1';
@@ -49,11 +49,13 @@ function service(
   ragApiClient: RagApiClient,
   options: Partial<VertexAiRagMemoryServiceOptions> = {},
 ): VertexAiRagMemoryService {
-  return new VertexAiRagMemoryService({
-    ragCorpus: CORPUS,
+  return new VertexAiRagMemoryService(
+    {
+      ragCorpus: CORPUS,
+      ...options,
+    },
     ragApiClient,
-    ...options,
-  });
+  );
 }
 
 /** A retrieved chunk holding one transcript line. Timestamps are seconds. */
@@ -170,6 +172,23 @@ describe('VertexAiRagMemoryService constructor', () => {
     );
     expect(client.listRagFiles.mock.calls[0]?.[0].ragCorpus).toBe(
       'projects/env-project/locations/europe-west4/ragCorpora/my-corpus',
+    );
+  });
+
+  it('treats a malformed resource name as a bare id and falls back to the environment', async () => {
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'europe-west4');
+    const client = fakeRagApiClient();
+
+    // `projects/my-proj` fails the resource-name shape check, so it does not
+    // throw when the environment supplies the project and the location.
+    await searchAsAlice(service(client, {ragCorpus: 'projects/my-proj'}));
+
+    expect(client.retrieveContexts.mock.calls[0]?.[0].parent).toBe(
+      'projects/env-project/locations/europe-west4',
+    );
+    expect(client.listRagFiles.mock.calls[0]?.[0].ragCorpus).toBe(
+      'projects/env-project/locations/europe-west4/ragCorpora/projects/my-proj',
     );
   });
 
