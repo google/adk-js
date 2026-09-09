@@ -108,8 +108,17 @@ export function getLogger(): Logger {
 }
 
 /**
- * Resets the logger to the built-in console logger. On Node this replaces the
- * winston-backed logger that the Node entry point installs.
+ * Resets the logger to the built-in console logger.
+ *
+ * This is the inverse of {@link setLogger}: it reinstates the built-in logger
+ * after a custom one has been installed. Prefer it over `setLogger(null)`,
+ * which installs a no-op logger that discards every message rather than
+ * restoring default output. On Node it also replaces the winston-backed logger
+ * that the Node entry point installs.
+ *
+ * The default logger is constructed fresh, so a log level previously applied
+ * with {@link setLogLevel} is discarded and the level returns to
+ * `LogLevel.INFO`.
  */
 export function resetLogger(): void {
   currentLogger = new SimpleLogger();
