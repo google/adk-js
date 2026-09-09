@@ -17,6 +17,7 @@ import {
   ProtocolType,
   ReadonlyContext,
   RemoteA2AAgent,
+  RemoteA2AAgentConfig,
   StreamableHTTPConnectionParams,
 } from '../../src/index.js';
 
@@ -721,6 +722,64 @@ describe('AgentRegistry', () => {
       expect(agent).toBeInstanceOf(RemoteA2AAgent);
       expect((agent as any).a2aConfig.client).toBe(dummyClient);
       expect((agent as any).a2aConfig.clientFactory).toBe(dummyClientFactory);
+    });
+
+    it("declares the synthesised card's default modes as media types", async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgent',
+        description: 'Declares media types',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+        skills: [{id: 's-1', name: 'Translate'}],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
+    });
+
+    it('declares media-type default modes even when the registry reports no skills', async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgentNoSkills',
+        description: 'Declares media types without skills',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        skills: [],
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
     });
   });
 
