@@ -125,6 +125,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
+    compactedEvent.isolationScope ??= invocationContext.isolationScope;
     invocationContext.session.events.push(compactedEvent);
   }
 }

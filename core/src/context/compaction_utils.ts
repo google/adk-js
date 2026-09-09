@@ -16,20 +16,17 @@ import {
  * If no compaction has occurred, returns all events.
  *
  * @param events The full history of events.
+ * @param currentIsolationScope The scope of the caller. Events tagged with a
+ *   different scope are withheld.
  * @returns The active events, starting with the latest CompactedEvent if present.
  */
 export function getActiveEvents(
   events: Event[],
   currentIsolationScope?: string,
 ): Event[] {
-  const visibleEvents =
-    currentIsolationScope !== undefined
-      ? events.filter(
-          (event) =>
-            event.isolationScope === undefined ||
-            event.isolationScope === currentIsolationScope,
-        )
-      : events;
+  const visibleEvents = events.filter((event) =>
+    isEventVisibleInIsolationScope(event, currentIsolationScope),
+  );
   const latest = visibleEvents.filter(isCompactedEvent).pop();
   return latest
     ? [
@@ -39,6 +36,21 @@ export function getActiveEvents(
         ),
       ]
     : visibleEvents;
+}
+
+/**
+ * Whether an event is visible to a caller's isolation scope.
+ * Untagged events are shared history; tagged events are visible only to their
+ * own scope. An unscoped caller therefore sees only shared history.
+ */
+export function isEventVisibleInIsolationScope(
+  event: Event,
+  currentIsolationScope?: string,
+): boolean {
+  return (
+    event.isolationScope === undefined ||
+    event.isolationScope === currentIsolationScope
+  );
 }
 
 /**

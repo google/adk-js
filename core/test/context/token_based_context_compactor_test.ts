@@ -123,7 +123,7 @@ describe('TokenBasedContextCompactor', () => {
     current2.isolationScope = 'current';
     const peer = createMockEvent('peer', undefined, false, false, 'peer');
     peer.isolationScope = 'peer';
-    const context = createMockInvocationContext([current, current2, peer]);
+    const context = createMockInvocationContext([current, peer, current2]);
     context.isolationScope = 'current';
     const compactor = new TokenBasedContextCompactor({
       tokenThreshold: 0,
@@ -135,6 +135,7 @@ describe('TokenBasedContextCompactor', () => {
 
     expect(summarized).toHaveLength(1);
     expect(summarized[0]).toEqual([current]);
+    expect(context.session.events.at(-1)?.isolationScope).toBe('current');
   });
   it('should not compact if event count is within retention size', async () => {
     const compactor = new TokenBasedContextCompactor({

@@ -488,6 +488,38 @@ describe('getContents', () => {
     );
   });
 
+  it('should filter compacted events by isolation scope', () => {
+    const peerSummary = {
+      isCompacted: true,
+      isolationScope: 'peer',
+      author: 'system',
+      compactedContent: 'peer summary',
+      timestamp: 12345,
+      invocationId: 'peer-invocation',
+      branch: 'main',
+    } as unknown as CompactedEvent;
+    const currentSummary = {
+      isCompacted: true,
+      isolationScope: 'current',
+      author: 'system',
+      compactedContent: 'current summary',
+      timestamp: 12346,
+      invocationId: 'current-invocation',
+      branch: 'main',
+    } as unknown as CompactedEvent;
+
+    const contents = getContents(
+      [peerSummary, currentSummary],
+      'my_agent',
+      undefined,
+      'current',
+    );
+
+    expect(contents).toHaveLength(1);
+    expect(contents[0].parts?.[0].text).toContain('current summary');
+    expect(contents[0].parts?.[0].text).not.toContain('peer summary');
+  });
+
   it('should skip rearranging when the second latest event contains the corresponding function calls', () => {
     const e0 = createEvent({
       author: 'user',

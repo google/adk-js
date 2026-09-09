@@ -18,6 +18,7 @@ import {
 } from '../../events/event.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
 
+import {isEventVisibleInIsolationScope} from '../../context/compaction_utils.js';
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
@@ -62,6 +63,9 @@ export function getContents(
   const filteredEvents: Event[] = [];
 
   for (const event of events) {
+    if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
+      continue;
+    }
     if (isCompactedEvent(event)) {
       filteredEvents.push(convertCompactedEvent(event));
       continue;
@@ -117,7 +121,7 @@ function shouldIncludeEventInContext(
   ) {
     return false;
   }
-  if (isOutsideIsolationScope(event, currentIsolationScope)) {
+  if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
     return false;
   }
   return (
@@ -236,16 +240,6 @@ function turnStart(events: Event[], anchor: number): number {
  * shared history and visible everywhere. So an isolated node sees the ambient
  * conversation plus its own turns, while its peers never see those turns.
  */
-function isOutsideIsolationScope(
-  event: Event,
-  currentIsolationScope?: string,
-): boolean {
-  return (
-    event.isolationScope !== undefined &&
-    event.isolationScope !== currentIsolationScope
-  );
-}
-
 /**
  * Whether the event is an auth event.
  *

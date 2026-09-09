@@ -42,7 +42,10 @@ export class ContentRequestProcessor implements BaseLlmRequestProcessor {
       return;
     }
 
-    const events = getActiveEvents(invocationContext.session.events);
+    const events = getActiveEvents(
+      invocationContext.session.events,
+      invocationContext.isolationScope,
+    );
 
     if (agent.includeContents === 'default') {
       // Include full conversation history
