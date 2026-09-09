@@ -103,6 +103,8 @@ function parseSocketUri(uri: string): SocketUriAuthority | null {
   const decodedAuthority = safeDecode(rawAuthority) ?? '';
 
   let socketPath: string | undefined;
+  let dbNameOverride: string | undefined;
+  let matchedBareSocket = false;
   if (queryHost?.startsWith('/')) {
     socketPath = queryHost;
     // Warn when ?host= overrides a real host.
@@ -115,6 +117,14 @@ function parseSocketUri(uri: string): SocketUriAuthority | null {
     }
   } else if (decodedAuthority.startsWith('/')) {
     socketPath = decodedAuthority;
+  } else if (!decodedAuthority && rawPath) {
+    const segments = rawPath.split('/');
+    const colonIndex = segments.findIndex((segment) => segment.includes(':'));
+    if (colonIndex !== -1) {
+      socketPath = segments.slice(0, colonIndex + 1).join('/');
+      dbNameOverride = segments[colonIndex + 1];
+      matchedBareSocket = true;
+    }
   }
   if (!socketPath) {
     return null;
@@ -136,7 +146,13 @@ function parseSocketUri(uri: string): SocketUriAuthority | null {
     socketPath,
     user,
     password,
-    dbName: rawPath ? decodeOrRaw(rawPath.slice(1)) : undefined,
+    dbName: matchedBareSocket
+      ? dbNameOverride
+        ? decodeOrRaw(dbNameOverride)
+        : undefined
+      : rawPath
+        ? decodeOrRaw(rawPath.slice(1))
+        : undefined,
     schema: params.get('schema') ?? undefined,
     extraParams: remainingParams(params, RESERVED_OPTION_KEYS),
   };

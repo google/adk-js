@@ -298,6 +298,16 @@ describe('operations', () => {
       expect(options).not.toHaveProperty('socketPath');
     });
 
+    it('should parse a bare Unix-socket authority with an unescaped Cloud SQL instance name', async () => {
+      const uri = 'mysql://u:p@/cloudsql/proj:region:inst/db';
+      const options = await getConnectionOptionsFromUri(uri);
+
+      expect(options.driverOptions?.connection?.socketPath).toBe(
+        '/cloudsql/proj:region:inst',
+      );
+      expect(options.dbName).toBe('db');
+    });
+
     it('should parse mysql Unix-socket URI with query param host', async () => {
       const options = await getConnectionOptionsFromUri(
         'mysql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
