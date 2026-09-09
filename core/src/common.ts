@@ -89,6 +89,8 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export {ScopedArtifactService} from './artifacts/scoped_artifact_service.js';
+export {isSessionArtifactService} from './artifacts/session_artifact_service.js';
 export type {
   SessionArtifactService,
   SessionLoadArtifactRequest,
@@ -298,6 +300,7 @@ export {
   FINISH_TASK_TOOL_NAME,
   FinishTaskTool,
 } from './tools/finish_task_tool.js';
+export {ForwardingArtifactService} from './tools/forwarding_artifact_service.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   RequireConfirmation,
