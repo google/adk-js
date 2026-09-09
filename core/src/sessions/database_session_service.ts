@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
+import type {
   FilterQuery,
-  LockMode,
+  LockMode as LockModeEnum,
   Options as MikroDBOptions,
-  MikroORM,
+  MikroORM as MikroORMClass,
 } from '@mikro-orm/core';
 
 import {Event} from '../events/event.js';
@@ -24,20 +24,56 @@ import {
   mergeStates,
   trimTempDeltaState,
 } from './base_session_service.js';
-import {
-  ensureDatabaseCreated,
-  getConnectionOptionsFromUri,
-  validateDatabaseSchemaVersion,
-} from './db/operations.js';
-import {
-  ENTITIES,
-  StorageAppState,
-  StorageEvent,
-  StorageSession,
-  StorageUserState,
-} from './db/schema.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
+
+type SchemaModule = typeof import('./db/schema.js');
+type OperationsModule = typeof import('./db/operations.js');
+type StorageEventEntity = InstanceType<SchemaModule['StorageEvent']>;
+type StorageSessionEntity = InstanceType<SchemaModule['StorageSession']>;
+
+let MikroORM: typeof MikroORMClass;
+let LockMode: typeof LockModeEnum;
+let ENTITIES: SchemaModule['ENTITIES'];
+let StorageAppState: SchemaModule['StorageAppState'];
+let StorageEvent: SchemaModule['StorageEvent'];
+let StorageSession: SchemaModule['StorageSession'];
+let StorageUserState: SchemaModule['StorageUserState'];
+let ensureDatabaseCreated: OperationsModule['ensureDatabaseCreated'];
+let getConnectionOptionsFromUri: OperationsModule['getConnectionOptionsFromUri'];
+let validateDatabaseSchemaVersion: OperationsModule['validateDatabaseSchemaVersion'];
+
+let mikroOrmLoad: Promise<void> | undefined;
+
+/**
+ * Resolves (and memoizes) MikroORM plus the ADK database modules.
+ *
+ * These stay off the static import graph so that `@mikro-orm/core` is not
+ * evaluated when an agent imports `@google/adk` and never opens a database.
+ * A rejected promise stays cached, so a broken install keeps producing the
+ * same error instead of retrying module resolution on every call.
+ */
+function loadMikroOrm(): Promise<void> {
+  mikroOrmLoad ??= importMikroOrm();
+  return mikroOrmLoad;
+}
+
+async function importMikroOrm(): Promise<void> {
+  const [core, schema, operations] = await Promise.all([
+    import('@mikro-orm/core'),
+    import('./db/schema.js'),
+    import('./db/operations.js'),
+  ]);
+
+  ({MikroORM, LockMode} = core);
+  ({ENTITIES, StorageAppState, StorageEvent, StorageSession, StorageUserState} =
+    schema);
+  ({
+    ensureDatabaseCreated,
+    getConnectionOptionsFromUri,
+    validateDatabaseSchemaVersion,
+  } = operations);
+}
 
 /**
  * Checks if a URI is a database connection URI.
@@ -64,7 +100,7 @@ export function isDatabaseConnectionString(uri?: string): boolean {
  * A session service that uses a SQL database for storage via MikroORM.
  */
 export class DatabaseSessionService extends BaseSessionService {
-  private orm?: MikroORM;
+  private orm?: MikroORMClass;
   private initialized = false;
   private options?: MikroDBOptions;
   private connectionString?: string;
@@ -78,10 +114,7 @@ export class DatabaseSessionService extends BaseSessionService {
         throw new Error('Driver is required when passing options object.');
       }
 
-      this.options = {
-        ...connectionStringOrOptions,
-        entities: ENTITIES,
-      };
+      this.options = connectionStringOrOptions;
     }
   }
 
@@ -90,11 +123,15 @@ export class DatabaseSessionService extends BaseSessionService {
       return;
     }
 
-    if (this.connectionString && (!this.options || !this.options.driver)) {
-      this.options = await getConnectionOptionsFromUri(this.connectionString);
-    }
+    await loadMikroOrm();
 
-    this.orm = await MikroORM.init(this.options!);
+    // ENTITIES overrides a caller-supplied `entities`, exactly as the
+    // constructor did before the schema module became lazy.
+    this.options = this.connectionString
+      ? await getConnectionOptionsFromUri(this.connectionString)
+      : {...this.options, entities: ENTITIES};
+
+    this.orm = await MikroORM.init(this.options);
     await ensureDatabaseCreated(this.orm!);
     await validateDatabaseSchemaVersion(this.orm!);
     this.initialized = true;
@@ -210,7 +247,7 @@ export class DatabaseSessionService extends BaseSessionService {
       return undefined;
     }
 
-    const eventWhere: FilterQuery<StorageEvent> = {
+    const eventWhere: FilterQuery<StorageEventEntity> = {
       appName,
       userId,
       sessionId,
@@ -262,7 +299,7 @@ export class DatabaseSessionService extends BaseSessionService {
     await this.init();
     const em = this.orm!.em.fork();
 
-    const where: FilterQuery<StorageSession> = {appName};
+    const where: FilterQuery<StorageSessionEntity> = {appName};
     if (userId) {
       where.userId = userId;
     }
