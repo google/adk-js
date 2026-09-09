@@ -204,24 +204,23 @@ describe('operations', () => {
       expect(options.schema).toBe('custom');
     });
 
-    it('should forward extra query params for a percent-encoded Unix-socket URI under driverOptions.connection', async () => {
+    it('should forward extra query params for a percent-encoded Unix-socket URI under driverOptions', async () => {
       const uri =
         'postgresql://u:p@%2Fcloudsql%2Fproj:region:inst/db?schema=custom&sslmode=require&connect_timeout=10';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.schema).toBe('custom');
       expect(options.driverOptions).toEqual({
-        connection: {sslmode: 'require', connect_timeout: '10'},
+        sslmode: 'require',
+        connect_timeout: '10',
       });
     });
 
-    it('should forward extra query params for a Unix-socket URI via the host query param under driverOptions.connection', async () => {
+    it('should forward extra query params for a Unix-socket URI via the host query param under driverOptions', async () => {
       const uri =
         'postgresql://user:pass@localhost:5433/mydb?host=/cloudsql/proj:region:inst&sslmode=require';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.host).toBe('/cloudsql/proj:region:inst');
-      expect(options.driverOptions).toEqual({
-        connection: {sslmode: 'require'},
-      });
+      expect(options.driverOptions).toEqual({sslmode: 'require'});
     });
 
     it('should not let a query param override canonical connection options', async () => {
@@ -311,7 +310,7 @@ describe('operations', () => {
       );
       expect(options.driver).toBeDefined();
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options.user).toBe('user');
       expect(options.password).toBe('pass');
       expect(options.dbName).toBe('mydb');
@@ -323,7 +322,7 @@ describe('operations', () => {
       const uri = 'mysql://u:p@/cloudsql/proj:region:inst/db';
       const options = await getConnectionOptionsFromUri(uri);
 
-      expect(options.driverOptions?.connection?.socketPath).toBe(
+      expect(options.driverOptions?.socketPath).toBe(
         '/cloudsql/proj:region:inst',
       );
       expect(options.dbName).toBe('db');
@@ -334,7 +333,7 @@ describe('operations', () => {
         'mysql://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
       );
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options.dbName).toBe('mydb');
     });
 
@@ -344,7 +343,7 @@ describe('operations', () => {
       );
       expect(options.driver).toBeDefined();
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options.user).toBe('user');
       expect(options.password).toBe('pass');
       expect(options.dbName).toBe('mydb');
@@ -357,7 +356,7 @@ describe('operations', () => {
         'mariadb://user:pass@/mydb?host=/cloudsql/my-project:us-central1:my-instance',
       );
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options.dbName).toBe('mydb');
     });
 
@@ -367,9 +366,7 @@ describe('operations', () => {
         const options = await getConnectionOptionsFromUri(
           'mariadb://user:secret@real-db.example.com:3306/db?host=/tmp/evil',
         );
-        expect(options.driverOptions).toEqual({
-          connection: {socketPath: '/tmp/evil'},
-        });
+        expect(options.driverOptions).toEqual({socketPath: '/tmp/evil'});
         expect(options).not.toHaveProperty('clientUrl');
         expect(warnSpy).toHaveBeenCalledTimes(1);
       } finally {
@@ -390,7 +387,7 @@ describe('operations', () => {
         'mysql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options.user).toBe('user');
       expect(options.password).toBe('pass');
       expect(options.dbName).toBe('mydb');
@@ -402,7 +399,7 @@ describe('operations', () => {
         'mariadb://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
       const socketPath = '/cloudsql/my-project:us-central1:my-instance';
-      expect(options.driverOptions).toEqual({connection: {socketPath}});
+      expect(options.driverOptions).toEqual({socketPath});
       expect(options).not.toHaveProperty('clientUrl');
     });
 
@@ -429,14 +426,52 @@ describe('operations', () => {
         false,
       );
       const driver = new MySqlDriver(config);
-      const knexOptions = (
-        driver.getConnection() as unknown as {
-          getKnexOptions: (type: string) => {
-            connection: Record<string, unknown>;
-          };
-        }
-      ).getKnexOptions('mysql2');
-      expect(knexOptions.connection.socketPath).toBe(
+      // Verify the socket path reaches the mysql2 pool options.
+      const connection = driver.getConnection() as unknown as {
+        options: {driverOptions?: Record<string, unknown>};
+        mapOptions: (overrides?: Record<string, unknown>) => {
+          socketPath?: string;
+        };
+      };
+      const poolOptions = connection.mapOptions(
+        connection.options.driverOptions,
+      );
+      expect(poolOptions.socketPath).toBe(
+        '/cloudsql/my-project:us-central1:my-instance',
+      );
+    });
+
+    it('should route the real PostgreSqlDriver at a Unix socket for a percent-encoded URI, not port 0', async () => {
+      const {PostgreSqlDriver} = await vi.importActual<
+        typeof import('@mikro-orm/postgresql')
+      >('@mikro-orm/postgresql');
+      const uri =
+        'postgresql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
+      const options = await getConnectionOptionsFromUri(uri);
+      const config = new Configuration(
+        {
+          ...options,
+          driver: PostgreSqlDriver,
+          entities: [],
+          metadataProvider: class {
+            useCache() {
+              return false;
+            }
+          },
+          discovery: {},
+        } as unknown as ConstructorParameters<typeof Configuration>[0],
+        false,
+      );
+      const driver = new PostgreSqlDriver(config);
+      const connection = driver.getConnection() as unknown as {
+        mapOptions: (overrides?: Record<string, unknown>) => {
+          host?: string;
+          port?: number;
+        };
+      };
+      // Verify the socket path reaches the pg pool options as the host.
+      const poolOptions = connection.mapOptions();
+      expect(poolOptions.host).toBe(
         '/cloudsql/my-project:us-central1:my-instance',
       );
     });
@@ -448,9 +483,7 @@ describe('operations', () => {
         const options = await getConnectionOptionsFromUri(
           'mysql://user:secret@real-db.example.com:3306/db?host=/tmp/evil',
         );
-        expect(options.driverOptions).toEqual({
-          connection: {socketPath: '/tmp/evil'},
-        });
+        expect(options.driverOptions).toEqual({socketPath: '/tmp/evil'});
         expect(options).not.toHaveProperty('clientUrl');
         expect(warnSpy).toHaveBeenCalledTimes(1);
         const [message] = warnSpy.mock.calls[0];
@@ -469,9 +502,7 @@ describe('operations', () => {
         const options = await getConnectionOptionsFromUri(
           'mysql://user:secret@real-db.example.com:notaport/db?host=/tmp/evil',
         );
-        expect(options.driverOptions).toEqual({
-          connection: {socketPath: '/tmp/evil'},
-        });
+        expect(options.driverOptions).toEqual({socketPath: '/tmp/evil'});
         expect(warnSpy).toHaveBeenCalledTimes(1);
         const [message] = warnSpy.mock.calls[0];
         expect(message).toContain('real-db.example.com');
@@ -499,11 +530,9 @@ describe('operations', () => {
         'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db?charset=utf8mb4&connectTimeout=10000';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {
-          socketPath: '/cloudsql/proj:region:inst',
-          charset: 'utf8mb4',
-          connectTimeout: '10000',
-        },
+        socketPath: '/cloudsql/proj:region:inst',
+        charset: 'utf8mb4',
+        connectTimeout: '10000',
       });
     });
 
@@ -512,10 +541,8 @@ describe('operations', () => {
         'mysql://u:p@localhost:3306/db?host=/cloudsql/proj:region:inst&charset=utf8mb4';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {
-          socketPath: '/cloudsql/proj:region:inst',
-          charset: 'utf8mb4',
-        },
+        socketPath: '/cloudsql/proj:region:inst',
+        charset: 'utf8mb4',
       });
     });
 
@@ -523,10 +550,8 @@ describe('operations', () => {
       const uri = 'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db?schema=custom';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {
-          socketPath: '/cloudsql/proj:region:inst',
-          schema: 'custom',
-        },
+        socketPath: '/cloudsql/proj:region:inst',
+        schema: 'custom',
       });
     });
 
@@ -535,7 +560,7 @@ describe('operations', () => {
         'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db?socketPath=/tmp/evil&dbName=evil';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {socketPath: '/cloudsql/proj:region:inst'},
+        socketPath: '/cloudsql/proj:region:inst',
       });
       expect(options.dbName).toBe('db');
     });
@@ -551,7 +576,7 @@ describe('operations', () => {
       const uri = 'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db%ZZ';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {socketPath: '/cloudsql/proj:region:inst'},
+        socketPath: '/cloudsql/proj:region:inst',
       });
       expect(options.dbName).toBe('db%ZZ');
     });
@@ -561,7 +586,7 @@ describe('operations', () => {
         'mysql://u:p@localhost:3306/db%ZZ?host=/cloudsql/proj:region:inst';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {socketPath: '/cloudsql/proj:region:inst'},
+        socketPath: '/cloudsql/proj:region:inst',
       });
       expect(options.dbName).toBe('db%ZZ');
     });
@@ -571,9 +596,7 @@ describe('operations', () => {
         'mysql://u:p@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/db%ZZ';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({
-        connection: {
-          socketPath: '/cloudsql/my-project:us-central1:my-instance',
-        },
+        socketPath: '/cloudsql/my-project:us-central1:my-instance',
       });
       expect(options.dbName).toBe('db%ZZ');
     });

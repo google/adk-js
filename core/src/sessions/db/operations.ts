@@ -218,7 +218,7 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
         dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
         ...(parsedUrl.port ? {port: Number(parsedUrl.port)} : {}),
         ...(schema ? {schema} : {}),
-        driverOptions: {connection: extraParams},
+        driverOptions: extraParams,
       } as MikroORMOptions;
     }
     return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
@@ -234,7 +234,7 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
       password: socket.password,
       dbName: socket.dbName,
       ...(socket.schema ? {schema: socket.schema} : {}),
-      driverOptions: {connection: socket.extraParams},
+      driverOptions: socket.extraParams,
     } as MikroORMOptions;
   }
 
@@ -244,8 +244,8 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
 }
 
 /**
- * Builds MikroORM options for MySQL/MariaDB URIs. Socket paths are passed
- * explicitly through `driverOptions.connection.socketPath`.
+ * Builds MikroORM options for MySQL/MariaDB URIs.
+ * Socket paths are passed through `driverOptions.socketPath`.
  */
 function buildMySqlFamilyOptions(
   uri: string,
@@ -297,7 +297,9 @@ function buildMySqlFamilyOptions(
           : undefined,
         dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
         driverOptions: {
-          connection: {socketPath, ...(schema ? {schema} : {}), ...extraParams},
+          socketPath,
+          ...(schema ? {schema} : {}),
+          ...extraParams,
         },
       } as MikroORMOptions;
     }
@@ -315,11 +317,9 @@ function buildMySqlFamilyOptions(
       password: socket.password,
       dbName: socket.dbName,
       driverOptions: {
-        connection: {
-          socketPath: socket.socketPath,
-          ...(socket.schema ? {schema: socket.schema} : {}),
-          ...socket.extraParams,
-        },
+        socketPath: socket.socketPath,
+        ...(socket.schema ? {schema: socket.schema} : {}),
+        ...socket.extraParams,
       },
     } as MikroORMOptions;
   }
