@@ -743,6 +743,54 @@ export function findEventByFunctionCallId(
 }
 
 /**
+ * Walks the last event's function responses once, matching each to its
+ * function call event. Returns the last-resolved match by iteration
+ * order (the loop overwrites its result on every match) alongside the
+ * first pair of distinct authors encountered, if any. Shared by {@link
+ * findMatchingFunctionCall} and {@link
+ * getConflictingFunctionResponseAuthors} so the walk and its matching
+ * rules live in exactly one place.
+ */
+function resolveFunctionResponseMatch(events: Event[]): {
+  resolved: Event | undefined;
+  conflictingAuthors: [string, string] | undefined;
+} {
+  if (!events.length) {
+    return {resolved: undefined, conflictingAuthors: undefined};
+  }
+  const lastEvent = events[events.length - 1];
+  const functionResponses = getFunctionResponses(lastEvent);
+  if (!functionResponses.length) {
+    return {resolved: undefined, conflictingAuthors: undefined};
+  }
+
+  let resolved: Event | undefined;
+  let conflictingAuthors: [string, string] | undefined;
+  for (const functionResponse of functionResponses) {
+    if (!functionResponse.id) {
+      continue;
+    }
+    const match = findEventByFunctionCallId(
+      events,
+      functionResponse.id,
+      events.length - 1,
+    );
+    if (!match) {
+      continue;
+    }
+    if (
+      !conflictingAuthors &&
+      resolved &&
+      resolved.author !== match.author
+    ) {
+      conflictingAuthors = [resolved.author ?? '', match.author ?? ''];
+    }
+    resolved = match;
+  }
+  return {resolved, conflictingAuthors};
+}
+
+/**
  * Returns the event containing the function call that the last event's
  * function response(s) answer, by matching functionCall.id to
  * functionResponse.id.
@@ -758,46 +806,43 @@ export function findEventByFunctionCallId(
  * it was never meant for, and the agent it actually answers would never
  * be correctly resumed at all.
  *
- * When the responses present resolve to calls from more than one
- * distinct author, this throws rather than picking one: the caller
- * (determineAgentForResumption) can only resume a single agent, so an
- * event answering calls from two different agents at once has no single
- * correct answer to fail open with.
- *
- * @throws {Error} If the function responses in the last event resolve to
- *   function calls authored by more than one distinct agent.
+ * This is a pure lookup: responses with no id, or whose id matches no
+ * function call, are skipped rather than treated as an error, and when
+ * several responses resolve to calls from more than one distinct
+ * author, this does not throw -- it returns the last-resolved match by
+ * iteration order (whichever response is checked last wins). That is a
+ * change from the pre-existing behavior of resolving only
+ * `functionResponses[0]` (which effectively made the first response
+ * win): an external caller of {@link findEventByLastFunctionResponseId}
+ * can now get a different event, and a different id, than before this
+ * fix, even though {@link determineAgentForResumption} itself is
+ * unaffected, since it only reads `.author` and every distinct-author
+ * case is instead surfaced there as a thrown conflict (see {@link
+ * getConflictingFunctionResponseAuthors}) after that caller's own
+ * resumability gate, not from this function.
  */
 export function findMatchingFunctionCall(events: Event[]): Event | undefined {
-  if (!events.length) {
-    return undefined;
-  }
-  const lastEvent = events[events.length - 1];
-  const functionResponses = getFunctionResponses(lastEvent);
-  if (!functionResponses.length) {
-    return undefined;
-  }
+  return resolveFunctionResponseMatch(events).resolved;
+}
 
-  let resolved: Event | undefined;
-  for (const functionResponse of functionResponses) {
-    if (!functionResponse.id) {
-      continue;
-    }
-    const match = findEventByFunctionCallId(
-      events,
-      functionResponse.id,
-      events.length - 1,
-    );
-    if (!match) {
-      continue;
-    }
-    if (resolved && resolved.author !== match.author) {
-      throw new Error(
-        'Function responses in the last event resolve to function calls ' +
-          `from more than one agent (at least "${resolved.author}" and ` +
-          `"${match.author}"); cannot determine a single agent to resume.`,
-      );
-    }
-    resolved = match;
-  }
-  return resolved;
+/**
+ * Returns the distinct pair of authors when the last event's function
+ * responses resolve to function calls from more than one agent, or
+ * `undefined` when they all resolve to a single agent (or there is
+ * nothing to resolve).
+ *
+ * This performs the same walk as {@link findMatchingFunctionCall} but
+ * reports a conflict instead of silently resolving to one match, so
+ * that a caller can decide when it is safe to raise it. {@link
+ * determineAgentForResumption} is the only current caller, and calls
+ * this only once resumability is confirmed enabled: this function
+ * existing separately from `findMatchingFunctionCall`, rather than
+ * that function throwing directly, is what keeps a session with such
+ * an event from aborting every run (not only resumption attempts) --
+ * see that caller's own comment for why the check has to live there.
+ */
+export function getConflictingFunctionResponseAuthors(
+  events: Event[],
+): [string, string] | undefined {
+  return resolveFunctionResponseMatch(events).conflictingAuthors;
 }

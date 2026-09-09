@@ -9,7 +9,10 @@ import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
-import {findMatchingFunctionCall} from '../agents/functions.js';
+import {
+  findMatchingFunctionCall,
+  getConflictingFunctionResponseAuthors,
+} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
@@ -827,6 +830,26 @@ export function determineAgentForResumption(
   const event = findEventByLastFunctionResponseId(session.events);
   const isResumable = Boolean(resumabilityConfig?.isResumable);
   if (event && event.author && isResumable) {
+    // Checked here, not inside findEventByLastFunctionResponseId /
+    // findMatchingFunctionCall: those run unconditionally above, on every
+    // runAsync for an agent root, not only when resumption is requested.
+    // Throwing there would abort a run whose result is thrown away
+    // whenever resumabilityConfig is unset, for a session whose last
+    // event merely happens to answer two agents' calls at once -- Cases
+    // 2 and 3 below would never get a chance to run. Gating the throw on
+    // isResumable, which is what actually decides whether this event
+    // matters, keeps that from happening.
+    const conflictingAuthors = getConflictingFunctionResponseAuthors(
+      session.events,
+    );
+    if (conflictingAuthors) {
+      throw new Error(
+        'Function responses in the last event resolve to function calls ' +
+          `from more than one agent (at least "${conflictingAuthors[0]}" ` +
+          `and "${conflictingAuthors[1]}"); cannot determine a single ` +
+          'agent to resume.',
+      );
+    }
     const resumedAgent = rootAgent.findAgent(event.author);
     if (resumedAgent) {
       return resumedAgent;
