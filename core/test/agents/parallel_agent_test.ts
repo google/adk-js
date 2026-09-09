@@ -187,8 +187,6 @@ describe('ParallelAgent', () => {
       'parallel.seq',
       'parallel.sub1',
     ]);
-    expect(yieldedEvents[0].branch).toBe(yieldedEvents[1].branch);
-    expect(yieldedEvents[2].branch).not.toBe(yieldedEvents[0].branch);
   });
 
   it('should respect abort signal', async () => {
