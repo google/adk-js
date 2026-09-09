@@ -8,14 +8,12 @@ import {FunctionDeclaration, Part, Type} from '@google/genai';
 
 import {Context} from '../agents/context.js';
 import {appendInstructions, LlmRequest} from '../models/llm_request.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 import {
   BaseTool,
   RunAsyncToolRequest,
   ToolProcessLlmRequest,
 } from './base_tool.js';
-
-const logger = getLogger();
 
 const GEMINI_SUPPORTED_INLINE_MIME_PREFIXES = ['image/', 'audio/', 'video/'];
 const GEMINI_SUPPORTED_INLINE_MIME_TYPES = new Set(['application/pdf']);
