@@ -693,12 +693,14 @@ export class Runner {
 
           const invocationContext = new InvocationContext({
             artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  params.userId,
-                  params.sessionId,
-                )
+              ? isSessionArtifactService(this.artifactService)
+                ? this.artifactService
+                : new ScopedArtifactService(
+                    this.artifactService,
+                    this.appName,
+                    params.userId,
+                    params.sessionId,
+                  )
               : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
