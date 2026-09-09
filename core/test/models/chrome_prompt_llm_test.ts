@@ -376,6 +376,99 @@ describe('ChromePromptApiLlm', () => {
     expect(text).toContain('[tool_result] searchProducts -> {"matches"');
     expect(text).not.toContain('\\"matches\\"');
   });
+
+  it('re-throws an abort error instead of swallowing it', async () => {
+    const session: ChromeLanguageModelSession = {
+      prompt: async () => {
+        const error = new Error('the operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      },
+      promptStreaming: () => new ReadableStream<string>(),
+      clone: async () => session,
+      destroy: () => {},
+    };
+    const factory: ChromeLanguageModelFactory = {
+      availability: async () => 'available',
+      create: async () => session,
+    };
+    const llm = new ChromePromptApiLlm({languageModel: factory});
+
+    await expect(collect(llm.generateContentAsync(request()))).rejects.toThrow(
+      /aborted/,
+    );
+  });
+
+  it('destroys the previous base session when the key changes', async () => {
+    const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'ok'}));
+    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+
+    await collect(
+      llm.generateContentAsync(request({config: {systemInstruction: 'one'}})),
+    );
+    await collect(
+      llm.generateContentAsync(request({config: {systemInstruction: 'two'}})),
+    );
+
+    // The first base is torn down before the second is created; leaving it
+    // undestroyed leaks model memory.
+    expect(fake.destroyed).toContain('base');
+  });
+
+  it('reports the requested and quota tokens on QuotaExceededError', async () => {
+    const session: ChromeLanguageModelSession = {
+      prompt: async () => {
+        throw Object.assign(new Error('quota'), {
+          name: 'QuotaExceededError',
+          requested: 100,
+          quota: 50,
+        });
+      },
+      promptStreaming: () => new ReadableStream<string>(),
+      clone: async () => session,
+      destroy: () => {},
+    };
+    const factory: ChromeLanguageModelFactory = {
+      availability: async () => 'available',
+      create: async () => session,
+    };
+    const llm = new ChromePromptApiLlm({languageModel: factory});
+
+    const responses = await collect(llm.generateContentAsync(request()));
+
+    expect(responses[0]!.errorCode).toBe('QuotaExceededError');
+    expect(responses[0]!.errorMessage).toContain('requested 100 of 50 tokens');
+  });
+
+  it('cancels the stream when the consumer stops reading early', async () => {
+    let cancelled = false;
+    const session: ChromeLanguageModelSession = {
+      prompt: async () => '',
+      promptStreaming: () =>
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('a');
+            controller.enqueue('b');
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      clone: async () => session,
+      destroy: () => {},
+    };
+    const factory: ChromeLanguageModelFactory = {
+      availability: async () => 'available',
+      create: async () => session,
+    };
+    const llm = new ChromePromptApiLlm({languageModel: factory});
+
+    for await (const response of llm.generateContentAsync(request(), true)) {
+      if (response.partial) break;
+    }
+
+    expect(cancelled).toBe(true);
+  });
 });
 
 describe('stripAdkIdentityPreamble', () => {
