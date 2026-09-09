@@ -6,6 +6,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import {AgentCard} from '@a2a-js/sdk';
 import {Client, ClientFactory} from '@a2a-js/sdk/client';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -17,6 +18,7 @@ import {
   ProtocolType,
   ReadonlyContext,
   RemoteA2AAgent,
+  RemoteA2AAgentConfig,
   StreamableHTTPConnectionParams,
 } from '../../src/index.js';
 
@@ -65,6 +67,16 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     Client: vi.fn().mockImplementation(() => mockMcpClient),
   };
 });
+
+/** Reads back the card `getRemoteA2AAgent` built, which has no public getter. */
+function builtAgentCard(agent: RemoteA2AAgent): AgentCard {
+  const {agentCard} = (agent as unknown as {a2aConfig: RemoteA2AAgentConfig})
+    .a2aConfig;
+  if (typeof agentCard !== 'object') {
+    expect.fail('expected the agent to be built with an AgentCard object');
+  }
+  return agentCard;
+}
 
 describe('AgentRegistry Helpers', () => {
   describe('isGoogleApi', () => {
@@ -721,6 +733,56 @@ describe('AgentRegistry', () => {
       expect(agent).toBeInstanceOf(RemoteA2AAgent);
       expect((agent as any).a2aConfig.client).toBe(dummyClient);
       expect((agent as any).a2aConfig.clientFactory).toBe(dummyClientFactory);
+    });
+
+    it("declares the synthesised card's default modes as media types", async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgent',
+        description: 'Declares media types',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+        skills: [{id: 's-1', name: 'Translate'}],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const agentCard = builtAgentCard(agent);
+      expect(agentCard.defaultInputModes).toEqual(['text/plain']);
+      expect(agentCard.defaultOutputModes).toEqual(['text/plain']);
+    });
+
+    it('declares media-type default modes even when the registry reports no skills', async () => {
+      const agentInfo = {
+        displayName: 'MediaTypeAgentNoSkills',
+        description: 'Declares media types without skills',
+        protocols: [
+          {
+            type: ProtocolType.A2A_AGENT,
+            interfaces: [
+              {
+                url: 'https://my-dynamic-agent.com',
+                protocolBinding: 'HTTP_JSON',
+              },
+            ],
+          },
+        ],
+      };
+
+      vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
+      const agent = await registry.getRemoteA2AAgent('agents/agent-1');
+      const agentCard = builtAgentCard(agent);
+      expect(agentCard.skills).toEqual([]);
+      expect(agentCard.defaultInputModes).toEqual(['text/plain']);
+      expect(agentCard.defaultOutputModes).toEqual(['text/plain']);
     });
   });
 
