@@ -80,7 +80,6 @@
     "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^2.9.0",
     "@mikro-orm/core": "^7.2.0",
-    "@mikro-orm/decorators": "^7.2.0",
     "@mikro-orm/reflection": "^7.2.0",
     "@opentelemetry/api": "1.9.0",
     "@opentelemetry/api-logs": "^0.222.0",
@@ -98,7 +97,6 @@
     "js-yaml": "^4.1.1",
     "jsonpath-plus": "^10.4.0",
     "lodash-es": "^4.18.1",
-    "reflect-metadata": "^0.2.2",
     "winston": "^3.19.0",
     "zod": "^4.2.1",
     "zod-to-json-schema": "^3.25.1"

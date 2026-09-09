@@ -4,8 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {JsonType, type Opt} from '@mikro-orm/core';
-import {Entity, PrimaryKey, Property} from '@mikro-orm/decorators/legacy';
+import {
+  EntitySchema,
+  JsonType,
+  type Opt,
+  PrimaryKeyProp,
+} from '@mikro-orm/core';
 import {
   Event,
   transformToCamelCaseEvent,
@@ -47,150 +51,148 @@ class CamelCaseToSnakeCaseJsonType extends JsonType {
   }
 }
 
-@Entity({tableName: 'adk_internal_metadata'})
-export class StorageMetadata {
-  @PrimaryKey({type: 'string'})
-  key!: string;
+/**
+ * The shape shared by every storage key column, which is capped so that a
+ * composite primary key still fits inside MySQL's index size limit.
+ */
+const KEY_COLUMN = {
+  type: 'string',
+  length: STORAGE_KEY_COLUMN_LENGTH,
+  primary: true,
+} as const;
 
-  @Property({type: 'string'})
+// The entities below are plain classes paired with an `EntitySchema`, rather
+// than decorated classes. MikroORM v7 moved the decorators into
+// `@mikro-orm/decorators`, whose legacy entry pulls in `reflect-metadata`;
+// declaring the mapping separately keeps both off the dependency list while
+// leaving the classes usable as values (`em.create(StorageEvent, ...)`) and as
+// types (`InstanceType<...>`) exactly as before.
+
+export class StorageMetadata {
+  key!: string;
   value!: string;
 }
 
-@Entity({tableName: 'app_states'})
+export const storageMetadataSchema = new EntitySchema<StorageMetadata>({
+  class: StorageMetadata,
+  tableName: 'adk_internal_metadata',
+  properties: {
+    key: {type: 'string', primary: true},
+    value: {type: 'string'},
+  },
+});
+
 export class StorageAppState {
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'app_name',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   appName!: string;
-
-  @Property({type: 'json'})
   state!: Record<string, unknown>;
-
-  @Property({
-    type: 'datetime',
-    fieldName: 'update_time',
-    onCreate: () => new Date(),
-    onUpdate: () => new Date(),
-  })
   updateTime: Opt<Date> = new Date();
 }
 
-@Entity({tableName: 'user_states'})
+export const storageAppStateSchema = new EntitySchema<StorageAppState>({
+  class: StorageAppState,
+  tableName: 'app_states',
+  properties: {
+    appName: {...KEY_COLUMN, fieldName: 'app_name'},
+    state: {type: 'json'},
+    updateTime: {
+      type: 'datetime',
+      fieldName: 'update_time',
+      onCreate: () => new Date(),
+      onUpdate: () => new Date(),
+    },
+  },
+});
+
 export class StorageUserState {
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'app_name',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   appName!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'user_id',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   userId!: string;
-
-  @Property({type: 'json'})
   state!: Record<string, unknown>;
-
-  @Property({
-    type: 'datetime',
-    fieldName: 'update_time',
-    onCreate: () => new Date(),
-    onUpdate: () => new Date(),
-  })
   updateTime: Opt<Date> = new Date();
 
-  [PrimaryKey.name]?: [string, string];
+  [PrimaryKeyProp]?: ['appName', 'userId'];
 }
 
-@Entity({tableName: 'sessions'})
+export const storageUserStateSchema = new EntitySchema<StorageUserState>({
+  class: StorageUserState,
+  tableName: 'user_states',
+  properties: {
+    appName: {...KEY_COLUMN, fieldName: 'app_name'},
+    userId: {...KEY_COLUMN, fieldName: 'user_id'},
+    state: {type: 'json'},
+    updateTime: {
+      type: 'datetime',
+      fieldName: 'update_time',
+      onCreate: () => new Date(),
+      onUpdate: () => new Date(),
+    },
+  },
+});
+
 export class StorageSession {
-  @PrimaryKey({type: 'string', length: STORAGE_KEY_COLUMN_LENGTH})
   id!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'app_name',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   appName!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'user_id',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   userId!: string;
-
-  @Property({type: 'json'})
   state!: Record<string, unknown>;
-
-  @Property({
-    type: 'datetime',
-    fieldName: 'create_time',
-    onCreate: () => new Date(),
-  })
   createTime: Opt<Date> = new Date();
-
-  @Property({
-    type: 'datetime',
-    fieldName: 'update_time',
-    onCreate: () => new Date(),
-  })
   updateTime: Opt<Date> = new Date();
 
-  [PrimaryKey.name]?: [string, string, string];
+  [PrimaryKeyProp]?: ['id', 'appName', 'userId'];
 }
 
-@Entity({tableName: 'events'})
+export const storageSessionSchema = new EntitySchema<StorageSession>({
+  class: StorageSession,
+  tableName: 'sessions',
+  properties: {
+    id: KEY_COLUMN,
+    appName: {...KEY_COLUMN, fieldName: 'app_name'},
+    userId: {...KEY_COLUMN, fieldName: 'user_id'},
+    state: {type: 'json'},
+    createTime: {
+      type: 'datetime',
+      fieldName: 'create_time',
+      onCreate: () => new Date(),
+    },
+    updateTime: {
+      type: 'datetime',
+      fieldName: 'update_time',
+      onCreate: () => new Date(),
+    },
+  },
+});
+
 export class StorageEvent {
-  @PrimaryKey({type: 'string', length: STORAGE_KEY_COLUMN_LENGTH})
   id!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'app_name',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   appName!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'user_id',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   userId!: string;
-
-  @PrimaryKey({
-    type: 'string',
-    fieldName: 'session_id',
-    length: STORAGE_KEY_COLUMN_LENGTH,
-  })
   sessionId!: string;
-
-  @Property({type: 'string', fieldName: 'invocation_id'})
   invocationId!: string;
-
-  @Property({type: 'datetime', length: EVENT_TIMESTAMP_PRECISION})
   timestamp!: Date;
-
-  @Property({type: CamelCaseToSnakeCaseJsonType, fieldName: 'event_data'})
   eventData!: Event;
 
-  [PrimaryKey.name]?: [string, string, string, string];
+  [PrimaryKeyProp]?: ['id', 'appName', 'userId', 'sessionId'];
 }
+
+export const storageEventSchema = new EntitySchema<StorageEvent>({
+  class: StorageEvent,
+  tableName: 'events',
+  properties: {
+    id: KEY_COLUMN,
+    appName: {...KEY_COLUMN, fieldName: 'app_name'},
+    userId: {...KEY_COLUMN, fieldName: 'user_id'},
+    sessionId: {...KEY_COLUMN, fieldName: 'session_id'},
+    invocationId: {type: 'string', fieldName: 'invocation_id'},
+    timestamp: {type: 'datetime', length: EVENT_TIMESTAMP_PRECISION},
+    eventData: {type: CamelCaseToSnakeCaseJsonType, fieldName: 'event_data'},
+  },
+});
 
 /*
  * Export entities for Mikro-ORM configuration
  */
 export const ENTITIES = [
-  StorageMetadata,
-  StorageAppState,
-  StorageUserState,
-  StorageSession,
-  StorageEvent,
+  storageMetadataSchema,
+  storageAppStateSchema,
+  storageUserStateSchema,
+  storageSessionSchema,
+  storageEventSchema,
 ];
