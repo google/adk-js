@@ -8,13 +8,15 @@ import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
-  // Safari 12, not 11: the library uses async generators throughout, and they
-  // are ES2018. Targeting Safari 11 asked esbuild to lower them, and its
-  // lowering of `yield* super.method()` emits `__yieldStar(super.method())` in
-  // a scope where `super` is a syntax error — so `models/apigee_llm.js` in the
-  // web build did not parse at all. Safari 11 was never really supported; the
-  // target only said it was.
-  'browser': ['chrome63', 'firefox57', 'safari12'],
+  // Safari 14.1, not 12: Safari below 14.1 mis-evaluates some destructuring
+  // patterns, and esbuild has no lowering pass for destructuring, so asking for
+  // an older Safari now fails the web build outright rather than emitting
+  // anything. The same reasoning that ruled out Safari 11 applies — the library
+  // uses async generators throughout, and Safari 11's lowering of
+  // `yield* super.method()` emitted `__yieldStar(super.method())` in a scope
+  // where `super` is a syntax error, so `models/apigee_llm.js` did not parse at
+  // all. Neither version was ever really supported; the target only said so.
+  'browser': ['chrome63', 'firefox57', 'safari14.1'],
 };
 
 const licenseHeaderText = `/**

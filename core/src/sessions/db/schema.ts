@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Entity, JsonType, PrimaryKey, Property} from '@mikro-orm/core';
+import {JsonType, type Opt} from '@mikro-orm/core';
+import {Entity, PrimaryKey, Property} from '@mikro-orm/decorators/legacy';
 import {
   Event,
   transformToCamelCaseEvent,
@@ -73,7 +74,7 @@ export class StorageAppState {
     onCreate: () => new Date(),
     onUpdate: () => new Date(),
   })
-  updateTime: Date = new Date();
+  updateTime: Opt<Date> = new Date();
 }
 
 @Entity({tableName: 'user_states'})
@@ -101,7 +102,7 @@ export class StorageUserState {
     onCreate: () => new Date(),
     onUpdate: () => new Date(),
   })
-  updateTime: Date = new Date();
+  updateTime: Opt<Date> = new Date();
 
   [PrimaryKey.name]?: [string, string];
 }
@@ -133,14 +134,14 @@ export class StorageSession {
     fieldName: 'create_time',
     onCreate: () => new Date(),
   })
-  createTime: Date = new Date();
+  createTime: Opt<Date> = new Date();
 
   @Property({
     type: 'datetime',
     fieldName: 'update_time',
     onCreate: () => new Date(),
   })
-  updateTime: Date = new Date();
+  updateTime: Opt<Date> = new Date();
 
   [PrimaryKey.name]?: [string, string, string];
 }
