@@ -16,16 +16,14 @@ export const SCHEMA_VERSION_1_JSON = '1';
 export const STORAGE_KEY_COLUMN_LENGTH = 191;
 
 /**
- * Fractional-second digits requested for stored timestamps.
+ * Fractional-second digits requested for the stored event timestamp.
  *
  * MySQL and MariaDB round a `datetime` column to whole seconds unless a
  * precision is given. That collapses events written in the same second onto one
- * value and leaves their order undefined. Six digits matches the
- * `DATETIME(fsp=6)` column adk-python creates, so a database the two SDKs share
- * has one schema. Other backends are unaffected: PostgreSQL already defaults to
- * six digits and SQLite ignores the precision.
+ * value and leaves their order undefined. Other backends are unaffected:
+ * PostgreSQL already defaults to six digits and SQLite ignores the precision.
  */
-export const TIMESTAMP_PRECISION = 6;
+export const EVENT_TIMESTAMP_PRECISION = 6;
 
 /**
  * Custom type for serializing and deserializing ADK Event objects.
@@ -176,7 +174,7 @@ export class StorageEvent {
   @Property({type: 'string', fieldName: 'invocation_id'})
   invocationId!: string;
 
-  @Property({type: 'datetime', length: TIMESTAMP_PRECISION})
+  @Property({type: 'datetime', length: EVENT_TIMESTAMP_PRECISION})
   timestamp!: Date;
 
   @Property({type: CamelCaseToSnakeCaseJsonType, fieldName: 'event_data'})

@@ -14,12 +14,12 @@ import {
 } from '../../../src/sessions/db/operations.js';
 import {
   ENTITIES,
+  EVENT_TIMESTAMP_PRECISION,
   SCHEMA_VERSION_1_JSON,
   SCHEMA_VERSION_KEY,
   STORAGE_KEY_COLUMN_LENGTH,
   StorageEvent,
   StorageMetadata,
-  TIMESTAMP_PRECISION,
 } from '../../../src/sessions/db/schema.js';
 
 // Mock dynamic imports for drivers that might not be installed in dev
@@ -76,10 +76,9 @@ describe('operations', () => {
         entities: ENTITIES,
       });
 
-      const eventProperties = orm.getMetadata().get(StorageEvent.name)
-        .properties as Record<string, {length?: number}>;
-
-      expect(eventProperties['timestamp'].length).toBe(TIMESTAMP_PRECISION);
+      expect(
+        orm.getMetadata().get(StorageEvent).properties.timestamp.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
     });
   });
 
