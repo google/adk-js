@@ -14,6 +14,7 @@ import {
 } from '../../../src/sessions/db/operations.js';
 import {
   ENTITIES,
+  EVENT_TIMESTAMP_PRECISION,
   SCHEMA_VERSION_1_JSON,
   SCHEMA_VERSION_KEY,
   STORAGE_KEY_COLUMN_LENGTH,
@@ -66,6 +67,18 @@ describe('operations', () => {
         return total + eventProperties[keyProperty].length! * 4;
       }, 0);
       expect(utf8mb4KeyBytes).toBeLessThanOrEqual(3072);
+    });
+
+    it('requests sub-second precision for event timestamps', async () => {
+      orm = await MikroORM.init({
+        dbName: ':memory:',
+        driver: SqliteDriver,
+        entities: ENTITIES,
+      });
+
+      expect(
+        orm.getMetadata().get(StorageEvent).properties.timestamp.length,
+      ).toBe(EVENT_TIMESTAMP_PRECISION);
     });
   });
 
