@@ -29,7 +29,10 @@ import {
   toForwardableA2AParts,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
-import {resolveAgentCard} from './agent_card.js';
+import {
+  resolveAgentCard,
+  ResolveAgentCardOptions,
+} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
 
@@ -84,6 +87,15 @@ export interface RemoteA2AAgentConfig extends BaseAgentConfig {
    * Loaded AgentCard or URL to AgentCard.
    */
   agentCard?: AgentCard | string;
+
+  /**
+   * Controls how a fetched agent card's RPC URL(s) are validated against
+   * the location the card was fetched from. Only relevant when
+   * {@link RemoteA2AAgentConfig.agentCard} is a URL rather than an
+   * already-loaded card object; see {@link ResolveAgentCardOptions} for
+   * what each option relaxes and why both default to failing closed.
+   */
+  resolveAgentCardOptions?: ResolveAgentCardOptions;
 
   /**
    * Optional pre-initialized Client for connection pooling.
@@ -142,7 +154,10 @@ export class RemoteA2AAgent extends BaseAgent<RemoteA2AAgentConfig> {
     }
 
     if (this.a2aConfig.agentCard) {
-      this.card = await resolveAgentCard(this.a2aConfig.agentCard);
+      this.card = await resolveAgentCard(
+        this.a2aConfig.agentCard,
+        this.a2aConfig.resolveAgentCardOptions,
+      );
 
       if (!this.client) {
         const factory = this.a2aConfig.clientFactory || new ClientFactory();

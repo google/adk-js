@@ -17,7 +17,11 @@ import {InMemorySessionService} from '../sessions/in_memory_session_service.js';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
-import {getA2AAgentCard, resolveAgentCard} from './agent_card.js';
+import {
+  getA2AAgentCard,
+  resolveAgentCard,
+  ResolveAgentCardOptions,
+} from './agent_card.js';
 import {A2AAgentExecutor} from './agent_executor.js';
 import {
   AdkDefaultRequestHandler,
@@ -78,6 +82,14 @@ export interface ToA2aOptions {
   basePath?: string;
   /** Optional pre-built AgentCard object or path to agent card JSON */
   agentCard?: AgentCard | string;
+  /**
+   * Controls how a fetched agent card's RPC URL(s) are validated against
+   * the location the card was fetched from. Only relevant when
+   * {@link ToA2aOptions.agentCard} is a URL rather than an already-loaded
+   * card object or file path; see {@link ResolveAgentCardOptions} for
+   * what each option relaxes and why both default to failing closed.
+   */
+  resolveAgentCardOptions?: ResolveAgentCardOptions;
   /** Optional pre-built Runner object */
   runner?: Runner;
   /** Optional session service */
@@ -180,7 +192,7 @@ export async function toA2a(
   const basePath = options.basePath || '';
   const rpcUrl = `${protocol}://${host}:${port}${basePath}`;
   const agentCard = options.agentCard
-    ? await resolveAgentCard(options.agentCard)
+    ? await resolveAgentCard(options.agentCard, options.resolveAgentCardOptions)
     : await getA2AAgentCard(agent, [
         {
           url: `${rpcUrl}/jsonrpc`,
