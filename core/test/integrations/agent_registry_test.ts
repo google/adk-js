@@ -6,7 +6,6 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import {AgentCard} from '@a2a-js/sdk';
 import {Client, ClientFactory} from '@a2a-js/sdk/client';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -67,16 +66,6 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     Client: vi.fn().mockImplementation(() => mockMcpClient),
   };
 });
-
-/** Reads back the card `getRemoteA2AAgent` built, which has no public getter. */
-function builtAgentCard(agent: RemoteA2AAgent): AgentCard {
-  const {agentCard} = (agent as unknown as {a2aConfig: RemoteA2AAgentConfig})
-    .a2aConfig;
-  if (typeof agentCard !== 'object') {
-    expect.fail('expected the agent to be built with an AgentCard object');
-  }
-  return agentCard;
-}
 
 describe('AgentRegistry Helpers', () => {
   describe('isGoogleApi', () => {
@@ -755,9 +744,13 @@ describe('AgentRegistry', () => {
 
       vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
       const agent = await registry.getRemoteA2AAgent('agents/agent-1');
-      const agentCard = builtAgentCard(agent);
-      expect(agentCard.defaultInputModes).toEqual(['text/plain']);
-      expect(agentCard.defaultOutputModes).toEqual(['text/plain']);
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
     });
 
     it('declares media-type default modes even when the registry reports no skills', async () => {
@@ -779,10 +772,14 @@ describe('AgentRegistry', () => {
 
       vi.spyOn(registry, 'getAgentInfo').mockResolvedValue(agentInfo);
       const agent = await registry.getRemoteA2AAgent('agents/agent-1');
-      const agentCard = builtAgentCard(agent);
-      expect(agentCard.skills).toEqual([]);
-      expect(agentCard.defaultInputModes).toEqual(['text/plain']);
-      expect(agentCard.defaultOutputModes).toEqual(['text/plain']);
+      const {agentCard} = (
+        agent as unknown as {a2aConfig: RemoteA2AAgentConfig}
+      ).a2aConfig;
+      expect(agentCard).toMatchObject({
+        skills: [],
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+      });
     });
   });
 
