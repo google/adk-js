@@ -121,20 +121,22 @@ describe('operations', () => {
       expect(resolved).not.toHaveProperty('connect_timeout');
     });
 
-    it('should leave a percent-encoded Unix-socket host with escaped colons as clientUrl, since MikroORM already decodes it correctly', async () => {
+    it('should resolve a percent-encoded Unix-socket host with escaped colons via explicit options, not a portless clientUrl', async () => {
       const uri =
         'postgresql://user:pass@%2Fcloudsql%2Fmy-project%3Aus-central1%3Amy-instance/mydb';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driver).toBeDefined();
-      expect(options.clientUrl).toBe(uri);
-      expect(options).not.toHaveProperty('host');
+      expect(options).not.toHaveProperty('clientUrl');
+      expect(options.host).toBe('/cloudsql/my-project:us-central1:my-instance');
+      expect(options.dbName).toBe('mydb');
     });
 
-    it('should leave a Unix-socket host with an explicit pg port as clientUrl, preserving the port MikroORM already resolves', async () => {
+    it('should resolve a Unix-socket host with an explicit pg port via explicit options', async () => {
       const uri = 'postgresql://user:pass@%2Fvar%2Frun%2Fpostgresql:5433/mydb';
       const options = await getConnectionOptionsFromUri(uri);
-      expect(options.clientUrl).toBe(uri);
-      expect(options).not.toHaveProperty('host');
+      expect(options).not.toHaveProperty('clientUrl');
+      expect(options.host).toBe('/var/run/postgresql');
+      expect(options.port).toBe(5433);
     });
 
     it('should resolve a Unix-socket host with unescaped colons in the instance name', async () => {
@@ -189,25 +191,24 @@ describe('operations', () => {
       expect(options.schema).toBe('custom');
     });
 
-    it('should forward extra query params for a percent-encoded Unix-socket URI', async () => {
+    it('should forward extra query params for a percent-encoded Unix-socket URI under driverOptions.connection', async () => {
       const uri =
         'postgresql://u:p@%2Fcloudsql%2Fproj:region:inst/db?schema=custom&sslmode=require&connect_timeout=10';
-      const options = (await getConnectionOptionsFromUri(
-        uri,
-      )) as unknown as Record<string, unknown>;
+      const options = await getConnectionOptionsFromUri(uri);
       expect(options.schema).toBe('custom');
-      expect(options.sslmode).toBe('require');
-      expect(options.connect_timeout).toBe('10');
+      expect(options.driverOptions).toEqual({
+        connection: {sslmode: 'require', connect_timeout: '10'},
+      });
     });
 
-    it('should forward extra query params for a Unix-socket URI via the host query param', async () => {
+    it('should forward extra query params for a Unix-socket URI via the host query param under driverOptions.connection', async () => {
       const uri =
         'postgresql://user:pass@localhost:5433/mydb?host=/cloudsql/proj:region:inst&sslmode=require';
-      const options = (await getConnectionOptionsFromUri(
-        uri,
-      )) as unknown as Record<string, unknown>;
+      const options = await getConnectionOptionsFromUri(uri);
       expect(options.host).toBe('/cloudsql/proj:region:inst');
-      expect(options.sslmode).toBe('require');
+      expect(options.driverOptions).toEqual({
+        connection: {sslmode: 'require'},
+      });
     });
 
     it('should not let a query param override canonical connection options', async () => {
@@ -263,11 +264,18 @@ describe('operations', () => {
       expect(options.dbName).toBe('db%ZZ');
     });
 
-    it('should handle malformed percent-encoding in userinfo', async () => {
+    it('should keep the raw value for malformed percent-encoding in userinfo, rather than silently dropping the credential', async () => {
       const uri = 'postgresql://u:' + 'p%ZZ@%2Fcloudsql%2Fproj:region:inst/db';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.user).toBe('u');
-      expect((options as {password?: string}).password).toBeUndefined();
+      expect((options as {password?: string}).password).toBe('p%ZZ');
+    });
+
+    it('should throw a clear error, naming the URI, for a bare socket authority with no colon boundary', async () => {
+      const uri = 'postgresql://u:p@/var/run/postgresql/db';
+      await expect(getConnectionOptionsFromUri(uri)).rejects.toThrow(
+        /Unrecognized postgres connection URI: postgresql:\/\//,
+      );
     });
 
     it('should parse mysql URI', async () => {
@@ -498,6 +506,17 @@ describe('operations', () => {
       });
     });
 
+    it('should forward the schema query param for a mysql Unix-socket URI instead of silently dropping it', async () => {
+      const uri = 'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db?schema=custom';
+      const options = await getConnectionOptionsFromUri(uri);
+      expect(options.driverOptions).toEqual({
+        connection: {
+          socketPath: '/cloudsql/proj:region:inst',
+          schema: 'custom',
+        },
+      });
+    });
+
     it('should not let a query param override the resolved socketPath', async () => {
       const uri =
         'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db?socketPath=/tmp/evil&dbName=evil';
@@ -508,7 +527,14 @@ describe('operations', () => {
       expect(options.dbName).toBe('db');
     });
 
-    it('should handle malformed percent-encoding in the manual parser', async () => {
+    it('should throw a clear error, naming the URI, for a bare mysql socket authority with no colon boundary', async () => {
+      const uri = 'mysql://u:p@/var/run/mysqld/mysqld.sock/db';
+      await expect(getConnectionOptionsFromUri(uri)).rejects.toThrow(
+        /Unrecognized MySQL\/MariaDB connection URI: mysql:\/\//,
+      );
+    });
+
+    it('should handle malformed percent-encoding in the manual parser (mysql)', async () => {
       const uri = 'mysql://u:p@%2Fcloudsql%2Fproj:region:inst/db%ZZ';
       const options = await getConnectionOptionsFromUri(uri);
       expect(options.driverOptions).toEqual({

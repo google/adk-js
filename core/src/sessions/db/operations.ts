@@ -24,6 +24,7 @@ function driverPeer(packageName: string, scheme: string) {
 }
 
 interface SocketUriAuthority {
+  // No port: the socket path alone is sufficient to dial.
   socketPath: string;
   user?: string;
   password?: string;
@@ -138,8 +139,8 @@ function parseSocketUri(uri: string): SocketUriAuthority | null {
       colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
     const rawPassword =
       colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
-    user = rawUser ? safeDecode(rawUser) : undefined;
-    password = rawPassword ? safeDecode(rawPassword) : undefined;
+    user = rawUser ? decodeOrRaw(rawUser) : undefined;
+    password = rawPassword ? decodeOrRaw(rawPassword) : undefined;
   }
 
   return {
@@ -173,14 +174,25 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
 
   if (parsedUrl) {
     const queryHost = parsedUrl.searchParams.get('host');
-    if (queryHost?.startsWith('/')) {
-      const decodedHostname = parsedUrl.hostname
-        ? safeDecode(parsedUrl.hostname)
+    const decodedHostname = parsedUrl.hostname
+      ? safeDecode(parsedUrl.hostname)
+      : undefined;
+    const socketPath = queryHost?.startsWith('/')
+      ? queryHost
+      : decodedHostname?.startsWith('/')
+        ? decodedHostname
         : undefined;
-      if (decodedHostname && !decodedHostname.startsWith('/')) {
+
+    if (socketPath) {
+      if (
+        queryHost?.startsWith('/') &&
+        decodedHostname &&
+        !decodedHostname.startsWith('/')
+      ) {
         logger.warn(
-          `Connection URI names host '${decodedHostname}' but the ?host= parameter ` +
-            `overrides it with the Unix socket '${queryHost}'; connecting to the socket.`,
+          `Connection URI names host "${decodedHostname}" but the ?host= ` +
+            `parameter overrides it with the Unix socket "${queryHost}"; ` +
+            `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
         );
       }
       const schema = parsedUrl.searchParams.get('schema');
@@ -191,15 +203,15 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
       return {
         entities: ENTITIES,
         driver,
-        host: queryHost,
-        user: parsedUrl.username ? safeDecode(parsedUrl.username) : undefined,
+        host: socketPath,
+        user: parsedUrl.username ? decodeOrRaw(parsedUrl.username) : undefined,
         password: parsedUrl.password
-          ? safeDecode(parsedUrl.password)
+          ? decodeOrRaw(parsedUrl.password)
           : undefined,
         dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
         ...(parsedUrl.port ? {port: Number(parsedUrl.port)} : {}),
         ...(schema ? {schema} : {}),
-        ...extraParams,
+        driverOptions: {connection: extraParams},
       } as MikroORMOptions;
     }
     return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
@@ -215,11 +227,13 @@ function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
       password: socket.password,
       dbName: socket.dbName,
       ...(socket.schema ? {schema: socket.schema} : {}),
-      ...socket.extraParams,
+      driverOptions: {connection: socket.extraParams},
     } as MikroORMOptions;
   }
 
-  return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
+  throw new Error(
+    `Unrecognized postgres connection URI: ${redactUriPassword(uri)}`,
+  );
 }
 
 /**
@@ -262,6 +276,7 @@ function buildMySqlFamilyOptions(
             `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
         );
       }
+      const schema = parsedUrl.searchParams.get('schema');
       const extraParams = remainingParams(
         parsedUrl.searchParams,
         RESERVED_OPTION_KEYS,
@@ -269,13 +284,13 @@ function buildMySqlFamilyOptions(
       return {
         entities: ENTITIES,
         driver,
-        user: parsedUrl.username ? safeDecode(parsedUrl.username) : undefined,
+        user: parsedUrl.username ? decodeOrRaw(parsedUrl.username) : undefined,
         password: parsedUrl.password
-          ? safeDecode(parsedUrl.password)
+          ? decodeOrRaw(parsedUrl.password)
           : undefined,
         dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
         driverOptions: {
-          connection: {socketPath, ...extraParams},
+          connection: {socketPath, ...(schema ? {schema} : {}), ...extraParams},
         },
       } as MikroORMOptions;
     }
@@ -293,12 +308,18 @@ function buildMySqlFamilyOptions(
       password: socket.password,
       dbName: socket.dbName,
       driverOptions: {
-        connection: {socketPath: socket.socketPath, ...socket.extraParams},
+        connection: {
+          socketPath: socket.socketPath,
+          ...(socket.schema ? {schema: socket.schema} : {}),
+          ...socket.extraParams,
+        },
       },
     } as MikroORMOptions;
   }
 
-  return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
+  throw new Error(
+    `Unrecognized MySQL/MariaDB connection URI: ${redactUriPassword(uri)}`,
+  );
 }
 
 /**
