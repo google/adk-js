@@ -166,6 +166,36 @@ describe('ChromePromptApiLlm', () => {
     expect(JSON.stringify(constraint)).not.toContain('STRING');
   });
 
+  it('keeps argument-schema bounds the model needs to obey', async () => {
+    // The tool-choice schema must not drop constraints like minimum/maximum;
+    // an on-device model relies on them to produce valid arguments.
+    const boundedTool = {
+      functionDeclarations: [
+        {
+          name: 'setVolume',
+          description: 'Set the volume.',
+          parameters: {
+            type: 'OBJECT',
+            properties: {level: {type: 'INTEGER', minimum: 0, maximum: 11}},
+            required: ['level'],
+          },
+        },
+      ],
+    };
+    const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
+    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+
+    await collect(
+      llm.generateContentAsync(request({config: {tools: [boundedTool]}})),
+    );
+
+    const constraint = JSON.stringify(
+      fake.promptCalls[0]!.options?.responseConstraint,
+    );
+    expect(constraint).toContain('"minimum":0');
+    expect(constraint).toContain('"maximum":11');
+  });
+
   it('refuses a tool the request never declared', async () => {
     const fake = fakeLanguageModel(
       JSON.stringify({kind: 'tool', name: 'deleteEverything', args: {}}),
