@@ -7,9 +7,9 @@
 import type {
   FilterQuery,
   LockMode as LockModeEnum,
-  Options as MikroDBOptions,
   MikroORM as MikroORMClass,
 } from '@mikro-orm/core';
+import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
@@ -127,11 +127,12 @@ export class DatabaseSessionService extends BaseSessionService {
 
     // ENTITIES overrides a caller-supplied `entities`, exactly as the
     // constructor did before the schema module became lazy.
-    this.options = this.connectionString
+    const options: MikroDBOptions = this.connectionString
       ? await getConnectionOptionsFromUri(this.connectionString)
       : {...this.options, entities: ENTITIES};
+    this.options = options;
 
-    this.orm = await MikroORM.init(this.options);
+    this.orm = await MikroORM.init(options);
     await ensureDatabaseCreated(this.orm!);
     await validateDatabaseSchemaVersion(this.orm!);
     this.initialized = true;
@@ -527,9 +528,14 @@ export class DatabaseSessionService extends BaseSessionService {
         });
         txEm.persist(newStorageEvent);
       }
-      await txEm.commit();
 
       storageSession.updateTime = new Date(event.timestamp);
+
+      // `em.transactional` owns the single commit for this block, so every
+      // mutation has to be staged before the callback returns. MikroORM v7 no
+      // longer picks up scalar and JSON mutations on its own either, so the
+      // three models edited above are persisted explicitly.
+      txEm.persist([appStateModel, userStateModel, storageSession]);
 
       const newMergedState = mergeStates(
         appStateModel.state,

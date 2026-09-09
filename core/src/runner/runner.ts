@@ -22,6 +22,10 @@ import {App} from '../apps/app.js';
 import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
+import {
+  isSessionArtifactService,
+  SessionArtifactService,
+} from '../artifacts/session_artifact_service.js';
 
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {
@@ -34,7 +38,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {CompositeSessionKey, Session} from '../sessions/session.js';
+import {Session} from '../sessions/session.js';
 import {
   runAsyncGeneratorWithOtelContext,
   tracer,
@@ -42,6 +46,7 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
 import type {RunnableNode} from '../workflow/graph.js';
 import {
   asRunnableRoot,
@@ -82,7 +87,7 @@ export interface RunnerConfig {
   /**
    * An optional service for storing and retrieving artifacts.
    */
-  artifactService?: BaseArtifactService;
+  artifactService?: BaseArtifactService | SessionArtifactService;
 
   /**
    * The service for managing sessions.
@@ -159,7 +164,7 @@ export class Runner {
    */
   readonly agent: RunnableRoot;
   readonly pluginManager: PluginManager;
-  readonly artifactService?: BaseArtifactService;
+  readonly artifactService?: BaseArtifactService | SessionArtifactService;
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
@@ -310,12 +315,14 @@ export class Runner {
 
           const invocationContext = new InvocationContext({
             artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  userId,
-                  sessionId,
-                )
+              ? isSessionArtifactService(this.artifactService)
+                ? this.artifactService
+                : new ScopedArtifactService(
+                    this.artifactService,
+                    this.appName,
+                    userId,
+                    sessionId,
+                  )
               : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
@@ -357,12 +364,10 @@ export class Runner {
 
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
-            // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
               newMessage = await this.saveArtifacts(
+                invocationContext.artifactService,
                 invocationContext.invocationId,
-                session.userId,
-                session.id,
                 newMessage,
               );
               if (params.abortSignal?.aborted) {
@@ -512,26 +517,19 @@ export class Runner {
    * Saves artifacts from the message parts and replaces the inline data with
    * a file name placeholder and optional file reference.
    *
+   * @param artifactService The session-scoped artifact service to save to.
    * @param invocationId The current invocation ID.
-   * @param userId The user ID of the session.
-   * @param sessionId The session ID of the session.
    * @param message The message containing parts to process.
    */
   private async saveArtifacts(
+    artifactService: SessionArtifactService | undefined,
     invocationId: string,
-    userId: string,
-    sessionId: string,
     message: Content,
   ): Promise<Content> {
-    if (!this.artifactService || !message.parts?.length) {
+    if (!artifactService || !message.parts?.length) {
       return message;
     }
 
-    const sessionKey: CompositeSessionKey = {
-      appName: this.appName,
-      userId,
-      sessionId,
-    };
     const newParts: Part[] = [];
     let modified = false;
 
@@ -548,8 +546,7 @@ export class Runner {
           (inlineData as {displayName?: string}).displayName ||
           `artifact_${invocationId}_${i}`;
 
-        const version = await this.artifactService.saveArtifact({
-          ...sessionKey,
+        const version = await artifactService.saveArtifact({
           filename: fileName,
           artifact: part,
         });
@@ -557,13 +554,10 @@ export class Runner {
         newParts.push(createPartFromText(`[Uploaded Artifact: "${fileName}"]`));
 
         try {
-          const artifactVersion = await this.artifactService.getArtifactVersion(
-            {
-              ...sessionKey,
-              filename: fileName,
-              version,
-            },
-          );
+          const artifactVersion = await artifactService.getArtifactVersion({
+            filename: fileName,
+            version,
+          });
           if (
             artifactVersion?.canonicalUri &&
             /^(gs|https?):/i.test(artifactVersion.canonicalUri)
@@ -699,12 +693,14 @@ export class Runner {
 
           const invocationContext = new InvocationContext({
             artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  params.userId,
-                  params.sessionId,
-                )
+              ? isSessionArtifactService(this.artifactService)
+                ? this.artifactService
+                : new ScopedArtifactService(
+                    this.artifactService,
+                    this.appName,
+                    params.userId,
+                    params.sessionId,
+                  )
               : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
@@ -846,7 +842,7 @@ export function determineAgentForResumption(
   // =========================================================================
   // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
   for (let i = session.events.length - 1; i >= 0; i--) {
-    logger.debug('event:', JSON.stringify(session.events[i]));
+    logger.debug('event:', stringifyWithRedactedInlineData(session.events[i]));
     const event = session.events[i];
     if (event.author === 'user' || !event.author) {
       continue;

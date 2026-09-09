@@ -89,6 +89,8 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export {ScopedArtifactService} from './artifacts/scoped_artifact_service.js';
+export {isSessionArtifactService} from './artifacts/session_artifact_service.js';
 export type {
   SessionArtifactService,
   SessionLoadArtifactRequest,
@@ -298,6 +300,7 @@ export {
   FINISH_TASK_TOOL_NAME,
   FinishTaskTool,
 } from './tools/finish_task_tool.js';
+export {ForwardingArtifactService} from './tools/forwarding_artifact_service.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   RequireConfirmation,
@@ -344,7 +347,13 @@ export type {
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {AsyncQueue} from './utils/async_queue.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
-export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
+export {
+  LogLevel,
+  getLogger,
+  resetLogger,
+  setLogLevel,
+  setLogger,
+} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export type {SchemaLike} from './utils/schema.js';
@@ -462,7 +471,8 @@ export type {
   WorkflowConfig,
 } from './workflow/index.js';
 
-export * from './apps/app.js';
+export {App, isApp, validateAppName} from './apps/app.js';
+export type {AppOptions} from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';

@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  NODE_OPTIONS: "--max-old-space-size=8192"
+  NODE_OPTIONS: '--max-old-space-size=8192'
 
 jobs:
   run-tests:
@@ -32,8 +32,21 @@ jobs:
         with:
           python-version: '3.11'
 
+      # `--ignore-scripts` keeps the Windows runner from trying to compile
+      # `better-sqlite3`, which `@mikro-orm/sqlite` depends on. The package
+      # ships a `win32-x64` prebuild and sets `gypfile: false`, so no build is
+      # needed or wanted, but npm runs `node-gyp rebuild` on it there anyway —
+      # and it cannot succeed: the image's Visual Studio 18 is newer than the
+      # bundled node-gyp can recognise, so no native module builds on that
+      # runner at all. Nothing in the tree needs its install script to run:
+      # esbuild, protobufjs and @google/genai all resolve their platform assets
+      # without one, and the full suite passes on a tree installed this way.
+      # Revisit if a dependency ever does need one.
+      #
+      # `npm ci` rather than `npm install` so the job validates the lockfile
+      # instead of quietly rewriting it.
       - name: Install dependencies
-        run: npm install
+        run: npm ci --ignore-scripts
 
       - name: Check for secrets leaks
         run: npx secretlint "**/*"

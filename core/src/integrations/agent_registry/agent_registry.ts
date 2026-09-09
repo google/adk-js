@@ -464,8 +464,9 @@ export class AgentRegistry {
       capabilities: {
         streaming: false,
       } as AgentCapabilities,
-      defaultInputModes: ['text'],
-      defaultOutputModes: ['text'],
+      // The A2A spec defines the default modes as media types.
+      defaultInputModes: ['text/plain'],
+      defaultOutputModes: ['text/plain'],
     };
 
     return new RemoteA2AAgent({

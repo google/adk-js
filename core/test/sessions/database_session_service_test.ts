@@ -16,6 +16,11 @@ import {SqliteDriver} from '@mikro-orm/sqlite';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 import {validateDatabaseSchemaVersion} from '../../src/sessions/db/operations.js';
+import {
+  StorageEvent,
+  StorageMetadata,
+  StorageSession,
+} from '../../src/sessions/db/schema.js';
 
 describe('DatabaseSessionService', () => {
   let service: DatabaseSessionService;
@@ -375,8 +380,8 @@ describe('DatabaseSessionService', () => {
 
     // Manually insert bad version
     const em = orm.em.fork();
-    await em.nativeDelete('StorageMetadata', {key: 'schema_version'});
-    await em.insert('StorageMetadata', {
+    await em.nativeDelete(StorageMetadata, {key: 'schema_version'});
+    await em.insert(StorageMetadata, {
       key: 'schema_version',
       value: '999',
     });
@@ -390,6 +395,44 @@ describe('DatabaseSessionService', () => {
     );
 
     await orm.close();
+  });
+
+  it('preserves sub-second event timestamps, their order and afterTimestamp', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+    });
+
+    // All three land inside one wall-clock second, which is what a datetime
+    // column with no fractional-seconds precision collapses onto one value.
+    const second = Math.floor(Date.now() / 1000) * 1000;
+    const timestamps = [second + 200, second + 400, second + 600];
+    for (const [index, timestamp] of timestamps.entries()) {
+      await service.appendEvent({
+        session,
+        event: createEvent({invocationId: `inv-${index}`, timestamp}),
+      });
+    }
+
+    const loaded = await service.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+    });
+
+    expect(loaded?.events.map((event) => event.timestamp)).toEqual(timestamps);
+
+    const afterFirst = await service.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+      config: {afterTimestamp: second + 300},
+    });
+
+    expect(afterFirst?.events.map((event) => event.timestamp)).toEqual(
+      timestamps.slice(1),
+    );
   });
 
   describe('listSessions pagination and sorting', () => {
@@ -669,7 +712,7 @@ describe('DatabaseSessionService', () => {
       await service.appendEvent({session, event});
 
       const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
-      const storedEvents = (await em.find('StorageEvent', {
+      const storedEvents = (await em.find(StorageEvent, {
         sessionId: 's-temp',
       })) as {sessionId: string; eventData: Event}[];
       const eventData = storedEvents[0].eventData;
@@ -695,7 +738,7 @@ describe('DatabaseSessionService', () => {
       expect(session.lastUpdateTime).toBe(timestamp);
 
       const em = (service as unknown as {orm: MikroORM}).orm.em.fork();
-      const storedSession = (await em.findOne('StorageSession', {
+      const storedSession = (await em.findOne(StorageSession, {
         id: 's-time',
       })) as {id: string; updateTime: Date};
 
