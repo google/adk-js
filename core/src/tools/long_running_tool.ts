@@ -21,7 +21,7 @@ NOTE: This is a long-running operation. Do not call this tool again if it has al
  * asynchronously.
  *
  * The framework invokes the user-provided function and delivers the response
- * back to the model once it completes, identified by the `function_call_id`.
+ * back to the model once it completes, matched up by the function call's `id`.
  * The model is also instructed not to re-invoke the tool while a call is
  * already in flight.
  */
