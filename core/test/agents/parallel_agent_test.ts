@@ -11,6 +11,7 @@ import {
   InvocationContext,
   ParallelAgent,
   PluginManager,
+  SequentialAgent,
   createEvent,
   createSession,
   isParallelAgent,
@@ -128,6 +129,66 @@ describe('ParallelAgent', () => {
 
     expect(yieldedEvents.length).toBe(1);
     expect(yieldedEvents[0].branch).toBe('parallel.sub');
+  });
+
+  it('should give descendants of a sub-agent the sub-agent branch', async () => {
+    const event1 = createEvent({
+      author: 'sub1',
+      content: {role: 'model', parts: [{text: 'one'}]},
+    });
+    const event2 = createEvent({
+      author: 'sub2',
+      content: {role: 'model', parts: [{text: 'two'}]},
+    });
+    const event3 = createEvent({
+      author: 'sub3',
+      content: {role: 'model', parts: [{text: 'three'}]},
+    });
+
+    // sub1 is slow, so the sequential branch reports first.
+    const sub1 = new MockSubAgent({name: 'sub1'}, [event1], 50);
+    const sub2 = new MockSubAgent({name: 'sub2'}, [event2]);
+    const sub3 = new MockSubAgent({name: 'sub3'}, [event3]);
+
+    const seq = new SequentialAgent({
+      name: 'seq',
+      subAgents: [sub2, sub3],
+    });
+
+    const parallelAgent = new ParallelAgent({
+      name: 'parallel',
+      subAgents: [seq, sub1],
+    });
+
+    const session = createSession({
+      id: 'test-session',
+      appName: 'test-app',
+    });
+
+    const context = new InvocationContext({
+      invocationId: 'test-invocation',
+      agent: parallelAgent,
+      session,
+      pluginManager: new PluginManager(),
+    });
+
+    const yieldedEvents: Event[] = [];
+    for await (const e of parallelAgent.runAsync(context)) {
+      yieldedEvents.push(e);
+    }
+
+    expect(yieldedEvents.map((e) => e.author)).toEqual([
+      'sub2',
+      'sub3',
+      'sub1',
+    ]);
+    expect(yieldedEvents.map((e) => e.branch)).toEqual([
+      'parallel.seq',
+      'parallel.seq',
+      'parallel.sub1',
+    ]);
+    expect(yieldedEvents[0].branch).toBe(yieldedEvents[1].branch);
+    expect(yieldedEvents[2].branch).not.toBe(yieldedEvents[0].branch);
   });
 
   it('should respect abort signal', async () => {
