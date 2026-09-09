@@ -48,7 +48,11 @@ const {StorageMock, storageMock} = vi.hoisted(() => {
     }
 
     async delete(): Promise<void> {
-      this.bucket.files.delete(this.name);
+      // Real GCS answers a delete of a missing object with a 404, which the
+      // storage client surfaces as a rejection.
+      if (!this.bucket.files.delete(this.name)) {
+        throw new Error(`File not found: ${this.name}`);
+      }
     }
 
     publicUrl(): string {
@@ -361,6 +365,47 @@ describe('GcsArtifactService', () => {
       expect(loaded?.inlineData?.data).toBe(data);
       expect(loaded?.inlineData?.mimeType).toBe('image/png');
       expect(loaded?.inlineData?.displayName).toBe('photo.png');
+    });
+  });
+
+  describe('deleteArtifact against a missing object', () => {
+    const sessionKey = {
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'test-session',
+    };
+
+    it('does not issue a delete for an artifact that was never saved', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'keep.txt',
+        artifact: {text: 'keep me'},
+      });
+
+      await expect(
+        service.deleteArtifact({...sessionKey, filename: 'ghost.txt'}),
+      ).resolves.toBeUndefined();
+
+      expect([...storageMock.bucket(bucketName).files.keys()]).toEqual([
+        'test-app/test-user/test-session/keep.txt/0',
+      ]);
+    });
+
+    it('surfaces the GCS failure when a listed version is already gone', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      const bucket = storageMock.bucket(bucketName);
+      vi.spyOn(bucket, 'getFiles').mockResolvedValue([
+        [bucket.file('test-app/test-user/test-session/vanished.txt/0')],
+      ]);
+
+      await expect(
+        service.deleteArtifact({...sessionKey, filename: 'vanished.txt'}),
+      ).rejects.toThrow(
+        'File not found: test-app/test-user/test-session/vanished.txt/0',
+      );
     });
   });
 });
