@@ -324,6 +324,51 @@ describe('VertexAiMemoryBankService', () => {
     });
   });
 
+  describe('response logging', () => {
+    it('logs the create memory response at debug', async () => {
+      const debugSpy = vi
+        .spyOn(getLogger(), 'debug')
+        .mockImplementation(() => {});
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories: [{content: {parts: [{text: 'fact 1'}]} as Content}],
+      });
+
+      expect(debugSpy).toHaveBeenCalledWith('Create memory response received.');
+      expect(infoSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+
+    it('logs the generate direct memory response at debug', async () => {
+      const debugSpy = vi
+        .spyOn(getLogger(), 'debug')
+        .mockImplementation(() => {});
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories: [{content: {parts: [{text: 'fact 1'}]} as Content}],
+        customMetadata: {enable_consolidation: true},
+      });
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        'Generate direct memory response received.',
+      );
+      expect(infoSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+  });
+
   describe('searchMemory', () => {
     it('calls retrieveInternal and returns mapped memories', async () => {
       const response = await service.searchMemory({
