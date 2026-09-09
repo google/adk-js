@@ -160,11 +160,17 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
         : {isolationScope: invocationContext.isolationScope}),
     } as CompactedEvent;
 
-    // Replace only the current scope's compacted events. Peer-scope events and
-    // shared history must remain in the session for their own readers.
+    // Replace only events owned by the current scope. Shared history may be
+    // included in the summary, but it must remain in the session for peer and
+    // unscoped readers.
+    const shouldReplaceEvent = (event: Event): boolean =>
+      invocationContext.isolationScope === undefined ||
+      event.isolationScope === invocationContext.isolationScope;
     const replacedEvents = new Set<Event>([
-      ...(reusableScratchpad ? [reusableScratchpad] : []),
-      ...rawEventsToCompact,
+      ...(reusableScratchpad && shouldReplaceEvent(reusableScratchpad)
+        ? [reusableScratchpad]
+        : []),
+      ...rawEventsToCompact.filter(shouldReplaceEvent),
     ]);
     const firstReplacedIndex = events.findIndex((event) =>
       replacedEvents.has(event),
