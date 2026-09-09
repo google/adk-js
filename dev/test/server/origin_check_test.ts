@@ -10,6 +10,7 @@ import {describe, expect, it} from 'vitest';
 import {
   isRequestOriginAllowed,
   normalizeOrigin,
+  parseAllowedOrigins,
 } from '../../src/server/origin_check.js';
 
 const PORT = 8000;
@@ -25,9 +26,51 @@ describe('normalizeOrigin', () => {
     );
   });
 
-  it('passes the wildcard and non-URL entries through unchanged', () => {
+  it('passes the wildcard through unchanged', () => {
     expect(normalizeOrigin('*')).toBe('*');
-    expect(normalizeOrigin('not a url')).toBe('not a url');
+  });
+
+  it('rejects a scheme-less entry whose opaque origin is "null"', () => {
+    // `new URL('localhost:4200').origin` is the string "null"; accepting it
+    // would allowlist every opaque origin.
+    expect(normalizeOrigin('localhost:4200')).toBeNull();
+  });
+
+  it('rejects a non-http(s) scheme and an unparseable entry', () => {
+    expect(normalizeOrigin('file:///etc/passwd')).toBeNull();
+    expect(normalizeOrigin('not a url')).toBeNull();
+  });
+});
+
+describe('parseAllowedOrigins', () => {
+  it('normalizes and keeps http(s) origins and the wildcard', () => {
+    expect(
+      parseAllowedOrigins('http://localhost:4200/, https://a.example, *'),
+    ).toEqual({
+      origins: ['http://localhost:4200', 'https://a.example', '*'],
+      rejected: [],
+    });
+  });
+
+  it('drops a scheme-less entry so it never reaches the allowlist', () => {
+    // The blocking bug: `localhost:4200` otherwise normalizes to the opaque
+    // "null" origin and grants every `Origin: null` request.
+    expect(parseAllowedOrigins('localhost:4200')).toEqual({
+      origins: [],
+      rejected: ['localhost:4200'],
+    });
+  });
+
+  it('drops an invalid entry while keeping a valid sibling', () => {
+    expect(parseAllowedOrigins('file:///x, https://ok.example')).toEqual({
+      origins: ['https://ok.example'],
+      rejected: ['file:///x'],
+    });
+  });
+
+  it('returns empty lists for an unset or blank value', () => {
+    expect(parseAllowedOrigins(undefined)).toEqual({origins: [], rejected: []});
+    expect(parseAllowedOrigins('  ,  ')).toEqual({origins: [], rejected: []});
   });
 });
 
@@ -76,6 +119,14 @@ describe('isRequestOriginAllowed', () => {
     ).toBe(false);
   });
 
+  it('blocks a literal "null" Origin via the malformed-URL path', () => {
+    // A sandboxed iframe or a data:/file: document sends `Origin: null`. It is
+    // not on the allowlist and `new URL('null')` throws, so it is refused.
+    expect(
+      isRequestOriginAllowed('null', headers(`localhost:${PORT}`), []),
+    ).toBe(false);
+  });
+
   // A TLS-terminating front end (Cloud Run) serves the UI over https while the
   // container sees a plain-http Host, so the same-origin check must compare
   // authorities, not full URLs including the scheme.
@@ -104,7 +155,7 @@ describe('isRequestOriginAllowed', () => {
       isRequestOriginAllowed(
         'http://localhost:4200',
         headers(`localhost:${PORT}`),
-        [normalizeOrigin('http://localhost:4200/')],
+        parseAllowedOrigins('http://localhost:4200/').origins,
       ),
     ).toBe(true);
   });

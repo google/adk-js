@@ -8,6 +8,8 @@ import {Logger} from '@google/adk';
 import {NextFunction, Request, RequestHandler, Response} from 'express';
 import * as http from 'node:http';
 
+import {formatHeaderForLog} from '../utils/log_utils.js';
+
 /** Methods that cannot change server state and are therefore not origin-checked. */
 const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -15,18 +17,60 @@ const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * Canonicalizes an `--allow_origins` entry to its origin form, so the gate and
  * `cors()` compare it against the browser's `Origin` consistently. A browser
  * sends `http://localhost:4200`, never the `http://localhost:4200/` a user may
- * type, so a raw string comparison silently never matches. The `*` wildcard and
- * any non-URL entry pass through unchanged.
+ * type, so a raw string comparison silently never matches. The `*` wildcard is
+ * returned unchanged.
+ *
+ * Returns `null` for anything that is not an `http:`/`https:` URL. A scheme-less
+ * entry like `localhost:4200` parses to the opaque origin `"null"`, so accepting
+ * it would put the literal string `"null"` on the allowlist and grant every
+ * opaque origin: sandboxed iframes, `data:`/`file:` documents, and
+ * cross-origin-redirected requests all send `Origin: null`.
  */
-export function normalizeOrigin(origin: string): string {
+export function normalizeOrigin(origin: string): string | null {
   if (origin === '*') {
     return origin;
   }
+  let url: URL;
   try {
-    return new URL(origin).origin;
+    url = new URL(origin);
   } catch {
-    return origin;
+    return null;
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
+  return url.origin;
+}
+
+/**
+ * Parses a raw `--allow_origins` value into the origins the gate enforces and
+ * the entries dropped as invalid. The value is a comma-separated list because a
+ * browser sends one `Origin` per request, so `cors()` never matches the joined
+ * string and the DNS-rebinding guard reads only its first host from it. Each
+ * entry is canonicalized by {@link normalizeOrigin}; an entry that is neither
+ * `*` nor an `http:`/`https:` URL is dropped, so a scheme-less typo cannot reach
+ * the allowlist. The caller warns on each dropped entry so the typo surfaces at
+ * startup.
+ */
+export function parseAllowedOrigins(raw: string | undefined): {
+  origins: string[];
+  rejected: string[];
+} {
+  const origins: string[] = [];
+  const rejected: string[] = [];
+  for (const entry of (raw ?? '').split(',')) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+    const normalized = normalizeOrigin(trimmed);
+    if (normalized === null) {
+      rejected.push(trimmed);
+    } else {
+      origins.push(normalized);
+    }
+  }
+  return {origins, rejected};
 }
 
 /**
@@ -81,7 +125,9 @@ export function createOriginCheckMiddleware(
     }
     const reason = 'Forbidden: origin not allowed';
     logger.warn(
-      `${reason}: ${req.method} ${req.originalUrl} (host: ${req.headers.host}, origin: ${req.headers.origin})`,
+      `${reason}: ${req.method} ${formatHeaderForLog(req.originalUrl)} ` +
+        `(host: ${formatHeaderForLog(req.headers.host)}, origin: ` +
+        `${formatHeaderForLog(req.headers.origin)})`,
     );
     res.status(403).type('text/plain').send(reason);
   };

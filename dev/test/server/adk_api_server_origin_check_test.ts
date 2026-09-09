@@ -100,6 +100,33 @@ describe('AdkApiServer origin validation', () => {
     expect(response.status).toBe(200);
   });
 
+  it('allows a state-changing request that carries no Origin', async () => {
+    // Compat contract for curl, the ADK CLI and AdkApiClient: a POST with no
+    // Origin is not cross-origin, so the gate must let it through.
+    const port = await startServer();
+
+    const response = await request(port, '/apps/testApp/users/u/sessions', {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it('does not allowlist Origin: null from a scheme-less allow_origins entry', async () => {
+    // A scheme-less `--allow_origins localhost:4200` used to normalize to the
+    // opaque "null" origin and grant every `Origin: null` request. The entry is
+    // now dropped, so the opaque origin is refused.
+    const port = await startServer({allowOrigins: 'localhost:4200'});
+
+    const response = await request(port, '/apps/testApp/users/u/sessions', {
+      method: 'POST',
+      headers: {origin: 'null'},
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toBe('Forbidden: origin not allowed');
+  });
+
   it.each([
     ['http://evil.com', 'http://evil.com'],
     ['*', '*'],
