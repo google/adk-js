@@ -23,15 +23,61 @@ function driverPeer(packageName: string, scheme: string) {
   };
 }
 
-interface SocketUri {
+interface SocketUriAuthority {
   socketPath: string;
   user?: string;
   password?: string;
   dbName?: string;
+  schema?: string;
+  extraParams: Record<string, string>;
 }
 
-/** Parses Unix-socket URIs that `new URL()` cannot represent. */
-function parseSocketUri(uri: string): SocketUri | null {
+/** Decodes a URI component without throwing on malformed percent-escapes. */
+function safeDecode(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeOrRaw(raw: string): string | undefined {
+  return (safeDecode(raw) ?? raw) || undefined;
+}
+
+function remainingParams(
+  params: URLSearchParams,
+  exclude: string[],
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of params.entries()) {
+    if (!exclude.includes(key)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+const RESERVED_OPTION_KEYS = [
+  'host',
+  'schema',
+  'socketPath',
+  'driver',
+  'entities',
+  'user',
+  'password',
+  'dbName',
+  'port',
+  'clientUrl',
+  'driverOptions',
+];
+
+/**
+ * Parses Unix-socket connection URIs that `new URL()` cannot represent,
+ * including unescaped Cloud SQL instance names and `?host=/...` URIs.
+ * Userinfo is split on the last `@` so IAM usernames are handled correctly.
+ */
+function parseSocketUri(uri: string): SocketUriAuthority | null {
   const schemeEnd = uri.indexOf('://');
   if (schemeEnd === -1) {
     return null;
@@ -54,56 +100,120 @@ function parseSocketUri(uri: string): SocketUri | null {
 
   const params = new URLSearchParams(rawQuery ?? '');
   const queryHost = params.get('host');
+  const decodedAuthority = safeDecode(rawAuthority) ?? '';
 
-  // Malformed percent-encoding falls back to null instead of throwing.
-  try {
-    const decodedAuthority = decodeURIComponent(rawAuthority);
-
-    let socketPath: string | undefined;
-    if (queryHost?.startsWith('/')) {
-      socketPath = queryHost;
-      // Warn when ?host= overrides a real host.
-      if (decodedAuthority && !decodedAuthority.startsWith('/')) {
-        logger.warn(
-          `Connection URI names host "${decodedAuthority}" but the ?host= ` +
-            `parameter overrides it with the Unix socket "${queryHost}"; ` +
-            `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
-        );
-      }
-    } else if (decodedAuthority.startsWith('/')) {
-      socketPath = decodedAuthority;
+  let socketPath: string | undefined;
+  if (queryHost?.startsWith('/')) {
+    socketPath = queryHost;
+    // Warn when ?host= overrides a real host.
+    if (decodedAuthority && !decodedAuthority.startsWith('/')) {
+      logger.warn(
+        `Connection URI names host "${decodedAuthority}" but the ?host= ` +
+          `parameter overrides it with the Unix socket "${queryHost}"; ` +
+          `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
+      );
     }
-    if (!socketPath) {
-      return null;
-    }
-
-    let user: string | undefined;
-    let password: string | undefined;
-    if (rawUserinfo) {
-      const colonIndex = rawUserinfo.indexOf(':');
-      const rawUser =
-        colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
-      const rawPassword =
-        colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
-      user = rawUser ? decodeURIComponent(rawUser) : undefined;
-      password = rawPassword ? decodeURIComponent(rawPassword) : undefined;
-    }
-
-    return {
-      socketPath,
-      user,
-      password,
-      dbName: rawPath
-        ? decodeURIComponent(rawPath.slice(1)) || undefined
-        : undefined,
-    };
-  } catch {
+  } else if (decodedAuthority.startsWith('/')) {
+    socketPath = decodedAuthority;
+  }
+  if (!socketPath) {
     return null;
   }
+
+  let user: string | undefined;
+  let password: string | undefined;
+  if (rawUserinfo) {
+    const colonIndex = rawUserinfo.indexOf(':');
+    const rawUser =
+      colonIndex === -1 ? rawUserinfo : rawUserinfo.slice(0, colonIndex);
+    const rawPassword =
+      colonIndex === -1 ? undefined : rawUserinfo.slice(colonIndex + 1);
+    user = rawUser ? safeDecode(rawUser) : undefined;
+    password = rawPassword ? safeDecode(rawPassword) : undefined;
+  }
+
+  return {
+    socketPath,
+    user,
+    password,
+    dbName: rawPath ? decodeOrRaw(rawPath.slice(1)) : undefined,
+    schema: params.get('schema') ?? undefined,
+    extraParams: remainingParams(params, RESERVED_OPTION_KEYS),
+  };
 }
 
-/** Builds MikroORM options for MySQL/MariaDB connection URIs. */
-function buildMySqlFamilyOptions(uri: string, driver: unknown) {
+/**
+ * Leaves URLs that `new URL()` can represent as `clientUrl`, preserving
+ * MikroORM's existing URL/query-parameter handling. Socket URIs that
+ * require manual parsing are converted to explicit connection options.
+ */
+function buildPostgresOptions(uri: string, driver: unknown): MikroORMOptions {
+  let parsedUrl: URL | null;
+  try {
+    parsedUrl = new URL(uri);
+  } catch {
+    parsedUrl = null;
+  }
+
+  if (parsedUrl) {
+    const queryHost = parsedUrl.searchParams.get('host');
+    if (queryHost?.startsWith('/')) {
+      const decodedHostname = parsedUrl.hostname
+        ? safeDecode(parsedUrl.hostname)
+        : undefined;
+      if (decodedHostname && !decodedHostname.startsWith('/')) {
+        logger.warn(
+          `Connection URI names host '${decodedHostname}' but the ?host= parameter ` +
+            `overrides it with the Unix socket '${queryHost}'; connecting to the socket.`,
+        );
+      }
+      const schema = parsedUrl.searchParams.get('schema');
+      const extraParams = remainingParams(
+        parsedUrl.searchParams,
+        RESERVED_OPTION_KEYS,
+      );
+      return {
+        entities: ENTITIES,
+        driver,
+        host: queryHost,
+        user: parsedUrl.username ? safeDecode(parsedUrl.username) : undefined,
+        password: parsedUrl.password
+          ? safeDecode(parsedUrl.password)
+          : undefined,
+        dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
+        ...(parsedUrl.port ? {port: Number(parsedUrl.port)} : {}),
+        ...(schema ? {schema} : {}),
+        ...extraParams,
+      } as MikroORMOptions;
+    }
+    return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
+  }
+
+  const socket = parseSocketUri(uri);
+  if (socket) {
+    return {
+      entities: ENTITIES,
+      driver,
+      host: socket.socketPath,
+      user: socket.user,
+      password: socket.password,
+      dbName: socket.dbName,
+      ...(socket.schema ? {schema: socket.schema} : {}),
+      ...socket.extraParams,
+    } as MikroORMOptions;
+  }
+
+  return {entities: ENTITIES, clientUrl: uri, driver} as MikroORMOptions;
+}
+
+/**
+ * Builds MikroORM options for MySQL/MariaDB URIs. Socket paths are passed
+ * explicitly through `driverOptions.connection.socketPath`.
+ */
+function buildMySqlFamilyOptions(
+  uri: string,
+  driver: unknown,
+): MikroORMOptions {
   let parsedUrl: URL | null = null;
   try {
     parsedUrl = new URL(uri);
@@ -111,58 +221,45 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
     // Fall back to manual parsing for socket URIs.
   }
 
-  // ?host= must win even when the rest of the authority parses fine.
   if (parsedUrl) {
     const queryHost = parsedUrl.searchParams.get('host');
-    // Ignore malformed percent-encoding when checking for a socket path.
-    let decodedHost = '';
-    if (parsedUrl.hostname) {
-      try {
-        decodedHost = decodeURIComponent(parsedUrl.hostname);
-      } catch {
-        decodedHost = '';
-      }
-    }
+    const decodedHostname = parsedUrl.hostname
+      ? safeDecode(parsedUrl.hostname)
+      : undefined;
 
-    if (queryHost?.startsWith('/')) {
+    const socketPath = queryHost?.startsWith('/')
+      ? queryHost
+      : decodedHostname?.startsWith('/')
+        ? decodedHostname
+        : undefined;
+
+    if (socketPath) {
       // Warn only when ?host= overrides a genuine TCP host.
-      if (decodedHost && !decodedHost.startsWith('/')) {
+      if (
+        queryHost?.startsWith('/') &&
+        decodedHostname &&
+        !decodedHostname.startsWith('/')
+      ) {
         logger.warn(
-          `Connection URI names host "${decodedHost}" but the ?host= ` +
+          `Connection URI names host "${decodedHostname}" but the ?host= ` +
             `parameter overrides it with the Unix socket "${queryHost}"; ` +
             `connecting to the socket instead. URI: ${redactUriPassword(uri)}`,
         );
       }
+      const extraParams = remainingParams(
+        parsedUrl.searchParams,
+        RESERVED_OPTION_KEYS,
+      );
       return {
         entities: ENTITIES,
         driver,
-        user: parsedUrl.username
-          ? decodeURIComponent(parsedUrl.username)
-          : undefined,
+        user: parsedUrl.username ? safeDecode(parsedUrl.username) : undefined,
         password: parsedUrl.password
-          ? decodeURIComponent(parsedUrl.password)
+          ? safeDecode(parsedUrl.password)
           : undefined,
-        dbName: decodeURIComponent(parsedUrl.pathname.slice(1)) || undefined,
+        dbName: decodeOrRaw(parsedUrl.pathname.slice(1)),
         driverOptions: {
-          connection: {socketPath: queryHost},
-        },
-      } as MikroORMOptions;
-    }
-
-    // Route percent-encoded socket authorities through socketPath.
-    if (decodedHost.startsWith('/')) {
-      return {
-        entities: ENTITIES,
-        driver,
-        user: parsedUrl.username
-          ? decodeURIComponent(parsedUrl.username)
-          : undefined,
-        password: parsedUrl.password
-          ? decodeURIComponent(parsedUrl.password)
-          : undefined,
-        dbName: decodeURIComponent(parsedUrl.pathname.slice(1)) || undefined,
-        driverOptions: {
-          connection: {socketPath: decodedHost},
+          connection: {socketPath, ...extraParams},
         },
       } as MikroORMOptions;
     }
@@ -173,7 +270,6 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
   // new URL() threw -- typically unescaped colons in the socket path.
   const socket = parseSocketUri(uri);
   if (socket) {
-    // Pass socketPath through to the underlying driver.
     return {
       entities: ENTITIES,
       driver,
@@ -181,7 +277,7 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
       password: socket.password,
       dbName: socket.dbName,
       driverOptions: {
-        connection: {socketPath: socket.socketPath},
+        connection: {socketPath: socket.socketPath, ...socket.extraParams},
       },
     } as MikroORMOptions;
   }
@@ -199,58 +295,58 @@ function buildMySqlFamilyOptions(uri: string, driver: unknown) {
 export async function getConnectionOptionsFromUri(
   uri: string,
 ): Promise<MikroORMOptions> {
-  let driver: unknown;
-
   if (uri.startsWith('postgres://') || uri.startsWith('postgresql://')) {
     const {PostgreSqlDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/postgresql', 'postgres'),
       () => import('@mikro-orm/postgresql'),
     );
-    driver = PostgreSqlDriver;
-  } else if (uri.startsWith('mysql://')) {
+    return buildPostgresOptions(uri, PostgreSqlDriver);
+  }
+
+  if (uri.startsWith('mysql://')) {
     const {MySqlDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/mysql', 'mysql'),
       () => import('@mikro-orm/mysql'),
     );
     return buildMySqlFamilyOptions(uri, MySqlDriver);
-  } else if (uri.startsWith('mariadb://')) {
+  }
+
+  if (uri.startsWith('mariadb://')) {
     const {MariaDbDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/mariadb', 'mariadb'),
       () => import('@mikro-orm/mariadb'),
     );
     return buildMySqlFamilyOptions(uri, MariaDbDriver);
-  } else if (uri.startsWith('sqlite://')) {
+  }
+
+  if (uri.startsWith('sqlite://')) {
     const {SqliteDriver} = await loadOptionalPeer(
       driverPeer('@mikro-orm/sqlite', 'sqlite'),
       () => import('@mikro-orm/sqlite'),
     );
-    driver = SqliteDriver;
-  } else if (uri.startsWith('mssql://')) {
-    const {MsSqlDriver} = await loadOptionalPeer(
-      driverPeer('@mikro-orm/mssql', 'mssql'),
-      () => import('@mikro-orm/mssql'),
-    );
-    driver = MsSqlDriver;
-  } else {
-    throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
-  }
-
-  if (uri.startsWith('sqlite://')) {
     return {
       entities: ENTITIES,
       dbName:
         uri === 'sqlite://:memory:'
           ? ':memory:'
           : uri.substring('sqlite://'.length),
-      driver,
+      driver: SqliteDriver,
     } as MikroORMOptions;
   }
 
-  return {
-    entities: ENTITIES,
-    clientUrl: uri,
-    driver,
-  } as MikroORMOptions;
+  if (uri.startsWith('mssql://')) {
+    const {MsSqlDriver} = await loadOptionalPeer(
+      driverPeer('@mikro-orm/mssql', 'mssql'),
+      () => import('@mikro-orm/mssql'),
+    );
+    return {
+      entities: ENTITIES,
+      clientUrl: uri,
+      driver: MsSqlDriver,
+    } as MikroORMOptions;
+  }
+
+  throw new Error(`Unsupported database URI: ${redactUriPassword(uri)}`);
 }
 
 /**
