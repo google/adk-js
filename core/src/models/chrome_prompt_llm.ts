@@ -6,6 +6,7 @@
 
 import type {FunctionDeclaration} from '@google/genai';
 
+import {generateClientFunctionCallId} from '../events/event.js';
 import {genaiSchemaToJsonSchema} from '../utils/genai_schema_to_json.js';
 
 import {BaseLlm} from './base_llm.js';
@@ -17,8 +18,8 @@ import {
   errorResponse,
   extractSystemInstruction,
   finalText,
+  isAbortError,
   isRecord,
-  newCallId,
   renderToolInstructions,
 } from './chrome_prompt_utils.js';
 import type {LlmRequest} from './llm_request.js';
@@ -310,36 +311,44 @@ export class ChromePromptApiLlm extends BaseLlm {
       this.params.expectedInputs,
     ]);
 
-    if (this.baseSessionKey === key && this.baseSessionPromise) {
-      const base = await this.baseSessionPromise;
-      return base.clone({signal});
+    if (this.baseSessionKey !== key || !this.baseSessionPromise) {
+      // The old base holds model memory until destroyed, so release it before
+      // replacing it. A ParallelAgent fan-out churns keys and would otherwise
+      // leak a session per child.
+      this.baseSession?.destroy?.();
+      this.baseSession = undefined;
+      this.baseSessionKey = key;
+      // Stored before it is awaited so concurrent callers share this in-flight
+      // create() instead of each starting their own.
+      this.baseSessionPromise = this.createBaseSession(systemPrompt);
     }
 
-    this.baseSessionKey = key;
-    // Deliberately stored before being awaited: concurrent callers have to be
-    // able to find and share this promise while it is still pending.
-    this.baseSessionPromise = this.createBaseSession(systemPrompt, signal);
+    let base: ChromeLanguageModelSession;
     try {
-      const base = await this.baseSessionPromise;
-      return base.clone({signal});
+      base = await this.baseSessionPromise;
     } catch (error) {
-      // A failed creation must not poison the cache for later attempts.
+      // A failed creation must not poison the cache for later attempts. The
+      // catch stays scoped to create(): a clone() failure below must leave the
+      // warm base intact.
       this.baseSessionPromise = undefined;
       this.baseSessionKey = undefined;
       throw error;
     }
+    // The per-request signal belongs on clone() and prompt(), never on the
+    // shared base's create(): a signal passed to create() destroys the session
+    // when it aborts, killing the warm base for every other caller.
+    return base.clone({signal});
   }
 
   private async createBaseSession(
     systemPrompt: string,
-    signal?: AbortSignal,
   ): Promise<ChromeLanguageModelSession> {
     const availability = await this.availability();
     if (availability === 'unavailable') {
       throw new ChromeModelUnavailableError(availability);
     }
 
-    const createOptions: ChromeCreateOptions = {signal};
+    const createOptions: ChromeCreateOptions = {};
     if (this.params.onDownloadProgress) {
       createOptions.monitor = (monitor) => {
         monitor.addEventListener('downloadprogress', (event) => {
@@ -405,8 +414,8 @@ export class ChromePromptApiLlm extends BaseLlm {
     if (useTools) systemParts.push(renderToolInstructions(declarations));
     const systemPrompt = systemParts.filter(Boolean).join('\n\n');
 
+    this.maybeAppendUserContent(llmRequest);
     const messages = contentsToMessages(llmRequest.contents ?? []);
-    if (!messages.length) messages.push({role: 'user', content: 'Continue.'});
 
     let session: ChromeLanguageModelSession | undefined;
     try {
@@ -443,6 +452,9 @@ export class ChromePromptApiLlm extends BaseLlm {
 
       yield useTools ? this.parseToolChoice(raw, declarations) : finalText(raw);
     } catch (error) {
+      // A cancelled invocation must propagate like Gemini and ApigeeLlm do,
+      // not be flattened into a normal-looking LlmResponse.
+      if (isAbortError(error)) throw error;
       yield errorResponse(error);
     } finally {
       // Only clones are destroyed; the base session stays warm.
@@ -490,6 +502,9 @@ export class ChromePromptApiLlm extends BaseLlm {
         };
       }
     } finally {
+      // Cancel before releasing: if the consumer breaks out of the `for await`
+      // early, the model keeps generating until the stream is cancelled.
+      await reader.cancel();
       reader.releaseLock();
     }
     yield {
@@ -537,7 +552,9 @@ export class ChromePromptApiLlm extends BaseLlm {
       return {
         content: {
           role: 'model',
-          parts: [{functionCall: {id: newCallId(), name, args}}],
+          parts: [
+            {functionCall: {id: generateClientFunctionCallId(), name, args}},
+          ],
         },
         turnComplete: true,
       };

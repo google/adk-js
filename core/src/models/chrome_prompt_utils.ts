@@ -8,12 +8,12 @@ import type {Content, FunctionDeclaration, Part} from '@google/genai';
 
 import {genaiSchemaToJsonSchema} from '../utils/genai_schema_to_json.js';
 
-import type {ChromeMessage, ChromeMessageContent} from './chrome_prompt_llm.js';
+import type {ChromeMessage} from './chrome_prompt_llm.js';
 import type {LlmRequest} from './llm_request.js';
 import type {LlmResponse} from './llm_response.js';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /* ------------------------------------------------------------------ *
@@ -167,7 +167,6 @@ export function contentsToMessages(contents: Content[]): ChromeMessage[] {
   for (const content of contents ?? []) {
     const role = content.role === 'model' ? 'assistant' : 'user';
     const chunks: string[] = [];
-    const rich: ChromeMessageContent[] = [];
 
     for (const part of (content.parts ?? []) as Part[]) {
       if (part.text) chunks.push(part.text);
@@ -181,20 +180,13 @@ export function contentsToMessages(contents: Content[]): ChromeMessage[] {
           `[tool_result] ${part.functionResponse.name} -> ${rendered}`,
         );
       }
-      if (
-        typeof part.inlineData?.data === 'string' &&
-        part.inlineData.mimeType?.startsWith('image/')
-      ) {
-        rich.push({type: 'image', value: part.inlineData.data});
-      }
+      // Image parts are dropped on purpose. The Prompt API needs a Blob or
+      // BufferSource plus `expectedInputs: [{type: 'image'}]` at create time,
+      // and base64 text rejects with a TypeError. Restore this once image
+      // input can be decoded and tested.
     }
 
-    if (rich.length) {
-      if (chunks.length) {
-        rich.unshift({type: 'text', value: chunks.join('\n')});
-      }
-      messages.push({role, content: rich});
-    } else if (chunks.length) {
+    if (chunks.length) {
       messages.push({role, content: chunks.join('\n')});
     }
   }
@@ -249,9 +241,9 @@ export function stripAdkIdentityPreamble(systemPrompt: string): string {
  * Response helpers
  * ------------------------------------------------------------------ */
 
-export function newCallId(): string {
-  const random = Math.random().toString(36).slice(2, 8);
-  return `chrome-${Date.now()}-${random}`;
+/** Whether an error is an aborted-operation error from a cancelled signal. */
+export function isAbortError(error: unknown): boolean {
+  return isRecord(error) && error['name'] === 'AbortError';
 }
 
 export function finalText(text: string): LlmResponse {
@@ -270,7 +262,7 @@ export function errorResponse(error: unknown): LlmResponse {
       errorCode: name,
       errorMessage:
         `Prompt exceeded the context window (requested ` +
-        `${details['requested']} of ${details['contextWindow']} tokens).`,
+        `${details['requested']} of ${details['quota']} tokens).`,
       turnComplete: true,
     };
   }
