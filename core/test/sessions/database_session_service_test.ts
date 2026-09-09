@@ -704,6 +704,32 @@ describe('DatabaseSessionService', () => {
   });
 });
 
+describe('DatabaseSessionService entities', () => {
+  let service: DatabaseSessionService;
+
+  afterEach(async () => {
+    await (service as unknown as {orm?: MikroORM}).orm?.close();
+  });
+
+  it('ignores a caller-supplied entities list', async () => {
+    service = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+      entities: [],
+    });
+
+    await service.init();
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'entities-override',
+    });
+
+    expect(session.id).toBe('entities-override');
+  });
+});
+
 describe('isDatabaseConnectionString', () => {
   it('should identify valid URI connection strings', () => {
     expect(

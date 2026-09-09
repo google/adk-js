@@ -14,7 +14,12 @@ import {
   type MockInstance,
 } from 'vitest';
 import {randomUUID as shimRandomUUID} from '../../src/utils/crypto_shim.js';
-import {getBooleanEnvVar, randomUUID} from '../../src/utils/env_aware_utils.js';
+import {
+  base64Decode,
+  base64Encode,
+  getBooleanEnvVar,
+  randomUUID,
+} from '../../src/utils/env_aware_utils.js';
 import type {Logger} from '../../src/utils/logger.js';
 
 describe('env_aware_utils', () => {
@@ -227,6 +232,28 @@ describe('env_aware_utils', () => {
       expect(isEnterpriseModeEnabled()).toBe(true);
       expect(isEnterpriseModeEnabled()).toBe(true);
       expect(warnSpy).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('base64Encode', () => {
+    it('encodes an ASCII string', () => {
+      expect(base64Encode('hello world')).toBe('aGVsbG8gd29ybGQ=');
+    });
+
+    it('encodes a Uint8Array', () => {
+      expect(base64Encode(new Uint8Array([0xde, 0xad, 0xbe, 0xef]))).toBe(
+        '3q2+7w==',
+      );
+    });
+
+    // 'café' is five UTF-8 bytes, not four: the trailing 'é' contributes
+    // 0xc3 0xa9.
+    it('encodes a non-ASCII string as UTF-8', () => {
+      expect(base64Encode('café')).toBe('Y2Fmw6k=');
+    });
+
+    it('round-trips through base64Decode', () => {
+      expect(base64Decode(base64Encode('hello world'))).toBe('hello world');
     });
   });
 });
