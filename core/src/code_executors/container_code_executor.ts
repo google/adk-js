@@ -16,9 +16,22 @@ import {
 import {
   DockerContainer,
   type DockerContainerOptions,
+  TIMEOUT_EXIT_CODE,
 } from './docker_container.js';
 
 const DEFAULT_IMAGE_TAG = 'adk-code-executor:latest';
+
+/**
+ * Default wall-clock timeout, in seconds, for a single execution. Matches
+ * adk-python's `ContainerCodeExecutor` default.
+ */
+const DEFAULT_TIMEOUT_SECONDS = 300;
+
+/**
+ * coreutils prefix used to bound a run inside the shared container. It sends
+ * SIGKILL after the deadline and exits {@link TIMEOUT_EXIT_CODE}.
+ */
+const TIMEOUT_COMMAND = ['timeout', '-s', 'KILL'];
 
 /**
  * Options for {@link ContainerCodeExecutor}.
@@ -45,6 +58,14 @@ export interface ContainerCodeExecutorOptions {
    */
   networkEnabled?: boolean;
   /**
+   * Wall-clock timeout in seconds for a single execution. Must be greater than
+   * 0; defaults to 300. Every execution shares one long-lived container, so an
+   * unbounded run (e.g. a loop emitted by the model) would burn that
+   * container's CPU for every later caller. Raise it rather than remove it for
+   * a computation that legitimately runs longer.
+   */
+  timeoutSeconds?: number;
+  /**
    * Injected Docker client, primarily for testing so unit tests never touch a
    * real Docker daemon. Defaults to a new client built from `baseUrl`.
    */
@@ -55,15 +76,18 @@ export interface ContainerCodeExecutorOptions {
  * The argv prefix used to run a code string for each supported language; the
  * code is appended as the final argument.
  *
- * TypeScript is run through `npx tsx`, which type-strips and executes in one
- * step, so no separate compile step or `tsconfig` is needed in the image.
+ * Only Python is guaranteed by the default image, and the container has no
+ * network access by default, so the interpreter for every other language
+ * (`node`, `tsx`, `sh`) must already be installed in the image. TypeScript runs
+ * through `tsx`, which type-strips and executes in one step but cannot be
+ * fetched on demand, so the image must preinstall it.
  */
 const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
   Record<CodeExecutionLanguage, string[]>
 > = {
   [CodeExecutionLanguage.PYTHON]: ['python3', '-c'],
   [CodeExecutionLanguage.JAVASCRIPT]: ['node', '-e'],
-  [CodeExecutionLanguage.TYPESCRIPT]: ['npx', '--yes', 'tsx', '--eval'],
+  [CodeExecutionLanguage.TYPESCRIPT]: ['tsx', '--eval'],
   [CodeExecutionLanguage.SHELL]: ['sh', '-c'],
 };
 
@@ -78,11 +102,19 @@ const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
  * metadata endpoint at `169.254.169.254`) or escalate privileges. Networking
  * can be re-enabled via `networkEnabled: true` when the executed code is
  * trusted.
+ *
+ * Limitations: this executor runs a code string only. `inputFiles` and `args`
+ * on the request are not copied into the container, and output files are not
+ * collected (`outputFiles` is always empty), so tools that stage resource
+ * files or read artifacts back (e.g. `RunSkillScriptTool`) are not yet
+ * supported. Sending files in and out via `putArchive`/`getArchive` is future
+ * work.
  */
 @experimental
 export class ContainerCodeExecutor extends BaseCodeExecutor {
   private readonly dockerPath?: string;
   private readonly containerOptions: DockerContainerOptions;
+  private readonly timeoutSeconds: number;
   private container?: DockerContainer;
   private initPromise?: Promise<void>;
 
@@ -91,6 +123,12 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     if (!options.image && !options.dockerPath) {
       throw new Error(
         'Either image or dockerPath must be set for ContainerCodeExecutor.',
+      );
+    }
+    this.timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+    if (this.timeoutSeconds <= 0) {
+      throw new Error(
+        'timeoutSeconds must be greater than 0 for ContainerCodeExecutor.',
       );
     }
     this.dockerPath = options.dockerPath
@@ -102,10 +140,10 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
       baseUrl: options.baseUrl,
       docker: options.docker,
     };
-    // These invariants mirror Python's frozen fields: this executor is never
-    // stateful and never optimizes data files.
-    this.stateful = false;
-    this.optimizeDataFile = false;
+    // Mirror Python's frozen fields: this executor is never stateful and never
+    // optimizes data files, and neither can be flipped after construction.
+    defineFrozenFalse(this, 'stateful');
+    defineFrozenFalse(this, 'optimizeDataFile');
   }
 
   override async executeCode(
@@ -123,9 +161,36 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
       );
     }
     await this.ensureContainer();
-    const {stdout, stderr} = await this.container!.execute([...command, code]);
+    // Bound the run inside the shared container. A process that detaches from
+    // it (e.g. via `setsid`) outlives the deadline until the container is torn
+    // down; this covers the common wedge (a `while True` from the model).
+    const {stdout, stderr, exitCode} = await this.container!.execute(
+      [...TIMEOUT_COMMAND, String(this.timeoutSeconds), ...command, code],
+      this.timeoutSeconds,
+    );
     logger.debug(`Executed ${language} code:\n\`\`\`\n${code}\n\`\`\``);
-    return {stdout, stderr, outputFiles: []};
+    return {
+      stdout,
+      stderr: this.describeExit(stderr, exitCode),
+      outputFiles: [],
+    };
+  }
+
+  /**
+   * Turns a non-zero exit into stderr the model can see. An empty stderr maps
+   * to `OUTCOME_OK` downstream, so a program that exits non-zero without
+   * writing stderr would otherwise look successful (matching
+   * `UnsafeLocalCodeExecutor`).
+   */
+  private describeExit(stderr: string, exitCode: number | null): string {
+    if (exitCode === TIMEOUT_EXIT_CODE) {
+      const message = `Code execution timed out after ${this.timeoutSeconds} seconds.`;
+      return stderr ? `${stderr}\n${message}` : message;
+    }
+    if (exitCode !== 0 && exitCode !== null && !stderr) {
+      return `Exit code ${exitCode}`;
+    }
+    return stderr;
   }
 
   /**
@@ -142,7 +207,12 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   /** Lazily builds/starts the container exactly once. */
   private ensureContainer(): Promise<void> {
     if (!this.initPromise) {
-      this.initPromise = this.initContainer();
+      // Clear the memoized promise on failure so a transient init error does
+      // not poison the executor until close().
+      this.initPromise = this.initContainer().catch((error) => {
+        this.initPromise = undefined;
+        throw error;
+      });
     }
     return this.initPromise;
   }
@@ -158,9 +228,26 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
     // Probe python3 after start: it is the baseline the default image
     // guarantees, and assigning `this.container` first means a failure here
     // still leaves the container tracked so `close()` can clean it up.
-    const {exitCode} = await container.execute(['which', 'python3']);
+    const {exitCode} = await container.execute(
+      ['which', 'python3'],
+      this.timeoutSeconds,
+    );
     if (exitCode !== 0) {
       throw new Error('python3 is not installed in the container.');
     }
   }
+}
+
+/**
+ * Defines a read-only `false` property, so a caller cannot flip it after
+ * construction. Assigning to it throws in strict mode, matching Python's frozen
+ * fields.
+ */
+function defineFrozenFalse(target: object, key: string): void {
+  Object.defineProperty(target, key, {
+    value: false,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
 }

@@ -74,13 +74,21 @@ describe.skipIf(!shouldRun)('ContainerCodeExecutor (real Docker)', () => {
   it('allows outbound network access when explicitly enabled', async () => {
     executor = new ContainerCodeExecutor({image: IMAGE, networkEnabled: true});
 
+    // Actually connect to a public host (Google Public DNS over TCP). Merely
+    // constructing a socket succeeds even with networking disabled, so it would
+    // not prove the opt-in took effect.
     const code = [
       'import socket',
-      'print("OK" if socket.socket(socket.AF_INET, socket.SOCK_STREAM) else "NO")',
+      'try:',
+      '    socket.create_connection(("8.8.8.8", 53), timeout=5).close()',
+      '    print("CONNECTED")',
+      'except Exception:',
+      '    print("BLOCKED")',
     ].join('\n');
 
     const result = await executor.executeCode(makeParams(code));
 
-    expect(result.stdout).toContain('OK');
+    expect(result.stdout).toContain('CONNECTED');
+    expect(result.stdout).not.toContain('BLOCKED');
   }, 120_000);
 });

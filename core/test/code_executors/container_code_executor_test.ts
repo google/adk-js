@@ -26,9 +26,13 @@ vi.mock('dockerode', () => ({default: vi.fn()}));
 interface MockConfig {
   stdout?: string;
   stderr?: string;
+  /** Exit code returned by the user-code exec. */
   exitCode?: number | null;
+  /** Exit code returned by the `which python3` probe exec. */
+  probeExitCode?: number;
   buildError?: Error;
   stopError?: Error;
+  removeError?: Error;
 }
 
 interface MockContainer {
@@ -60,21 +64,31 @@ function createMockDocker(config: MockConfig = {}): {
     stdout = '',
     stderr = '',
     exitCode = 0,
+    probeExitCode = 0,
     buildError,
     stopError,
+    removeError,
   } = config;
 
   const container: MockContainer = {
     id: 'test-container-id',
-    exec: vi.fn().mockImplementation(async () => ({
-      start: vi.fn().mockResolvedValue(new PassThrough()),
-      inspect: vi.fn().mockResolvedValue({ExitCode: exitCode}),
-    })),
+    exec: vi.fn().mockImplementation(async (opts: {Cmd: string[]}) => {
+      // The first exec is the `which python3` probe; user code follows.
+      const isProbe = opts.Cmd[0] === 'which';
+      return {
+        start: vi.fn().mockResolvedValue(new PassThrough()),
+        inspect: vi
+          .fn()
+          .mockResolvedValue({ExitCode: isProbe ? probeExitCode : exitCode}),
+      };
+    }),
     start: vi.fn().mockResolvedValue(undefined),
     stop: stopError
       ? vi.fn().mockRejectedValue(stopError)
       : vi.fn().mockResolvedValue(undefined),
-    remove: vi.fn().mockResolvedValue(undefined),
+    remove: removeError
+      ? vi.fn().mockRejectedValue(removeError)
+      : vi.fn().mockResolvedValue(undefined),
   };
 
   const docker: MockDocker = {
@@ -210,8 +224,13 @@ describe('ContainerCodeExecutor', () => {
     expect(result.stderr).toBe('a warning\n');
     expect(result.outputFiles).toEqual([]);
 
-    // First exec verifies python; second runs the user code.
+    // First exec verifies python; second runs the user code, wrapped in the
+    // in-container timeout so a wedged run cannot hold the shared container.
     expect(container.exec.mock.calls[1][0].Cmd).toEqual([
+      'timeout',
+      '-s',
+      'KILL',
+      '300',
       'python3',
       '-c',
       'print("hello from the sandbox")',
@@ -230,7 +249,7 @@ describe('ContainerCodeExecutor', () => {
     [
       CodeExecutionLanguage.TYPESCRIPT,
       'const x: number = 1;',
-      ['npx', '--yes', 'tsx', '--eval', 'const x: number = 1;'],
+      ['tsx', '--eval', 'const x: number = 1;'],
     ],
     [CodeExecutionLanguage.SHELL, 'echo hi', ['sh', '-c', 'echo hi']],
   ])(
@@ -245,8 +264,15 @@ describe('ContainerCodeExecutor', () => {
       const result = await executor.executeCode(makeParams(code, language));
 
       expect(result.stdout).toBe('ok\n');
-      // First exec verifies python3; second runs the user code.
-      expect(container.exec.mock.calls[1][0].Cmd).toEqual(cmd);
+      // First exec verifies python3; second runs the user code, wrapped in the
+      // in-container timeout.
+      expect(container.exec.mock.calls[1][0].Cmd).toEqual([
+        'timeout',
+        '-s',
+        'KILL',
+        '300',
+        ...cmd,
+      ]);
 
       await executor.close();
     },
@@ -322,7 +348,7 @@ describe('ContainerCodeExecutor', () => {
   });
 
   it('throws when python3 is not installed in the container', async () => {
-    const {docker} = createMockDocker({exitCode: 1});
+    const {docker} = createMockDocker({probeExitCode: 1});
     const executor = new ContainerCodeExecutor({
       image: 'test-image',
       docker: asDocker(docker),
@@ -331,6 +357,80 @@ describe('ContainerCodeExecutor', () => {
     await expect(executor.executeCode(makeParams('print(1)'))).rejects.toThrow(
       'python3 is not installed in the container.',
     );
+  });
+
+  it('reports a non-zero exit as stderr when the program wrote none', async () => {
+    // Empty stderr maps to OUTCOME_OK downstream, so an exit-1-with-no-stderr
+    // program would otherwise look successful to the model.
+    const {docker} = createMockDocker({exitCode: 1});
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      docker: asDocker(docker),
+    });
+
+    const result = await executor.executeCode(
+      makeParams('import sys; sys.exit(1)'),
+    );
+
+    expect(result.stderr).toBe('Exit code 1');
+
+    await executor.close();
+  });
+
+  it('keeps existing stderr on a non-zero exit', async () => {
+    const {docker} = createMockDocker({exitCode: 1, stderr: 'boom\n'});
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      docker: asDocker(docker),
+    });
+
+    const result = await executor.executeCode(
+      makeParams('raise SystemExit(1)'),
+    );
+
+    expect(result.stderr).toBe('boom\n');
+
+    await executor.close();
+  });
+
+  it('appends a timeout message when the run hits the deadline', async () => {
+    const {docker} = createMockDocker({exitCode: 124});
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      timeoutSeconds: 5,
+      docker: asDocker(docker),
+    });
+
+    const result = await executor.executeCode(makeParams('while True: pass'));
+
+    expect(result.stderr).toBe('Code execution timed out after 5 seconds.');
+
+    await executor.close();
+  });
+
+  it('rejects a non-positive timeout', () => {
+    expect(
+      () => new ContainerCodeExecutor({image: 'test-image', timeoutSeconds: 0}),
+    ).toThrow(
+      'timeoutSeconds must be greater than 0 for ContainerCodeExecutor.',
+    );
+  });
+
+  it('forbids flipping stateful or optimizeDataFile after construction', () => {
+    const {docker} = createMockDocker();
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      docker: asDocker(docker),
+    });
+
+    expect(() => {
+      (executor as {stateful: boolean}).stateful = true;
+    }).toThrow();
+    expect(() => {
+      (executor as {optimizeDataFile: boolean}).optimizeDataFile = true;
+    }).toThrow();
+    expect(executor.stateful).toBe(false);
+    expect(executor.optimizeDataFile).toBe(false);
   });
 
   it('initializes the container only once across calls', async () => {
@@ -395,6 +495,26 @@ describe('ContainerCodeExecutor', () => {
     await executor.close();
   });
 
+  it('retries init after a transient init failure', async () => {
+    const {docker} = createMockDocker();
+    // A rejected initPromise must not be memoized, or one hiccup would poison
+    // the executor until close().
+    docker.createContainer.mockRejectedValueOnce(new Error('daemon hiccup'));
+    const executor = new ContainerCodeExecutor({
+      image: 'test-image',
+      docker: asDocker(docker),
+    });
+
+    await expect(executor.executeCode(makeParams('print(1)'))).rejects.toThrow(
+      'daemon hiccup',
+    );
+    await expect(
+      executor.executeCode(makeParams('print(2)')),
+    ).resolves.toBeDefined();
+
+    await executor.close();
+  });
+
   describe('lazy client construction', () => {
     beforeEach(() => {
       vi.mocked(Dockerode).mockReset();
@@ -441,7 +561,7 @@ describe('ContainerCodeExecutor', () => {
   });
 
   describe('process exit cleanup', () => {
-    function getExitHandler(): () => Promise<void> {
+    function getExitHandler(): (signal: 'SIGINT' | 'SIGTERM') => Promise<void> {
       const onSigint = process.listeners('SIGINT');
       const onSigterm = process.listeners('SIGTERM');
       const handler = onSigint.find((h) =>
@@ -450,10 +570,14 @@ describe('ContainerCodeExecutor', () => {
       if (!handler) {
         throw new Error('exit handler was not registered');
       }
-      return handler as unknown as () => Promise<void>;
+      return handler as unknown as (
+        signal: 'SIGINT' | 'SIGTERM',
+      ) => Promise<void>;
     }
 
-    it('stops and removes tracked containers on exit', async () => {
+    it('stops containers then re-raises the signal on exit', async () => {
+      // Spy so the re-raise does not actually terminate the test runner.
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
       const {docker, container} = createMockDocker();
       const executor = new ContainerCodeExecutor({
         image: 'test-image',
@@ -461,22 +585,26 @@ describe('ContainerCodeExecutor', () => {
       });
       await executor.executeCode(makeParams('print(1)'));
 
-      await getExitHandler()();
+      await getExitHandler()('SIGINT');
 
       expect(container.stop).toHaveBeenCalledTimes(1);
       expect(container.remove).toHaveBeenCalledTimes(1);
+      // Re-raised so Node's default termination runs; otherwise the first
+      // Ctrl-C would clean up and leave the process alive.
+      expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGINT');
     });
 
     it('logs and swallows cleanup errors on exit', async () => {
+      vi.spyOn(process, 'kill').mockImplementation(() => true);
       const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
-      const {docker} = createMockDocker({stopError: new Error('boom')});
+      const {docker} = createMockDocker({removeError: new Error('boom')});
       const executor = new ContainerCodeExecutor({
         image: 'test-image',
         docker: asDocker(docker),
       });
       await executor.executeCode(makeParams('print(1)'));
 
-      await expect(getExitHandler()()).resolves.toBeUndefined();
+      await expect(getExitHandler()('SIGTERM')).resolves.toBeUndefined();
 
       expect(errorSpy).toHaveBeenCalled();
     });

@@ -92,8 +92,8 @@
     "@opentelemetry/sdk-metrics": "^2.1.0",
     "@opentelemetry/sdk-trace-base": "^2.1.0",
     "@opentelemetry/sdk-trace-node": "^2.1.0",
+    "@types/dockerode": "^4.0.1",
     "adm-zip": "^0.5.17",
-    "dockerode": "^5.0.1",
     "google-auth-library": "^10.3.0",
     "js-yaml": "^4.1.1",
     "jsonpath-plus": "^10.4.0",
@@ -101,6 +101,9 @@
     "winston": "^3.19.0",
     "zod": "^4.2.1",
     "zod-to-json-schema": "^3.25.1"
+  },
+  "optionalDependencies": {
+    "dockerode": "^5.0.1"
   },
   "devDependencies": {
     "@google-cloud/opentelemetry-cloud-monitoring-exporter": "^0.21.0",
@@ -110,7 +113,6 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@opentelemetry/context-async-hooks": "^2.1.0",
     "@types/adm-zip": "^0.5.8",
-    "@types/dockerode": "^4.0.1",
     "@types/express": "^4.17.25",
     "@types/lodash-es": "^4.17.12",
     "express": "^4.22.1",
