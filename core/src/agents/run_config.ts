@@ -27,9 +27,9 @@ export enum StreamingMode {
    */
   SSE = 'sse',
   /**
-   * Reserved for bidirectional streaming, which is not implemented. Passing
-   * this value to `createRunConfig` throws. Use {@link StreamingMode.SSE} for
-   * incremental responses.
+   * Reserved. Bidirectional streaming is reached through `Runner.runLive()`,
+   * not through this value: `runLive` itself calls `createRunConfig`, which
+   * rejects `BIDI`. Use {@link StreamingMode.SSE} for incremental responses.
    */
   BIDI = 'bidi',
 }
@@ -67,8 +67,8 @@ export interface RunConfig {
    * How the response is delivered. Defaults to {@link StreamingMode.NONE},
    * which emits one event when the turn completes; set
    * {@link StreamingMode.SSE} to receive partial events as the response is
-   * produced. {@link StreamingMode.BIDI} is not implemented and is rejected by
-   * `createRunConfig`.
+   * produced. {@link StreamingMode.BIDI} is rejected by `createRunConfig`;
+   * bidirectional streaming is reached through `Runner.runLive()` instead.
    */
   streamingMode?: StreamingMode;
 

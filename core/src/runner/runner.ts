@@ -69,8 +69,7 @@ export interface RunnerConfig {
    * A bare node — a `Workflow`, most usefully — is accepted as the root and
    * driven directly, so a graph does not have to be wrapped by hand to be run.
    * The accepted set is the one an edge takes: any other node-like value
-   * becomes the single node of a one-node workflow. Mirrors adk-python, whose
-   * `Runner.agent` is typed `BaseNode`.
+   * becomes the single node of a one-node workflow.
    */
   agent?: RunnableNode;
 
