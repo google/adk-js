@@ -392,6 +392,44 @@ describe('DatabaseSessionService', () => {
     await orm.close();
   });
 
+  it('preserves sub-second event timestamps, their order and afterTimestamp', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+    });
+
+    // All three land inside one wall-clock second, which is what a datetime
+    // column with no fractional-seconds precision collapses onto one value.
+    const second = Math.floor(Date.now() / 1000) * 1000;
+    const timestamps = [second + 200, second + 400, second + 600];
+    for (const [index, timestamp] of timestamps.entries()) {
+      await service.appendEvent({
+        session,
+        event: createEvent({invocationId: `inv-${index}`, timestamp}),
+      });
+    }
+
+    const loaded = await service.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+    });
+
+    expect(loaded?.events.map((event) => event.timestamp)).toEqual(timestamps);
+
+    const afterFirst = await service.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'precision-session',
+      config: {afterTimestamp: second + 300},
+    });
+
+    expect(afterFirst?.events.map((event) => event.timestamp)).toEqual(
+      timestamps.slice(1),
+    );
+  });
+
   describe('listSessions pagination and sorting', () => {
     const appName = 'test-app';
     const userId = 'test-user';

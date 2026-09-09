@@ -19,6 +19,7 @@ import {
   STORAGE_KEY_COLUMN_LENGTH,
   StorageEvent,
   StorageMetadata,
+  TIMESTAMP_PRECISION,
 } from '../../../src/sessions/db/schema.js';
 
 // Mock dynamic imports for drivers that might not be installed in dev
@@ -66,6 +67,19 @@ describe('operations', () => {
         return total + eventProperties[keyProperty].length! * 4;
       }, 0);
       expect(utf8mb4KeyBytes).toBeLessThanOrEqual(3072);
+    });
+
+    it('requests sub-second precision for event timestamps', async () => {
+      orm = await MikroORM.init({
+        dbName: ':memory:',
+        driver: SqliteDriver,
+        entities: ENTITIES,
+      });
+
+      const eventProperties = orm.getMetadata().get(StorageEvent.name)
+        .properties as Record<string, {length?: number}>;
+
+      expect(eventProperties['timestamp'].length).toBe(TIMESTAMP_PRECISION);
     });
   });
 
