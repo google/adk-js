@@ -4,11 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {getLogger, Logger, LogLevel, setLogger, setLogLevel} from '@google/adk';
+import {
+  getLogger,
+  Logger,
+  LogLevel,
+  resetLogger,
+  setLogger,
+  setLogLevel,
+} from '@google/adk';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {resetLogger} from '../../src/utils/logger.js';
 
 /** Reads a module under `core/src/utils` as text. */
 function readCoreSource(name: string): Promise<string> {
@@ -149,6 +155,34 @@ describe('setLogger', () => {
       const logger = getLogger();
 
       expect(logger.constructor.name).toBe('SimpleLogger');
+    });
+
+    it('restores the default after a custom logger', () => {
+      const customLogger: Logger = {
+        setLogLevel: () => {},
+        log: () => {},
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      };
+
+      setLogger(customLogger);
+      expect(getLogger()).toBe(customLogger);
+
+      resetLogger();
+
+      expect(getLogger()).not.toBe(customLogger);
+      expect(typeof getLogger().info).toBe('function');
+    });
+
+    it('installs a fresh default instance on each call', () => {
+      resetLogger();
+      const first = getLogger();
+
+      resetLogger();
+
+      expect(getLogger()).not.toBe(first);
     });
   });
 });
