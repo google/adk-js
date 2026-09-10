@@ -618,7 +618,7 @@ export async function handleFunctionCallList({
       functionResponse = normalizeCallbackResponse(alteredFunctionResponse);
     }
 
-    // Allow long running function to return None as response.
+    // Allow a long-running function to return no response.
     // Only a nullish response defers the event. A falsy-but-present response
     // ('', 0, false) is a real result and still emits one, so long-running
     // tools that return such a value now produce a response event where they
@@ -740,8 +740,8 @@ export function mergeParallelFunctionResponseEvents(
 // TODO - b/425992518: support function call in live connection.
 
 /**
- * Finds the function call event that matches the function call ID.
- * Mirrors Python ADK's `find_event_by_function_call_id`.
+ * Finds the most recent event before `endIndex` that contains a function call
+ * with the given ID.
  */
 export function findEventByFunctionCallId(
   events: Event[],

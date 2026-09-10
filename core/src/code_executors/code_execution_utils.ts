@@ -127,7 +127,7 @@ interface CodeGroupMatch {
  * @param content The mutable content to extract the code from.
  * @param codeBlockDelimiters The list of the enclosing delimiters to identify
  *     the code blocks.
- * @return The first code block if found, otherwise None.
+ * @return The first code block if found, otherwise an empty string.
  */
 export function extractCodeAndTruncateContent(
   content: Content,

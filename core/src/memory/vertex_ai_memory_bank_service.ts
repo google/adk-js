@@ -246,7 +246,8 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       if (shouldFilterOutEvent(event.content)) {
         continue;
       }
-      // Content might need to be serialized or dumped as in Python
+      // Deep-clone into a plain JSON object so nothing non-serializable
+      // reaches the request body.
       directEvents.push({
         content: JSON.parse(JSON.stringify(event.content)),
       });

@@ -24,7 +24,10 @@ export interface LoadWebPageOptions {
 /** Default request timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Builds the parity failure message for a URL. */
+/**
+ * Builds the single failure message returned for every unsuccessful fetch, so
+ * the caller cannot tell which check rejected the URL.
+ */
 function failedToFetchMessage(url: string): string {
   return `Failed to fetch url: ${url}`;
 }
@@ -67,7 +70,7 @@ function decodeHtmlEntities(text: string): string {
 /**
  * Extracts readable text from an HTML document. Removes `<script>`/`<style>`
  * blocks and comments, strips remaining tags, decodes common entities, and
- * keeps only lines with more than three words (parity with the Python tool).
+ * keeps only lines with more than three words.
  */
 function htmlToText(html: string): string {
   const withoutCode = html

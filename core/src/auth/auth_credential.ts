@@ -70,7 +70,7 @@ export interface OAuth2Auth {
 /**
  * Represents Google Service Account configuration.
  * @example
- * config = {
+ * const config: ServiceAccountCredential = {
  *   type: "service_account",
  *   projectId: "your_project_id",
  *   privateKeyId: "your_private_key_id",
@@ -82,7 +82,7 @@ export interface OAuth2Auth {
  *   authProviderX509CertUrl: "https://www.googleapis.com/oauth2/v1/certs",
  *   clientX509CertUrl: "https://www.googleapis.com/robot/v1/metadata/x509/...",
  *   universeDomain: "googleapis.com",
- * }
+ * };
  */
 export interface ServiceAccountCredential {
   /**
@@ -196,10 +196,11 @@ export enum AuthCredentialTypes {
 }
 
 /**
- * Data class representing an authentication credential.
+ * An authentication credential, in one of several shapes selected by
+ * `authType`.
  *
- * To exchange for the actual credential, please use
- * CredentialExchanger.exchangeCredential().
+ * To turn one of these into the credential a request actually carries, use the
+ * `exchange()` method of a {@link BaseCredentialExchanger}.
  *
  * @example
  * // API Key Auth
@@ -243,7 +244,7 @@ export enum AuthCredentialTypes {
  *   }
  * }
  *
- * @example:
+ * @example
  * // Open ID Connect Auth
  * const authCredential: AuthCredential = {
  *   authType: AuthCredentialTypes.OPEN_ID_CONNECT,
@@ -251,11 +252,10 @@ export enum AuthCredentialTypes {
  *     clientId: "1234",
  *     clientSecret: "secret",
  *     redirectUri: "https://example.com",
- *     scopes: ["scope1", "scope2"],
  *   }
  * }
  *
- * @example:
+ * @example
  * // Auth with resource reference
  * const authCredential: AuthCredential = {
  *   authType: AuthCredentialTypes.API_KEY,

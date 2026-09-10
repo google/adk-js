@@ -123,7 +123,9 @@ const PORT_OPTION = new Option(
 ).default('8000');
 const ORIGINS_OPTION = new Option(
   '--allow_origins <string>',
-  'Optional. The allow origins of the server',
+  'Optional. Comma-separated list of origins allowed to send cross-origin ' +
+    "requests to the server. Each origin's host is also accepted by the " +
+    'DNS-rebinding guard.',
 ).default('');
 const ALLOWED_HOSTS_OPTION = new Option(
   '--allowed_hosts <string>',

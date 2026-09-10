@@ -77,8 +77,7 @@ export interface RunnerConfig {
    * A bare node — a `Workflow`, most usefully — is accepted as the root and
    * driven directly, so a graph does not have to be wrapped by hand to be run.
    * The accepted set is the one an edge takes: any other node-like value
-   * becomes the single node of a one-node workflow. Mirrors adk-python, whose
-   * `Runner.agent` is typed `BaseNode`.
+   * becomes the single node of a one-node workflow.
    */
   agent?: RunnableNode;
 
@@ -429,8 +428,8 @@ export class Runner {
                 author: 'model',
                 content: beforeRunCallbackResponse,
               });
-              // TODO: b/447446338 - In the future, do *not* save live call audio
-              // content to session This is a feature in Python ADK
+              // TODO: b/447446338 - In the future, do *not* save live call
+              // audio content to the session.
               await this.sessionService.appendEvent({
                 session,
                 event: earlyExitEvent,
@@ -620,7 +619,7 @@ export class Runner {
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
    * @param agentToRun The agent to check for transferability.
-   * @returns True if the agent can transfer, False otherwise.
+   * @returns True if the agent can transfer, false otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     return isRoutableLlmAgent(agentToRun);
@@ -923,7 +922,7 @@ function isWorkflowNodeEvent(event: Event): boolean {
  *    `disallowTransferToParent` set to false).
  *
  * @param agentToRun The agent to check for transferability.
- * @returns True if the agent can transfer, False otherwise.
+ * @returns True if the agent can transfer, false otherwise.
  */
 export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
   let agent: BaseAgent | undefined = agentToRun;
