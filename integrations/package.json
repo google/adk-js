@@ -45,6 +45,18 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "@google/adk": "^2.0.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/vertex-sdk": "^0.19.7"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/vertex-sdk": "^0.19.7"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/vertex-sdk": {
+      "optional": true
+    }
   }
 }
