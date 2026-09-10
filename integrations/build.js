@@ -8,7 +8,12 @@ import {writeFile} from 'node:fs/promises';
 
 const platformBuildTargets = {
   'node': ['node10.4'],
-  'browser': ['chrome58', 'firefox57', 'safari11'],
+  // Matches core's browser target, and for the same reason: esbuild has no
+  // lowering pass for destructuring, so a target below Safari 14.1 fails the
+  // web build outright rather than emitting anything. Nothing here was ever
+  // really usable on Safari 11 — the target only said so, back when this
+  // package held nothing but a version string.
+  'browser': ['chrome63', 'firefox57', 'safari14.1'],
 };
 
 const licenseHeaderText = `/**
