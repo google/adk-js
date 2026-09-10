@@ -111,7 +111,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       if (prior && isFastForwardable(prior)) {
         // Completed in a prior turn -> return cached output, do not re-execute.
         // `rerunOnResume` is deliberately not consulted, as in the static twin
-        // (`Workflow.scheduleNode`): it says what to do with an interrupt the
+        // (`Workflow.startNodeTask`): it says what to do with an interrupt the
         // node is still waiting on, and `isFastForwardable` has already ruled
         // a waiting node out. Consulted here it would replay the whole run.
         return this.completeWithoutRunning(
@@ -124,7 +124,7 @@ export class DynamicNodeScheduler implements ScheduleDynamicNode {
       // (raised interrupts, produced no output) does NOT re-run its body. It
       // completes with the resolved resume value(s) as its output, which
       // `ctx.runNode()` hands back to the caller. Mirrors the static-graph
-      // handoff in `Workflow.scheduleNode`; without it such a child re-runs,
+      // handoff in `Workflow.startNodeTask`; without it such a child re-runs,
       // raises a brand-new interrupt, and the workflow can never resume.
       const handoff = this.resumeHandoff(ctx, node, prior);
       if (handoff) {

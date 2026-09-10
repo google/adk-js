@@ -78,7 +78,7 @@ export class OperationParser {
     }
 
     const content = requestBody.content || {};
-    // Process first mime type only, similar to python
+    // Process the first mime type only.
     const firstMimeType = Object.keys(content)[0];
     if (!firstMimeType) {
       return;

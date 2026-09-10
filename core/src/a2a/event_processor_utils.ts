@@ -13,7 +13,6 @@ import {
 import {Event as AdkEvent} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
 import {
-  createInputMissingErrorEvent,
   createTaskCompletedEvent,
   createTaskFailedEvent,
   createTaskInputRequiredEvent,
@@ -191,7 +190,7 @@ export function getUnansweredRequestEvent(options: {
     return undefined;
   }
 
-  return createInputMissingErrorEvent({
+  return createTaskInputRequiredEvent({
     taskId: task?.id ?? taskId,
     contextId: task?.contextId ?? contextId,
     parts: [

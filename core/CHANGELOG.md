@@ -1,5 +1,109 @@
 # Changelog
 
+## [2.0.0](https://github.com/google/adk-js/compare/adk-v1.6.0...adk-v2.0.0) (2026-08-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **workflow:** `LLMAgentWrapper` and `LLMAgentWrapperConfig` are removed. An agent is a workflow node as itself — pass it to an edge or `node()` directly. A non-`LlmAgent` agent used as a node no longer has the node input appended to its conversation, nor its final model text promoted to the node output.
+* **workflow:** `InvocationContext.agent` is now optional. Code reading it outside an agent's own execution must handle `undefined`; inside one, prefer `requireAgent(ctx)`.
+* **agents:** constructing a `SequentialAgent`, `ParallelAgent` or `LoopAgent` now logs a deprecation warning once per class per process. The classes are otherwise unchanged and keep working.
+* **agents:** `BaseAgent` now extends `BaseNode`, so subclasses inherit `rerunOnResume`, `waitForOutput`, `retryConfig`, `timeout`, `inputSchema`, `outputSchema` and `stateSchema`. A subclass that declares a field of the same name now collides with the inherited one. `BaseAgent.description` is also no longer `undefined` when unset.
+* **workflow:** a dynamic `ctx.runNode()` child that raises an interrupt and re-reads `ctx.resumeInputs` on re-run must now declare `rerunOnResume: true`. With the default it is completed with the raw reply as its output instead of re-running. `Workflow` is still @experimental.
+* **workflow:** add engine core — execution model, graph, and node registry (Part 2) ([#588](https://github.com/google/adk-js/issues/588))
+* **workflow:** event model extensions and shared node primitives (Part 1) ([#587](https://github.com/google/adk-js/issues/587))
+
+### Features
+
+* **agents:** deprecate SequentialAgent, ParallelAgent and LoopAgent ([#679](https://github.com/google/adk-js/issues/679)) ([63927e2](https://github.com/google/adk-js/commit/63927e23ab1c692a94f3b5d0acf159f9ec1bc825))
+* **agents:** make BaseAgent a BaseNode ([#667](https://github.com/google/adk-js/issues/667)) ([4b0c605](https://github.com/google/adk-js/commit/4b0c60570e56d73890f842d01784d6bbf1f102f5))
+* **core:** accept a bare Workflow as a root — runner, App and agent loader ([#680](https://github.com/google/adk-js/issues/680)) ([b3497e0](https://github.com/google/adk-js/commit/b3497e0ff2a931d954b4efa57337fc3a8b709056))
+* **core:** graduate RoutedAgent and RoutedLlm out of experimental ([#783](https://github.com/google/adk-js/issues/783)) ([36e3fcb](https://github.com/google/adk-js/commit/36e3fcb2d4911dc1ca7790eecbd8d638e4465414))
+* **core:** implement Runner.runLive and LlmAgent live flow ([#523](https://github.com/google/adk-js/issues/523)) ([48165a8](https://github.com/google/adk-js/commit/48165a8b74c23d02c1b57afa5a0d0681f80a0bd2))
+* **dev:** render graph workflows in the dev UI agent graph ([#654](https://github.com/google/adk-js/issues/654)) ([434a43e](https://github.com/google/adk-js/commit/434a43e90fd67fb0e72e879ab992716c4a7efbe9))
+* Honor GOOGLE_GENAI_USE_ENTERPRISE in getExpressModeApiKey() (adk-python parity) ([#569](https://github.com/google/adk-js/issues/569)) ([444f30b](https://github.com/google/adk-js/commit/444f30bb77e6cae3681f1f35d149b11b072543bc))
+* **plugins:** add before/after node callbacks ([#659](https://github.com/google/adk-js/issues/659)) ([e03bbad](https://github.com/google/adk-js/commit/e03bbadb2120f924e4696c348efacc1720f5784a))
+* Port the environment abstraction (BaseEnvironment, ExecutionResult, LocalEnvironment) from adk-python ([#582](https://github.com/google/adk-js/issues/582)) ([f7f541e](https://github.com/google/adk-js/commit/f7f541e0730de5a3f0c14b2dae40189ac461aecb))
+* **tools:** FunctionTool require_confirmation — HITL approval (Part 7) ([#594](https://github.com/google/adk-js/issues/594)) ([d2ae57b](https://github.com/google/adk-js/commit/d2ae57b071ab4db7ea636b0d40e9b8ae93307222))
+* **utils:** enforce schemas declared in the genai dialect, not just Zod ([#663](https://github.com/google/adk-js/issues/663)) ([392511a](https://github.com/google/adk-js/commit/392511ae92732536d6f4079e1823e52954b23a45))
+* **workflow:** add engine core — execution model, graph, and node registry (Part 2) ([#588](https://github.com/google/adk-js/issues/588)) ([672dbde](https://github.com/google/adk-js/commit/672dbdeb9c2e6726f2f223e47efb2aa7e4fe0e0d))
+* **workflow:** built-in Function and Tool nodes (Part 3) ([#590](https://github.com/google/adk-js/issues/590)) ([68aebdb](https://github.com/google/adk-js/commit/68aebdbfa4aa87a40fd7e49c70fc1dca05da985e))
+* **workflow:** drive workflows as nodes and remove WorkflowAgent ([#688](https://github.com/google/adk-js/issues/688)) ([534546f](https://github.com/google/adk-js/commit/534546f5f847fc677bbb9e5abe11beabebf9e574))
+* **workflow:** enforce a node's declared stateSchema ([#713](https://github.com/google/adk-js/issues/713)) ([379e45c](https://github.com/google/adk-js/commit/379e45c44d96784034822445822f173146d92057))
+* **workflow:** event model extensions and shared node primitives (Part 1) ([#587](https://github.com/google/adk-js/issues/587)) ([3865f3c](https://github.com/google/adk-js/commit/3865f3c05984ff6406b4f52a1db6c3bec6bde574))
+* **workflow:** let ctx.runNode() take what edges take ([#683](https://github.com/google/adk-js/issues/683)) ([53535d3](https://github.com/google/adk-js/commit/53535d345e3abcbc15613e4fe12dc3661fb36942))
+* **workflow:** LLM-agent-as-node, task mode, and node-as-tool (Part 6) ([#593](https://github.com/google/adk-js/issues/593)) ([5334b45](https://github.com/google/adk-js/commit/5334b4502edc8e8086b11d7e679b6decee944d67))
+* **workflow:** make isolationScope real by filtering LLM contents on it ([#656](https://github.com/google/adk-js/issues/656)) ([bdc9090](https://github.com/google/adk-js/commit/bdc90901edd6ce64acc97f349a11e485ede5c234))
+* **workflow:** ParallelWorker and JoinNode (Part 4) ([#591](https://github.com/google/adk-js/issues/591)) ([13f9995](https://github.com/google/adk-js/commit/13f9995c275dbf9844c1108f22b613966d0d5ccb))
+* **workflow:** record a failed node as a NodeErrorEvent ([#657](https://github.com/google/adk-js/issues/657)) ([e5025e9](https://github.com/google/adk-js/commit/e5025e9cbe1d8889d386efaca811963952beb064))
+* **workflow:** trace workflow and node execution with OpenTelemetry ([#653](https://github.com/google/adk-js/issues/653)) ([d0f19c5](https://github.com/google/adk-js/commit/d0f19c5eb287c2318335e8f0449698395a8f6663))
+* **workflow:** workflow runner and public API (Part 5) ([#592](https://github.com/google/adk-js/issues/592)) ([1b90f3b](https://github.com/google/adk-js/commit/1b90f3b35b8b4e4a9d9e902b9ab6023d05390b69))
+
+
+### Bug Fixes
+
+* **agents:** bind a human-in-the-loop confirmation to the action it approves ([#771](https://github.com/google/adk-js/issues/771)) ([2d1bb44](https://github.com/google/adk-js/commit/2d1bb449c257ed12ae91e22f36eb8d11f8955f9a))
+* **agents:** keep usage metadata from content-less streaming responses ([#646](https://github.com/google/adk-js/issues/646)) ([2e58422](https://github.com/google/adk-js/commit/2e584224c715275fc8c77e53bf48046cfd2ed66d)), closes [#645](https://github.com/google/adk-js/issues/645)
+* **agents:** persist processLlmRequest state changes ([#630](https://github.com/google/adk-js/issues/630)) ([9360bf2](https://github.com/google/adk-js/commit/9360bf24b8de699fedab692a826011aa119fd093))
+* **agents:** stop warning about transfer config the author never set ([#746](https://github.com/google/adk-js/issues/746)) ([5860560](https://github.com/google/adk-js/commit/58605605ce16c452f99e1ad240792c585e89de21)), closes [#725](https://github.com/google/adk-js/issues/725) [#726](https://github.com/google/adk-js/issues/726)
+* **auth:** bind a credential response to the request that asked for it ([#775](https://github.com/google/adk-js/issues/775)) ([10ae7bd](https://github.com/google/adk-js/commit/10ae7bdd24d0a7bdef856a15b67255c617f5ce9d))
+* **cli:** keep one broken agent from killing the dev server; surface HITL prompts and errors in `adk run` ([#633](https://github.com/google/adk-js/issues/633)) ([a98d132](https://github.com/google/adk-js/commit/a98d132f7122f3cca1bce4121ce81610db5b1084))
+* **dev:** stop an empty node response vanishing from the transcript ([#765](https://github.com/google/adk-js/issues/765)) ([af3a821](https://github.com/google/adk-js/commit/af3a82144261470eb59672ee535f2fa1ccf78e00)), closes [#728](https://github.com/google/adk-js/issues/728)
+* encode and validate OpenAPI path parameters in RestApiTool ([#638](https://github.com/google/adk-js/issues/638)) ([cedd2a5](https://github.com/google/adk-js/commit/cedd2a5fd378ca11e0ebdd6d6689e445a7493407))
+* **models:** consult GOOGLE_API_KEY on the Gemini API path ([#748](https://github.com/google/adk-js/issues/748)) ([60a3c67](https://github.com/google/adk-js/commit/60a3c6732b5100bcf67df9d806a64fdb2049bc72)), closes [#712](https://github.com/google/adk-js/issues/712)
+* resolve the browser export condition in core and integrations ([#618](https://github.com/google/adk-js/issues/618)) ([0f9f73d](https://github.com/google/adk-js/commit/0f9f73d4fc0577f1ed8d474451e53d4a2ca2f720))
+* **runner:** stop warning about workflow nodes when resuming ([#672](https://github.com/google/adk-js/issues/672)) ([e294c4d](https://github.com/google/adk-js/commit/e294c4d5632496b896dd7557c1ba915a1989d2c5))
+* **sessions:** keep workflow event fields across the Agent Engine fallback path ([#649](https://github.com/google/adk-js/issues/649)) ([a493f74](https://github.com/google/adk-js/commit/a493f74d64dd54bb5ab179d1dddbf78bfccc9311))
+* **sessions:** redact connection-URI password in unsupported-URI errors ([#602](https://github.com/google/adk-js/issues/602)) ([aee56e0](https://github.com/google/adk-js/commit/aee56e07a47df35bece844a91099c8ee760885aa))
+* **sessions:** restore event round trip in VertexAiSessionService ([#565](https://github.com/google/adk-js/issues/565)) ([90b2417](https://github.com/google/adk-js/commit/90b2417a6355a05b491ab64d76b9af9b70d4781d))
+* **sessions:** send the agent-transfer action under the name the API defines ([#660](https://github.com/google/adk-js/issues/660)) ([6a8224e](https://github.com/google/adk-js/commit/6a8224e997d9c4c1de4a558b5a4d46086387f982))
+* **sessions:** stop a late event commit rolling a state key back ([#695](https://github.com/google/adk-js/issues/695)) ([86459dc](https://github.com/google/adk-js/commit/86459dcd24a001ad706c54b8d992dda3e11c8b4a))
+* **skills:** materialize script output into a dedicated dir, not process.cwd() ([#620](https://github.com/google/adk-js/issues/620)) ([2ea08cf](https://github.com/google/adk-js/commit/2ea08cf8ba5fca65d678cdabecbf78713fee4106))
+* **skills:** preserve binary skill assets as Buffer ([#644](https://github.com/google/adk-js/issues/644)) ([94cbe4a](https://github.com/google/adk-js/commit/94cbe4a5f44fb52a994a1e632d98cad64340d696))
+* skip identity preamble when agent transfer is disabled ([#616](https://github.com/google/adk-js/issues/616)) ([09e2375](https://github.com/google/adk-js/commit/09e23757f0cbbd4dfbf71a4704c15ab1352d6434))
+* StreamingMode.BIDI is accepted but has no effect — silently degrades to NONE with no error or warning ([#692](https://github.com/google/adk-js/issues/692)) ([8c1004f](https://github.com/google/adk-js/commit/8c1004ffbfdbe5aa5261fdec16441810f6e67e80)), closes [#676](https://github.com/google/adk-js/issues/676)
+* **telemetry:** make a workflow's spans retrievable so its traces render ([#750](https://github.com/google/adk-js/issues/750)) ([63a5f43](https://github.com/google/adk-js/commit/63a5f4395e6367d5129ccd679b76104eb7e6a8d3))
+* **tests:** give the local code executor tests a Windows-sized budget ([#662](https://github.com/google/adk-js/issues/662)) ([9726467](https://github.com/google/adk-js/commit/9726467f3eaa79a4f416811561371f501127431c))
+* three defects found bug-bashing the graph-workflow docs samples ([#664](https://github.com/google/adk-js/issues/664)) ([e0dae58](https://github.com/google/adk-js/commit/e0dae584d43bab7ef068decb4743e6d6753d176f))
+* **workflow:** apply node overrides to an already-built node ([#673](https://github.com/google/adk-js/issues/673)) ([a9dd7c6](https://github.com/google/adk-js/commit/a9dd7c6b0137417aaae5d6b0d1a33751d2566a20))
+* **workflow:** check a structured HITL reply against its responseSchema ([#665](https://github.com/google/adk-js/issues/665)) ([238d600](https://github.com/google/adk-js/commit/238d600e24eb3a1c6ef0ce5e44fd951fa3d55d1e))
+* **workflow:** don't replay a finished run on the next turn ([#637](https://github.com/google/adk-js/issues/637)) ([3e4f770](https://github.com/google/adk-js/commit/3e4f770333053ad32b33b3154d9ec062e1950c5a))
+* **workflow:** emit the interrupt schema under the key clients read ([#686](https://github.com/google/adk-js/issues/686)) ([e84eb3f](https://github.com/google/adk-js/commit/e84eb3fa9953a5e21164adb69475e7678f4b6fbf))
+* **workflow:** fail a node that reports an error instead of throwing ([#776](https://github.com/google/adk-js/issues/776)) ([8786718](https://github.com/google/adk-js/commit/87867184f71e311dea7b54ea4dd10e5a6cd90163))
+* **workflow:** hand the START node the user's text, attachment or not ([#778](https://github.com/google/adk-js/issues/778)) ([7c65534](https://github.com/google/adk-js/commit/7c65534f6ef54c368eac9a7f9f560a09eedbf7d2))
+* **workflow:** keep a jittered retry delay inside maxDelay ([#704](https://github.com/google/adk-js/issues/704)) ([c577510](https://github.com/google/adk-js/commit/c577510c9943ab0ae1871432d40f489b1693f019))
+* **workflow:** let a child's pending interrupt hold its caller ([#759](https://github.com/google/adk-js/issues/759)) ([8b43818](https://github.com/google/adk-js/commit/8b43818548ed754fb678fd0ddc05e8fc4b28f9ce)), closes [#734](https://github.com/google/adk-js/issues/734)
+* **workflow:** let a resumed graph route back through a node it already ran ([#700](https://github.com/google/adk-js/issues/700)) ([074827a](https://github.com/google/adk-js/commit/074827abdd4ac7dfb7c1b5ce743e9288c214a340))
+* **workflow:** let an agent node converse and finish a confirmed tool call ([#703](https://github.com/google/adk-js/issues/703)) ([73b9443](https://github.com/google/adk-js/commit/73b9443910b0b11b9bb2f0f48c794e3d47891996))
+* **workflow:** let an item that asks the user pause the whole worker ([#708](https://github.com/google/adk-js/issues/708)) ([d4a5373](https://github.com/google/adk-js/commit/d4a5373d4b8b706297a31a5f9379c75140d4db42))
+* **workflow:** let two route keys share a destination node ([#763](https://github.com/google/adk-js/issues/763)) ([172ccb1](https://github.com/google/adk-js/commit/172ccb148c14990eec7435f7360f5349172369df)), closes [#740](https://github.com/google/adk-js/issues/740)
+* **workflow:** match a retryable exception by its class name ([#705](https://github.com/google/adk-js/issues/705)) ([de31b04](https://github.com/google/adk-js/commit/de31b04ab518e7050039033df2a7acae4b0ace0f))
+* **workflow:** record which nodes an output answers for ([#690](https://github.com/google/adk-js/issues/690)) ([6796f42](https://github.com/google/adk-js/commit/6796f422f0d153a9e289d2dcb400d473833e228c))
+* **workflow:** refuse a numeric custom runId whichever call comes first ([#762](https://github.com/google/adk-js/issues/762)) ([fbff483](https://github.com/google/adk-js/commit/fbff4836763594747f6b95aad62cdb246e48aa1a))
+* **workflow:** refuse a reply that answers no open interrupt ([#777](https://github.com/google/adk-js/issues/777)) ([19c50ef](https://github.com/google/adk-js/commit/19c50ef9cbae0fa548d3f763902da4b9408e073e))
+* **workflow:** refuse a runId that collides with an automatic one ([#670](https://github.com/google/adk-js/issues/670)) ([aca4a32](https://github.com/google/adk-js/commit/aca4a323d697b53061818ea91ca0eb4ccd235d1d))
+* **workflow:** report an aborted node as aborted, not timed out ([#706](https://github.com/google/adk-js/issues/706)) ([596f41c](https://github.com/google/adk-js/commit/596f41cf55c7e199df9222a01666c5c2bc489542))
+* **workflow:** resume a waiting parent on its original input ([#760](https://github.com/google/adk-js/issues/760)) ([67d5246](https://github.com/google/adk-js/commit/67d52460d253d58e687d39847d270248fba51b0a))
+* **workflow:** resume dynamic HITL children instead of livelocking ([#635](https://github.com/google/adk-js/issues/635)) ([1961d2c](https://github.com/google/adk-js/commit/1961d2c349a7a2ffdab34537ac1345eee8495c56))
+* **workflow:** say which node failed, and when a route goes nowhere ([#650](https://github.com/google/adk-js/issues/650)) ([a785f3a](https://github.com/google/adk-js/commit/a785f3a9004e590868c9bc4143e2068f32a8d739))
+* **workflow:** stamp the invocation id on an event a node built itself ([#747](https://github.com/google/adk-js/issues/747)) ([b339f75](https://github.com/google/adk-js/commit/b339f75a3bbd086b5d03b91e4320e5f914a1faf9)), closes [#715](https://github.com/google/adk-js/issues/715)
+* **workflow:** stop delivering a workflow's output as two events ([#669](https://github.com/google/adk-js/issues/669)) ([7aa76e7](https://github.com/google/adk-js/commit/7aa76e71b8cc11457435cfd3f902d092f3b5ed7d))
+* **workflow:** stop duplicating a delegated output, and parse a structured reply ([#702](https://github.com/google/adk-js/issues/702)) ([bd47431](https://github.com/google/adk-js/commit/bd4743169c4884da96477e9c7664785659f55470))
+* **workflow:** stop node state writes from being rolled back mid-run ([#636](https://github.com/google/adk-js/issues/636)) ([fcc6c1e](https://github.com/google/adk-js/commit/fcc6c1e72768ad98f00ee69d2b5c696d9e4717c4))
+* **workflow:** stop re-running a dynamic node that already settled ([#707](https://github.com/google/adk-js/issues/707)) ([bc4e238](https://github.com/google/adk-js/commit/bc4e23874db51c81d823ce85a5384a7fe44ed8f2))
+* **workflow:** stop reinterpreting a text reply the schema asked for as text ([#761](https://github.com/google/adk-js/issues/761)) ([022fcc9](https://github.com/google/adk-js/commit/022fcc9158fc8c314cf54d2377e347771e27de94)), closes [#737](https://github.com/google/adk-js/issues/737)
+* **workflow:** unwind a caller past a dynamic child that paused or failed ([#709](https://github.com/google/adk-js/issues/709)) ([5719010](https://github.com/google/adk-js/commit/571901063815da387930d335dda4f5876441cec7))
+
+
+### Performance Improvements
+
+* **core:** make situational subsystems optional peers, 591 → 172 packages on install ([#626](https://github.com/google/adk-js/issues/626)) ([a5cdc38](https://github.com/google/adk-js/commit/a5cdc38e4ef2cbcd1770a9684528f09cdffe12a8))
+
+
+### Code Refactoring
+
+* **workflow:** collapse LLMAgentWrapper into LlmAgent.runImpl ([#696](https://github.com/google/adk-js/issues/696)) ([49209ab](https://github.com/google/adk-js/commit/49209ab91bdcf4762f92d6a0b5fe9b5617a027bd))
+
 ## [1.6.0](https://github.com/google/adk-js/compare/adk-v1.5.0...adk-v1.6.0) (2026-08-05)
 
 

@@ -9,7 +9,10 @@ import {context, trace} from '@opentelemetry/api';
 
 import {BaseAgent, isBaseAgent} from '../agents/base_agent.js';
 import {reservedFunctionCallName} from '../agents/framework_function_calls.js';
-import {findMatchingFunctionCall} from '../agents/functions.js';
+import {
+  findMatchingFunctionCall,
+  getConflictingFunctionResponseAuthors,
+} from '../agents/functions.js';
 import {
   InvocationContext,
   newInvocationContextId,
@@ -22,6 +25,10 @@ import {App} from '../apps/app.js';
 import {ResumabilityConfig} from '../apps/resumability_config.js';
 import {BaseArtifactService} from '../artifacts/base_artifact_service.js';
 import {ScopedArtifactService} from '../artifacts/scoped_artifact_service.js';
+import {
+  isSessionArtifactService,
+  SessionArtifactService,
+} from '../artifacts/session_artifact_service.js';
 
 import {BaseCredentialService} from '../auth/credential_service/base_credential_service.js';
 import {
@@ -34,7 +41,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
-import {CompositeSessionKey, Session} from '../sessions/session.js';
+import {Session} from '../sessions/session.js';
 import {
   runAsyncGeneratorWithOtelContext,
   tracer,
@@ -42,6 +49,7 @@ import {
 import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {isGemini2OrAbove} from '../utils/model_name.js';
+import {stringifyWithRedactedInlineData} from '../utils/redact_inline_data.js';
 import type {RunnableNode} from '../workflow/graph.js';
 import {
   asRunnableRoot,
@@ -69,8 +77,7 @@ export interface RunnerConfig {
    * A bare node — a `Workflow`, most usefully — is accepted as the root and
    * driven directly, so a graph does not have to be wrapped by hand to be run.
    * The accepted set is the one an edge takes: any other node-like value
-   * becomes the single node of a one-node workflow. Mirrors adk-python, whose
-   * `Runner.agent` is typed `BaseNode`.
+   * becomes the single node of a one-node workflow.
    */
   agent?: RunnableNode;
 
@@ -82,7 +89,7 @@ export interface RunnerConfig {
   /**
    * An optional service for storing and retrieving artifacts.
    */
-  artifactService?: BaseArtifactService;
+  artifactService?: BaseArtifactService | SessionArtifactService;
 
   /**
    * The service for managing sessions.
@@ -159,7 +166,7 @@ export class Runner {
    */
   readonly agent: RunnableRoot;
   readonly pluginManager: PluginManager;
-  readonly artifactService?: BaseArtifactService;
+  readonly artifactService?: BaseArtifactService | SessionArtifactService;
   readonly sessionService: BaseSessionService;
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
@@ -288,7 +295,9 @@ export class Runner {
                 `Session lookup failed: appName must be provided in runner constructor (or via app.name)`,
               );
             }
-            throw new Error(`Session not found: ${sessionId}`);
+            throw new Error(
+              `Session not found: ${sessionId} (appName=${this.appName}, userId=${userId})`,
+            );
           }
 
           if (runConfig.supportCfc && isLlmAgent(this.agent)) {
@@ -308,12 +317,14 @@ export class Runner {
 
           const invocationContext = new InvocationContext({
             artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  userId,
-                  sessionId,
-                )
+              ? isSessionArtifactService(this.artifactService)
+                ? this.artifactService
+                : new ScopedArtifactService(
+                    this.artifactService,
+                    this.appName,
+                    userId,
+                    sessionId,
+                  )
               : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
@@ -323,6 +334,7 @@ export class Runner {
             session,
             userContent: newMessage,
             runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
             pluginManager: this.pluginManager,
             abortSignal: params.abortSignal,
           });
@@ -354,7 +366,6 @@ export class Runner {
 
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
-            // TODO - b/425992518: fix Runner<>>ArtifactService leaky abstraction.
             if (runConfig.saveInputBlobsAsArtifacts) {
               logger.warn(
                 "The 'saveInputBlobsAsArtifacts' parameter is deprecated. Use " +
@@ -362,9 +373,8 @@ export class Runner {
                   'flexibility.',
               );
               newMessage = await this.saveArtifacts(
+                invocationContext.artifactService,
                 invocationContext.invocationId,
-                session.userId,
-                session.id,
                 newMessage,
               );
               if (params.abortSignal?.aborted) {
@@ -423,8 +433,8 @@ export class Runner {
                 author: 'model',
                 content: beforeRunCallbackResponse,
               });
-              // TODO: b/447446338 - In the future, do *not* save live call audio
-              // content to session This is a feature in Python ADK
+              // TODO: b/447446338 - In the future, do *not* save live call
+              // audio content to the session.
               await this.sessionService.appendEvent({
                 session,
                 event: earlyExitEvent,
@@ -514,26 +524,19 @@ export class Runner {
    * Saves artifacts from the message parts and replaces the inline data with
    * a file name placeholder and optional file reference.
    *
+   * @param artifactService The session-scoped artifact service to save to.
    * @param invocationId The current invocation ID.
-   * @param userId The user ID of the session.
-   * @param sessionId The session ID of the session.
    * @param message The message containing parts to process.
    */
   private async saveArtifacts(
+    artifactService: SessionArtifactService | undefined,
     invocationId: string,
-    userId: string,
-    sessionId: string,
     message: Content,
   ): Promise<Content> {
-    if (!this.artifactService || !message.parts?.length) {
+    if (!artifactService || !message.parts?.length) {
       return message;
     }
 
-    const sessionKey: CompositeSessionKey = {
-      appName: this.appName,
-      userId,
-      sessionId,
-    };
     const newParts: Part[] = [];
     let modified = false;
 
@@ -550,8 +553,7 @@ export class Runner {
           (inlineData as {displayName?: string}).displayName ||
           `artifact_${invocationId}_${i}`;
 
-        const version = await this.artifactService.saveArtifact({
-          ...sessionKey,
+        const version = await artifactService.saveArtifact({
           filename: fileName,
           artifact: part,
         });
@@ -559,13 +561,10 @@ export class Runner {
         newParts.push(createPartFromText(`[Uploaded Artifact: "${fileName}"]`));
 
         try {
-          const artifactVersion = await this.artifactService.getArtifactVersion(
-            {
-              ...sessionKey,
-              filename: fileName,
-              version,
-            },
-          );
+          const artifactVersion = await artifactService.getArtifactVersion({
+            filename: fileName,
+            version,
+          });
           if (
             artifactVersion?.canonicalUri &&
             /^(gs|https?):/i.test(artifactVersion.canonicalUri)
@@ -625,7 +624,7 @@ export class Runner {
    * Whether the agent to run can transfer to any other agent in the agent tree.
    *
    * @param agentToRun The agent to check for transferability.
-   * @returns True if the agent can transfer, False otherwise.
+   * @returns True if the agent can transfer, false otherwise.
    */
   private isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
     return isRoutableLlmAgent(agentToRun);
@@ -701,12 +700,14 @@ export class Runner {
 
           const invocationContext = new InvocationContext({
             artifactService: this.artifactService
-              ? new ScopedArtifactService(
-                  this.artifactService,
-                  this.appName,
-                  params.userId,
-                  params.sessionId,
-                )
+              ? isSessionArtifactService(this.artifactService)
+                ? this.artifactService
+                : new ScopedArtifactService(
+                    this.artifactService,
+                    this.appName,
+                    params.userId,
+                    params.sessionId,
+                  )
               : undefined,
             sessionService: this.sessionService,
             memoryService: this.memoryService,
@@ -715,6 +716,7 @@ export class Runner {
             agent,
             session,
             runConfig,
+            a2aMetadata: runConfig.a2aMetadata,
             pluginManager: this.pluginManager,
             liveRequestQueue: params.liveRequestQueue,
             abortSignal: params.abortSignal,
@@ -830,6 +832,26 @@ export function determineAgentForResumption(
   const event = findEventByLastFunctionResponseId(session.events);
   const isResumable = Boolean(resumabilityConfig?.isResumable);
   if (event && event.author && isResumable) {
+    // Checked here, not inside findEventByLastFunctionResponseId /
+    // findMatchingFunctionCall: those run unconditionally above, on every
+    // runAsync for an agent root, not only when resumption is requested.
+    // Throwing there would abort a run whose result is thrown away
+    // whenever resumabilityConfig is unset, for a session whose last
+    // event merely happens to answer two agents' calls at once -- Cases
+    // 2 and 3 below would never get a chance to run. Gating the throw on
+    // isResumable, which is what actually decides whether this event
+    // matters, keeps that from happening.
+    const conflictingAuthors = getConflictingFunctionResponseAuthors(
+      session.events,
+    );
+    if (conflictingAuthors) {
+      throw new Error(
+        'Function responses in the last event resolve to function calls ' +
+          `from more than one agent (at least "${conflictingAuthors[0]}" ` +
+          `and "${conflictingAuthors[1]}"); cannot determine a single ` +
+          'agent to resume.',
+      );
+    }
     const resumedAgent = rootAgent.findAgent(event.author);
     if (resumedAgent) {
       return resumedAgent;
@@ -847,7 +869,7 @@ export function determineAgentForResumption(
   // =========================================================================
   // simplicity: O(N) backward event scan, upgrade to indexed lookups or map if N > 1000.
   for (let i = session.events.length - 1; i >= 0; i--) {
-    logger.debug('event:', JSON.stringify(session.events[i]));
+    logger.debug('event:', stringifyWithRedactedInlineData(session.events[i]));
     const event = session.events[i];
     if (event.author === 'user' || !event.author) {
       continue;
@@ -905,7 +927,7 @@ function isWorkflowNodeEvent(event: Event): boolean {
  *    `disallowTransferToParent` set to false).
  *
  * @param agentToRun The agent to check for transferability.
- * @returns True if the agent can transfer, False otherwise.
+ * @returns True if the agent can transfer, false otherwise.
  */
 export function isRoutableLlmAgent(agentToRun: BaseAgent): boolean {
   let agent: BaseAgent | undefined = agentToRun;

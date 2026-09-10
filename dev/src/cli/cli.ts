@@ -92,6 +92,23 @@ function getBoolean(option?: string | boolean): boolean {
   return false;
 }
 
+/**
+ * Splits the comma-separated --allowed_hosts value into a list, dropping
+ * empty/whitespace-only entries. An unset or empty option yields undefined
+ * rather than [], so it composes with ServerOptions.allowedHosts?: string[]
+ * without callers needing to special-case "no value provided".
+ */
+function getAllowedHosts(option?: string): string[] | undefined {
+  if (!option) {
+    return undefined;
+  }
+  const hosts = option
+    .split(',')
+    .map((host) => host.trim())
+    .filter(Boolean);
+  return hosts.length > 0 ? hosts : undefined;
+}
+
 const AGENT_DIR_ARGUMENT = new Argument(
   '[agents_dir]',
   'Agent file or directory of agents to serve. For directory the internal structure should be agents_dir/{agentName}.js or agents_dir/{agentName}/agent.js. Agent file should has export of the rootAgent as instance of BaseAgent (e.g LlmAgent) or a Workflow',
@@ -106,7 +123,16 @@ const PORT_OPTION = new Option(
 ).default('8000');
 const ORIGINS_OPTION = new Option(
   '--allow_origins <string>',
-  'Optional. The allow origins of the server',
+  'Optional. Comma-separated list of origins allowed to send cross-origin ' +
+    "requests to the server. Each origin's host is also accepted by the " +
+    'DNS-rebinding guard.',
+).default('');
+const ALLOWED_HOSTS_OPTION = new Option(
+  '--allowed_hosts <string>',
+  'Optional. Comma-separated list of additional Host header values the ' +
+    'DNS-rebinding guard accepts, independent of --allow_origins. Use ' +
+    'this to widen the guard for a reverse proxy in front of a ' +
+    'loopback-bound server without opening --allow_origins to "*".',
 ).default('');
 const VERBOSE_OPTION = new Option(
   '-v, --verbose',
@@ -134,7 +160,8 @@ const COMPILE_AGENT_FILE = new Option(
 ).default(true);
 const BUNDLE_AGENT_FILE = new Option(
   '--bundle [boolean]',
-  'Optional. Whether to compile ts agent file to js before execution',
+  'Optional. Whether to inline the agent file dependencies into a single ' +
+    'bundle before execution. Bundling also minifies the result.',
 ).default(true);
 const A2A_OPTION = new Option(
   '--a2a [boolean]',
@@ -214,6 +241,7 @@ export function createProgram(): Command {
     .addOption(HOST_OPTION)
     .addOption(PORT_OPTION)
     .addOption(ORIGINS_OPTION)
+    .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(SESSION_SERVICE_URI_OPTION)
@@ -237,6 +265,7 @@ export function createProgram(): Command {
           port: parseInt(options['port'], 10),
           serveDebugUI: true,
           allowOrigins: options['allow_origins'],
+          allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
           otelToCloud: options['otel_to_cloud'] ? true : false,
@@ -260,6 +289,7 @@ export function createProgram(): Command {
     .addOption(HOST_OPTION)
     .addOption(PORT_OPTION)
     .addOption(ORIGINS_OPTION)
+    .addOption(ALLOWED_HOSTS_OPTION)
     .addOption(VERBOSE_OPTION)
     .addOption(LOG_LEVEL_OPTION)
     .addOption(SESSION_SERVICE_URI_OPTION)
@@ -283,6 +313,7 @@ export function createProgram(): Command {
           port: parseInt(options['port'], 10),
           serveDebugUI: false,
           allowOrigins: options['allow_origins'],
+          allowedHosts: getAllowedHosts(options['allowed_hosts']),
           sessionService: getSessionServiceFromOptions(options),
           artifactService: getArtifactServiceFromOptions(options),
           otelToCloud: options['otel_to_cloud'] ? true : false,

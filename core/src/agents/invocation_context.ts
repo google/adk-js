@@ -60,6 +60,10 @@ export interface InvocationContextParams {
   nodeToolDepth?: number;
   liveRequestQueue?: LiveRequestQueue;
   liveSessionResumptionHandle?: string;
+  /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  a2aMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -114,7 +118,7 @@ class InvocationCostManager {
  *  An LLM agent runs steps in a loop until:
  *    1. A final response is generated.
  *    2. The agent transfers to another agent.
- *    3. The end_invocation is set to true by any callbacks or tools.
+ *    3. `endInvocation` is set to true by any callbacks or tools.
  *
  *  A step:
  *    1. Calls the LLM only once and yields its response.
@@ -122,7 +126,7 @@ class InvocationCostManager {
  *
  *  The summarization of the function response is considered another step, since
  *  it is another llm call.
- *  A step ends when it's done calling llm and tools, or if the end_invocation
+ *  A step ends when it's done calling llm and tools, or if `endInvocation`
  *  is set to true at any time.
  *
  *  ```
@@ -181,7 +185,7 @@ export class InvocationContext {
 
   /**
    * Whether to end this invocation.
-   * Set to True in callbacks or tools to terminate this invocation.
+   * Set to `true` in callbacks or tools to terminate this invocation.
    */
   endInvocation: boolean;
 
@@ -259,6 +263,11 @@ export class InvocationContext {
   liveSessionResumptionHandle?: string;
 
   /**
+   * Request-level metadata passed from an incoming A2A request or caller.
+   */
+  readonly a2aMetadata?: Record<string, unknown>;
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -279,6 +288,7 @@ export class InvocationContext {
     this.workflowInstructionScope = params.workflowInstructionScope;
     this.isolationScope = params.isolationScope;
     this.nodeToolDepth = params.nodeToolDepth ?? 0;
+    this.a2aMetadata = params.a2aMetadata;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop

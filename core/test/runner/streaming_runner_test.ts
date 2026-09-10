@@ -71,17 +71,28 @@ class AbortMockLlm extends BaseLlm {
 }
 
 class SleepyTool extends BaseTool {
+  /** Whether the tool ran and observed the abort on its context. */
+  sawAbort = false;
+  /** Whether the tool ran all the way through without seeing an abort. */
+  finished = false;
+
   constructor() {
     super({name: 'sleepy_tool', description: 'sleepy tool'});
   }
-  async runAsync(
-    request: RunAsyncToolRequest,
-    abortSignal?: AbortSignal,
-  ): Promise<unknown> {
+  // Without a declaration the tool never lands in `toolsDict`, so the call
+  // below would fail to resolve and the tool would never actually run.
+  override _getDeclaration() {
+    return {name: this.name, description: this.description};
+  }
+  // `callToolAsync` invokes `runAsync({args, toolContext})` with one argument;
+  // the abort signal rides on the context, not a second parameter.
+  async runAsync(request: RunAsyncToolRequest): Promise<unknown> {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    if (abortSignal?.aborted) {
+    if (request.toolContext.abortSignal?.aborted) {
+      this.sawAbort = true;
       throw new Error('Tool aborted');
     }
+    this.finished = true;
     return {result: 'slept'};
   }
 }
@@ -307,6 +318,18 @@ describe('Runner Streaming and Ephemeral', () => {
       expect(events.some((e) => e.content?.parts?.[0].text === 'Done')).toBe(
         false,
       );
+      // 'Done' is absent either way once the runner aborts, so assert the
+      // tool-level abort where it is actually observable: the tool ran, read
+      // the signal off its context, and bailed instead of returning.
+      expect(sleepyTool.sawAbort).toBe(true);
+      expect(sleepyTool.finished).toBe(false);
+      // The runner stops at the functionCall; the tool's error response never
+      // reaches the caller.
+      expect(
+        events.flatMap((e) =>
+          (e.content?.parts ?? []).filter((p) => p.functionResponse),
+        ),
+      ).toHaveLength(0);
     });
   });
 

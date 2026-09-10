@@ -21,6 +21,7 @@ export {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
+  isToolNotFound,
 } from './agents/functions.js';
 export {InvocationContext, requireAgent} from './agents/invocation_context.js';
 export type {
@@ -88,6 +89,8 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export {ScopedArtifactService} from './artifacts/scoped_artifact_service.js';
+export {isSessionArtifactService} from './artifacts/session_artifact_service.js';
 export type {
   SessionArtifactService,
   SessionLoadArtifactRequest,
@@ -146,6 +149,14 @@ export {TruncatingContextCompactor} from './context/truncating_context_compactor
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {BaseEnvironment} from './environment/base_environment.js';
 export type {ExecutionResult} from './environment/base_environment.js';
+export {AlreadyExistsError} from './errors/already_exists_error.js';
+export {InputValidationError} from './errors/input_validation_error.js';
+export {NotFoundError} from './errors/not_found_error.js';
+export {SessionNotFoundError} from './errors/session_not_found_error.js';
+export {
+  ToolErrorType,
+  ToolExecutionError,
+} from './errors/tool_execution_error.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
@@ -197,6 +208,8 @@ export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
 export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.js';
 export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
+export {VertexAiRagMemoryService} from './memory/vertex_ai_rag_memory_service.js';
+export type {VertexAiRagMemoryServiceOptions} from './memory/vertex_ai_rag_memory_service.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
@@ -209,12 +222,31 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
+export {
+  GLOBAL_SCOPE_KEY,
+  REFLECT_AND_RETRY_RESPONSE_TYPE,
+  ScopedFailureTracker,
+  TrackingScope,
+  resolveScopeKey,
+  type PerItemFailuresCounter,
+  type ToolFailureResponse,
+} from './plugins/_reflect_retry_utils.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
 export {SaveFilesAsArtifactsPlugin} from './plugins/save_files_as_artifacts_plugin.js';
 export type {SaveFilesAsArtifactsPluginOptions} from './plugins/save_files_as_artifacts_plugin.js';
+export {
+  ADK_HANDLE_MODEL_ERROR_TOOL_NAME,
+  RESERVED_TOOL_CALL_ERROR_TYPE,
+  ReflectAndRetryModelPlugin,
+  type ReflectAndRetryModelPluginOptions,
+} from './plugins/reflect_retry_model_plugin.js';
+export {
+  ReflectAndRetryToolPlugin,
+  type ReflectAndRetryToolPluginOptions,
+} from './plugins/reflect_retry_tool_plugin.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
@@ -259,6 +291,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {BuiltInTool} from './tools/built_in_tool.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {
   ENTERPRISE_WEB_SEARCH,
@@ -271,6 +304,7 @@ export {
   FINISH_TASK_TOOL_NAME,
   FinishTaskTool,
 } from './tools/finish_task_tool.js';
+export {ForwardingArtifactService} from './tools/forwarding_artifact_service.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   RequireConfirmation,
@@ -298,6 +332,7 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
+export type {ResumeInputs} from './tools/resume_inputs.js';
 export {
   IntentMismatchError,
   ToolConfirmation,
@@ -316,7 +351,13 @@ export type {
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {AsyncQueue} from './utils/async_queue.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
-export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
+export {
+  LogLevel,
+  getLogger,
+  resetLogger,
+  setLogLevel,
+  setLogger,
+} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export type {SchemaLike} from './utils/schema.js';
@@ -434,7 +475,8 @@ export type {
   WorkflowConfig,
 } from './workflow/index.js';
 
-export * from './apps/app.js';
+export {App, isApp, validateAppName} from './apps/app.js';
+export type {AppOptions} from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';

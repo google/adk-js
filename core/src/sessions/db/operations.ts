@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MikroORM, Options as MikroORMOptions} from '@mikro-orm/core';
+import type {MikroORM, Options} from '@mikro-orm/core';
 import {loadOptionalPeer} from '../../utils/optional_peer.js';
 import {redactUriPassword} from '../../utils/redact_uri.js';
 import {
@@ -13,6 +13,13 @@ import {
   SCHEMA_VERSION_KEY,
   StorageMetadata,
 } from './schema.js';
+
+/**
+ * The user-facing MikroORM config shape. Since v7 `Options` marks every key
+ * that has a default as required, so a partial config has to be described as
+ * `Partial<Options>`.
+ */
+export type MikroORMOptions = Partial<Options>;
 
 /** Describes the optional driver peer backing a connection-string scheme. */
 function driverPeer(packageName: string, scheme: string) {
@@ -24,6 +31,12 @@ function driverPeer(packageName: string, scheme: string) {
 
 /**
  * Parses a database connection URI and returns MikroORM Options.
+ *
+ * Dialect drivers are imported dynamically so that installing `@google/adk`
+ * does not pull in five database drivers. Adding a dialect here therefore also
+ * means adding it to core's `peerDependencies` and to dev's `dependencies` (see
+ * "Dependency declarations" in CONTRIBUTING.md);
+ * `tests/integration/lazy_load_db_drivers/driver_manifest_test.ts` enforces it.
  *
  * @param uri The database connection URI (e.g., "postgres://user:password@host:port/database")
  * @returns MikroORM Options configured for the database
@@ -97,7 +110,7 @@ export async function ensureDatabaseCreated(orm: MikroORM): Promise<void> {
   await orm.schema.ensureDatabase();
 
   // creates tables if they don't exist. Safe mode prevents dropping columns or tables.
-  await orm.schema.updateSchema({safe: true});
+  await orm.schema.update({safe: true});
 }
 
 /**

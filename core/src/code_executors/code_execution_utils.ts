@@ -127,7 +127,7 @@ interface CodeGroupMatch {
  * @param content The mutable content to extract the code from.
  * @param codeBlockDelimiters The list of the enclosing delimiters to identify
  *     the code blocks.
- * @return The first code block if found, otherwise None.
+ * @return The first code block if found, otherwise an empty string.
  */
 export function extractCodeAndTruncateContent(
   content: Content,
@@ -147,7 +147,7 @@ export function extractCodeAndTruncateContent(
         !content.parts[i + 1].codeExecutionResult)
     ) {
       content.parts = content.parts.slice(0, i + 1);
-      return part.executableCode.code!;
+      return part.executableCode.code || '';
     }
   }
 
@@ -267,7 +267,7 @@ export function convertCodeExecutionParts(
     content.parts[content.parts.length - 1] = {
       text:
         codeBlockDelimiter[0] +
-        lastPart.executableCode.code +
+        (lastPart.executableCode.code || '') +
         codeBlockDelimiter[1],
     };
   } else if (content.parts.length == 1 && lastPart.codeExecutionResult) {

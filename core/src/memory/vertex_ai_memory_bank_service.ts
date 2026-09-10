@@ -246,7 +246,8 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       if (shouldFilterOutEvent(event.content)) {
         continue;
       }
-      // Content might need to be serialized or dumped as in Python
+      // Deep-clone into a plain JSON object so nothing non-serializable
+      // reaches the request body.
       directEvents.push({
         content: JSON.parse(JSON.stringify(event.content)),
       });
@@ -306,7 +307,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         config: config,
       };
       const operation = await this.memories.createInternal(params);
-      logger.info('Create memory response received.');
+      logger.debug('Create memory response received.');
       logger.debug(`Create memory response: ${JSON.stringify(operation)}`);
     }
   }
@@ -338,7 +339,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
         config: config,
       };
       const operation = await this.memories.generateInternal(params);
-      logger.info('Generate direct memory response received.');
+      logger.debug('Generate direct memory response received.');
       logger.debug(
         `Generate direct memory response: ${JSON.stringify(operation)}`,
       );

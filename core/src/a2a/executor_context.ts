@@ -20,6 +20,10 @@ export interface ExecutorContext {
   events: Event[];
   userContent: Content;
   requestContext: RequestContext;
+  /**
+   * Request-level metadata passed from an incoming A2A request.
+   */
+  a2aMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -27,16 +31,19 @@ export interface ExecutorContext {
  * @param session The session.
  * @param userContent The content of the user.
  * @param requestContext The request context.
+ * @param a2aMetadata Optional request-level metadata.
  * @returns The A2A Agent Executor context.
  */
 export function createExecutorContext({
   session,
   userContent,
   requestContext,
+  a2aMetadata,
 }: {
   session: Session;
   userContent: Content;
   requestContext: RequestContext;
+  a2aMetadata?: Record<string, unknown>;
 }): ExecutorContext {
   return {
     userId: session.userId,
@@ -46,5 +53,6 @@ export function createExecutorContext({
     events: session.events,
     userContent,
     requestContext,
+    a2aMetadata,
   };
 }

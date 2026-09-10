@@ -5,7 +5,7 @@
  */
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
-import {DefaultRequestHandler, InMemoryTaskStore} from '@a2a-js/sdk/server';
+import {InMemoryTaskStore} from '@a2a-js/sdk/server';
 import type {UserBuilder} from '@a2a-js/sdk/server/express';
 import type express from 'express';
 import {StreamingMode} from '../agents/run_config.js';
@@ -19,6 +19,12 @@ import {loadOptionalPeer} from '../utils/optional_peer.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
 import {getA2AAgentCard, resolveAgentCard} from './agent_card.js';
 import {A2AAgentExecutor} from './agent_executor.js';
+import {
+  AdkDefaultRequestHandler,
+  getA2aRequestMetadata,
+} from './request_metadata.js';
+
+export {AdkDefaultRequestHandler, getA2aRequestMetadata};
 
 /**
  * Loads Express and the Express bindings of `@a2a-js/sdk`, which are only
@@ -199,7 +205,7 @@ export async function toA2a(
     },
   });
 
-  const requestHandler = new DefaultRequestHandler(
+  const requestHandler = new AdkDefaultRequestHandler(
     agentCard,
     new InMemoryTaskStore(),
     agentExecutor,

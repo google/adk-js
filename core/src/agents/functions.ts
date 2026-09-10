@@ -15,8 +15,12 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../events/event.js';
-import {mergeEventActions} from '../events/event_actions.js';
+import {
+  isDefaultEventActions,
+  mergeEventActions,
+} from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
@@ -130,7 +134,7 @@ export function generateAuthEvent(
     branch: invocationContext.branch,
     content: {
       parts: parts,
-      role: functionResponseEvent.content!.role,
+      role: functionResponseEvent.content?.role ?? 'user',
     },
     longRunningToolIds: Array.from(longRunningToolIds),
   });
@@ -183,7 +187,7 @@ export function generateRequestConfirmationEvent({
     branch: invocationContext.branch,
     content: {
       parts: parts,
-      role: functionResponseEvent.content!.role,
+      role: functionResponseEvent.content?.role ?? 'user',
     },
     actions: functionResponseEvent.actions,
     longRunningToolIds: Array.from(longRunningToolIds),
@@ -257,6 +261,11 @@ function buildResponseEvent(
  * Handles function calls.
  * Runtime behavior to pay attention to:
  * - Iterate through each function call in the `functionCallEvent`:
+ *   - Resolve the named tool. If the name is not callable, run the on-tool-
+ *     error callbacks and answer the call with their response, or with the
+ *     resolution error when none handles it, then move to the next call. That
+ *     answer skips the before/after tool callbacks below, so a plugin auditing
+ *     every response does not observe it — as in Python.
  *   - Execute before tool callbacks !!if a callback provides a response, short
  *     circuit the rest.
  *   - Execute the tool.
@@ -273,6 +282,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCallEvent: Event;
@@ -281,6 +291,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionCalls = getFunctionCalls(functionCallEvent);
   return await handleFunctionCallList({
@@ -291,6 +302,7 @@ export async function handleFunctionCallsAsync({
     afterToolCallbacks: afterToolCallbacks,
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
+    resumeInputsDict: resumeInputsDict,
   });
 }
 
@@ -313,6 +325,126 @@ function normalizeCallbackResponse(
 }
 
 /**
+ * Why a name the model called may be missing from `toolsDict`. Operator-facing
+ * only — the model gets the short form, since none of this is actionable to it.
+ */
+const RESOLUTION_FAILURE_CAUSES = `Possible causes:
+  1. The model hallucinated the name.
+  2. The tool is not registered on this agent, or a plugin filtered it out of this request.
+  3. The name does not match the registered tool's name exactly.
+  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined (as prompt-injecting tools like \`ExampleTool\` and \`PreloadMemoryTool\` do).`;
+
+const TOOL_NOT_FOUND_SYMBOL = Symbol.for('google.adk.toolNotFound');
+
+/**
+ * Whether `tool` is the placeholder handed to the on-tool-error callbacks for a
+ * function call naming a tool this agent cannot call.
+ *
+ * Lets a plugin tell an unresolvable name from a registered tool that threw
+ * without matching on the error message.
+ */
+export function isToolNotFound(tool: unknown): boolean {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    (tool as Record<symbol, unknown>)[TOOL_NOT_FOUND_SYMBOL] === true
+  );
+}
+
+/**
+ * Stands in for a tool the model named but that the agent cannot call, so the
+ * on-tool-error callbacks get something to inspect. Mirrors the bare
+ * `BaseTool` Python builds in the same spot.
+ *
+ * The framework never runs it, but a plugin receiving it as `tool` can, so
+ * `runAsync` rethrows the resolution error rather than inventing a second
+ * message that could drift from the first.
+ */
+class ToolNotFoundPlaceholder extends BaseTool {
+  readonly [TOOL_NOT_FOUND_SYMBOL] = true;
+
+  constructor(
+    name: string,
+    private readonly resolutionError: Error,
+  ) {
+    super({name, description: 'Tool not found'});
+  }
+
+  override async runAsync(): Promise<never> {
+    throw this.resolutionError;
+  }
+}
+
+/**
+ * Answers a function call naming a tool this agent cannot call.
+ *
+ * Failing to resolve the tool is a tool error, not a model error, so it runs
+ * through the same on-tool-error callbacks a registered tool that throws does.
+ * With no plugin response the model is handed the error as the call's result:
+ * leaving the call unanswered makes the next request identical to this one, and
+ * the model re-issues it until `maxLlmCalls` trips.
+ */
+async function answerUnresolvableCall({
+  invocationContext,
+  functionCall,
+  toolsDict,
+  toolContext,
+}: {
+  invocationContext: InvocationContext;
+  functionCall: FunctionCall;
+  toolsDict: Record<string, BaseTool>;
+  toolContext: Context;
+}): Promise<Event> {
+  // The sibling path opens `execute_tool <name>` inside `callToolAsync`.
+  // Without this an unresolvable call is the one tool interaction that
+  // leaves no span, which is the worst case to be missing from a waterfall.
+  return tracer.startActiveSpan(
+    `execute_tool ${functionCall.name || '<unnamed>'}`,
+    async (span) => {
+      try {
+        const toolName = functionCall.name || '<unnamed>';
+        const error = new Error(
+          `Function ${toolName} is not found in the toolsDict.`,
+        );
+        const tool = new ToolNotFoundPlaceholder(toolName, error);
+
+        const onToolErrorResponse =
+          await invocationContext.pluginManager.runOnToolErrorCallback({
+            tool,
+            toolArgs: functionCall.args ?? {},
+            toolContext,
+            error,
+          });
+
+        if (onToolErrorResponse == null) {
+          // Only an unhandled failure is the operator's problem; a plugin that
+          // answers these has made them an expected condition. The tool inventory
+          // belongs here rather than in the model's payload — the model already has
+          // its declarations, and a large toolset would cost kilobytes per
+          // occurrence.
+          const callableTools = Object.keys(toolsDict);
+          logger.warn(
+            `Could not resolve tool '${toolName}' for function call ` +
+              `'${functionCall.id ?? ''}'. Callable tools: ` +
+              `${callableTools.length ? callableTools.join(', ') : '(none)'}.\n` +
+              RESOLUTION_FAILURE_CAUSES,
+          );
+        }
+
+        return buildResponseEvent(
+          tool,
+          onToolErrorResponse ?? {error: error.message},
+          toolContext,
+          invocationContext,
+        );
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
+/**
  * The underlying implementation of handleFunctionCalls, but takes a list of
  * function calls instead of an event.
  * This is also used by llm_agent execution flow in preprocessing.
@@ -325,6 +457,7 @@ export async function handleFunctionCallList({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCalls: FunctionCall[];
@@ -333,6 +466,13 @@ export async function handleFunctionCallList({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
+  /**
+   * Inputs to resume a paused tool call with, keyed by function call id. Each
+   * value is itself keyed by interrupt id. Kept apart from
+   * `toolConfirmationDict` so resume inputs can never be mistaken for a human
+   * approval; see {@link ResumeInputs}.
+   */
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionResponseEvents: Event[] = [];
 
@@ -347,12 +487,36 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
-    const {tool, toolContext} = getToolAndContext({
+    let resumeInputs = undefined;
+    if (resumeInputsDict && functionCall.id) {
+      resumeInputs = resumeInputsDict[functionCall.id];
+    }
+
+    const toolContext = new Context({
       invocationContext,
-      functionCall,
-      toolsDict,
+      functionCallId: functionCall.id || undefined,
       toolConfirmation,
+      resumeInputs,
     });
+    // `functionCall.name` comes from the model, and `toolsDict` is a plain
+    // object, so an unguarded lookup would resolve `toString` or `constructor`
+    // to a function on `Object.prototype` and treat the call as found.
+    const tool =
+      functionCall.name && Object.hasOwn(toolsDict, functionCall.name)
+        ? toolsDict[functionCall.name]
+        : undefined;
+
+    if (!tool) {
+      functionResponseEvents.push(
+        await answerUnresolvableCall({
+          invocationContext,
+          functionCall,
+          toolsDict,
+          toolContext,
+        }),
+      );
+      continue;
+    }
 
     // TODO - b/436079721: implement [tracer.start_as_current_span]
     logger.debug(`execute_tool ${tool.name}`);
@@ -454,12 +618,25 @@ export async function handleFunctionCallList({
       functionResponse = normalizeCallbackResponse(alteredFunctionResponse);
     }
 
-    // Allow long running function to return None as response.
+    // Allow a long-running function to return no response.
     // Only a nullish response defers the event. A falsy-but-present response
     // ('', 0, false) is a real result and still emits one, so long-running
     // tools that return such a value now produce a response event where they
     // previously produced none.
     if (tool.isLongRunning && functionResponse == null) {
+      // The tool's response will arrive later, but any actions it recorded on
+      // the tool context (state/artifact deltas, auth or confirmation
+      // requests, transfer, escalation, skipSummarization) must not be lost.
+      if (!isDefaultEventActions(toolContext.actions)) {
+        functionResponseEvents.push(
+          createEvent({
+            invocationId: invocationContext.invocationId,
+            author: toolEventAuthor(invocationContext),
+            actions: toolContext.actions,
+            branch: invocationContext.branch,
+          }),
+        );
+      }
       continue;
     }
 
@@ -522,35 +699,6 @@ export async function handleFunctionCallList({
   return mergedEvent;
 }
 
-// TODO - b/425992518: consider inline, which is much cleaner.
-function getToolAndContext({
-  invocationContext,
-  functionCall,
-  toolsDict,
-  toolConfirmation,
-}: {
-  invocationContext: InvocationContext;
-  functionCall: FunctionCall;
-  toolsDict: Record<string, BaseTool>;
-  toolConfirmation?: ToolConfirmation;
-}): {tool: BaseTool; toolContext: Context} {
-  if (!functionCall.name || !(functionCall.name in toolsDict)) {
-    throw new Error(
-      `Function ${functionCall.name} is not found in the toolsDict.`,
-    );
-  }
-
-  const toolContext = new Context({
-    invocationContext: invocationContext,
-    functionCallId: functionCall.id || undefined,
-    toolConfirmation,
-  });
-
-  const tool = toolsDict[functionCall.name];
-
-  return {tool, toolContext};
-}
-
 /**
  * Merges a list of function response events into a single event.
  */
@@ -592,8 +740,8 @@ export function mergeParallelFunctionResponseEvents(
 // TODO - b/425992518: support function call in live connection.
 
 /**
- * Finds the function call event that matches the function call ID.
- * Mirrors Python ADK's `find_event_by_function_call_id`.
+ * Finds the most recent event before `endIndex` that contains a function call
+ * with the given ID.
  */
 export function findEventByFunctionCallId(
   events: Event[],
@@ -613,21 +761,101 @@ export function findEventByFunctionCallId(
 }
 
 /**
- * Finds the function call event that matches the function response ID of the last event.
- * Mirrors Python ADK's `find_matching_function_call`.
+ * Walks the last event's function responses once, matching each to its
+ * function call event. Returns the last-resolved match by iteration
+ * order (the loop overwrites its result on every match) alongside the
+ * first pair of distinct authors encountered, if any. Shared by {@link
+ * findMatchingFunctionCall} and `getConflictingFunctionResponseAuthors`
+ * so the walk and its matching rules live in exactly one place.
  */
-export function findMatchingFunctionCall(events: Event[]): Event | undefined {
+function resolveFunctionResponseMatch(events: Event[]): {
+  resolved: Event | undefined;
+  conflictingAuthors: [string, string] | undefined;
+} {
   if (!events.length) {
-    return undefined;
+    return {resolved: undefined, conflictingAuthors: undefined};
   }
   const lastEvent = events[events.length - 1];
   const functionResponses = getFunctionResponses(lastEvent);
-  if (!functionResponses.length || !functionResponses[0].id) {
-    return undefined;
+  if (!functionResponses.length) {
+    return {resolved: undefined, conflictingAuthors: undefined};
   }
-  return findEventByFunctionCallId(
-    events,
-    functionResponses[0].id,
-    events.length - 1,
-  );
+
+  let resolved: Event | undefined;
+  let conflictingAuthors: [string, string] | undefined;
+  for (const functionResponse of functionResponses) {
+    if (!functionResponse.id) {
+      continue;
+    }
+    const match = findEventByFunctionCallId(
+      events,
+      functionResponse.id,
+      events.length - 1,
+    );
+    if (!match) {
+      continue;
+    }
+    if (!conflictingAuthors && resolved && resolved.author !== match.author) {
+      conflictingAuthors = [resolved.author ?? '', match.author ?? ''];
+    }
+    resolved = match;
+  }
+  return {resolved, conflictingAuthors};
+}
+
+/**
+ * Returns the event containing the function call that the last event's
+ * function response(s) answer, by matching functionCall.id to
+ * functionResponse.id.
+ *
+ * Every function response in the last event is checked, not just the
+ * first one. A single event can carry responses answering calls from
+ * different agents at once -- for example two long-running operations
+ * from sibling sub-agents completing together and being resumed in one
+ * message. Resolving from only `functionResponses[0]` would silently
+ * attribute the rest to whichever agent's call happened to come first,
+ * which is the wrong agent for any response that isn't the first one:
+ * that response would then be processed under a resumed agent's context
+ * it was never meant for, and the agent it actually answers would never
+ * be correctly resumed at all.
+ *
+ * This is a pure lookup: responses with no id, or whose id matches no
+ * function call, are skipped rather than treated as an error, and when
+ * several responses resolve to calls from more than one distinct
+ * author, this does not throw -- it returns the last-resolved match by
+ * iteration order (whichever response is checked last wins). That is a
+ * change from the pre-existing behavior of resolving only
+ * `functionResponses[0]` (which effectively made the first response
+ * win): an external caller of {@link findEventByLastFunctionResponseId}
+ * can now get a different event, and a different id, than before this
+ * fix, even though {@link determineAgentForResumption} itself is
+ * unaffected, since it only reads `.author` and every distinct-author
+ * case is instead surfaced there as a thrown conflict (see
+ * `getConflictingFunctionResponseAuthors`) after that caller's own
+ * resumability gate, not from this function.
+ */
+export function findMatchingFunctionCall(events: Event[]): Event | undefined {
+  return resolveFunctionResponseMatch(events).resolved;
+}
+
+/**
+ * Returns the distinct pair of authors when the last event's function
+ * responses resolve to function calls from more than one agent, or
+ * `undefined` when they all resolve to a single agent (or there is
+ * nothing to resolve).
+ *
+ * This performs the same walk as {@link findMatchingFunctionCall} but
+ * reports a conflict instead of silently resolving to one match, so
+ * that a caller can decide when it is safe to raise it. {@link
+ * determineAgentForResumption} is the only current caller, and calls
+ * this only once resumability is confirmed enabled: this function
+ * existing separately from `findMatchingFunctionCall`, rather than
+ * that function throwing directly, is what keeps a session with such
+ * an event from aborting every run (not only resumption attempts) --
+ * see that caller's own comment for why the check has to live there.
+ */
+export function getConflictingFunctionResponseAuthors(
+  events: Event[],
+): [string, string] | undefined {
+  return resolveFunctionResponseMatch(events).conflictingAuthors;
 }

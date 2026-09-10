@@ -1,5 +1,55 @@
 # Changelog
 
+## [2.0.0](https://github.com/google/adk-js/compare/devtools-v1.6.0...devtools-v2.0.0) (2026-08-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **workflow:** `LLMAgentWrapper` and `LLMAgentWrapperConfig` are removed. An agent is a workflow node as itself — pass it to an edge or `node()` directly. A non-`LlmAgent` agent used as a node no longer has the node input appended to its conversation, nor its final model text promoted to the node output.
+* **workflow:** `InvocationContext.agent` is now optional. Code reading it outside an agent's own execution must handle `undefined`; inside one, prefer `requireAgent(ctx)`.
+
+### Features
+
+* **core:** accept a bare Workflow as a root — runner, App and agent loader ([#680](https://github.com/google/adk-js/issues/680)) ([b3497e0](https://github.com/google/adk-js/commit/b3497e0ff2a931d954b4efa57337fc3a8b709056))
+* **dev:** render graph workflows in the dev UI agent graph ([#654](https://github.com/google/adk-js/issues/654)) ([434a43e](https://github.com/google/adk-js/commit/434a43e90fd67fb0e72e879ab992716c4a7efbe9))
+* **dev:** serve the agent structure graph the dev UI's graph tab asks for ([#694](https://github.com/google/adk-js/issues/694)) ([8915c2b](https://github.com/google/adk-js/commit/8915c2bae78553c1872bf0ea4fd90e1c83c3ad0b))
+* **tools:** FunctionTool require_confirmation — HITL approval (Part 7) ([#594](https://github.com/google/adk-js/issues/594)) ([d2ae57b](https://github.com/google/adk-js/commit/d2ae57b071ab4db7ea636b0d40e9b8ae93307222))
+* **workflow:** drive workflows as nodes and remove WorkflowAgent ([#688](https://github.com/google/adk-js/issues/688)) ([534546f](https://github.com/google/adk-js/commit/534546f5f847fc677bbb9e5abe11beabebf9e574))
+
+
+### Bug Fixes
+
+* **agent-loader:** ignore node_modules and hidden folders in agent discovery and fix integration test timeouts ([#674](https://github.com/google/adk-js/issues/674)) ([d9ffd9d](https://github.com/google/adk-js/commit/d9ffd9d28f6218a11599f5cd8b920e8fab89d985))
+* **api-server:** return the events a failed invocation produced from /run ([#749](https://github.com/google/adk-js/issues/749)) ([4bc0e0d](https://github.com/google/adk-js/commit/4bc0e0db13f64d3becb08549ccc880bf4ec92488)), closes [#743](https://github.com/google/adk-js/issues/743)
+* **build:** retry the ADK Web download instead of failing the build ([#693](https://github.com/google/adk-js/issues/693)) ([e57f6cf](https://github.com/google/adk-js/commit/e57f6cf8da0e248f32aa5c4af0da49847447f181))
+* **cli:** keep one broken agent from killing the dev server; surface HITL prompts and errors in `adk run` ([#633](https://github.com/google/adk-js/issues/633)) ([a98d132](https://github.com/google/adk-js/commit/a98d132f7122f3cca1bce4121ce81610db5b1084))
+* **cli:** make --log_level debug actually set the debug level ([#658](https://github.com/google/adk-js/issues/658)) ([d56ea73](https://github.com/google/adk-js/commit/d56ea739fa2293c5ffb525b8964ee6752bacf771))
+* **dev:** keep the adk run REPL alive when a turn fails ([#780](https://github.com/google/adk-js/issues/780)) ([9c3121f](https://github.com/google/adk-js/commit/9c3121ffb042524011769de9797b3004394e3c72))
+* **dev:** print a node's output when it emitted no text ([#779](https://github.com/google/adk-js/issues/779)) ([2f534b7](https://github.com/google/adk-js/commit/2f534b7acd79b4bd5c7f34700b1eb25312544348))
+* **dev:** stop --verbose eating the agent path ([#764](https://github.com/google/adk-js/issues/764)) ([b633b57](https://github.com/google/adk-js/commit/b633b57f67a8fcee5f56d12edc720809c847c6df))
+* **dev:** stop an empty node response vanishing from the transcript ([#765](https://github.com/google/adk-js/issues/765)) ([af3a821](https://github.com/google/adk-js/commit/af3a82144261470eb59672ee535f2fa1ccf78e00)), closes [#728](https://github.com/google/adk-js/issues/728)
+* **dev:** stop dropping piped stdin lines, and keep the prompt on its own line ([#781](https://github.com/google/adk-js/issues/781)) ([e5c8532](https://github.com/google/adk-js/commit/e5c853278ef8ed35382db6be4322025a6bc14083))
+* **models:** consult GOOGLE_API_KEY on the Gemini API path ([#748](https://github.com/google/adk-js/issues/748)) ([60a3c67](https://github.com/google/adk-js/commit/60a3c6732b5100bcf67df9d806a64fdb2049bc72)), closes [#712](https://github.com/google/adk-js/issues/712)
+* **server:** serve /version, which the dev UI reads on load ([#685](https://github.com/google/adk-js/issues/685)) ([2817457](https://github.com/google/adk-js/commit/2817457bdcf1e9dc0ae3a87de4a17661b48955fb))
+* **skills:** materialize script output into a dedicated dir, not process.cwd() ([#620](https://github.com/google/adk-js/issues/620)) ([2ea08cf](https://github.com/google/adk-js/commit/2ea08cf8ba5fca65d678cdabecbf78713fee4106))
+* **telemetry:** make a workflow's spans retrievable so its traces render ([#750](https://github.com/google/adk-js/issues/750)) ([63a5f43](https://github.com/google/adk-js/commit/63a5f4395e6367d5129ccd679b76104eb7e6a8d3))
+* **tests:** stop cli_create tests reading the developer's gcloud env ([#666](https://github.com/google/adk-js/issues/666)) ([7312efc](https://github.com/google/adk-js/commit/7312efc8bb6ae0c86d79cce54e846bc77e09b9ce))
+* three defects found bug-bashing the graph-workflow docs samples ([#664](https://github.com/google/adk-js/issues/664)) ([e0dae58](https://github.com/google/adk-js/commit/e0dae584d43bab7ef068decb4743e6d6753d176f))
+* **workflow:** emit the interrupt schema under the key clients read ([#686](https://github.com/google/adk-js/issues/686)) ([e84eb3f](https://github.com/google/adk-js/commit/e84eb3fa9953a5e21164adb69475e7678f4b6fbf))
+* **workflow:** let two route keys share a destination node ([#763](https://github.com/google/adk-js/issues/763)) ([172ccb1](https://github.com/google/adk-js/commit/172ccb148c14990eec7435f7360f5349172369df)), closes [#740](https://github.com/google/adk-js/issues/740)
+
+
+### Code Refactoring
+
+* **workflow:** collapse LLMAgentWrapper into LlmAgent.runImpl ([#696](https://github.com/google/adk-js/issues/696)) ([49209ab](https://github.com/google/adk-js/commit/49209ab91bdcf4762f92d6a0b5fe9b5617a027bd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^1.6.0 to ^2.0.0
+
 ## [1.6.0](https://github.com/google/adk-js/compare/devtools-v1.5.0...devtools-v1.6.0) (2026-08-05)
 
 

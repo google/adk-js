@@ -24,6 +24,7 @@ import {
   LlmAgent,
   LlmRequest,
   LlmResponse,
+  LongRunningFunctionTool,
   PluginManager,
   RunAsyncToolRequest,
   Runner,
@@ -31,7 +32,15 @@ import {
   ToolProcessLlmRequest,
 } from '@google/adk';
 import {Content, Schema, Type} from '@google/genai';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 import {logger} from '../../src/utils/logger.js';
@@ -100,6 +109,28 @@ class StreamingMockLlm extends BaseLlm {
       yield chunk;
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+  }
+
+  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    return new MockLlmConnection();
+  }
+}
+
+/**
+ * Yields the chunks of `turns[n]` on the n-th call and counts how many turns
+ * the agent asked for.
+ */
+class CountingMockLlm extends BaseLlm {
+  callCount = 0;
+
+  constructor(private readonly turns: LlmResponse[][]) {
+    super({model: 'counting-mock-llm'});
+  }
+
+  async *generateContentAsync(
+    _request: LlmRequest,
+  ): AsyncGenerator<LlmResponse, void, void> {
+    yield* this.turns[this.callCount++] ?? [];
   }
 
   async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
@@ -911,6 +942,79 @@ describe('LlmAgent postprocess empty parts filtering', () => {
   });
 });
 
+describe('LlmAgent long running tool termination', () => {
+  const startJobCall: LlmResponse = {
+    content: {
+      role: 'model',
+      parts: [{functionCall: {name: 'startJob', args: {}, id: 'call_1'}}],
+    },
+  };
+  const secondTurnText: LlmResponse = {
+    content: {role: 'model', parts: [{text: 'second turn'}]},
+  };
+
+  function runAgent(model: BaseLlm, startJob: LongRunningFunctionTool) {
+    const agent = new LlmAgent({name: 'test_agent', model, tools: [startJob]});
+    const invocationContext = new InvocationContext({
+      invocationId: 'inv_123',
+      session: createSession({id: 'sess_123', appName: 'test_app'}),
+      agent,
+      pluginManager: new PluginManager(),
+    });
+    return agent.runAsync(invocationContext);
+  }
+
+  function createStartJobTool(mutate?: (toolContext: Context) => void) {
+    return new LongRunningFunctionTool({
+      name: 'startJob',
+      description: 'starts a background job',
+      execute: async (_args, toolContext) => {
+        mutate?.(toolContext!);
+        return undefined;
+      },
+    });
+  }
+
+  it('should stop the step loop after an actions-only event', async () => {
+    const model = new CountingMockLlm([[startJobCall], [secondTurnText]]);
+    const startJob = createStartJobTool((toolContext) => {
+      toolContext.actions.skipSummarization = true;
+    });
+
+    const events: Event[] = [];
+    for await (const event of runAgent(model, startJob)) {
+      events.push(event);
+    }
+
+    expect(model.callCount).toBe(1);
+    expect(
+      events.some((event) =>
+        event.content?.parts?.some((part) => part.text === 'second turn'),
+      ),
+    ).toBe(false);
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.content).toBeUndefined();
+    expect(lastEvent.actions.skipSummarization).toBe(true);
+  });
+
+  it('should keep running the step loop after a trailing empty chunk with default actions', async () => {
+    const model = new CountingMockLlm([
+      [startJobCall, {content: {role: 'model'}}],
+      [secondTurnText],
+    ]);
+
+    const events: Event[] = [];
+    for await (const event of runAgent(model, createStartJobTool())) {
+      events.push(event);
+    }
+
+    expect(model.callCount).toBe(2);
+    expect(events[events.length - 1].content?.parts?.[0].text).toBe(
+      'second turn',
+    );
+  });
+});
+
 describe('LlmAgent Default Request Processors', () => {
   it('includes AUTH_PREPROCESSOR in default requestProcessors before CONTENT_REQUEST_PROCESSOR', () => {
     const agent = new LlmAgent({
@@ -1222,5 +1326,106 @@ describe('LlmAgent usage metadata on content-less responses', () => {
     const events = await runAndCollect();
 
     expect(events.find((e) => e.usageMetadata)).toBeUndefined();
+  });
+});
+
+describe('LlmAgent unresolvable tool calls', () => {
+  /**
+   * Calls a name that cannot resolve, then reacts to whatever came back — the
+   * behaviour a real model has and the stub in the bug report deliberately
+   * lacks.
+   */
+  class GhostCallerLlm extends BaseLlm {
+    calls = 0;
+
+    constructor() {
+      super({model: 'mock-llm'});
+    }
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.calls++;
+      const answered = (request.contents ?? []).some((content) =>
+        (content.parts ?? []).some(
+          (part) =>
+            (part.functionResponse?.response as {error?: string} | undefined)
+              ?.error,
+        ),
+      );
+      yield answered
+        ? {content: {role: 'model', parts: [{text: 'Recovered.'}]}}
+        : {
+            content: {
+              role: 'model',
+              parts: [
+                {functionCall: {id: 'call-1', name: 'ghost_tool', args: {}}},
+              ],
+            },
+          };
+    }
+
+    async connect(): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  // The unit tests cover `handleFunctionCallList` directly, but #789 is a
+  // whole-invocation symptom: the throw reached `runAndHandleError`, the turn
+  // reported UNKNOWN_ERROR, and the unanswered call was re-issued until
+  // `maxLlmCalls` tripped. Assert it here so reintroducing the escape one
+  // layer up cannot stay green.
+  it('completes the invocation instead of erroring and re-issuing the call', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
+    const mockLlm = new GhostCallerLlm();
+    const agent = new LlmAgent({
+      name: 'ghost_agent',
+      model: mockLlm,
+      tools: [
+        new FunctionTool({
+          name: 'real_tool',
+          description: 'The only registered tool.',
+          parameters: z3.object({}),
+          execute: async () => ({result: 'ok'}),
+        }),
+      ],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({appName: 'test_app', agent, sessionService});
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'go'}]},
+    })) {
+      events.push(event);
+    }
+
+    // No error event: this is a tool failure the turn recovers from, not a
+    // model error that fails the invocation.
+    expect(events.filter((e) => e.errorMessage)).toHaveLength(0);
+    expect(events.filter((e) => e.errorCode)).toHaveLength(0);
+
+    // Two model calls, not `maxLlmCalls` worth.
+    expect(mockLlm.calls).toBe(2);
+
+    const parts = events.flatMap((e) => e.content?.parts ?? []);
+    const calls = parts.filter((p) => p.functionCall);
+    const responses = parts.filter((p) => p.functionResponse);
+    // Gemini rejects a dangling functionCall, so the pairing has to balance.
+    expect(calls).toHaveLength(1);
+    expect(responses).toHaveLength(1);
+    expect(responses[0].functionResponse!.id).toBe('call-1');
+    expect(responses[0].functionResponse!.name).toBe('ghost_tool');
+    expect(responses[0].functionResponse!.response).toHaveProperty('error');
+
+    expect(parts.some((p) => p.text === 'Recovered.')).toBe(true);
   });
 });

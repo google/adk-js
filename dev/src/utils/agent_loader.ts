@@ -6,8 +6,6 @@
 
 import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
@@ -197,30 +195,42 @@ export class AgentFile {
         target: 'node16',
         platform: 'node',
         format: moduleType,
-        packages: 'bundle',
         bundle: this.options.bundle,
         minify: this.options.bundle,
         plugins: [replaceDirnamePlugin(filePath, originalDir), shimPlugin()],
-        // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
-        external: [
-          'sqlite3',
-          'better-sqlite3',
-          'mysql',
-          'mysql2',
-          // Native addons must remain external so Node can resolve their
-          // platform-specific assets at runtime.
-          'onnxruntime-node',
-          'oracledb',
-          'pg-native',
-          'pg-query-stream',
-          'tedious',
-          'libsql',
-          // Optional peer dependencies of vite and eslint that are not
-          // installed and MUST NOT be bundled.
-          'lightningcss',
-          'jiti',
-          'jiti/package.json',
-        ],
+        // esbuild rejects `packages` and `external` unless it is bundling, so
+        // both have to be withheld when `--bundle false` asks it only to
+        // transpile. Nothing is being inlined in that mode, so there is
+        // nothing to hold out of the bundle either.
+        ...(this.options.bundle
+          ? {
+              packages: 'bundle' as const,
+              // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
+              external: [
+                'sqlite3',
+                'better-sqlite3',
+                'mysql',
+                'mysql2',
+                // Native addons must remain external so Node can resolve their
+                // platform-specific assets at runtime.
+                'onnxruntime-node',
+                'oracledb',
+                'pg-native',
+                'pg-query-stream',
+                'tedious',
+                'libsql',
+                // dockerode (used by ContainerCodeExecutor) pulls in ssh2, which
+                // bundles native `.node` addons esbuild cannot process.
+                'ssh2',
+                'cpu-features',
+                // Optional peer dependencies of vite and eslint that are not
+                // installed and MUST NOT be bundled.
+                'lightningcss',
+                'jiti',
+                'jiti/package.json',
+              ],
+            }
+          : {}),
       });
 
       this.cleanupDirPath = outputDir;
@@ -263,7 +273,7 @@ export class AgentFile {
       const rootApps = Object.values(jsModule).filter(isApp) as App[];
 
       if (rootApps.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple apps found in ${filePath}. Using the ${rootApps[0].name} as a root app.`,
         );
       }
@@ -291,7 +301,7 @@ export class AgentFile {
       const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
 
       if (rootAgents.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple agents found in ${filePath}. Using the ${rootAgents[0].name} as a root agent.`,
         );
       }
