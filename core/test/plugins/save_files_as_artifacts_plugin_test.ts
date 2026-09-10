@@ -71,7 +71,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     } as unknown as InvocationContext;
   });
 
-  it('test_save_files_with_display_name', async () => {
+  it('saves files with a display name', async () => {
     const originalPart: Part = {
       inlineData: {
         displayName: 'test_document.pdf',
@@ -108,7 +108,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![1].fileData!.mimeType).toBe('application/pdf');
   });
 
-  it('test_attach_file_reference_false', async () => {
+  it('does not attach file references when attachFileReference is false', async () => {
     const customPlugin = new SaveFilesAsArtifactsPlugin({
       attachFileReference: false,
     });
@@ -143,7 +143,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     );
   });
 
-  it('test_save_files_without_display_name', async () => {
+  it('saves files without a display name and generates a fallback', async () => {
     const originalPart: Part = {
       inlineData: {
         displayName: undefined,
@@ -180,7 +180,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![1].fileData!.displayName).toBe(expectedFilename);
   });
 
-  it('test_multiple_files_in_message', async () => {
+  it('handles multiple files in a single message', async () => {
     const inlineData1 = {
       displayName: 'file1.txt',
       data: 'file1 content',
@@ -230,7 +230,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![4].fileData!.displayName).toBe('file2.jpg');
   });
 
-  it('test_no_artifact_service', async () => {
+  it('returns original message when artifact service is not configured', async () => {
     const contextWithoutArtifactService = {
       ...mockContext,
       artifactService: undefined,
@@ -256,7 +256,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(mockArtifactService.saveArtifact).not.toHaveBeenCalled();
   });
 
-  it('test_no_parts_in_message', async () => {
+  it('returns undefined when message contains no parts', async () => {
     const userMessage: Content = {
       role: 'user',
       parts: [],
@@ -271,7 +271,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(mockArtifactService.saveArtifact).not.toHaveBeenCalled();
   });
 
-  it('test_parts_without_inline_data', async () => {
+  it('ignores parts without inline data', async () => {
     const userMessage: Content = {
       role: 'user',
       parts: [{text: 'Hello world'}, {text: 'No files here'}],
@@ -286,7 +286,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(mockArtifactService.saveArtifact).not.toHaveBeenCalled();
   });
 
-  it('test_save_artifact_failure', async () => {
+  it('returns undefined when save artifact fails', async () => {
     vi.mocked(mockArtifactService.saveArtifact).mockRejectedValueOnce(
       new Error('Storage error'),
     );
@@ -309,7 +309,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result).toBeUndefined();
   });
 
-  it('test_mixed_success_and_failure', async () => {
+  it('handles mixed success and failure across multiple files', async () => {
     let callCount = 0;
     vi.mocked(mockArtifactService.saveArtifact).mockImplementation(async () => {
       callCount++;
@@ -349,7 +349,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![2].inlineData).toEqual(inlineData2);
   });
 
-  it('test_placeholder_text_format', async () => {
+  it('formats replacement placeholder text correctly', async () => {
     const inlineData = {
       displayName: 'test file with spaces.docx',
       data: 'document data',
@@ -372,7 +372,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![1].fileData).toBeDefined();
   });
 
-  it('test_plugin_name_default_and_custom', () => {
+  it('initializes with default or custom plugin name', () => {
     const defaultPlugin = new SaveFilesAsArtifactsPlugin();
     expect(defaultPlugin.name).toBe('save_files_as_artifacts_plugin');
 
@@ -387,7 +387,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(customOptionsPlugin.name).toBe('options_saver');
   });
 
-  it('test_file_size_exceeds_limit', async () => {
+  it('skips files exceeding the size limit', async () => {
     // Create a file larger than 20MB (21 MB)
     const largeFileData = Buffer.alloc(21 * 1024 * 1024).toString('base64');
     const inlineData = {
@@ -415,7 +415,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     );
   });
 
-  it('test_file_size_at_limit', async () => {
+  it('saves files exactly at the 20MB limit', async () => {
     // Exactly 20MB
     const fileData = Buffer.alloc(20 * 1024 * 1024).toString('base64');
     const inlineData = {
@@ -442,7 +442,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![1].fileData).toBeDefined();
   });
 
-  it('test_file_size_just_over_limit', async () => {
+  it('rejects files just over the 20MB limit', async () => {
     // 20MB + 1 byte
     const largeFileData = Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64');
     const inlineData = {
@@ -470,7 +470,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     );
   });
 
-  it('test_mixed_file_sizes', async () => {
+  it('handles mixed file sizes around the limit', async () => {
     const smallFileData = Buffer.alloc(5 * 1024 * 1024).toString('base64'); // 5 MB
     const largeFileData = Buffer.alloc(25 * 1024 * 1024).toString('base64'); // 25 MB
 
@@ -510,7 +510,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(result!.parts![2].text).toContain('large.pdf');
   });
 
-  it('test_non_model_accessible_uri_does_not_attach_file_data', async () => {
+  it('does not attach file data for non-model accessible URIs', async () => {
     vi.mocked(mockArtifactService.getArtifactVersion).mockResolvedValueOnce({
       version: 0,
       canonicalUri: 'file:///tmp/artifacts/local_file.pdf',
@@ -541,7 +541,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     );
   });
 
-  it('test_artifact_delta_reporting_multi_turn', async () => {
+  it('reports artifact deltas across multiple turns', async () => {
     const mockAgent = {name: 'test_agent'} as BaseAgent;
 
     // 1. First Turn - Trigger user message callback
@@ -616,7 +616,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
     expect(mockContext.session.state[key]).toEqual({});
   });
 
-  it('test_runner_end_to_end_integration', async () => {
+  it('integrates end-to-end with runner and agent callbacks', async () => {
     const sessionService = new InMemorySessionService();
     const artifactService = new InMemoryArtifactService();
 

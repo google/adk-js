@@ -246,27 +246,21 @@ export class SaveFilesAsArtifactsPlugin extends BasePlugin {
   }
 }
 
-function getInlineDataSizeBytes(data?: string | Uint8Array): number {
+function getInlineDataSizeBytes(data?: string): number {
   if (!data) {
     return 0;
   }
-  if (typeof data === 'string') {
-    if (typeof Buffer !== 'undefined') {
-      return Buffer.from(data, 'base64').byteLength;
-    }
-    const len = data.length;
-    let padding = 0;
-    if (data.endsWith('==')) {
-      padding = 2;
-    } else if (data.endsWith('=')) {
-      padding = 1;
-    }
-    return Math.max(0, Math.floor((len * 3) / 4) - padding);
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(data, 'base64').byteLength;
   }
-  if (data instanceof Uint8Array) {
-    return data.byteLength;
+  const len = data.length;
+  let padding = 0;
+  if (data.endsWith('==')) {
+    padding = 2;
+  } else if (data.endsWith('=')) {
+    padding = 1;
   }
-  return 0;
+  return Math.max(0, Math.floor((len * 3) / 4) - padding);
 }
 
 function isModelAccessibleUri(uri: string): boolean {
