@@ -24,7 +24,10 @@ import {
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import * as fsPromises from 'node:fs/promises';
 import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
@@ -1232,10 +1235,14 @@ describe('AdkWebServer', () => {
 
   describe('Structure graph', () => {
     /** Points the loader at `agent` for the rest of the test. */
-    function loadInstead(agent: unknown) {
+    function loadInstead(
+      agent: unknown,
+      sourceFilePath = '/nonexistent/agent.ts',
+    ) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
           load: () => Promise.resolve(agent),
+          getSourceFilePath: () => sourceFilePath,
           async [Symbol.asyncDispose](): Promise<void> {
             return;
           },
@@ -1292,6 +1299,42 @@ describe('AdkWebServer', () => {
         expect(response.data?.root_agent.sub_agents).toEqual([
           expect.objectContaining({name: 'child', description: 'a child'}),
         ]);
+      });
+
+      it('returns the README.md sitting beside the agent', async () => {
+        const dir = await fsPromises.mkdtemp(
+          path.join(os.tmpdir(), 'adk-readme-'),
+        );
+        await fsPromises.writeFile(
+          path.join(dir, 'README.md'),
+          '# Sample\n\nWhat it shows.\n',
+          'utf-8',
+        );
+        loadInstead(
+          new LlmAgent({name: 'documented'}),
+          path.join(dir, 'agent.ts'),
+        );
+
+        const response = await client.get<{readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.readme).toBe('# Sample\n\nWhat it shows.\n');
+      });
+
+      it('omits readme when the agent has no README.md', async () => {
+        // The common case today: none of the samples carries one yet, so a
+        // missing file must be silent rather than a 500 or a logged error.
+        loadInstead(new LlmAgent({name: 'undocumented'}));
+
+        const response = await client.get<{name: string; readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testApp');
+        expect(response.data?.readme).toBeUndefined();
       });
 
       // A workflow keeps its structure in its edges, so a serializer that only
