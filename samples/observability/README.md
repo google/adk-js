@@ -18,6 +18,14 @@ them into `$ai_generation` events server-side and surfaces them in its
 model, token usage, latency, and, when span content capture is on, the prompt
 and response.
 
+> **Content capture is on by default.** ADK records the full request and full
+> response into the span attributes `gcp.vertex.agent.llm_request` and
+> `gcp.vertex.agent.llm_response` (both default to `true`). Because the sample
+> forwards these spans to PostHog, the entire conversation text leaves your
+> environment for a third party out of the box. To keep message bodies out of
+> the spans, set `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false` before running;
+> the events still carry model and usage metadata.
+
 ### Wiring (recommended: the published `@posthog/ai/otel`)
 
 In your own project, install PostHog's AI SDK and hand its span processor to
@@ -72,6 +80,18 @@ or `https://eu.i.posthog.com` (EU cloud) as the host.
 `npm run sample -- <path>` is shorthand for
 `node dev/dist/esm/cli_entrypoint.js run <path>`. The CLI is interactive: type a
 message and press Enter; type `exit` to quit.
+
+This sample only wires up PostHog under `npm run sample`. Under `adk web` or
+`adk api_server`, ADK's `setupTelemetry()` registers the global tracer provider
+before any agent loads, so the sample's own registration is refused
+(`registerGlobal` returns `false` and logs "Attempted duplicate registration of
+API") and no spans reach PostHog.
+
+> **Note:** this sample sits outside the CI coverage guard. The
+> `tests/integration/docs_samples` "covers every sample on disk" check reads
+> only `samples/workflows` (its `SAMPLES_ROOT`), so nothing constructs
+> `posthog/agent.ts` in CI. An ADK API rename could leave it type-checking but
+> broken at load; run it manually after such changes.
 
 ### What shows up in PostHog
 

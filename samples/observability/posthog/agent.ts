@@ -103,17 +103,16 @@ function createPostHogSpanProcessor(options: {
 // guarding on the key keeps the sample a no-op until PostHog is configured.
 const projectToken = process.env.POSTHOG_API_KEY ?? '';
 if (projectToken) {
-  maybeSetOtelProviders([
-    {
-      spanProcessors: [
-        createPostHogSpanProcessor({
-          projectToken,
-          // Defaults to https://us.i.posthog.com when unset.
-          host: process.env.POSTHOG_HOST,
-        }),
-      ],
-    },
-  ]);
+  const postHogProcessor = createPostHogSpanProcessor({
+    projectToken,
+    // Defaults to https://us.i.posthog.com when unset.
+    host: process.env.POSTHOG_HOST,
+  });
+  maybeSetOtelProviders([{spanProcessors: [postHogProcessor]}]);
+  // BatchSpanProcessor unref()s its flush timer, so it never holds the process
+  // open; without an explicit flush the last turn's spans never reach PostHog.
+  // shutdown() flushes the batch before the CLI exits.
+  process.on('beforeExit', () => void postHogProcessor.shutdown());
 } else {
   console.warn(
     'POSTHOG_API_KEY is not set; running without PostHog telemetry. ' +
