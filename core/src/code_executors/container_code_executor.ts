@@ -103,6 +103,17 @@ const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
  * can be re-enabled via `networkEnabled: true` when the executed code is
  * trusted.
  *
+ * A separate container is started per session (keyed on `appName`, `userId`,
+ * and `session.id` from `ExecuteCodeParams.invocationContext`) rather than
+ * one container shared across every call: `codeExecutor` is a single
+ * property set once on an `LlmAgent` instance, and that instance is the
+ * long-lived object serving every session the agent handles, so a single
+ * shared container would let one session's files, environment, and
+ * background processes persist into a later, unrelated session's execution.
+ * A container is still reused across multiple calls *within* the same
+ * session, so the per-call container-startup cost is paid once per session,
+ * not once per call.
+ *
  * Limitations: this executor runs a code string only. `inputFiles` and `args`
  * on the request are not copied into the container, and output files are not
  * collected (`outputFiles` is always empty), so tools that stage resource
@@ -115,8 +126,8 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   private readonly dockerPath?: string;
   private readonly containerOptions: DockerContainerOptions;
   private readonly timeoutSeconds: number;
-  private container?: DockerContainer;
-  private initPromise?: Promise<void>;
+  private readonly containers = new Map<string, DockerContainer>();
+  private readonly initPromises = new Map<string, Promise<void>>();
 
   constructor(options: ContainerCodeExecutorOptions = {}) {
     super();
@@ -160,11 +171,13 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
           `Supported: ${Object.keys(LANGUAGE_RUNTIME_COMMAND_MAP).join(', ')}.`,
       );
     }
-    await this.ensureContainer();
-    // Bound the run inside the shared container. A process that detaches from
-    // it (e.g. via `setsid`) outlives the deadline until the container is torn
-    // down; this covers the common wedge (a `while True` from the model).
-    const {stdout, stderr, exitCode} = await this.container!.execute(
+    const key = sessionKey(params.invocationContext);
+    const container = await this.ensureContainer(key);
+    // Bound the run inside the session's container. A process that detaches
+    // from it (e.g. via `setsid`) outlives the deadline until the container
+    // is torn down; this covers the common wedge (a `while True` from the
+    // model).
+    const {stdout, stderr, exitCode} = await container.execute(
       [...TIMEOUT_COMMAND, String(this.timeoutSeconds), ...command, code],
       this.timeoutSeconds,
     );
@@ -194,40 +207,43 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
   }
 
   /**
-   * Stops and removes the container. Safe to call when no container has been
-   * started; provided for deterministic teardown in tests and app shutdown.
+   * Stops and removes every session's container. Safe to call when none has
+   * been started; provided for deterministic teardown in tests and app
+   * shutdown.
    */
   async close(): Promise<void> {
-    const container = this.container;
-    this.container = undefined;
-    this.initPromise = undefined;
-    await container?.stop();
+    const containers = [...this.containers.values()];
+    this.containers.clear();
+    this.initPromises.clear();
+    await Promise.all(containers.map((container) => container.stop()));
   }
 
-  /** Lazily builds/starts the container exactly once. */
-  private ensureContainer(): Promise<void> {
-    if (!this.initPromise) {
+  /** Lazily builds/starts the given session's container exactly once. */
+  private ensureContainer(key: string): Promise<DockerContainer> {
+    let initPromise = this.initPromises.get(key);
+    if (!initPromise) {
       // Clear the memoized promise on failure so a transient init error does
-      // not poison the executor until close().
-      this.initPromise = this.initContainer().catch((error) => {
-        this.initPromise = undefined;
+      // not poison this session's executor state until close().
+      initPromise = this.initContainer(key).catch((error) => {
+        this.initPromises.delete(key);
         throw error;
       });
+      this.initPromises.set(key, initPromise);
     }
-    return this.initPromise;
+    return initPromise.then(() => this.containers.get(key)!);
   }
 
-  private async initContainer(): Promise<void> {
+  private async initContainer(key: string): Promise<void> {
     const container = new DockerContainer(this.containerOptions);
     if (this.dockerPath) {
       await container.build(this.dockerPath);
     }
     await container.start();
-    this.container = container;
+    this.containers.set(key, container);
 
     // Probe python3 after start: it is the baseline the default image
-    // guarantees, and assigning `this.container` first means a failure here
-    // still leaves the container tracked so `close()` can clean it up.
+    // guarantees, and registering the container first means a failure here
+    // still leaves it tracked so `close()` can clean it up.
     const {exitCode} = await container.execute(
       ['which', 'python3'],
       this.timeoutSeconds,
@@ -236,6 +252,17 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
       throw new Error('python3 is not installed in the container.');
     }
   }
+}
+
+/**
+ * Returns a key identifying the session a call belongs to, so each session
+ * gets its own container. Joined via JSON.stringify rather than a delimited
+ * string so that no combination of appName/userId/session id values can
+ * collide into the same key regardless of what characters they contain.
+ */
+function sessionKey(invocationContext: ExecuteCodeParams['invocationContext']): string {
+  const session = invocationContext.session;
+  return JSON.stringify([session.appName, session.userId, session.id]);
 }
 
 /**
