@@ -765,9 +765,8 @@ export function findEventByFunctionCallId(
  * function call event. Returns the last-resolved match by iteration
  * order (the loop overwrites its result on every match) alongside the
  * first pair of distinct authors encountered, if any. Shared by {@link
- * findMatchingFunctionCall} and {@link
- * getConflictingFunctionResponseAuthors} so the walk and its matching
- * rules live in exactly one place.
+ * findMatchingFunctionCall} and `getConflictingFunctionResponseAuthors`
+ * so the walk and its matching rules live in exactly one place.
  */
 function resolveFunctionResponseMatch(events: Event[]): {
   resolved: Event | undefined;
@@ -796,11 +795,7 @@ function resolveFunctionResponseMatch(events: Event[]): {
     if (!match) {
       continue;
     }
-    if (
-      !conflictingAuthors &&
-      resolved &&
-      resolved.author !== match.author
-    ) {
+    if (!conflictingAuthors && resolved && resolved.author !== match.author) {
       conflictingAuthors = [resolved.author ?? '', match.author ?? ''];
     }
     resolved = match;
@@ -835,8 +830,8 @@ function resolveFunctionResponseMatch(events: Event[]): {
  * can now get a different event, and a different id, than before this
  * fix, even though {@link determineAgentForResumption} itself is
  * unaffected, since it only reads `.author` and every distinct-author
- * case is instead surfaced there as a thrown conflict (see {@link
- * getConflictingFunctionResponseAuthors}) after that caller's own
+ * case is instead surfaced there as a thrown conflict (see
+ * `getConflictingFunctionResponseAuthors`) after that caller's own
  * resumability gate, not from this function.
  */
 export function findMatchingFunctionCall(events: Event[]): Event | undefined {

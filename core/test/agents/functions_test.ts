@@ -1363,9 +1363,7 @@ describe('findMatchingFunctionCall', () => {
       },
     });
 
-    expect(findMatchingFunctionCall([callA, callB, bothResponses])).toBe(
-      callB,
-    );
+    expect(findMatchingFunctionCall([callA, callB, bothResponses])).toBe(callB);
   });
 });
 
@@ -1468,9 +1466,7 @@ describe('getConflictingFunctionResponseAuthors', () => {
         ],
       },
     });
-    expect(
-      getConflictingFunctionResponseAuthors([callEvent]),
-    ).toBeUndefined();
+    expect(getConflictingFunctionResponseAuthors([callEvent])).toBeUndefined();
     expect(getConflictingFunctionResponseAuthors([])).toBeUndefined();
   });
 });
