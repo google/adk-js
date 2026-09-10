@@ -389,7 +389,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
 
   it('test_file_size_exceeds_limit', async () => {
     // Create a file larger than 20MB (21 MB)
-    const largeFileData = 'x'.repeat(21 * 1024 * 1024);
+    const largeFileData = Buffer.alloc(21 * 1024 * 1024).toString('base64');
     const inlineData = {
       displayName: 'large_file.pdf',
       data: largeFileData,
@@ -417,7 +417,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
 
   it('test_file_size_at_limit', async () => {
     // Exactly 20MB
-    const fileData = 'x'.repeat(20 * 1024 * 1024);
+    const fileData = Buffer.alloc(20 * 1024 * 1024).toString('base64');
     const inlineData = {
       displayName: 'max_size_file.pdf',
       data: fileData,
@@ -444,7 +444,7 @@ describe('SaveFilesAsArtifactsPlugin', () => {
 
   it('test_file_size_just_over_limit', async () => {
     // 20MB + 1 byte
-    const largeFileData = 'x'.repeat(20 * 1024 * 1024 + 1);
+    const largeFileData = Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64');
     const inlineData = {
       displayName: 'slightly_too_large.pdf',
       data: largeFileData,
@@ -471,8 +471,8 @@ describe('SaveFilesAsArtifactsPlugin', () => {
   });
 
   it('test_mixed_file_sizes', async () => {
-    const smallFileData = 'x'.repeat(5 * 1024 * 1024); // 5 MB
-    const largeFileData = 'x'.repeat(25 * 1024 * 1024); // 25 MB
+    const smallFileData = Buffer.alloc(5 * 1024 * 1024).toString('base64'); // 5 MB
+    const largeFileData = Buffer.alloc(25 * 1024 * 1024).toString('base64'); // 25 MB
 
     const smallInlineData = {
       displayName: 'small.pdf',

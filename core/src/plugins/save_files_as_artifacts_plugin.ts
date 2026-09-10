@@ -110,10 +110,10 @@ export class SaveFilesAsArtifactsPlugin extends BasePlugin {
         const inlineData = part.inlineData;
         const fileSize = getInlineDataSizeBytes(inlineData.data);
 
-        let fileName = (inlineData as {displayName?: string}).displayName;
+        let fileName = inlineData.displayName;
         if (!fileName) {
           fileName = `artifact_${invocationContext.invocationId}_${i}`;
-          logger.info(
+          logger.debug(
             `No display_name found, using generated filename: ${fileName}`,
           );
         }
@@ -156,7 +156,7 @@ export class SaveFilesAsArtifactsPlugin extends BasePlugin {
 
         pendingDelta[fileName] = version;
         modified = true;
-        logger.info(`Successfully saved artifact: ${fileName}`);
+        logger.debug(`Successfully saved artifact: ${fileName}`);
       } catch (error) {
         logger.error(`Failed to save artifact for part ${i}:`, error);
         // Keep the original part if saving fails
@@ -196,13 +196,8 @@ export class SaveFilesAsArtifactsPlugin extends BasePlugin {
     const pendingDelta =
       callbackContext.state.get<Record<string, number>>(deltaKey);
     if (pendingDelta && Object.keys(pendingDelta).length > 0) {
-      try {
-        Object.assign(callbackContext.actions.artifactDelta, pendingDelta);
-      } catch (e) {
-        logger.warn(`Incompatible pending_delta type: ${e}`);
-      } finally {
-        callbackContext.state.set(deltaKey, {});
-      }
+      Object.assign(callbackContext.actions.artifactDelta, pendingDelta);
+      callbackContext.state.set(deltaKey, {});
     }
     return undefined;
   }
@@ -257,9 +252,16 @@ function getInlineDataSizeBytes(data?: string | Uint8Array): number {
   }
   if (typeof data === 'string') {
     if (typeof Buffer !== 'undefined') {
-      return Buffer.byteLength(data);
+      return Buffer.from(data, 'base64').byteLength;
     }
-    return new TextEncoder().encode(data).length;
+    const len = data.length;
+    let padding = 0;
+    if (data.endsWith('==')) {
+      padding = 2;
+    } else if (data.endsWith('=')) {
+      padding = 1;
+    }
+    return Math.max(0, Math.floor((len * 3) / 4) - padding);
   }
   if (data instanceof Uint8Array) {
     return data.byteLength;
