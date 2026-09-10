@@ -367,6 +367,11 @@ export class Runner {
             // Directly saves the artifacts (if applicable) in the user message and
             // replaces the artifact data with a file name placeholder.
             if (runConfig.saveInputBlobsAsArtifacts) {
+              logger.warn(
+                "The 'saveInputBlobsAsArtifacts' parameter is deprecated. Use " +
+                  'SaveFilesAsArtifactsPlugin instead for better control and ' +
+                  'flexibility.',
+              );
               newMessage = await this.saveArtifacts(
                 invocationContext.artifactService,
                 invocationContext.invocationId,
