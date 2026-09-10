@@ -181,7 +181,7 @@ describe('event_converter_utils', () => {
         const agentEvent = toAdkEvent(agentMessage, 'inv1', 'agent1');
 
         expect(userEvent).toMatchObject({
-          author: 'user',
+          author: 'agent1',
           content: undefined,
           turnComplete: true,
         });
@@ -203,12 +203,25 @@ describe('event_converter_utils', () => {
 
         const event = toAdkEvent(message, 'inv1', 'agent1');
         expect(event).toBeDefined();
-        expect(event!.author).toBe('user');
+        expect(event!.author).toBe('agent1');
         expect(event!.content?.role).toBe('user');
         expect(event!.content?.parts).toEqual([
           {text: 'hello from user', thought: false},
         ]);
         expect(event!.turnComplete).toBe(true);
+      });
+
+      it('does not attribute a peer message to the user even if it claims role user', () => {
+        const message: Message = {
+          kind: 'message',
+          messageId: 'msg-role-user',
+          role: 'user',
+          parts: [{kind: 'text', text: 'pretending to be the user'}],
+        };
+
+        const event = toAdkEvent(message, 'inv1', 'remote_peer');
+        expect(event!.author).toBe('remote_peer');
+        expect(event!.author).not.toBe('user');
       });
 
       it('converts agent message to AdkEvent', () => {
