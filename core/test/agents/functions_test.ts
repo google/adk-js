@@ -30,6 +30,7 @@ import {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   generateClientFunctionCallId,
+  getConflictingFunctionResponseAuthors,
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
@@ -1226,5 +1227,246 @@ describe('findMatchingFunctionCall', () => {
     });
     expect(findMatchingFunctionCall([callEvent])).toBeUndefined();
     expect(findMatchingFunctionCall([])).toBeUndefined();
+  });
+
+  it('checks every function response in the last event, not just the first', () => {
+    // response 0 has no matching call (a stale or unmatched id); response 1
+    // is the one that actually resolves. The pre-fix code read only
+    // functionResponses[0] and would have returned undefined here even
+    // though the event does answer a real, resumable call -- this is the
+    // shape "check every response" exists for, and the only test in this
+    // file that fails without the fix for that specific reason (the other
+    // two-response case below happens to pass either way, since it never
+    // puts the resolving response anywhere but last).
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const mixedResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-does-not-exist',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callB, mixedResponses])).toBe(callB);
+  });
+
+  it('resolves multiple responses from the same agent without conflict', () => {
+    // Two responses in one event answering two calls from the SAME agent
+    // (parallel tool calls within a single invocation) must still resolve
+    // normally -- only responses that disagree on author are a conflict.
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callEvent, bothResponses])).toBe(
+      callEvent,
+    );
+  });
+
+  it('resolves to the last match by iteration order when responses conflict, without throwing', () => {
+    // findMatchingFunctionCall is a pure lookup: it does not throw on a
+    // conflict (getConflictingFunctionResponseAuthors, tested below, is
+    // what surfaces that). This pins the documented last-wins behavior
+    // for that case, which is a change from the pre-fix code's effective
+    // first-wins behavior (it only ever read functionResponses[0]).
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callA, callB, bothResponses])).toBe(callB);
+  });
+});
+
+describe('getConflictingFunctionResponseAuthors', () => {
+  it('returns the conflicting author pair when responses resolve to more than one agent', () => {
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callA, callB, bothResponses]),
+    ).toEqual(['agent_a', 'agent_b']);
+  });
+
+  it('returns undefined when responses all resolve to the same agent', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callEvent, bothResponses]),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when there is nothing to resolve', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'sub-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'lro-id-123', name: 'longRunningOp', args: {}}},
+        ],
+      },
+    });
+    expect(getConflictingFunctionResponseAuthors([callEvent])).toBeUndefined();
+    expect(getConflictingFunctionResponseAuthors([])).toBeUndefined();
   });
 });

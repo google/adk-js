@@ -542,6 +542,140 @@ describe('Runner.determineAgentForResumption', () => {
     debugSpy.mockRestore();
   });
 
+  it('does not throw on a conflicting-author event when resumability is disabled', async () => {
+    // Pins the fix for the review's blocking point: the conflict check
+    // used to run unconditionally, before isResumable was even read, so
+    // it could abort a run that never asked to resume anything. This
+    // session's last event answers calls from two different agents at
+    // once -- exactly the shape that conflict check exists to catch --
+    // with isResumable left unset. determineAgentForResumption must fall
+    // through Case 1 without throwing and resolve via a later case
+    // instead (here, Case 2: subAgent2's own message is the most recent
+    // event from an author in the tree).
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_conflict_not_resumable',
+    });
+    const callFromAgent1 = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-1', name: 'tool_a', args: {}}}],
+      },
+    });
+    const messageFromAgent2 = createEvent({
+      invocationId: 'inv2',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-2', name: 'tool_b', args: {}}}],
+      },
+    });
+    const conflictingResponses = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+    await sessionService.appendEvent({session, event: callFromAgent1});
+    await sessionService.appendEvent({session, event: messageFromAgent2});
+    await sessionService.appendEvent({session, event: conflictingResponses});
+
+    expect(() =>
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: false}),
+      ),
+    ).not.toThrow();
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: false}),
+    );
+    expect(result.name).toBe('sub_agent2');
+  });
+
+  it('throws on a conflicting-author event when resumability is enabled', async () => {
+    // Same conflicting session as above, but with isResumable: true --
+    // now Case 1 does apply, and the conflict is genuinely unresolvable,
+    // so this is the one case that should throw.
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_conflict_resumable',
+    });
+    const callFromAgent1 = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-1', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callFromAgent2 = createEvent({
+      invocationId: 'inv2',
+      author: 'sub_agent2',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-2', name: 'tool_b', args: {}}}],
+      },
+    });
+    const conflictingResponses = createEvent({
+      invocationId: 'inv3',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+    await sessionService.appendEvent({session, event: callFromAgent1});
+    await sessionService.appendEvent({session, event: callFromAgent2});
+    await sessionService.appendEvent({session, event: conflictingResponses});
+
+    expect(() =>
+      determineAgentForResumption(
+        session,
+        rootAgent,
+        createResumabilityConfig({isResumable: true}),
+      ),
+    ).toThrow(/more than one agent/);
+  });
+
   describe('graph-workflow node events', () => {
     /** A session holding the given events. */
     async function sessionWith(sessionId: string, events: Event[]) {
