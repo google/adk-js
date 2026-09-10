@@ -18,6 +18,8 @@ import {
   isRoutableLlmAgent,
   LlmAgent,
   Runner,
+  ScopedArtifactService,
+  SessionArtifactService,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -503,6 +505,41 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  it('does not write an inline attachment payload to the debug log', async () => {
+    const payload = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNk';
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_inline_data',
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'inv1',
+        author: 'sub_agent1',
+        content: {
+          role: 'model',
+          parts: [{inlineData: {mimeType: 'image/png', data: payload}}],
+        },
+      }),
+    });
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+
+    const logged = debugSpy.mock.calls.flat().join('\n');
+    expect(logged).not.toContain(payload);
+    expect(logged).toContain('image/png');
+    expect(logged).toContain(`<redacted ${payload.length} chars>`);
+    expect(result.name).toBe('sub_agent1');
+    debugSpy.mockRestore();
   });
 
   it('does not throw on a conflicting-author event when resumability is disabled', async () => {
@@ -1107,6 +1144,31 @@ describe('Runner error handling', () => {
       `Session not found: ${nonExistentSessionId}`,
     );
   });
+
+  it('should name the searched app and user in the session not found error', async () => {
+    const agent = new MockLlmAgent('test_agent');
+
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent: agent,
+      sessionService,
+      artifactService,
+    });
+
+    // The session exists, but under a different app namespace.
+    const session = await sessionService.createSession({
+      appName: 'other_app_id',
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const error = await runTestExpectingError(runner, session.id, TEST_USER_ID);
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(`Session not found: ${session.id}`);
+    expect(error?.message).toContain(`appName=${TEST_APP_ID}`);
+    expect(error?.message).toContain(`userId=${TEST_USER_ID}`);
+  });
 });
 
 describe('Runner customMetadata support', () => {
@@ -1211,6 +1273,109 @@ describe('Runner customMetadata support', () => {
     const userEvent = updatedSession!.events[0];
     expect(userEvent.author).toBe('user');
     expect(userEvent.content?.role).toBe('user');
+  });
+});
+
+describe('Runner artifactService handling', () => {
+  const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+    'google.adk.sessionArtifactService',
+  );
+
+  it('should wrap BaseArtifactService in ScopedArtifactService when constructing InvocationContext', async () => {
+    const baseArtifactService = new InMemoryArtifactService();
+    const agent = new MockLlmAgent('agent_base_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: baseArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBeInstanceOf(
+      ScopedArtifactService,
+    );
+  });
+
+  it('should pass SessionArtifactService directly to InvocationContext without wrapping in ScopedArtifactService', async () => {
+    const sessionArtifactService: SessionArtifactService &
+      Record<symbol, unknown> = {
+      // Brands the stub the same way ScopedArtifactService and
+      // ForwardingArtifactService brand themselves.
+      [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL]: true,
+      saveArtifact: vi.fn().mockResolvedValue(1),
+      loadArtifact: vi.fn().mockResolvedValue(undefined),
+      listArtifactKeys: vi.fn().mockResolvedValue([]),
+      deleteArtifact: vi.fn().mockResolvedValue(undefined),
+      listVersions: vi.fn().mockResolvedValue([]),
+      listArtifactVersions: vi.fn().mockResolvedValue([]),
+      getArtifactVersion: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new MockLlmAgent('agent_session_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: sessionArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin_session');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBe(
+      sessionArtifactService,
+    );
+    expect(capturedInvocationContext!.artifactService).not.toBeInstanceOf(
+      ScopedArtifactService,
+    );
   });
 });
 
@@ -1647,5 +1812,108 @@ describe('Runner reserved function call rejection', () => {
     });
 
     expect(error).toBeUndefined();
+  });
+});
+
+describe('Runner artifactService handling', () => {
+  const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+    'google.adk.sessionArtifactService',
+  );
+
+  it('should wrap BaseArtifactService in ScopedArtifactService when constructing InvocationContext', async () => {
+    const baseArtifactService = new InMemoryArtifactService();
+    const agent = new MockLlmAgent('agent_base_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: baseArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBeInstanceOf(
+      ScopedArtifactService,
+    );
+  });
+
+  it('should pass SessionArtifactService directly to InvocationContext without wrapping in ScopedArtifactService', async () => {
+    const sessionArtifactService: SessionArtifactService &
+      Record<symbol, unknown> = {
+      // Brands the stub the same way ScopedArtifactService and
+      // ForwardingArtifactService brand themselves.
+      [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL]: true,
+      saveArtifact: vi.fn().mockResolvedValue(1),
+      loadArtifact: vi.fn().mockResolvedValue(undefined),
+      listArtifactKeys: vi.fn().mockResolvedValue([]),
+      deleteArtifact: vi.fn().mockResolvedValue(undefined),
+      listVersions: vi.fn().mockResolvedValue([]),
+      listArtifactVersions: vi.fn().mockResolvedValue([]),
+      getArtifactVersion: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new MockLlmAgent('agent_session_artifact');
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService: sessionArtifactService,
+    });
+
+    let capturedInvocationContext: InvocationContext | undefined;
+    const plugin = new (class extends BasePlugin {
+      constructor() {
+        super('capture_context_plugin_session');
+      }
+      override async onUserMessageCallback({
+        invocationContext,
+      }: {
+        invocationContext: InvocationContext;
+        userMessage: Content;
+      }) {
+        capturedInvocationContext = invocationContext;
+        return undefined;
+      }
+    })();
+    runner.pluginManager.registerPlugin(plugin);
+
+    for await (const _ of runner.runEphemeral({
+      userId: TEST_USER_ID,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+    })) {
+      // iterate
+    }
+
+    expect(capturedInvocationContext).toBeDefined();
+    expect(capturedInvocationContext!.artifactService).toBe(
+      sessionArtifactService,
+    );
+    expect(capturedInvocationContext!.artifactService).not.toBeInstanceOf(
+      ScopedArtifactService,
+    );
   });
 });

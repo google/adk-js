@@ -20,6 +20,7 @@ import {
   mergeEventActions,
 } from '../events/event_actions.js';
 import {BaseTool} from '../tools/base_tool.js';
+import {ResumeInputs} from '../tools/resume_inputs.js';
 import {ToolConfirmation} from '../tools/tool_confirmation.js';
 import {logger} from '../utils/logger.js';
 import {Context} from './context.js';
@@ -281,6 +282,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCallEvent: Event;
@@ -289,6 +291,7 @@ export async function handleFunctionCallsAsync({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionCalls = getFunctionCalls(functionCallEvent);
   return await handleFunctionCallList({
@@ -299,6 +302,7 @@ export async function handleFunctionCallsAsync({
     afterToolCallbacks: afterToolCallbacks,
     filters: filters,
     toolConfirmationDict: toolConfirmationDict,
+    resumeInputsDict: resumeInputsDict,
   });
 }
 
@@ -328,7 +332,7 @@ const RESOLUTION_FAILURE_CAUSES = `Possible causes:
   1. The model hallucinated the name.
   2. The tool is not registered on this agent, or a plugin filtered it out of this request.
   3. The name does not match the registered tool's name exactly.
-  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined or it is a built-in tool that runs inside the model (\`google_search\`, \`url_context\`, ...).`;
+  4. The tool is registered but never enters the toolsDict, because its \`_getDeclaration()\` returns undefined (as prompt-injecting tools like \`ExampleTool\` and \`PreloadMemoryTool\` do).`;
 
 const TOOL_NOT_FOUND_SYMBOL = Symbol.for('google.adk.toolNotFound');
 
@@ -453,6 +457,7 @@ export async function handleFunctionCallList({
   afterToolCallbacks,
   filters,
   toolConfirmationDict,
+  resumeInputsDict,
 }: {
   invocationContext: InvocationContext;
   functionCalls: FunctionCall[];
@@ -461,6 +466,13 @@ export async function handleFunctionCallList({
   afterToolCallbacks: SingleAfterToolCallback[];
   filters?: Set<string>;
   toolConfirmationDict?: Record<string, ToolConfirmation>;
+  /**
+   * Inputs to resume a paused tool call with, keyed by function call id. Each
+   * value is itself keyed by interrupt id. Kept apart from
+   * `toolConfirmationDict` so resume inputs can never be mistaken for a human
+   * approval; see {@link ResumeInputs}.
+   */
+  resumeInputsDict?: Record<string, ResumeInputs>;
 }): Promise<Event | null> {
   const functionResponseEvents: Event[] = [];
 
@@ -475,10 +487,16 @@ export async function handleFunctionCallList({
       toolConfirmation = toolConfirmationDict[functionCall.id];
     }
 
+    let resumeInputs = undefined;
+    if (resumeInputsDict && functionCall.id) {
+      resumeInputs = resumeInputsDict[functionCall.id];
+    }
+
     const toolContext = new Context({
       invocationContext,
       functionCallId: functionCall.id || undefined,
       toolConfirmation,
+      resumeInputs,
     });
     // `functionCall.name` comes from the model, and `toolsDict` is a plain
     // object, so an unguarded lookup would resolve `toString` or `constructor`

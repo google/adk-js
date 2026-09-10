@@ -10,7 +10,11 @@ import {
   AuthCredentialTypes,
   Context,
   createRestApiTool,
+  createSession,
+  InvocationContext,
+  LlmAgent,
   OpenApiSpecParser,
+  PluginManager,
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
@@ -345,7 +349,7 @@ describe('RestApiTool', () => {
       expect.stringContaining('http://api.example.com/test'),
       expect.anything(),
     );
-    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0][0] as string;
+    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0][0];
     expect(calledUrl).toContain('existing=param');
     expect(calledUrl).toContain('new_param=value');
   });
@@ -397,8 +401,10 @@ describe('RestApiTool', () => {
         body: expect.any(URLSearchParams),
       }),
     );
-    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
-      .body as URLSearchParams;
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]?.body;
+    if (!(calledBody instanceof URLSearchParams)) {
+      expect.fail('the request body was not a URLSearchParams');
+    }
     expect(calledBody.get('foo')).toBe('bar');
     expect(calledBody.get('baz')).toBe('qux');
   });
@@ -450,8 +456,10 @@ describe('RestApiTool', () => {
         body: expect.any(FormData),
       }),
     );
-    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]!
-      .body as FormData;
+    const calledBody = vi.mocked(globalThis.fetch).mock.calls[0][1]?.body;
+    if (!(calledBody instanceof FormData)) {
+      expect.fail('the request body was not a FormData');
+    }
     expect(calledBody.get('foo')).toBe('bar');
     expect(calledBody.get('file')).toBe('content');
   });
@@ -529,6 +537,51 @@ describe('RestApiTool', () => {
         headers: expect.objectContaining({'X-API-Key': 'secret_key'}),
       }),
     );
+  });
+
+  it('should send no request for a basic auth credential', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const authScheme: OpenAPIV3.SecuritySchemeObject = {
+      type: 'http',
+      scheme: 'basic',
+    };
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.HTTP,
+      http: {
+        scheme: 'basic',
+        credentials: {username: 'user', password: 'password'},
+      },
+    };
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+      authScheme,
+      authCredential,
+    );
+
+    globalThis.fetch = vi.fn();
+
+    await expect(
+      tool.runAsync({
+        args: {},
+        toolContext: new Context({
+          invocationContext: new InvocationContext({
+            invocationId: 'invocation-1',
+            agent: new LlmAgent({name: 'test_agent'}),
+            session: createSession({id: 'session-1', appName: 'test_app'}),
+            pluginManager: new PluginManager(),
+          }),
+        }),
+      }),
+    ).rejects.toThrow('Basic Authentication is not supported.');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('should fallback to JSON if no requestBody in spec', async () => {
@@ -1139,7 +1192,11 @@ describe('RestApiTool Utilities', () => {
     });
 
     it('should fallback to JSON if requestBody has no content', () => {
-      const requestBody = {} as OpenAPIV3.RequestBodyObject; // defined but no content
+      // An unresolved $ref is how a defined-but-contentless request body
+      // actually reaches prepareRequestBody.
+      const requestBody: OpenAPIV3.ReferenceObject = {
+        $ref: '#/components/requestBodies/Pet',
+      };
       const body = {foo: 'bar'};
       const bodyData = {};
       const headers = {};
@@ -1150,6 +1207,18 @@ describe('RestApiTool Utilities', () => {
       expect(headers).toEqual({
         'Content-Type': 'application/json',
       });
+    });
+
+    it('should return undefined when content declares no mime types', () => {
+      const requestBody: OpenAPIV3.RequestBodyObject = {content: {}};
+      const body = {foo: 'bar'};
+      const bodyData = {};
+      const headers = {};
+
+      const result = prepareRequestBody(requestBody, body, bodyData, headers);
+
+      expect(result).toBeUndefined();
+      expect(headers).toEqual({});
     });
   });
 });

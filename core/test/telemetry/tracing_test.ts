@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Type} from '@google/genai';
 import {trace} from '@opentelemetry/api';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -287,6 +288,78 @@ describe('Telemetry Tracing Functions', () => {
         'gen_ai.request.max_tokens',
         expect.anything(),
       );
+    });
+
+    it('should omit responseSchema from the traced request config', () => {
+      // Arrange
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const requestWithSchema = {
+        ...mockLlmRequest,
+        config: {
+          ...mockLlmRequest.config,
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {answer: {type: Type.STRING}},
+          },
+        },
+      };
+
+      // Act
+      traceCallLlm({
+        invocationContext: mockInvocationContext,
+        eventId: 'test-event-id',
+        llmRequest: requestWithSchema,
+        llmResponse: mockLlmResponse,
+      });
+
+      // Assert
+      const attributes = mockSpan.setAttributes.mock.calls[0][0];
+      const tracedRequest = JSON.parse(
+        attributes['gcp.vertex.agent.llm_request'],
+      );
+      expect(tracedRequest.config).not.toHaveProperty('responseSchema');
+      expect(tracedRequest.config).toEqual({topP: 0.8, maxOutputTokens: 100});
+    });
+
+    it('should not serialize credential-bearing httpOptions fields', () => {
+      // Arrange
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const httpOptions = {
+        baseUrl: 'https://example.test',
+        headers: {Authorization: 'Bearer sentinel-secret-token'},
+        extraBody: {apiKey: 'sentinel-secret-token'},
+      };
+      const llmRequest = {
+        ...mockLlmRequest,
+        config: {temperature: 0.1, httpOptions},
+      };
+
+      // Act
+      traceCallLlm({
+        invocationContext: mockInvocationContext,
+        eventId: 'test-event-id',
+        llmRequest,
+        llmResponse: mockLlmResponse,
+      });
+
+      // Assert
+      const serialized: string =
+        mockSpan.setAttributes.mock.calls[0][0]['gcp.vertex.agent.llm_request'];
+      expect(serialized).not.toContain('sentinel-secret-token');
+      expect(serialized).not.toContain('Authorization');
+
+      const traced = JSON.parse(serialized);
+      expect(traced.config.httpOptions).toEqual({
+        baseUrl: 'https://example.test',
+      });
+      expect(traced.config.temperature).toBe(0.1);
+
+      // The config the SDK will actually send must be untouched.
+      expect(llmRequest.config.httpOptions).toBe(httpOptions);
+      expect(httpOptions.headers).toEqual({
+        Authorization: 'Bearer sentinel-secret-token',
+      });
+      expect(httpOptions.extraBody).toEqual({apiKey: 'sentinel-secret-token'});
     });
   });
 });

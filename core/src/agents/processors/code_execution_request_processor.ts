@@ -57,14 +57,14 @@ export class CodeExecutionRequestProcessor extends BaseLlmRequestProcessor {
     }
 
     for (const content of llmRequest.contents) {
-      const delimeters: [string, string] = invocationContext.agent.codeExecutor
+      const delimiters: [string, string] = invocationContext.agent.codeExecutor
         .codeBlockDelimiters.length
         ? invocationContext.agent.codeExecutor.codeBlockDelimiters[0]
         : ['', ''];
 
       convertCodeExecutionParts(
         content,
-        delimeters,
+        delimiters,
         invocationContext.agent.codeExecutor.executionResultDelimiters,
       );
     }

@@ -6,8 +6,6 @@
 
 import {App, isApp, isRunnableRoot, RunnableRoot} from '@google/adk';
 import esbuild from 'esbuild';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import {shimPlugin} from 'esbuild-shim-plugin';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
@@ -271,7 +269,7 @@ export class AgentFile {
       const rootApps = Object.values(jsModule).filter(isApp) as App[];
 
       if (rootApps.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple apps found in ${filePath}. Using the ${rootApps[0].name} as a root app.`,
         );
       }
@@ -299,7 +297,7 @@ export class AgentFile {
       const rootAgents = Object.values(jsModule).filter(isRunnableRoot);
 
       if (rootAgents.length > 1) {
-        console.warn(
+        logger.warn(
           `Multiple agents found in ${filePath}. Using the ${rootAgents[0].name} as a root agent.`,
         );
       }

@@ -244,6 +244,25 @@ export function runArtifactServiceTests(
       expect(keys).toContain('nested/dir/session.txt');
       expect(keys).toContain('user:user.txt');
     });
+
+    it('includes an artifact nested under another artifact', async () => {
+      for (const filename of ['doc', 'doc/nested', 'doc/nested/deep']) {
+        await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: {text: filename},
+        });
+      }
+
+      const keys = await service.listArtifactKeys({
+        appName,
+        userId,
+        sessionId,
+      });
+      expect(keys).toEqual(['doc', 'doc/nested', 'doc/nested/deep']);
+    });
   });
 
   describe('deleteArtifact', () => {

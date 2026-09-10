@@ -107,9 +107,10 @@ describe('GoogleMapsGroundingTool', () => {
       }
     });
 
-    it('runAsync returns resolved promise', async () => {
+    it('runAsync tells the model the tool is not callable', async () => {
       const tool = new GoogleMapsGroundingTool();
-      await expect(tool.runAsync()).resolves.toBeUndefined();
+      const {error} = (await tool.runAsync()) as {error: string};
+      expect(error).toContain('google_maps runs inside the model');
     });
   });
 

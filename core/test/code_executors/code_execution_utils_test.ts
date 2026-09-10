@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content, Language, Outcome} from '@google/genai';
+import {Content, Language, Outcome, Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
   CodeExecutionLanguage,
@@ -152,6 +152,13 @@ describe('extractCodeAndTruncateContent', () => {
     expect(content.parts).toHaveLength(1);
   });
 
+  it('returns empty string for an executableCode part without code', () => {
+    const parts: Part[] = [{executableCode: {language: Language.PYTHON}}];
+    const content = {parts, role: 'model'};
+
+    expect(extractCodeAndTruncateContent(content, PYTHON_DELIMITERS)).toBe('');
+  });
+
   it('skips executableCode part when followed by codeExecutionResult', () => {
     const code = 'print("hi")';
     const content = {
@@ -271,6 +278,30 @@ describe('convertCodeExecutionParts', () => {
     convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
     expect(content.parts![0].text).toBe('```python\nx = 1\n```');
     expect(content.parts![0].executableCode).toBeUndefined();
+  });
+
+  it('converts an executableCode part without code to an empty code block', () => {
+    const parts: Part[] = [{executableCode: {language: Language.PYTHON}}];
+    const content = {parts, role: 'model'};
+
+    convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
+
+    expect(content.parts[0].text).toBe('```python\n\n```');
+    expect(content.parts[0].executableCode).toBeUndefined();
+    expect(content.role).toBe('model');
+  });
+
+  it('converts an executableCode part with a null code to an empty code block', () => {
+    // An A2A data part or a persisted event is deserialized straight into the
+    // part, so an explicit null reaches the converter even though the SDK types
+    // code as string | undefined.
+    const content: Content = JSON.parse(
+      '{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":null}}]}',
+    );
+
+    convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
+
+    expect(content.parts?.[0].text).toBe('```python\n\n```');
   });
 
   it('converts single codeExecutionResult part to text and sets role to user', () => {

@@ -89,6 +89,8 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export {ScopedArtifactService} from './artifacts/scoped_artifact_service.js';
+export {isSessionArtifactService} from './artifacts/session_artifact_service.js';
 export type {
   SessionArtifactService,
   SessionLoadArtifactRequest,
@@ -147,6 +149,14 @@ export {TruncatingContextCompactor} from './context/truncating_context_compactor
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {BaseEnvironment} from './environment/base_environment.js';
 export type {ExecutionResult} from './environment/base_environment.js';
+export {AlreadyExistsError} from './errors/already_exists_error.js';
+export {InputValidationError} from './errors/input_validation_error.js';
+export {NotFoundError} from './errors/not_found_error.js';
+export {SessionNotFoundError} from './errors/session_not_found_error.js';
+export {
+  ToolErrorType,
+  ToolExecutionError,
+} from './errors/tool_execution_error.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
@@ -277,6 +287,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {BuiltInTool} from './tools/built_in_tool.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {
   ENTERPRISE_WEB_SEARCH,
@@ -289,6 +300,7 @@ export {
   FINISH_TASK_TOOL_NAME,
   FinishTaskTool,
 } from './tools/finish_task_tool.js';
+export {ForwardingArtifactService} from './tools/forwarding_artifact_service.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   RequireConfirmation,
@@ -316,6 +328,7 @@ export {
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
+export type {ResumeInputs} from './tools/resume_inputs.js';
 export {
   IntentMismatchError,
   ToolConfirmation,
@@ -334,7 +347,13 @@ export type {
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {AsyncQueue} from './utils/async_queue.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
-export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
+export {
+  LogLevel,
+  getLogger,
+  resetLogger,
+  setLogLevel,
+  setLogger,
+} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
 export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
 export type {SchemaLike} from './utils/schema.js';
@@ -452,7 +471,8 @@ export type {
   WorkflowConfig,
 } from './workflow/index.js';
 
-export * from './apps/app.js';
+export {App, isApp, validateAppName} from './apps/app.js';
+export type {AppOptions} from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';

@@ -6,15 +6,14 @@
 
 import {GenerateContentConfig, Tool} from '@google/genai';
 import {ReadonlyContext} from '../agents/readonly_context.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 import {
   isGemini1Model,
   isGeminiModel,
   isGeminiModelIdCheckDisabled,
 } from '../utils/model_name.js';
-import {BaseTool, ToolProcessLlmRequest} from './base_tool.js';
-
-const logger = getLogger();
+import {ToolProcessLlmRequest} from './base_tool.js';
+import {BuiltInTool} from './built_in_tool.js';
 
 export interface VertexAISearchDataStoreSpec {
   dataStore?: string;
@@ -51,7 +50,7 @@ export type VertexAiSearchToolParams = DataStoreParams | SearchEngineParams;
 /**
  * A built-in tool using Vertex AI Search.
  */
-export class VertexAiSearchTool extends BaseTool {
+export class VertexAiSearchTool extends BuiltInTool {
   readonly dataStoreId?: string;
   readonly dataStoreSpecs?: VertexAISearchDataStoreSpec[];
   readonly searchEngineId?: string;
@@ -95,12 +94,6 @@ export class VertexAiSearchTool extends BaseTool {
     this.bypassMultiToolsLimit = bypassMultiToolsLimit;
   }
 
-  runAsync(): Promise<unknown> {
-    // This is a built-in tool on server side, it's triggered by setting the
-    // corresponding request parameters.
-    return Promise.resolve();
-  }
-
   /**
    * Builds the VertexAISearch configuration.
    *
@@ -120,7 +113,7 @@ export class VertexAiSearchTool extends BaseTool {
     };
   }
 
-  override async processLlmRequest({
+  protected override async applyBuiltInConfig({
     toolContext,
     llmRequest,
   }: ToolProcessLlmRequest): Promise<void> {

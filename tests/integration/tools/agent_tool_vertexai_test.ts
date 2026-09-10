@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
+import {Client} from '@google-cloud/vertexai';
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   AgentTool,

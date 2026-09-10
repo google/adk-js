@@ -7,11 +7,11 @@
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   createEvent,
+  createSession,
   isCompactedEvent,
   State,
   VertexAiSessionService,
 } from '@google/adk';
-import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -32,8 +32,10 @@ vi.mock('nodejs-vertexai', () => ({
 
 const clientConstructor = vi.hoisted(() => vi.fn());
 
-// The service imports Client from this deep path, so the mock must target it.
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+// The service imports Client from the package root, so the mock must target
+// the root. Keep the other root exports for the rest of the module graph.
+vi.mock('@google-cloud/vertexai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@google-cloud/vertexai')>()),
   Client: class {
     readonly agentEnginesInternal = {sessions: {}};
 
@@ -1117,13 +1119,13 @@ describe('VertexAiSessionService', () => {
 
   describe('appendEvent', () => {
     it('appends event to session and falls back on empty invocationId/author', async () => {
-      const session = {
+      const session = createSession({
         id: 'append-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      } as unknown as Session;
+      });
 
       const event = createEvent({
         timestamp: 1620000000000,
@@ -1170,12 +1172,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('appends compaction metadata if event is compacted', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1207,12 +1209,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('appends usage metadata if present', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1238,13 +1240,13 @@ describe('VertexAiSessionService', () => {
     });
 
     it('passes provided author and invocationId from Event', async () => {
-      const session = {
+      const session = createSession({
         id: 'append-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      } as unknown as Session;
+      });
 
       const event = createEvent({
         timestamp: 1620000000000,
@@ -1264,12 +1266,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('handles event without actions in appendEvent', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1289,13 +1291,13 @@ describe('VertexAiSessionService', () => {
 
     describe('agent transfer action', () => {
       const transferSession = () =>
-        ({
+        createSession({
           id: 'transfer-session',
           appName: '12345',
           userId: 'testUser',
           events: [],
           lastUpdateTime: Date.now(),
-        }) as unknown as Session;
+        });
 
       it('sends the transfer under the name the API defines', async () => {
         const event = createEvent({
@@ -1378,13 +1380,13 @@ describe('VertexAiSessionService', () => {
 
     describe('unsupported fields and fallback', () => {
       const appendSession = () =>
-        ({
+        createSession({
           id: 'append-session',
           appName: '12345',
           userId: 'testUser',
           events: [],
           lastUpdateTime: Date.now(),
-        }) as unknown as Session;
+        });
 
       /** The request config captured by the first appendEvent call. */
       const appendedConfig = () =>
@@ -1489,13 +1491,13 @@ describe('VertexAiSessionService', () => {
 
   describe('workflow event fields', () => {
     const appendSession = () =>
-      ({
+      createSession({
         id: 'wf-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      }) as unknown as Session;
+      });
 
     /**
      * Replays an API event the way the real service sees it: the request is

@@ -134,9 +134,10 @@ describe('EnterpriseWebSearchTool', () => {
       }
     });
 
-    it('runAsync returns resolved promise', async () => {
+    it('runAsync tells the model the tool is not callable', async () => {
       const tool = new EnterpriseWebSearchTool();
-      await expect(tool.runAsync()).resolves.toBeUndefined();
+      const {error} = (await tool.runAsync()) as {error: string};
+      expect(error).toContain('enterprise_web_search runs inside the model');
     });
   });
 

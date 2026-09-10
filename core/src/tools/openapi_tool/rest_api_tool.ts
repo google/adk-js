@@ -270,29 +270,28 @@ export function prepareRequestBody(
 
   if (requestBody && 'content' in requestBody) {
     const content = requestBody.content;
-    for (const [mimeType, _mediaTypeObject] of Object.entries(content)) {
-      if (finalData !== undefined) {
-        if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
-          headers['Content-Type'] = mimeType;
-          return typeof finalData === 'string'
-            ? finalData
-            : JSON.stringify(finalData);
-        } else if (mimeType === 'application/x-www-form-urlencoded') {
-          return new URLSearchParams(finalData as Record<string, string>);
-        } else if (mimeType === 'multipart/form-data') {
-          const formData = new FormData();
-          if (typeof finalData === 'object' && finalData !== null) {
-            for (const [key, value] of Object.entries(finalData)) {
-              formData.append(key, String(value));
-            }
+    // Process only the first mime type
+    const mimeType = Object.keys(content)[0];
+    if (mimeType && finalData !== undefined) {
+      if (mimeType === 'application/json' || mimeType.endsWith('+json')) {
+        headers['Content-Type'] = mimeType;
+        return typeof finalData === 'string'
+          ? finalData
+          : JSON.stringify(finalData);
+      } else if (mimeType === 'application/x-www-form-urlencoded') {
+        return new URLSearchParams(finalData as Record<string, string>);
+      } else if (mimeType === 'multipart/form-data') {
+        const formData = new FormData();
+        if (typeof finalData === 'object' && finalData !== null) {
+          for (const [key, value] of Object.entries(finalData)) {
+            formData.append(key, String(value));
           }
-          return formData;
-        } else if (mimeType === 'text/plain') {
-          headers['Content-Type'] = mimeType;
-          return String(finalData);
         }
+        return formData;
+      } else if (mimeType === 'text/plain') {
+        headers['Content-Type'] = mimeType;
+        return String(finalData);
       }
-      break; // Process only the first mime type
     }
   } else if (finalData !== undefined) {
     // Fallback to JSON if no requestBody content specified but data exists
