@@ -65,6 +65,8 @@ const REPO_ROOT = path.resolve(
 /** How long to wait for the model to answer one prompt. */
 const MODEL_TIMEOUT_MS = 120_000;
 
+const IS_CI = process.env['CI'] === 'true';
+
 /* ------------------------------------------------------------------ *
  * Finding and launching Chrome
  * ------------------------------------------------------------------ */
@@ -403,6 +405,15 @@ async function run<T>(call: string): Promise<T> {
 }
 
 beforeAll(async () => {
+  // Bail before spawning anything on CI. Hosted runners have no GPU, so the
+  // model is never available there, and launching a browser buys nothing but a
+  // way for the suite to hang. `live_model_test.ts` skips on CI for the same
+  // reason.
+  if (IS_CI) {
+    blocked = 'running on CI, which has no on-device model';
+    return;
+  }
+
   const existing = process.env['CHROME_CDP_URL'];
   let wsUrl: string;
 
