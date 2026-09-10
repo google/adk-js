@@ -8,6 +8,12 @@ import {Part as A2APart} from '@a2a-js/sdk';
 import {Content, Part as GenAIPart} from '@google/genai';
 import {REQUEST_CREDENTIAL_FUNCTION_CALL_NAME} from '../agents/functions.js';
 import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
+import {
+  elideQuoteMarkers,
+  OTHER_AGENT_CONTEXT_PREAMBLE,
+  quoteUntrusted,
+  safeStringify,
+} from '../agents/processors/_fencing.js';
 import {Event as AdkEvent, createEvent} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {camelCaseKeys} from '../utils/case_utils.js';
@@ -382,7 +388,7 @@ export function presentAsUserMessage(
     return event;
   }
 
-  const parts: GenAIPart[] = [{text: 'For context:'}];
+  const parts: GenAIPart[] = [{text: OTHER_AGENT_CONTEXT_PREAMBLE}];
 
   for (const part of agentEvent.content.parts) {
     if (part.thought) {
@@ -391,17 +397,21 @@ export function presentAsUserMessage(
 
     if (part.text) {
       parts.push({
-        text: `[${agentEvent.author}] said: ${part.text}`,
+        text: `[${agentEvent.author}] said:\n${quoteUntrusted(part.text)}`,
       });
     } else if (part.functionCall) {
       const call = part.functionCall;
       parts.push({
-        text: `[${agentEvent.author}] called tool ${call.name} with parameters: ${JSON.stringify(call.args)}`,
+        text: `[${agentEvent.author}] called tool ${elideQuoteMarkers(
+          String(call.name),
+        )} with parameters:\n${quoteUntrusted(safeStringify(call.args))}`,
       });
     } else if (part.functionResponse) {
       const resp = part.functionResponse;
       parts.push({
-        text: `[${agentEvent.author}] ${resp.name} tool returned result: ${JSON.stringify(resp.response)}`,
+        text: `[${agentEvent.author}] ${elideQuoteMarkers(
+          String(resp.name),
+        )} tool returned result:\n${quoteUntrusted(safeStringify(resp.response))}`,
       });
     } else {
       parts.push(part);
