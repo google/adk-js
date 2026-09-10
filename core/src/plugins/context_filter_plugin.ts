@@ -169,7 +169,6 @@ export class ContextFilterPlugin extends BasePlugin {
 
       if (
         this.numInvocationsToKeep !== undefined &&
-        this.numInvocationsToKeep !== null &&
         this.numInvocationsToKeep > 0
       ) {
         const invocationStartIndices = _getInvocationStartIndices(contents);
