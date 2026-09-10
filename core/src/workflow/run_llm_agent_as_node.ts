@@ -91,7 +91,7 @@ async function appendNodeInputAsUserTurn(
     branch: ctx.branch,
     content: toUserContent(nodeInput),
   });
-  if (ctx.isolationScope) {
+  if (ctx.isolationScope !== undefined) {
     userEvent.isolationScope = ctx.isolationScope;
   }
   const sessionService = ctx.invocationContext.sessionService;
