@@ -21,7 +21,10 @@ export const spawnAsync = (
   options: SpawnOptions,
 ) => {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, options);
+    const child = spawn(command, args, {
+      ...options,
+      shell: process.platform === 'win32',
+    });
     child.on('close', (code: number) => {
       if (code === 0) {
         resolve();
