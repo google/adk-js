@@ -71,7 +71,6 @@ function build({
     buildOptions.alias = {
       'node:async_hooks': './src/utils/async_hooks_shim.ts',
       'node:crypto': './src/utils/crypto_shim.ts',
-      'winston': './src/utils/winston_shim.ts',
     };
   }
 

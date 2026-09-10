@@ -55,11 +55,12 @@ describe('node build output', () => {
   });
 
   it('keeps winston in the Node builds', async () => {
-    // The browser build swaps winston for a console transport because winston
-    // needs os/fs/zlib/http. Node keeps it, so a custom winston transport
+    // The browser entry installs a console logger and never imports winston,
+    // because winston needs os/fs/zlib/http. The Node entry keeps the
+    // winston-backed logger in logger_node, so a custom winston transport
     // configured through setLogger() still works there.
     const esm = await fs.readFile(
-      path.join(ESM_DIST, 'utils', 'logger.js'),
+      path.join(ESM_DIST, 'utils', 'logger_node.js'),
       'utf8',
     );
     expect(esm).toContain('winston');
