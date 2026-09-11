@@ -39,22 +39,6 @@ function createMockContext(
   } as unknown as Context;
 }
 
-function createPlainMockContext(
-  initialState: Record<string, unknown> = {},
-): Context {
-  const store = {...initialState};
-  return {
-    invocationId: 'inv-test-456',
-    state: {
-      get: (key: string) => store[key],
-      set: (key: string, value: unknown) => {
-        store[key] = value;
-      },
-      has: (key: string) => key in store,
-    },
-  } as unknown as Context;
-}
-
 describe('MultimodalToolResultsPlugin', () => {
   describe('Initialization & Options', () => {
     it('should initialize with default options', () => {
@@ -92,8 +76,7 @@ describe('MultimodalToolResultsPlugin', () => {
   });
 
   describe('isPart helper', () => {
-    it('should identify valid Part objects', () => {
-      expect(isPart({text: 'hello world'})).toBe(true);
+    it('should identify valid multimodal Part objects', () => {
       expect(
         isPart({
           inlineData: {data: 'aGVsbG8=', mimeType: 'image/png'},
@@ -107,19 +90,9 @@ describe('MultimodalToolResultsPlugin', () => {
           },
         }),
       ).toBe(true);
-      expect(
-        isPart({
-          functionCall: {name: 'test_func', args: {}},
-        }),
-      ).toBe(true);
-      expect(
-        isPart({
-          functionResponse: {name: 'test_func', response: {output: 'ok'}},
-        }),
-      ).toBe(true);
     });
 
-    it('should reject non-Part objects', () => {
+    it('should reject non-Part objects and plain tool results', () => {
       expect(isPart(null)).toBe(false);
       expect(isPart(undefined)).toBe(false);
       expect(isPart('string')).toBe(false);
@@ -128,7 +101,23 @@ describe('MultimodalToolResultsPlugin', () => {
       expect(isPart({})).toBe(false);
       expect(isPart({some: 'data'})).toBe(false);
       expect(isPart({result: 'ok'})).toBe(false);
-      expect(isPart({text: 'hello', unexpectedExtraKey: 123})).toBe(false);
+      expect(isPart({text: 'hello world'})).toBe(false);
+      expect(
+        isPart({
+          functionResponse: {name: 'test_func', response: {output: 'ok'}},
+        }),
+      ).toBe(false);
+      expect(
+        isPart({
+          functionCall: {name: 'test_func', args: {}},
+        }),
+      ).toBe(false);
+      expect(
+        isPart({
+          inlineData: {data: 'aGVsbG8=', mimeType: 'image/png'},
+          unexpectedExtraKey: 123,
+        }),
+      ).toBe(false);
     });
   });
 
@@ -137,7 +126,17 @@ describe('MultimodalToolResultsPlugin', () => {
       const plugin = new MultimodalToolResultsPlugin();
       const mockTool = createMockTool();
       const context = createMockContext();
-      const parts: Part[] = [{text: 'part1'}, {text: 'part2'}];
+      const parts: Part[] = [
+        {
+          inlineData: {data: 'cGFydDE=', mimeType: 'image/png'},
+        },
+        {
+          fileData: {
+            fileUri: 'gs://bucket/file.pdf',
+            mimeType: 'application/pdf',
+          },
+        },
+      ];
 
       const afterResult = await plugin.afterToolCallback({
         tool: mockTool,
@@ -239,8 +238,12 @@ describe('MultimodalToolResultsPlugin', () => {
       const plugin = new MultimodalToolResultsPlugin();
       const mockTool = createMockTool();
       const context = createMockContext();
-      const parts1: Part[] = [{text: 'part1'}];
-      const parts2: Part[] = [{text: 'part2'}];
+      const parts1: Part[] = [
+        {fileData: {fileUri: 'gs://b/doc1.pdf', mimeType: 'application/pdf'}},
+      ];
+      const parts2: Part[] = [
+        {fileData: {fileUri: 'gs://b/doc2.pdf', mimeType: 'application/pdf'}},
+      ];
 
       await plugin.afterToolCallback({
         tool: mockTool,
@@ -257,8 +260,8 @@ describe('MultimodalToolResultsPlugin', () => {
       });
 
       expect(context.state.get(PARTS_RETURNED_BY_TOOLS_ID)).toEqual([
-        {text: 'part1'},
-        {text: 'part2'},
+        ...parts1,
+        ...parts2,
       ]);
 
       const llmRequest: LlmRequest = {
@@ -272,17 +275,21 @@ describe('MultimodalToolResultsPlugin', () => {
         llmRequest,
       });
 
-      expect(llmRequest.contents[0].parts).toEqual([
-        {text: 'part1'},
-        {text: 'part2'},
-      ]);
+      expect(llmRequest.contents[0].parts).toEqual([...parts1, ...parts2]);
     });
 
     it('should leave parts pending if llmRequest.contents is empty', async () => {
       const plugin = new MultimodalToolResultsPlugin();
       const mockTool = createMockTool();
       const context = createMockContext();
-      const parts: Part[] = [{text: 'pending_part'}];
+      const parts: Part[] = [
+        {
+          fileData: {
+            fileUri: 'gs://b/pending.pdf',
+            mimeType: 'application/pdf',
+          },
+        },
+      ];
 
       await plugin.afterToolCallback({
         tool: mockTool,
@@ -306,31 +313,32 @@ describe('MultimodalToolResultsPlugin', () => {
       expect(context.state.get(PARTS_RETURNED_BY_TOOLS_ID)).toEqual(parts);
     });
 
-    it('works seamlessly with plain object state stores', async () => {
+    it('should leave plain tool results with text or functionResponse fields completely unchanged', async () => {
       const plugin = new MultimodalToolResultsPlugin();
       const mockTool = createMockTool();
-      const context = createPlainMockContext();
-      const parts: Part[] = [{text: 'plain_part'}];
+      const context = createMockContext();
 
-      await plugin.afterToolCallback({
+      const textResult = {text: 'The weather is sunny in Paris.'};
+      const textAfter = await plugin.afterToolCallback({
         tool: mockTool,
         toolArgs: {},
         toolContext: context,
-        result: parts,
+        result: textResult,
       });
+      expect(textAfter).toEqual(textResult);
+      expect(context.state.has(PARTS_RETURNED_BY_TOOLS_ID)).toBe(false);
 
-      const llmRequest: LlmRequest = {
-        contents: [{parts: []} as Content],
-        toolsDict: {},
-        liveConnectConfig: {},
+      const funcResponseResult = {
+        functionResponse: {name: 'get_weather', response: {temp: 72}},
       };
-
-      await plugin.beforeModelCallback({
-        callbackContext: context,
-        llmRequest,
+      const funcAfter = await plugin.afterToolCallback({
+        tool: mockTool,
+        toolArgs: {},
+        toolContext: context,
+        result: funcResponseResult,
       });
-
-      expect(llmRequest.contents[0].parts).toEqual(parts);
+      expect(funcAfter).toEqual(funcResponseResult);
+      expect(context.state.has(PARTS_RETURNED_BY_TOOLS_ID)).toBe(false);
     });
   });
 
@@ -339,7 +347,10 @@ describe('MultimodalToolResultsPlugin', () => {
       const plugin = new MultimodalToolResultsPlugin({retention: 'session'});
       const mockTool = createMockTool();
       const context = createMockContext();
-      const parts: Part[] = [{text: 'part1'}, {text: 'part2'}];
+      const parts: Part[] = [
+        {fileData: {fileUri: 'gs://b/doc1.pdf', mimeType: 'application/pdf'}},
+        {fileData: {fileUri: 'gs://b/doc2.pdf', mimeType: 'application/pdf'}},
+      ];
 
       await plugin.afterToolCallback({
         tool: mockTool,
@@ -411,8 +422,12 @@ describe('MultimodalToolResultsPlugin', () => {
       const plugin = new MultimodalToolResultsPlugin({retention: 'session'});
       const mockTool = createMockTool();
       const context = createMockContext();
-      const part1: Part = {text: 'part1'};
-      const part2: Part = {text: 'part2'};
+      const part1: Part = {
+        fileData: {fileUri: 'gs://b/part1.pdf', mimeType: 'application/pdf'},
+      };
+      const part2: Part = {
+        fileData: {fileUri: 'gs://b/part2.pdf', mimeType: 'application/pdf'},
+      };
 
       await plugin.afterToolCallback({
         tool: mockTool,
@@ -438,8 +453,12 @@ describe('MultimodalToolResultsPlugin', () => {
       const plugin = new MultimodalToolResultsPlugin({retention: 'session'});
       const mockTool = createMockTool();
       const context = createMockContext();
-      const turn1Parts: Part[] = [{text: 'turn1_part'}];
-      const turn2Parts: Part[] = [{text: 'turn2_part'}];
+      const turn1Parts: Part[] = [
+        {fileData: {fileUri: 'gs://b/turn1.pdf', mimeType: 'application/pdf'}},
+      ];
+      const turn2Parts: Part[] = [
+        {fileData: {fileUri: 'gs://b/turn2.pdf', mimeType: 'application/pdf'}},
+      ];
 
       // Turn 1
       await plugin.afterToolCallback({
@@ -623,7 +642,9 @@ describe('MultimodalToolResultsPlugin', () => {
       const pluginManager = new PluginManager([plugin]);
       const mockTool = createMockTool();
       const context = createMockContext();
-      const parts: Part[] = [{text: 'plugin_manager_part'}];
+      const parts: Part[] = [
+        {inlineData: {data: 'cGx1Z2lu', mimeType: 'image/png'}},
+      ];
 
       await pluginManager.runAfterToolCallback({
         tool: mockTool,

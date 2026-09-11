@@ -10,7 +10,6 @@ import {cloneDeep, isEqual} from 'lodash-es';
 import {type Context} from '../agents/context.js';
 import {type LlmRequest} from '../models/llm_request.js';
 import {type LlmResponse} from '../models/llm_response.js';
-import {State} from '../sessions/state.js';
 import {type BaseTool} from '../tools/base_tool.js';
 import {BasePlugin} from './base_plugin.js';
 
@@ -75,33 +74,28 @@ const MULTIMODAL_TOOL_RESULTS_PLUGIN_SYMBOL = Symbol.for(
 const PART_KEYS = new Set([
   'text',
   'inlineData',
-  'inline_data',
   'fileData',
-  'file_data',
   'functionCall',
-  'function_call',
   'functionResponse',
-  'function_response',
   'executableCode',
-  'executable_code',
   'codeExecutionResult',
-  'code_execution_result',
   'thought',
   'thoughtSignature',
-  'thought_signature',
   'videoMetadata',
-  'video_metadata',
   'partMetadata',
-  'part_metadata',
   'mediaResolution',
-  'media_resolution',
 ]);
 
 /**
- * Checks whether an object conforms to the Gemini {@link Part} structure.
+ * Checks whether an object conforms to the Gemini {@link Part} structure for
+ * multimodal content.
+ *
+ * Matches parts containing `inlineData` or `fileData`. Plain objects containing
+ * text or standard tool results are not treated as multimodal parts so their
+ * return values are not dropped.
  *
  * @param value The value to inspect.
- * @returns True if the value is a Part object.
+ * @returns True if the value is a multimodal Part object.
  */
 export function isPart(value: unknown): value is Part {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) {
@@ -112,23 +106,8 @@ export function isPart(value: unknown): value is Part {
   if (keys.length === 0) {
     return false;
   }
-  const hasPartDiscriminator =
-    'inlineData' in obj ||
-    'inline_data' in obj ||
-    'fileData' in obj ||
-    'file_data' in obj ||
-    'text' in obj ||
-    'functionCall' in obj ||
-    'function_call' in obj ||
-    'functionResponse' in obj ||
-    'function_response' in obj ||
-    'executableCode' in obj ||
-    'executable_code' in obj ||
-    'codeExecutionResult' in obj ||
-    'code_execution_result' in obj ||
-    'thought' in obj;
-
-  if (!hasPartDiscriminator) {
+  const hasMultimodalPayload = 'inlineData' in obj || 'fileData' in obj;
+  if (!hasMultimodalPayload) {
     return false;
   }
 
@@ -136,51 +115,7 @@ export function isPart(value: unknown): value is Part {
 }
 
 function hasInlineData(part: Part): boolean {
-  return (
-    part.inlineData != null ||
-    (part as Record<string, unknown>)['inline_data'] != null
-  );
-}
-
-function getStateValue<T>(
-  state: State | Record<string, unknown> | undefined,
-  key: string,
-): T | undefined {
-  if (state == null) {
-    return undefined;
-  }
-  if (typeof (state as State).get === 'function') {
-    return (state as State).get<T>(key);
-  }
-  return (state as Record<string, unknown>)[key] as T | undefined;
-}
-
-function setStateValue(
-  state: State | Record<string, unknown> | undefined,
-  key: string,
-  value: unknown,
-): void {
-  if (state == null) {
-    return;
-  }
-  if (typeof (state as State).set === 'function') {
-    (state as State).set(key, value);
-  } else {
-    (state as Record<string, unknown>)[key] = value;
-  }
-}
-
-function hasStateKey(
-  state: State | Record<string, unknown> | undefined,
-  key: string,
-): boolean {
-  if (state == null) {
-    return false;
-  }
-  if (typeof (state as State).has === 'function') {
-    return (state as State).has(key);
-  }
-  return key in (state as Record<string, unknown>);
+  return part.inlineData != null;
 }
 
 /**
@@ -269,38 +204,29 @@ export class MultimodalToolResultsPlugin extends BasePlugin {
       const updatedKey = _SESSION_UPDATED_KEY;
 
       if (sessionParts.length > 0) {
-        if (getStateValue(toolContext.state, updatedKey)) {
-          const existing =
-            getStateValue<Part[]>(toolContext.state, sessionKey) ?? [];
-          setStateValue(toolContext.state, sessionKey, [
-            ...existing,
-            ...sessionParts,
-          ]);
+        if (toolContext.state.get(updatedKey)) {
+          const existing = toolContext.state.get<Part[]>(sessionKey) ?? [];
+          toolContext.state.set(sessionKey, [...existing, ...sessionParts]);
         } else {
-          setStateValue(toolContext.state, updatedKey, true);
-          setStateValue(toolContext.state, sessionKey, [...sessionParts]);
+          toolContext.state.set(updatedKey, true);
+          toolContext.state.set(sessionKey, [...sessionParts]);
         }
       }
 
       const currentTurnKey = _CURRENT_TURN_PARTS_ID;
-      if (hasStateKey(toolContext.state, currentTurnKey)) {
-        const existing =
-          getStateValue<Part[]>(toolContext.state, currentTurnKey) ?? [];
-        setStateValue(toolContext.state, currentTurnKey, [
-          ...existing,
-          ...parts,
-        ]);
+      if (toolContext.state.has(currentTurnKey)) {
+        const existing = toolContext.state.get<Part[]>(currentTurnKey) ?? [];
+        toolContext.state.set(currentTurnKey, [...existing, ...parts]);
       } else {
-        setStateValue(toolContext.state, currentTurnKey, [...parts]);
+        toolContext.state.set(currentTurnKey, [...parts]);
       }
     } else {
       const tempKey = PARTS_RETURNED_BY_TOOLS_ID;
-      if (hasStateKey(toolContext.state, tempKey)) {
-        const existing =
-          getStateValue<Part[]>(toolContext.state, tempKey) ?? [];
-        setStateValue(toolContext.state, tempKey, [...existing, ...parts]);
+      if (toolContext.state.has(tempKey)) {
+        const existing = toolContext.state.get<Part[]>(tempKey) ?? [];
+        toolContext.state.set(tempKey, [...existing, ...parts]);
       } else {
-        setStateValue(toolContext.state, tempKey, [...parts]);
+        toolContext.state.set(tempKey, [...parts]);
       }
     }
 
@@ -325,9 +251,9 @@ export class MultimodalToolResultsPlugin extends BasePlugin {
       const currentTurnKey = _CURRENT_TURN_PARTS_ID;
 
       const savedSessionParts =
-        getStateValue<Part[]>(callbackContext.state, sessionKey) ?? [];
+        callbackContext.state.get<Part[]>(sessionKey) ?? [];
       const currentParts =
-        getStateValue<Part[]>(callbackContext.state, currentTurnKey) ?? [];
+        callbackContext.state.get<Part[]>(currentTurnKey) ?? [];
 
       const filteredSessionParts = savedSessionParts.filter(
         (sp) => !currentParts.some((cp) => isEqual(sp, cp)),
@@ -336,7 +262,7 @@ export class MultimodalToolResultsPlugin extends BasePlugin {
       const partsToAttach = [...filteredSessionParts, ...currentParts];
 
       if (currentParts.length > 0) {
-        setStateValue(callbackContext.state, currentTurnKey, []);
+        callbackContext.state.set(currentTurnKey, []);
       }
 
       if (partsToAttach.length > 0) {
@@ -348,8 +274,7 @@ export class MultimodalToolResultsPlugin extends BasePlugin {
       }
     } else {
       const tempKey = PARTS_RETURNED_BY_TOOLS_ID;
-      const tempParts =
-        getStateValue<Part[]>(callbackContext.state, tempKey) ?? [];
+      const tempParts = callbackContext.state.get<Part[]>(tempKey) ?? [];
 
       if (tempParts.length > 0) {
         const lastContent = llmRequest.contents[llmRequest.contents.length - 1];
@@ -357,7 +282,7 @@ export class MultimodalToolResultsPlugin extends BasePlugin {
           lastContent.parts = [];
         }
         lastContent.parts.push(...cloneDeep(tempParts));
-        setStateValue(callbackContext.state, tempKey, []);
+        callbackContext.state.set(tempKey, []);
       }
     }
 
