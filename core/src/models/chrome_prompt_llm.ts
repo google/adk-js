@@ -68,7 +68,7 @@ export {stripAdkIdentityPreamble} from './chrome_prompt_utils.js';
  *
  * @example
  * ```ts
- * const llm = new ChromePromptApiLlm();
+ * const llm = new ChromeBuiltInLlm();
  * if ((await llm.availability()) === 'unavailable') {
  *   // Fall back to a hosted model.
  * }
@@ -170,7 +170,7 @@ export interface ChromeLanguageModelFactory {
  * ------------------------------------------------------------------ */
 
 /** Timing and context signals emitted while the adapter runs. */
-export interface ChromePromptApiDiagnostic {
+export interface ChromeBuiltInDiagnostic {
   phase: 'create' | 'prompt' | 'parse-fallback' | 'context-overflow';
   ms?: number;
   contextUsage?: number;
@@ -178,8 +178,8 @@ export interface ChromePromptApiDiagnostic {
   note?: string;
 }
 
-/** Constructor options for {@link ChromePromptApiLlm}. */
-export interface ChromePromptApiLlmParams {
+/** Constructor options for {@link ChromeBuiltInLlm}. */
+export interface ChromeBuiltInLlmParams {
   /** Model id used for registry matching. Defaults to `chrome-on-device`. */
   model?: string;
   /**
@@ -219,7 +219,7 @@ export interface ChromePromptApiLlmParams {
    */
   normalizeSystemPrompt?: (systemPrompt: string) => string;
   /** Receives timing and context diagnostics. */
-  onDiagnostic?: (diagnostic: ChromePromptApiDiagnostic) => void;
+  onDiagnostic?: (diagnostic: ChromeBuiltInDiagnostic) => void;
 }
 
 /** Thrown when the browser has no usable on-device model. */
@@ -241,7 +241,7 @@ export class ChromeModelUnavailableError extends Error {
  * ------------------------------------------------------------------ */
 
 /** See the file overview for the design rationale. */
-export class ChromePromptApiLlm extends BaseLlm {
+export class ChromeBuiltInLlm extends BaseLlm {
   // Left unanchored on purpose: LLMRegistry.resolve wraps each pattern in
   // `^...$` before matching, so anchoring here would double-anchor and never
   // match.
@@ -250,7 +250,7 @@ export class ChromePromptApiLlm extends BaseLlm {
     /chrome\/.*/,
   ];
 
-  private readonly params: ChromePromptApiLlmParams;
+  private readonly params: ChromeBuiltInLlmParams;
 
   /**
    * A warm session holding only the system prompt, cloned per request.
@@ -266,7 +266,7 @@ export class ChromePromptApiLlm extends BaseLlm {
   private baseSession?: ChromeLanguageModelSession;
   private baseSessionKey?: string;
 
-  constructor(params: ChromePromptApiLlmParams = {}) {
+  constructor(params: ChromeBuiltInLlmParams = {}) {
     super({model: params.model ?? 'chrome-on-device'});
     this.params = params;
   }
@@ -292,7 +292,7 @@ export class ChromePromptApiLlm extends BaseLlm {
     }
   }
 
-  private diagnostic(diagnostic: ChromePromptApiDiagnostic): void {
+  private diagnostic(diagnostic: ChromeBuiltInDiagnostic): void {
     this.params.onDiagnostic?.(diagnostic);
   }
 
@@ -566,7 +566,7 @@ export class ChromePromptApiLlm extends BaseLlm {
   override async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
     throw new Error(
       "Chrome's Prompt API has no bidirectional live mode, so connect() is " +
-        'not supported by ChromePromptApiLlm.',
+        'not supported by ChromeBuiltInLlm.',
     );
   }
 

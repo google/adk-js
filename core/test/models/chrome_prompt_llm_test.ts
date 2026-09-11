@@ -14,7 +14,7 @@ import type {
   ChromePromptOptions,
 } from '@google/adk';
 import {
-  ChromePromptApiLlm,
+  ChromeBuiltInLlm,
   LLMRegistry,
   LlmRequest,
   LlmResponse,
@@ -108,17 +108,17 @@ async function collect(
   return out;
 }
 
-describe('ChromePromptApiLlm', () => {
+describe('ChromeBuiltInLlm', () => {
   it('is resolvable from the registry by model string', () => {
-    expect(LLMRegistry.resolve('chrome-on-device')).toBe(ChromePromptApiLlm);
-    expect(LLMRegistry.resolve('chrome/whatever')).toBe(ChromePromptApiLlm);
+    expect(LLMRegistry.resolve('chrome-on-device')).toBe(ChromeBuiltInLlm);
+    expect(LLMRegistry.resolve('chrome/whatever')).toBe(ChromeBuiltInLlm);
   });
 
   it('returns the final text when the model answers directly', async () => {
     const fake = fakeLanguageModel(
       JSON.stringify({kind: 'final', text: 'the answer'}),
     );
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     const responses = await collect(
       llm.generateContentAsync(request({config: {tools: [searchTool]}})),
@@ -136,7 +136,7 @@ describe('ChromePromptApiLlm', () => {
         args: {query: 'drill'},
       }),
     );
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     const responses = await collect(
       llm.generateContentAsync(request({config: {tools: [searchTool]}})),
@@ -150,7 +150,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('passes the tool-choice schema as a responseConstraint', async () => {
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
     await collect(
       llm.generateContentAsync(request({config: {tools: [searchTool]}})),
     );
@@ -183,7 +183,7 @@ describe('ChromePromptApiLlm', () => {
       ],
     };
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await collect(
       llm.generateContentAsync(request({config: {tools: [boundedTool]}})),
@@ -200,7 +200,7 @@ describe('ChromePromptApiLlm', () => {
     const fake = fakeLanguageModel(
       JSON.stringify({kind: 'tool', name: 'deleteEverything', args: {}}),
     );
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     const responses = await collect(
       llm.generateContentAsync(request({config: {tools: [searchTool]}})),
@@ -217,7 +217,7 @@ describe('ChromePromptApiLlm', () => {
       'Sure! ```json\n{"kind":"final","text":"salvaged"}\n```',
     );
     const diagnostics: string[] = [];
-    const llm = new ChromePromptApiLlm({
+    const llm = new ChromeBuiltInLlm({
       languageModel: fake.factory,
       onDiagnostic: (d) => diagnostics.push(d.phase),
     });
@@ -237,7 +237,7 @@ describe('ChromePromptApiLlm', () => {
       JSON.stringify({kind: 'final', text: 'ok'}),
       {createDelayMs: 20},
     );
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await Promise.all(
       Array.from({length: 8}, () =>
@@ -251,7 +251,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('rebuilds the base session when the system prompt changes', async () => {
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'ok'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await collect(
       llm.generateContentAsync(request({config: {systemInstruction: 'one'}})),
@@ -265,7 +265,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('destroys clones but keeps the base session warm', async () => {
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'ok'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await collect(llm.generateContentAsync(request()));
 
@@ -285,7 +285,7 @@ describe('ChromePromptApiLlm', () => {
       return original(options);
     };
 
-    const llm = new ChromePromptApiLlm({
+    const llm = new ChromeBuiltInLlm({
       languageModel: fake.factory,
       temperature: 0.2,
     });
@@ -296,7 +296,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('reports an error response when the model is unavailable', async () => {
     const fake = fakeLanguageModel('', {availability: 'unavailable'});
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     const responses = await collect(llm.generateContentAsync(request()));
 
@@ -306,7 +306,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('streams free text but not schema-constrained output', async () => {
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     const streamed = await collect(llm.generateContentAsync(request(), true));
     expect(streamed.filter((r) => r.partial)).toHaveLength(2);
@@ -320,7 +320,7 @@ describe('ChromePromptApiLlm', () => {
   });
 
   it('rejects connect(), which the Prompt API cannot support', async () => {
-    const llm = new ChromePromptApiLlm({
+    const llm = new ChromeBuiltInLlm({
       languageModel: fakeLanguageModel('').factory,
     });
     await expect(llm.connect(request())).rejects.toThrow(
@@ -334,7 +334,7 @@ describe('ChromePromptApiLlm', () => {
       seen(input);
       return JSON.stringify({kind: 'final', text: 'ok'});
     });
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await collect(
       llm.generateContentAsync(
@@ -392,7 +392,7 @@ describe('ChromePromptApiLlm', () => {
       availability: async () => 'available',
       create: async () => session,
     };
-    const llm = new ChromePromptApiLlm({languageModel: factory});
+    const llm = new ChromeBuiltInLlm({languageModel: factory});
 
     await expect(collect(llm.generateContentAsync(request()))).rejects.toThrow(
       /aborted/,
@@ -401,7 +401,7 @@ describe('ChromePromptApiLlm', () => {
 
   it('destroys the previous base session when the key changes', async () => {
     const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'ok'}));
-    const llm = new ChromePromptApiLlm({languageModel: fake.factory});
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
 
     await collect(
       llm.generateContentAsync(request({config: {systemInstruction: 'one'}})),
@@ -432,7 +432,7 @@ describe('ChromePromptApiLlm', () => {
       availability: async () => 'available',
       create: async () => session,
     };
-    const llm = new ChromePromptApiLlm({languageModel: factory});
+    const llm = new ChromeBuiltInLlm({languageModel: factory});
 
     const responses = await collect(llm.generateContentAsync(request()));
 
@@ -461,7 +461,7 @@ describe('ChromePromptApiLlm', () => {
       availability: async () => 'available',
       create: async () => session,
     };
-    const llm = new ChromePromptApiLlm({languageModel: factory});
+    const llm = new ChromeBuiltInLlm({languageModel: factory});
 
     for await (const response of llm.generateContentAsync(request(), true)) {
       if (response.partial) break;

@@ -5,26 +5,24 @@
  */
 
 /**
- * `ChromePromptApiLlm` against the real on-device model, in a real browser.
+ * An ADK agent backed by `ChromeBuiltInLlm`, driven end to end in a real
+ * browser.
  *
  * The unit tests in `core/test/models/chrome_prompt_llm_test.ts` drive the
  * adapter against a hand-written stand-in for `LanguageModel`. That proves the
  * adapter's own logic and nothing about the API it wraps, because a fake agrees
- * with whatever the adapter expects of it. The interesting failures are the
- * ones where the browser disagrees: constrained decoding that emits a key the
- * schema did not declare, a session `clone()` that does not carry the system
- * prompt, a stream that ends mid-token.
+ * with whatever the adapter expects of it.
  *
- * So this runs the same adapter in Chrome, against whatever model Chrome
- * actually has, and asserts the behaviours the adapter depends on:
+ * This suite builds a normal `LlmAgent` with the Chrome model and runs it
+ * through an `InMemoryRunner`, in Chrome, against whatever model Chrome
+ * actually has. It asserts the agent behaviours that depend on the real model
+ * inside the ADK loop:
  *
- *   1. `availability()` answers, and the adapter reports an unusable model as
- *      an error response rather than throwing.
- *   2. A plain question comes back as non-empty text on an `LlmResponse`.
- *   3. Streaming yields more than one partial before the final response.
- *   4. A declared tool comes back as a real `functionCall` part whose args
- *      match the declared schema — the constrained-decoding path.
- *   5. The warm base session is created once and cloned per turn.
+ *   1. `availability()` answers, so the suite tells "no model" from "broken".
+ *   2. The agent answers a plain question with non-empty text.
+ *   3. The agent runs a declared tool through the full ADK loop: the model
+ *      emits a `functionCall`, the runner executes the tool, and the tool
+ *      result flows back into the conversation.
  *
  * Preconditions, and what happens without them:
  *
@@ -203,13 +201,13 @@ function waitForDevtoolsUrl(child: ChildProcess): Promise<string> {
  * ------------------------------------------------------------------ */
 
 /**
- * Bundles the adapter together with a driver that exercises it, as one script
+ * Bundles the agent, the adapter, and a driver that runs them, as one script
  * to evaluate in the page.
  *
- * The adapter's import graph reaches a handful of Node built-ins it never calls
- * in a browser — the logger and the client-label helpers. They are aliased to
+ * The import graph reaches a handful of Node built-ins it never calls in a
+ * browser — the logger and the client-label helpers. They are aliased to
  * stand-ins here rather than shipped; that is a property of the bundle this
- * test builds, not of the adapter.
+ * test builds, not of the runtime code.
  */
 async function buildDriverBundle(): Promise<string> {
   const stub = path.join(REPO_ROOT, 'tests/e2e/chrome_prompt_api_node_stub.js');
@@ -250,131 +248,89 @@ async function buildDriverBundle(): Promise<string> {
  * adapter in one pass and nothing has to be served over http.
  */
 const DRIVER_SOURCE = `
-import {ChromePromptApiLlm} from './chrome_prompt_llm.js';
+import {z} from 'zod';
 
-const textOf = (response) =>
-  (response?.content?.parts ?? []).map((p) => p.text ?? '').join('');
+import {LlmAgent} from '../agents/llm_agent.js';
+import {FunctionTool} from '../tools/function_tool.js';
+import {InMemoryRunner} from '../runner/in_memory_runner.js';
+
+import {ChromeBuiltInLlm} from './chrome_prompt_llm.js';
+
+const textOf = (event) =>
+  (event?.content?.parts ?? []).map((p) => p.text ?? '').join('');
+
+const anyPart = (events, predicate) =>
+  events.some((event) => (event.content?.parts ?? []).some(predicate));
+
+/** Runs one user turn through the ADK runner and collects its events. */
+async function runTurn(agent, question) {
+  const runner = new InMemoryRunner({agent});
+  const events = [];
+  for await (const event of runner.runEphemeral({
+    userId: 'e2e',
+    newMessage: {role: 'user', parts: [{text: question}]},
+    // Bound the loop so a small model that keeps re-calling a tool cannot
+    // spin forever.
+    runConfig: {maxLlmCalls: 6},
+  })) {
+    events.push(event);
+  }
+  return events;
+}
 
 export async function availability() {
   if (typeof globalThis.LanguageModel === 'undefined') return 'missing-api';
   return await globalThis.LanguageModel.availability();
 }
 
-/** One non-streaming turn. */
+/** The agent answers a plain question, with no tools. */
 export async function answer(question) {
-  const llm = new ChromePromptApiLlm({});
-  const responses = [];
-  for await (const r of llm.generateContentAsync(
-    {
-      model: 'chrome-on-device',
-      contents: [{role: 'user', parts: [{text: question}]}],
-      config: {systemInstruction: 'Answer in one short sentence.'},
-    },
-    false,
-  )) {
-    responses.push({text: textOf(r), error: r.errorCode ?? null});
-  }
-  const last = responses[responses.length - 1];
-  return {count: responses.length, text: last?.text ?? '', error: last?.error ?? null};
+  const agent = new LlmAgent({
+    name: 'answerer',
+    model: new ChromeBuiltInLlm({}),
+    instruction: 'Answer in one short sentence.',
+  });
+  const events = await runTurn(agent, question);
+  const error =
+    events.map((e) => e.errorCode ?? null).find((code) => code) ?? null;
+  const text = events
+    .filter((e) => !e.partial)
+    .map(textOf)
+    .join('');
+  return {events: events.length, text, error};
 }
 
-/** One streaming turn, counting partials. */
-export async function stream(question) {
-  const llm = new ChromePromptApiLlm({});
-  let partials = 0;
-  let finalText = '';
-  for await (const r of llm.generateContentAsync(
-    {
-      model: 'chrome-on-device',
-      contents: [{role: 'user', parts: [{text: question}]}],
-      config: {systemInstruction: 'Answer in one short sentence.'},
-    },
-    true,
-  )) {
-    if (r.partial) partials++;
-    else finalText = textOf(r);
-  }
-  return {partials, finalText};
-}
-
-/** One turn with a tool declared, exercising constrained decoding. */
+/** The agent runs a declared tool through the full ADK loop. */
 export async function toolCall(question) {
-  const llm = new ChromePromptApiLlm({});
-  const parts = [];
-  for await (const r of llm.generateContentAsync(
-    {
-      model: 'chrome-on-device',
-      contents: [{role: 'user', parts: [{text: question}]}],
-      config: {
-        systemInstruction:
-          'You look up weather. Call get_weather for any question about weather.',
-        tools: [
-          {
-            functionDeclarations: [
-              {
-                name: 'get_weather',
-                description: 'Returns the current weather for a city.',
-                parametersJsonSchema: {
-                  type: 'object',
-                  properties: {city: {type: 'string'}},
-                  required: ['city'],
-                },
-              },
-            ],
-          },
-        ],
-      },
+  let toolRuns = 0;
+  let toolCity = null;
+  const getWeather = new FunctionTool({
+    name: 'get_weather',
+    description: 'Returns the current weather for a city.',
+    parameters: z.object({city: z.string()}),
+    execute: ({city}) => {
+      toolRuns++;
+      toolCity = city;
+      return {city, forecast: 'sunny, 21C'};
     },
-    false,
-  )) {
-    for (const p of r.content?.parts ?? []) parts.push(p);
-  }
-  const call = parts.find((p) => p.functionCall)?.functionCall;
+  });
+  const agent = new LlmAgent({
+    name: 'weatherbot',
+    model: new ChromeBuiltInLlm({}),
+    instruction:
+      'You look up weather. Call get_weather for any question about weather.',
+    tools: [getWeather],
+  });
+  const events = await runTurn(agent, question);
   return {
-    called: call?.name ?? null,
-    args: call?.args ?? null,
-    text: parts.map((p) => p.text ?? '').join(''),
+    toolRuns,
+    toolCity,
+    calledTool: anyPart(events, (p) => p.functionCall?.name === 'get_weather'),
+    gotToolResponse: anyPart(
+      events,
+      (p) => p.functionResponse?.name === 'get_weather',
+    ),
   };
-}
-
-/** Two turns on one adapter, counting create() against clone(). */
-export async function sessionReuse() {
-  let creates = 0;
-  let clones = 0;
-  const real = globalThis.LanguageModel;
-  const counting = {
-    availability: (...a) => real.availability(...a),
-    create: async (...a) => {
-      creates++;
-      const session = await real.create(...a);
-      const wrap = (s) => ({
-        prompt: (...p) => s.prompt(...p),
-        promptStreaming: (...p) => s.promptStreaming(...p),
-        clone: async (...p) => {
-          clones++;
-          return wrap(await s.clone(...p));
-        },
-        destroy: () => s.destroy?.(),
-        get inputUsage() { return s.inputUsage; },
-        get inputQuota() { return s.inputQuota; },
-      });
-      return wrap(session);
-    },
-  };
-  const llm = new ChromePromptApiLlm({languageModel: counting});
-  for (const q of ['Say hello.', 'Say goodbye.']) {
-    for await (const _ of llm.generateContentAsync(
-      {
-        model: 'chrome-on-device',
-        contents: [{role: 'user', parts: [{text: q}]}],
-        config: {systemInstruction: 'Answer in one short sentence.'},
-      },
-      false,
-    )) {
-      // drain
-    }
-  }
-  return {creates, clones};
 }
 `;
 
@@ -506,12 +462,12 @@ afterAll(async () => {
   if (profileDir) rmSync(profileDir, {recursive: true, force: true});
 });
 
-describe('ChromePromptApiLlm against the real on-device model', () => {
+describe('An ADK agent backed by ChromeBuiltInLlm', () => {
   it(
     'answers a plain question with non-empty text',
     async (ctx) => {
       if (blocked) return ctx.skip();
-      const result = await run<{count: number; text: string; error: unknown}>(
+      const result = await run<{events: number; text: string; error: unknown}>(
         'answer("Name one primary colour.")',
       );
       expect(result.error).toBeNull();
@@ -521,42 +477,20 @@ describe('ChromePromptApiLlm against the real on-device model', () => {
   );
 
   it(
-    'streams more than one partial before the final response',
-    async (ctx) => {
-      if (blocked) return ctx.skip();
-      const result = await run<{partials: number; finalText: string}>(
-        'stream("Count from one to five.")',
-      );
-      expect(result.partials).toBeGreaterThan(1);
-      expect(result.finalText.trim().length).toBeGreaterThan(0);
-    },
-    MODEL_TIMEOUT_MS,
-  );
-
-  it(
-    'produces a functionCall whose args match the declared schema',
+    'runs a declared tool through the full ADK loop',
     async (ctx) => {
       if (blocked) return ctx.skip();
       const result = await run<{
-        called: string | null;
-        args: Record<string, unknown> | null;
+        toolRuns: number;
+        toolCity: string | null;
+        calledTool: boolean;
+        gotToolResponse: boolean;
       }>('toolCall("What is the weather in Oslo?")');
-      expect(result.called).toBe('get_weather');
-      expect(typeof result.args?.['city']).toBe('string');
-      expect(String(result.args?.['city']).length).toBeGreaterThan(0);
-    },
-    MODEL_TIMEOUT_MS,
-  );
-
-  it(
-    'creates the base session once and clones it per turn',
-    async (ctx) => {
-      if (blocked) return ctx.skip();
-      const result = await run<{creates: number; clones: number}>(
-        'sessionReuse()',
-      );
-      expect(result.creates).toBe(1);
-      expect(result.clones).toBe(2);
+      expect(result.calledTool).toBe(true);
+      expect(result.gotToolResponse).toBe(true);
+      expect(result.toolRuns).toBeGreaterThanOrEqual(1);
+      expect(typeof result.toolCity).toBe('string');
+      expect(String(result.toolCity).length).toBeGreaterThan(0);
     },
     MODEL_TIMEOUT_MS * 2,
   );

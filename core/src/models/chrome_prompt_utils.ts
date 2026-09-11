@@ -228,7 +228,7 @@ export function extractSystemInstruction(llmRequest: LlmRequest): string {
  *
  * into just the instruction, so that sibling agents sharing one instruction
  * also share one cached session. See
- * {@link ChromePromptApiLlmParams.normalizeSystemPrompt}.
+ * {@link ChromeBuiltInLlmParams.normalizeSystemPrompt}.
  */
 export function stripAdkIdentityPreamble(systemPrompt: string): string {
   return systemPrompt
