@@ -68,6 +68,9 @@ vi.mock('node:readline', () => ({
   createInterface: vi.fn(),
 }));
 
+/** The two-argument `readline.question` overload the REPL calls. */
+type AskUser = (query: string, cb: (answer: string) => void) => void;
+
 describe('cli_run', () => {
   let mockAgentFile: AgentFile;
   let mockRootAgent: BaseAgent;
@@ -254,17 +257,19 @@ describe('cli_run', () => {
   });
 
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
-  const watchRunner = (): Mock => {
+  const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
-    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    vi.mocked(Runner).mockImplementation(
+      () => ({runAsync}) as unknown as Runner,
+    );
     return runAsync;
   };
 
   /** Scripts one readline answer per interactive turn the test drives. */
   const answerWith = (...answers: string[]): void => {
     for (const answer of answers) {
-      (mockRl.question as Mock).mockImplementationOnce(
-        (_p: string, cb: (a: string) => void) => cb(answer),
+      vi.mocked<AskUser>(mockRl.question).mockImplementationOnce((_p, cb) =>
+        cb(answer),
       );
     }
   };

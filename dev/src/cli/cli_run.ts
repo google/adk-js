@@ -289,8 +289,6 @@ async function runInteractively(
       continue;
     }
 
-    // A stray leading or trailing space used to make the documented quit word
-    // a model turn.
     if (trimmed === 'exit') {
       break;
     }
