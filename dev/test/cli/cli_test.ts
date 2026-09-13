@@ -538,7 +538,12 @@ describe('usage errors', () => {
     try {
       await program.parseAsync(['node', 'cli_entrypoint.js', ...args]);
     } catch (e: unknown) {
-      error = e as CommanderError;
+      // Rethrow anything an action handler raised, so a real failure is
+      // reported as itself instead of as a usage error.
+      if (!(e instanceof CommanderError)) {
+        throw e;
+      }
+      error = e;
     }
     return {stderr, error};
   };
