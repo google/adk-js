@@ -509,6 +509,36 @@ describe('CLI Entrypoint', () => {
         maxInstances: undefined,
       });
     });
+
+    it('should pass staging_bucket to deployToAgentEngine when --staging_bucket is set', async () => {
+      await parse(['deploy', 'agent_engine', '--staging_bucket', 'my-bucket']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        stagingBucket: 'my-bucket',
+      });
+    });
+
+    it('should leave stagingBucket unset when --staging_bucket is absent', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].stagingBucket,
+      ).toBeUndefined();
+    });
+
+    it('should not consume the agents_dir positional when --staging_bucket is set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        '--staging_bucket=my-bucket',
+        './my-agent-path',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        stagingBucket: 'my-bucket',
+      });
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -529,6 +559,19 @@ describe('CLI Entrypoint', () => {
 
       expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
         agentEngineId: '12345',
+      });
+    });
+
+    it('should pass staging_bucket to deployToAgentEngine when --staging_bucket is set', async () => {
+      await parse([
+        'deploy',
+        'reasoning_engine',
+        '--staging_bucket',
+        'my-bucket',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        stagingBucket: 'my-bucket',
       });
     });
   });

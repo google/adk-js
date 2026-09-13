@@ -395,6 +395,32 @@ describe('deployToAgentEngine', () => {
     );
   });
 
+  it('should send Cloud Build logs to the staging bucket when one is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      stagingBucket: 'custom-bucket',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['--gcs-log-dir', 'gs://custom-bucket/logs']),
+      expect.any(Object),
+    );
+  });
+
+  it('should send Cloud Build logs to the project bucket when no staging bucket is provided', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        '--gcs-log-dir',
+        'gs://test-project_cloudbuild/logs',
+      ]),
+      expect.any(Object),
+    );
+  });
+
   it('should resolve default project and region from gcloud if not provided', async () => {
     const optionsWithoutProjectRegion = {
       ...defaultOptions,
