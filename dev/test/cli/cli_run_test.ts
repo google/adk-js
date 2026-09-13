@@ -253,6 +253,22 @@ describe('cli_run', () => {
     }
   });
 
+  /** Replaces the mocked Runner with one whose runAsync the test can watch. */
+  const watchRunner = (): Mock => {
+    const runAsync = vi.fn(async function* () {});
+    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    return runAsync;
+  };
+
+  /** Scripts one readline answer per interactive turn the test drives. */
+  const answerWith = (...answers: string[]): void => {
+    for (const answer of answers) {
+      (mockRl.question as Mock).mockImplementationOnce(
+        (_p: string, cb: (a: string) => void) => cb(answer),
+      );
+    }
+  };
+
   /**
    * The REPL prints "type exit to exit", so the quit word must survive the
    * stray space a terminal user adds to it. The default `mockRl.question`
@@ -260,11 +276,8 @@ describe('cli_run', () => {
    * the next turn and the assertion fails instead of hanging.
    */
   it('treats a whitespace-padded exit as the quit command', async () => {
-    const runAsync = vi.fn(async function* () {});
-    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
-    (mockRl.question as Mock).mockImplementationOnce(
-      (_p: string, cb: (a: string) => void) => cb('  exit  '),
-    );
+    const runAsync = watchRunner();
+    answerWith('  exit  ');
 
     await runAgent({
       agentPath: 'agent.ts',
@@ -275,11 +288,8 @@ describe('cli_run', () => {
   });
 
   it('sends the user text to the model untrimmed', async () => {
-    const runAsync = vi.fn(async function* () {});
-    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
-    (mockRl.question as Mock).mockImplementationOnce(
-      (_p: string, cb: (a: string) => void) => cb('  hello  '),
-    );
+    const runAsync = watchRunner();
+    answerWith('  hello  ');
 
     await runAgent({
       agentPath: 'agent.ts',
@@ -294,15 +304,8 @@ describe('cli_run', () => {
   });
 
   it('keeps quit matching exact and case-sensitive', async () => {
-    const runAsync = vi.fn(async function* () {});
-    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
-    (mockRl.question as Mock)
-      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
-        cb('EXIT'),
-      )
-      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
-        cb('exit now'),
-      );
+    const runAsync = watchRunner();
+    answerWith('EXIT', 'exit now');
 
     await runAgent({
       agentPath: 'agent.ts',
@@ -313,15 +316,8 @@ describe('cli_run', () => {
   });
 
   it('skips a whitespace-only line without ending the loop', async () => {
-    const runAsync = vi.fn(async function* () {});
-    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
-    (mockRl.question as Mock)
-      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
-        cb('   '),
-      )
-      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
-        cb('hello'),
-      );
+    const runAsync = watchRunner();
+    answerWith('   ', 'hello');
 
     await runAgent({
       agentPath: 'agent.ts',
