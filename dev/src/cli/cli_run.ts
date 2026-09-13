@@ -283,12 +283,15 @@ async function runInteractively(
 
   while (true) {
     const query = await getUserInput('[user]: ');
+    const trimmed = query.trim();
 
-    if (!query || !query.trim()) {
+    if (!trimmed) {
       continue;
     }
 
-    if (query === 'exit') {
+    // A stray leading or trailing space used to make the documented quit word
+    // a model turn.
+    if (trimmed === 'exit') {
       break;
     }
 

@@ -253,6 +253,84 @@ describe('cli_run', () => {
     }
   });
 
+  /**
+   * The REPL prints "type exit to exit", so the quit word must survive the
+   * stray space a terminal user adds to it. The default `mockRl.question`
+   * answers `'exit'` on every later prompt, so an unfixed loop still ends on
+   * the next turn and the assertion fails instead of hanging.
+   */
+  it('treats a whitespace-padded exit as the quit command', async () => {
+    const runAsync = vi.fn(async function* () {});
+    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    (mockRl.question as Mock).mockImplementationOnce(
+      (_p: string, cb: (a: string) => void) => cb('  exit  '),
+    );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).not.toHaveBeenCalled();
+  });
+
+  it('sends the user text to the model untrimmed', async () => {
+    const runAsync = vi.fn(async function* () {});
+    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    (mockRl.question as Mock).mockImplementationOnce(
+      (_p: string, cb: (a: string) => void) => cb('  hello  '),
+    );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newMessage: {role: 'user', parts: [{text: '  hello  '}]},
+      }),
+    );
+  });
+
+  it('keeps quit matching exact and case-sensitive', async () => {
+    const runAsync = vi.fn(async function* () {});
+    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('EXIT'),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('exit now'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips a whitespace-only line without ending the loop', async () => {
+    const runAsync = vi.fn(async function* () {});
+    (Runner as unknown as Mock).mockImplementation(() => ({runAsync}));
+    (mockRl.question as Mock)
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('   '),
+      )
+      .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
+        cb('hello'),
+      );
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(1);
+  });
+
   it('should run from input file', async () => {
     const inputFileContent = {
       state: {foo: 'bar'},
