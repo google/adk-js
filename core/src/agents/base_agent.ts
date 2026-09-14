@@ -496,11 +496,7 @@ export abstract class BaseAgent<
       });
     }
 
-    if (
-      callbackContext.state.hasDelta() ||
-      (callbackContext.eventActions.artifactDelta &&
-        Object.keys(callbackContext.eventActions.artifactDelta).length > 0)
-    ) {
+    if (callbackContext.state.hasDelta()) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
@@ -566,11 +562,7 @@ export abstract class BaseAgent<
       });
     }
 
-    if (
-      callbackContext.state.hasDelta() ||
-      (callbackContext.eventActions.artifactDelta &&
-        Object.keys(callbackContext.eventActions.artifactDelta).length > 0)
-    ) {
+    if (callbackContext.state.hasDelta()) {
       return createEvent({
         invocationId: invocationContext.invocationId,
         author: this.name,
