@@ -208,7 +208,7 @@ export class OperationParser {
     return {
       type: 'object',
       properties,
-      required: required.length > 0 ? required : undefined,
+      required,
       title: `${this.operation.operationId || 'unnamed'}_Arguments`,
     };
   }
