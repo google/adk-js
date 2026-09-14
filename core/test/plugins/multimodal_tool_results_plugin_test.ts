@@ -90,6 +90,21 @@ describe('MultimodalToolResultsPlugin', () => {
           },
         }),
       ).toBe(true);
+      expect(
+        isPart({
+          inlineData: {data: 'aGVsbG8=', mimeType: 'image/png'},
+          toolCall: {name: 'test_tool', args: {}},
+        }),
+      ).toBe(true);
+      expect(
+        isPart({
+          fileData: {
+            fileUri: 'gs://bucket/file.pdf',
+            mimeType: 'application/pdf',
+          },
+          toolResponse: {name: 'test_tool', response: {output: 'ok'}},
+        }),
+      ).toBe(true);
     });
 
     it('should reject non-Part objects and plain tool results', () => {
@@ -110,6 +125,16 @@ describe('MultimodalToolResultsPlugin', () => {
       expect(
         isPart({
           functionCall: {name: 'test_func', args: {}},
+        }),
+      ).toBe(false);
+      expect(
+        isPart({
+          toolCall: {name: 'test_func', args: {}},
+        }),
+      ).toBe(false);
+      expect(
+        isPart({
+          toolResponse: {name: 'test_func', response: {output: 'ok'}},
         }),
       ).toBe(false);
       expect(
@@ -313,7 +338,7 @@ describe('MultimodalToolResultsPlugin', () => {
       expect(context.state.get(PARTS_RETURNED_BY_TOOLS_ID)).toEqual(parts);
     });
 
-    it('should leave plain tool results with text or functionResponse fields completely unchanged', async () => {
+    it('should leave plain tool results with text, functionResponse, or toolResponse fields completely unchanged', async () => {
       const plugin = new MultimodalToolResultsPlugin();
       const mockTool = createMockTool();
       const context = createMockContext();
@@ -338,6 +363,30 @@ describe('MultimodalToolResultsPlugin', () => {
         result: funcResponseResult,
       });
       expect(funcAfter).toEqual(funcResponseResult);
+      expect(context.state.has(PARTS_RETURNED_BY_TOOLS_ID)).toBe(false);
+
+      const toolResponseResult = {
+        toolResponse: {name: 'server_tool', response: {success: true}},
+      };
+      const toolRespAfter = await plugin.afterToolCallback({
+        tool: mockTool,
+        toolArgs: {},
+        toolContext: context,
+        result: toolResponseResult,
+      });
+      expect(toolRespAfter).toEqual(toolResponseResult);
+      expect(context.state.has(PARTS_RETURNED_BY_TOOLS_ID)).toBe(false);
+
+      const toolCallResult = {
+        toolCall: {name: 'server_tool', args: {query: 'test'}},
+      };
+      const toolCallAfter = await plugin.afterToolCallback({
+        tool: mockTool,
+        toolArgs: {},
+        toolContext: context,
+        result: toolCallResult,
+      });
+      expect(toolCallAfter).toEqual(toolCallResult);
       expect(context.state.has(PARTS_RETURNED_BY_TOOLS_ID)).toBe(false);
     });
   });

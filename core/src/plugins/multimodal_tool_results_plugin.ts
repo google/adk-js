@@ -84,6 +84,8 @@ const PART_KEYS = new Set([
   'videoMetadata',
   'partMetadata',
   'mediaResolution',
+  'toolCall',
+  'toolResponse',
 ]);
 
 /**
