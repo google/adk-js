@@ -8,7 +8,10 @@ import {InvocationContext} from '../agents/invocation_context.js';
 import {CompactedEvent, isScratchpadEvent} from '../events/compacted_event.js';
 import {Event, getEventTokens} from '../events/event.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
-import {calculateRetainStartIndex} from './compaction_utils.js';
+import {
+  calculateRetainStartIndex,
+  isEventVisibleInIsolationScope,
+} from './compaction_utils.js';
 import {BaseSummarizer} from './summarizers/base_summarizer.js';
 
 export interface AnchoredContextCompactorOptions {
@@ -41,11 +44,17 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
     this.summarizer = options.summarizer;
   }
 
-  private getActiveEvents(events: Event[]): Event[] {
+  private getActiveEvents(
+    events: Event[],
+    currentIsolationScope?: string,
+  ): Event[] {
+    const visibleEvents = events.filter((event) =>
+      isEventVisibleInIsolationScope(event, currentIsolationScope),
+    );
     let latestScratchpad: CompactedEvent | undefined = undefined;
 
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
+    for (let i = visibleEvents.length - 1; i >= 0; i--) {
+      const e = visibleEvents[i];
       if (isScratchpadEvent(e)) {
         latestScratchpad = e;
         break;
@@ -53,10 +62,10 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
     }
 
     if (!latestScratchpad) {
-      return events;
+      return visibleEvents;
     }
 
-    const activeRawEvents = events.filter(
+    const activeRawEvents = visibleEvents.filter(
       (e) => e.timestamp > latestScratchpad!.endTime && !isScratchpadEvent(e),
     );
 
@@ -67,7 +76,10 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = this.getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const hasScratchpad =
       activeEvents.length > 0 && isScratchpadEvent(activeEvents[0]);
     const rawEvents = hasScratchpad ? activeEvents.slice(1) : activeEvents;
@@ -94,7 +106,10 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = this.getActiveEvents(events);
+    const activeEvents = this.getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const hasScratchpad =
       activeEvents.length > 0 && isScratchpadEvent(activeEvents[0]);
     const rawEvents = hasScratchpad ? activeEvents.slice(1) : activeEvents;
@@ -116,11 +131,19 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
     const rawEventsToCompact = rawEvents.slice(0, retainStartIndex);
 
     let scratchpadEvent: CompactedEvent;
+    const existingScratchpad = hasScratchpad
+      ? (activeEvents[0] as CompactedEvent)
+      : undefined;
+    const reusableScratchpad =
+      existingScratchpad &&
+      (existingScratchpad.isolationScope === undefined ||
+        existingScratchpad.isolationScope === invocationContext.isolationScope)
+        ? existingScratchpad
+        : undefined;
 
-    if (hasScratchpad) {
-      const existingScratchpad = activeEvents[0] as CompactedEvent;
+    if (reusableScratchpad) {
       scratchpadEvent = await this.summarizer.summarize([
-        existingScratchpad,
+        reusableScratchpad,
         ...rawEventsToCompact,
       ]);
     } else {
@@ -132,17 +155,37 @@ export class AnchoredContextCompactor implements BaseContextCompactor {
       ...scratchpadEvent,
       isScratchpad: true,
       author: 'system',
+      ...(invocationContext.isolationScope === undefined
+        ? {}
+        : {isolationScope: invocationContext.isolationScope}),
     } as CompactedEvent;
 
-    // Reconstruct the events list: inactive events + new scratchpad + active retained events
-    const inactiveEvents = events.slice(0, events.indexOf(activeEvents[0]));
-    const retainedRawEvents = rawEvents.slice(retainStartIndex);
-
-    const newEventsList = [
-      ...inactiveEvents,
-      updatedScratchpad,
-      ...retainedRawEvents,
-    ];
+    // Replace only events owned by the current scope. Shared history may be
+    // included in the summary, but it must remain in the session for peer and
+    // unscoped readers.
+    const shouldReplaceEvent = (event: Event): boolean =>
+      invocationContext.isolationScope === undefined ||
+      event.isolationScope === invocationContext.isolationScope;
+    const replacedEvents = new Set<Event>([
+      ...(reusableScratchpad && shouldReplaceEvent(reusableScratchpad)
+        ? [reusableScratchpad]
+        : []),
+      ...rawEventsToCompact.filter(shouldReplaceEvent),
+    ]);
+    const firstReplacedIndex = events.findIndex((event) =>
+      replacedEvents.has(event),
+    );
+    const newEventsList: Event[] = [];
+    let insertedScratchpad = false;
+    for (let index = 0; index < events.length; index++) {
+      const event = events[index];
+      if (index === firstReplacedIndex) {
+        newEventsList.push(updatedScratchpad);
+        insertedScratchpad = true;
+      }
+      if (!replacedEvents.has(event)) newEventsList.push(event);
+    }
+    if (!insertedScratchpad) newEventsList.push(updatedScratchpad);
 
     // Mutate the original session events array.
     events.length = 0;
