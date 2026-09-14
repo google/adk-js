@@ -195,6 +195,13 @@ describe('An ADK agent in a browser, on a scripted model', () => {
     page = await openDriverPage(browser);
     await run<void>(page, 'installScriptedModel()');
     expect(await run<string>(page, 'availability()')).toBe('available');
+    // Pairs with the "real model skipped" warning below: run locally, the two
+    // together say which model each result came from, which is otherwise
+    // guesswork. Vitest suppresses this on CI, where passing files print
+    // nothing.
+    console.warn(
+      `[chrome-prompt-api] scripted tier running in ${browser.version()}`,
+    );
   }, 120_000);
 
   afterAll(async () => {
