@@ -374,6 +374,27 @@ describe('deployToAgentEngine', () => {
     });
   });
 
+  it('should use custom minInstances and maxInstances when provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      minInstances: 2,
+      maxInstances: 5,
+    });
+
+    expect(mockCreateInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          spec: expect.objectContaining({
+            deploymentSpec: expect.objectContaining({
+              minInstances: 2,
+              maxInstances: 5,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
   it('should resolve default project and region from gcloud if not provided', async () => {
     const optionsWithoutProjectRegion = {
       ...defaultOptions,
