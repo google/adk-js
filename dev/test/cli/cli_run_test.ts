@@ -68,6 +68,9 @@ vi.mock('node:readline', () => ({
   createInterface: vi.fn(),
 }));
 
+/** The two-argument `readline.question` overload the REPL calls. */
+type AskUser = (query: string, cb: (answer: string) => void) => void;
+
 describe('cli_run', () => {
   let mockAgentFile: AgentFile;
   let mockRootAgent: BaseAgent;
@@ -251,6 +254,82 @@ describe('cli_run', () => {
         configurable: true,
       });
     }
+  });
+
+  /** Replaces the mocked Runner with one whose runAsync the test can watch. */
+  const watchRunner = () => {
+    const runAsync = vi.fn(async function* () {});
+    vi.mocked(Runner).mockImplementation(
+      () => ({runAsync}) as unknown as Runner,
+    );
+    return runAsync;
+  };
+
+  /** Scripts one readline answer per interactive turn the test drives. */
+  const answerWith = (...answers: string[]): void => {
+    for (const answer of answers) {
+      vi.mocked<AskUser>(mockRl.question).mockImplementationOnce((_p, cb) =>
+        cb(answer),
+      );
+    }
+  };
+
+  /**
+   * The REPL prints "type exit to exit", so the quit word must survive the
+   * stray space a terminal user adds to it. The default `mockRl.question`
+   * answers `'exit'` on every later prompt, so an unfixed loop still ends on
+   * the next turn and the assertion fails instead of hanging.
+   */
+  it('treats a whitespace-padded exit as the quit command', async () => {
+    const runAsync = watchRunner();
+    answerWith('  exit  ');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).not.toHaveBeenCalled();
+  });
+
+  it('sends the user text to the model untrimmed', async () => {
+    const runAsync = watchRunner();
+    answerWith('  hello  ');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newMessage: {role: 'user', parts: [{text: '  hello  '}]},
+      }),
+    );
+  });
+
+  it('keeps quit matching exact and case-sensitive', async () => {
+    const runAsync = watchRunner();
+    answerWith('EXIT', 'exit now');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips a whitespace-only line without ending the loop', async () => {
+    const runAsync = watchRunner();
+    answerWith('   ', 'hello');
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      sessionService: createMockSessionService(),
+    });
+
+    expect(runAsync).toHaveBeenCalledTimes(1);
   });
 
   it('should run from input file', async () => {
