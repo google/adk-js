@@ -130,7 +130,7 @@ describe('createAgent', () => {
       );
     });
 
-    it('should set Vertex AI env vars if project/region provided', async () => {
+    it('should set enterprise-mode env vars if project/region provided', async () => {
       await createAgent({
         ...getFreshOptions(),
         forceYes: true,
@@ -144,7 +144,7 @@ describe('createAgent', () => {
       );
       expect(saveToFile).toHaveBeenCalledWith(
         expect.stringContaining('.env'),
-        expect.stringContaining('GOOGLE_GENAI_USE_VERTEXAI=1'),
+        expect.stringContaining('GOOGLE_GENAI_USE_ENTERPRISE=1'),
       );
     });
 
