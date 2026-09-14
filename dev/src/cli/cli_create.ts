@@ -163,12 +163,12 @@ async function generateAgentFolder(agentDir: string, forceYes: boolean) {
 function generateEnvFile(options: AgentCreationOptions): string {
   const lines = [];
   if (options.apiKey) {
-    // The Gemini API path — the one `GOOGLE_GENAI_USE_VERTEXAI=0` selects —
+    // The Gemini API path — the one `GOOGLE_GENAI_USE_ENTERPRISE=0` selects —
     // reads GOOGLE_GENAI_API_KEY, then GOOGLE_API_KEY, then GEMINI_API_KEY (see
     // `geminiInitParams` in core). GOOGLE_GENAI_API_KEY is the adk-js-specific
     // name and wins outright, so it is the unambiguous one to scaffold.
     lines.push(`GOOGLE_GENAI_API_KEY=${options.apiKey}`);
-    lines.push(`GOOGLE_GENAI_USE_VERTEXAI=0`);
+    lines.push(`GOOGLE_GENAI_USE_ENTERPRISE=0`);
   }
   if (options.project) {
     lines.push(`GOOGLE_CLOUD_PROJECT=${options.project}`);
@@ -177,7 +177,7 @@ function generateEnvFile(options: AgentCreationOptions): string {
     lines.push(`GOOGLE_CLOUD_LOCATION=${options.region}`);
   }
   if (options.region && options.project) {
-    lines.push(`GOOGLE_GENAI_USE_VERTEXAI=1`);
+    lines.push(`GOOGLE_GENAI_USE_ENTERPRISE=1`);
   }
   return lines.join('\n');
 }
