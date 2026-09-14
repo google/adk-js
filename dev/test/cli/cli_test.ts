@@ -5,6 +5,7 @@
  */
 
 import {LogLevel, setLogLevel} from '@google/adk';
+import {Command, CommanderError} from 'commander';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createProgram} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
@@ -531,5 +532,85 @@ describe('CLI Entrypoint', () => {
         agentEngineId: '12345',
       });
     });
+  });
+});
+
+describe('usage errors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const runWithUsageError = async (args: string[]) => {
+    const program = createProgram();
+    let stderr = '';
+    // A subcommand inherits neither of these once it exists: exitOverride()
+    // is a per-command property, and configureOutput() replaces the shared
+    // object instead of mutating it. Without the second call the subcommand
+    // writes to the real stderr and calls the real process.exit(), which kills
+    // the worker.
+    const capture = (command: Command) => {
+      command.configureOutput({
+        writeErr: (str) => {
+          stderr += str;
+        },
+      });
+      command.exitOverride();
+    };
+    capture(program);
+    program.commands.forEach(capture);
+
+    let error: CommanderError | undefined;
+    try {
+      await program.parseAsync(['node', 'cli_entrypoint.js', ...args]);
+    } catch (e: unknown) {
+      // Rethrow anything an action handler raised, so a real failure is
+      // reported as itself instead of as a usage error.
+      if (!(e instanceof CommanderError)) {
+        throw e;
+      }
+      error = e;
+    }
+    return {stderr, error};
+  };
+
+  it('prints the full run help after a missing agent path', async () => {
+    const {stderr} = await runWithUsageError(['run']);
+
+    expect(stderr).toContain("error: missing required argument 'agent'");
+    expect(stderr).toContain('Usage: ADK CLI run [options] <agent>');
+    expect(stderr).toContain('Agent file path (.js or .ts)');
+    expect(stderr).toContain('--save_session [boolean]');
+  });
+
+  it('keeps the exit code and the error code of a missing agent path', async () => {
+    const {error} = await runWithUsageError(['run']);
+
+    expect(error?.exitCode).toBe(1);
+    expect(error?.code).toBe('commander.missingArgument');
+  });
+
+  it('does not run the agent when the agent path is missing', async () => {
+    await runWithUsageError(['run']);
+
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('prints no help when the run succeeds', async () => {
+    const {stderr, error} = await runWithUsageError(['run', 'agent.ts']);
+
+    expect(error).toBeUndefined();
+    expect(stderr).not.toContain('Usage:');
+    expect(runAgent).toHaveBeenCalled();
+  });
+
+  it('prints the full run help after an unknown option', async () => {
+    const {stderr} = await runWithUsageError([
+      'run',
+      'agent.ts',
+      '--definitely-not-an-option',
+    ]);
+
+    expect(stderr).toContain('unknown option');
+    expect(stderr).toContain('Usage: ADK CLI run');
   });
 });

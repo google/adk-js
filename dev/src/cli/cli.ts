@@ -236,6 +236,10 @@ export function createProgram(): Command {
 
   const program = new Command('ADK CLI');
 
+  // Commander copies this setting into a subcommand when the subcommand is
+  // created, so it has to be set before the commands below are registered.
+  program.showHelpAfterError();
+
   program
     .addOption(new Option('-v, --version', 'Get ADK CLI version'))
     .action(() => {
