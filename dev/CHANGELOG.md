@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.1.0](https://github.com/google/adk-js/compare/devtools-v2.0.0...devtools-v2.1.0) (2026-09-14)
+
+
+### Features
+
+* Add ContainerCodeExecutor for Docker-sandboxed code execution ([#541](https://github.com/google/adk-js/issues/541)) ([a52b669](https://github.com/google/adk-js/commit/a52b669b1d53e8897c0f6316fb007f22a5e91617))
+* **dev:** add --min_instances/--max_instances flags to agent_engine deploy ([#899](https://github.com/google/adk-js/issues/899)) ([0dc138c](https://github.com/google/adk-js/commit/0dc138c8be901373bb4424e0240d8a1902b3744b))
+* **dev:** add Origin validation to the dev server (DNS-rebinding defense in depth) ([#557](https://github.com/google/adk-js/issues/557)) ([f280eba](https://github.com/google/adk-js/commit/f280ebaaab06197d1e6b162293deaea13ae5c8f9))
+
+
+### Bug Fixes
+
+* **build:** stop compiling the dev CLI entrypoint into dist/cjs ([#861](https://github.com/google/adk-js/issues/861)) ([da9a492](https://github.com/google/adk-js/commit/da9a4923b5ed44a2123541e3d7864920cc23ffa6))
+* **cli:** quit adk run on a whitespace-padded exit ([#896](https://github.com/google/adk-js/issues/896)) ([0568990](https://github.com/google/adk-js/commit/0568990038ee1e23bc820f77accdd9fc672fbeee))
+* **cli:** stop staging an empty node_modules and a zero-byte lockfile into the deploy image ([#894](https://github.com/google/adk-js/issues/894)) ([fd4ac9a](https://github.com/google/adk-js/commit/fd4ac9a8ad00615fb26cc18d53d1ddd9d912e065))
+* **cli:** surface model errors and make agent stack traces readable ([#625](https://github.com/google/adk-js/issues/625)) ([9508dee](https://github.com/google/adk-js/commit/9508dee4eaafd05b648cd698109af8ac7b5338a3))
+* **cli:** use GOOGLE_GENAI_USE_ENTERPRISE instead of deprecated GOOGLE_GENAI_USE_VERTEXAI ([#897](https://github.com/google/adk-js/issues/897)) ([6dc4a3d](https://github.com/google/adk-js/commit/6dc4a3d5c9500e5e088b9d94faa0e2971f3c08ab))
+* **core:** make transfer and runtime tool confirmation work across runtimes ([#808](https://github.com/google/adk-js/issues/808)) ([6e251bb](https://github.com/google/adk-js/commit/6e251bb1e2d12bf279148b812d9de77244c0bfa5))
+* **deploy:** pass shell:true to spawn on win32 to fix ENOENT for .cmd binaries ([#888](https://github.com/google/adk-js/issues/888)) ([b46196b](https://github.com/google/adk-js/commit/b46196b5bd2b6583ec51142b8c7c3a875ec9cfdd))
+* **dev:** let --bundle false actually load an agent ([#791](https://github.com/google/adk-js/issues/791)) ([91357fd](https://github.com/google/adk-js/commit/91357fdf9a1f93adf089db91f407a840a27f27f6)), closes [#714](https://github.com/google/adk-js/issues/714)
+* **dev:** print the command help after a CLI usage error ([#892](https://github.com/google/adk-js/issues/892)) ([206dc97](https://github.com/google/adk-js/commit/206dc97c24082f806226ed0da28fb7e8cc7c01e0))
+* **dev:** route AgentFile.load multiple-apps/agents warnings through AdkLogger ([#879](https://github.com/google/adk-js/issues/879)) ([905e730](https://github.com/google/adk-js/commit/905e7303d636c71f0020412e5457f61be422787b))
+* guard reads in the dev server against DNS rebinding ([#744](https://github.com/google/adk-js/issues/744)) ([0fe9581](https://github.com/google/adk-js/commit/0fe958137e9c4b5211651f62609ca95933809eb5))
+* remove the no-op [@ts-ignore](https://github.com/ts-ignore) on the esbuild-shim-plugin import ([#805](https://github.com/google/adk-js/issues/805)) ([9566743](https://github.com/google/adk-js/commit/9566743ffaa5fcc29b5a97d2a823837fa8319627))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.0.0 to ^2.1.0
+
 ## [2.0.0](https://github.com/google/adk-js/compare/devtools-v1.6.0...devtools-v2.0.0) (2026-08-20)
 
 
