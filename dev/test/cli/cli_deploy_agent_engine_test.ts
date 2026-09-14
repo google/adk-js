@@ -18,6 +18,7 @@ import {
   isFile,
   isFolderExists,
   loadFileData,
+  saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
 declare global {
@@ -319,6 +320,25 @@ describe('deployToAgentEngine', () => {
     );
     expect(isFolderExists).not.toHaveBeenCalled();
     await expect(fs.access(createdTempFolder)).rejects.toThrow();
+  });
+
+  it('should not stage an empty node_modules or package-lock.json', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    const mkdirPaths = (fs.mkdir as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    const savedPaths = (saveToFile as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    expect(mkdirPaths).not.toContain(path.join(tempFolder, 'node_modules'));
+    expect(savedPaths).not.toContain(
+      path.join(tempFolder, 'package-lock.json'),
+    );
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(tempFolder, 'package.json'),
+      {dependencies: {'@google/adk': '^1.0.0'}},
+    );
   });
 
   it('should deploy successfully with all optional parameters', async () => {
