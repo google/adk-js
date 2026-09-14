@@ -484,6 +484,31 @@ describe('CLI Entrypoint', () => {
         agentEngineId: '12345',
       });
     });
+
+    it('should pass min_instances and max_instances to deployToAgentEngine when set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        '--min_instances',
+        '2',
+        '--max_instances',
+        '5',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        minInstances: 2,
+        maxInstances: 5,
+      });
+    });
+
+    it('should leave minInstances and maxInstances undefined when not set', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        minInstances: undefined,
+        maxInstances: undefined,
+      });
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {

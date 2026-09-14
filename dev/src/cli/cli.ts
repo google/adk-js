@@ -215,6 +215,14 @@ export const AGENT_ENGINE_ID_OPTION = new Option(
   '--agent_engine_id [id]',
   'Optional. ID of the Agent Engine instance to update if it exists (default: undefined, which means a new instance will be created). If project and region are set, this should be the resource ID or the full resource name (projects/.../locations/.../reasoningEngines/...).',
 );
+export const MIN_INSTANCES_OPTION = new Option(
+  '--min_instances [number]',
+  'Optional. The minimum number of application instances that will be kept running at all times. Default: 1.',
+);
+export const MAX_INSTANCES_OPTION = new Option(
+  '--max_instances [number]',
+  'Optional. The maximum number of application instances that can be launched to handle increased traffic. Default: 10.',
+);
 
 /**
  * Creates the ADK CLI program.
@@ -517,6 +525,8 @@ export function createProgram(): Command {
       .addOption(AGENT_FILE_MODULE_TYPE)
       .addOption(A2A_OPTION)
       .addOption(AGENT_ENGINE_ID_OPTION)
+      .addOption(MIN_INSTANCES_OPTION)
+      .addOption(MAX_INSTANCES_OPTION)
       .action(async (agentPath: string, options: Record<string, string>) => {
         try {
           await deployToAgentEngine({
@@ -537,6 +547,14 @@ export function createProgram(): Command {
             agentFileLoadOptions: getAgentFileOptions(options),
             a2a: getBoolean(options['a2a']),
             agentEngineId: options['agent_engine_id'],
+            minInstances:
+              options['min_instances'] !== undefined
+                ? parseInt(options['min_instances'], 10)
+                : undefined,
+            maxInstances:
+              options['max_instances'] !== undefined
+                ? parseInt(options['max_instances'], 10)
+                : undefined,
           });
         } catch (error) {
           logger.error('Error deploying agent:', (error as Error).message);
