@@ -7,31 +7,41 @@
 /**
  * The page-side driver for `chrome_prompt_api_test.ts`.
  *
- * Runs in the page and returns plain objects so its results survive the CDP
- * boundary. Kept as a string rather than a real module so esbuild bundles it
- * with the adapter in one pass and nothing has to be served over http. The
- * relative imports resolve against `core/src/models`, which the test passes to
- * esbuild as the `resolveDir`.
+ * These functions run inside the browser page, not in Node. The test bundles
+ * this module with esbuild and injects the bundle into the page with Playwright,
+ * then calls the exports through `page.evaluate`. Each function returns a plain
+ * object so its result survives the serialisation boundary Playwright crosses.
+ *
+ * The relative imports reach into `core/src` directly. esbuild follows them and
+ * bundles only that subgraph, which keeps the browser bundle small; importing
+ * the `@google/adk` barrel would pull in Node-only modules the page cannot load.
  */
-export const DRIVER_SOURCE = `
+
+import type {Part} from '@google/genai';
 import {z} from 'zod';
 
-import {LlmAgent} from '../agents/llm_agent.js';
-import {FunctionTool} from '../tools/function_tool.js';
-import {InMemoryRunner} from '../runner/in_memory_runner.js';
+import {LlmAgent} from '../../core/src/agents/llm_agent.js';
+import type {Event} from '../../core/src/events/event.js';
+import {
+  ChromeBuiltInLlm,
+  type ChromeLanguageModelFactory,
+} from '../../core/src/models/chrome_prompt_llm.js';
+import {InMemoryRunner} from '../../core/src/runner/in_memory_runner.js';
+import {FunctionTool} from '../../core/src/tools/function_tool.js';
 
-import {ChromeBuiltInLlm} from './chrome_prompt_llm.js';
+const textOf = (event: Event): string =>
+  (event.content?.parts ?? []).map((p) => p.text ?? '').join('');
 
-const textOf = (event) =>
-  (event?.content?.parts ?? []).map((p) => p.text ?? '').join('');
-
-const anyPart = (events, predicate) =>
+const anyPart = (
+  events: Event[],
+  predicate: (part: Part) => boolean,
+): boolean =>
   events.some((event) => (event.content?.parts ?? []).some(predicate));
 
 /** Runs one user turn through the ADK runner and collects its events. */
-async function runTurn(agent, question) {
+async function runTurn(agent: LlmAgent, question: string): Promise<Event[]> {
   const runner = new InMemoryRunner({agent});
-  const events = [];
+  const events: Event[] = [];
   for await (const event of runner.runEphemeral({
     userId: 'e2e',
     newMessage: {role: 'user', parts: [{text: question}]},
@@ -44,13 +54,18 @@ async function runTurn(agent, question) {
   return events;
 }
 
-export async function availability() {
-  if (typeof globalThis.LanguageModel === 'undefined') return 'missing-api';
-  return await globalThis.LanguageModel.availability();
+export async function availability(): Promise<string> {
+  const languageModel = (
+    globalThis as {LanguageModel?: ChromeLanguageModelFactory}
+  ).LanguageModel;
+  if (!languageModel) return 'missing-api';
+  return languageModel.availability();
 }
 
 /** The agent answers a plain question, with no tools. */
-export async function answer(question) {
+export async function answer(
+  question: string,
+): Promise<{events: number; text: string; error: string | null}> {
   const agent = new LlmAgent({
     name: 'answerer',
     model: new ChromeBuiltInLlm(),
@@ -67,9 +82,14 @@ export async function answer(question) {
 }
 
 /** The agent runs a declared tool through the full ADK loop. */
-export async function toolCall(question) {
+export async function toolCall(question: string): Promise<{
+  toolRuns: number;
+  toolCity: string | null;
+  calledTool: boolean;
+  gotToolResponse: boolean;
+}> {
   let toolRuns = 0;
-  let toolCity = null;
+  let toolCity: string | null = null;
   const getWeather = new FunctionTool({
     name: 'get_weather',
     description: 'Returns the current weather for a city.',
@@ -98,4 +118,3 @@ export async function toolCall(question) {
     ),
   };
 }
-`;

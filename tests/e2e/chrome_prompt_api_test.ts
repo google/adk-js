@@ -15,8 +15,10 @@
  *
  * This suite builds a normal `LlmAgent` with the Chrome model and runs it
  * through an `InMemoryRunner`, in Chrome, against whatever model Chrome
- * actually has. It asserts the agent behaviours that depend on the real model
- * inside the ADK loop:
+ * actually has. Playwright launches the browser; the page-side logic lives in
+ * `chrome_prompt_api_driver.ts`, which esbuild bundles and Playwright injects.
+ * The suite asserts the agent behaviours that depend on the real model inside
+ * the ADK loop:
  *
  *   1. `availability()` answers, so the suite tells "no model" from "broken".
  *   2. The agent answers a plain question with non-empty text.
@@ -48,18 +50,21 @@
  */
 
 import * as esbuild from 'esbuild';
-import {spawn, type ChildProcess} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {chromium, type Browser, type Page} from 'playwright-chromium';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-
-import {DRIVER_SOURCE} from './chrome_prompt_api_driver.js';
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../..',
+);
+
+/** The page-side driver esbuild bundles and Playwright injects. */
+const DRIVER_ENTRY = path.join(
+  REPO_ROOT,
+  'tests/e2e/chrome_prompt_api_driver.ts',
 );
 
 /** How long to wait for the model to answer one prompt. */
@@ -67,8 +72,15 @@ const MODEL_TIMEOUT_MS = 120_000;
 
 const IS_CI = process.env['CI'] === 'true';
 
+/**
+ * The on-device model is gated on these features in most Chrome channels.
+ */
+const CHROME_FEATURE_ARGS = [
+  '--enable-features=AIPromptAPI,AIPromptAPIForGeminiNano',
+];
+
 /* ------------------------------------------------------------------ *
- * Finding and launching Chrome
+ * Finding Chrome
  * ------------------------------------------------------------------ */
 
 function findChrome(): string | undefined {
@@ -93,118 +105,13 @@ function findChrome(): string | undefined {
   return candidates.find(existsSync);
 }
 
-/** The fields of a CDP response this test reads. */
-interface CdpResult {
-  result?: {value?: unknown};
-  exceptionDetails?: {text?: string; exception?: {description?: string}};
-  [key: string]: unknown;
-}
-
-/**
- * A minimal Chrome DevTools Protocol client.
- *
- * Only what this test needs: open a page, evaluate an expression in it, read
- * the result. Written against the global `WebSocket` so the test adds no
- * dependency to the repo for a suite that usually skips.
- */
-class Cdp {
-  private nextId = 1;
-  private readonly pending = new Map<
-    number,
-    {resolve: (v: CdpResult) => void; reject: (e: Error) => void}
-  >();
-
-  private constructor(private readonly socket: WebSocket) {
-    socket.addEventListener('message', (event) => {
-      const msg = JSON.parse(String((event as MessageEvent).data)) as {
-        id?: number;
-        result?: CdpResult;
-        error?: {message: string};
-      };
-      if (msg.id === undefined) return;
-      const waiter = this.pending.get(msg.id);
-      if (!waiter) return;
-      this.pending.delete(msg.id);
-      if (msg.error) waiter.reject(new Error(msg.error.message));
-      else waiter.resolve(msg.result ?? {});
-    });
-  }
-
-  static async connect(url: string): Promise<Cdp> {
-    const socket = new WebSocket(url);
-    await new Promise<void>((resolve, reject) => {
-      socket.addEventListener('open', () => resolve(), {once: true});
-      socket.addEventListener(
-        'error',
-        () => reject(new Error(`cannot open ${url}`)),
-        {once: true},
-      );
-    });
-    return new Cdp(socket);
-  }
-
-  send(
-    method: string,
-    params: Record<string, unknown> = {},
-  ): Promise<CdpResult> {
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, {resolve, reject});
-      this.socket.send(JSON.stringify({id, method, params}));
-    });
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
-
-/**
- * Finds a page target's own websocket, given the browser-level one.
- *
- * Both live on the same port, and `/json/list` names the page targets.
- */
-async function findPageTarget(
-  browserWsUrl: string,
-): Promise<string | undefined> {
-  const {port} = new URL(browserWsUrl.replace(/^ws:/, 'http:'));
-  const targets = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) =>
-    r.json(),
-  )) as Array<{type: string; webSocketDebuggerUrl?: string}>;
-  return targets.find((t) => t.type === 'page' && t.webSocketDebuggerUrl)
-    ?.webSocketDebuggerUrl;
-}
-
-/** Reads the DevTools websocket URL Chrome prints on stderr as it starts. */
-function waitForDevtoolsUrl(child: ChildProcess): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('Chrome did not report a DevTools endpoint')),
-      30_000,
-    );
-    let buffered = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      buffered += chunk.toString();
-      const match = buffered.match(/ws:\/\/[^\s]+/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match[0]);
-      }
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Chrome exited early (code ${code})`));
-    });
-  });
-}
-
 /* ------------------------------------------------------------------ *
  * The page-side driver
  * ------------------------------------------------------------------ */
 
 /**
- * Bundles the agent, the adapter, and a driver that runs them, as one script
- * to evaluate in the page.
+ * Bundles the agent, the adapter, and the driver that runs them, as one script
+ * to inject into the page.
  *
  * The import graph reaches a handful of Node built-ins it never calls in a
  * browser — the logger and the client-label helpers. They are aliased to
@@ -218,11 +125,7 @@ async function buildDriverBundle(): Promise<string> {
     'tests/e2e/chrome_prompt_api_winston_stub.js',
   );
   const result = await esbuild.build({
-    stdin: {
-      contents: DRIVER_SOURCE,
-      resolveDir: path.join(REPO_ROOT, 'core/src/models'),
-      loader: 'ts',
-    },
+    entryPoints: [DRIVER_ENTRY],
     bundle: true,
     format: 'iife',
     globalName: '__adkChromeTest',
@@ -247,30 +150,20 @@ async function buildDriverBundle(): Promise<string> {
  * Harness
  * ------------------------------------------------------------------ */
 
-let chrome: ChildProcess | undefined;
-let cdp: Cdp | undefined;
-let profileDir: string | undefined;
+let browser: Browser | undefined;
+let page: Page | undefined;
+/** True when this test launched the browser and must close it. */
+let ownsBrowser = false;
 /** Why the suite is skipping, or undefined when it can run. */
 let blocked: string | undefined;
 
 /** Evaluates `__adkChromeTest.<call>` in the page and returns its result. */
 async function run<T>(call: string): Promise<T> {
-  const result = await cdp!.send('Runtime.evaluate', {
-    expression: `__adkChromeTest.${call}`,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  if (result.exceptionDetails) {
-    throw new Error(
-      result.exceptionDetails.exception?.description ??
-        result.exceptionDetails.text,
-    );
-  }
-  return result.result?.value as T;
+  return (await page!.evaluate(`__adkChromeTest.${call}`)) as T;
 }
 
 beforeAll(async () => {
-  // Bail before spawning anything on CI. Hosted runners have no GPU, so the
+  // Bail before launching anything on CI. Hosted runners have no GPU, so the
   // model is never available there, and launching a browser buys nothing but a
   // way for the suite to hang. `live_model_test.ts` skips on CI for the same
   // reason.
@@ -279,63 +172,43 @@ beforeAll(async () => {
     return;
   }
 
-  const existing = process.env['CHROME_CDP_URL'];
-  let wsUrl: string;
-
-  if (existing) {
-    const listing = await fetch(new URL('/json/version', existing)).then((r) =>
-      r.json(),
-    );
-    wsUrl = listing.webSocketDebuggerUrl;
+  const cdpUrl = process.env['CHROME_CDP_URL'];
+  if (cdpUrl) {
+    try {
+      browser = await chromium.connectOverCDP(cdpUrl);
+    } catch (error) {
+      blocked = `cannot attach to ${cdpUrl}: ${(error as Error).message}`;
+      return;
+    }
   } else {
     const binary = findChrome();
     if (!binary) {
       blocked = 'no Chrome binary found (set CHROME_PATH)';
       return;
     }
-    profileDir = mkdtempSync(path.join(tmpdir(), 'adk-chrome-'));
-    const args = [
-      '--remote-debugging-port=0',
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      // The on-device model is gated on these in most channels.
-      '--enable-features=AIPromptAPI,AIPromptAPIForGeminiNano',
-      'about:blank',
-    ];
-    if (!process.env['CHROME_HEADFUL']) args.unshift('--headless=new');
-    chrome = spawn(binary, args, {stdio: ['ignore', 'ignore', 'pipe']});
     try {
-      wsUrl = await waitForDevtoolsUrl(chrome);
+      browser = await chromium.launch({
+        executablePath: binary,
+        headless: !process.env['CHROME_HEADFUL'],
+        args: CHROME_FEATURE_ARGS,
+      });
+      ownsBrowser = true;
     } catch (error) {
       blocked = `Chrome did not start: ${(error as Error).message}`;
       return;
     }
   }
 
-  // Connect to the page target directly rather than the browser endpoint.
-  // The browser endpoint has no Runtime domain, and attaching to a target
-  // would mean routing every later message through a session id; the page's
-  // own websocket needs neither.
-  const pageWsUrl = await findPageTarget(wsUrl);
-  if (!pageWsUrl) {
-    blocked = 'Chrome exposed no page target';
-    return;
-  }
-  cdp = await Cdp.connect(pageWsUrl);
+  const context = browser.contexts()[0] ?? (await browser.newContext());
+  page = await context.newPage();
+  await page.goto('about:blank');
 
-  await cdp.send('Runtime.enable');
-  const injected = await cdp.send('Runtime.evaluate', {
-    expression: await buildDriverBundle(),
-    returnByValue: false,
-  });
-  if (injected.exceptionDetails) {
+  try {
+    await page.addScriptTag({content: await buildDriverBundle()});
+  } catch (error) {
     // A bundle that throws while initialising would otherwise surface later as
     // "__adkChromeTest is undefined", which says nothing about the cause.
-    blocked = `driver bundle failed to load: ${
-      injected.exceptionDetails.exception?.description ??
-      injected.exceptionDetails.text
-    }`;
+    blocked = `driver bundle failed to load: ${(error as Error).message}`;
     return;
   }
 
@@ -355,20 +228,10 @@ afterAll(() => {
 });
 
 afterAll(async () => {
-  cdp?.close();
-  if (chrome && chrome.exitCode === null) {
-    // Wait for the process to actually go before removing its profile, or the
-    // directory is still being written to and rmSync fails with ENOTEMPTY.
-    const exited = new Promise<void>((resolve) =>
-      chrome!.once('exit', () => resolve()),
-    );
-    chrome.kill();
-    await Promise.race([
-      exited,
-      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
-    ]);
-  }
-  if (profileDir) rmSync(profileDir, {recursive: true, force: true});
+  await page?.close();
+  // Only close a browser this test launched; a browser reached over CDP belongs
+  // to whoever started it.
+  if (ownsBrowser) await browser?.close();
 });
 
 describe('An ADK agent backed by ChromeBuiltInLlm', () => {
