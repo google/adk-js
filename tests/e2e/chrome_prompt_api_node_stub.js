@@ -26,6 +26,17 @@ export const randomUUID = () => globalThis.crypto.randomUUID();
 export const format = (...args) => args.join(' ');
 export const inspect = (value) => String(value);
 
+/**
+ * Reached through the OAuth2 PKCE helpers, which nothing in these tests calls.
+ * They throw rather than return something plausible, so a future test that does
+ * reach them fails loudly instead of quietly signing with a stub.
+ */
+const unsupported = (name) => () => {
+  throw new Error(`${name} is not available in the browser test bundle`);
+};
+export const createHash = unsupported('createHash');
+export const randomBytes = unsupported('randomBytes');
+
 export function createLogger() {
   const noop = () => {};
   return {debug: noop, info: noop, warn: noop, error: noop};
@@ -37,10 +48,12 @@ export const config = {npm: {levels: {}}};
 export default {
   AsyncLocalStorage,
   config,
+  createHash,
   createLogger,
   format,
   hostname,
   inspect,
+  randomBytes,
   randomUUID,
   transports,
 };
