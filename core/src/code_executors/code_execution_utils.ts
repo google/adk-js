@@ -271,12 +271,13 @@ export function convertCodeExecutionParts(
         codeBlockDelimiter[1],
     };
   } else if (content.parts.length == 1 && lastPart.codeExecutionResult) {
-    content.parts[content.parts.length - 1] = {
-      text:
-        executionResultDelimiters[0] +
-        lastPart.codeExecutionResult.output +
-        executionResultDelimiters[1],
-    };
+    const output = lastPart.codeExecutionResult.output;
+    // No output means no delimiters either, just an empty text part.
+    const text =
+      output == null
+        ? ''
+        : executionResultDelimiters[0] + output + executionResultDelimiters[1];
+    content.parts[content.parts.length - 1] = {text};
     content.role = 'user';
   }
 }
