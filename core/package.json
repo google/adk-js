@@ -73,7 +73,8 @@
     "test": "vitest",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
-    "prepublishOnly": "npm run build"
+    "readme:sync": "node ../scripts/sync-package-readme.mjs core",
+    "prepublishOnly": "npm run readme:sync && npm run build"
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
