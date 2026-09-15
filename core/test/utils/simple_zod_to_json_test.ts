@@ -376,5 +376,89 @@ describe('zodObjectToSchema', () => {
         new Error('Expected a Zod Object'),
       );
     });
+
+    it('inlines a sub-schema reused in two properties', () => {
+      const inner = z.object({a: z.string()});
+      const schema = z.object({first: inner, second: inner});
+
+      const jsonSchema = zodObjectToSchema(schema);
+
+      expect(jsonSchema).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          first: {
+            type: Type.OBJECT,
+            properties: {a: {type: Type.STRING}},
+            required: ['a'],
+          },
+          second: {
+            type: Type.OBJECT,
+            properties: {a: {type: Type.STRING}},
+            required: ['a'],
+          },
+        },
+        required: ['first', 'second'],
+      });
+      expect(JSON.stringify(jsonSchema)).not.toContain('$ref');
+      expect(JSON.stringify(jsonSchema)).not.toContain('definitions');
+    });
+
+    it('inlines a sub-schema reused as a property and as an array item', () => {
+      const item = z.object({id: z.number().int()});
+      const schema = z.object({one: item, many: z.array(item)});
+
+      const jsonSchema = zodObjectToSchema(schema);
+
+      const expectedItem = {
+        type: Type.OBJECT,
+        properties: {
+          id: {
+            type: Type.INTEGER,
+            minimum: Number.MIN_SAFE_INTEGER,
+            maximum: Number.MAX_SAFE_INTEGER,
+          },
+        },
+        required: ['id'],
+      };
+      expect(jsonSchema).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          one: expectedItem,
+          many: {type: Type.ARRAY, items: expectedItem},
+        },
+        required: ['one', 'many'],
+      });
+      expect(JSON.stringify(jsonSchema)).not.toContain('$ref');
+    });
+  });
+
+  describe('z3 recursive schemas', () => {
+    it('degrades the recursive field rather than hanging', () => {
+      interface Tree {
+        name: string;
+        child?: Tree;
+      }
+      const tree: z3.ZodType<Tree> = z3.lazy(() =>
+        z3.object({name: z3.string(), child: tree.optional()}),
+      );
+
+      const jsonSchema = zodObjectToSchema(
+        z3.object({root: tree, plain: z3.string()}),
+      );
+
+      expect(jsonSchema).toEqual({
+        type: Type.OBJECT,
+        properties: {
+          root: {
+            type: Type.OBJECT,
+            properties: {name: {type: Type.STRING}, child: {}},
+            required: ['name'],
+          },
+          plain: {type: Type.STRING},
+        },
+        required: ['root', 'plain'],
+      });
+      expect(JSON.stringify(jsonSchema)).not.toContain('$ref');
+    });
   });
 });
