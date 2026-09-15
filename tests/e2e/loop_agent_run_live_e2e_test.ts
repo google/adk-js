@@ -10,12 +10,12 @@ import {
   Context,
   createEvent,
   createEventActions,
+  createSession,
   Event,
   EXIT_LOOP,
   InvocationContext,
   LoopAgent,
   PluginManager,
-  Session,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -117,14 +117,12 @@ describe('E2E LoopAgent Live Streaming Execution', () => {
       maxIterations: 10,
     });
 
-    const session = {
+    const session = createSession({
       id: 'e2e-live-session',
       appName: 'e2e-test-app',
       userId: 'e2e-user',
-      state: {},
-      events: [],
       lastUpdateTime: Date.now(),
-    } as unknown as Session;
+    });
 
     const context = new InvocationContext({
       invocationId: 'e2e-live-invocation',
