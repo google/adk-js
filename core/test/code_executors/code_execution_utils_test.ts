@@ -321,6 +321,57 @@ describe('convertCodeExecutionParts', () => {
     expect(content.role).toBe('user');
   });
 
+  it('converts a codeExecutionResult without output to an empty text part', () => {
+    const content: Content = {
+      parts: [{codeExecutionResult: {outcome: Outcome.OUTCOME_OK}}],
+      role: 'model',
+    };
+
+    convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
+
+    // No output means no delimiters either - an empty text part, not
+    // '```tool_output\nundefined\n```'.
+    expect(content.parts![0].text).toBe('');
+    expect(content.parts![0].text).not.toContain('undefined');
+    expect(content.parts![0].codeExecutionResult).toBeUndefined();
+    expect(content.role).toBe('user');
+  });
+
+  it('converts a codeExecutionResult with a null output to an empty text part', () => {
+    // An A2A data part or a persisted event is deserialized straight into the
+    // part, so an explicit null reaches the converter.
+    const content: Content = {
+      parts: [
+        {
+          codeExecutionResult: JSON.parse(
+            '{"outcome":"OUTCOME_OK","output":null}',
+          ),
+        },
+      ],
+      role: 'model',
+    };
+
+    convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
+
+    expect(content.parts![0].text).toBe('');
+    expect(content.parts![0].text).not.toContain('null');
+    expect(content.role).toBe('user');
+  });
+
+  it('keeps the delimiters when the output is an empty string', () => {
+    const content: Content = {
+      parts: [{codeExecutionResult: {outcome: Outcome.OUTCOME_OK, output: ''}}],
+      role: 'model',
+    };
+
+    convertCodeExecutionParts(content, CODE_DELIM, RESULT_DELIM);
+
+    // '' is not "no output": adk-python guards on `is not None`, so an empty
+    // result still renders as an empty tool_output block.
+    expect(content.parts![0].text).toBe('```tool_output\n\n```');
+    expect(content.role).toBe('user');
+  });
+
   it('does not convert codeExecutionResult when there are multiple parts', () => {
     const content = {
       parts: [
