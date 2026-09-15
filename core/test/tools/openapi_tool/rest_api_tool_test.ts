@@ -14,6 +14,7 @@ import {
   InvocationContext,
   LlmAgent,
   OpenApiSpecParser,
+  OperationParser,
   PluginManager,
   RestApiTool,
   ToolAuthHandler,
@@ -1219,6 +1220,40 @@ describe('RestApiTool Utilities', () => {
 
       expect(result).toBeUndefined();
       expect(headers).toEqual({});
+    });
+  });
+
+  describe('schema-less request body', () => {
+    it('should send the body parsed from a media type without a schema', () => {
+      const operation: OpenAPIV3.OperationObject = {
+        operationId: 'testOp',
+        requestBody: {
+          description: 'Arbitrary JSON payload.',
+          content: {'application/json': {}},
+        },
+        responses: {},
+      };
+      const endpoint = {
+        baseUrl: 'http://api.example.com',
+        path: '/payloads',
+        method: 'POST',
+      };
+      const parameters = new OperationParser(operation).getParameters();
+
+      const prepared = prepareRequestParams(endpoint, parameters, {
+        body: {any: 'payload'},
+      });
+      const result = prepareRequestBody(
+        operation.requestBody,
+        prepared.body,
+        prepared.bodyData,
+        prepared.headers,
+      );
+
+      expect(result).toBe(JSON.stringify({any: 'payload'}));
+      expect(prepared.headers).toEqual({
+        'Content-Type': 'application/json',
+      });
     });
   });
 });

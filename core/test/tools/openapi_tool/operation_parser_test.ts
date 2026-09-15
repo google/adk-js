@@ -165,4 +165,55 @@ describe('OperationParser', () => {
 
     expect(JSON.parse(JSON.stringify(schema))).toHaveProperty('required', []);
   });
+
+  it('should parse a request body whose media type omits the schema', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      requestBody: {
+        description: 'Arbitrary JSON payload.',
+        content: {'application/json': {}},
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op);
+    const params = parser.getParameters();
+
+    expect(params.length).toBe(1);
+    expect(params[0].name).toBe('body');
+    expect(params[0].originalName).toBe('body');
+    expect(params[0].paramLocation).toBe('body');
+    expect(params[0].paramSchema).toEqual({});
+    expect(params[0].description).toBe('Arbitrary JSON payload.');
+  });
+
+  it('should advertise the body argument for a schema-less request body', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      requestBody: {
+        description: 'Arbitrary JSON payload.',
+        content: {'application/json': {}},
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op);
+
+    expect(parser.getJsonSchema().properties).toHaveProperty('body');
+  });
+
+  it('should parse no parameter for a request body with empty content', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      requestBody: {
+        description: 'Arbitrary JSON payload.',
+        content: {},
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op);
+
+    expect(parser.getParameters()).toEqual([]);
+  });
 });
