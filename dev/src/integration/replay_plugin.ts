@@ -74,14 +74,24 @@ export class ReplayPlugin extends BasePlugin {
     const rec = this.recordings[index];
     (rec as unknown as {_consumed: boolean})._consumed = true;
 
-    // Handle side effects for built-in tools that modify EventActions
-    if (toolName === 'transfer_to_agent') {
-      // `agent_name` is the wire spelling, matching adk-python. Recordings
-      // captured before the rename still carry `agentName`, so both are read
-      // here rather than invalidating every recording on disk.
-      const args = params.toolArgs;
-      params.toolContext.actions.transferToAgent = (args['agent_name'] ??
-        args['agentName']) as string;
+    // Returning the recorded response short-circuits the real tool call, so
+    // built-in tools whose only observable effect is on EventActions must have
+    // that effect replicated here. (adk-python instead runs the real tool in
+    // its replay plugin before returning the recording.)
+    switch (toolName) {
+      case 'transfer_to_agent': {
+        // `agent_name` is the wire spelling, matching adk-python. Recordings
+        // captured before the rename still carry `agentName`, so both are read
+        // here rather than invalidating every recording on disk.
+        const args = params.toolArgs;
+        params.toolContext.actions.transferToAgent = (args['agent_name'] ??
+          args['agentName']) as string;
+        break;
+      }
+      case 'exit_loop':
+        params.toolContext.actions.escalate = true;
+        params.toolContext.actions.skipSummarization = true;
+        break;
     }
 
     // The response from a tool call is a plain object.
