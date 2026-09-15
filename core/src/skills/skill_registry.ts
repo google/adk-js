@@ -30,4 +30,13 @@ export interface SkillRegistry {
    * Returns the description for the search_skills tool.
    */
   searchToolDescription?(): string | undefined;
+
+  /**
+   * Releases resources held by the registry, such as network clients or
+   * temporary credentials.
+   *
+   * Optional: registries that hold no resources may omit it. `SkillToolset`
+   * invokes it, when present, from its own `close()`.
+   */
+  close?(): Promise<void>;
 }

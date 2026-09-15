@@ -118,6 +118,7 @@ export class SkillToolset extends BaseToolset {
 
   override async close(): Promise<void> {
     this.fetchedSkillCache.clear();
+    await this.registry?.close?.();
   }
 
   getSkill(name: string): Skill | undefined {
