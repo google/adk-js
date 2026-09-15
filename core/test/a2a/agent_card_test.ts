@@ -18,6 +18,7 @@ import {
   BaseAgent,
   BaseTool,
   BaseToolset,
+  BuiltInCodeExecutor,
   FunctionTool,
   getA2AAgentCard,
   LlmAgent,
@@ -282,6 +283,83 @@ describe('Agent Card', () => {
       const workflowSkill = skills.find((s) => s.name === 'workflow');
       expect(workflowSkill?.description).toBe('Runs a graph');
       expect(skills.find((s) => s.name === 'custom')).toBeUndefined();
+    });
+
+    it('publishes a code-execution skill for an agent with a code executor', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+        codeExecutor: new BuiltInCodeExecutor(),
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      const codeSkill = skills.find((s) => s.id === 'coder-code-executor');
+      expect(codeSkill).toBeDefined();
+      expect(codeSkill?.name).toBe('code-execution');
+      expect(codeSkill?.description).toBe('Can execute code');
+      expect(codeSkill?.tags).toEqual(['llm', 'code_execution']);
+    });
+
+    it('publishes no code-execution skill for an agent without a code executor', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      expect(skills.find((s) => s.name === 'code-execution')).toBeUndefined();
+      expect(skills).toHaveLength(1);
+    });
+
+    it('appends the code-execution skill after the tool skills', async () => {
+      const agent = new LlmAgent({
+        name: 'coder',
+        description: 'Writes code',
+        tools: [
+          new FunctionTool({
+            name: 'lookup',
+            description: 'Looks something up',
+            execute: async () => 'ok',
+          }),
+        ],
+        codeExecutor: new BuiltInCodeExecutor(),
+      });
+
+      const skills = await buildAgentSkills(agent);
+
+      expect(skills.map((s) => s.name)).toEqual([
+        'model',
+        'lookup',
+        'code-execution',
+      ]);
+    });
+
+    it('prefixes the code-execution skill of a sub-agent', async () => {
+      const root = new LlmAgent({
+        name: 'root',
+        description: 'Delegates to a coder',
+        subAgents: [
+          new LlmAgent({
+            name: 'coder',
+            description: 'Writes code',
+            codeExecutor: new BuiltInCodeExecutor(),
+          }),
+        ],
+      });
+
+      const skills = await buildAgentSkills(root);
+
+      const codeSkill = skills.find((s) => s.name === 'coder: code-execution');
+      expect(codeSkill).toBeDefined();
+      expect(codeSkill?.id).toBe('coder_coder-code-executor');
+      expect(codeSkill?.description).toBe('Can execute code');
+      expect(codeSkill?.tags).toEqual([
+        'sub_agent:coder',
+        'llm',
+        'code_execution',
+      ]);
     });
   });
 
