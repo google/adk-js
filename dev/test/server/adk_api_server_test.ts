@@ -1780,5 +1780,161 @@ describe('AdkWebServer', () => {
         expect(response.status).toBe(404);
       }
     });
+
+    it('returns 404 for an eval set id matching an inherited key', async () => {
+      for (const key of INHERITED_KEYS) {
+        const response = await fetch(
+          `${server.url}/dev/apps/testApp/eval_sets/${key}`,
+        );
+        expect(response.status).toBe(404);
+      }
+    });
+  });
+
+  describe('Eval endpoints', () => {
+    it('supports creating, listing, getting, and deleting eval sets via /dev/apps routes', async () => {
+      // Initially empty
+      const initialList = await client.get<string[]>(
+        '/dev/apps/testApp/eval_sets',
+      );
+      expect(initialList.status).toBe(200);
+      expect(initialList.data).toEqual([]);
+
+      // Create via Web UI payload shape (POST /dev/apps/:appName/eval-sets)
+      const createRes = await client.post<{eval_set_id: string}>(
+        '/dev/apps/testApp/eval-sets',
+        {
+          eval_set: {
+            eval_set_id: 'eval_set_1',
+            model_execution_mode: 'live',
+            tool_execution_mode: 'live',
+            eval_cases: [],
+          },
+        },
+      );
+      expect(createRes.status).toBe(200);
+      expect(createRes.data?.eval_set_id).toBe('eval_set_1');
+
+      // List returns the created eval set ID
+      const listRes = await client.get<string[]>('/dev/apps/testApp/eval_sets');
+      expect(listRes.status).toBe(200);
+      expect(listRes.data).toEqual(['eval_set_1']);
+
+      // Get single eval set
+      const getRes = await client.get<{eval_set_id: string}>(
+        '/dev/apps/testApp/eval_sets/eval_set_1',
+      );
+      expect(getRes.status).toBe(200);
+      expect(getRes.data?.eval_set_id).toBe('eval_set_1');
+
+      // Delete eval set
+      const deleteRes = await client.delete(
+        '/dev/apps/testApp/eval_sets/eval_set_1',
+      );
+      expect(deleteRes.status).toBe(200);
+
+      // Verify deleted
+      const listAfterDelete = await client.get<string[]>(
+        '/dev/apps/testApp/eval_sets',
+      );
+      expect(listAfterDelete.data).toEqual([]);
+    });
+
+    it('supports adding sessions as eval cases and CRUD operations on eval cases', async () => {
+      await client.post('/dev/apps/testApp/eval-sets', {
+        eval_set: {eval_set_id: 'set_cases'},
+      });
+
+      // Create a session with user and model turns
+      const session = await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'user1',
+        sessionId: 'sess1',
+      });
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'Hello agent'}]},
+        }),
+      });
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          author: 'testApp',
+          content: {role: 'model', parts: [{text: 'Hello user'}]},
+        }),
+      });
+
+      // Add session to eval set
+      const addRes = await client.post<{
+        evalId: string;
+        conversation: unknown[];
+      }>('/dev/apps/testApp/eval_sets/set_cases/add_session', {
+        evalId: 'case_1',
+        sessionId: 'sess1',
+        userId: 'user1',
+      });
+      expect(addRes.status).toBe(200);
+      expect(addRes.data?.evalId).toBe('case_1');
+      expect(addRes.data?.conversation.length).toBe(1);
+
+      // List eval cases
+      const listCases = await client.get<string[]>(
+        '/dev/apps/testApp/eval_sets/set_cases/evals',
+      );
+      expect(listCases.status).toBe(200);
+      expect(listCases.data).toEqual(['case_1']);
+
+      // Get eval case
+      const getCase = await client.get<{evalId: string}>(
+        '/dev/apps/testApp/eval_sets/set_cases/evals/case_1',
+      );
+      expect(getCase.status).toBe(200);
+      expect(getCase.data?.evalId).toBe('case_1');
+
+      // Update eval case
+      const putCase = await client.put<{
+        evalId: string;
+        conversation: unknown[];
+      }>('/dev/apps/testApp/eval_sets/set_cases/evals/case_1', {
+        evalId: 'case_1',
+        conversation: [],
+      });
+      expect(putCase.status).toBe(200);
+      expect(putCase.data?.conversation).toEqual([]);
+
+      // Delete eval case
+      const delCase = await client.delete(
+        '/dev/apps/testApp/eval_sets/set_cases/evals/case_1',
+      );
+      expect(delCase.status).toBe(200);
+    });
+
+    it('returns metrics-info, eval_results, and informative detail on run_eval', async () => {
+      const metricsRes = await client.get<{metricsInfo: unknown[]}>(
+        '/dev/apps/testApp/metrics-info',
+      );
+      expect(metricsRes.status).toBe(200);
+      expect(metricsRes.data).toEqual({metricsInfo: []});
+
+      const resultsRes = await client.get<unknown[]>(
+        '/dev/apps/testApp/eval_results',
+      );
+      expect(resultsRes.status).toBe(200);
+      expect(resultsRes.data).toEqual([]);
+
+      const runRes = await fetch(
+        `${server.url}/dev/apps/testApp/eval_sets/any_set/run_eval`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({}),
+        },
+      );
+      expect(runRes.status).toBe(501);
+      const runBody = (await runRes.json()) as {detail: string};
+      expect(runBody.detail).toContain('not installed');
+    });
   });
 });
