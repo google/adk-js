@@ -50,6 +50,7 @@ export interface CreateDockerFileContentOptions {
   artifactServiceUri?: string;
   otelToCloud?: boolean;
   a2a?: boolean;
+  agentFileLoadOptions?: AgentFileOptions;
 }
 
 export interface BaseDeployOptions extends CreateDockerFileContentOptions {
@@ -61,7 +62,6 @@ export interface BaseDeployOptions extends CreateDockerFileContentOptions {
    */
   tempFolder?: string;
   adkVersion: string;
-  agentFileLoadOptions?: AgentFileOptions;
 }
 
 // Dockerfile instructions and the generated CMD's shell form have no
@@ -113,6 +113,16 @@ export function createDockerFileContent(
 
   const adkCommand = options.withUi ? 'web' : 'api_server';
   const adkServerOptions = [`--port=${options.port}`, '--host=0.0.0.0'];
+
+  // Only skip the container's own compile/bundle when the agent file was
+  // already compiled/bundled before being copied into the image.
+  const stagedFileIsBundleOutput = options.agentFileLoadOptions
+    ? Boolean(options.agentFileLoadOptions.compile) ||
+      Boolean(options.agentFileLoadOptions.bundle)
+    : true;
+  if (stagedFileIsBundleOutput) {
+    adkServerOptions.push('--compile=false', '--bundle=false');
+  }
 
   if (options.logLevel) {
     assertNoDockerfileNewline(options.logLevel, 'logLevel');
