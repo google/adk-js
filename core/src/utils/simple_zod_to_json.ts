@@ -126,6 +126,11 @@ export function zodObjectToSchema(
   if (isZodV3Schema(schema)) {
     return toJSONSchemaV3(schema, {
       target: 'openApi3',
+      // The genai `Schema` type has no `$ref`, so a pointer back at an earlier
+      // occurrence of a reused sub-schema reaches the model as an untyped
+      // parameter. Inline every occurrence instead. A cycle has no finite
+      // inlining and degrades to an unconstrained schema.
+      $refStrategy: 'none',
       emailStrategy: 'format:email',
       postProcess: (jsonSchema) => {
         if (!jsonSchema) {
