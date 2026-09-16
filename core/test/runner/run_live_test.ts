@@ -29,6 +29,7 @@ const TEST_SESSION_ID = 'test_session_id';
 class RecordingConnection implements BaseLlmConnection {
   readonly historyCalls: Content[][] = [];
   readonly contentCalls: Content[] = [];
+  readonly partialFlags: Array<boolean | undefined> = [];
   readonly realtimeCalls: Blob[] = [];
   activityStartCalls = 0;
   activityEndCalls = 0;
@@ -49,7 +50,7 @@ class RecordingConnection implements BaseLlmConnection {
   async sendHistory(history: Content[]): Promise<void> {
     this.historyCalls.push(history);
   }
-  async sendContent(content: Content): Promise<void> {
+  async sendContent(content: Content, partial?: boolean): Promise<void> {
     if (this.sendDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.sendDelayMs));
     }
@@ -61,6 +62,7 @@ class RecordingConnection implements BaseLlmConnection {
       throw this.sendContentError;
     }
     this.contentCalls.push(content);
+    this.partialFlags.push(partial);
   }
   async sendRealtime(blob: Blob): Promise<void> {
     if (this.sendDelayMs > 0) {
@@ -695,7 +697,16 @@ describe('Runner.runLive', () => {
 
     const queue = new LiveRequestQueue();
     const content: Content = {role: 'user', parts: [{text: 'hi there'}]};
+    const partialContent: Content = {
+      role: 'model',
+      parts: [{text: 'progress'}],
+    };
+    const rawContent: Content = {role: 'user', parts: [{text: 'raw'}]};
     queue.sendContent(content);
+    queue.sendContent(partialContent, true);
+    // Raw send() leaves partial unset, so it reaches the connection as
+    // undefined and the connection default applies.
+    queue.send({content: rawContent});
     queue.close();
     for await (const _ of runner.runLive({
       userId: TEST_USER_ID,
@@ -705,7 +716,12 @@ describe('Runner.runLive', () => {
       // drain
     }
 
-    expect(llm.connection!.contentCalls).toEqual([content]);
+    expect(llm.connection!.contentCalls).toEqual([
+      content,
+      partialContent,
+      rawContent,
+    ]);
+    expect(llm.connection!.partialFlags).toEqual([false, true, undefined]);
   });
 
   it('stops early when the abort signal is already aborted', async () => {
