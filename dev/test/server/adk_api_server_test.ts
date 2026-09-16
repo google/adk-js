@@ -31,6 +31,7 @@ import {z} from 'zod';
 import {
   A2A_AUTH_TOKEN_ENV_VAR,
   AdkApiServer,
+  sessionToEvalConversation,
 } from '../../src/server/adk_api_server.js';
 import {AgentLoader} from '../../src/utils/agent_loader.js';
 import {version} from '../../src/version.js';
@@ -1935,6 +1936,55 @@ describe('AdkWebServer', () => {
       expect(runRes.status).toBe(501);
       const runBody = (await runRes.json()) as {detail: string};
       expect(runBody.detail).toContain('not installed');
+    });
+
+    it('sessionToEvalConversation groups user turns, tool events, and final responses', () => {
+      const userEvent = createEvent({
+        invocationId: 'inv_1',
+        author: 'user',
+        timestamp: 1000,
+        content: {role: 'user', parts: [{text: 'Calculate 2+2'}]},
+      });
+      const callEvent = createEvent({
+        invocationId: 'inv_1',
+        author: 'agent',
+        timestamp: 1001,
+        content: {
+          role: 'model',
+          parts: [{functionCall: {name: 'add', args: {a: 2, b: 2}}}],
+        },
+      });
+      const respEvent = createEvent({
+        invocationId: 'inv_1',
+        author: 'agent',
+        timestamp: 1002,
+        content: {
+          role: 'user',
+          parts: [{functionResponse: {name: 'add', response: {result: 4}}}],
+        },
+      });
+      const finalEvent = createEvent({
+        invocationId: 'inv_1',
+        author: 'agent',
+        timestamp: 1003,
+        content: {role: 'model', parts: [{text: 'The answer is 4'}]},
+      });
+
+      const result = sessionToEvalConversation([
+        userEvent,
+        callEvent,
+        respEvent,
+        finalEvent,
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        invocationId: 'inv_1',
+        userContent: userEvent.content,
+        finalResponse: finalEvent.content,
+        intermediateData: {invocationEvents: [callEvent, respEvent]},
+        creationTimestamp: 1000,
+      });
     });
   });
 });

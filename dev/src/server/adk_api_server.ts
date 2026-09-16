@@ -126,6 +126,54 @@ interface EvalSet {
   creation_timestamp?: number;
 }
 
+/**
+ * Converts session events into evaluation conversation turns.
+ */
+export function sessionToEvalConversation(
+  events: Event[],
+): Array<Record<string, unknown>> {
+  const conversation: Array<Record<string, unknown>> = [];
+  let currentTurn: {
+    invocationId?: string;
+    userContent?: Content;
+    finalResponse?: Content;
+    intermediateData: {invocationEvents: Event[]};
+    creationTimestamp?: number;
+  } | null = null;
+
+  for (const event of events) {
+    if (event.author === 'user') {
+      if (currentTurn) {
+        conversation.push(currentTurn);
+      }
+      currentTurn = {
+        invocationId: event.invocationId,
+        userContent: event.content,
+        intermediateData: {invocationEvents: []},
+        creationTimestamp: event.timestamp,
+      };
+    } else if (currentTurn) {
+      const hasTextPart = event.content?.parts?.some(
+        (p) => typeof p.text === 'string' && p.text.length > 0,
+      );
+      const hasFunctionCall = getFunctionCalls(event).length > 0;
+      const hasFunctionResponse = getFunctionResponses(event).length > 0;
+
+      if (hasFunctionCall || hasFunctionResponse) {
+        currentTurn.intermediateData.invocationEvents.push(event);
+      } else if (hasTextPart) {
+        currentTurn.finalResponse = event.content;
+      } else {
+        currentTurn.intermediateData.invocationEvents.push(event);
+      }
+    }
+  }
+  if (currentTurn) {
+    conversation.push(currentTurn);
+  }
+  return conversation;
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -1028,7 +1076,7 @@ export class AdkApiServer {
             sessionId,
           });
           if (session) {
-            conversation = this.sessionToEvalConversation(session.events ?? []);
+            conversation = sessionToEvalConversation(session.events ?? []);
             sessionInput = {
               appName,
               userId,
@@ -1552,50 +1600,5 @@ export class AdkApiServer {
       this.evalSets[appName] = Object.create(null);
     }
     return this.evalSets[appName];
-  }
-
-  private sessionToEvalConversation(
-    events: Event[],
-  ): Array<Record<string, unknown>> {
-    const conversation: Array<Record<string, unknown>> = [];
-    let currentTurn: {
-      invocationId?: string;
-      userContent?: Content;
-      finalResponse?: Content;
-      intermediateData: {invocationEvents: Event[]};
-      creationTimestamp?: number;
-    } | null = null;
-
-    for (const event of events) {
-      if (event.author === 'user') {
-        if (currentTurn) {
-          conversation.push(currentTurn);
-        }
-        currentTurn = {
-          invocationId: event.invocationId,
-          userContent: event.content,
-          intermediateData: {invocationEvents: []},
-          creationTimestamp: event.timestamp,
-        };
-      } else if (currentTurn) {
-        const hasTextPart = event.content?.parts?.some(
-          (p) => typeof p.text === 'string' && p.text.length > 0,
-        );
-        const hasFunctionCall = getFunctionCalls(event).length > 0;
-        const hasFunctionResponse = getFunctionResponses(event).length > 0;
-
-        if (hasFunctionCall || hasFunctionResponse) {
-          currentTurn.intermediateData.invocationEvents.push(event);
-        } else if (hasTextPart) {
-          currentTurn.finalResponse = event.content;
-        } else {
-          currentTurn.intermediateData.invocationEvents.push(event);
-        }
-      }
-    }
-    if (currentTurn) {
-      conversation.push(currentTurn);
-    }
-    return conversation;
   }
 }
