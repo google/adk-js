@@ -13,6 +13,7 @@ import {
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {logger} from '../utils/logger.js';
 import {
   AppendEventRequest,
   BaseSessionService,
@@ -23,6 +24,7 @@ import {
   ListSessionsResponse,
   mergeStates,
   trimTempDeltaState,
+  upsertSessionEvent,
 } from './base_session_service.js';
 import {
   ensureDatabaseCreated,
@@ -420,18 +422,11 @@ export class DatabaseSessionService extends BaseSessionService {
         txEm.persist(userStateModel);
       }
 
-      // Stale session check. The event reload itself happens after the
-      // transaction: this transaction holds a PESSIMISTIC_WRITE lock on the
-      // session row, and reloading the full event history is the most
-      // expensive query in this method, so running it here would make every
-      // concurrent appendEvent on the session wait for an
-      // O(session history) read. Only the in-memory `session` object depends
-      // on the reload — the writes below never read `session.events` — and
-      // `session.state` is unconditionally recomputed after the commit, so
-      // deferring the reload is observationally equivalent.
-      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
-        sessionWasStale = true;
-      }
+      // Reload after the transaction: this holds a PESSIMISTIC_WRITE lock on
+      // the session row, and the reload only refreshes the in-memory
+      // `session`.
+      sessionWasStale =
+        storageSession.updateTime.getTime() > session.lastUpdateTime;
 
       if (event.actions && event.actions.stateDelta) {
         const appDelta: Record<string, unknown> = {};
@@ -493,33 +488,36 @@ export class DatabaseSessionService extends BaseSessionService {
       );
       session.state = newMergedState;
 
-      const index = session.events.findIndex((e) => e.id === event.id);
-      if (index >= 0) {
-        session.events[index] = event;
-      } else {
-        session.events.push(event);
-      }
+      upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();
     });
 
     if (sessionWasStale) {
-      const storageEvents = await em.find(
-        StorageEvent,
-        {
-          appName: session.appName,
-          userId: session.userId,
-          sessionId: session.id,
-        },
-        {orderBy: {timestamp: 'ASC'}},
-      );
-      session.events = storageEvents.map((se) => se.eventData);
-      // The reload sees the committed (trimmed) copy of the current event;
-      // put the caller's in-memory event back, as the pre-reload push did.
-      const index = session.events.findIndex((e) => e.id === event.id);
-      if (index >= 0) {
-        session.events[index] = event;
-      } else {
-        session.events.push(event);
+      // The append is already committed, so a failure here must not reject:
+      // the caller's event is durable and only the in-memory `session` would
+      // be left stale. `runner.ts` awaits this call for the user message, and
+      // rejecting would abort the run after the write landed.
+      try {
+        const storageEvents = await em.find(
+          StorageEvent,
+          {
+            appName: session.appName,
+            userId: session.userId,
+            sessionId: session.id,
+          },
+          {orderBy: {timestamp: 'ASC'}},
+        );
+        session.events = storageEvents.map((se) => se.eventData);
+        // The reload returns the committed (trimmed) copy of the current
+        // event; put the caller's own object back in its place.
+        upsertSessionEvent(session, event);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        logger.warn(
+          `Failed to reload events for stale session ${session.id} after ` +
+            `appendEvent; the event was persisted but session.events may be ` +
+            `missing concurrent appends: ${message}`,
+        );
       }
     }
 
