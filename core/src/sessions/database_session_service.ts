@@ -493,10 +493,6 @@ export class DatabaseSessionService extends BaseSessionService {
     });
 
     if (sessionWasStale) {
-      // The append is already committed, so a failure here must not reject:
-      // the caller's event is durable and only the in-memory `session` would
-      // be left stale. `runner.ts` awaits this call for the user message, and
-      // rejecting would abort the run after the write landed.
       try {
         const storageEvents = await em.find(
           StorageEvent,
@@ -508,8 +504,6 @@ export class DatabaseSessionService extends BaseSessionService {
           {orderBy: {timestamp: 'ASC'}},
         );
         session.events = storageEvents.map((se) => se.eventData);
-        // The reload returns the committed (trimmed) copy of the current
-        // event; put the caller's own object back in its place.
         upsertSessionEvent(session, event);
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
