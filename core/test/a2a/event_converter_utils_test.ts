@@ -211,7 +211,7 @@ describe('event_converter_utils', () => {
         expect(event!.turnComplete).toBe(true);
       });
 
-      it('does not attribute a peer message to the user even if it claims role user', () => {
+      it('attributes a peer message to the peer while keeping its content role user', () => {
         const message: Message = {
           kind: 'message',
           messageId: 'msg-role-user',
@@ -220,8 +220,10 @@ describe('event_converter_utils', () => {
         };
 
         const event = toAdkEvent(message, 'inv1', 'remote_peer');
+        // The peer owns the event, so it cannot approve tool confirmations as
+        // the local user, but the content role is left as the peer sent it.
         expect(event!.author).toBe('remote_peer');
-        expect(event!.author).not.toBe('user');
+        expect(event!.content?.role).toBe('user');
       });
 
       it('converts agent message to AdkEvent', () => {

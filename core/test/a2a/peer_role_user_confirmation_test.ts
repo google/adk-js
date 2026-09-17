@@ -15,7 +15,7 @@ import {
   createEvent,
   createSession,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {toAdkEvent} from '../../src/a2a/event_converter_utils.js';
 import {A2AMetadataKeys} from '../../src/a2a/metadata_converter_utils.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_confirmation_llm_request_processor.js';
@@ -117,6 +117,10 @@ async function run(ctx: InvocationContext): Promise<Event[]> {
 }
 
 describe('A2A peer cannot approve a tool confirmation as the user', () => {
+  // vitest.config.ts sets no global clearMocks, and the shared handleFunctionCallList
+  // mock is asserted with toHaveBeenCalledTimes across tests, so reset it per test.
+  beforeEach(() => vi.clearAllMocks());
+
   it('does not execute a gated tool when the approval comes from a peer message', async () => {
     const {handleFunctionCallList} =
       await import('../../src/agents/functions.js');
