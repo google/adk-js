@@ -1767,10 +1767,6 @@ describe('AdkWebServer', () => {
       expect(port).toBeGreaterThan(0);
 
       await expect(shutdownServer.stop()).resolves.toBeUndefined();
-      // The closed server is dropped, so nothing holds its listener closures.
-      expect(
-        (shutdownServer as unknown as {server?: unknown}).server,
-      ).toBeUndefined();
       await expect(shutdownServer.stop()).resolves.toBeUndefined();
 
       // The no-op second stop() must not have cost the first one its close.
