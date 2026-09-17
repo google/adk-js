@@ -5,12 +5,13 @@
  */
 
 import {
-  resetWebMCPArgEncoding,
+  Context,
+  InvocationContext,
   WebMCPDocument,
   WebMCPRegisteredTool,
   WebMCPTool,
 } from '@google/adk';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 
 const SAMPLE_TOOL: WebMCPRegisteredTool = {
   name: 'select_flight',
@@ -34,11 +35,16 @@ function docWith(executeTool: (...args: never[]) => unknown): WebMCPDocument {
   } as unknown as WebMCPDocument;
 }
 
-describe('WebMCPTool', () => {
-  beforeEach(() => {
-    resetWebMCPArgEncoding();
-  });
+/** A real Context, so request typing is checked rather than suppressed. */
+function toolContextWith(abortSignal?: AbortSignal): Context {
+  const invocationContext = {
+    abortSignal,
+    session: {state: {}},
+  } as unknown as InvocationContext;
+  return new Context({invocationContext});
+}
 
+describe('WebMCPTool', () => {
   describe('_getDeclaration', () => {
     it('should convert the JSON Schema into a Gemini declaration', () => {
       const tool = new WebMCPTool(SAMPLE_TOOL);
@@ -118,7 +124,8 @@ describe('WebMCPTool', () => {
 
       const result = await tool.runAsync({
         args: {flightId: 'SB-101'},
-      } as never);
+        toolContext: toolContextWith(),
+      });
 
       expect(result).toEqual({ok: true});
       expect(executeTool).toHaveBeenCalledTimes(1);
@@ -137,7 +144,8 @@ describe('WebMCPTool', () => {
 
       const result = await tool.runAsync({
         args: {flightId: 'SB-101'},
-      } as never);
+        toolContext: toolContextWith(),
+      });
 
       expect(result).toEqual({ok: true});
       expect(executeTool).toHaveBeenCalledTimes(2);
@@ -152,10 +160,16 @@ describe('WebMCPTool', () => {
       );
       const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
 
-      await tool.runAsync({args: {flightId: 'SB-101'}} as never);
+      await tool.runAsync({
+        args: {flightId: 'SB-101'},
+        toolContext: toolContextWith(),
+      });
       expect(executeTool).toHaveBeenCalledTimes(2);
 
-      await tool.runAsync({args: {flightId: 'SB-102'}} as never);
+      await tool.runAsync({
+        args: {flightId: 'SB-102'},
+        toolContext: toolContextWith(),
+      });
       expect(executeTool).toHaveBeenCalledTimes(3);
       expect(executeTool.mock.calls[2][1]).toBe('{"flightId":"SB-102"}');
     });
@@ -166,9 +180,9 @@ describe('WebMCPTool', () => {
       });
       const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
 
-      await expect(tool.runAsync({args: {}} as never)).rejects.toThrow(
-        'Flight service unavailable',
-      );
+      await expect(
+        tool.runAsync({args: {}, toolContext: toolContextWith()}),
+      ).rejects.toThrow('Flight service unavailable');
       expect(executeTool).toHaveBeenCalledTimes(1);
     });
 
@@ -183,8 +197,8 @@ describe('WebMCPTool', () => {
 
       await tool.runAsync({
         args: {},
-        toolContext: {abortSignal: controller.signal},
-      } as never);
+        toolContext: toolContextWith(controller.signal),
+      });
 
       expect(executeTool.mock.calls[0][2]).toEqual({
         signal: controller.signal,
@@ -193,9 +207,9 @@ describe('WebMCPTool', () => {
 
     it('should throw a clear error when WebMCP is unavailable', async () => {
       const tool = new WebMCPTool(SAMPLE_TOOL, undefined, {});
-      await expect(tool.runAsync({args: {}} as never)).rejects.toThrow(
-        /document\.modelContext is unavailable/,
-      );
+      await expect(
+        tool.runAsync({args: {}, toolContext: toolContextWith()}),
+      ).rejects.toThrow(/document\.modelContext is unavailable/);
     });
   });
 });

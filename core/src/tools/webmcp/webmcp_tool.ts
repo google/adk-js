@@ -36,12 +36,17 @@ type WebMCPInputSchema = {
   required?: string[];
 };
 
-let negotiatedArgEncoding: ArgEncoding | undefined;
-
-/** Clears the negotiated encoding. Exported for tests. */
-export function resetWebMCPArgEncoding(): void {
-  negotiatedArgEncoding = undefined;
-}
+/**
+ * The encoding negotiated per model context.
+ *
+ * Scoped to the context rather than the module because the answer is a
+ * property of the browser that owns it: a cross-origin iframe reached through
+ * `fromOrigins` may be a different implementation than the top-level document.
+ * Keying it here also means the result is still shared by every tool from the
+ * same page, so the probe happens once, and no module-global has to be reset
+ * between tests.
+ */
+const argEncodingByContext = new WeakMap<object, ArgEncoding>();
 
 /** Whether a result or error means the browser could not read the arguments. */
 function isArgParseFailure(value: unknown): boolean {
@@ -60,7 +65,7 @@ function isArgParseFailure(value: unknown): boolean {
 /**
  * A tool registered by the page on `document.modelContext`.
  *
- * Converts the tool's JSON Schema into a Gemini {@link FunctionDeclaration} and
+ * Converts the tool's JSON Schema into a Gemini `FunctionDeclaration` and
  * executes it through `document.modelContext.executeTool()`, so the page runs
  * its own handler and updates its own UI.
  *
@@ -154,8 +159,9 @@ export class WebMCPTool extends BaseTool {
         options,
       );
 
-    if (negotiatedArgEncoding) {
-      return await invoke(negotiatedArgEncoding);
+    const known = argEncodingByContext.get(modelContext);
+    if (known) {
+      return await invoke(known);
     }
 
     // Probe the modern object form, falling back to the legacy JSON string. A
@@ -165,7 +171,7 @@ export class WebMCPTool extends BaseTool {
     try {
       firstResult = await invoke('object');
       if (!isArgParseFailure(firstResult)) {
-        negotiatedArgEncoding = 'object';
+        argEncodingByContext.set(modelContext, 'object');
         return firstResult;
       }
     } catch (err) {
@@ -178,8 +184,8 @@ export class WebMCPTool extends BaseTool {
       // Neither encoding worked; surface the original complaint.
       return firstResult;
     }
-    negotiatedArgEncoding = 'json-string';
-    logger.info(
+    argEncodingByContext.set(modelContext, 'json-string');
+    logger.debug(
       'This browser expects JSON-string WebMCP tool arguments; using that encoding.',
     );
     return retried;
