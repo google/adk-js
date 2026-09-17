@@ -224,9 +224,11 @@ export class GcsArtifactService implements BaseArtifactService {
     const [files] = await bucket.getFiles({prefix: searchPrefix});
     const versions = [];
     for (const file of files) {
-      const version = parseVersion(file.name, searchPrefix);
-      if (version !== undefined) {
-        versions.push(version);
+      // GCS is a flat namespace: 'doc/' also matches 'doc/nested/3', a version
+      // of the distinct artifact 'doc/nested'. Only '{prefix}{digits}' is ours.
+      const suffix = file.name.slice(searchPrefix.length);
+      if (/^\d+$/.test(suffix)) {
+        versions.push(Number(suffix));
       }
     }
 
@@ -306,29 +308,6 @@ function getFileName({
     : `${appName}/${userId}/${sessionId}/${cleanFilename}`;
 
   return version !== undefined ? `${prefix}/${version}` : prefix;
-}
-
-/**
- * Extracts the version an object holds for the artifact denoted by `prefix`.
- *
- * GCS has a flat namespace, so an artifact's prefix is also a prefix of every
- * artifact nested under it: filenames may contain '/', so scanning 'doc/' for
- * versions of 'doc' also returns 'doc/nested/3', version 3 of the distinct
- * artifact 'doc/nested'. Only a name of exactly `{prefix}{version}` holds a
- * version of this artifact.
- *
- * @param name The full object name, which starts with `prefix`.
- * @param prefix The artifact's object prefix, including the trailing '/'.
- * @returns The version, or undefined if the object belongs to another artifact.
- */
-function parseVersion(name: string, prefix: string): number | undefined {
-  const suffix = name.slice(prefix.length);
-  // A further '/' means a nested artifact; a non-digit means a foreign object.
-  if (!/^\d+$/.test(suffix)) {
-    return undefined;
-  }
-
-  return Number(suffix);
 }
 
 function extractArtifactKeys(
