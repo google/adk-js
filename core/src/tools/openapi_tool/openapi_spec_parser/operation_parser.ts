@@ -35,7 +35,7 @@ export class OperationParser {
     this.preservePropertyNames = options.preservePropertyNames ?? false;
     this.processOperationParameters();
     this.processRequestBody();
-    this.processReturnValue();
+    this.returnValue = parseReturnValue(this.operation);
     this.dedupeParamNames();
   }
 
@@ -140,36 +140,6 @@ export class OperationParser {
     }
   }
 
-  private processReturnValue() {
-    const responses = this.operation.responses || {};
-    // Find first 2xx response
-    const validCodes = Object.keys(responses).filter((k) => k.startsWith('2'));
-    const min20x = validCodes.sort()[0];
-
-    let returnSchema: OpenAPIV3.SchemaObject = {};
-
-    if (min20x) {
-      const response = responses[min20x];
-      if (!('$ref' in response) && response.content) {
-        const firstMimeType = Object.keys(response.content)[0];
-        if (firstMimeType) {
-          const schema = response.content[firstMimeType].schema;
-          if (schema && !('$ref' in schema)) {
-            returnSchema = schema;
-          }
-        }
-      }
-    }
-
-    this.returnValue = {
-      originalName: '',
-      paramLocation: '',
-      paramSchema: returnSchema,
-      required: true,
-      name: 'return',
-    };
-  }
-
   private dedupeParamNames() {
     const nameCounts = new Map<string, number>();
     for (const param of this.params) {
@@ -241,4 +211,46 @@ export class OperationParser {
   public getDescription(): string {
     return this.operation.description || this.operation.summary || '';
   }
+}
+
+/**
+ * Builds the operation's return value from the lowest 2xx response.
+ *
+ * A response can declare several media types and only some of them carry a
+ * schema, so the scan continues past an entry without one. Mirrors
+ * `_process_return_value` in adk-python.
+ *
+ * @param operation The OpenAPI operation to read the responses from.
+ * @returns The return parameter, with an empty schema when no media type of
+ *   the lowest 2xx response declares one.
+ */
+export function parseReturnValue(
+  operation: OpenAPIV3.OperationObject,
+): ApiParameter {
+  const responses = operation.responses || {};
+  const validCodes = Object.keys(responses).filter((k) => k.startsWith('2'));
+  const min20x = validCodes.sort()[0];
+
+  let returnSchema: OpenAPIV3.SchemaObject = {};
+
+  if (min20x) {
+    const response = responses[min20x];
+    if (!('$ref' in response) && response.content) {
+      for (const mediaType of Object.values(response.content)) {
+        const schema = mediaType.schema;
+        if (schema && !('$ref' in schema)) {
+          returnSchema = schema;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    originalName: '',
+    paramLocation: '',
+    paramSchema: returnSchema,
+    required: true,
+    name: 'return',
+  };
 }
