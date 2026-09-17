@@ -12,6 +12,7 @@ import {
   BaseSessionService,
   createEvent,
   createEventActions,
+  createSession,
   Runner,
   RunnerConfig,
   Session,
@@ -218,14 +219,13 @@ describe('A2AAgentExecutor', () => {
   });
 
   it('should publish the task and working events with ADK session metadata', async () => {
-    const mockSession = {
-      id: 'session-id',
-      userId: 'test-user',
-      appName: 'test-app',
-      events: [],
-      state: {},
-    } as unknown as Session;
-    mockSessionService.getSession.mockResolvedValue(mockSession);
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'session-id',
+        userId: 'test-user',
+        appName: 'test-app',
+      }),
+    );
 
     async function* mockRunAsync() {
       yield createEvent({
@@ -245,10 +245,7 @@ describe('A2AAgentExecutor', () => {
     }) as unknown as () => Runner);
 
     const executor = new A2AAgentExecutor({
-      runner: {
-        appName: 'test-app',
-        sessionService: mockSessionService,
-      } as unknown as RunnerConfig,
+      runner: {appName: 'test-app', sessionService: mockSessionService},
     });
 
     await executor.execute(createRequestContext(), mockEventBus);
@@ -264,20 +261,16 @@ describe('A2AAgentExecutor', () => {
   });
 
   it('should publish the input-required event with ADK session metadata', async () => {
-    const mockSession = {
-      id: 'session-id',
-      userId: 'test-user',
-      appName: 'test-app',
-      events: [],
-      state: {},
-    } as unknown as Session;
-    mockSessionService.getSession.mockResolvedValue(mockSession);
+    mockSessionService.getSession.mockResolvedValue(
+      createSession({
+        id: 'session-id',
+        userId: 'test-user',
+        appName: 'test-app',
+      }),
+    );
 
     const executor = new A2AAgentExecutor({
-      runner: {
-        appName: 'test-app',
-        sessionService: mockSessionService,
-      } as unknown as RunnerConfig,
+      runner: {appName: 'test-app', sessionService: mockSessionService},
     });
 
     const ctx = createRequestContext({
