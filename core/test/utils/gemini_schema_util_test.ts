@@ -392,6 +392,81 @@ describe('toGeminiSchema', () => {
     });
   });
 
+  it('drops a null member from a string-typed enum', () => {
+    const input = {
+      type: 'string' as const,
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: ['a'],
+    });
+  });
+
+  it('drops a null member from a nullable string enum', () => {
+    const input = {
+      type: ['string', 'null'],
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      nullable: true,
+      enum: ['a'],
+    });
+  });
+
+  it('drops a null enum member on a nested property', () => {
+    const input = {
+      type: 'object' as const,
+      properties: {
+        status: {type: 'string', enum: ['open', null]},
+      },
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        status: {type: Type.STRING, enum: ['open']},
+      },
+    });
+  });
+
+  it('yields an empty enum when every string enum member is null', () => {
+    const input = {
+      type: 'string' as const,
+      enum: [null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: [],
+    });
+  });
+
+  it('keeps stringified members on a non-string enum', () => {
+    const input = {
+      type: 'integer' as const,
+      enum: [1, 2],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.INTEGER,
+      enum: ['1', '2'],
+    });
+  });
+
   it('handles const-only schema with string value', () => {
     const input = {
       const: 'fixed-value',
