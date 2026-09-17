@@ -134,10 +134,7 @@ export class A2AAgentExecutor implements AgentExecutor {
           eventBus,
           event: {
             ...unansweredRequestEvent,
-            metadata: {
-              ...unansweredRequestEvent.metadata,
-              ...getA2ASessionMetadata(executorContext),
-            },
+            metadata: getA2ASessionMetadata(executorContext),
           },
         });
 

@@ -241,7 +241,7 @@ describe('A2AAgentExecutor', () => {
         appName: config?.appName,
         sessionService: config?.sessionService,
         runAsync: mockRunAsync,
-      } as unknown as Runner;
+      };
     }) as unknown as () => Runner);
 
     const executor = new A2AAgentExecutor({
