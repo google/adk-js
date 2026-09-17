@@ -1189,12 +1189,20 @@ export class AdkApiServer {
   }
 
   stop(): Promise<void> {
-    if (!this.server) {
+    const server = this.server;
+    // `listen()` hands back the server before the socket is bound, so a
+    // `start()` that failed with EADDRINUSE leaves one here, and an already
+    // closed server stays assigned too. `close()` on either reports
+    // ERR_SERVER_NOT_RUNNING, which would make a second `stop()` -- or a
+    // teardown helper stopping defensively -- reject for no reason. Neither
+    // has a listener left to close, so both are already stopped.
+    if (!server?.listening) {
       return Promise.resolve();
     }
+    this.server = undefined;
 
     return new Promise((resolve, reject) => {
-      this.server!.close((err) => {
+      server.close((err) => {
         if (err) {
           reject(err);
           return;
