@@ -132,7 +132,13 @@ export class A2AAgentExecutor implements AgentExecutor {
         await this.publishFinalTaskStatus({
           executorContext,
           eventBus,
-          event: unansweredRequestEvent,
+          event: {
+            ...unansweredRequestEvent,
+            metadata: {
+              ...unansweredRequestEvent.metadata,
+              ...getA2ASessionMetadata(executorContext),
+            },
+          },
         });
 
         return;
@@ -144,6 +150,7 @@ export class A2AAgentExecutor implements AgentExecutor {
             taskId: ctx.taskId,
             contextId: ctx.contextId,
             message: a2aUserMessage,
+            metadata: getA2ASessionMetadata(executorContext),
           }),
         );
       }
@@ -152,6 +159,7 @@ export class A2AAgentExecutor implements AgentExecutor {
         createTaskWorkingEvent({
           taskId: ctx.taskId,
           contextId: ctx.contextId,
+          metadata: getA2ASessionMetadata(executorContext),
         }),
       );
 

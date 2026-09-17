@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {TaskStatusUpdateEvent, TextPart} from '@a2a-js/sdk';
+import {Task, TaskStatusUpdateEvent, TextPart} from '@a2a-js/sdk';
 import {ExecutionEventBus, RequestContext} from '@a2a-js/sdk/server';
 import {
   A2AAgentExecutor,
@@ -31,6 +31,13 @@ vi.mock('../../src/runner/runner.js', async (importOriginal) => {
     })),
   };
 });
+
+// Wire contract, mirroring expected_metadata in the adk-python executor test.
+const EXPECTED_SESSION_METADATA = {
+  'adk_app_name': 'test-app',
+  'adk_user_id': 'test-user',
+  'adk_session_id': 'session-id',
+};
 
 describe('A2AAgentExecutor', () => {
   let mockSessionService: Mocked<BaseSessionService>;
@@ -208,6 +215,99 @@ describe('A2AAgentExecutor', () => {
       .calls[0][0] as TaskStatusUpdateEvent;
     expect(event.kind).toBe('status-update');
     expect(event.status.state).toBe('input-required');
+  });
+
+  it('should publish the task and working events with ADK session metadata', async () => {
+    const mockSession = {
+      id: 'session-id',
+      userId: 'test-user',
+      appName: 'test-app',
+      events: [],
+      state: {},
+    } as unknown as Session;
+    mockSessionService.getSession.mockResolvedValue(mockSession);
+
+    async function* mockRunAsync() {
+      yield createEvent({
+        author: 'model',
+        content: {role: 'model', parts: [{text: 'response'}]},
+        partial: false,
+        actions: createEventActions(),
+      });
+    }
+
+    vi.mocked(Runner).mockImplementation(((config: RunnerConfig) => {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    }) as unknown as () => Runner);
+
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+    });
+
+    await executor.execute(createRequestContext(), mockEventBus);
+
+    const task = mockEventBus.publish.mock.calls[0][0] as Task;
+    expect(task.kind).toBe('task');
+    expect(task.metadata).toEqual(EXPECTED_SESSION_METADATA);
+
+    const workingEvent = mockEventBus.publish.mock
+      .calls[1][0] as TaskStatusUpdateEvent;
+    expect(workingEvent.status.state).toBe('working');
+    expect(workingEvent.metadata).toEqual(EXPECTED_SESSION_METADATA);
+  });
+
+  it('should publish the input-required event with ADK session metadata', async () => {
+    const mockSession = {
+      id: 'session-id',
+      userId: 'test-user',
+      appName: 'test-app',
+      events: [],
+      state: {},
+    } as unknown as Session;
+    mockSessionService.getSession.mockResolvedValue(mockSession);
+
+    const executor = new A2AAgentExecutor({
+      runner: {
+        appName: 'test-app',
+        sessionService: mockSessionService,
+      } as unknown as RunnerConfig,
+    });
+
+    const ctx = createRequestContext({
+      task: {
+        kind: 'task',
+        id: 'test-task',
+        contextId: 'test-context',
+        status: {
+          state: 'input-required',
+          message: {
+            role: 'agent',
+            parts: [
+              {
+                kind: 'data',
+                metadata: {'adk_type': 'function_call'},
+                data: {id: 'fc-123', name: 'mockFunction'},
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    await executor.execute(ctx, mockEventBus);
+
+    expect(mockEventBus.publish).toHaveBeenCalledTimes(1);
+    const event = mockEventBus.publish.mock
+      .calls[0][0] as TaskStatusUpdateEvent;
+    expect(event.status.state).toBe('input-required');
+    expect(event.metadata).toEqual(EXPECTED_SESSION_METADATA);
   });
 
   it('should handle unrecoverable runner errors properly', async () => {
