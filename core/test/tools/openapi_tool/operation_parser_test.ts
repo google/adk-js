@@ -7,7 +7,6 @@
 import {OperationParser} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
-import {parseReturnValue} from '../../../src/tools/openapi_tool/openapi_spec_parser/operation_parser.js';
 
 describe('OperationParser', () => {
   it('should throw error if operationId is missing', () => {
@@ -234,10 +233,10 @@ describe('OperationParser', () => {
       },
     };
 
-    const returnValue = parseReturnValue(op);
+    const returnValue = new OperationParser(op).getReturnValue();
 
-    expect(returnValue.paramSchema.type).toBe('object');
-    expect(returnValue.paramSchema.properties?.['id']).toBeDefined();
+    expect(returnValue?.paramSchema.type).toBe('object');
+    expect(returnValue?.paramSchema.properties?.['id']).toBeDefined();
   });
 
   it('should keep an empty return schema when no media type declares a schema', () => {
@@ -251,10 +250,10 @@ describe('OperationParser', () => {
       },
     };
 
-    const returnValue = parseReturnValue(op);
+    const returnValue = new OperationParser(op).getReturnValue();
 
-    expect(returnValue.paramSchema).toEqual({});
-    expect(returnValue.name).toBe('return');
+    expect(returnValue?.paramSchema).toEqual({});
+    expect(returnValue?.name).toBe('return');
   });
 
   it('should scan the media types of the lowest 2xx response only', () => {
@@ -275,9 +274,9 @@ describe('OperationParser', () => {
       },
     };
 
-    const returnValue = parseReturnValue(op);
+    const returnValue = new OperationParser(op).getReturnValue();
 
-    expect(returnValue.paramSchema.type).toBe('boolean');
+    expect(returnValue?.paramSchema.type).toBe('boolean');
   });
 
   it('should skip a media type whose schema is an unresolved reference', () => {
@@ -294,8 +293,8 @@ describe('OperationParser', () => {
       },
     };
 
-    const returnValue = parseReturnValue(op);
+    const returnValue = new OperationParser(op).getReturnValue();
 
-    expect(returnValue.paramSchema.type).toBe('string');
+    expect(returnValue?.paramSchema.type).toBe('string');
   });
 });
