@@ -14,7 +14,7 @@ import {
 
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
-import {isGemini3xFlashLive} from '../utils/model_name.js';
+import {isGemini3xLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
@@ -43,7 +43,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     );
 
     if (contents.length > 0) {
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       this.geminiSession.sendClientContent({
         turns: contents,
         turnComplete: isGemini3x
@@ -79,7 +79,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       });
     } else {
       logger.debug('Sending LLM new content', content);
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
         logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
@@ -99,7 +99,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob:', blob);
-    const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+    const isGemini3x = isGemini3xLive(this.modelVersion);
     const isNativeAudio = this.modelVersion?.includes('native-audio');
 
     if (isGemini3x || isNativeAudio) {

@@ -95,17 +95,34 @@ export function isGemini2OrAbove(modelString: string): boolean {
 }
 
 /**
- * Check if the model is a Gemini 3.x Flash Live model.
+ * Check if the model is a Gemini 3.x Live model.
+ *
+ * Matches the whole `gemini-3.N-*live*` family, not just the `-flash-live`
+ * spelling: ids such as `gemini-3.8-live` and `gemini-3.5-transcribe-live` are
+ * Live models too, and they need the same realtime handling. Non-live 3.x
+ * models such as `gemini-3.0-flash` are still excluded.
  *
  * @param modelString Either a simple model name or path-based model name
- * @return true if it's a Gemini 3.x Flash Live model, false otherwise.
+ * @return true if it's a Gemini 3.x Live model, false otherwise.
  */
-export function isGemini3xFlashLive(modelString: string | undefined): boolean {
+export function isGemini3xLive(modelString: string | undefined): boolean {
   if (!modelString) {
     return false;
   }
   const modelName = extractModelName(modelString);
-  return modelName.startsWith('gemini-3.') && modelName.includes('-flash-live');
+  return modelName.startsWith('gemini-3.') && modelName.includes('-live');
+}
+
+/**
+ * Check if the model is a Gemini 3.x Live model.
+ *
+ * @param modelString Either a simple model name or path-based model name
+ * @return true if it's a Gemini 3.x Live model, false otherwise.
+ * @deprecated Renamed to {@link isGemini3xLive}, which covers every Gemini 3.x
+ *   Live id rather than only those spelled `-flash-live`.
+ */
+export function isGemini3xFlashLive(modelString: string | undefined): boolean {
+  return isGemini3xLive(modelString);
 }
 
 /**

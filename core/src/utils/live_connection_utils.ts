@@ -11,7 +11,7 @@ import {
   Part,
 } from '@google/genai';
 import {LlmResponse} from '../models/llm_response.js';
-import {isGemini3xFlashLive} from './model_name.js';
+import {isGemini3xLive} from './model_name.js';
 
 /**
  * Aggregator and mapper for Gemini Live WebSocket server messages.
@@ -243,7 +243,7 @@ export class LiveResponseAggregator {
         );
       }
 
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       if (isGemini3x && this.toolCallParts.length > 0) {
         yield {
           content: {role: 'model', parts: this.toolCallParts},
