@@ -8,7 +8,7 @@ import {OpenAPIV3} from 'openapi-types';
 import {Context} from '../../../agents/context.js';
 import {AuthCredential} from '../../../auth/auth_credential.js';
 import {
-  credentialWithoutSecrets,
+  credentialWithoutClientSecret,
   withConfiguredClient,
 } from '../../../auth/auth_handler.js';
 import {AuthConfig} from '../../../auth/auth_tool.js';
@@ -126,9 +126,15 @@ export class ToolAuthHandler {
     if (authResponseCredential || result.wasExchanged) {
       const key = store.getCredentialKey(this.authScheme);
       // This is written to session state, which the client can read, so the
-      // cached copy keeps the access token but not the client secret that
-      // was merged in to obtain it.
-      store.storeCredential(key, credentialWithoutSecrets(result.credential)!);
+      // cached copy drops the OAuth2 client secret that was merged in to obtain
+      // the access token. It keeps every other secret: for apiKey, http and
+      // serviceAccount the secret is the credential itself, so stripping it
+      // would cache a credential that the next invocation reads back and then
+      // sends an unauthenticated request with.
+      store.storeCredential(
+        key,
+        credentialWithoutClientSecret(result.credential)!,
+      );
     }
 
     return {state: 'done', authCredential: result.credential};

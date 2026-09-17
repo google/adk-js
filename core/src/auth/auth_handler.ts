@@ -31,7 +31,37 @@ export function credentialWithoutSecrets(
     redacted.http.credentials.password = undefined;
   }
   if (redacted.serviceAccount?.serviceAccountCredential) {
+    // privateKey is a required `string` on the public ServiceAccountCredential
+    // interface, so it is emptied rather than set undefined like the other
+    // three. Both remove the key; making it undefined would mean widening the
+    // public field to optional, which is more than this change should carry.
     redacted.serviceAccount.serviceAccountCredential.privateKey = '';
+  }
+  return redacted;
+}
+
+/**
+ * Removes only the OAuth2 client secret from a credential.
+ *
+ * This is for a credential that is cached into session state after a token
+ * exchange. The client secret is the agent's own secret and is merged in only
+ * to obtain the access token, so it must not be persisted where the client can
+ * read it. Every other secret is left intact: for `apiKey`, `http` and
+ * `serviceAccount` the secret is the credential itself, so stripping it would
+ * cache a credential that can no longer authenticate, and the next invocation
+ * would read it back and make an unauthenticated request. Unlike
+ * [credentialWithoutSecrets], which redacts a credential for an event the
+ * client reads, this keeps what the next invocation needs.
+ */
+export function credentialWithoutClientSecret(
+  credential: AuthCredential | undefined,
+): AuthCredential | undefined {
+  if (!credential) {
+    return credential;
+  }
+  const redacted = structuredClone(credential);
+  if (redacted.oauth2) {
+    redacted.oauth2.clientSecret = undefined;
   }
   return redacted;
 }

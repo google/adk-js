@@ -180,6 +180,102 @@ describe('ToolAuthHandler', () => {
     expect(secondContext.getAuthResponse).not.toHaveBeenCalled();
   });
 
+  it('caches an apiKey credential with its key intact so a later invocation still authenticates', async () => {
+    // The credential this run caches is an apiKey, where the key is the secret
+    // itself. Only the OAuth2 client secret may be dropped on the way into
+    // session state; stripping the key would cache a credential that the next
+    // invocation reads back and then sends unauthenticated.
+    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(
+      () =>
+        ({
+          exchange: vi.fn().mockResolvedValue({
+            credential: {
+              authType: AuthCredentialTypes.API_KEY,
+              apiKey: 'secret-key',
+            },
+            wasExchanged: true,
+          }),
+        }) as unknown as AutoAuthCredentialExchanger,
+    );
+
+    const firstState = new State();
+    const firstContext = {
+      state: firstState,
+      getAuthResponse: vi.fn().mockReturnValue({
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'secret-key',
+      }),
+    } as unknown as Context;
+    const first = await new ToolAuthHandler(firstContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    }).prepareAuthCredentials();
+    expect(first.authCredential?.apiKey).toBe('secret-key');
+
+    const secondState = new State(firstState.toRecord());
+    const secondContext = {
+      state: secondState,
+      getAuthResponse: vi.fn(),
+    } as unknown as Context;
+    const second = await new ToolAuthHandler(secondContext, {
+      type: 'apiKey',
+      name: 'X-API-Key',
+      in: 'header',
+    }).prepareAuthCredentials();
+
+    expect(second.state).toBe('done');
+    expect(second.authCredential?.apiKey).toBe('secret-key');
+    expect(secondContext.getAuthResponse).not.toHaveBeenCalled();
+  });
+
+  it('caches an http credential with its password intact so a later invocation still authenticates', async () => {
+    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(
+      () =>
+        ({
+          exchange: vi.fn().mockResolvedValue({
+            credential: {
+              authType: AuthCredentialTypes.HTTP,
+              http: {
+                scheme: 'basic',
+                credentials: {username: 'u', password: 'secret-pw'},
+              },
+            },
+            wasExchanged: true,
+          }),
+        }) as unknown as AutoAuthCredentialExchanger,
+    );
+
+    const firstState = new State();
+    const firstContext = {
+      state: firstState,
+      getAuthResponse: vi.fn().mockReturnValue({
+        authType: AuthCredentialTypes.HTTP,
+        http: {
+          scheme: 'basic',
+          credentials: {username: 'u', password: 'secret-pw'},
+        },
+      }),
+    } as unknown as Context;
+    await new ToolAuthHandler(firstContext, {
+      type: 'http',
+      scheme: 'basic',
+    }).prepareAuthCredentials();
+
+    const secondState = new State(firstState.toRecord());
+    const secondContext = {
+      state: secondState,
+      getAuthResponse: vi.fn(),
+    } as unknown as Context;
+    const second = await new ToolAuthHandler(secondContext, {
+      type: 'http',
+      scheme: 'basic',
+    }).prepareAuthCredentials();
+
+    expect(second.state).toBe('done');
+    expect(second.authCredential?.http?.credentials.password).toBe('secret-pw');
+  });
+
   it('uses the credential the tool was configured with instead of requesting one', async () => {
     const mockContext = {
       state: new State(),
