@@ -429,7 +429,7 @@ describe('toGeminiSchema', () => {
       },
     };
 
-    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+    const schema = toGeminiSchema(input);
 
     expect(schema).toEqual({
       type: Type.OBJECT,
@@ -464,6 +464,33 @@ describe('toGeminiSchema', () => {
     expect(schema).toEqual({
       type: Type.INTEGER,
       enum: ['1', '2'],
+    });
+  });
+
+  it('drops a null member from an integer-typed enum', () => {
+    const input = {
+      type: 'integer' as const,
+      enum: [1, null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.INTEGER,
+      enum: ['1'],
+    });
+  });
+
+  it('drops a null member from an enum with no declared type', () => {
+    const input = {
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.TYPE_UNSPECIFIED,
+      enum: ['a'],
     });
   });
 
