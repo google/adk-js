@@ -85,7 +85,7 @@ export class LoopAgent extends BaseAgent<LoopAgentConfig> {
 
           yield event;
 
-          if (event.actions.escalate) {
+          if (event.actions.escalate || context.shouldPauseInvocation(event)) {
             shouldExit = true;
           }
         }
