@@ -408,4 +408,103 @@ describe('GcsArtifactService', () => {
       );
     });
   });
+
+  describe('nested artifacts', () => {
+    const sessionKey = {
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'test-session',
+    };
+
+    it('does not count a nested artifact versions as the parent versions', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      for (let i = 0; i < 3; i++) {
+        await service.saveArtifact({
+          ...sessionKey,
+          filename: 'doc/nested',
+          artifact: {text: `nested v${i}`},
+        });
+      }
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc'}),
+      ).toEqual([0]);
+
+      const loaded = await service.loadArtifact({
+        ...sessionKey,
+        filename: 'doc',
+      });
+      expect(loaded?.text).toBe('parent v0');
+
+      const nextVersion = await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v1'},
+      });
+      expect(nextVersion).toBe(1);
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc/nested'}),
+      ).toEqual([0, 1, 2]);
+    });
+
+    it('excludes a nested artifact from listArtifactVersions', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+        artifact: {text: 'nested v0'},
+      });
+
+      const versions = await service.listArtifactVersions({
+        ...sessionKey,
+        filename: 'doc',
+      });
+
+      expect(versions.map((v) => v.version)).toEqual([0]);
+      expect(versions[0].canonicalUri).toMatch(/\/test-session\/doc\/0$/);
+    });
+
+    it('keeps a nested artifact when the parent is deleted', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+        artifact: {text: 'nested v0'},
+      });
+
+      await service.deleteArtifact({...sessionKey, filename: 'doc'});
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc'}),
+      ).toEqual([]);
+
+      const nested = await service.loadArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+      });
+      expect(nested?.text).toBe('nested v0');
+    });
+  });
 });

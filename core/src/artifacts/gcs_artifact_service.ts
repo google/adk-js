@@ -224,10 +224,11 @@ export class GcsArtifactService implements BaseArtifactService {
     const [files] = await bucket.getFiles({prefix: searchPrefix});
     const versions = [];
     for (const file of files) {
-      const version = file.name.split('/').pop()!;
-      const v = parseInt(version, 10);
-      if (!isNaN(v)) {
-        versions.push(v);
+      // GCS is a flat namespace: 'doc/' also matches 'doc/nested/3', a version
+      // of the distinct artifact 'doc/nested'. Only '{prefix}{digits}' is ours.
+      const suffix = file.name.slice(searchPrefix.length);
+      if (/^\d+$/.test(suffix)) {
+        versions.push(Number(suffix));
       }
     }
 
