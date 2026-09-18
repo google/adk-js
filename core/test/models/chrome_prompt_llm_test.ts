@@ -491,3 +491,108 @@ describe('stripAdkIdentityPreamble', () => {
     );
   });
 });
+
+/**
+ * A reply that stops before its closing brace.
+ *
+ * Every string here was produced by Gemini Nano during a demo run, or is a
+ * one-character variation on one that was. The first is verbatim: the prose
+ * finished, the object did not, and the panel printed the envelope.
+ */
+describe('ChromeBuiltInLlm and a reply that does not close', () => {
+  const TRUNCATED =
+    '{"kind":"final","text":"You can return unworn items within 60 days for ' +
+    'a full refund. Return shipping is free in the UK and the US.","';
+
+  it('closes every branch of the tool-choice schema', async () => {
+    const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+    await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    const constraint = fake.promptCalls[0]!.options?.responseConstraint as {
+      anyOf: Array<Record<string, unknown>>;
+    };
+    // Without this, `,"` is as legal as `}` once the last required key is
+    // written, so the object never has to close and the reply truncates.
+    for (const branch of constraint.anyOf) {
+      expect(branch['additionalProperties']).toBe(false);
+    }
+  });
+
+  it("leaves a tool's own argument schema open", async () => {
+    // Those schemas belong to the caller. Some accept keys they do not list,
+    // and forbidding them here would make a valid call impossible to express.
+    const fake = fakeLanguageModel(JSON.stringify({kind: 'final', text: 'x'}));
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+    await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    const constraint = fake.promptCalls[0]!.options?.responseConstraint as {
+      anyOf: Array<{properties?: {args?: Record<string, unknown>}}>;
+    };
+    const toolBranch = constraint.anyOf.find((b) => b.properties?.args);
+    expect(
+      toolBranch?.properties?.args?.['additionalProperties'],
+    ).toBeUndefined();
+  });
+
+  it('recovers the answer instead of showing the envelope', async () => {
+    const fake = fakeLanguageModel(TRUNCATED);
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+
+    const responses = await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    const text = responses[0]!.content?.parts?.[0]?.text ?? '';
+    expect(text).toBe(
+      'You can return unworn items within 60 days for a full refund. ' +
+        'Return shipping is free in the UK and the US.',
+    );
+    expect(text).not.toContain('"kind"');
+    expect(text).not.toContain('{');
+  });
+
+  it('keeps escapes that the truncation cut short', async () => {
+    const fake = fakeLanguageModel(
+      '{"kind":"final","text":"caf\\u00e9 is \\"open\\"',
+    );
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+
+    const responses = await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    expect(responses[0]!.content?.parts?.[0]?.text).toBe('café is "open"');
+  });
+
+  it('says so plainly when a broken envelope holds no answer', async () => {
+    const fake = fakeLanguageModel('{"kind":"fin');
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+
+    const responses = await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    const text = responses[0]!.content?.parts?.[0]?.text ?? '';
+    expect(text).toBe(
+      'The model started an answer and did not finish it. Ask again.',
+    );
+  });
+
+  it('still passes through prose that was never JSON', async () => {
+    const fake = fakeLanguageModel('We have two waterproof jackets.');
+    const llm = new ChromeBuiltInLlm({languageModel: fake.factory});
+
+    const responses = await collect(
+      llm.generateContentAsync(request({config: {tools: [searchTool]}})),
+    );
+
+    expect(responses[0]!.content?.parts?.[0]?.text).toBe(
+      'We have two waterproof jackets.',
+    );
+  });
+});
