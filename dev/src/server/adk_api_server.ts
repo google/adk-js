@@ -109,6 +109,71 @@ interface ServerOptions {
   registerProcessors?: (tracerProvider: TracerProvider) => void;
 }
 
+interface EvalCase {
+  evalId: string;
+  conversation: Array<Record<string, unknown>>;
+  sessionInput?: Record<string, unknown>;
+  creationTimestamp?: number;
+}
+
+interface EvalSet {
+  eval_set_id: string;
+  name?: string;
+  description?: string;
+  model_execution_mode?: string;
+  tool_execution_mode?: string;
+  eval_cases: EvalCase[];
+  creation_timestamp?: number;
+}
+
+/**
+ * Converts session events into evaluation conversation turns.
+ */
+export function sessionToEvalConversation(
+  events: Event[],
+): Array<Record<string, unknown>> {
+  const conversation: Array<Record<string, unknown>> = [];
+  let currentTurn: {
+    invocationId?: string;
+    userContent?: Content;
+    finalResponse?: Content;
+    intermediateData: {invocationEvents: Event[]};
+    creationTimestamp?: number;
+  } | null = null;
+
+  for (const event of events) {
+    if (event.author === 'user') {
+      if (currentTurn) {
+        conversation.push(currentTurn);
+      }
+      currentTurn = {
+        invocationId: event.invocationId,
+        userContent: event.content,
+        intermediateData: {invocationEvents: []},
+        creationTimestamp: event.timestamp,
+      };
+    } else if (currentTurn) {
+      const hasTextPart = event.content?.parts?.some(
+        (p) => typeof p.text === 'string' && p.text.length > 0,
+      );
+      const hasFunctionCall = getFunctionCalls(event).length > 0;
+      const hasFunctionResponse = getFunctionResponses(event).length > 0;
+
+      if (hasFunctionCall || hasFunctionResponse) {
+        currentTurn.intermediateData.invocationEvents.push(event);
+      } else if (hasTextPart) {
+        currentTurn.finalResponse = event.content;
+      } else {
+        currentTurn.intermediateData.invocationEvents.push(event);
+      }
+    }
+  }
+  if (currentTurn) {
+    conversation.push(currentTurn);
+  }
+  return conversation;
+}
+
 export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
@@ -148,6 +213,8 @@ export class AdkApiServer {
   private readonly traceDict: Record<string, Record<string, unknown>> =
     Object.create(null);
   private readonly sessionTraceDict: Record<string, string[]> =
+    Object.create(null);
+  private readonly evalSets: Record<string, Record<string, EvalSet>> =
     Object.create(null);
   private memoryExporter: InMemoryExporter;
   private readonly logger: Logger;
@@ -883,76 +950,328 @@ export class AdkApiServer {
     );
 
     // --------------------- Eval Sets related endpoints -----------------------
-    // TODO: Implement eval set related endpoints.
     app.post(
-      '/apps/:appName/eval_sets/:evalSetId',
+      [
+        '/apps/:appName/eval-sets',
+        '/dev/apps/:appName/eval-sets',
+        '/apps/:appName/eval_sets/:evalSetId',
+        '/dev/apps/:appName/eval_sets/:evalSetId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
-      },
-    );
+        const appName = req.params['appName'];
+        const bodyEvalSet = req.body?.eval_set ?? req.body ?? {};
+        const evalSetId =
+          req.params['evalSetId'] ??
+          bodyEvalSet.eval_set_id ??
+          bodyEvalSet.evalSetId ??
+          bodyEvalSet.name;
 
-    app.get('/apps/:appName/eval_sets', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+        if (!evalSetId || typeof evalSetId !== 'string') {
+          return res.status(400).json({error: 'eval_set_id is required'});
+        }
 
-    app.post(
-      '/apps/:appName/eval_sets/:evalSetId/add_session',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet: EvalSet = {
+          eval_set_id: evalSetId,
+          name: bodyEvalSet.name ?? evalSetId,
+          description: bodyEvalSet.description ?? '',
+          model_execution_mode: bodyEvalSet.model_execution_mode ?? 'live',
+          tool_execution_mode: bodyEvalSet.tool_execution_mode ?? 'live',
+          eval_cases: Array.isArray(bodyEvalSet.eval_cases)
+            ? bodyEvalSet.eval_cases
+            : [],
+          creation_timestamp: Date.now() / 1000,
+        };
+
+        appEvalSets[evalSetId] = evalSet;
+        return res.status(200).json(evalSet);
       },
     );
 
     app.get(
-      '/apps/:appName/eval_sets/:evalSetId/evals',
+      ['/apps/:appName/eval_sets', '/dev/apps/:appName/eval_sets'],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        const appName = req.params['appName'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        return res.status(200).json(Object.keys(appEvalSets));
       },
     );
 
     app.get(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      [
+        '/apps/:appName/eval_sets/:evalSetId',
+        '/dev/apps/:appName/eval_sets/:evalSetId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
-      },
-    );
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
 
-    app.put(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
-      (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        return res.status(200).json(evalSet);
       },
     );
 
     app.delete(
-      '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      [
+        '/apps/:appName/eval_sets/:evalSetId',
+        '/dev/apps/:appName/eval_sets/:evalSetId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+
+        if (!appEvalSets[evalSetId]) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        delete appEvalSets[evalSetId];
+        return res.status(200).json({status: 'ok'});
       },
     );
 
     app.post(
-      '/apps/:appName/eval_sets/:evalSetId/run_eval',
+      [
+        '/apps/:appName/eval_sets/:evalSetId/add_session',
+        '/dev/apps/:appName/eval_sets/:evalSetId/add_session',
+      ],
+      async (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const {evalId, sessionId, userId} = req.body ?? {};
+
+        if (!evalId || typeof evalId !== 'string') {
+          return res.status(400).json({error: 'evalId is required'});
+        }
+
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
+
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        let conversation: Array<Record<string, unknown>> =
+          req.body?.conversation ?? [];
+        let sessionInput: Record<string, unknown> = req.body?.sessionInput ?? {
+          appName,
+          userId,
+        };
+
+        if (sessionId && userId) {
+          const session = await this.sessionService.getSession({
+            appName,
+            userId,
+            sessionId,
+          });
+          if (session) {
+            conversation = sessionToEvalConversation(session.events ?? []);
+            sessionInput = {
+              appName,
+              userId,
+              state: session.state ?? {},
+            };
+          }
+        }
+
+        const evalCase: EvalCase = {
+          evalId,
+          conversation,
+          sessionInput,
+          creationTimestamp: Date.now() / 1000,
+        };
+
+        const existingIndex = evalSet.eval_cases.findIndex(
+          (c) => c.evalId === evalId,
+        );
+        if (existingIndex >= 0) {
+          evalSet.eval_cases[existingIndex] = evalCase;
+        } else {
+          evalSet.eval_cases.push(evalCase);
+        }
+
+        return res.status(200).json(evalCase);
+      },
+    );
+
+    app.get(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
+
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        return res.status(200).json(evalSet.eval_cases.map((c) => c.evalId));
+      },
+    );
+
+    app.get(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const evalCaseId = req.params['evalCaseId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
+
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        const evalCase = evalSet.eval_cases.find(
+          (c) => c.evalId === evalCaseId,
+        );
+        if (!evalCase) {
+          return res
+            .status(404)
+            .json({error: `Eval case not found: ${evalCaseId}`});
+        }
+
+        return res.status(200).json(evalCase);
+      },
+    );
+
+    app.put(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const evalCaseId = req.params['evalCaseId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
+
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        const index = evalSet.eval_cases.findIndex(
+          (c) => c.evalId === evalCaseId,
+        );
+        if (index < 0) {
+          return res
+            .status(404)
+            .json({error: `Eval case not found: ${evalCaseId}`});
+        }
+
+        const updated: EvalCase = {
+          ...evalSet.eval_cases[index],
+          ...req.body,
+          evalId: evalCaseId,
+        };
+        evalSet.eval_cases[index] = updated;
+
+        return res.status(200).json(updated);
+      },
+    );
+
+    app.delete(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+        '/dev/apps/:appName/eval_sets/:evalSetId/evals/:evalCaseId',
+      ],
+      (req: Request, res: Response) => {
+        const appName = req.params['appName'];
+        const evalSetId = req.params['evalSetId'];
+        const evalCaseId = req.params['evalCaseId'];
+        const appEvalSets = this.getAppEvalSets(appName);
+        const evalSet = appEvalSets[evalSetId];
+
+        if (!evalSet) {
+          return res
+            .status(404)
+            .json({error: `Eval set not found: ${evalSetId}`});
+        }
+
+        const index = evalSet.eval_cases.findIndex(
+          (c) => c.evalId === evalCaseId,
+        );
+        if (index < 0) {
+          return res
+            .status(404)
+            .json({error: `Eval case not found: ${evalCaseId}`});
+        }
+
+        evalSet.eval_cases.splice(index, 1);
+        return res.status(200).json({status: 'ok'});
+      },
+    );
+
+    app.post(
+      [
+        '/apps/:appName/eval_sets/:evalSetId/run_eval',
+        '/dev/apps/:appName/eval_sets/:evalSetId/run_eval',
+      ],
+      (req: Request, res: Response) => {
+        return res.status(501).json({
+          error: 'Not implemented',
+          detail:
+            'Eval runner module is not installed or not yet supported in adk-js.',
+        });
       },
     );
 
     // ----------------------- Eval Results related endpoints ------------------
-    // TODO: Implement eval results related endpoints.
     app.get(
-      '/apps/:appName/eval_results/:evalResultId',
+      [
+        '/apps/:appName/eval_results/:evalResultId',
+        '/dev/apps/:appName/eval_results/:evalResultId',
+      ],
       (req: Request, res: Response) => {
-        return res.status(501).json({error: 'Not implemented'});
+        return res.status(404).json({
+          error: `Eval result not found: ${req.params['evalResultId']}`,
+        });
       },
     );
 
-    app.get('/apps/:appName/eval_results', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+    app.get(
+      ['/apps/:appName/eval_results', '/dev/apps/:appName/eval_results'],
+      (req: Request, res: Response) => {
+        return res.status(200).json([]);
+      },
+    );
 
-    app.get('/apps/:appName/eval_metrics', (req: Request, res: Response) => {
-      return res.status(501).json({error: 'Not implemented'});
-    });
+    app.get(
+      [
+        '/apps/:appName/eval_metrics',
+        '/dev/apps/:appName/eval_metrics',
+        '/apps/:appName/metrics-info',
+        '/dev/apps/:appName/metrics-info',
+      ],
+      (req: Request, res: Response) => {
+        return res.status(200).json({metricsInfo: []});
+      },
+    );
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
@@ -1278,5 +1597,12 @@ export class AdkApiServer {
       stateDelta: options.stateDelta,
       abortSignal: options.abortSignal,
     });
+  }
+
+  private getAppEvalSets(appName: string): Record<string, EvalSet> {
+    if (!(appName in this.evalSets)) {
+      this.evalSets[appName] = Object.create(null);
+    }
+    return this.evalSets[appName];
   }
 }
