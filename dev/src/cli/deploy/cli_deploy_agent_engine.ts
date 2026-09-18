@@ -109,6 +109,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       sessionServiceUri: options.sessionServiceUri,
       artifactServiceUri: options.artifactServiceUri,
       a2a: options.a2a,
+      agentFileLoadOptions: options.agentFileLoadOptions,
     });
 
     const imageTag = `${options.region}-docker.pkg.dev/${options.project}/${options.repository}/agent-engine-${appName}:latest`;
