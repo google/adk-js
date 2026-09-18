@@ -7,6 +7,10 @@
 import {OpenAPIV3} from 'openapi-types';
 import {Context} from '../../../agents/context.js';
 import {AuthCredential} from '../../../auth/auth_credential.js';
+import {
+  credentialWithoutClientSecret,
+  withConfiguredClient,
+} from '../../../auth/auth_handler.js';
 import {AuthConfig} from '../../../auth/auth_tool.js';
 import {experimental} from '../../../utils/experimental.js';
 import {AutoAuthCredentialExchanger} from '../auth/credential_exchangers/auto_auth_credential_exchanger.js';
@@ -92,7 +96,14 @@ export class ToolAuthHandler {
     // need no user interaction, so requesting one would strand the tool in
     // `pending` forever.
     const authResponseCredential = this.context.getAuthResponse(authConfig);
-    const credential = authResponseCredential ?? this.authCredential;
+    // An auth response carries the outcome of the user's browser round trip,
+    // not the agent's own client identity: it travelled through the client, so
+    // the request it answers was redacted and the token endpoint would be
+    // given no secret to authenticate with. The configured credential supplies
+    // that half, and it is the only authority for it.
+    const credential = authResponseCredential
+      ? withConfiguredClient(authResponseCredential, this.authCredential)
+      : this.authCredential;
 
     if (!credential) {
       // No credential to work with, so ask the client for one.
@@ -114,7 +125,16 @@ export class ToolAuthHandler {
     // secret into the session store for nothing.
     if (authResponseCredential || result.wasExchanged) {
       const key = store.getCredentialKey(this.authScheme);
-      store.storeCredential(key, result.credential);
+      // This is written to session state, which the client can read, so the
+      // cached copy drops the OAuth2 client secret that was merged in to obtain
+      // the access token. It keeps every other secret: for apiKey, http and
+      // serviceAccount the secret is the credential itself, so stripping it
+      // would cache a credential that the next invocation reads back and then
+      // sends an unauthenticated request with.
+      store.storeCredential(
+        key,
+        credentialWithoutClientSecret(result.credential)!,
+      );
     }
 
     return {state: 'done', authCredential: result.credential};
