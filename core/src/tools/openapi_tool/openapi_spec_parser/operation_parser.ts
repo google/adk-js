@@ -151,11 +151,12 @@ export class OperationParser {
     if (min20x) {
       const response = responses[min20x];
       if (!('$ref' in response) && response.content) {
-        const firstMimeType = Object.keys(response.content)[0];
-        if (firstMimeType) {
-          const schema = response.content[firstMimeType].schema;
+        // Some media types omit a schema; keep scanning until one declares it.
+        for (const mediaType of Object.values(response.content)) {
+          const schema = mediaType.schema;
           if (schema && !('$ref' in schema)) {
             returnSchema = schema;
+            break;
           }
         }
       }
@@ -190,6 +191,17 @@ export class OperationParser {
   @experimental
   public getParameters(): ApiParameter[] {
     return this.params;
+  }
+
+  /**
+   * Gets the return value parsed from the lowest 2xx response.
+   *
+   * @returns The return parameter, whose schema is empty when no media type of
+   *   that response declares one.
+   */
+  @experimental
+  public getReturnValue(): ApiParameter | undefined {
+    return this.returnValue;
   }
 
   /**

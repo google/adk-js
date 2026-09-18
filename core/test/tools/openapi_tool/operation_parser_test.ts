@@ -216,4 +216,85 @@ describe('OperationParser', () => {
 
     expect(parser.getParameters()).toEqual([]);
   });
+
+  it('should use the first 2xx media type that declares a schema', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'getPet',
+      responses: {
+        '200': {
+          description: 'OK',
+          content: {
+            'text/plain': {},
+            'application/json': {
+              schema: {type: 'object', properties: {id: {type: 'integer'}}},
+            },
+          },
+        },
+      },
+    };
+
+    const returnValue = new OperationParser(op).getReturnValue();
+
+    expect(returnValue?.paramSchema.type).toBe('object');
+    expect(returnValue?.paramSchema.properties?.['id']).toBeDefined();
+  });
+
+  it('should keep an empty return schema when no media type declares a schema', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'getPet',
+      responses: {
+        '200': {
+          description: 'OK',
+          content: {'text/plain': {}, 'application/xml': {}},
+        },
+      },
+    };
+
+    const returnValue = new OperationParser(op).getReturnValue();
+
+    expect(returnValue?.paramSchema).toEqual({});
+    expect(returnValue?.name).toBe('return');
+  });
+
+  it('should scan the media types of the lowest 2xx response only', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'getPet',
+      responses: {
+        '201': {
+          description: 'Created',
+          content: {'application/json': {schema: {type: 'string'}}},
+        },
+        '200': {
+          description: 'OK',
+          content: {
+            'text/plain': {},
+            'application/json': {schema: {type: 'boolean'}},
+          },
+        },
+      },
+    };
+
+    const returnValue = new OperationParser(op).getReturnValue();
+
+    expect(returnValue?.paramSchema.type).toBe('boolean');
+  });
+
+  it('should skip a media type whose schema is an unresolved reference', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'getPet',
+      responses: {
+        '200': {
+          description: 'OK',
+          content: {
+            'application/json': {schema: {$ref: '#/components/schemas/Pet'}},
+            'application/xml': {schema: {type: 'string'}},
+          },
+        },
+      },
+    };
+
+    const returnValue = new OperationParser(op).getReturnValue();
+
+    expect(returnValue?.paramSchema.type).toBe('string');
+  });
 });
