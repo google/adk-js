@@ -1189,12 +1189,16 @@ export class AdkApiServer {
   }
 
   stop(): Promise<void> {
-    if (!this.server) {
+    const server = this.server;
+    // A failed `start()` (EADDRINUSE) and an already-closed server both leave
+    // `this.server` assigned, and `close()` on either rejects with
+    // ERR_SERVER_NOT_RUNNING. Neither has a listener left, so both are stopped.
+    if (!server?.listening) {
       return Promise.resolve();
     }
 
     return new Promise((resolve, reject) => {
-      this.server!.close((err) => {
+      server.close((err) => {
         if (err) {
           reject(err);
           return;

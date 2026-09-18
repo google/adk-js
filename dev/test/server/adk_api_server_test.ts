@@ -1707,7 +1707,7 @@ describe('AdkWebServer', () => {
           `Port ${port} is already in use`,
         );
       } finally {
-        await duplicateServer.stop().catch(() => {});
+        await duplicateServer.stop();
       }
     });
 
@@ -1750,6 +1750,92 @@ describe('AdkWebServer', () => {
       } finally {
         await specificServer.stop();
       }
+    });
+  });
+
+  describe('Shutdown', () => {
+    it('should resolve a second stop() and still free the port on the first', async () => {
+      const shutdownServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await shutdownServer.start();
+
+      const port = parseInt(shutdownServer.url.split(':').pop() ?? '0', 10);
+      expect(port).toBeGreaterThan(0);
+
+      await expect(shutdownServer.stop()).resolves.toBeUndefined();
+      await expect(shutdownServer.stop()).resolves.toBeUndefined();
+
+      // The no-op second stop() must not have cost the first one its close.
+      const reboundServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port,
+      });
+      try {
+        await expect(reboundServer.start()).resolves.toBeUndefined();
+      } finally {
+        await reboundServer.stop();
+      }
+    });
+
+    it('should resolve stop() on a server that never started', async () => {
+      const unstartedServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+
+      await expect(unstartedServer.stop()).resolves.toBeUndefined();
+    });
+
+    it('should resolve stop() after start() failed on a port in use', async () => {
+      const port = parseInt(server.url.split(':').pop() ?? '0', 10);
+      expect(port).toBeGreaterThan(0);
+
+      const duplicateServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port,
+      });
+
+      await expect(duplicateServer.start()).rejects.toThrow(
+        `Port ${port} is already in use`,
+      );
+      await expect(duplicateServer.stop()).resolves.toBeUndefined();
+    });
+
+    it('should reject when close() reports an error', async () => {
+      const failingServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      const closeError = new Error('close failed');
+      // No real listener fails to close, so stand one in. Same private-field
+      // shape the Startup tests above use to read `address()`.
+      (
+        failingServer as unknown as {
+          server: {
+            listening: boolean;
+            close: (cb: (err?: Error) => void) => void;
+          };
+        }
+      ).server = {
+        listening: true,
+        close: (cb) => cb(closeError),
+      };
+
+      await expect(failingServer.stop()).rejects.toThrow('close failed');
     });
   });
 
