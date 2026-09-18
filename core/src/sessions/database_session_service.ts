@@ -13,6 +13,7 @@ import type {MikroORMOptions as MikroDBOptions} from './db/operations.js';
 
 import {Event} from '../events/event.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
+import {logger} from '../utils/logger.js';
 import {
   AppendEventRequest,
   BaseSessionService,
@@ -23,6 +24,7 @@ import {
   ListSessionsResponse,
   mergeStates,
   trimTempDeltaState,
+  upsertSessionEvent,
 } from './base_session_service.js';
 import {createSession, Session} from './session.js';
 import {State} from './state.js';
@@ -416,6 +418,7 @@ export class DatabaseSessionService extends BaseSessionService {
     }
 
     const trimmedEvent = trimTempDeltaState(event);
+    let sessionWasStale = false;
 
     await em.transactional(async (txEm) => {
       const storageSession = await txEm.findOne(
@@ -457,27 +460,11 @@ export class DatabaseSessionService extends BaseSessionService {
         txEm.persist(userStateModel);
       }
 
-      // Stale session check
-      if (storageSession.updateTime.getTime() > session.lastUpdateTime) {
-        // Reload state
-        const events = await txEm.find(
-          StorageEvent,
-          {
-            appName: session.appName,
-            userId: session.userId,
-            sessionId: session.id,
-          },
-          {orderBy: {timestamp: 'ASC'}},
-        );
-
-        const mergedState = mergeStates(
-          appStateModel.state,
-          userStateModel.state,
-          storageSession.state,
-        );
-        session.state = mergedState;
-        session.events = events.map((e) => e.eventData);
-      }
+      // Reload after the transaction: this holds a PESSIMISTIC_WRITE lock on
+      // the session row, and the reload only refreshes the in-memory
+      // `session`.
+      sessionWasStale =
+        storageSession.updateTime.getTime() > session.lastUpdateTime;
 
       if (event.actions && event.actions.stateDelta) {
         const appDelta: Record<string, unknown> = {};
@@ -544,14 +531,32 @@ export class DatabaseSessionService extends BaseSessionService {
       );
       session.state = newMergedState;
 
-      const index = session.events.findIndex((e) => e.id === event.id);
-      if (index >= 0) {
-        session.events[index] = event;
-      } else {
-        session.events.push(event);
-      }
+      upsertSessionEvent(session, event);
       session.lastUpdateTime = storageSession.updateTime.getTime();
     });
+
+    if (sessionWasStale) {
+      try {
+        const storageEvents = await em.find(
+          StorageEvent,
+          {
+            appName: session.appName,
+            userId: session.userId,
+            sessionId: session.id,
+          },
+          {orderBy: {timestamp: 'ASC'}},
+        );
+        session.events = storageEvents.map((se) => se.eventData);
+        upsertSessionEvent(session, event);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        logger.warn(
+          `Failed to reload events for stale session ${session.id} after ` +
+            `appendEvent; the event was persisted but session.events may be ` +
+            `missing concurrent appends: ${message}`,
+        );
+      }
+    }
 
     return event;
   }
