@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.2.0](https://github.com/google/adk-js/compare/devtools-v2.1.0...devtools-v2.2.0) (2026-09-18)
+
+
+### Bug Fixes
+
+* **cli:** wire --staging_bucket into adk deploy agent_engine ([#893](https://github.com/google/adk-js/issues/893)) ([0194968](https://github.com/google/adk-js/commit/01949683be422aa99591310a539be88dc7f340f7))
+* **dev:** make AdkApiServer.stop() safe to call twice ([#916](https://github.com/google/adk-js/issues/916)) ([270be5f](https://github.com/google/adk-js/commit/270be5f2dce9204968abecc060a88ff8a0b51480))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.1.0 to ^2.2.0
+
 ## [2.1.0](https://github.com/google/adk-js/compare/devtools-v2.0.0...devtools-v2.1.0) (2026-09-14)
 
 

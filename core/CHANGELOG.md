@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.2.0](https://github.com/google/adk-js/compare/adk-v2.1.0...adk-v2.2.0) (2026-09-18)
+
+
+### Features
+
+* **a2a:** attach session metadata to the task, working and input-required events ([#919](https://github.com/google/adk-js/issues/919)) ([86ff0a0](https://github.com/google/adk-js/commit/86ff0a0ffb7a8ddb7d7b8d2c6d5a61b5670a2621))
+* **a2a:** publish the code-execution skill on the agent card ([#905](https://github.com/google/adk-js/issues/905)) ([98cb72c](https://github.com/google/adk-js/commit/98cb72c469159dcde6314e7f553ff790e528a532))
+
+
+### Bug Fixes
+
+* **artifacts:** stop a nested artifact leaking versions into its parent ([#918](https://github.com/google/adk-js/issues/918)) ([6a690d8](https://github.com/google/adk-js/commit/6a690d8aedac17d1fcc738b5608a36e0f226ab0c))
+* **code-executors:** render an empty text part when a code execution result has no output ([#903](https://github.com/google/adk-js/issues/903)) ([032e171](https://github.com/google/adk-js/commit/032e1710c7984e7800b3c18fa12ef12b0bf301dc))
+* **core:** route Gemini 3.x live audio by model family, not the '-flash-live' spelling ([#912](https://github.com/google/adk-js/issues/912)) ([cc53f30](https://github.com/google/adk-js/commit/cc53f30d7cd7f3df2fcd5f5c473feedef46847d2)), closes [#911](https://github.com/google/adk-js/issues/911)
+* **openapi:** emit the body argument for a schema-less media type ([#907](https://github.com/google/adk-js/issues/907)) ([aad4b8a](https://github.com/google/adk-js/commit/aad4b8a9d379dd088929d795d942ba68a247a5e8))
+* **openapi:** scan every 2xx media type for the return schema ([#917](https://github.com/google/adk-js/issues/917)) ([975b693](https://github.com/google/adk-js/commit/975b6931f28f5dca35b3c76ac98917b6a1d8e438))
+* **schema:** drop a null member from an enum in toGeminiSchema ([#915](https://github.com/google/adk-js/issues/915)) ([eb92390](https://github.com/google/adk-js/commit/eb9239046f548f13a271aaed1ebfff595195fdc6))
+* **skills:** close the skill registry when the skill toolset closes ([#906](https://github.com/google/adk-js/issues/906)) ([76d9559](https://github.com/google/adk-js/commit/76d9559acef2a1c45bceaf5897b4d3c14857e9b3))
+* **utils:** inline reused Zod v3 sub-schemas in genai declarations ([#904](https://github.com/google/adk-js/issues/904)) ([fb0bb12](https://github.com/google/adk-js/commit/fb0bb12d28cad91edb34119a5ea48c5eff845edf))
+
 ## [2.1.0](https://github.com/google/adk-js/compare/adk-v2.0.0...adk-v2.1.0) (2026-09-14)
 
 
