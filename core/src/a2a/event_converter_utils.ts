@@ -125,7 +125,12 @@ function messageToAdkEvent(
   return {
     ...createAdkEventFromMetadata(msg),
     invocationId,
-    author: msg.role === MessageRole.USER ? MessageRole.USER : agentName,
+    // The role on a peer's message is the peer's own claim and must not decide
+    // authorship: letting `user` through here lets a remote agent post events
+    // that read as the local user's, which is a trust anchor elsewhere (tool
+    // confirmations are approved only from user-authored events). Attribute the
+    // event to the peer, the same way the task and status converters below do.
+    author: agentName,
     branch,
     content,
     turnComplete: true,
@@ -283,8 +288,10 @@ function createAdkEventFromMetadata(a2aEvent: A2AEvent): AdkEvent {
     // (set it to a shared ancestor branch, or omit it) to leak its content
     // into an unrelated sibling agent's LLM context. Every caller of the
     // `*ToAdkEvent` functions in this file force-sets `branch` from its own
-    // local `InvocationContext` instead, the same way `author` is handled.
-    author: metadata[A2AMetadataKeys.AUTHOR] as string,
+    // local `InvocationContext` instead, the same way `author` is handled:
+    // `author` is likewise never restored from peer metadata here, since every
+    // converter sets it from the local context after the spread, so reading it
+    // from metadata would be dead and read as if a peer could set the author.
     partial: metadata[A2AMetadataKeys.PARTIAL] as boolean,
     errorCode: metadata[A2AMetadataKeys.ERROR_CODE] as string,
     errorMessage: metadata[A2AMetadataKeys.ERROR_MESSAGE] as string,
