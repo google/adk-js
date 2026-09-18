@@ -45,11 +45,6 @@ export type {VertexAiRagMemoryServiceOptions} from './memory/vertex_ai_rag_memor
 export {
   DebugLoggingPlugin,
   isDebugLoggingPlugin,
-  isSensitiveKey,
-  redactPrivateKeys,
-  type DebugEntry,
-  type DebugLoggingPluginOptions,
-  type InvocationDebugState,
 } from './plugins/debug_logging_plugin.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';

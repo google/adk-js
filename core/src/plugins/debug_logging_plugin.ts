@@ -25,15 +25,6 @@ const DEBUG_LOGGING_PLUGIN_SYMBOL = Symbol.for('google.adk.debugLoggingPlugin');
 
 const REDACTED = '[REDACTED]';
 
-const CREDENTIAL_TYPE_NAMES = new Set([
-  'AuthCredential',
-  'HttpAuth',
-  'HttpCredentials',
-  'OAuth2Auth',
-  'ServiceAccount',
-  'ServiceAccountCredential',
-]);
-
 const AUTH_CREDENTIAL_TYPES = new Set<string>([
   AuthCredentialTypes.API_KEY,
   AuthCredentialTypes.HTTP,
@@ -122,7 +113,7 @@ const MAX_WALK_DEPTH = 20;
 /**
  * Whether a mapping key names a credential-bearing value.
  */
-export function isSensitiveKey(key: unknown): boolean {
+function isSensitiveKey(key: unknown): boolean {
   if (typeof key !== 'string') {
     return false;
   }
@@ -152,27 +143,20 @@ export function isSensitiveKey(key: unknown): boolean {
 /**
  * Blanks any armored private key block, leaving the rest of the string.
  */
-export function redactPrivateKeys(value: string): string {
+function redactPrivateKeys(value: string): string {
   return String(value).replace(PRIVATE_KEY_BLOCK, REDACTED);
 }
 
 /**
- * Whether `obj` is an ADK credential model or structural credential object.
+ * Whether `obj` is a structural ADK credential object.
  */
 function isCredentialObject(obj: unknown): boolean {
   if (typeof obj !== 'object' || obj === null) {
     return false;
   }
-  const ctorName = (obj as {constructor?: {name?: string}}).constructor?.name;
-  if (ctorName && CREDENTIAL_TYPE_NAMES.has(ctorName)) {
-    return true;
-  }
   const record = obj as Record<string, unknown>;
   const authType = record['authType'] ?? record['auth_type'];
-  if (typeof authType === 'string' && AUTH_CREDENTIAL_TYPES.has(authType)) {
-    return true;
-  }
-  return false;
+  return typeof authType === 'string' && AUTH_CREDENTIAL_TYPES.has(authType);
 }
 
 /**
@@ -295,88 +279,54 @@ export class DebugLoggingPlugin extends BasePlugin {
     const parts: Array<Record<string, unknown>> = [];
     if (content.parts) {
       for (const part of content.parts) {
-        const partRecord = part as unknown as Record<string, unknown>;
         const partData: Record<string, unknown> = {};
 
         if (part.text) {
           partData['text'] = part.text;
         }
 
-        const functionCall = (part.functionCall ??
-          partRecord['function_call']) as
-          | {id?: string; name?: string; args?: unknown}
-          | undefined;
-        if (functionCall) {
+        if (part.functionCall) {
           partData['function_call'] = {
-            id: functionCall.id ?? null,
-            name: functionCall.name ?? null,
-            args: this.safeSerialize(functionCall.args),
+            id: part.functionCall.id ?? null,
+            name: part.functionCall.name ?? null,
+            args: this.safeSerialize(part.functionCall.args),
           };
         }
 
-        const functionResponse = (part.functionResponse ??
-          partRecord['function_response']) as
-          | {id?: string; name?: string; response?: unknown}
-          | undefined;
-        if (functionResponse) {
+        if (part.functionResponse) {
           partData['function_response'] = {
-            id: functionResponse.id ?? null,
-            name: functionResponse.name ?? null,
-            response: this.safeSerialize(functionResponse.response),
+            id: part.functionResponse.id ?? null,
+            name: part.functionResponse.name ?? null,
+            response: this.safeSerialize(part.functionResponse.response),
           };
         }
 
-        const inlineData = (part.inlineData ?? partRecord['inline_data']) as
-          | {
-              mimeType?: string;
-              mime_type?: string;
-              displayName?: string;
-              display_name?: string;
-            }
-          | undefined;
-        if (inlineData) {
+        if (part.inlineData) {
           partData['inline_data'] = {
-            mime_type: inlineData.mimeType ?? inlineData.mime_type ?? null,
-            display_name:
-              inlineData.displayName ?? inlineData.display_name ?? null,
+            mime_type: part.inlineData.mimeType ?? null,
+            display_name: part.inlineData.displayName ?? null,
             _data_omitted: true,
           };
         }
 
-        const fileData = (part.fileData ?? partRecord['file_data']) as
-          | {
-              fileUri?: string;
-              file_uri?: string;
-              mimeType?: string;
-              mime_type?: string;
-            }
-          | undefined;
-        if (fileData) {
+        if (part.fileData) {
           partData['file_data'] = {
-            file_uri: fileData.fileUri ?? fileData.file_uri ?? null,
-            mime_type: fileData.mimeType ?? fileData.mime_type ?? null,
+            file_uri: part.fileData.fileUri ?? null,
+            mime_type: part.fileData.mimeType ?? null,
           };
         }
 
-        const codeExecutionResult = (part.codeExecutionResult ??
-          partRecord['code_execution_result']) as
-          | {outcome?: unknown; output?: string}
-          | undefined;
-        if (codeExecutionResult) {
+        if (part.codeExecutionResult) {
           partData['code_execution_result'] = {
-            outcome: String(codeExecutionResult.outcome ?? ''),
-            output: codeExecutionResult.output ?? null,
+            outcome: String(part.codeExecutionResult.outcome ?? ''),
+            output: part.codeExecutionResult.output ?? null,
           };
         }
 
-        const executableCode = (part.executableCode ??
-          partRecord['executable_code']) as
-          | {language?: unknown; code?: string}
-          | undefined;
-        if (executableCode) {
+        if (part.executableCode) {
           partData['executable_code'] = {
-            language: String(executableCode.language ?? ''),
-            code: executableCode.code ?? null,
+            language: String(part.executableCode.language ?? ''),
+            code: part.executableCode.code ?? null,
           };
         }
 
@@ -404,15 +354,7 @@ export class DebugLoggingPlugin extends BasePlugin {
       return REDACTED;
     }
     if (depth > MAX_WALK_DEPTH) {
-      if (Array.isArray(obj)) {
-        return '<list ...>';
-      }
-      const ctorName = (obj as {constructor?: {name?: string}}).constructor
-        ?.name;
-      if (!ctorName || ctorName === 'Object') {
-        return '<dict ...>';
-      }
-      return `<${ctorName} ...>`;
+      return Array.isArray(obj) ? '<list ...>' : '<dict ...>';
     }
 
     const childDepth = depth + 1;
@@ -436,9 +378,6 @@ export class DebugLoggingPlugin extends BasePlugin {
       return Array.from(obj).map((item) =>
         this.safeSerialize(item, childDepth),
       );
-    }
-    if (obj instanceof State) {
-      return this.safeSerialize(obj.toRecord(), depth);
     }
     if (obj instanceof Map) {
       const result: Record<string, unknown> = {};
@@ -848,7 +787,7 @@ export class DebugLoggingPlugin extends BasePlugin {
       'llm_error',
       callbackContext.agentName,
       {
-        error_type: error.name || error.constructor?.name || 'Error',
+        error_type: error.name || 'Error',
         error_message: error.message || String(error),
         model: llmRequest.model ?? null,
       },
@@ -920,7 +859,7 @@ export class DebugLoggingPlugin extends BasePlugin {
         tool_name: tool.name,
         function_call_id: toolContext.functionCallId ?? null,
         args: this.safeSerialize(toolArgs),
-        error_type: error.name || error.constructor?.name || 'Error',
+        error_type: error.name || 'Error',
         error_message: error.message || String(error),
       },
     );
