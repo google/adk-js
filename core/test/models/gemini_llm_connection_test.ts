@@ -120,6 +120,28 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
+    it('should use sendClientContent for Gemini 3.5 Live Translate text', async () => {
+      // Live Translate is not a conversational 3.x Live model (adk-python
+      // parity), so text must not be routed through sendRealtimeInput.
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-3.5-live-translate-preview',
+      );
+      const content: Content = {
+        parts: [{text: 'hello'}],
+      };
+
+      await connection.sendContent(content);
+
+      expect(mockSession.sendRealtimeInput).not.toHaveBeenCalledWith({
+        text: 'hello',
+      });
+      expect(mockSession.sendClientContent).toHaveBeenCalledWith({
+        turns: [content],
+        turnComplete: true,
+      });
+    });
+
     it('should use sendClientContent for non-Gemini 3.x single-part text', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
@@ -184,6 +206,7 @@ describe('GeminiLlmConnection', () => {
         'gemini-3.8-live',
         'gemini-3.8-live-extended-thinking',
         'gemini-3.5-transcribe-live',
+        'gemini-3.5-live-translate-preview',
       ]) {
         mockSession.sendRealtimeInput.mockClear();
         const connection = new GeminiLlmConnection(mockSession, model);

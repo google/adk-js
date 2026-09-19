@@ -100,7 +100,10 @@ export function isGemini2OrAbove(modelString: string): boolean {
  * Matches the whole `gemini-3.N-*live*` family, not just the `-flash-live`
  * spelling: ids such as `gemini-3.8-live` and `gemini-3.5-transcribe-live` are
  * Live models too, and they need the same realtime handling. Non-live 3.x
- * models such as `gemini-3.0-flash` are still excluded.
+ * models such as `gemini-3.0-flash` are still excluded. Gemini 3.5 Live
+ * Translate ids are excluded as well, mirroring adk-python's
+ * `_is_gemini_3_x_live`, which handles them through a dedicated translate
+ * branch instead.
  *
  * @param modelString Either a simple model name or path-based model name
  * @return true if it's a Gemini 3.x Live model, false otherwise.
@@ -110,7 +113,30 @@ export function isGemini3xLive(modelString: string | undefined): boolean {
     return false;
   }
   const modelName = extractModelName(modelString);
-  return modelName.startsWith('gemini-3.') && modelName.includes('-live');
+  return (
+    modelName.startsWith('gemini-3.') &&
+    modelName.includes('-live') &&
+    !isGemini35LiveTranslate(modelString)
+  );
+}
+
+/**
+ * Check if the model is a Gemini 3.5 Live Translate model.
+ *
+ * Live Translate ids contain "-live" but are translation endpoints rather
+ * than conversational Live models, so they must not take the Gemini 3.x Live
+ * conversational path. Mirrors adk-python's `is_gemini_3_5_live_translate`.
+ *
+ * @param modelString Either a simple model name or path-based model name
+ * @return true if it's a Gemini 3.5 Live Translate model, false otherwise.
+ */
+export function isGemini35LiveTranslate(
+  modelString: string | undefined,
+): boolean {
+  if (!modelString) {
+    return false;
+  }
+  return extractModelName(modelString).startsWith('gemini-3.5-live-translate');
 }
 
 /**

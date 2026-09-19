@@ -14,7 +14,10 @@ import {
 
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
-import {isGemini3xLive} from '../utils/model_name.js';
+import {
+  isGemini35LiveTranslate,
+  isGemini3xLive,
+} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
@@ -101,8 +104,12 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     logger.debug('Sending LLM Blob:', blob);
     const isGemini3x = isGemini3xLive(this.modelVersion);
     const isNativeAudio = this.modelVersion?.includes('native-audio');
+    const isLiveTranslate = isGemini35LiveTranslate(this.modelVersion);
 
-    if (isGemini3x || isNativeAudio) {
+    // Live Translate is excluded from the conversational 3.x routing above but
+    // still sends audio/video over the realtime path (adk-python parity:
+    // `if self._is_gemini_3_x_live or self._is_gemini_3_5_live_translate:`).
+    if (isGemini3x || isNativeAudio || isLiveTranslate) {
       if (blob.mimeType?.startsWith('audio/')) {
         this.geminiSession.sendRealtimeInput({audio: blob});
       } else if (blob.mimeType?.startsWith('image/')) {
