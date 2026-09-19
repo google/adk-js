@@ -6,6 +6,7 @@
 
 import {
   isGemini2OrAbove,
+  isGemini35LiveTranslate,
   isGemini3xFlashLive,
   isGemini3xLive,
 } from '@google/adk';
@@ -82,13 +83,25 @@ describe('isGemini3xLive', () => {
     // as non-3.x, so their audio went to the legacy media field.
     expect(isGemini3xLive('gemini-3.8-live')).toBe(true);
     expect(isGemini3xLive('gemini-3.8-live-extended-thinking')).toBe(true);
-    expect(isGemini3xLive('gemini-3.5-live-translate-preview')).toBe(true);
     expect(isGemini3xLive('gemini-3.5-transcribe-live')).toBe(true);
     expect(
       isGemini3xLive(
         'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.8-live',
       ),
     ).toBe(true);
+  });
+
+  it('should return false for Gemini 3.5 Live Translate models', () => {
+    // adk-python pins the same exclusion: Live Translate is a translation
+    // endpoint, not a conversational Live model (test_model_name_utils.py
+    // asserts `_is_gemini_3_x_live('gemini-3.5-live-translate') is False`).
+    expect(isGemini3xLive('gemini-3.5-live-translate')).toBe(false);
+    expect(isGemini3xLive('gemini-3.5-live-translate-preview')).toBe(false);
+    expect(
+      isGemini3xLive(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.5-live-translate-preview',
+      ),
+    ).toBe(false);
   });
 
   it('should return false for other models', () => {
@@ -113,5 +126,26 @@ describe('isGemini3xFlashLive (deprecated alias)', () => {
     ]) {
       expect(isGemini3xFlashLive(model)).toBe(isGemini3xLive(model));
     }
+  });
+});
+
+describe('isGemini35LiveTranslate', () => {
+  it('should return true for Live Translate ids', () => {
+    expect(isGemini35LiveTranslate('gemini-3.5-live-translate')).toBe(true);
+    expect(isGemini35LiveTranslate('gemini-3.5-live-translate-preview')).toBe(
+      true,
+    );
+    expect(
+      isGemini35LiveTranslate(
+        'projects/my-project/locations/us-central1/publishers/google/models/gemini-3.5-live-translate-preview',
+      ),
+    ).toBe(true);
+  });
+
+  it('should return false for other models', () => {
+    expect(isGemini35LiveTranslate('gemini-3.8-live')).toBe(false);
+    expect(isGemini35LiveTranslate('gemini-3.5-flash-live')).toBe(false);
+    expect(isGemini35LiveTranslate(undefined)).toBe(false);
+    expect(isGemini35LiveTranslate('')).toBe(false);
   });
 });
