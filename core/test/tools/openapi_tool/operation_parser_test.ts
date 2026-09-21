@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {OperationParser} from '@google/adk';
+import {OperationParser, type ApiParameter} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
 
@@ -296,5 +296,204 @@ describe('OperationParser', () => {
     const returnValue = new OperationParser(op).getReturnValue();
 
     expect(returnValue?.paramSchema.type).toBe('string');
+  });
+
+  it('leaves a JavaScript-only keyword alone, as adk-python does', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'testOp',
+      parameters: [{name: 'function', in: 'query', schema: {type: 'string'}}],
+      responses: {},
+    };
+    expect(new OperationParser(op).getParameters()[0].name).toBe('function');
+  });
+  it('should parse a JSON string operation', () => {
+    const parser = new OperationParser(
+      JSON.stringify({
+        operationId: 'stringOp',
+        parameters: [{name: 'q', in: 'query', schema: {type: 'integer'}}],
+        responses: {},
+      }),
+    );
+
+    expect(parser.getFunctionName()).toBe('string_op');
+    expect(parser.getParameters().length).toBe(1);
+    expect(parser.getParameters()[0].originalName).toBe('q');
+    expect(parser.getParameters()[0].paramSchema).toEqual({type: 'integer'});
+  });
+  it('should give the Any type hint for an unrecognised schema type', () => {
+    // Only reachable through an untyped input: the OperationObject type
+    // permits none of these as a schema `type`.
+    const parser = new OperationParser(
+      JSON.stringify({
+        operationId: 'bogusOp',
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {'application/json': {schema: {type: 'bogus'}}},
+          },
+        },
+      }),
+    );
+
+    expect(parser.getReturnTypeHint()).toBe('Any');
+  });
+  it('should skip parsing when shouldParse is false', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'skippedOp',
+      parameters: [{name: 'q', in: 'query', schema: {type: 'string'}}],
+      responses: {
+        '200': {
+          description: 'OK',
+          content: {'application/json': {schema: {type: 'string'}}},
+        },
+      },
+    };
+
+    const parser = new OperationParser(op, {shouldParse: false});
+
+    expect(parser.getParameters()).toEqual([]);
+    expect(parser.getReturnValue()).toBeUndefined();
+    expect(parser.getReturnTypeHint()).toBe('Any');
+  });
+  it('should load a parser without a return value', () => {
+    const params: ApiParameter[] = [
+      {
+        originalName: 'p1',
+        paramLocation: 'query',
+        paramSchema: {type: 'string'},
+        name: 'p1',
+        required: true,
+      },
+    ];
+
+    const parser = OperationParser.load({operationId: 'loadedOp'}, params);
+
+    expect(parser.getParameters()).toBe(params);
+    expect(parser.getReturnValue()).toBeUndefined();
+    expect(parser.getFunctionName()).toBe('loaded_op');
+  });
+  it('should keep original names when preservePropertyNames is set', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'getPetById',
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {petName: {type: 'string'}},
+            },
+          },
+        },
+      },
+      responses: {},
+    };
+
+    const parser = new OperationParser(op, {preservePropertyNames: true});
+
+    expect(parser.getFunctionName()).toBe('getPetById');
+    expect(parser.getParameters()[0].name).toBe('petName');
+  });
+  it('should omit the returns block when no response qualifies', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'bareOp',
+      summary: 'Bare summary',
+      responses: {},
+    };
+
+    const pydoc = new OperationParser(op).getPydocString();
+
+    expect(pydoc).toContain('Bare summary');
+    expect(pydoc).toContain('Args:');
+    expect(pydoc).not.toContain('Returns');
+  });
+  it('should fall back to the description when there is no summary', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'describedOp',
+      description: 'Only a description',
+      responses: {},
+    };
+
+    expect(new OperationParser(op).getPydocString()).toContain(
+      'Only a description',
+    );
+  });
+  it('should return an empty auth scheme name for an empty security entry', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'emptySecurityOp',
+      security: [{}],
+      responses: {},
+    };
+
+    expect(new OperationParser(op).getAuthSchemeName()).toBe('');
+  });
+  it('should skip a non-numeric response key when picking the return doc', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'defaultResponseOp',
+      responses: {
+        default: {
+          description: 'Fallback',
+          content: {'application/json': {schema: {type: 'string'}}},
+        },
+        '200': {
+          description: 'Numeric success',
+          content: {'application/json': {schema: {type: 'integer'}}},
+        },
+      },
+    };
+
+    const pydoc = new OperationParser(op).getPydocString();
+
+    expect(pydoc).toContain('Returns (int): Numeric success');
+  });
+  it('should handle an operation that declares no responses', () => {
+    // A plain object may omit `responses`, which the OperationObject type
+    // requires.
+    const parser = new OperationParser({operationId: 'noResponsesOp'});
+
+    expect(parser.getReturnTypeHint()).toBe('Any');
+    expect(parser.getPydocString()).not.toContain('Returns');
+  });
+  it('should ignore a request body whose content is empty', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'emptyBodyOp',
+      requestBody: {content: {}},
+      responses: {},
+    };
+
+    expect(new OperationParser(op).getParameters()).toEqual([]);
+  });
+  it('should list required parameters in the JSON schema', () => {
+    const op: OpenAPIV3.OperationObject = {
+      operationId: 'requiredOp',
+      parameters: [
+        {name: 'needed', in: 'query', required: true, schema: {type: 'string'}},
+        {name: 'optional', in: 'query', schema: {type: 'string'}},
+      ],
+      responses: {},
+    };
+
+    const schema = new OperationParser(op).getJsonSchema();
+
+    expect(schema.required).toEqual(['needed']);
+  });
+  it('should give List[Any] for an unrecognised array item type', () => {
+    // Only reachable through an untyped input, as with the scalar case above.
+    const parser = new OperationParser(
+      JSON.stringify({
+        operationId: 'bogusArrayOp',
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {type: 'array', items: {type: 'bogus'}},
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(parser.getReturnTypeHint()).toBe('List[Any]');
   });
 });

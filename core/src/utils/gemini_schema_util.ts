@@ -5,6 +5,7 @@
  */
 
 import {Schema, Type} from '@google/genai';
+import {toSnakeCaseName} from './case_utils.js';
 
 type MCPToolSchema = {
   type: 'object';
@@ -159,4 +160,141 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
     return geminiSchema;
   }
   return recursiveConvert(mcpSchema);
+}
+
+/**
+ * Field names of the `Schema` interface exported by `@google/genai`. A key of
+ * an OpenAPI schema that does not name one of these is dropped, because the
+ * Gemini backend rejects a schema carrying a field it does not know.
+ */
+const GEMINI_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
+  'anyOf',
+  'default',
+  'description',
+  'enum',
+  'example',
+  'format',
+  'items',
+  'maxItems',
+  'maxLength',
+  'maxProperties',
+  'maximum',
+  'minItems',
+  'minLength',
+  'minProperties',
+  'minimum',
+  'nullable',
+  'pattern',
+  'properties',
+  'propertyOrdering',
+  'required',
+  'title',
+  'type',
+]);
+
+/**
+ * Fields the Gemini backend rejects even though `Schema` declares them. A
+ * `format` of `date` on a STRING, for example, fails with "only 'enum' and
+ * 'date-time' are supported for STRING type".
+ */
+const GEMINI_REJECTED_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
+  'title',
+  'default',
+  'format',
+]);
+
+/**
+ * Placeholder property of an otherwise empty OBJECT schema. The Gemini backend
+ * rejects such a schema with "properties: should be non-empty for OBJECT type".
+ */
+const EMPTY_OBJECT_PLACEHOLDER = 'dummy_DO_NOT_GENERATE';
+
+/**
+ * Normalizes an OpenAPI schema key to the corresponding `Schema` field name.
+ *
+ * The key is snake_cased first so that a separator, an acronym or a spelling
+ * the OpenAPI document chose is folded away, then lower camel cased because
+ * that is how `@google/genai` spells its field names.
+ */
+function toGeminiSchemaField(key: string): string {
+  return toSnakeCaseName(key).replace(
+    /_([a-z0-9])/g,
+    (_match, letter: string) => letter.toUpperCase(),
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function convertSchemaField(field: string, value: unknown): unknown {
+  if (field === 'type') {
+    return toGeminiType(typeof value === 'string' ? value : undefined);
+  }
+  if (field === 'properties' && isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, property]) => [
+        name,
+        openApiSchemaToGeminiSchema(property),
+      ]),
+    );
+  }
+  if (field === 'items' && isPlainObject(value)) {
+    return openApiSchemaToGeminiSchema(value);
+  }
+  if (field === 'anyOf' && Array.isArray(value)) {
+    return value.map((item) => openApiSchemaToGeminiSchema(item));
+  }
+  return value;
+}
+
+/**
+ * Converts an OpenAPI schema to a Gemini `Schema`.
+ *
+ * This is the counterpart of `toGeminiSchema` for an arbitrary OpenAPI schema
+ * rather than an MCP tool input schema. An OpenAPI document may carry any key
+ * it likes, so a key the Gemini `Schema` does not declare is dropped instead of
+ * being forwarded to a backend that rejects it.
+ *
+ * @param openApiSchema The OpenAPI schema, which may be any value.
+ * @returns The converted schema, or `undefined` when there is no input.
+ * @throws {TypeError} If the input is neither an object nor nullish.
+ */
+export function openApiSchemaToGeminiSchema(
+  openApiSchema?: unknown,
+): Schema | undefined {
+  if (openApiSchema === undefined || openApiSchema === null) {
+    return undefined;
+  }
+  if (!isPlainObject(openApiSchema)) {
+    throw new TypeError('openapi_schema must be a dictionary');
+  }
+
+  const source: Record<string, unknown> = {...openApiSchema};
+  // A schema with no type at all fails with "one_of or any_of must specify a
+  // type", so an untyped schema is treated as an object.
+  if (!source['type']) {
+    source['type'] = 'object';
+  }
+  const properties = source['properties'];
+  const hasProperties =
+    isPlainObject(properties) && Object.keys(properties).length > 0;
+  if (source['type'] === 'object' && !hasProperties) {
+    source['properties'] = {[EMPTY_OBJECT_PLACEHOLDER]: {type: 'string'}};
+  }
+
+  // Every key is checked against GEMINI_SCHEMA_FIELDS before it is written, so
+  // the accumulated record holds only fields the Gemini `Schema` declares.
+  const converted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    const field = toGeminiSchemaField(key);
+    if (
+      !GEMINI_SCHEMA_FIELDS.has(field) ||
+      GEMINI_REJECTED_SCHEMA_FIELDS.has(field)
+    ) {
+      continue;
+    }
+    converted[field] = convertSchemaField(field, value);
+  }
+  return converted as Schema;
 }

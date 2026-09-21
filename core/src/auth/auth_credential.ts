@@ -276,3 +276,24 @@ export interface AuthCredential {
   serviceAccount?: ServiceAccount;
   oauth2?: OAuth2Auth;
 }
+
+const AUTH_CREDENTIAL_TYPES: ReadonlySet<unknown> = new Set<unknown>(
+  Object.values(AuthCredentialTypes),
+);
+
+/**
+ * Reports whether `value` is an {@link AuthCredential}.
+ *
+ * Use it on a value that crossed a boundary where the type was lost, such as a
+ * credential read back out of session state. The check is a shallow one on
+ * `authType`, because the payload members are all optional and the type they
+ * carry depends on the scheme.
+ */
+export function isAuthCredential(value: unknown): value is AuthCredential {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'authType' in value &&
+    AUTH_CREDENTIAL_TYPES.has(value.authType)
+  );
+}

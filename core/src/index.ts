@@ -59,6 +59,34 @@ export {
 } from './skills/loader.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
+export {
+  credentialToParam,
+  dictToAuthScheme,
+  INTERNAL_AUTH_PREFIX,
+  openidDictToSchemeCredential,
+  openidUrlToSchemeCredential,
+  serviceAccountDictToSchemeCredential,
+  serviceAccountSchemeCredential,
+  tokenToSchemeCredential,
+} from './tools/openapi_tool/auth/auth_helpers.js';
+export {AutoAuthCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
+export type {CustomCredentialExchangers} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
+export {
+  AuthCredentialMissingError,
+  BaseAuthCredentialExchanger,
+} from './tools/openapi_tool/auth/credential_exchangers/base_auth_credential_exchanger.js';
+export {
+  exchangeCredential,
+  OAuth2BearerExchanger,
+} from './tools/openapi_tool/auth/credential_exchangers/oauth2_exchanger.js';
+export {ServiceAccountCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';
+export {
+  createApiParameter,
+  generateParamDoc,
+  generateReturnDoc,
+  getTypeHint,
+} from './tools/openapi_tool/common/common.js';
+export type {ApiParameterInit} from './tools/openapi_tool/common/common.js';
 export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 export type {
   OperationEndpoint,
@@ -66,13 +94,21 @@ export type {
 } from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
 export {OperationParser} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
 export type {ApiParameter} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
-export {ToolAuthHandler} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
-export type {AuthPreparationResult} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export {
+  ToolAuthHandler,
+  ToolContextCredentialStore,
+} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export type {
+  AuthPreparationResult,
+  ToolAuthHandlerOptions,
+} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
 export {OpenAPIToolset} from './tools/openapi_tool/openapi_toolset.js';
 export {
   createRestApiTool,
+  createRestApiToolFromJson,
   RestApiTool,
 } from './tools/openapi_tool/rest_api_tool.js';
+export type {ParsedOperationInput} from './tools/openapi_tool/rest_api_tool.js';
 export {FilesRetrieval} from './tools/retrieval/files_retrieval.js';
 export type {
   FilesRetrievalConstructorParams,

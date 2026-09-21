@@ -96,7 +96,7 @@ export type {
   SessionLoadArtifactRequest,
   SessionSaveArtifactRequest,
 } from './artifacts/session_artifact_service.js';
-export {AuthCredentialTypes} from './auth/auth_credential.js';
+export {AuthCredentialTypes, isAuthCredential} from './auth/auth_credential.js';
 export type {
   AuthCredential,
   HttpAuth,
@@ -369,6 +369,7 @@ export type {
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {AsyncQueue} from './utils/async_queue.js';
+export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {
   LogLevel,

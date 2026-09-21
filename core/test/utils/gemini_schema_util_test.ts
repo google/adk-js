@@ -6,7 +6,10 @@
 
 import {Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
-import {toGeminiSchema} from '../../src/utils/gemini_schema_util.js';
+import {
+  openApiSchemaToGeminiSchema,
+  toGeminiSchema,
+} from '../../src/utils/gemini_schema_util.js';
 
 interface MCPToolSchema {
   type: 'object';
@@ -546,5 +549,13 @@ describe('toGeminiSchema', () => {
         {type: Type.STRING},
       ],
     });
+  });
+});
+
+describe('openApiSchemaToGeminiSchema', () => {
+  it('leaves the type unspecified when the schema declares a type union', () => {
+    const schema = openApiSchemaToGeminiSchema({type: ['string', 'null']});
+
+    expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
   });
 });
