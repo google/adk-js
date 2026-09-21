@@ -65,9 +65,10 @@ Left unset, the sample runs on the corpus written into the file.
 
 ## Samples
 
-| Sample      | Shows                                                                                  | Key | Extra                                      |
-| ----------- | -------------------------------------------------------------------------------------- | --- | ------------------------------------------ |
-| `retrieval` | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval` | ✅  | `llamaindex` for the `FilesRetrieval` half |
+| Sample                                   | Shows                                                                                   | Key | Extra                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- | --- | ------------------------------------------ |
+| `retrieval`                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`  | ✅  | `llamaindex` for the `FilesRetrieval` half |
+| [`openapi_tool`](openapi_tool/README.md) | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call | ✅  |                                            |
 
 ## Worth knowing
 
@@ -83,9 +84,33 @@ Left unset, the sample runs on the corpus written into the file.
   interchangeable.** The first runs in your process and hands the model text;
   the second adds a `retrieval.vertexRagStore` entry to the request config and
   the model retrieves server-side. See the guide below for how to choose.
+- **A toolset goes into `tools` whole.** `tools` accepts a `ToolUnion`, so a
+  `BaseToolset` sits in the same array as a single `BaseTool`. The agent sees
+  one function declaration per operation in the spec.
+- **`OpenAPIToolset.getTool` ignores `toolFilter`.** The filter decides what an
+  agent exposes to the model; `getTool` searches everything the spec produced.
+  A filtered-out tool still resolves.
+- **An `OpenAPIToolset` applies its `authScheme` and `authCredential` to every
+  tool it generates.** The pair is a toolset-wide override, so a specification
+  describing several operations authenticates all of them the same way. Give
+  each service its own toolset when they need different credentials.
+- **A failing HTTP call returns a result, not an exception.** `RestApiTool`
+  answers a non-2xx response with `{error: "Tool ... execution failed. ..."}`,
+  so the model reads the failure. An agent that is not told what to do with it
+  may report the error text as though it were the answer.
+- **The type hints reaching the model are Python tokens in a TypeScript SDK.**
+  `int`, `str` and `Dict[str, Any]` appear inside the generated description,
+  and adk-python emits the same tokens for the same operation. Matching them is
+  what keeps a ported agent's tool descriptions identical.
+- **`credentialKey` is not the cache key.** `credentialKey` names the auth
+  request a client answers. The slot `ToolAuthHandler` caches the exchanged
+  credential in is derived from the auth scheme and the credential, so two
+  tools sharing a `credentialKey` still cache separately.
 
 ## See also
 
 - [BaseRetrievalTool](../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - The abstract base, and how client-side retrieval differs from `VertexRagRetrievalTool`.
 - [LlamaIndexRetrieval](../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - Answers from any object with a `retrieve` method.
 - [FilesRetrieval](../../docs/guides/tools/retrieval/files_retrieval/index.md) - Builds the retriever from a directory of documents.
+- [OpenAPI tool](../../docs/guides/tools/openapi_tool/index.md) - Building a toolset from a spec, selecting tools, and configuring the credential the requests carry.
+- [Graph workflow samples](../workflows/README.md) - The other sample category, one directory per section of the graph documentation.

@@ -13,12 +13,17 @@ import {
 import {AuthScheme} from '../../../../auth/auth_schemes.js';
 import {
   BaseCredentialExchanger,
-  CredentialExchangeError,
   ExchangeResult,
 } from '../../../../auth/exchanger/base_credential_exchanger.js';
 import {experimental} from '../../../../utils/experimental.js';
+import {AuthCredentialMissingError} from './base_auth_credential_exchanger.js';
 
 const DEFAULT_SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
+
+const MISSING_SERVICE_ACCOUNT_CREDENTIALS =
+  'Service account credentials are missing. Please provide them, or set ' +
+  '`useDefaultCredential: true` to use application default credentials in a ' +
+  'hosted service like Cloud Run.';
 
 /**
  * Fetches credentials for Google Service Account.
@@ -32,13 +37,16 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
   }): Promise<ExchangeResult> {
     const {authCredential} = params;
 
-    if (
-      authCredential.authType !== AuthCredentialTypes.SERVICE_ACCOUNT ||
-      !authCredential.serviceAccount
-    ) {
-      throw new CredentialExchangeError(
-        'Invalid credential type for ServiceAccountCredentialExchanger',
-      );
+    // `serviceAccount` is the discriminator, not `authType`: adk-python never
+    // reads the type, so a credential carrying key material is exchanged
+    // whatever it announces.
+    if (!authCredential.serviceAccount) {
+      // One message for every missing-credential case, as the reference has
+      // (`service_account_exchanger.py:60-67`): its single guard covers a null
+      // credential, a null `service_account`, and both sub-fields unset, and it
+      // never reads `auth_type`. Branching on the type produced a second string
+      // -- "Invalid credential type for ..." -- with no counterpart there.
+      throw new AuthCredentialMissingError(MISSING_SERVICE_ACCOUNT_CREDENTIALS);
     }
 
     const saConfig = authCredential.serviceAccount;
@@ -76,7 +84,10 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
         wasExchanged: true,
       };
     } catch (error) {
-      throw new CredentialExchangeError(
+      // The reference's catch-all raises `AuthCredentialMissingError`
+      // (`service_account_exchanger.py:95`), not a distinct exchange-failure
+      // type. A caller taught to catch it must not miss this path.
+      throw new AuthCredentialMissingError(
         `Failed to exchange default service account token: ${(error as Error).message}`,
       );
     }
@@ -87,15 +98,22 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
   ): Promise<ExchangeResult> {
     const creds = saConfig.serviceAccountCredential;
     if (!creds) {
-      throw new CredentialExchangeError(
-        'Service account credentials are missing.',
-      );
+      // Same condition, same type as the check above: the reference raises
+      // `AuthCredentialMissingError` for missing service-account material at
+      // `service_account_exchanger.py:68`, and this is the explicit-credential
+      // branch of it.
+      throw new AuthCredentialMissingError(MISSING_SERVICE_ACCOUNT_CREDENTIALS);
     }
 
     try {
+      // `tokenUri`, `authUri` and the certificate URLs have no counterpart on
+      // the JWT client: google-auth-library hardcodes Google's token endpoint.
       const client = new JWT({
         email: creds.clientEmail,
         key: creds.privateKey,
+        keyId: creds.privateKeyId,
+        projectId: creds.projectId,
+        universeDomain: creds.universeDomain,
         scopes: saConfig.scopes,
       });
 
@@ -117,7 +135,9 @@ export class ServiceAccountCredentialExchanger implements BaseCredentialExchange
         wasExchanged: true,
       };
     } catch (error) {
-      throw new CredentialExchangeError(
+      // As above: `service_account_exchanger.py:95` is the only catch-all in
+      // the reference and it raises `AuthCredentialMissingError`.
+      throw new AuthCredentialMissingError(
         `Failed to exchange explicit service account token: ${(error as Error).message}`,
       );
     }

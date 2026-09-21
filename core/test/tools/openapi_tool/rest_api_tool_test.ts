@@ -10,6 +10,7 @@ import {
   AuthCredentialTypes,
   Context,
   createRestApiTool,
+  createRestApiToolFromJson,
   createSession,
   InvocationContext,
   LlmAgent,
@@ -19,6 +20,7 @@ import {
   RestApiTool,
   ToolAuthHandler,
 } from '@google/adk';
+import {Type} from '@google/genai';
 import {OpenAPIV3} from 'openapi-types';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -29,6 +31,17 @@ import {
   prepareRequestBody,
   prepareRequestParams,
 } from '../../../src/tools/openapi_tool/rest_api_tool.js';
+
+function createParityToolContext(): Context {
+  return new Context({
+    invocationContext: new InvocationContext({
+      invocationId: 'invocation-1',
+      agent: new LlmAgent({name: 'test_agent'}),
+      session: createSession({id: 'session-1', appName: 'test_app'}),
+      pluginManager: new PluginManager(),
+    }),
+  });
+}
 
 describe('RestApiTool', () => {
   afterEach(() => {
@@ -310,7 +323,10 @@ describe('RestApiTool', () => {
     expect(declaration).toEqual({
       name: 'test_tool',
       description: 'description',
-      parameters: mockSchema,
+      parameters: {
+        type: Type.OBJECT,
+        properties: {dummy_DO_NOT_GENERATE: {type: Type.STRING}},
+      },
     });
   });
 
@@ -481,14 +497,11 @@ describe('RestApiTool', () => {
 
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
 
-    const result = await tool.runAsync({
-      args: {},
-      toolContext: {} as unknown as Context,
-    });
-
-    expect(result).toEqual({
-      error: 'Failed to execute API call: Network error',
-    });
+    // Propagates, matching the reference: `requests.request()` sits outside
+    // the try (`rest_api_tool.py:465`).
+    await expect(
+      tool.runAsync({args: {}, toolContext: {} as unknown as Context}),
+    ).rejects.toThrow('Network error');
   });
 
   it('should apply auth credentials to fetch request', async () => {
@@ -585,6 +598,50 @@ describe('RestApiTool', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('applies the credential with the scheme the auth result carries', async () => {
+    const endpoint = {
+      baseUrl: 'http://api.example.com',
+      path: '/test',
+      method: 'GET',
+    };
+    const operation: OpenAPIV3.OperationObject = {responses: {}};
+    const tool = new RestApiTool(
+      'test_tool',
+      'description',
+      endpoint,
+      operation,
+      {type: 'apiKey', name: 'X-Stale-Key', in: 'header'},
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    // The handler deep-copies the scheme, so the copy on the result is what it
+    // prepared the credential against. Here the two disagree, which pins that
+    // the result wins.
+    const mockAuthHandler = {
+      prepareAuthCredentials: async () => ({
+        state: 'done',
+        authScheme: {type: 'apiKey', name: 'X-Prepared-Key', in: 'header'},
+        authCredential: {apiKey: 'secret_key'},
+      }),
+    };
+    vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue(
+      mockAuthHandler as unknown as ToolAuthHandler,
+    );
+
+    await tool.runAsync({args: {}, toolContext: {} as unknown as Context});
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    expect(init?.headers).toEqual(
+      expect.objectContaining({'X-Prepared-Key': 'secret_key'}),
+    );
+    expect(init?.headers).not.toHaveProperty('X-Stale-Key');
+  });
+
   it('should fallback to JSON if no requestBody in spec', async () => {
     const endpoint = {
       baseUrl: 'http://api.example.com',
@@ -646,6 +703,7 @@ describe('RestApiTool', () => {
         get: (name: string) =>
           name === 'content-type' ? 'application/json' : null,
       },
+      text: async () => JSON.stringify(jsonResponse),
       json: async () => jsonResponse,
     });
 
@@ -731,6 +789,43 @@ describe('RestApiTool Utilities', () => {
       expect(tool).toBeInstanceOf(RestApiTool);
       expect(tool.name).toBe('test_tool');
       expect(tool.description).toBe('description');
+    });
+
+    it('should give the tool the credential on the parsed operation', async () => {
+      const authCredential = {
+        authType: AuthCredentialTypes.API_KEY,
+        apiKey: 'parsed-operation-key',
+      };
+      const tool = createRestApiTool({
+        name: 'credentialed_tool',
+        description: 'description',
+        endpoint: {
+          baseUrl: 'http://api.example.com',
+          path: '/test',
+          method: 'GET',
+        },
+        operation: {responses: {}},
+        authScheme: createApiKeyScheme('X-API-Key', 'header'),
+        authCredential,
+      });
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        headers: {get: () => 'text/plain'},
+        text: async () => 'ok',
+      });
+      const spy = vi.spyOn(ToolAuthHandler, 'fromToolContext').mockReturnValue({
+        prepareAuthCredentials: async () => ({state: 'done', authCredential}),
+      } as unknown as ToolAuthHandler);
+
+      await tool.runAsync({args: {}, toolContext: {} as unknown as Context});
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        authCredential,
+        expect.anything(),
+      );
     });
   });
 
@@ -1255,5 +1350,278 @@ describe('RestApiTool Utilities', () => {
         'Content-Type': 'application/json',
       });
     });
+  });
+});
+
+describe('RestApiTool v0.1.0 parity behaviour', () => {
+  const endpoint = {
+    baseUrl: 'http://api.example.com',
+    path: '/test',
+    method: 'GET',
+  };
+  const operation: OpenAPIV3.OperationObject = {
+    operationId: 'getThing',
+    description: 'Gets a thing.',
+    responses: {},
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('falls through to the body for an unfollowed 3xx, as raise_for_status does', async () => {
+    // `raise_for_status()` raises only for 400-599 (`rest_api_tool.py:471`),
+    // so a 304 -- which neither `requests` nor `fetch` follows -- reaches
+    // `.json()`, fails on the empty body and returns `{"text": ""}` via the
+    // reference's `ValueError` branch (`:481`). Testing `response.ok` instead
+    // would return an `{error: ...}` the model then reasons about.
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 304,
+      headers: {get: () => 'application/json'},
+      text: async () => '',
+    });
+
+    const result = await tool.runAsync({
+      args: {},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(result).toEqual({text: ''});
+  });
+
+  it('should return an error object for a 4xx/5xx response', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      // A real `Response` always carries a status, and the code follows
+      // `raise_for_status()` by testing `status >= 400` rather than `ok`.
+      // Without it the mock exercised a state no `Response` can be in.
+      status: 404,
+      headers: {get: () => 'application/json'},
+      text: async () => '{"error":"no such pet"}',
+    });
+
+    const result = await tool.runAsync({
+      args: {},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(result).toEqual({
+      error:
+        'Tool test_tool execution failed. Analyze this execution error and ' +
+        'your inputs. Retry with adjustments if applicable. But make sure ' +
+        "don't retry more than 3 times. Execution Error: " +
+        '{"error":"no such pet"}',
+    });
+  });
+
+  it('should truncate a tool name longer than 60 characters', () => {
+    const longName = 'a'.repeat(70);
+
+    const tool = new RestApiTool(longName, 'description', endpoint, {
+      responses: {},
+    });
+
+    expect(tool.name).toHaveLength(60);
+    expect(tool.name).toBe('a'.repeat(60));
+  });
+
+  it('should send cookie parameters as a single Cookie header', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+      parameters: [
+        {name: 'session_id', in: 'cookie', schema: {type: 'string'}},
+        {name: 'theme', in: 'cookie', schema: {type: 'string'}},
+      ],
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    await tool.runAsync({
+      args: {session_id: 'abc def', theme: 'dark'},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: 'session_id=abc%20def; theme=dark',
+        }),
+      }),
+    );
+  });
+
+  it('should keep an explicit Cookie header parameter', async () => {
+    const tool = new RestApiTool('test_tool', 'description', endpoint, {
+      responses: {},
+      parameters: [
+        {name: 'session_id', in: 'cookie', schema: {type: 'string'}},
+        {name: 'Cookie', in: 'header', schema: {type: 'string'}},
+      ],
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {get: () => 'text/plain'},
+      text: async () => 'ok',
+    });
+
+    await tool.runAsync({
+      args: {session_id: 'abc', cookie: 'caller=wins'},
+      toolContext: createParityToolContext(),
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        headers: expect.objectContaining({Cookie: 'caller=wins'}),
+      }),
+    );
+  });
+
+  // Guards the deliberate divergence from the reference, which drops every
+  // falsy query value and so loses `?count=0` and `?flag=false`.
+  it('should send falsy query values but not unset ones', () => {
+    const parameters = [
+      'count',
+      'flag',
+      'blank',
+      'missing',
+      'absent',
+      'kept',
+    ].map((name) => ({
+      name,
+      originalName: name,
+      paramLocation: 'query',
+      paramSchema: {},
+      required: false,
+    }));
+
+    const result = prepareRequestParams(endpoint, parameters, {
+      count: 0,
+      flag: false,
+      blank: '',
+      missing: null,
+      absent: undefined,
+      kept: 'yes',
+    });
+
+    expect(result.url).toBe(
+      'http://api.example.com/test?count=0&flag=false&kept=yes',
+    );
+  });
+
+  it('should not double a slash between the base URL and the path', () => {
+    const result = prepareRequestParams(
+      {baseUrl: 'http://api.example.com/', path: '/test', method: 'GET'},
+      [],
+      {},
+    );
+
+    expect(result.url).toBe('http://api.example.com/test');
+  });
+
+  it('should use supplied parameters instead of re-parsing the operation', () => {
+    const parameters = [
+      {
+        name: 'renamed',
+        originalName: 'X-Renamed',
+        paramLocation: 'header',
+        paramSchema: {type: 'string' as const},
+        required: false,
+      },
+    ];
+
+    const tool = createRestApiTool({
+      endpoint,
+      operation: {
+        ...operation,
+        parameters: [{name: 'ignored', in: 'query', schema: {type: 'string'}}],
+      },
+      parameters,
+    });
+
+    expect(tool.name).toBe('get_thing');
+    expect(tool.description).toBe('Gets a thing.');
+    expect(tool._getDeclaration().parameters?.properties).toEqual({
+      renamed: {type: Type.STRING},
+    });
+  });
+
+  it('should keep an explicit name and description', () => {
+    const tool = createRestApiTool({
+      name: 'explicit_name',
+      description: 'Explicit description.',
+      endpoint,
+      operation,
+    });
+
+    expect(tool.name).toBe('explicit_name');
+    expect(tool.description).toBe('Explicit description.');
+  });
+
+  it('should round-trip a serialized parsed operation', () => {
+    const tool = createRestApiToolFromJson(
+      JSON.stringify({
+        name: 'json_tool',
+        description: 'From JSON.',
+        endpoint,
+        operation,
+        parameters: [],
+      }),
+    );
+
+    expect(tool.name).toBe('json_tool');
+    expect(tool.description).toBe('From JSON.');
+  });
+
+  it('should reject an auth scheme with an unknown type from JSON', () => {
+    const serialize = (authScheme: unknown) =>
+      JSON.stringify({name: 'json_tool', endpoint, operation, authScheme});
+
+    expect(
+      createRestApiToolFromJson(
+        serialize({type: 'apiKey', name: 'X-Api-Key', in: 'header'}),
+      ).name,
+    ).toBe('json_tool');
+    expect(() => createRestApiToolFromJson(serialize({type: 'magic'}))).toThrow(
+      'Unsupported security scheme type: "magic". Expected one of: ' +
+        'apiKey, http, oauth2, openIdConnect.',
+    );
+    expect(() => createRestApiToolFromJson(serialize({}))).toThrow(
+      'Unsupported security scheme type: undefined.',
+    );
+  });
+
+  it('should send an octet-stream body unchanged', () => {
+    const requestBody: OpenAPIV3.RequestBodyObject = {
+      content: {'application/octet-stream': {schema: {type: 'string'}}},
+    };
+    const headers: Record<string, string> = {};
+    const payload = new Uint8Array([1, 2, 3]);
+
+    expect(prepareRequestBody(requestBody, payload, {}, headers)).toBe(payload);
+    expect(headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('should stringify a non-binary octet-stream body', () => {
+    const requestBody: OpenAPIV3.RequestBodyObject = {
+      content: {'application/octet-stream': {schema: {type: 'string'}}},
+    };
+    const headers: Record<string, string> = {};
+
+    expect(prepareRequestBody(requestBody, {a: 1}, {}, headers)).toBe(
+      '[object Object]',
+    );
+    expect(headers['Content-Type']).toBe('application/octet-stream');
   });
 });
