@@ -58,9 +58,23 @@ const CREATE_MEMORY_KNOWN_FIELDS = [
 const ENABLE_CONSOLIDATION_KEY = 'enable_consolidation';
 const MAX_DIRECT_MEMORIES_PER_GENERATE_CALL = 5;
 
+/**
+ * Reports whether an event carries nothing worth writing to memory. The part
+ * fields below mirror `_should_filter_out_event` in adk-python's
+ * `memory/vertex_ai_memory_bank_service.py`.
+ */
 function shouldFilterOutEvent(content?: Content): boolean {
   return !(content?.parts || []).some(
-    (p) => p.text || p.inlineData || p.fileData,
+    (p) =>
+      p.text ||
+      p.inlineData ||
+      p.fileData ||
+      p.functionCall ||
+      p.functionResponse ||
+      p.executableCode ||
+      p.codeExecutionResult ||
+      p.toolCall ||
+      p.toolResponse,
   );
 }
 

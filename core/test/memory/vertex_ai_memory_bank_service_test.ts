@@ -11,10 +11,11 @@ import {
   Event,
   getLogger,
   MemoryEntry,
+  Session,
   VertexAiMemoryBankService,
   VertexAiMemoryBankServiceOptions,
 } from '@google/adk';
-import {Content, Part} from '@google/genai';
+import {Content, Language, Outcome, Part, ToolType} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 const clientConstructor = vi.hoisted(() => vi.fn());
@@ -34,6 +35,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
   clientConstructor.mockClear();
 });
+
+function sessionWithEvents(events: Event[]): Session {
+  return createSession({
+    id: 'test-session-id',
+    appName: 'test-app',
+    userId: 'test-user',
+    events,
+    lastUpdateTime: Date.now(),
+  });
+}
 
 describe('VertexAiMemoryBankService', () => {
   let service: VertexAiMemoryBankService;
@@ -198,6 +209,101 @@ describe('VertexAiMemoryBankService', () => {
           timestamp: Date.now(),
         }),
       );
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, Part]>([
+      ['functionCall', {functionCall: {name: 'test_function', args: {}}}],
+      [
+        'functionResponse',
+        {functionResponse: {name: 'test_function', response: {result: 'ok'}}},
+      ],
+      [
+        'executableCode',
+        {executableCode: {code: 'print(1)', language: Language.PYTHON}},
+      ],
+      [
+        'codeExecutionResult',
+        {codeExecutionResult: {outcome: Outcome.OUTCOME_OK, output: '1'}},
+      ],
+      [
+        'toolCall',
+        {
+          toolCall: {
+            id: 'tool-call-id',
+            toolType: ToolType.GOOGLE_SEARCH_WEB,
+            args: {query: 'adk'},
+          },
+        },
+      ],
+      [
+        'toolResponse',
+        {
+          toolResponse: {
+            id: 'tool-call-id',
+            toolType: ToolType.GOOGLE_SEARCH_WEB,
+            response: {result: 'ok'},
+          },
+        },
+      ],
+    ])('forwards an event whose only part is a %s', async (_, part) => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {parts: [part]},
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {events: [{content: {parts: [part]}}]},
+        }),
+      );
+    });
+
+    it('keeps a text event and a function call event, and drops the event without content', async () => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'user',
+          content: {parts: [{text: 'test_content'}]},
+          timestamp: Date.now(),
+        }),
+        createEvent({author: 'user', timestamp: Date.now()}),
+        createEvent({
+          author: 'agent',
+          content: {parts: [{functionCall: {name: 'test_function'}}]},
+          timestamp: Date.now(),
+        }),
+      ]);
+
+      await service.addSessionToMemory(session);
+
+      expect(mockMemories.generateInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directContentsSource: {
+            events: [
+              {content: {parts: [{text: 'test_content'}]}},
+              {content: {parts: [{functionCall: {name: 'test_function'}}]}},
+            ],
+          },
+        }),
+      );
+    });
+
+    it('still filters out an event whose only part is a thought', async () => {
+      const session = sessionWithEvents([
+        createEvent({
+          author: 'agent',
+          content: {parts: [{thought: true}]},
+          timestamp: Date.now(),
+        }),
+      ]);
 
       await service.addSessionToMemory(session);
 
