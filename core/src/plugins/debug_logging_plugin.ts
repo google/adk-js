@@ -18,6 +18,7 @@ import {LlmResponse} from '../models/llm_response.js';
 import {State} from '../sessions/state.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {logger} from '../utils/logger.js';
+import {toSnakeCaseKey} from '../utils/object_notation_utils.js';
 
 import {BasePlugin} from './base_plugin.js';
 
@@ -89,12 +90,6 @@ const SENSITIVE_SUFFIXES = ['_token'] as const;
 const STATE_PREFIXES = [State.APP_PREFIX, State.USER_PREFIX] as const;
 
 /**
- * Splits a camel-cased key so that `apiKey` and `XApiKey` normalize to the
- * same `api_key` that `api-key` and `api_key` do.
- */
-const CAMEL_BOUNDARY = /(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/g;
-
-/**
  * Matches armored private key blocks inside any string.
  */
 const PRIVATE_KEY_BLOCK =
@@ -117,10 +112,7 @@ function isSensitiveKey(key: unknown): boolean {
   if (typeof key !== 'string') {
     return false;
   }
-  let normalized = key
-    .replace(CAMEL_BOUNDARY, '_')
-    .toLowerCase()
-    .replace(/-/g, '_');
+  let normalized = toSnakeCaseKey(key);
 
   if (normalized.startsWith(State.TEMP_PREFIX)) {
     return true;

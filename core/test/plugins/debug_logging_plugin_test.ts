@@ -4,13 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Content} from '@google/genai';
-import * as yaml from 'js-yaml';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-
 import {
   AuthCredential,
   AuthCredentialTypes,
@@ -28,7 +21,13 @@ import {
   PluginManager,
   Session,
   State,
-} from '../../src/index.js';
+} from '@google/adk';
+import {Content} from '@google/genai';
+import * as yaml from 'js-yaml';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 const SENTINEL_ACCESS_TOKEN = 'sentinel-access-token-4f7a21';
 const SENTINEL_REFRESH_TOKEN = 'sentinel-refresh-token-91cc03';
