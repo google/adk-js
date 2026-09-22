@@ -259,7 +259,7 @@ export async function createAgent(options: AgentCreationOptions) {
 
     if (backend === 'vertex') {
       const defaultProject = await getGcpProject();
-      const defaultRegion = await getGcpRegion();
+      const defaultRegion = options.region || (await getGcpRegion());
 
       const projectResponse: symbol | string = options.forceYes
         ? defaultProject

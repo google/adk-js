@@ -283,6 +283,37 @@ describe('createAgent', () => {
 
       expect(saveToFile).not.toHaveBeenCalled();
     });
+
+    it('should seed the region prompt with the --region value', async () => {
+      (select as Mock).mockResolvedValueOnce('gemini-2.5-flash'); // Model
+      (select as Mock).mockResolvedValueOnce('ts'); // Language
+      (select as Mock).mockResolvedValueOnce('vertex'); // Backend
+
+      // gcloud and the environment offer a different region, so the assertion
+      // below can only pass if the flag wins.
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+      (execSync as Mock).mockImplementation((cmd: string) => {
+        if (cmd.includes('project')) return 'gcloud-project\n';
+        if (cmd.includes('region')) return 'gcloud-region\n';
+        return '';
+      });
+
+      (text as Mock).mockResolvedValueOnce('gcloud-project'); // Project
+      (text as Mock).mockResolvedValueOnce('europe-west4'); // Region
+
+      await createAgent({...getFreshOptions(), region: 'europe-west4'});
+
+      expect(text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Enter the Google Cloud Region',
+          initialValue: 'europe-west4',
+        }),
+      );
+      expect(execSync).not.toHaveBeenCalledWith(
+        'gcloud config get-value compute/region',
+        expect.anything(),
+      );
+    });
   });
 
   describe('Folder Handling', () => {
