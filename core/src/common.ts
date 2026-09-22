@@ -369,6 +369,7 @@ export type {
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
 export {WebMCPTool} from './tools/webmcp/webmcp_tool.js';
+export type {WebMCPToolParams} from './tools/webmcp/webmcp_tool.js';
 export {WebMCPToolset} from './tools/webmcp/webmcp_toolset.js';
 export type {WebMCPToolsetOptions} from './tools/webmcp/webmcp_toolset.js';
 export {

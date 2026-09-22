@@ -47,7 +47,7 @@ function toolContextWith(abortSignal?: AbortSignal): Context {
 describe('WebMCPTool', () => {
   describe('_getDeclaration', () => {
     it('should convert the JSON Schema into a Gemini declaration', () => {
-      const tool = new WebMCPTool(SAMPLE_TOOL);
+      const tool = new WebMCPTool({tool: SAMPLE_TOOL});
       const declaration = tool._getDeclaration();
 
       expect(declaration.name).toBe('select_flight');
@@ -64,8 +64,10 @@ describe('WebMCPTool', () => {
       // Left unparsed this yields TYPE_UNSPECIFIED with no properties, and the
       // model then calls the tool with no arguments at all.
       const tool = new WebMCPTool({
-        ...SAMPLE_TOOL,
-        inputSchema: JSON.stringify(SAMPLE_TOOL.inputSchema),
+        tool: {
+          ...SAMPLE_TOOL,
+          inputSchema: JSON.stringify(SAMPLE_TOOL.inputSchema),
+        },
       });
 
       const parameters = tool._getDeclaration().parameters;
@@ -76,21 +78,26 @@ describe('WebMCPTool', () => {
     });
 
     it('should declare an empty object when there is no schema', () => {
-      const tool = new WebMCPTool({name: 'ping', description: 'Ping.'});
+      const tool = new WebMCPTool({tool: {name: 'ping', description: 'Ping.'}});
       const parameters = tool._getDeclaration().parameters;
 
       expect(parameters).toEqual({type: 'OBJECT', properties: {}});
     });
 
     it('should degrade to no parameters on an unparseable schema string', () => {
-      const tool = new WebMCPTool({...SAMPLE_TOOL, inputSchema: 'not json'});
+      const tool = new WebMCPTool({
+        tool: {...SAMPLE_TOOL, inputSchema: 'not json'},
+      });
       const parameters = tool._getDeclaration().parameters;
 
       expect(parameters).toEqual({type: 'OBJECT', properties: {}});
     });
 
     it('should use the prefixed name when one is supplied', () => {
-      const tool = new WebMCPTool(SAMPLE_TOOL, 'web_select_flight');
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        name: 'web_select_flight',
+      });
       expect(tool._getDeclaration().name).toBe('web_select_flight');
     });
   });
@@ -98,16 +105,14 @@ describe('WebMCPTool', () => {
   describe('checkRequireConfirmation', () => {
     it('should require confirmation for a consequential tool', async () => {
       const tool = new WebMCPTool({
-        ...SAMPLE_TOOL,
-        annotations: {consequentialHint: true},
+        tool: {...SAMPLE_TOOL, annotations: {consequentialHint: true}},
       });
       await expect(tool.checkRequireConfirmation()).resolves.toBe(true);
     });
 
     it('should not require confirmation otherwise', async () => {
       const tool = new WebMCPTool({
-        ...SAMPLE_TOOL,
-        annotations: {readOnlyHint: true},
+        tool: {...SAMPLE_TOOL, annotations: {readOnlyHint: true}},
       });
       await expect(tool.checkRequireConfirmation()).resolves.toBe(false);
     });
@@ -120,7 +125,10 @@ describe('WebMCPTool', () => {
           ok: true,
         }),
       );
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        document: docWith(executeTool),
+      });
 
       const result = await tool.runAsync({
         args: {flightId: 'SB-101'},
@@ -140,7 +148,10 @@ describe('WebMCPTool', () => {
           ? {ok: true}
           : {error: 'Failed to parse input arguments'},
       );
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        document: docWith(executeTool),
+      });
 
       const result = await tool.runAsync({
         args: {flightId: 'SB-101'},
@@ -158,7 +169,10 @@ describe('WebMCPTool', () => {
           ? {ok: true}
           : {error: 'Failed to parse input arguments'},
       );
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        document: docWith(executeTool),
+      });
 
       await tool.runAsync({
         args: {flightId: 'SB-101'},
@@ -178,7 +192,10 @@ describe('WebMCPTool', () => {
       const executeTool = vi.fn(async () => {
         throw new Error('Flight service unavailable');
       });
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        document: docWith(executeTool),
+      });
 
       await expect(
         tool.runAsync({args: {}, toolContext: toolContextWith()}),
@@ -192,7 +209,10 @@ describe('WebMCPTool', () => {
           ok: true,
         }),
       );
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, docWith(executeTool));
+      const tool = new WebMCPTool({
+        tool: SAMPLE_TOOL,
+        document: docWith(executeTool),
+      });
       const controller = new AbortController();
 
       await tool.runAsync({
@@ -206,7 +226,7 @@ describe('WebMCPTool', () => {
     });
 
     it('should throw a clear error when WebMCP is unavailable', async () => {
-      const tool = new WebMCPTool(SAMPLE_TOOL, undefined, {});
+      const tool = new WebMCPTool({tool: SAMPLE_TOOL, document: {}});
       await expect(
         tool.runAsync({args: {}, toolContext: toolContextWith()}),
       ).rejects.toThrow(/document\.modelContext is unavailable/);

@@ -87,11 +87,11 @@ export class WebMCPToolset extends BaseToolset {
 
     const tools = registered.map(
       (tool) =>
-        new WebMCPTool(
+        new WebMCPTool({
           tool,
-          this.prefix ? `${this.prefix}_${tool.name}` : tool.name,
-          this.doc,
-        ),
+          name: this.prefix ? `${this.prefix}_${tool.name}` : tool.name,
+          document: this.doc,
+        }),
     );
 
     const filter = this.toolFilter;

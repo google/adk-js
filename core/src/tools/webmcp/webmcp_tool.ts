@@ -62,6 +62,19 @@ function isArgParseFailure(value: unknown): boolean {
   );
 }
 
+/** Parameters for {@link WebMCPTool}. */
+export interface WebMCPToolParams {
+  /** The tool as reported by `document.modelContext.getTools()`. */
+  tool: WebMCPRegisteredTool;
+  /**
+   * Overrides the name exposed to the model, which the toolset uses to apply
+   * its prefix. Defaults to the tool's own name.
+   */
+  name?: string;
+  /** Document to read `modelContext` from. Defaults to the global document. */
+  document?: WebMCPDocument;
+}
+
 /**
  * A tool registered by the page on `document.modelContext`.
  *
@@ -74,18 +87,16 @@ function isArgParseFailure(value: unknown): boolean {
  * confirmation rather than firing unprompted.
  */
 export class WebMCPTool extends BaseTool {
+  readonly webmcpTool: WebMCPRegisteredTool;
   private readonly doc?: WebMCPDocument;
 
-  constructor(
-    readonly webmcpTool: WebMCPRegisteredTool,
-    name?: string,
-    doc?: WebMCPDocument,
-  ) {
+  constructor(params: WebMCPToolParams) {
     super({
-      name: name ?? webmcpTool.name,
-      description: webmcpTool.description ?? '',
+      name: params.name ?? params.tool.name,
+      description: params.tool.description ?? '',
     });
-    this.doc = doc;
+    this.webmcpTool = params.tool;
+    this.doc = params.document;
   }
 
   /**
