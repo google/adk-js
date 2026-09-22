@@ -18,7 +18,7 @@ import fg from 'fast-glob';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ADK_WEB_VERSION = 'v1.0.0';
+const ADK_WEB_VERSION = 'v1.0.5';
 const cacheDir = path.join(__dirname, '.cache');
 const zipCachePath = path.join(cacheDir, `adk-web-${ADK_WEB_VERSION}.zip`);
 
