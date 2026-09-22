@@ -170,9 +170,9 @@ export abstract class BasePlugin {
    * @param _params.invocationContext The context for the entire invocation.
    * @param _params.event The event raised by the runner.
    * @returns An optional value. A non-`undefined` return may be used by the
-   *     framework to modify or replace the response. Copy `_params.event` when
-   *     constructing a replacement to preserve fields that are not being
-   *     modified, such as event actions. Returning `undefined` allows the
+   *     framework to modify or replace the response. Copy the incoming
+   *     `event` when constructing a replacement to preserve fields that are not
+   *     being modified, such as event actions. Returning `undefined` allows the
    *     original response to be used.
    */
   async onEventCallback(_params: {
