@@ -368,6 +368,22 @@ export type {
   VertexAiSearchToolParams,
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
+export {WebMCPTool} from './tools/webmcp/webmcp_tool.js';
+export type {WebMCPToolParams} from './tools/webmcp/webmcp_tool.js';
+export {WebMCPToolset} from './tools/webmcp/webmcp_toolset.js';
+export type {WebMCPToolsetOptions} from './tools/webmcp/webmcp_toolset.js';
+export {
+  getModelContext,
+  isWebMCPSupported,
+} from './tools/webmcp/webmcp_types.js';
+export type {
+  WebMCPDocument,
+  WebMCPExecuteToolOptions,
+  WebMCPGetToolsOptions,
+  WebMCPModelContext,
+  WebMCPRegisteredTool,
+  WebMCPToolAnnotations,
+} from './tools/webmcp/webmcp_types.js';
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';

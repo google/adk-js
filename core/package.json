@@ -61,6 +61,12 @@
       "require": "./dist/cjs/tools/mcp/index.js",
       "default": "./dist/esm/tools/mcp/index.js"
     },
+    "./tools/webmcp": {
+      "types": "./dist/types/tools/webmcp/index.d.ts",
+      "import": "./dist/esm/tools/webmcp/index.js",
+      "require": "./dist/cjs/tools/webmcp/index.js",
+      "default": "./dist/esm/tools/webmcp/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
