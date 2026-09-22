@@ -130,14 +130,13 @@ export abstract class BasePlugin {
    * This callback helps logging and modifying the user message before the
    * runner starts the invocation.
    *
-   * @param params.invocationContext The context for the entire invocation.
-   * @param params.userMessage The message content input by user.
+   * @param _params.invocationContext The context for the entire invocation.
+   * @param _params.userMessage The message content input by user.
    * @returns An optional `Content` to be returned to the ADK. Returning a
    *     value to replace the user message. Returning `undefined` to proceed
    *     normally.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async onUserMessageCallback(params: {
+  async onUserMessageCallback(_params: {
     invocationContext: InvocationContext;
     userMessage: Content;
   }): Promise<Content | undefined> {
@@ -150,14 +149,13 @@ export abstract class BasePlugin {
    * This is the first callback to be called in the lifecycle, ideal for global
    * setup or initialization tasks.
    *
-   * @param params.invocationContext The context for the entire invocation, containing
+   * @param _params.invocationContext The context for the entire invocation, containing
    *     session information, the root agent, etc.
    * @returns An optional `Event` to be returned to the ADK. Returning a value
    *     to halt execution of the runner and ends the runner with that event.
    *     Return `undefined` to proceed normally.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeRunCallback(params: {
+  async beforeRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<Content | undefined> {
     return;
@@ -169,16 +167,15 @@ export abstract class BasePlugin {
    * This is the ideal place to make modification to the event before the event
    * is handled by the underlying agent app.
    *
-   * @param params.invocationContext The context for the entire invocation.
-   * @param params.event The event raised by the runner.
+   * @param _params.invocationContext The context for the entire invocation.
+   * @param _params.event The event raised by the runner.
    * @returns An optional value. A non-`undefined` return may be used by the
-   *     framework to modify or replace the response. Copy `params.event` when
+   *     framework to modify or replace the response. Copy `_params.event` when
    *     constructing a replacement to preserve fields that are not being
    *     modified, such as event actions. Returning `undefined` allows the
    *     original response to be used.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async onEventCallback(params: {
+  async onEventCallback(_params: {
     invocationContext: InvocationContext;
     event: Event;
   }): Promise<Event | undefined> {
@@ -191,11 +188,10 @@ export abstract class BasePlugin {
    * This is the final callback in the ADK lifecycle, suitable for cleanup,
    * final logging, or reporting tasks.
    *
-   * @param params.invocationContext The context for the entire invocation.
+   * @param _params.invocationContext The context for the entire invocation.
    * @returns undefined
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async afterRunCallback(params: {
+  async afterRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<void> {
     return;
@@ -207,14 +203,13 @@ export abstract class BasePlugin {
    * This callback can be used for logging, setup, or to short-circuit the
    * agent's execution by returning a value.
    *
-   * @param params.agent The agent that is about to run.
-   * @param params.callbackContext The context for the agent invocation.
+   * @param _params.agent The agent that is about to run.
+   * @param _params.callbackContext The context for the agent invocation.
    * @returns An optional `Content` object. If a value is returned, it will
    *     bypass the agent's callbacks and its execution, and return this value
    *     directly. Returning `undefined` allows the agent to proceed normally.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeAgentCallback(params: {
+  async beforeAgentCallback(_params: {
     agent: BaseAgent;
     callbackContext: Context;
   }): Promise<Content | undefined> {
@@ -227,14 +222,13 @@ export abstract class BasePlugin {
    * This callback can be used to inspect, log, or modify the agent's final
    * result before it is returned.
    *
-   * @param params.agent The agent that has just run.
-   * @param params.callbackContext The context for the agent invocation.
+   * @param _params.agent The agent that has just run.
+   * @param _params.callbackContext The context for the agent invocation.
    * @returns An optional `Content` object. If a value is returned, it will
    *     replace the agent's original result. Returning `undefined` uses the
    *     original, unmodified result.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async afterAgentCallback(params: {
+  async afterAgentCallback(_params: {
     agent: BaseAgent;
     callbackContext: Context;
   }): Promise<Content | undefined> {
@@ -289,14 +283,13 @@ export abstract class BasePlugin {
    * object. It can also be used to implement caching by returning a cached
    * `LlmResponse`, which would skip the actual model call.
    *
-   * @param params.callbackContext The context for the current agent call.
-   * @param params.llmRequest The prepared request object to be sent to the model.
+   * @param _params.callbackContext The context for the current agent call.
+   * @param _params.llmRequest The prepared request object to be sent to the model.
    * @returns An optional value. The interpretation of a non-`undefined`
    *     trigger an early exit and returns the response immediately. Returning
    *     `undefined` allows the LLM request to proceed normally.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeModelCallback(params: {
+  async beforeModelCallback(_params: {
     callbackContext: Context;
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
@@ -309,14 +302,13 @@ export abstract class BasePlugin {
    * This is the ideal place to log model responses, collect metrics on token
    * usage, or perform post-processing on the raw `LlmResponse`.
    *
-   * @param params.callbackContext The context for the current agent call.
-   * @param params.llmResponse The response object received from the model.
+   * @param _params.callbackContext The context for the current agent call.
+   * @param _params.llmResponse The response object received from the model.
    * @returns An optional value. A non-`undefined` return may be used by the
    *     framework to modify or replace the response. Returning `undefined`
    *     allows the original response to be used.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async afterModelCallback(params: {
+  async afterModelCallback(_params: {
     callbackContext: Context;
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
@@ -329,16 +321,15 @@ export abstract class BasePlugin {
    * This callback provides an opportunity to handle model errors gracefully,
    * potentially providing alternative responses or recovery mechanisms.
    *
-   * @param params.callbackContext The context for the current agent call.
-   * @param params.llmRequest The request that was sent to the model when the error
+   * @param _params.callbackContext The context for the current agent call.
+   * @param _params.llmRequest The request that was sent to the model when the error
    *     occurred.
-   * @param params.error The exception that was raised during model execution.
+   * @param _params.error The exception that was raised during model execution.
    * @returns An optional LlmResponse. If an LlmResponse is returned, it will be
    *     used instead of propagating the error. Returning `undefined` allows
    *     the original error to be raised.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async onModelErrorCallback(params: {
+  async onModelErrorCallback(_params: {
     callbackContext: Context;
     llmRequest: LlmRequest;
     error: Error;
@@ -352,15 +343,14 @@ export abstract class BasePlugin {
    * This callback provides an opportunity to inspect, log, or modify the
    * available tools before they are selected.
    *
-   * @param params.callbackContext The context for the current agent call.
-   * @param params.tools The available tools.
+   * @param _params.callbackContext The context for the current agent call.
+   * @param _params.tools The available tools.
    * @returns An optional value. A non-`undefined` return may be used by the
    *     framework to modify or replace the available tools. Returning
    *     `undefined` allows the original tools to be used.
    */
   @experimental
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeToolSelection(params: {
+  async beforeToolSelection(_params: {
     callbackContext: Context;
     tools: Readonly<Record<string, BaseTool>>;
   }): Promise<Readonly<Record<string, BaseTool>> | undefined> {
@@ -373,12 +363,11 @@ export abstract class BasePlugin {
    * This callback provides an opportunity to inspect or modify the context
    * before it is compacted.
    *
-   * @param params.invocationContext The context for the entire invocation.
-   * @param params.trigger The trigger for the context compaction.
+   * @param _params.invocationContext The context for the entire invocation.
+   * @param _params.trigger The trigger for the context compaction.
    */
   @experimental
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeContextCompaction(params: {
+  async beforeContextCompaction(_params: {
     invocationContext: InvocationContext;
     trigger: ContextCompactionTrigger;
   }): Promise<void> {
@@ -391,12 +380,11 @@ export abstract class BasePlugin {
    * This callback provides an opportunity to inspect the context
    * after it has been compacted.
    *
-   * @param params.invocationContext The context for the entire invocation.
-   * @param params.trigger The trigger for the context compaction.
+   * @param _params.invocationContext The context for the entire invocation.
+   * @param _params.trigger The trigger for the context compaction.
    */
   @experimental
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async afterContextCompaction(params: {
+  async afterContextCompaction(_params: {
     invocationContext: InvocationContext;
     trigger: ContextCompactionTrigger;
   }): Promise<void> {
@@ -409,16 +397,15 @@ export abstract class BasePlugin {
    * This callback is useful for logging tool usage, input validation, or
    * modifying the arguments before they are passed to the tool.
    *
-   * @param params.tool The tool instance that is about to be executed.
-   * @param params.toolArgs The dictionary of arguments to be used for invoking the
+   * @param _params.tool The tool instance that is about to be executed.
+   * @param _params.toolArgs The dictionary of arguments to be used for invoking the
    *     tool.
-   * @param params.toolContext The context specific to the tool execution.
+   * @param _params.toolContext The context specific to the tool execution.
    * @returns An optional dictionary. If a dictionary is returned, it will stop
    *     the tool execution and return this response immediately. Returning
    *     `undefined` uses the original, unmodified arguments.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async beforeToolCallback(params: {
+  async beforeToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
@@ -432,17 +419,16 @@ export abstract class BasePlugin {
    * This callback allows for inspecting, logging, or modifying the result
    * returned by a tool.
    *
-   * @param params.tool The tool instance that has just been executed.
-   * @param params.toolArgs The original arguments that were passed to the tool.
-   * @param params.toolContext The context specific to the tool execution.
-   * @param params.result The dictionary returned by the tool invocation.
+   * @param _params.tool The tool instance that has just been executed.
+   * @param _params.toolArgs The original arguments that were passed to the tool.
+   * @param _params.toolContext The context specific to the tool execution.
+   * @param _params.result The dictionary returned by the tool invocation.
    * @returns An optional dictionary. If a dictionary is returned, it will
    *     **replace** the original result from the tool. This allows for
    *     post-processing or altering tool outputs. Returning `undefined` uses
    *     the original, unmodified result.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async afterToolCallback(params: {
+  async afterToolCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
@@ -467,16 +453,15 @@ export abstract class BasePlugin {
    * This callback provides an opportunity to handle tool errors gracefully,
    * potentially providing alternative responses or recovery mechanisms.
    *
-   * @param params.tool The tool instance that encountered an error.
-   * @param params.toolArgs The arguments that were passed to the tool.
-   * @param params.toolContext The context specific to the tool execution.
-   * @param params.error The exception that was raised during tool execution.
+   * @param _params.tool The tool instance that encountered an error.
+   * @param _params.toolArgs The arguments that were passed to the tool.
+   * @param _params.toolContext The context specific to the tool execution.
+   * @param _params.error The exception that was raised during tool execution.
    * @returns An optional dictionary. If a dictionary is returned, it will be
    *     used as the tool response instead of propagating the error. Returning
    *     `undefined` allows the original error to be raised.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async onToolErrorCallback(params: {
+  async onToolErrorCallback(_params: {
     tool: BaseTool;
     toolArgs: Record<string, unknown>;
     toolContext: Context;
