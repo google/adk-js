@@ -22,9 +22,17 @@ const {StorageMock, storageMock} = vi.hoisted(() => {
         metadata?: {contentType?: string; metadata?: Record<string, unknown>};
       },
     ): Promise<void> {
+      const metadata = options?.metadata?.metadata ?? {};
+      for (const [key, value] of Object.entries(metadata)) {
+        if (typeof value !== 'string') {
+          throw new TypeError(
+            `GCS custom metadata values must be strings; got ${typeof value} for key "${key}"`,
+          );
+        }
+      }
       this.bucket.files.set(this.name, {
         data: Buffer.isBuffer(data) ? data : Buffer.from(data),
-        metadata: options?.metadata?.metadata || {},
+        metadata,
         contentType: options?.metadata?.contentType ?? options?.contentType,
       });
     }
@@ -118,6 +126,7 @@ describe('GcsArtifactService', () => {
     async () => {
       storageMock.buckets.clear();
     },
+    {stringifiesCustomMetadata: true},
   );
 
   describe('customMetadata GCS shape', () => {
@@ -175,6 +184,80 @@ describe('GcsArtifactService', () => {
       });
       expect(loaded?.fileData).toBeUndefined();
       expect(loaded?.text).toBe('actual note content');
+    });
+
+    it('stringifies non-string customMetadata values, matching adk-python', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      const version = await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'counted.txt',
+        artifact: {text: 'hello'},
+        customMetadata: {count: 123, enabled: true, label: 'x'},
+      });
+
+      const entry = storageMock
+        .bucket(bucketName)
+        .files.get('test-app/test-user/test-session/counted.txt/0');
+      expect(entry?.metadata).toEqual({
+        count: '123',
+        enabled: 'true',
+        label: 'x',
+        adkIsText: 'true',
+      });
+
+      const versionMetadata = await service.getArtifactVersion({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'counted.txt',
+        version,
+      });
+      expect(versionMetadata?.customMetadata).toMatchObject({
+        count: '123',
+        enabled: 'true',
+        label: 'x',
+      });
+    });
+
+    it('stringifies customMetadata on the fileData path', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'report.pdf',
+        artifact: {
+          fileData: {
+            fileUri: 'gs://my-bucket/report.pdf',
+            mimeType: 'application/pdf',
+          },
+        },
+        customMetadata: {retries: 0},
+      });
+
+      const entry = storageMock
+        .bucket(bucketName)
+        .files.get('test-app/test-user/test-session/report.pdf/0');
+      expect(entry?.metadata['retries']).toBe('0');
+      expect(entry?.metadata['adkFileUri']).toBe('gs://my-bucket/report.pdf');
+      expect(entry?.metadata['adkFileMimeType']).toBe('application/pdf');
+    });
+
+    it('the fake bucket rejects non-string metadata values, as real GCS does', async () => {
+      storageMock.buckets.clear();
+
+      await expect(
+        storageMock
+          .bucket(bucketName)
+          .file('x')
+          .save('data', {metadata: {metadata: {n: 123}}}),
+      ).rejects.toThrow(TypeError);
     });
   });
 

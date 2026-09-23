@@ -8,16 +8,41 @@ import {BaseArtifactService, CompositeSessionKey} from '@google/adk';
 import {Part} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 
+export interface ArtifactServiceTestOptions {
+  /**
+   * Set for backends whose storage layer accepts only string metadata values,
+   * where `customMetadata` values are stringified on save.
+   */
+  stringifiesCustomMetadata?: boolean;
+}
+
+/**
+ * Returns the `customMetadata` the backend under test is expected to return
+ * for the given saved map.
+ */
+function expectedCustomMetadata(
+  customMetadata: Record<string, unknown>,
+  options: ArtifactServiceTestOptions,
+): Record<string, unknown> {
+  if (!options.stringifiesCustomMetadata) {
+    return customMetadata;
+  }
+  return Object.fromEntries(
+    Object.entries(customMetadata).map(([key, value]) => [key, String(value)]),
+  );
+}
+
 /**
  * Runs the shared artifact service tests.
  *
  * @param createService A function that returns a promise that resolves to the artifact service.
  * @param cleanup A function that returns a promise that cleans up the artifact service.
- * @param suiteName The name of the test suite.
+ * @param options Behaviour the backend under test is expected to have.
  */
 export function runArtifactServiceTests(
   createService: () => Promise<BaseArtifactService>,
   cleanup: () => Promise<void>,
+  options: ArtifactServiceTestOptions = {},
 ) {
   let service: BaseArtifactService;
   const appName = 'test-app';
@@ -356,7 +381,9 @@ export function runArtifactServiceTests(
       });
 
       expect(versionMetadata).toBeDefined();
-      expect(versionMetadata?.customMetadata).toMatchObject(customMetadata);
+      expect(versionMetadata?.customMetadata).toMatchObject(
+        expectedCustomMetadata(customMetadata, options),
+      );
     });
   });
 
@@ -389,9 +416,13 @@ export function runArtifactServiceTests(
 
       expect(versions).toHaveLength(2);
       expect(versions[0].version).toBe(0);
-      expect(versions[0].customMetadata).toMatchObject({v: 1});
+      expect(versions[0].customMetadata).toMatchObject(
+        expectedCustomMetadata({v: 1}, options),
+      );
       expect(versions[1].version).toBe(1);
-      expect(versions[1].customMetadata).toMatchObject({v: 2});
+      expect(versions[1].customMetadata).toMatchObject(
+        expectedCustomMetadata({v: 2}, options),
+      );
     });
 
     it('returns empty list for non-existent artifact', async () => {
@@ -432,7 +463,9 @@ export function runArtifactServiceTests(
         filename,
         version: 0,
       });
-      expect(v0?.customMetadata).toMatchObject({v: 1});
+      expect(v0?.customMetadata).toMatchObject(
+        expectedCustomMetadata({v: 1}, options),
+      );
 
       const v1 = await service.getArtifactVersion({
         appName,
@@ -441,7 +474,9 @@ export function runArtifactServiceTests(
         filename,
         version: 1,
       });
-      expect(v1?.customMetadata).toMatchObject({v: 2});
+      expect(v1?.customMetadata).toMatchObject(
+        expectedCustomMetadata({v: 2}, options),
+      );
 
       const latest = await service.getArtifactVersion({
         appName,
@@ -449,7 +484,9 @@ export function runArtifactServiceTests(
         sessionId,
         filename,
       });
-      expect(latest?.customMetadata).toMatchObject({v: 2});
+      expect(latest?.customMetadata).toMatchObject(
+        expectedCustomMetadata({v: 2}, options),
+      );
     });
 
     it('returns undefined for non-existent version', async () => {
