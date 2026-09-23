@@ -58,10 +58,24 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
     let isNullable = false;
     let nonNullTypes;
     if (Array.isArray(sourceType)) {
-      nonNullTypes = sourceType.filter(
+      // JSON Schema allows a boolean where a schema is expected: `true` accepts
+      // any value and `false` accepts none. Gemini has no equivalent for
+      // either, so both become an unconstrained object, as adk-python does.
+      // `anyOf` holds schemas while `type` holds type names, hence the two
+      // replacement shapes.
+      const fromAnyOf = Boolean(mcp.anyOf);
+      const branches: MCPTypeArrayItem[] = sourceType.map(
+        (branch: MCPTypeArrayItem | boolean) => {
+          if (typeof branch !== 'boolean') return branch;
+          return fromAnyOf ? {type: 'object'} : 'object';
+        },
+      );
+      mcp = fromAnyOf ? {...mcp, anyOf: branches} : {...mcp, type: branches};
+
+      nonNullTypes = branches.filter(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) !== 'null',
       );
-      isNullable = sourceType.some(
+      isNullable = branches.some(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) === 'null',
       );
 
