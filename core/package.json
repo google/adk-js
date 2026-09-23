@@ -98,7 +98,7 @@
     "@opentelemetry/sdk-trace-base": "^2.1.0",
     "@opentelemetry/sdk-trace-node": "^2.1.0",
     "@types/dockerode": "^4.0.1",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.1",
     "google-auth-library": "^10.3.0",
     "js-yaml": "^4.1.1",
     "jsonpath-plus": "^10.4.0",
