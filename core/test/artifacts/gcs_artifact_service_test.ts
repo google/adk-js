@@ -126,7 +126,7 @@ describe('GcsArtifactService', () => {
     async () => {
       storageMock.buckets.clear();
     },
-    {stringifiesCustomMetadata: true},
+    true,
   );
 
   describe('customMetadata GCS shape', () => {
