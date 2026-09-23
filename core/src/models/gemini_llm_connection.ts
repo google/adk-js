@@ -14,10 +14,7 @@ import {
 
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
-import {
-  isGemini35LiveTranslate,
-  isGemini3xLive,
-} from '../utils/model_name.js';
+import {isGemini35LiveTranslate, isGemini3xLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
