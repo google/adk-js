@@ -54,6 +54,13 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function recursiveConvert(mcp: any): Schema {
+    // JSON Schema allows boolean schemas: `true` accepts any value and `false`
+    // rejects all values. Gemini has no equivalent for either, so both are
+    // approximated as an unconstrained object schema, matching adk-python.
+    if (typeof mcp === 'boolean') {
+      mcp = {type: 'object'};
+    }
+
     const sourceType = mcp.anyOf ?? mcp.type;
     let isNullable = false;
     let nonNullTypes;
