@@ -13,7 +13,10 @@ import {
 } from '@google/adk';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {AgentRegistry} from '../../src/integration/agent_registry.js';
-import {YamlAgentConfig} from '../../src/integration/agent_types.js';
+import {
+  AgentClass,
+  YamlAgentConfig,
+} from '../../src/integration/agent_types.js';
 import {IntegrationRegistry} from '../../src/integration/integration_registry.js';
 
 describe('AgentRegistry', () => {
@@ -272,5 +275,57 @@ describe('AgentRegistry', () => {
 
     expect(retrieved).toBeDefined();
     expect(retrieved.tools.length).toBe(0);
+  });
+
+  it('should summarise an empty registry', () => {
+    expect(agentRegistry.summary()).toBe('0 configs, 0 instantiated agents');
+  });
+
+  it('should count configs and instantiated agents separately', () => {
+    const config: YamlAgentConfig = {
+      agentClass: AgentClass.LlmAgent,
+      name: 'summary_config_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+      isRootAgent: false,
+    };
+    const agent = new LlmAgent({
+      name: 'summary_instance_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+    });
+
+    agentRegistry.registerAgentConfig('summary_config_agent', config);
+    agentRegistry.registerAgent('summary_instance_agent', agent);
+
+    expect(agentRegistry.summary()).toBe('1 configs, 1 instantiated agents');
+  });
+
+  it('should report each count in its own slot', () => {
+    const config: YamlAgentConfig = {
+      agentClass: AgentClass.LlmAgent,
+      name: 'summary_config_agent_a',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+      isRootAgent: false,
+    };
+    const agent = new LlmAgent({
+      name: 'summary_instance_agent',
+      model: 'test_model',
+      description: 'test description',
+      instruction: 'test instruction',
+    });
+
+    agentRegistry.registerAgentConfig('summary_config_agent_a', config);
+    agentRegistry.registerAgentConfig('summary_config_agent_b', {
+      ...config,
+      name: 'summary_config_agent_b',
+    });
+    agentRegistry.registerAgent('summary_instance_agent', agent);
+
+    expect(agentRegistry.summary()).toBe('2 configs, 1 instantiated agents');
   });
 });
