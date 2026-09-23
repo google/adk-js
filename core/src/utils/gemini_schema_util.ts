@@ -174,7 +174,9 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         geminiSchema.required = mcp.required;
       }
     } else if (geminiType === Type.ARRAY) {
-      if (mcp.items) {
+      // `items: false` is a schema node, so a bare truthiness test would drop
+      // it. Other falsy values are not schemas and stay skipped.
+      if (mcp.items || mcp.items === false) {
         geminiSchema.items = recursiveConvert(mcp.items);
       }
     }

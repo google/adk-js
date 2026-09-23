@@ -756,6 +756,20 @@ describe('toGeminiSchema', () => {
     });
   });
 
+  it('converts a boolean false array items schema to an object schema', () => {
+    const input = {
+      type: 'array',
+      items: false,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
   it('converts a boolean schema in an anyOf branch to an object schema', () => {
     const input = {
       anyOf: [true, {type: 'string'}],
