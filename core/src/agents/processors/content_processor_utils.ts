@@ -619,9 +619,9 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
  * Safely stringifies a value for inclusion in LLM-facing text.
  *
  * Always returns a string and never throws. `JSON.stringify` is typed as
- * returning `string` but yields `undefined` when `toJSON` returns nothing, and
- * both it and `String` throw on hostile input — cycles, BigInt, a
- * null-prototype object, or a throwing `toString`.
+ * returning `string` but yields `undefined` when `toJSON` yields nothing, and
+ * it throws on a cycle or a BigInt. `String` throws on a null-prototype object
+ * or a throwing `toString`.
  */
 function safeStringify(obj: unknown): string {
   if (typeof obj === 'string') {
