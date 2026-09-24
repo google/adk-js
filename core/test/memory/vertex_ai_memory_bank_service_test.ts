@@ -52,6 +52,7 @@ describe('VertexAiMemoryBankService', () => {
     createInternal: ReturnType<typeof vi.fn>;
     generateInternal: ReturnType<typeof vi.fn>;
     retrieveInternal: ReturnType<typeof vi.fn>;
+    retrieveProfiles: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -72,6 +73,18 @@ describe('VertexAiMemoryBankService', () => {
             distance: 0.1,
           },
         ],
+      }),
+      retrieveProfiles: vi.fn().mockResolvedValue({
+        profiles: {
+          default: {
+            schemaId: 'default',
+            profile: {name: 'Alice', age: 30},
+          },
+          preferences: {
+            schemaId: 'preferences',
+            profile: {theme: 'dark'},
+          },
+        },
       }),
     };
 
@@ -495,6 +508,56 @@ describe('VertexAiMemoryBankService', () => {
       expect(response.memories[0].content.parts?.[0].text).toBe(
         'user likes blue',
       );
+    });
+  });
+
+  describe('retrieveProfiles', () => {
+    it('calls memories.retrieveProfiles and returns profiles list', async () => {
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+
+      const profiles = await service.retrieveProfiles({
+        appName: 'test-app',
+        userId: 'test-user',
+      });
+
+      expect(mockMemories.retrieveProfiles).toHaveBeenCalledWith({
+        name: 'reasoningEngines/test-engine-id',
+        scope: {app_name: 'test-app', user_id: 'test-user'},
+      });
+      expect(profiles).toEqual([
+        {
+          schemaId: 'default',
+          profile: {name: 'Alice', age: 30},
+        },
+        {
+          schemaId: 'preferences',
+          profile: {theme: 'dark'},
+        },
+      ]);
+      expect(infoSpy).toHaveBeenCalledWith('Retrieved 2 memory profiles.');
+      infoSpy.mockRestore();
+    });
+
+    it('returns empty list when no profiles are returned', async () => {
+      const infoSpy = vi
+        .spyOn(getLogger(), 'info')
+        .mockImplementation(() => {});
+      mockMemories.retrieveProfiles.mockResolvedValueOnce({profiles: {}});
+
+      const profiles = await service.retrieveProfiles({
+        appName: 'test-app',
+        userId: 'test-user',
+      });
+
+      expect(mockMemories.retrieveProfiles).toHaveBeenCalledWith({
+        name: 'reasoningEngines/test-engine-id',
+        scope: {app_name: 'test-app', user_id: 'test-user'},
+      });
+      expect(profiles).toEqual([]);
+      expect(infoSpy).toHaveBeenCalledWith('Retrieved no memory profiles.');
+      infoSpy.mockRestore();
     });
   });
 

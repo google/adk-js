@@ -27,6 +27,24 @@ import {
 } from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
 
+/**
+ * A user profile stored in Vertex AI Memory Bank.
+ */
+export interface MemoryProfile {
+  /** The ID of the schema that the profile conforms to. */
+  schemaId?: string;
+  /** The structured profile data conforming to the schema. */
+  profile?: Record<string, unknown>;
+}
+
+/**
+ * Request parameters for retrieving user profiles from Vertex AI Memory Bank.
+ */
+export interface RetrieveProfilesRequest {
+  appName: string;
+  userId: string;
+}
+
 interface MemoryEntryWithMetadata extends MemoryEntry {
   customMetadata?: Record<string, unknown>;
 }
@@ -247,6 +265,32 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
     }
 
     return {memories: memoryEvents};
+  }
+
+  /**
+   * Retrieves user profiles for a given scope.
+   *
+   * @param request The request containing `appName` and `userId`.
+   * @returns A list of {@link MemoryProfile} instances retrieved from Vertex AI
+   *   Memory Bank.
+   */
+  async retrieveProfiles(
+    request: RetrieveProfilesRequest,
+  ): Promise<MemoryProfile[]> {
+    const response = await this.memories.retrieveProfiles({
+      name: `reasoningEngines/${this.agentEngineId}`,
+      scope: {
+        app_name: request.appName,
+        user_id: request.userId,
+      },
+    });
+    const profiles = Object.values(response.profiles || {});
+    if (profiles.length > 0) {
+      logger.info(`Retrieved ${profiles.length} memory profiles.`);
+    } else {
+      logger.info('Retrieved no memory profiles.');
+    }
+    return profiles;
   }
 
   private async addEventsToMemoryFromEvents(request: {
