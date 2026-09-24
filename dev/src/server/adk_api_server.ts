@@ -10,6 +10,7 @@ import {
   BaseMemoryService,
   BaseSessionService,
   bearerTokenUserBuilder,
+  createRunConfig,
   Event,
   getFunctionCalls,
   getFunctionResponses,
@@ -956,7 +957,19 @@ export class AdkApiServer {
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, stateDelta} = req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        stateDelta,
+        serviceTier,
+        service_tier,
+      } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+      const runConfig: RunConfig | undefined = resolvedServiceTier
+        ? {serviceTier: resolvedServiceTier}
+        : undefined;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -988,6 +1001,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1080,8 +1094,30 @@ export class AdkApiServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, streaming, stateDelta} =
-        req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        streaming,
+        stateDelta,
+        serviceTier,
+        service_tier,
+      } = req.body;
+      const resolvedServiceTier = serviceTier ?? service_tier;
+
+      let runConfig: RunConfig;
+      try {
+        runConfig = createRunConfig({
+          streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
+          ...(resolvedServiceTier ? {serviceTier: resolvedServiceTier} : {}),
+        });
+      } catch (e: unknown) {
+        const error = (e as Error).message;
+        res.status(422).json({error});
+        this.logger.error(error);
+        return;
+      }
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1121,9 +1157,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
-          runConfig: {
-            streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
-          },
+          runConfig,
           abortSignal: abortController.signal,
         })) {
           res.write(`data: ${JSON.stringify(event)}\n\n`);
