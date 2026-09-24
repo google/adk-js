@@ -27,10 +27,6 @@ import {
 } from './base_memory_service.js';
 import {MemoryEntry} from './memory_entry.js';
 
-interface MemoryEntryWithMetadata extends MemoryEntry {
-  customMetadata?: Record<string, unknown>;
-}
-
 const GENERATE_MEMORIES_KNOWN_FIELDS = [
   'disableConsolidation',
   'waitForCompletion',
@@ -199,6 +195,11 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 
   /**
    * Adds explicit memory items using Vertex Memory Bank.
+   *
+   * When a `MemoryEntry.id` is set, it is forwarded as the `memoryId` of the
+   * created memory, so the caller picks the last component of the memory
+   * resource name instead of letting the service generate one. An explicit
+   * `customMetadata['memoryId']` takes precedence over `MemoryEntry.id`.
    */
   async addMemory(request: {
     appName: string;
@@ -298,8 +299,6 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       const memory = validatedMemories[index];
       const memoryFact = memoryEntryToFact(memory, index);
 
-      // We don't have customMetadata on MemoryEntry in JS yet, so we pass undefined or handle it if we extend it.
-      // For now, we assume it's not there as per the current interface.
       const memoryMetadata = mergeCustomMetadataForMemory({
         customMetadata: request.customMetadata,
         memory: memory,
@@ -309,6 +308,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
       const config = buildCreateMemoryConfig({
         customMetadata: memoryMetadata,
         memoryRevisionLabels,
+        memoryId: memory.id,
       });
 
       const params = {
@@ -366,6 +366,7 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
 function buildCreateMemoryConfig(params: {
   customMetadata?: Record<string, unknown>;
   memoryRevisionLabels?: Record<string, string>;
+  memoryId?: string;
 }): AgentEngineMemoryConfig {
   const config: Record<string, unknown> = {waitForCompletion: false};
 
@@ -426,6 +427,12 @@ function buildCreateMemoryConfig(params: {
         ...buildVertexMetadata(metadataByKey),
       };
     }
+  }
+
+  // A memoryId supplied through customMetadata was copied into config above and
+  // takes precedence over the entry's id.
+  if (params.memoryId !== undefined && config['memoryId'] === undefined) {
+    config['memoryId'] = params.memoryId;
   }
 
   const revisionLabels = {
@@ -585,10 +592,8 @@ function mergeCustomMetadataForMemory(params: {
     Object.assign(mergedMetadata, params.customMetadata);
   }
 
-  // Check if memory has customMetadata (it might if passed by user, even if not in interface)
-  const memoryWithMetadata = params.memory as MemoryEntryWithMetadata;
-  if (memoryWithMetadata.customMetadata) {
-    Object.assign(mergedMetadata, memoryWithMetadata.customMetadata);
+  if (params.memory.customMetadata) {
+    Object.assign(mergedMetadata, params.memory.customMetadata);
   }
 
   if (Object.keys(mergedMetadata).length === 0) {
