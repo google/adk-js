@@ -5,8 +5,6 @@
  */
 
 import {
-  AuthCredentialTypes,
-  AuthHandler,
   CallbackContext,
   Context,
   createEventActions,
@@ -19,7 +17,6 @@ import {
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {z} from 'zod/v4';
-import type {AuthConfig, AuthCredential} from '../../src/tools/tool_context.js';
 import * as toolContextModule from '../../src/tools/tool_context.js';
 
 function newInvocationContext() {
@@ -75,25 +72,8 @@ describe('tool_context', () => {
     expect(takesToolContext(context)).toBe('fc-2');
   });
 
-  it('re-exports the auth names the Python module re-exports', () => {
-    expect(toolContextModule.AuthHandler).toBe(AuthHandler);
-
-    const credential: AuthCredential = {
-      authType: AuthCredentialTypes.API_KEY,
-      apiKey: 'placeholder-key',
-    };
-    const config: AuthConfig = {
-      authScheme: {type: 'apiKey', in: 'header', name: 'X-Api-Key'},
-      rawAuthCredential: credential,
-      credentialKey: 'test-credential',
-    };
-
-    expect(config.rawAuthCredential).toBe(credential);
-  });
-
   it('exports exactly the ported names', () => {
     expect(Object.keys(toolContextModule).sort()).toEqual([
-      'AuthHandler',
       'CallbackContext',
       'ToolContext',
     ]);
