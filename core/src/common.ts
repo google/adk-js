@@ -393,6 +393,7 @@ export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
 export {
   LogLevel,
   getLogger,
+  logger,
   resetLogger,
   setLogLevel,
   setLogger,

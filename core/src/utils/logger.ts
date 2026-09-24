@@ -101,7 +101,12 @@ export function setLogger(customLogger: Logger | null): void {
 }
 
 /**
- * Gets the current logger instance.
+ * Gets the logger instance that is currently installed.
+ *
+ * The result is a snapshot. A later {@link setLogger} call swaps the instance,
+ * and a reference captured before that call keeps writing to the old one. Do
+ * not hold the result in a module-level `const`. Use the {@link logger} facade
+ * instead, which resolves the installed instance on every call.
  */
 export function getLogger(): Logger {
   return currentLogger;
@@ -132,7 +137,12 @@ export function setLogLevel(level: LogLevel) {
 }
 
 /**
- * The logger instance for ADK.
+ * The ADK logger, and the recommended way to log through ADK.
+ *
+ * Every method forwards to the instance installed by {@link setLogger} at the
+ * moment it is called, so this object is safe to capture once at module scope.
+ * It keeps tracking the installed logger, including {@link setLogger} with
+ * `null` to disable logging.
  */
 export const logger: Logger = {
   setLogLevel(level: LogLevel): void {
