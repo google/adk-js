@@ -11,12 +11,14 @@ import {
   Context,
   createEventActions,
   createSession,
+  FunctionTool,
   InvocationContext,
   PluginManager,
   State,
   ToolContext,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {z} from 'zod/v4';
 import type {AuthConfig, AuthCredential} from '../../src/tools/tool_context.js';
 import * as toolContextModule from '../../src/tools/tool_context.js';
 
@@ -95,5 +97,33 @@ describe('tool_context', () => {
       'CallbackContext',
       'ToolContext',
     ]);
+  });
+
+  it('runs a tool whose execute declares a ToolContext parameter', async () => {
+    const rememberTool = new FunctionTool({
+      name: 'remember',
+      description: 'Stores a value in session state.',
+      parameters: z.object({key: z.string(), value: z.string()}),
+      execute: async (input, toolContext?: ToolContext) => {
+        toolContext?.state.set(input.key, input.value);
+        return `stored ${input.key}`;
+      },
+    });
+
+    const eventActions = createEventActions();
+    const context = new ToolContext({
+      invocationContext: newInvocationContext(),
+      eventActions,
+      functionCallId: 'fc-3',
+    });
+
+    const result = await rememberTool.runAsync({
+      args: {key: 'city', value: 'Paris'},
+      toolContext: context,
+    });
+
+    expect(result).toBe('stored city');
+    expect(context.state.get('city')).toBe('Paris');
+    expect(eventActions.stateDelta).toEqual({city: 'Paris'});
   });
 });
