@@ -102,42 +102,30 @@ export class LiveResponseAggregator {
       }
 
       if (serverContent.inputTranscription) {
-        // Gemini 3.x Live only sends a single final input transcription.
-        if (isGemini3xFlashLive(this.modelVersion)) {
-          if (serverContent.inputTranscription.text) {
-            yield {
-              inputTranscription: {
-                text: serverContent.inputTranscription.text,
-                finished: true,
-              },
-              partial: false,
-              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-            };
+        // Gemini 3.x Live sends one final input transcription instead of a
+        // stream of partials, so emit it directly rather than buffering.
+        const isGemini3x = isGemini3xLive(this.modelVersion);
+        const {text, finished} = serverContent.inputTranscription;
+        if (text) {
+          if (!isGemini3x) {
+            this.inputTranscriptionText += text;
           }
-        } else {
-          if (serverContent.inputTranscription.text) {
-            this.inputTranscriptionText +=
-              serverContent.inputTranscription.text;
-            yield {
-              inputTranscription: {
-                text: serverContent.inputTranscription.text,
-                finished: false,
-              },
-              partial: true,
-              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-            };
-          }
-          if (serverContent.inputTranscription.finished) {
-            yield {
-              inputTranscription: {
-                text: this.inputTranscriptionText,
-                finished: true,
-              },
-              partial: false,
-              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-            };
-            this.inputTranscriptionText = '';
-          }
+          yield {
+            inputTranscription: {text, finished: isGemini3x},
+            partial: !isGemini3x,
+            ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+          };
+        }
+        if (finished && !isGemini3x) {
+          yield {
+            inputTranscription: {
+              text: this.inputTranscriptionText,
+              finished: true,
+            },
+            partial: false,
+            ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+          };
+          this.inputTranscriptionText = '';
         }
       }
 
