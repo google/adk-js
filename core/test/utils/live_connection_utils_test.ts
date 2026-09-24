@@ -376,4 +376,128 @@ describe('LiveResponseAggregator', () => {
       },
     ]);
   });
+
+  it('should yield a single final input transcription for Gemini 3.x', () => {
+    const aggregator = new LiveResponseAggregator(
+      'gemini-3.0-flash-live-preview',
+    );
+
+    const res = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: 'hello world', finished: true},
+          },
+        }),
+      ),
+    );
+
+    expect(res).toEqual([
+      {
+        inputTranscription: {text: 'hello world', finished: true},
+        partial: false,
+        modelVersion: 'gemini-3.0-flash-live-preview',
+      },
+    ]);
+  });
+
+  it('should mark a Gemini 3.x input transcription final without the finished flag', () => {
+    const aggregator = new LiveResponseAggregator(
+      'gemini-3.0-flash-live-preview',
+    );
+
+    const res = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {inputTranscription: {text: 'hello world'}},
+        }),
+      ),
+    );
+
+    expect(res).toEqual([
+      {
+        inputTranscription: {text: 'hello world', finished: true},
+        partial: false,
+        modelVersion: 'gemini-3.0-flash-live-preview',
+      },
+    ]);
+  });
+
+  it('should yield nothing for a text-less input transcription on Gemini 3.x', () => {
+    const aggregator = new LiveResponseAggregator(
+      'gemini-3.0-flash-live-preview',
+    );
+
+    const res = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {inputTranscription: {finished: true}},
+        }),
+      ),
+    );
+
+    expect(res).toEqual([]);
+  });
+
+  it('should not re-emit input transcription on turnComplete for Gemini 3.x', () => {
+    const aggregator = new LiveResponseAggregator(
+      'gemini-3.0-flash-live-preview',
+    );
+
+    const res1 = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: 'hello world', finished: true},
+          },
+        }),
+      ),
+    );
+    expect(res1).toEqual([
+      {
+        inputTranscription: {text: 'hello world', finished: true},
+        partial: false,
+        modelVersion: 'gemini-3.0-flash-live-preview',
+      },
+    ]);
+
+    const res2 = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({serverContent: {turnComplete: true}}),
+      ),
+    );
+    expect(res2).toEqual([
+      {
+        turnComplete: true,
+        modelVersion: 'gemini-3.0-flash-live-preview',
+      },
+    ]);
+  });
+
+  it('should still yield partial and final input transcription for non-Gemini 3.x', () => {
+    const aggregator = new LiveResponseAggregator('gemini-2.5-flash');
+
+    const res = Array.from(
+      aggregator.processMessage(
+        liveServerMessage({
+          serverContent: {
+            inputTranscription: {text: 'hello world', finished: true},
+          },
+        }),
+      ),
+    );
+
+    expect(res).toEqual([
+      {
+        inputTranscription: {text: 'hello world', finished: false},
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        inputTranscription: {text: 'hello world', finished: true},
+        partial: false,
+        modelVersion: 'gemini-2.5-flash',
+      },
+    ]);
+  });
 });

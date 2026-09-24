@@ -102,27 +102,42 @@ export class LiveResponseAggregator {
       }
 
       if (serverContent.inputTranscription) {
-        if (serverContent.inputTranscription.text) {
-          this.inputTranscriptionText += serverContent.inputTranscription.text;
-          yield {
-            inputTranscription: {
-              text: serverContent.inputTranscription.text,
-              finished: false,
-            },
-            partial: true,
-            ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-          };
-        }
-        if (serverContent.inputTranscription.finished) {
-          yield {
-            inputTranscription: {
-              text: this.inputTranscriptionText,
-              finished: true,
-            },
-            partial: false,
-            ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-          };
-          this.inputTranscriptionText = '';
+        // Gemini 3.x Live only sends a single final input transcription.
+        if (isGemini3xFlashLive(this.modelVersion)) {
+          if (serverContent.inputTranscription.text) {
+            yield {
+              inputTranscription: {
+                text: serverContent.inputTranscription.text,
+                finished: true,
+              },
+              partial: false,
+              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+            };
+          }
+        } else {
+          if (serverContent.inputTranscription.text) {
+            this.inputTranscriptionText +=
+              serverContent.inputTranscription.text;
+            yield {
+              inputTranscription: {
+                text: serverContent.inputTranscription.text,
+                finished: false,
+              },
+              partial: true,
+              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+            };
+          }
+          if (serverContent.inputTranscription.finished) {
+            yield {
+              inputTranscription: {
+                text: this.inputTranscriptionText,
+                finished: true,
+              },
+              partial: false,
+              ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+            };
+            this.inputTranscriptionText = '';
+          }
         }
       }
 
