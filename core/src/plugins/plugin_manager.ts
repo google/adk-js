@@ -116,7 +116,7 @@ export class PluginManager {
       } catch (e) {
         const errorMessage = `Error in plugin '${plugin.name}' during '${callbackName}' callback: ${e}`;
         logger.error(errorMessage);
-        throw new Error(errorMessage);
+        throw new Error(errorMessage, {cause: e});
       }
     }
     return undefined;

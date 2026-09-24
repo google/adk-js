@@ -274,6 +274,13 @@ export type {
   PolicyCheckResult,
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
+export {
+  EnforcementMode,
+  ToolCallIntegrityError,
+  ToolCallIntegrityPlugin,
+  type ToolCallIntegrityKey,
+  type ToolCallIntegrityPluginOptions,
+} from './plugins/tool_call_integrity_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {
   Runner,
