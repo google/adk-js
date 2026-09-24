@@ -550,6 +550,115 @@ describe('toGeminiSchema', () => {
       ],
     });
   });
+
+  it('converts a boolean true branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean false branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('keeps an anyOf with a boolean branch nullable', () => {
+    const input = {anyOf: [true, {type: 'null'}]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      nullable: true,
+      properties: {},
+    });
+  });
+
+  it('converts a boolean branch alongside a typed branch', () => {
+    const input = {anyOf: [true, {type: 'string'}]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts every boolean branch of an all-boolean anyOf', () => {
+    const input = {anyOf: [true, false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.OBJECT, properties: {}},
+        {type: Type.OBJECT, properties: {}},
+      ],
+    });
+  });
+
+  it('converts a boolean member of a type array', () => {
+    const input = {type: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean member alongside a named type', () => {
+    const input = {type: [true, 'string']} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts a boolean branch on a nested property', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {a: {anyOf: [true]}},
+    };
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {a: {type: Type.OBJECT, properties: {}}},
+    });
+  });
+
+  it('converts a boolean branch inside array items', () => {
+    const input = {
+      type: 'array',
+      items: {anyOf: [true]},
+    } as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
