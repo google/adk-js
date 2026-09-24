@@ -944,6 +944,59 @@ describe('AdkWebServer', () => {
 
       spy.mockRestore();
     });
+
+    it('should forward serviceTier to Runner.runAsync in /run', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        serviceTier: 'priority',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.runConfig?.serviceTier).toBe('priority');
+
+      spy.mockRestore();
+    });
+
+    it('should return 422 in /run_sse when serviceTier=deferred is combined with streaming=true', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      try {
+        await client.post('/run_sse', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessionId',
+          streaming: true,
+          serviceTier: 'deferred',
+          newMessage: {
+            parts: [{text: 'Hello test agent!'}],
+            role: 'user',
+          },
+        });
+        expect.fail('Expected /run_sse to reject with 422');
+      } catch (e: unknown) {
+        expect((e as {response: {status: number}}).response.status).toBe(422);
+      }
+    });
   });
 
   describe('List Apps', () => {
