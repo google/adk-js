@@ -6,6 +6,7 @@
 
 import {Content} from '@google/genai';
 
+import {Session} from '../sessions/session.js';
 import {State} from '../sessions/state.js';
 
 import {InvocationContext, requireAgent} from './invocation_context.js';
@@ -35,6 +36,13 @@ export class ReadonlyContext {
    */
   get userId(): string {
     return this.invocationContext.userId;
+  }
+
+  /**
+   * The current session.
+   */
+  get session(): Session {
+    return this.invocationContext.session;
   }
 
   /**
