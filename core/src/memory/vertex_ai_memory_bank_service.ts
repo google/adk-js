@@ -200,6 +200,10 @@ export class VertexAiMemoryBankService implements BaseMemoryService {
    * created memory, so the caller picks the last component of the memory
    * resource name instead of letting the service generate one. An explicit
    * `customMetadata['memoryId']` takes precedence over `MemoryEntry.id`.
+   *
+   * The id is forwarded unvalidated, so an id the API rejects fails the create
+   * call. Vertex accepts up to 63 characters from `[a-z0-9-]`, starting with a
+   * letter and ending with a letter or number.
    */
   async addMemory(request: {
     appName: string;

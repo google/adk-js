@@ -418,6 +418,29 @@ describe('VertexAiMemoryBankService', () => {
       );
     });
 
+    it('prefers an entry customMetadata memoryId over the entry id', async () => {
+      const memories: MemoryEntry[] = [
+        {
+          id: 'from-entry-id',
+          content: {parts: [{text: 'fact one'}]},
+          customMetadata: {memoryId: 'from-entry-metadata'},
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {memoryId: 'from-request'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'from-entry-metadata'}),
+        }),
+      );
+    });
+
     it('prefers entry customMetadata over the request-level value', async () => {
       const memories: MemoryEntry[] = [
         {
