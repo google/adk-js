@@ -659,6 +659,128 @@ describe('toGeminiSchema', () => {
       items: {type: Type.OBJECT, properties: {}},
     });
   });
+
+  it('converts a boolean true property schema to an object schema', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        model: true,
+      },
+    };
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        model: {type: Type.OBJECT, properties: {}},
+      },
+    });
+  });
+
+  it('converts a boolean false property schema to an object schema without throwing', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        anything: false,
+      },
+    };
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        anything: {type: Type.OBJECT, properties: {}},
+      },
+    });
+  });
+
+  it('converts a boolean true schema nested in array item properties', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {
+        title: {type: 'string'},
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              datasourceUid: {type: 'string'},
+              model: true,
+              queryType: {type: 'string'},
+              refId: {type: 'string'},
+            },
+          },
+        },
+      },
+      required: ['title', 'data'],
+    };
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        title: {type: Type.STRING},
+        data: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              datasourceUid: {type: Type.STRING},
+              model: {type: Type.OBJECT, properties: {}},
+              queryType: {type: Type.STRING},
+              refId: {type: Type.STRING},
+            },
+          },
+        },
+      },
+      required: ['title', 'data'],
+    });
+  });
+
+  it('converts a boolean array items schema to an object schema', () => {
+    const input = {
+      type: 'array',
+      items: true,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
+  it('converts a boolean false array items schema to an object schema', () => {
+    const input = {
+      type: 'array',
+      items: false,
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+
+  it('converts a boolean schema in an anyOf branch to an object schema', () => {
+    const input = {
+      anyOf: [true, {type: 'string'}],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
 });
 
 describe('openApiSchemaToGeminiSchema', () => {
