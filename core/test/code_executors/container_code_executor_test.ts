@@ -120,12 +120,26 @@ function asDocker(docker: MockDocker): Dockerode {
   return docker as unknown as Dockerode;
 }
 
+/**
+ * Builds an ExecuteCodeParams with a realistic session, defaulting to a
+ * fixed (appName, userId, sessionId) triple so existing tests that don't
+ * care about session identity keep behaving as a single session. Tests
+ * that specifically exercise per-session isolation pass a distinct
+ * `sessionId` to get a different container.
+ */
 function makeParams(
   code: string,
   language: CodeExecutionLanguage = CodeExecutionLanguage.PYTHON,
+  sessionId = 'test-session',
 ): ExecuteCodeParams {
   return {
-    invocationContext: {} as unknown as InvocationContext,
+    invocationContext: {
+      session: {
+        appName: 'test-app',
+        userId: 'test-user',
+        id: sessionId,
+      },
+    } as unknown as InvocationContext,
     codeExecutionInput: {
       code,
       language,
@@ -607,6 +621,70 @@ describe('ContainerCodeExecutor', () => {
       await expect(getExitHandler()('SIGTERM')).resolves.toBeUndefined();
 
       expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('per-session container isolation', () => {
+    // codeExecutor is a single property set once on an LlmAgent instance,
+    // and that instance is the long-lived object serving every session the
+    // agent handles -- so a single shared container would let one
+    // session's filesystem state (files, environment, background
+    // processes) persist into a later, unrelated session's execution.
+    // Each session must get its own container.
+
+    it('starts a separate container for a different session', async () => {
+      // This is the concrete guarantee that closes the vulnerability: pre-fix,
+      // a second session's exec would run in the exact same container the
+      // first session used, making any file the first session wrote directly
+      // readable by the second. createContainer is dockerode's actual
+      // container-provisioning call, so asserting it fires once per distinct
+      // session (not once total, memoized across sessions) is the real,
+      // structural guarantee that one session's code never reaches another
+      // session's container to read anything left behind there.
+      const {docker} = createMockDocker();
+      const executor = new ContainerCodeExecutor({
+        image: 'test-image',
+        docker: asDocker(docker),
+      });
+
+      await executor.executeCode(makeParams('print(1)', undefined, 'session-a'));
+      await executor.executeCode(makeParams('print(2)', undefined, 'session-b'));
+
+      expect(docker.createContainer).toHaveBeenCalledTimes(2);
+    });
+
+    it('reuses one container across multiple calls within the same session', async () => {
+      const {docker} = createMockDocker();
+      const executor = new ContainerCodeExecutor({
+        image: 'test-image',
+        docker: asDocker(docker),
+      });
+
+      await executor.executeCode(makeParams('x = 1', undefined, 'session-a'));
+      await executor.executeCode(makeParams('print(x)', undefined, 'session-a'));
+      await executor.executeCode(makeParams('print(x)', undefined, 'session-a'));
+
+      expect(docker.createContainer).toHaveBeenCalledTimes(1);
+    });
+
+    it('close() stops every session\'s container', async () => {
+      const {docker, container} = createMockDocker();
+      const executor = new ContainerCodeExecutor({
+        image: 'test-image',
+        docker: asDocker(docker),
+      });
+
+      await executor.executeCode(makeParams('print(1)', undefined, 'session-a'));
+      await executor.executeCode(makeParams('print(2)', undefined, 'session-b'));
+
+      await executor.close();
+
+      // Both sessions' containers are stopped, not just the last one --
+      // the mock's createContainer resolves to the same underlying object
+      // both times, so this counts stop() calls per tracked session
+      // (two map entries), not per distinct object identity.
+      expect(container.stop).toHaveBeenCalledTimes(2);
+      expect(docker.createContainer).toHaveBeenCalledTimes(2);
     });
   });
 });
