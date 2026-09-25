@@ -116,6 +116,21 @@ export type {
 } from './tools/retrieval/files_retrieval.js';
 export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
 export {
+  BashTool,
+  BashToolPolicy,
+  ExecuteBashTool,
+  isBashTool,
+  isBashToolPolicy,
+  isExecuteBashTool,
+} from './tools/bash_tool.js';
+export type {
+  BashToolErrorResult,
+  BashToolPolicyOptions,
+  BashToolResult,
+  BashToolSuccessResult,
+  ExecuteBashToolOptions,
+} from './tools/bash_tool.js';
+export {
   RunSkillInlineScriptErrorCode,
   RunSkillInlineScriptTool,
 } from './tools/skill/run_skill_inline_script_tool.js';
