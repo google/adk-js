@@ -39,7 +39,7 @@ class FixedExampleProvider extends BaseExampleProvider {
   constructor(private readonly examples: Example[]) {
     super();
   }
-  override getExamples(_query: string): Example[] {
+  override async getExamples(_query: string): Promise<Example[]> {
     return this.examples;
   }
 }
