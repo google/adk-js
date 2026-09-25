@@ -237,6 +237,17 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
+export {AgentOptimizer} from './optimization/agent_optimizer.js';
+export type {
+  AgentWithScores,
+  OptimizerResult,
+  SamplingResult,
+  UnstructuredSamplingResult,
+} from './optimization/data_types.js';
+export {Sampler} from './optimization/sampler.js';
+export type {ExampleSet} from './optimization/sampler.js';
+export {SimplePromptOptimizer} from './optimization/simple_prompt_optimizer.js';
+export type {SimplePromptOptimizerConfig} from './optimization/simple_prompt_optimizer.js';
 export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
 export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
 export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
