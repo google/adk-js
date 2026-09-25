@@ -237,8 +237,8 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
-export {BasePlanner} from './planners/base_planner.js';
-export {BuiltInPlanner} from './planners/built_in_planner.js';
+export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
+export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
 export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
 export {
   GLOBAL_SCOPE_KEY,

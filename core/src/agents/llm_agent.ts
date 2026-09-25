@@ -37,6 +37,8 @@ import {BaseLlmConnection} from '../models/base_llm_connection.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
+import type {BasePlanner} from '../planners/base_planner.js';
+import {isBuiltInPlanner} from '../planners/built_in_planner.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
@@ -77,6 +79,10 @@ import {ContextCompactorRequestProcessor} from './processors/context_compactor_r
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
 import {INTERACTIONS_REQUEST_PROCESSOR} from './processors/interactions_request_processor.js';
+import {
+  NL_PLANNING_REQUEST_PROCESSOR,
+  NL_PLANNING_RESPONSE_PROCESSOR,
+} from './processors/nl_planning_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
 import {REQUEST_INPUT_LLM_REQUEST_PROCESSOR} from './processors/request_input_llm_request_processor.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from './processors/tool_filter_request_processor.js';
@@ -318,7 +324,9 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    * Three fields are rejected by the constructor, because the agent owns them:
    * `tools` (set them through `tools`), `systemInstruction` (through
    * `instruction`) and `responseSchema` (through `outputSchema`). Every other
-   * field is forwarded to the model as given — `thinkingConfig` included.
+   * field is forwarded to the model as given. That includes `thinkingConfig`,
+   * unless `planner` is a `BuiltInPlanner` with its own `thinkingConfig`: the
+   * planner's `thinkingConfig` then takes precedence.
    *
    * For example: use this config to adjust model temperature, configure safety
    * settings, etc.
@@ -414,6 +422,14 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    * Instructs the agent to make a plan and execute it step by step.
    */
   codeExecutor?: BaseCodeExecutor;
+
+  /**
+   * Instructs the agent to make a plan and execute it step by step.
+   *
+   * NOTE: to use the model's built-in thinking features, set `thinkingConfig`
+   * on a `BuiltInPlanner`.
+   */
+  planner?: BasePlanner;
 }
 
 async function convertToolUnionToTools(
@@ -503,6 +519,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   requestProcessors: BaseLlmRequestProcessor[];
   responseProcessors: BaseLlmResponseProcessor[];
   codeExecutor?: BaseCodeExecutor;
+  planner?: BasePlanner;
 
   constructor(config: LlmAgentConfig) {
     // Node defaults for an agent used in a graph, matching adk-python's
@@ -538,9 +555,11 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     this.beforeToolCallback = config.beforeToolCallback;
     this.afterToolCallback = config.afterToolCallback;
     this.codeExecutor = config.codeExecutor;
+    this.planner = config.planner;
 
     // TODO - b/425992518: Define these processor arrays.
-    // Orders matter, don't change. Append new processors to the end
+    // The order is load-bearing: processors depend on what earlier ones
+    // wrote to the request. Place a new processor where its inputs are ready.
     this.requestProcessors = config.requestProcessors ?? [
       BASIC_LLM_REQUEST_PROCESSOR,
       AUTH_PREPROCESSOR,
@@ -549,6 +568,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
       REQUEST_INPUT_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
+      // Planning clears the thought flags that the planning response
+      // processor sets, so it must run after the contents are built and
+      // before code execution rewrites them.
+      NL_PLANNING_REQUEST_PROCESSOR,
       INTERACTIONS_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
       TOOL_FILTER_REQUEST_PROCESSOR,
@@ -576,7 +599,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     }
 
-    this.responseProcessors = config.responseProcessors ?? [];
+    this.responseProcessors = config.responseProcessors ?? [
+      NL_PLANNING_RESPONSE_PROCESSOR,
+    ];
 
     // Preserve the agent transfer behavior.
     const agentTransferDisabled =
@@ -600,6 +625,15 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       if (config.generateContentConfig.responseSchema) {
         throw new Error(
           'Response schema must be set via LlmAgent.output_schema.',
+        );
+      }
+      if (
+        config.generateContentConfig.thinkingConfig &&
+        isBuiltInPlanner(this.planner) &&
+        this.planner.thinkingConfig
+      ) {
+        logger.warn(
+          `Agent ${this.name}: both generateContentConfig.thinkingConfig and planner.thinkingConfig are set. The planner's thinkingConfig takes precedence.`,
         );
       }
     } else {
