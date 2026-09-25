@@ -361,6 +361,7 @@ export {
   isIntentMismatchError,
 } from './tools/tool_confirmation.js';
 export type {IntentMismatchReason} from './tools/tool_confirmation.js';
+export {CallbackContext, ToolContext} from './tools/tool_context.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {
