@@ -102,18 +102,21 @@ export class LiveResponseAggregator {
       }
 
       if (serverContent.inputTranscription) {
-        if (serverContent.inputTranscription.text) {
-          this.inputTranscriptionText += serverContent.inputTranscription.text;
+        // Gemini 3.x Live sends one final input transcription instead of a
+        // stream of partials, so emit it directly rather than buffering.
+        const isGemini3x = isGemini3xLive(this.modelVersion);
+        const {text, finished} = serverContent.inputTranscription;
+        if (text) {
+          if (!isGemini3x) {
+            this.inputTranscriptionText += text;
+          }
           yield {
-            inputTranscription: {
-              text: serverContent.inputTranscription.text,
-              finished: false,
-            },
-            partial: true,
+            inputTranscription: {text, finished: isGemini3x},
+            partial: !isGemini3x,
             ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
           };
         }
-        if (serverContent.inputTranscription.finished) {
+        if (finished && !isGemini3x) {
           yield {
             inputTranscription: {
               text: this.inputTranscriptionText,
