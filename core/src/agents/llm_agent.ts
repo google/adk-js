@@ -921,6 +921,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
+      // Events of this step that raised a long-running call. Whether such a
+      // call pauses the run is only decided once the step has finished, since
+      // a tool that resolves inline emits its response later in the same step.
+      const pauseCandidates: Event[] = [];
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -935,9 +939,15 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         }
         this.maybeSaveOutputToState(event);
         yield event;
+        if (event.longRunningToolIds?.length) {
+          pauseCandidates.push(event);
+        }
       }
 
-      if (!lastEvent) {
+      const shouldPause = pauseCandidates.some((e) =>
+        context.shouldPauseInvocation(e),
+      );
+      if (shouldPause || !lastEvent) {
         break;
       }
 
@@ -1577,7 +1587,6 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     // Global runtime interruption
     // =========================================================================
-    // TODO - b/425992518: global runtime interruption, hacky, fix.
     if (
       invocationContext.endInvocation ||
       invocationContext.abortSignal?.aborted
@@ -1790,6 +1799,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     yield functionResponseEvent;
+
+    // Decided only now: the responses just emitted are what tell a genuinely
+    // pending long-running call apart from one that resolved inline.
+    if (invocationContext.shouldPauseInvocation(mergedEvent)) {
+      return;
+    }
 
     // If model instruct to transfer to an agent, run the transferred agent.
     const nextAgentName = functionResponseEvent.actions.transferToAgent;
