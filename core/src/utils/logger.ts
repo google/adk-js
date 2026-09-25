@@ -101,7 +101,11 @@ export function setLogger(customLogger: Logger | null): void {
 }
 
 /**
- * Gets the current logger instance.
+ * Gets the logger instance that is currently installed.
+ *
+ * The result is a snapshot. A later {@link setLogger} call swaps the instance,
+ * and this reference keeps writing to the old one. The {@link logger} facade
+ * resolves the installed instance on every call.
  */
 export function getLogger(): Logger {
   return currentLogger;
@@ -132,7 +136,11 @@ export function setLogLevel(level: LogLevel) {
 }
 
 /**
- * The logger instance for ADK.
+ * The ADK logger.
+ *
+ * Every method forwards to the instance installed by {@link setLogger} at call
+ * time, so this object is safe to capture at module scope, including across a
+ * {@link setLogger} call with `null` to disable logging.
  */
 export const logger: Logger = {
   setLogLevel(level: LogLevel): void {
