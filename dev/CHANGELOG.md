@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.2.0](https://github.com/google/adk-js/compare/devtools-v2.1.0...devtools-v2.2.0) (2026-09-25)
+
+
+### Bug Fixes
+
+* **cli:** await the command promise in the adk entrypoint ([#929](https://github.com/google/adk-js/issues/929)) ([8162dbc](https://github.com/google/adk-js/commit/8162dbc2b7a24d95aa00ab70722f3afa103cf539))
+* **cli:** seed the interactive Vertex region prompt from --region in adk create ([#926](https://github.com/google/adk-js/issues/926)) ([cbd2f1c](https://github.com/google/adk-js/commit/cbd2f1c0c25c15175b2bb3690d978ac57daabae1))
+* **cli:** wire --staging_bucket into adk deploy agent_engine ([#893](https://github.com/google/adk-js/issues/893)) ([0194968](https://github.com/google/adk-js/commit/01949683be422aa99591310a539be88dc7f340f7))
+* **dev:** bump adk-web to v1.0.5 to preserve multiline output ([#925](https://github.com/google/adk-js/issues/925)) ([5bbaebe](https://github.com/google/adk-js/commit/5bbaebe4c69332a55977b0e3a586b776840abe4b)), closes [#738](https://github.com/google/adk-js/issues/738)
+* **dev:** make AdkApiServer.stop() safe to call twice ([#916](https://github.com/google/adk-js/issues/916)) ([270be5f](https://github.com/google/adk-js/commit/270be5f2dce9204968abecc060a88ff8a0b51480))
+* **security:** update adm-zip past vulnerable releases ([#923](https://github.com/google/adk-js/issues/923)) ([3c82d43](https://github.com/google/adk-js/commit/3c82d43d0d0c6681c281f404fcc4692aa5ff1103))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.1.0 to ^2.2.0
+
 ## [2.1.0](https://github.com/google/adk-js/compare/devtools-v2.0.0...devtools-v2.1.0) (2026-09-14)
 
 
