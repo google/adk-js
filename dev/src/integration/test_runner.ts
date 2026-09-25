@@ -30,7 +30,6 @@ const SKIPPED_TESTS = [
     name: 'tool/example_tool_001',
     reason: 'ExampleTool is not implemented yet.',
   },
-  {name: 'workflow/loop_001', reason: 'ExitLoopTool is not implemented yet.'},
   {
     name: 'core/multi_005',
     reason: 'Suspected broken test. Need to re-evaluate.',
