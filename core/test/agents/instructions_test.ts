@@ -97,6 +97,42 @@ describe('injectSessionState', () => {
     );
   });
 
+  it('leaves a literal ${expression} untouched when the key is absent', async () => {
+    const ctx = makeContext({});
+    const template = 'formatString supports ${expression} interpolation.';
+    expect(await injectSessionState(template, ctx)).toBe(template);
+  });
+
+  it('leaves ${expression} untouched when the key is in state', async () => {
+    const ctx = makeContext({user_name: 'Foo', expression: 'bar'});
+    expect(
+      await injectSessionState('Hello {user_name}! Uses ${expression}.', ctx),
+    ).toBe('Hello Foo! Uses ${expression}.');
+  });
+
+  it('leaves ${{expression}} untouched', async () => {
+    expect(
+      await injectSessionState(
+        'Workflow syntax: ${{expression}}.',
+        makeContext(),
+      ),
+    ).toBe('Workflow syntax: ${{expression}}.');
+    const ctx = makeContext({expression: 'foo', user_name: 'bar'});
+    expect(
+      await injectSessionState(
+        'Workflow syntax: ${{expression}} and {user_name}.',
+        ctx,
+      ),
+    ).toBe('Workflow syntax: ${{expression}} and bar.');
+  });
+
+  it('leaves a backslash-escaped \\{expression} untouched', async () => {
+    const ctx = makeContext({expression: 'foo'});
+    expect(await injectSessionState('Literal \\{expression}.', ctx)).toBe(
+      'Literal \\{expression}.',
+    );
+  });
+
   it('passes through keys containing spaces (not valid identifiers)', async () => {
     const ctx = makeContext({});
     expect(await injectSessionState('value={invalid key}', ctx)).toBe(
