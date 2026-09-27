@@ -261,6 +261,9 @@ export class AgentFile {
               packages: 'bundle' as const,
               // See http://mikro-orm.io/docs/deployment#deploy-a-bundle-of-entities-and-dependencies-with-esbuild for more details
               external: [
+                // Keep host and agent code on one SDK instance so process-wide
+                // settings such as the configured logger are shared.
+                '@google/adk',
                 'sqlite3',
                 'better-sqlite3',
                 'mysql',
