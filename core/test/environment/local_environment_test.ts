@@ -21,8 +21,8 @@ const NODE = `"${process.execPath}"`;
 const SPAWN_TIMEOUT_MS = 30_000;
 
 /**
- * How long the commands used by the timeout tests run for. A killed shell can
- * leave the command running, so this also bounds how long cleanup has to wait.
+ * How long the commands used by timeout tests run for. This bounds cleanup if
+ * a platform cannot terminate a descendant process as expected.
  */
 const SURVIVOR_LIFETIME_MS = 5_000;
 
@@ -39,9 +39,9 @@ describe('LocalEnvironment', () => {
   });
 
   afterEach(async () => {
-    // A command killed by a timeout outlives the test by up to
-    // SURVIVOR_LIFETIME_MS, and Windows refuses to remove a directory that is
-    // a live process's cwd; retry until that process exits.
+    // Keep cleanup resilient if a platform cannot terminate a descendant as
+    // expected; Windows refuses to remove a directory that is a live process's
+    // cwd.
     await fs.rm(tmpRoot, {
       recursive: true,
       force: true,
@@ -349,16 +349,16 @@ describe('LocalEnvironment', () => {
     );
 
     it(
-      'times out even when the command leaves a child holding the pipes open',
+      'kills descendants on timeout and preserves output written before it',
       async () => {
-        // A shell that forks rather than exec's its command leaves a survivor
-        // that keeps stdout/stderr open after the kill. Reproduce that with a
-        // script file so no shell-specific syntax is needed.
+        const markerPath = path.join(env.workingDir, 'survivor.marker');
+        const childScript = `setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
         await env.writeFile(
           'spawn_survivor.cjs',
           [
             "const {spawn} = require('node:child_process');",
-            `spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${SURVIVOR_LIFETIME_MS})'], {`,
+            "process.stdout.write('before-timeout');",
+            `spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], {`,
             "  stdio: 'inherit',",
             '});',
             `setTimeout(() => {}, ${SURVIVOR_LIFETIME_MS});`,
@@ -369,10 +369,60 @@ describe('LocalEnvironment', () => {
         const result = await env.execute(`${NODE} spawn_survivor.cjs`, 0.5);
 
         expect(result.timedOut).toBe(true);
+        expect(result.stdout).toBe('before-timeout');
         expect(Date.now() - startedAt).toBeLessThan(TIMED_OUT_BY_MS);
+
+        const sizeAfterTimeout = await waitForFileSize(markerPath);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect((await fs.stat(markerPath)).size).toBe(sizeAfterTimeout);
       },
       SPAWN_TIMEOUT_MS,
     );
+
+    it(
+      'terminates descendants and rejects with AbortError when aborted',
+      async () => {
+        const markerPath = path.join(env.workingDir, 'aborted.marker');
+        const childScript = `setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
+        await env.writeFile(
+          'spawn_survivor.cjs',
+          [
+            "const {spawn} = require('node:child_process');",
+            `spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], {stdio: 'inherit'});`,
+            `setInterval(() => {}, ${SURVIVOR_LIFETIME_MS});`,
+          ].join('\n'),
+        );
+
+        const controller = new AbortController();
+        const execution = env.execute(
+          `${NODE} spawn_survivor.cjs`,
+          undefined,
+          controller.signal,
+        );
+        await waitForFileSize(markerPath);
+        controller.abort();
+
+        await expect(execution).rejects.toMatchObject({name: 'AbortError'});
+        const sizeAfterAbort = (await fs.stat(markerPath)).size;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect((await fs.stat(markerPath)).size).toBe(sizeAfterAbort);
+      },
+      SPAWN_TIMEOUT_MS,
+    );
+
+    it('does not spawn a command when the abort signal is already aborted', async () => {
+      const markerPath = path.join(env.workingDir, 'should-not-exist.marker');
+      const controller = new AbortController();
+      controller.abort();
+
+      const command = `${NODE} -e "require('node:fs').writeFileSync('${markerPath}', 'ran')"`;
+      await expect(
+        env.execute(command, undefined, controller.signal),
+      ).rejects.toMatchObject({name: 'AbortError'});
+      await expect(fs.stat(markerPath)).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    });
 
     it(
       'clears the timer when the command finishes before the timeout',
@@ -405,3 +455,23 @@ describe('LocalEnvironment', () => {
     );
   });
 });
+
+async function waitForFileSize(filePath: string): Promise<number> {
+  const deadline = Date.now() + SPAWN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const {size} = await fs.stat(filePath);
+      if (size > 0) {
+        return size;
+      }
+    } catch (error) {
+      if (
+        !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      ) {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for file to contain data: ${filePath}`);
+}
