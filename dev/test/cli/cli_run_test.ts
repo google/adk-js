@@ -375,7 +375,7 @@ describe('cli_run', () => {
   });
 
   it('should handle missing input file', async () => {
-    (loadFileData as Mock).mockResolvedValue(null);
+    (loadFileData as Mock).mockResolvedValue(undefined);
     const mockSessionService = createMockSessionService();
 
     await runAgent({
@@ -385,6 +385,37 @@ describe('cli_run', () => {
     });
     expect(loadFileData).toHaveBeenCalled();
   });
+
+  it.each([
+    ['a missing state object', {queries: ['go']}],
+    ['a missing queries array', {state: {}}],
+    ['queries provided as a string', {state: {}, queries: 'hi'}],
+    ['a non-string query', {state: {}, queries: ['go', 1]}],
+    ['a non-object state', {state: [], queries: ['go']}],
+    ['a null JSON document', null],
+  ])(
+    'rejects replay input with %s before creating a session or running the agent',
+    async (_description, content) => {
+      (loadFileData as Mock).mockResolvedValue(content);
+      const mockSessionService = createMockSessionService();
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: mockSessionService,
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Invalid replay file'),
+        }),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(AgentFile).not.toHaveBeenCalled();
+      expect(Runner).not.toHaveBeenCalled();
+    },
+  );
 
   it('honours an absolute --replay path instead of rebasing it on cwd', async () => {
     // `path.join(cwd, '/abs/input.json')` silently strips the leading
