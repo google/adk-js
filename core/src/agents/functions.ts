@@ -207,18 +207,49 @@ async function callToolAsync(
       traceToolCall({
         tool,
         args,
+        span,
         functionResponseEvent: buildResponseEvent(
           tool,
           result,
           toolContext,
           toolContext.invocationContext,
         ),
+        errorType: getToolResponseErrorType(result),
       });
       return result;
+    } catch (error: unknown) {
+      traceToolCall({tool, args, span, error});
+      throw error;
     } finally {
       span.end();
     }
   });
+}
+
+/**
+ * Gets an explicitly reported error type from a tool response object.
+ *
+ * Tools may return an error payload instead of throwing. Only the dedicated
+ * error type field is copied to telemetry; the payload itself is never used as
+ * the error classification.
+ */
+function getToolResponseErrorType(result: unknown): string | undefined {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+    return undefined;
+  }
+
+  try {
+    if (!Object.hasOwn(result, 'error')) {
+      return undefined;
+    }
+    const response = result as Record<string, unknown>;
+    const errorType = response.errorType ?? response.error_type;
+    return typeof errorType === 'string' ? errorType : undefined;
+  } catch {
+    // Telemetry should not change tool behavior if a custom response object
+    // throws when its fields are inspected.
+    return undefined;
+  }
 }
 
 function buildResponseEvent(

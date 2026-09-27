@@ -23,6 +23,7 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
+import {Span, SpanStatusCode} from '@opentelemetry/api';
 import type {MockInstance} from 'vitest';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
@@ -34,6 +35,7 @@ import {
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {tracer} from '../../src/telemetry/tracing.js';
 import {logger} from '../../src/utils/logger.js';
 
 // Get the test target function
@@ -60,6 +62,16 @@ const errorTool = new FunctionTool({
   execute: async () => {
     throw new Error('tool error message content');
   },
+});
+
+const typedErrorResponseTool = new FunctionTool({
+  name: 'typedErrorResponseTool',
+  description: 'returns a typed tool error response',
+  parameters: z.object({}),
+  execute: async () => ({
+    error: 'sensitive tool error details',
+    errorType: 'MCP_TOOL_ERROR',
+  }),
 });
 
 // Plugin for testing
@@ -354,6 +366,88 @@ describe('handleFunctionCallList', () => {
     expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
       result: 'onToolErrorCallback executed',
     });
+  });
+
+  it('records a thrown tool error on its execution span', async () => {
+    const executionSpan = {
+      setAttributes: vi.fn(),
+      setAttribute: vi.fn(),
+      setStatus: vi.fn(),
+      recordException: vi.fn(),
+      end: vi.fn(),
+    };
+    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
+      _name: string,
+      callback: (span: Span) => unknown,
+    ) =>
+      callback(
+        executionSpan as unknown as Span,
+      )) as typeof tracer.startActiveSpan);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{...functionCall, name: 'errorTool'}],
+      toolsDict: {errorTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(executionSpan.recordException).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('tool error message content'),
+      }),
+    );
+    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
+      'error.type',
+      'Error',
+    );
+    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+      code: SpanStatusCode.ERROR,
+      message: 'Error',
+    });
+    expect(executionSpan.end).toHaveBeenCalledOnce();
+    expect(
+      executionSpan.recordException.mock.invocationCallOrder[0],
+    ).toBeLessThan(executionSpan.end.mock.invocationCallOrder[0]);
+    expect(executionSpan.setStatus.mock.invocationCallOrder[0]).toBeLessThan(
+      executionSpan.end.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('records an explicit error type returned by the tool', async () => {
+    const executionSpan = {
+      setAttributes: vi.fn(),
+      setAttribute: vi.fn(),
+      setStatus: vi.fn(),
+      recordException: vi.fn(),
+      end: vi.fn(),
+    };
+    vi.spyOn(tracer, 'startActiveSpan').mockImplementation(((
+      _name: string,
+      callback: (span: Span) => unknown,
+    ) =>
+      callback(
+        executionSpan as unknown as Span,
+      )) as typeof tracer.startActiveSpan);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{...functionCall, name: 'typedErrorResponseTool'}],
+      toolsDict: {typedErrorResponseTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(executionSpan.setAttribute).toHaveBeenCalledWith(
+      'error.type',
+      'MCP_TOOL_ERROR',
+    );
+    expect(executionSpan.setStatus).toHaveBeenCalledWith({
+      code: SpanStatusCode.ERROR,
+      message: 'MCP_TOOL_ERROR',
+    });
+    expect(executionSpan.recordException).not.toHaveBeenCalled();
+    expect(executionSpan.end).toHaveBeenCalledOnce();
   });
 
   it('should return error message when error is thrown during tool execution, when no plugin onToolErrorCallback is provided', async () => {

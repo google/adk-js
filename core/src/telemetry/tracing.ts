@@ -15,8 +15,14 @@
  *    constructs of the framework that are not observable by the SDK.
  */
 
-import {Content, HttpOptions} from '@google/genai';
-import {context, Context, trace} from '@opentelemetry/api';
+import {ApiError, Content, HttpOptions} from '@google/genai';
+import {
+  context,
+  Context,
+  Span,
+  SpanStatusCode,
+  trace,
+} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
 import {InvocationContext} from '../agents/invocation_context.js';
@@ -152,7 +158,54 @@ export function traceNodeExecution({
 export interface TraceToolCallParams {
   tool: BaseTool;
   args: Record<string, unknown>;
-  functionResponseEvent: Event;
+  functionResponseEvent?: Event;
+  /** The exception raised while executing the tool, if any. */
+  error?: unknown;
+  /** An error type reported by a tool response instead of a thrown error. */
+  errorType?: string;
+  /** The tool execution span. Defaults to the active span when omitted. */
+  span?: Span;
+}
+
+/**
+ * Resolves a stable error classification suitable for the OpenTelemetry
+ * `error.type` attribute without using the potentially sensitive error message.
+ *
+ * @param error The thrown value.
+ * @returns The explicit ADK error type, GenAI API status, or error class name.
+ */
+export function resolveErrorType(error: unknown): string {
+  if (
+    error !== null &&
+    (typeof error === 'object' || typeof error === 'function')
+  ) {
+    try {
+      const errorObject = error as {
+        errorType?: unknown;
+        error_type?: unknown;
+        constructor?: {name?: unknown};
+      };
+      const customErrorType = errorObject.errorType ?? errorObject.error_type;
+      if (
+        typeof customErrorType === 'string' ||
+        typeof customErrorType === 'number'
+      ) {
+        return String(customErrorType);
+      }
+      if (error instanceof ApiError) {
+        return String(error.status);
+      }
+      const constructorName = errorObject.constructor?.name;
+      if (typeof constructorName === 'string' && constructorName.length > 0) {
+        return constructorName;
+      }
+    } catch {
+      // A hostile thrown object (for example, a Proxy with throwing getters)
+      // must not replace the original tool error with a telemetry error.
+    }
+  }
+
+  return typeof error;
 }
 
 /**
@@ -160,13 +213,31 @@ export interface TraceToolCallParams {
  *
  * @param params The parameters object containing tool, args, and function response event.
  */
-export function traceToolCall({
-  tool,
-  args,
-  functionResponseEvent,
-}: TraceToolCallParams): void {
-  const span = trace.getActiveSpan();
+export function traceToolCall(params: TraceToolCallParams): void {
+  const {tool, args, functionResponseEvent, error, errorType} = params;
+  const span = params.span ?? trace.getActiveSpan();
   if (!span) return;
+
+  const hasError = Object.hasOwn(params, 'error');
+  const failureType = hasError ? resolveErrorType(error) : errorType;
+
+  if (hasError) {
+    // Preserve useful stacks for Error instances without copying arbitrary
+    // thrown strings or objects (which can contain user data) into telemetry.
+    let exception: Error | string;
+    try {
+      exception = error instanceof Error ? error : resolveErrorType(error);
+    } catch {
+      exception = resolveErrorType(error);
+    }
+    span.recordException(exception);
+  }
+  if (failureType !== undefined) {
+    span.setAttribute('error.type', failureType);
+    // Do not use an exception or tool response message here: those may contain
+    // user data or credentials and are not covered by the content capture gate.
+    span.setStatus({code: SpanStatusCode.ERROR, message: failureType});
+  }
 
   span.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'execute_tool',
@@ -187,7 +258,7 @@ export function traceToolCall({
   let toolCallId = '<not specified>';
   let toolResponse: unknown = '<not specified>';
 
-  if (functionResponseEvent.content?.parts) {
+  if (functionResponseEvent?.content?.parts) {
     const responseParts = functionResponseEvent.content.parts;
     const functionResponse = responseParts[0]?.functionResponse;
     if (functionResponse?.id) {
@@ -203,7 +274,9 @@ export function traceToolCall({
 
   span.setAttributes({
     [GEN_AI_TOOL_CALL_ID]: toolCallId,
-    'gcp.vertex.agent.event_id': functionResponseEvent.id,
+    ...(functionResponseEvent
+      ? {'gcp.vertex.agent.event_id': functionResponseEvent.id}
+      : {}),
     'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(toolResponse)
       : '{}',
