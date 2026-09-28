@@ -6,6 +6,9 @@
 
 import {FunctionCall, Part} from '@google/genai';
 
+import {getFunctionResponses} from '../events/event.js';
+import {Session} from '../sessions/session.js';
+import {logger} from '../utils/logger.js';
 import {
   BaseExampleProvider,
   isBaseExampleProvider,
@@ -98,6 +101,33 @@ export function convertExamplesToText(
 }
 
 /**
+ * Gets the latest message from the user.
+ *
+ * @param session - The session to inspect.
+ * @returns The latest message from the user. If not found, returns an empty
+ *   string.
+ */
+export function getLatestMessageFromUser(session: Session): string {
+  const events = session.events;
+  if (!events || events.length === 0) {
+    return '';
+  }
+
+  const event = events[events.length - 1];
+  if (event.author === 'user' && getFunctionResponses(event).length === 0) {
+    if (event.content?.parts && event.content.parts[0]?.text) {
+      return event.content.parts[0].text;
+    } else {
+      logger.warn('No message from user for fetching example.');
+    }
+  }
+
+  return '';
+}
+
+export const _getLatestMessageFromUser = getLatestMessageFromUser;
+
+/**
  * Builds the few-shot portion of a system instruction from a list of examples
  * or a {@link BaseExampleProvider}.
  *
@@ -108,20 +138,21 @@ export function convertExamplesToText(
  *   when `examples` is a provider. Ignored when `examples` is an array.
  * @param model - Optional model name forwarded to
  *   {@link convertExamplesToText} to select the function-call fence style.
- * @returns A formatted string ready to be appended to a system instruction.
+ * @returns A promise resolving to a formatted string ready to be appended to a
+ *   system instruction.
  * @throws {Error} When `examples` is neither an array nor a
  *   {@link BaseExampleProvider}.
  */
-export function buildExampleSi(
+export async function buildExampleSi(
   examples: Example[] | BaseExampleProvider,
   query: string,
   model?: string,
-): string {
+): Promise<string> {
   if (Array.isArray(examples)) {
     return convertExamplesToText(examples, model);
   }
   if (isBaseExampleProvider(examples)) {
-    return convertExamplesToText(examples.getExamples(query), model);
+    return convertExamplesToText(await examples.getExamples(query), model);
   }
 
   throw new Error('Invalid example configuration');
