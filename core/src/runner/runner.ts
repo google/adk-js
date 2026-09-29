@@ -217,13 +217,8 @@ export class Runner {
   /**
    * Looks the session up, creating it first when `autoCreateSession` is set.
    *
-   * The create goes through the service's `getOrCreateSession` so that a
-   * service can make the get-then-create atomic; a Runner-local sequence would
-   * be somewhere no service could override.
-   *
-   * A runner with no `appName` cannot address a session at all, so it falls
-   * through to the plain lookup: the caller gets the misconfiguration reported
-   * rather than a session created under an undefined app name.
+   * A runner with no `appName` cannot address a session, so it falls through to
+   * the plain lookup rather than creating one under an undefined app name.
    */
   private async resolveSession(
     userId: string,
