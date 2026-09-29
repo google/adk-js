@@ -70,19 +70,21 @@ export function randomUUID(): string {
 /**
  * Encodes the given string or Uint8Array to base64.
  *
+ * `window.btoa` is byte-oriented and throws on any code unit above `U+00FF`,
+ * so a string is first encoded to UTF-8 bytes. Node's `Buffer` encodes a
+ * string as UTF-8 too, which keeps both environments on one contract and lets
+ * `base64Decode` round-trip its output.
+ *
  * @param data The data to encode.
  * @return The base64-encoded string.
  */
 export function base64Encode(data: string | Uint8Array): string {
   if (isBrowser()) {
+    const bytes =
+      typeof data === 'string' ? new TextEncoder().encode(data) : data;
     let strData = '';
-    if (typeof data === 'string') {
-      strData = data;
-    } else {
-      const len = data.byteLength;
-      for (let i = 0; i < len; i++) {
-        strData += String.fromCharCode(data[i]);
-      }
+    for (let i = 0; i < bytes.length; i++) {
+      strData += String.fromCharCode(bytes[i]);
     }
     // eslint-disable-next-line no-undef
     return window.btoa(strData);

@@ -18,11 +18,27 @@ import {
   base64Decode,
   base64Encode,
   getBooleanEnvVar,
+  isBase64Encoded,
   randomUUID,
 } from '../../src/utils/env_aware_utils.js';
 import type {Logger} from '../../src/utils/logger.js';
 
 describe('env_aware_utils', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // isBrowser() only checks for a `window` global, and atob and btoa are the
+  // only members the browser branches touch. The spies are returned so a test
+  // can prove the browser branch ran, rather than the stub silently missing
+  // and the Node branch answering instead.
+  const stubBrowser = () => {
+    const atob = vi.fn(globalThis.atob.bind(globalThis));
+    const btoa = vi.fn(globalThis.btoa.bind(globalThis));
+    vi.stubGlobal('window', {atob, btoa});
+    return {atob, btoa};
+  };
+
   describe('getBooleanEnvVar', () => {
     const originalEnv = process.env;
 
@@ -258,20 +274,6 @@ describe('env_aware_utils', () => {
   });
 
   describe('base64Decode', () => {
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    // isBrowser() only checks for a `window` global, and `atob` is the sole
-    // member the browser branch touches. The spy is returned so a test can
-    // prove the browser branch ran, rather than the stub silently missing and
-    // the Node branch answering instead.
-    const stubBrowser = () => {
-      const atob = vi.fn(globalThis.atob.bind(globalThis));
-      vi.stubGlobal('window', {atob});
-      return atob;
-    };
-
     it('decodes UTF-8 text in Node', () => {
       const decoded = base64Decode('Y2Fmw6kg4pyT');
 
@@ -282,7 +284,7 @@ describe('env_aware_utils', () => {
     // window.atob yields one code unit per byte, so this input decoded to
     // 'cafÃ© â' (9 code units) before the browser branch decoded UTF-8.
     it('decodes UTF-8 text in the browser', () => {
-      const atob = stubBrowser();
+      const {atob} = stubBrowser();
 
       const decoded = base64Decode('Y2Fmw6kg4pyT');
 
@@ -335,6 +337,49 @@ describe('env_aware_utils', () => {
       expect(browserResult).toBe(nodeResult);
       expect(browserResult).toBe('\uFEFFcafé');
       expect(browserResult.length).toBe(5);
+    });
+  });
+
+  describe('base64Encode', () => {
+    // window.btoa throws on any code unit above U+00FF, so a string has to
+    // reach it as UTF-8 bytes for the browser to agree with Buffer.
+    it('encodes UTF-8 text in the browser', () => {
+      const nodeResult = base64Encode('café ✓');
+      const {btoa} = stubBrowser();
+      const browserResult = base64Encode('café ✓');
+
+      expect(btoa).toHaveBeenCalledOnce();
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('Y2Fmw6kg4pyT');
+    });
+
+    it('encodes a Uint8Array in the browser', () => {
+      const bytes = new Uint8Array([104, 105]);
+      const nodeResult = base64Encode(bytes);
+      stubBrowser();
+
+      expect(base64Encode(bytes)).toBe(nodeResult);
+      expect(nodeResult).toBe('aGk=');
+    });
+
+    it('encodes the empty string in both environments', () => {
+      expect(base64Encode('')).toBe('');
+
+      stubBrowser();
+
+      expect(base64Encode('')).toBe('');
+    });
+  });
+
+  describe('isBase64Encoded', () => {
+    // The round trip only holds while base64Encode and base64Decode share one
+    // contract; a byte-oriented btoa would throw here and report false.
+    it('recognises a non-ASCII payload in both environments', () => {
+      expect(isBase64Encoded('Y2Fmw6kg4pyT')).toBe(true);
+
+      stubBrowser();
+
+      expect(isBase64Encoded('Y2Fmw6kg4pyT')).toBe(true);
     });
   });
 });
