@@ -92,15 +92,24 @@ export function base64Encode(data: string | Uint8Array): string {
 }
 
 /**
- * Decodes the given base64 string to a string.
+ * Decodes the given base64 string to UTF-8 text.
+ *
+ * `window.atob` is byte-oriented: it returns a latin1 "binary string" with one
+ * code unit per decoded byte, so a multi-byte UTF-8 sequence surfaces as
+ * mojibake. Node's `Buffer` decodes the same bytes as UTF-8, so the browser
+ * branch recovers the bytes from `atob` and decodes them explicitly. That keeps
+ * both environments on the single contract `File.content` and
+ * `materializeFiles` already assume.
  *
  * @param data The base64-encoded string.
- * @return The decoded string.
+ * @return The decoded UTF-8 string.
  */
 export function base64Decode(data: string): string {
   if (isBrowser()) {
     // eslint-disable-next-line no-undef
-    return window.atob(data);
+    const binary = window.atob(data);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
   }
 
   return Buffer.from(data, 'base64').toString();

@@ -256,4 +256,67 @@ describe('env_aware_utils', () => {
       expect(base64Decode(base64Encode('hello world'))).toBe('hello world');
     });
   });
+
+  describe('base64Decode', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // isBrowser() only checks for a `window` global, and `atob` is the sole
+    // member the browser branch touches.
+    const stubBrowser = () => {
+      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+    };
+
+    it('decodes UTF-8 text in Node', () => {
+      const decoded = base64Decode('Y2Fmw6kg4pyT');
+
+      expect(decoded).toBe('café ✓');
+      expect(decoded.length).toBe(6);
+    });
+
+    // window.atob yields one code unit per byte, so this input decoded to
+    // 'cafÃ© â' (9 code units) before the browser branch decoded UTF-8.
+    it('decodes UTF-8 text in the browser', () => {
+      stubBrowser();
+
+      const decoded = base64Decode('Y2Fmw6kg4pyT');
+
+      expect(decoded).toBe('café ✓');
+      expect(decoded.length).toBe(6);
+    });
+
+    it('returns the same text in both environments', () => {
+      const nodeResult = base64Decode('5pel5pys6KqeIOKCrDEwMA==');
+      stubBrowser();
+      const browserResult = base64Decode('5pel5pys6KqeIOKCrDEwMA==');
+
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('日本語 €100');
+    });
+
+    it('leaves ASCII text unchanged in the browser', () => {
+      stubBrowser();
+
+      expect(base64Decode('aGVsbG8gd29ybGQ=')).toBe('hello world');
+    });
+
+    it('decodes the empty string in both environments', () => {
+      expect(base64Decode('')).toBe('');
+
+      stubBrowser();
+
+      expect(base64Decode('')).toBe('');
+    });
+
+    // Buffer.toString() substitutes U+FFFD instead of throwing, so the browser
+    // branch must decode in TextDecoder's default non-fatal mode to match.
+    it('substitutes U+FFFD for invalid UTF-8 in both environments', () => {
+      expect(base64Decode('//4=')).toBe('\uFFFD\uFFFD');
+
+      stubBrowser();
+
+      expect(base64Decode('//4=')).toBe('\uFFFD\uFFFD');
+    });
+  });
 });
