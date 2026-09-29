@@ -101,6 +101,10 @@ export function base64Encode(data: string | Uint8Array): string {
  * both environments on the single contract `File.content` and
  * `materializeFiles` already assume.
  *
+ * `ignoreBOM` keeps a leading byte order mark as `U+FEFF`, which is what
+ * `Buffer` does. `TextDecoder` strips it by default, so a spreadsheet CSV
+ * exported as UTF-8 with a BOM would otherwise lose a character.
+ *
  * @param data The base64-encoded string.
  * @return The decoded UTF-8 string.
  */
@@ -109,7 +113,7 @@ export function base64Decode(data: string): string {
     // eslint-disable-next-line no-undef
     const binary = window.atob(data);
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
+    return new TextDecoder('utf-8', {ignoreBOM: true}).decode(bytes);
   }
 
   return Buffer.from(data, 'base64').toString();

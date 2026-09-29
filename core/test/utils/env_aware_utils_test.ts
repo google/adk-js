@@ -263,9 +263,13 @@ describe('env_aware_utils', () => {
     });
 
     // isBrowser() only checks for a `window` global, and `atob` is the sole
-    // member the browser branch touches.
+    // member the browser branch touches. The spy is returned so a test can
+    // prove the browser branch ran, rather than the stub silently missing and
+    // the Node branch answering instead.
     const stubBrowser = () => {
-      vi.stubGlobal('window', {atob: globalThis.atob.bind(globalThis)});
+      const atob = vi.fn(globalThis.atob.bind(globalThis));
+      vi.stubGlobal('window', {atob});
+      return atob;
     };
 
     it('decodes UTF-8 text in Node', () => {
@@ -278,10 +282,11 @@ describe('env_aware_utils', () => {
     // window.atob yields one code unit per byte, so this input decoded to
     // 'cafÃ© â' (9 code units) before the browser branch decoded UTF-8.
     it('decodes UTF-8 text in the browser', () => {
-      stubBrowser();
+      const atob = stubBrowser();
 
       const decoded = base64Decode('Y2Fmw6kg4pyT');
 
+      expect(atob).toHaveBeenCalledOnce();
       expect(decoded).toBe('café ✓');
       expect(decoded.length).toBe(6);
     });
@@ -317,6 +322,19 @@ describe('env_aware_utils', () => {
       stubBrowser();
 
       expect(base64Decode('//4=')).toBe('\uFFFD\uFFFD');
+    });
+
+    // Buffer keeps a leading byte order mark, and TextDecoder drops it unless
+    // ignoreBOM is set. Spreadsheets export UTF-8 CSV with a BOM, so this is
+    // the common shape of the one mime type that reaches this function.
+    it('keeps a leading byte order mark in both environments', () => {
+      const nodeResult = base64Decode('77u/Y2Fmw6k=');
+      stubBrowser();
+      const browserResult = base64Decode('77u/Y2Fmw6k=');
+
+      expect(browserResult).toBe(nodeResult);
+      expect(browserResult).toBe('\uFEFFcafé');
+      expect(browserResult.length).toBe(5);
     });
   });
 });
