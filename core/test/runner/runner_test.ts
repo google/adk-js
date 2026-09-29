@@ -1917,3 +1917,152 @@ describe('Runner artifactService handling', () => {
     );
   });
 });
+
+describe('Runner autoCreateSession', () => {
+  const MISSING_SESSION_ID = 'non_existent_session_id';
+
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let agent: MockLlmAgent;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    agent = new MockLlmAgent('test_agent');
+  });
+
+  function createRunner(autoCreateSession: boolean): Runner {
+    return new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession,
+    });
+  }
+
+  async function collectEvents(
+    runner: Runner,
+    sessionId: string,
+  ): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId,
+      newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('creates the missing session and runs in it when enabled', async () => {
+    const events = await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    const agentEvent = events.find((e) => e.author === 'test_agent');
+    expect(agentEvent?.content?.parts).toEqual([{text: 'Test LLM response'}]);
+
+    const created = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
+    expect(created).toBeDefined();
+    expect(created!.id).toBe(MISSING_SESSION_ID);
+    expect(created!.appName).toBe(TEST_APP_ID);
+    expect(created!.userId).toBe(TEST_USER_ID);
+    expect(created!.events.map((e) => e.author)).toEqual([
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('throws and creates nothing when disabled', async () => {
+    let error: Error | null = null;
+    try {
+      await collectEvents(createRunner(false), MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      `Session not found: ${MISSING_SESSION_ID}`,
+    );
+    expect(
+      await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: MISSING_SESSION_ID,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('reuses an existing session instead of clobbering it when enabled', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'earlier_invocation',
+        author: 'test_agent',
+        content: {role: 'model', parts: [{text: 'Earlier turn'}]},
+      }),
+    });
+
+    await collectEvents(createRunner(true), TEST_SESSION_ID);
+
+    const updated = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(updated!.events[0].content?.parts).toEqual([{text: 'Earlier turn'}]);
+    expect(updated!.events.map((e) => e.author)).toEqual([
+      'test_agent',
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('reports the missing appName instead of creating a session', async () => {
+    // `appName` is optional on RunnerConfig, so an unconfigured runner cannot
+    // address a session and must not create one under an undefined app name.
+    const runner = new Runner({
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession: true,
+    });
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    let error: Error | null = null;
+    try {
+      await collectEvents(runner, MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      'appName must be provided in runner constructor',
+    );
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('creates the session once, with the requested identifiers', async () => {
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
+  });
+});
