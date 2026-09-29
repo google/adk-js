@@ -15,39 +15,51 @@ import {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './base_example_provider.js';
-import {Example, exampleSchema} from './example.js';
+import {Example} from './example.js';
 
-const examplesSchema = z.array(exampleSchema);
+const contentSchema = z
+  .object({
+    role: z.string().optional(),
+    parts: z.array(z.object({}).loose()).optional(),
+  })
+  .loose();
 
 /**
- * Throws when `examples` is not a well-formed list of {@link Example}s.
+ * Runtime shape check for a list of {@link Example}s.
+ *
+ * The check is deliberately shallow. `Content` and `Part` carry many optional
+ * fields, so both objects stay open, and the schema pins only the invariants
+ * the few-shot renderer depends on.
+ */
+const examplesSchema = z.array(
+  z.object({input: contentSchema, output: z.array(contentSchema)}),
+);
+
+/**
+ * Throws unless `examples` is a well-formed list of {@link Example}s.
  *
  * Mirrors `TypeAdapter(list[Example]).validate_python` in the adk-python
- * `ExampleTool` constructor. A malformed entry is rejected where the caller
- * supplies it, instead of crashing later while the few-shot instruction is
- * rendered.
+ * `ExampleTool` constructor. {@link Example} is erased at compile time, so a
+ * value that reaches the SDK from untyped JavaScript or from a configuration
+ * file is otherwise unchecked, and a malformed entry only fails later while the
+ * few-shot instruction is rendered.
  *
- * The caller's array is checked but not replaced, so the value keeps reference
- * identity and no defensive copy is made.
+ * The value is checked but not replaced, so it keeps reference identity and no
+ * defensive copy is made.
  *
- * @param examples - The few-shot examples to check.
- * @throws {InputValidationError} When an entry does not match the runtime shape
- *   of an {@link Example}. The message names the path of each failing field.
+ * @param examples - The value to check.
+ * @throws {InputValidationError} When the value is not a list of well-formed
+ *   examples. The message names the path of each failing field.
  */
-export function validateExamples(examples: readonly Example[]): void {
+export function validateExamples(
+  examples: unknown,
+): asserts examples is Example[] {
   const result = examplesSchema.safeParse(examples);
-  if (result.success) {
-    return;
+  if (!result.success) {
+    throw new InputValidationError(
+      `Invalid few-shot examples:\n${z.prettifyError(result.error)}`,
+    );
   }
-  const issues = result.error.issues
-    .map((issue) => {
-      const at = issue.path.length
-        ? ` at 'examples.${issue.path.join('.')}'`
-        : '';
-      return `${issue.message}${at}`;
-    })
-    .join('; ');
-  throw new InputValidationError(`Invalid few-shot examples: ${issues}.`);
 }
 
 const EXAMPLES_INTRO =

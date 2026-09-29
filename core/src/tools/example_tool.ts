@@ -5,10 +5,6 @@
  */
 
 import {
-  ToolErrorType,
-  ToolExecutionError,
-} from '../errors/tool_execution_error.js';
-import {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from '../examples/base_example_provider.js';
@@ -39,10 +35,8 @@ export class ExampleTool extends BaseTool {
   /**
    * @param examples - A list of {@link Example}s, or a
    *   {@link BaseExampleProvider} that returns them for a query.
-   * @throws {InputValidationError} When `examples` is a list holding a
-   *   malformed entry.
-   * @throws {ToolExecutionError} With {@link ToolErrorType.BAD_REQUEST} when
-   *   `examples` is neither a list nor a {@link BaseExampleProvider}.
+   * @throws {InputValidationError} When `examples` is neither a
+   *   {@link BaseExampleProvider} nor a list of well-formed examples.
    */
   constructor(examples: Example[] | BaseExampleProvider) {
     super({
@@ -51,14 +45,8 @@ export class ExampleTool extends BaseTool {
       name: 'example_tool',
       description: 'example tool',
     });
-    if (Array.isArray(examples)) {
+    if (!isBaseExampleProvider(examples)) {
       validateExamples(examples);
-    } else if (!isBaseExampleProvider(examples)) {
-      throw new ToolExecutionError(
-        'ExampleTool examples must be a list of examples or a ' +
-          'BaseExampleProvider instance.',
-        ToolErrorType.BAD_REQUEST,
-      );
     }
     this.examples = examples;
   }

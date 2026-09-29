@@ -17,8 +17,6 @@ import {
   InvocationContext,
   LlmRequest,
   PluginManager,
-  ToolErrorType,
-  ToolExecutionError,
 } from '@google/adk';
 import {Content} from '@google/genai';
 
@@ -167,18 +165,6 @@ function asExamplesArg(value: unknown): Example[] | BaseExampleProvider {
   return value as Example[] | BaseExampleProvider;
 }
 
-/** Asserts that `construct` fails with a BAD_REQUEST tool error. */
-function expectBadRequest(construct: () => ExampleTool): void {
-  let caught: unknown;
-  try {
-    construct();
-  } catch (error: unknown) {
-    caught = error;
-  }
-  expect(caught).toBeInstanceOf(ToolExecutionError);
-  expect(caught).toMatchObject({errorType: ToolErrorType.BAD_REQUEST});
-}
-
 describe('ExampleTool construction validation', () => {
   it('rejects a list holding a malformed example', () => {
     expect(
@@ -187,15 +173,15 @@ describe('ExampleTool construction validation', () => {
   });
 
   it('rejects a duck-typed provider', () => {
-    expectBadRequest(
+    expect(
       () =>
         new ExampleTool(asExamplesArg({getExamples: () => [SIMPLE_EXAMPLE]})),
-    );
+    ).toThrow(InputValidationError);
   });
 
   it('rejects a fully-qualified provider name string', () => {
-    expectBadRequest(
-      () => new ExampleTool(asExamplesArg('my.module.provider')),
+    expect(() => new ExampleTool(asExamplesArg('my.module.provider'))).toThrow(
+      InputValidationError,
     );
   });
 
@@ -203,7 +189,9 @@ describe('ExampleTool construction validation', () => {
     ['null', null],
     ['undefined', undefined],
   ])('rejects %s rather than raising a TypeError later', (_label, value) => {
-    expectBadRequest(() => new ExampleTool(asExamplesArg(value)));
+    expect(() => new ExampleTool(asExamplesArg(value))).toThrow(
+      InputValidationError,
+    );
   });
 
   it('keeps the provider reference the caller passed', () => {
