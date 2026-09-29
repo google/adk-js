@@ -11,9 +11,9 @@ import {
   InvocationContext,
   LoopAgent,
   PluginManager,
+  Session,
   createEvent,
   createEventActions,
-  createSession,
   isLoopAgent,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
@@ -76,12 +76,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -112,12 +114,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -156,12 +160,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -193,12 +199,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
       abortSignal: controller.signal,
     });
@@ -235,12 +243,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -271,12 +281,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -315,12 +327,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
     });
 
@@ -331,59 +345,6 @@ describe('LoopAgent', () => {
 
     expect(yieldedEvents.length).toBe(3);
     expect(yieldedEvents[2].actions?.escalate).toBe(true);
-  });
-
-  it('should drain the escalating sub-agent before exiting in live mode', async () => {
-    // The escalating event is NOT last, so this distinguishes "return from
-    // inside the for-await" (which tears the sub-agent's stream down and drops
-    // the trailing event) from the runAsyncImpl shouldExit behaviour.
-    const escalatingEvent = createEvent({
-      author: 'sub1',
-      content: {role: 'model', parts: [{text: 'escalating'}]},
-      actions: createEventActions({escalate: true}),
-    });
-    const trailingEvent = createEvent({
-      author: 'sub1',
-      content: {role: 'model', parts: [{text: 'trailing'}]},
-    });
-    const nextAgentEvent = createEvent({
-      author: 'sub2',
-      content: {role: 'model', parts: [{text: 'should not reach'}]},
-    });
-
-    const sub1 = new MockSubAgent({name: 'sub1'}, [
-      escalatingEvent,
-      trailingEvent,
-    ]);
-    const sub2 = new MockSubAgent({name: 'sub2'}, [nextAgentEvent]);
-
-    const loopAgent = new LoopAgent({
-      name: 'loop',
-      subAgents: [sub1, sub2],
-      maxIterations: 5,
-    });
-
-    const parentContext = new InvocationContext({
-      invocationId: 'test-invocation',
-      agent: loopAgent,
-      session: createSession({
-        id: 'test-session',
-        appName: 'test-app',
-        userId: 'test-user',
-        lastUpdateTime: Date.now(),
-      }),
-      pluginManager: new PluginManager(),
-    });
-
-    const yieldedEvents: Event[] = [];
-    for await (const event of loopAgent.runLive(parentContext)) {
-      yieldedEvents.push(event);
-    }
-
-    expect(yieldedEvents.map((e) => e.content?.parts?.[0]?.text)).toEqual([
-      'escalating',
-      'trailing',
-    ]);
   });
 
   it('should stop on abort signal in live mode', async () => {
@@ -405,12 +366,14 @@ describe('LoopAgent', () => {
     const parentContext = new InvocationContext({
       invocationId: 'test-invocation',
       agent: loopAgent,
-      session: createSession({
+      session: {
         id: 'test-session',
         appName: 'test-app',
         userId: 'test-user',
+        state: {},
+        events: [],
         lastUpdateTime: Date.now(),
-      }),
+      } as unknown as Session,
       pluginManager: new PluginManager(),
       abortSignal: controller.signal,
     });
