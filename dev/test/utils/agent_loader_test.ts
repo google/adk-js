@@ -24,13 +24,13 @@ import {App, isApp} from '@google/adk';
 import {
   AgentFile,
   AgentLoader,
-  isBuildCacheFile,
   replaceDirnamePlugin,
 } from '../../src/utils/agent_loader.js';
 import * as fileUtils from '../../src/utils/file_utils.js';
 import {AdkLogger} from '../../src/utils/logger.js';
 
 vi.mock('../../src/utils/file_utils.js', () => ({
+  createTempDir: vi.fn(),
   isFile: vi.fn(),
   isFileExists: vi.fn(),
   isFolderExists: vi.fn(),
@@ -186,6 +186,11 @@ describe('AgentLoader', () => {
     setSourceMapsEnabledSpy = vi
       .spyOn(process, 'setSourceMapsEnabled')
       .mockImplementation(() => {}) as unknown as Mock;
+    // Mirror the real implementation: a fresh, unique OS temp dir per call, so
+    // no two compiled fixtures collide in the module registry.
+    (fileUtils.createTempDir as Mock).mockImplementation((prefix: string) =>
+      fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`)),
+    );
     (fileUtils.isFile as Mock).mockImplementation(async (filePath) => {
       try {
         const stat = await fs.stat(filePath as string);
@@ -411,7 +416,7 @@ describe('AgentLoader', () => {
       await agentFile.dispose();
     });
 
-    it('compiles into a private build-cache dir without allowing overwrite', async () => {
+    it('compiles into the OS temp dir, not the working dir', async () => {
       const agentPath = path.join(tempAgentsDir, 'agent1.js');
       await fs.writeFile(agentPath, agent1JsContent);
 
@@ -427,7 +432,8 @@ describe('AgentLoader', () => {
       const agentFile = new AgentFile(agentPath);
       await agentFile.load();
 
-      expect(compiledAgentPath).toContain('.adk_build_cache');
+      expect(compiledAgentPath.startsWith(os.tmpdir())).toBe(true);
+      expect(compiledAgentPath.startsWith(tempAgentsDir)).toBe(false);
       expect(
         (esbuild.build as Mock).mock.calls[0][0].allowOverwrite,
       ).toBeUndefined();
@@ -1085,37 +1091,6 @@ describe('AgentLoader', () => {
       expect(agents).not.toContain('.hidden');
 
       await loader.disposeAll();
-    });
-  });
-
-  describe('isBuildCacheFile', () => {
-    it('matches compiler output so the watcher does not invalidate on its own writes', () => {
-      expect(
-        isBuildCacheFile(
-          path.join(
-            'agent1',
-            '.adk_build_cache',
-            'adk_agent_loader',
-            'a5f1',
-            'agent1.cjs',
-          ),
-        ),
-      ).toBe(true);
-      // fs.watch reports POSIX- or Windows-style separators depending on host.
-      expect(
-        isBuildCacheFile('.adk_build_cache/adk_agent_loader/a5f1/agent1.mjs'),
-      ).toBe(true);
-      expect(
-        isBuildCacheFile(
-          '.adk_build_cache\\adk_agent_loader\\a5f1\\agent1.mjs',
-        ),
-      ).toBe(true);
-    });
-
-    it('does not match ordinary agent sources', () => {
-      expect(isBuildCacheFile(path.join('agent1', 'agent.ts'))).toBe(false);
-      expect(isBuildCacheFile('agent1.js')).toBe(false);
-      expect(isBuildCacheFile('my_adk_build_cache/agent1.cjs')).toBe(false);
     });
   });
 });
