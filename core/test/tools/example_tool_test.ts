@@ -13,9 +13,12 @@ import {
   createSession,
   Example,
   ExampleTool,
+  InputValidationError,
   InvocationContext,
   LlmRequest,
   PluginManager,
+  ToolErrorType,
+  ToolExecutionError,
 } from '@google/adk';
 import {Content} from '@google/genai';
 
@@ -151,6 +154,68 @@ describe('ExampleTool', () => {
 
   it('is importable from @google/adk (public export)', () => {
     expect(new ExampleTool([])).toBeInstanceOf(ExampleTool);
+  });
+});
+
+/**
+ * Presents a deliberately malformed value as the declared constructor
+ * parameter type. The constructor guards values that reach the SDK from
+ * untyped JavaScript or from a configuration file, which a TypeScript call
+ * site cannot express.
+ */
+function asExamplesArg(value: unknown): Example[] | BaseExampleProvider {
+  return value as Example[] | BaseExampleProvider;
+}
+
+/** Asserts that `construct` fails with a BAD_REQUEST tool error. */
+function expectBadRequest(construct: () => ExampleTool): void {
+  let caught: unknown;
+  try {
+    construct();
+  } catch (error: unknown) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(ToolExecutionError);
+  expect(caught).toMatchObject({errorType: ToolErrorType.BAD_REQUEST});
+}
+
+describe('ExampleTool construction validation', () => {
+  it('rejects a list holding a malformed example', () => {
+    expect(
+      () => new ExampleTool(asExamplesArg([{input: {parts: [{text: 'q'}]}}])),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects a duck-typed provider', () => {
+    expectBadRequest(
+      () =>
+        new ExampleTool(asExamplesArg({getExamples: () => [SIMPLE_EXAMPLE]})),
+    );
+  });
+
+  it('rejects a fully-qualified provider name string', () => {
+    expectBadRequest(
+      () => new ExampleTool(asExamplesArg('my.module.provider')),
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+  ])('rejects %s rather than raising a TypeError later', (_label, value) => {
+    expectBadRequest(() => new ExampleTool(asExamplesArg(value)));
+  });
+
+  it('keeps the provider reference the caller passed', () => {
+    const provider = new FixedExampleProvider([SIMPLE_EXAMPLE]);
+
+    expect(new ExampleTool(provider).examples).toBe(provider);
+  });
+
+  it('keeps the array reference the caller passed', () => {
+    const examples = [SIMPLE_EXAMPLE];
+
+    expect(new ExampleTool(examples).examples).toBe(examples);
   });
 });
 

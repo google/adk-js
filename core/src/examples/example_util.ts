@@ -5,7 +5,9 @@
  */
 
 import {FunctionCall, Part} from '@google/genai';
+import {z} from 'zod';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {getFunctionResponses} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -13,7 +15,40 @@ import {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './base_example_provider.js';
-import {Example} from './example.js';
+import {Example, exampleSchema} from './example.js';
+
+const examplesSchema = z.array(exampleSchema);
+
+/**
+ * Throws when `examples` is not a well-formed list of {@link Example}s.
+ *
+ * Mirrors `TypeAdapter(list[Example]).validate_python` in the adk-python
+ * `ExampleTool` constructor. A malformed entry is rejected where the caller
+ * supplies it, instead of crashing later while the few-shot instruction is
+ * rendered.
+ *
+ * The caller's array is checked but not replaced, so the value keeps reference
+ * identity and no defensive copy is made.
+ *
+ * @param examples - The few-shot examples to check.
+ * @throws {InputValidationError} When an entry does not match the runtime shape
+ *   of an {@link Example}. The message names the path of each failing field.
+ */
+export function validateExamples(examples: readonly Example[]): void {
+  const result = examplesSchema.safeParse(examples);
+  if (result.success) {
+    return;
+  }
+  const issues = result.error.issues
+    .map((issue) => {
+      const at = issue.path.length
+        ? ` at 'examples.${issue.path.join('.')}'`
+        : '';
+      return `${issue.message}${at}`;
+    })
+    .join('; ');
+  throw new InputValidationError(`Invalid few-shot examples: ${issues}.`);
+}
 
 const EXAMPLES_INTRO =
   '<EXAMPLES>\nBegin few-shot\nThe following are examples of user queries and' +

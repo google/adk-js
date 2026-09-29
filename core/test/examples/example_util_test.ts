@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {InputValidationError} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 import {createEvent} from '../../src/events/event.js';
 import {BaseExampleProvider} from '../../src/examples/base_example_provider.js';
@@ -13,6 +14,7 @@ import {
   buildExampleSi,
   convertExamplesToText,
   getLatestMessageFromUser,
+  validateExamples,
 } from '../../src/examples/example_util.js';
 import {createSession} from '../../src/sessions/session.js';
 import {logger} from '../../src/utils/logger.js';
@@ -229,5 +231,84 @@ describe('example_util (v0.1.0 parity)', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * Presents a deliberately malformed value as the declared parameter type.
+ * `validateExamples` guards values that reach the SDK from untyped JavaScript
+ * or from a configuration file, which a TypeScript call site cannot express.
+ */
+function asExamples(value: unknown): Example[] {
+  return value as Example[];
+}
+
+describe('validateExamples', () => {
+  it('accepts a valid list', () => {
+    expect(() =>
+      validateExamples([SIMPLE_EXAMPLE, FUNCTION_CALL_EXAMPLE]),
+    ).not.toThrow();
+  });
+
+  it('accepts an empty list', () => {
+    expect(() => validateExamples([])).not.toThrow();
+  });
+
+  it('rejects an entry without an output', () => {
+    expect(() =>
+      validateExamples(asExamples([{input: {parts: [{text: 'q'}]}}])),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects an entry without an input', () => {
+    expect(() =>
+      validateExamples(
+        asExamples([{output: [{role: 'model', parts: [{text: 'a'}]}]}]),
+      ),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects an output that is not an array', () => {
+    expect(() =>
+      validateExamples(
+        asExamples([
+          {
+            input: {parts: [{text: 'q'}]},
+            output: {role: 'model', parts: [{text: 'a'}]},
+          },
+        ]),
+      ),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects input parts that are not an array', () => {
+    expect(() =>
+      validateExamples(asExamples([{input: {parts: 'q'}, output: []}])),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects a value that is not a list, without a field path', () => {
+    expect(() => validateExamples(asExamples('not a list'))).toThrow(
+      /^Invalid few-shot examples: [^']+\.$/,
+    );
+  });
+
+  it('names the offending index and field in the message', () => {
+    expect(() =>
+      validateExamples(asExamples([{input: {parts: [{text: 'q'}]}}])),
+    ).toThrow(/examples\.0\.output/);
+  });
+
+  it('accepts unknown keys on a content object', () => {
+    expect(() =>
+      validateExamples(
+        asExamples([
+          {
+            input: {role: 'user', parts: [{text: 'q', thought: true}]},
+            output: [{role: 'model', parts: [{text: 'a'}], newField: 1}],
+          },
+        ]),
+      ),
+    ).not.toThrow();
   });
 });
