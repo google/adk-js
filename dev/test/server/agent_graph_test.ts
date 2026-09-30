@@ -15,6 +15,7 @@ import {
   LoopAgent,
   node,
   ParallelAgent,
+  RunnableRoot,
   SequentialAgent,
   Workflow,
 } from '@google/adk';
@@ -228,12 +229,65 @@ describe('AgentGraph', () => {
       'label = "cluster_parallelAgent (Parallel Agent)"',
     );
   });
+
+  it('labels a Sequential cluster with the agent name, not the graphviz cluster id', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    expect(dot).toContain('subgraph "cluster_pipeline (Sequential Agent)"');
+    expect(dot).toContain('label = "pipeline (Sequential Agent)"');
+    expect(dot).not.toContain('label = "cluster_pipeline (Sequential Agent)"');
+  });
+
+  it('outlines a cluster instead of filling it', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    expect(dot).toContain('color = "#ffffff"');
+    expect(dot).not.toContain('bgcolor = "#ffffff"');
+    expect(dot).toContain('bgcolor = "#333537"');
+  });
+
+  it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#cccccc"');
+    expect(edge).not.toContain('#69CB87');
+  });
+
+  it('keeps a highlighted edge inside a Sequential cluster green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'second']]);
+
+    expect(edgeBlock(dot, 'first', 'second')).toContain('color = "#69CB87"');
+  });
+
+  it('draws an unhighlighted edge inside a Loop cluster in gray', async () => {
+    const loop = new LoopAgent({
+      name: 'pipeline',
+      subAgents: [
+        new LlmAgent({name: 'first'}),
+        new LlmAgent({name: 'second'}),
+      ],
+    });
+
+    const dot = await renderDot(loop);
+
+    const wrapAround = edgeBlock(dot, 'second', 'first');
+    expect(wrapAround).toContain('color = "#cccccc"');
+    expect(wrapAround).not.toContain('#69CB87');
+  });
 });
+
+function sequentialPipeline(): SequentialAgent {
+  return new SequentialAgent({
+    name: 'pipeline',
+    subAgents: [new LlmAgent({name: 'first'}), new LlmAgent({name: 'second'})],
+  });
+}
 
 const noopHandler = async () => 'ok';
 
 async function renderDot(
-  agent: Workflow | SequentialAgent,
+  agent: RunnableRoot,
   highlights: Array<[string, string]> = [],
 ): Promise<string> {
   const dot = await getAgentGraphAsDot(agent, highlights);

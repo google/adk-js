@@ -128,9 +128,9 @@ export async function buildGraph(
         if (highlightsPair.includes(name)) {
           if (asCluster) {
             const cluster = new Subgraph(`cluster_${name}`, {
-              label: `cluster_${name}`,
+              label: name,
               style: 'rounded',
-              bgcolor: WHITE,
+              color: WHITE,
               fontcolor: LIGHT_GRAY,
             });
             graph.addSubgraph(cluster);
@@ -155,9 +155,9 @@ export async function buildGraph(
 
     if (asCluster) {
       const cluster = new Subgraph(`cluster_${name}`, {
-        label: `cluster_${name}`,
+        label: name,
         style: 'rounded',
-        bgcolor: WHITE,
+        color: WHITE,
         fontcolor: LIGHT_GRAY,
       });
       graph.addSubgraph(cluster);
@@ -206,7 +206,7 @@ export async function buildGraph(
     if (shouldBuildAgentCluster(rootAgent)) {
       graph.addEdge(
         new Edge([new Node(fromName), new Node(toName)], {
-          color: LIGHT_GREEN,
+          color: LIGHT_GRAY,
         }),
       );
 
@@ -251,7 +251,7 @@ function drawWorkflowCluster(
   const cluster = new Subgraph(`cluster_${path}`, {
     label: `🧩 ${workflow.name}`,
     style: 'rounded',
-    bgcolor: WHITE,
+    color: WHITE,
     fontcolor: LIGHT_GRAY,
   });
   container.addSubgraph(cluster);
