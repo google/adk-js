@@ -956,7 +956,14 @@ export class AdkApiServer {
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, stateDelta} = req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        stateDelta,
+        customMetadata,
+      } = req.body;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -988,6 +995,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1017,6 +1025,7 @@ export class AdkApiServer {
           input.sessionId || body.sessionId || 'default-session';
         const newMessage = input.newMessage || body.newMessage;
         const stateDelta = input.stateDelta || body.stateDelta;
+        const customMetadata = input.customMetadata || body.customMetadata;
         if (!appName) {
           res.status(400).json({error: 'appName is required in input'});
           return;
@@ -1039,6 +1048,7 @@ export class AdkApiServer {
             sessionId,
             newMessage,
             stateDelta,
+            customMetadata,
             abortSignal: abortController.signal,
           })) {
             events.push(e);
@@ -1080,8 +1090,15 @@ export class AdkApiServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, streaming, stateDelta} =
-        req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        streaming,
+        stateDelta,
+        customMetadata,
+      } = req.body;
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1121,6 +1138,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
@@ -1261,6 +1279,7 @@ export class AdkApiServer {
     sessionId: string;
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
+    customMetadata?: Record<string, unknown>;
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
@@ -1276,6 +1295,7 @@ export class AdkApiServer {
       newMessage: options.newMessage,
       runConfig: options.runConfig,
       stateDelta: options.stateDelta,
+      customMetadata: options.customMetadata,
       abortSignal: options.abortSignal,
     });
   }
