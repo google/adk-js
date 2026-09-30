@@ -9,6 +9,7 @@ import {OpenAPIV3} from 'openapi-types';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
 import {experimental} from '../../utils/experimental.js';
+import {logger} from '../../utils/logger.js';
 import {BaseTool} from '../base_tool.js';
 import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {OpenApiSpecParser} from './openapi_spec_parser/openapi_spec_parser.js';
@@ -41,8 +42,10 @@ export class OpenAPIToolset extends BaseToolset {
         (!options.specType && options.specStr.trim().startsWith('---'))
       ) {
         spec = yaml.load(options.specStr) as OpenAPIV3.Document;
-      } else {
+      } else if (options.specType === 'json' || !options.specType) {
         spec = JSON.parse(options.specStr) as OpenAPIV3.Document;
+      } else {
+        throw new Error(`Unsupported spec type: ${options.specType}`);
       }
     }
 
@@ -68,6 +71,8 @@ export class OpenAPIToolset extends BaseToolset {
           endpoint: op.endpoint,
           operation: op.operation,
           authScheme: op.authScheme,
+          parameters: op.parameters,
+          authCredential: op.authCredential,
         },
         {
           preservePropertyNames: options.preservePropertyNames,
@@ -77,6 +82,7 @@ export class OpenAPIToolset extends BaseToolset {
       );
 
       this.tools.push(tool);
+      logger.info(`Parsed tool: ${tool.name}`);
     }
 
     // Apply global auth overrides if provided
@@ -100,6 +106,20 @@ export class OpenAPIToolset extends BaseToolset {
       }
       return true;
     });
+  }
+
+  /**
+   * Returns the parsed tool with the given name, or `undefined` when the spec
+   * produced no such tool.
+   *
+   * The lookup is over every tool parsed from the spec and does not apply
+   * `toolFilter`, which selects what an agent exposes to the model rather than
+   * what the toolset holds. When the toolset was constructed with `prefix`,
+   * pass the prefixed name.
+   */
+  @experimental
+  getTool(toolName: string): RestApiTool | undefined {
+    return this.tools.find((tool) => tool.name === toolName);
   }
 
   @experimental

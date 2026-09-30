@@ -14,7 +14,7 @@ import {
 
 import {LiveResponseAggregator} from '../utils/live_connection_utils.js';
 import {logger} from '../utils/logger.js';
-import {isGemini3xFlashLive} from '../utils/model_name.js';
+import {isGemini35LiveTranslate, isGemini3xLive} from '../utils/model_name.js';
 
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {LlmResponse} from './llm_response.js';
@@ -43,7 +43,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
     );
 
     if (contents.length > 0) {
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       this.geminiSession.sendClientContent({
         turns: contents,
         turnComplete: isGemini3x
@@ -79,7 +79,7 @@ export class GeminiLlmConnection implements BaseLlmConnection {
       });
     } else {
       logger.debug('Sending LLM new content', content);
-      const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+      const isGemini3x = isGemini3xLive(this.modelVersion);
       if (isGemini3x && content.parts.length === 1 && content.parts[0].text) {
         logger.debug('Using sendRealtimeInput for Gemini 3.x text input');
         this.geminiSession.sendRealtimeInput({text: content.parts[0].text});
@@ -99,10 +99,14 @@ export class GeminiLlmConnection implements BaseLlmConnection {
    */
   async sendRealtime(blob: Blob): Promise<void> {
     logger.debug('Sending LLM Blob:', blob);
-    const isGemini3x = isGemini3xFlashLive(this.modelVersion);
+    const isGemini3x = isGemini3xLive(this.modelVersion);
     const isNativeAudio = this.modelVersion?.includes('native-audio');
+    const isLiveTranslate = isGemini35LiveTranslate(this.modelVersion);
 
-    if (isGemini3x || isNativeAudio) {
+    // Live Translate is excluded from the conversational 3.x routing above but
+    // still sends audio/video over the realtime path (adk-python parity:
+    // `if self._is_gemini_3_x_live or self._is_gemini_3_5_live_translate:`).
+    if (isGemini3x || isNativeAudio || isLiveTranslate) {
       if (blob.mimeType?.startsWith('audio/')) {
         this.geminiSession.sendRealtimeInput({audio: blob});
       } else if (blob.mimeType?.startsWith('image/')) {

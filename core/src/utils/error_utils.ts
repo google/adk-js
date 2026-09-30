@@ -70,7 +70,7 @@ function baseMessage(err: unknown): string {
  * Extracts synchronously-available HTTP details (status, status text and a
  * truncated response body) from a duck-typed error, or `undefined` when none
  * are present. Several shapes are supported: errors carrying `.status`
- * directly, axios/httpx-style errors nesting them under `.response`, and
+ * directly, axios-style errors nesting them under `.response`, and
  * errors that expose the status as a numeric `.code` (as the MCP SDK's
  * `StreamableHTTPError` does). A body is only read when it is already a
  * string, so no async `Response.text()` is ever invoked.

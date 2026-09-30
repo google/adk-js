@@ -151,9 +151,14 @@ export class Gemini extends BaseLlm {
   /**
    * Sends a request to the Gemini model.
    *
-   * @param llmRequest LlmRequest, the request to send to the Gemini model.
-   * @param stream bool = false, whether to do streaming call.
-   * @yields LlmResponse: The model response.
+   * @param llmRequest The request to send to the Gemini model.
+   * @param stream Whether to make a streaming call. Defaults to `false`.
+   * @yields Each {@link LlmResponse} produced by the model. A non-streaming
+   *     call yields exactly one; a streaming call yields the partial responses
+   *     as they arrive, then a final aggregated response whenever the stream
+   *     carried either content or usage/grounding/citation metadata. A
+   *     metadata-only stream therefore still ends with one, holding the
+   *     metadata and no `content`; only a stream with neither ends silently.
    */
   override async *generateContentAsync(
     llmRequest: LlmRequest,

@@ -72,10 +72,15 @@ function getAgentFileOptions(options: {
   compile?: boolean;
   bundle?: boolean;
   file_type?: string;
+  // Minification destroys stack traces, so it is opt-in and reserved for
+  // deployment bundles where the artifact size matters more than a readable
+  // trace. Local commands (run/web/api_server) keep readable output.
+  minify?: boolean;
 }) {
   return {
     compile: getBoolean(options['compile']),
     bundle: getBoolean(options['bundle']),
+    minify: getBoolean(options['minify']),
     moduleType: options['file_type'] as FileModuleType | undefined,
   };
 }
@@ -123,7 +128,9 @@ const PORT_OPTION = new Option(
 ).default('8000');
 const ORIGINS_OPTION = new Option(
   '--allow_origins <string>',
-  'Optional. The allow origins of the server',
+  'Optional. Comma-separated list of origins allowed to send cross-origin ' +
+    "requests to the server. Each origin's host is also accepted by the " +
+    'DNS-rebinding guard.',
 ).default('');
 const ALLOWED_HOSTS_OPTION = new Option(
   '--allowed_hosts <string>',
@@ -209,9 +216,21 @@ export const REPOSITORY_DEPLOY_OPTION = new Option(
   '--repository [string]',
   'Optional. Artifact Registry repository name to push docker images. Required for agent_engine deploy.',
 );
+export const STAGING_BUCKET_DEPLOY_OPTION = new Option(
+  '--staging_bucket [string]',
+  'Optional. Google Cloud Storage bucket name (no gs:// prefix) used for deployment staging. Cloud Build logs are written to gs://<staging_bucket>/logs. If not set, gs://<project>_cloudbuild/logs is used.',
+);
 export const AGENT_ENGINE_ID_OPTION = new Option(
   '--agent_engine_id [id]',
   'Optional. ID of the Agent Engine instance to update if it exists (default: undefined, which means a new instance will be created). If project and region are set, this should be the resource ID or the full resource name (projects/.../locations/.../reasoningEngines/...).',
+);
+export const MIN_INSTANCES_OPTION = new Option(
+  '--min_instances [number]',
+  'Optional. The minimum number of application instances that will be kept running at all times. Default: 1.',
+);
+export const MAX_INSTANCES_OPTION = new Option(
+  '--max_instances [number]',
+  'Optional. The maximum number of application instances that can be launched to handle increased traffic. Default: 10.',
 );
 
 /**
@@ -225,6 +244,10 @@ export function createProgram(): Command {
   });
 
   const program = new Command('ADK CLI');
+
+  // Commander copies this setting into a subcommand when the subcommand is
+  // created, so it has to be set before the commands below are registered.
+  program.showHelpAfterError();
 
   program
     .addOption(new Option('-v, --version', 'Get ADK CLI version'))
@@ -413,7 +436,7 @@ export function createProgram(): Command {
         });
       } catch (error) {
         logger.error('Error running agent:', (error as Error).message);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -479,7 +502,7 @@ export function createProgram(): Command {
           allowOrigins: options['allow_origins'],
           sessionServiceUri: options['session_service_uri'],
           artifactServiceUri: options['artifact_service_uri'],
-          agentFileLoadOptions: getAgentFileOptions(options),
+          agentFileLoadOptions: getAgentFileOptions({...options, minify: true}),
           a2a: getBoolean(options['a2a']),
           a2aAuthToken: options['a2a_auth_token'],
           extraGcloudArgs,
@@ -499,6 +522,7 @@ export function createProgram(): Command {
       .addOption(DISPLAY_NAME_OPTION)
       .addOption(DESCRIPTION_OPTION)
       .addOption(REPOSITORY_DEPLOY_OPTION)
+      .addOption(STAGING_BUCKET_DEPLOY_OPTION)
       .option(
         '--temp_folder [string]',
         'Optional. Temp folder for the generated source files (default: a private directory created in the system temp directory).',
@@ -515,6 +539,8 @@ export function createProgram(): Command {
       .addOption(AGENT_FILE_MODULE_TYPE)
       .addOption(A2A_OPTION)
       .addOption(AGENT_ENGINE_ID_OPTION)
+      .addOption(MIN_INSTANCES_OPTION)
+      .addOption(MAX_INSTANCES_OPTION)
       .action(async (agentPath: string, options: Record<string, string>) => {
         try {
           await deployToAgentEngine({
@@ -524,6 +550,7 @@ export function createProgram(): Command {
             displayName: options['display_name'],
             description: options['description'],
             repository: options['repository'],
+            stagingBucket: options['staging_bucket'],
             tempFolder: options['temp_folder'],
             port: 8080, // Agent Engine requires fixed port of 8080
             withUi: getBoolean(options['with_ui']),
@@ -532,9 +559,20 @@ export function createProgram(): Command {
             allowOrigins: options['allow_origins'],
             sessionServiceUri: options['session_service_uri'],
             artifactServiceUri: options['artifact_service_uri'],
-            agentFileLoadOptions: getAgentFileOptions(options),
+            agentFileLoadOptions: getAgentFileOptions({
+              ...options,
+              minify: true,
+            }),
             a2a: getBoolean(options['a2a']),
             agentEngineId: options['agent_engine_id'],
+            minInstances:
+              options['min_instances'] !== undefined
+                ? parseInt(options['min_instances'], 10)
+                : undefined,
+            maxInstances:
+              options['max_instances'] !== undefined
+                ? parseInt(options['max_instances'], 10)
+                : undefined,
           });
         } catch (error) {
           logger.error('Error deploying agent:', (error as Error).message);

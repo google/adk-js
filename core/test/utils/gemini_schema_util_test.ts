@@ -6,7 +6,10 @@
 
 import {Type} from '@google/genai';
 import {describe, expect, it} from 'vitest';
-import {toGeminiSchema} from '../../src/utils/gemini_schema_util.js';
+import {
+  openApiSchemaToGeminiSchema,
+  toGeminiSchema,
+} from '../../src/utils/gemini_schema_util.js';
 
 interface MCPToolSchema {
   type: 'object';
@@ -392,6 +395,108 @@ describe('toGeminiSchema', () => {
     });
   });
 
+  it('drops a null member from a string-typed enum', () => {
+    const input = {
+      type: 'string' as const,
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: ['a'],
+    });
+  });
+
+  it('drops a null member from a nullable string enum', () => {
+    const input = {
+      type: ['string', 'null'],
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      nullable: true,
+      enum: ['a'],
+    });
+  });
+
+  it('drops a null enum member on a nested property', () => {
+    const input = {
+      type: 'object' as const,
+      properties: {
+        status: {type: 'string', enum: ['open', null]},
+      },
+    };
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {
+        status: {type: Type.STRING, enum: ['open']},
+      },
+    });
+  });
+
+  it('yields an empty enum when every string enum member is null', () => {
+    const input = {
+      type: 'string' as const,
+      enum: [null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.STRING,
+      enum: [],
+    });
+  });
+
+  it('keeps stringified members on a non-string enum', () => {
+    const input = {
+      type: 'integer' as const,
+      enum: [1, 2],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.INTEGER,
+      enum: ['1', '2'],
+    });
+  });
+
+  it('drops a null member from an integer-typed enum', () => {
+    const input = {
+      type: 'integer' as const,
+      enum: [1, null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.INTEGER,
+      enum: ['1'],
+    });
+  });
+
+  it('drops a null member from an enum with no declared type', () => {
+    const input = {
+      enum: ['a', null],
+    };
+
+    const schema = toGeminiSchema(input as unknown as MCPToolSchema);
+
+    expect(schema).toEqual({
+      type: Type.TYPE_UNSPECIFIED,
+      enum: ['a'],
+    });
+  });
+
   it('handles const-only schema with string value', () => {
     const input = {
       const: 'fixed-value',
@@ -444,5 +549,122 @@ describe('toGeminiSchema', () => {
         {type: Type.STRING},
       ],
     });
+  });
+
+  it('converts a boolean true branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean false branch inside anyOf to an object schema', () => {
+    const input = {anyOf: [false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('keeps an anyOf with a boolean branch nullable', () => {
+    const input = {anyOf: [true, {type: 'null'}]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      nullable: true,
+      properties: {},
+    });
+  });
+
+  it('converts a boolean branch alongside a typed branch', () => {
+    const input = {anyOf: [true, {type: 'string'}]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts every boolean branch of an all-boolean anyOf', () => {
+    const input = {anyOf: [true, false]} as unknown as MCPToolSchema;
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [
+        {type: Type.OBJECT, properties: {}},
+        {type: Type.OBJECT, properties: {}},
+      ],
+    });
+  });
+
+  it('converts a boolean member of a type array', () => {
+    const input = {type: [true]} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({type: Type.OBJECT, properties: {}});
+  });
+
+  it('converts a boolean member alongside a named type', () => {
+    const input = {type: [true, 'string']} as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      anyOf: [{type: Type.OBJECT, properties: {}}, {type: Type.STRING}],
+    });
+  });
+
+  it('converts a boolean branch on a nested property', () => {
+    const input: MCPToolSchema = {
+      type: 'object',
+      properties: {a: {anyOf: [true]}},
+    };
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.OBJECT,
+      properties: {a: {type: Type.OBJECT, properties: {}}},
+    });
+  });
+
+  it('converts a boolean branch inside array items', () => {
+    const input = {
+      type: 'array',
+      items: {anyOf: [true]},
+    } as unknown as MCPToolSchema;
+
+    expect(() => toGeminiSchema(input)).not.toThrow();
+
+    const schema = toGeminiSchema(input);
+
+    expect(schema).toEqual({
+      type: Type.ARRAY,
+      items: {type: Type.OBJECT, properties: {}},
+    });
+  });
+});
+
+describe('openApiSchemaToGeminiSchema', () => {
+  it('leaves the type unspecified when the schema declares a type union', () => {
+    const schema = openApiSchemaToGeminiSchema({type: ['string', 'null']});
+
+    expect(schema?.type).toBe(Type.TYPE_UNSPECIFIED);
   });
 });

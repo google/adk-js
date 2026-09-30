@@ -29,7 +29,10 @@ export class AgentControlledContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
 
     // Find the consolidate_context tool call.
     const consolidateToolCallIndex = activeEvents.reduce(
@@ -75,6 +78,7 @@ export class AgentControlledContextCompactor implements BaseContextCompactor {
 
     try {
       const compactedEvent = await this.summarizer.summarize(eventsToCompact);
+      compactedEvent.isolationScope ??= invocationContext.isolationScope;
       invocationContext.session.events.push(compactedEvent);
     } catch (error) {
       // If the summarizer fails, log the error, clear the flags, and proceed without compaction.

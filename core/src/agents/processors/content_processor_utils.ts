@@ -18,12 +18,16 @@ import {
 } from '../../events/event.js';
 import {isSegmentPrefix} from '../../utils/branch_trie.js';
 
+import {isEventVisibleInIsolationScope} from '../../context/compaction_utils.js';
 import {
   AF_FUNCTION_CALL_ID_PREFIX,
   REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
   REQUEST_CREDENTIAL_FUNCTION_CALL_NAME,
   REQUEST_INPUT_FUNCTION_CALL_NAME,
 } from '../functions.js';
+
+/** Returned by {@link safeStringify} when a value defeats every conversion. */
+const UNSTRINGIFIABLE_VALUE = '<unstringifiable value>';
 
 /**
  * Removes the client-generated function call IDs from a given content object.
@@ -62,6 +66,9 @@ export function getContents(
   const filteredEvents: Event[] = [];
 
   for (const event of events) {
+    if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
+      continue;
+    }
     if (isCompactedEvent(event)) {
       filteredEvents.push(convertCompactedEvent(event));
       continue;
@@ -117,7 +124,7 @@ function shouldIncludeEventInContext(
   ) {
     return false;
   }
-  if (isOutsideIsolationScope(event, currentIsolationScope)) {
+  if (!isEventVisibleInIsolationScope(event, currentIsolationScope)) {
     return false;
   }
   return (
@@ -236,16 +243,6 @@ function turnStart(events: Event[], anchor: number): number {
  * shared history and visible everywhere. So an isolated node sees the ambient
  * conversation plus its own turns, while its peers never see those turns.
  */
-function isOutsideIsolationScope(
-  event: Event,
-  currentIsolationScope?: string,
-): boolean {
-  return (
-    event.isolationScope !== undefined &&
-    event.isolationScope !== currentIsolationScope
-  );
-}
-
 /**
  * Whether the event is an auth event.
  *
@@ -619,16 +616,29 @@ function rearrangeEventsForAsyncFunctionResponsesInHistory(
 }
 
 /**
- * Safely stringifies an object, handling circular references.
+ * Safely stringifies a value for inclusion in LLM-facing text.
+ *
+ * Always returns a string and never throws. `JSON.stringify` is typed as
+ * returning `string` but yields `undefined` when `toJSON` yields nothing, and
+ * it throws on a cycle or a BigInt. `String` throws on a null-prototype object
+ * or a throwing `toString`.
  */
 function safeStringify(obj: unknown): string {
   if (typeof obj === 'string') {
     return obj;
   }
   try {
-    return JSON.stringify(obj);
-  } catch (_e: unknown) {
+    const json = JSON.stringify(obj);
+    if (typeof json === 'string') {
+      return json;
+    }
+  } catch {
+    // Falls through to `String`, which renders a cycle as `[object Object]`.
+  }
+  try {
     return String(obj);
+  } catch {
+    return UNSTRINGIFIABLE_VALUE;
   }
 }
 

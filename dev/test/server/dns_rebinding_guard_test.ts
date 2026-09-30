@@ -58,44 +58,58 @@ describe('isLoopbackAddress', () => {
 
 describe('getAllowedRequestHosts', () => {
   it('vouches for the hostname of a real configured origin', () => {
-    const hosts = getAllowedRequestHosts('http://proxy.example');
+    const hosts = getAllowedRequestHosts(['http://proxy.example']);
     expect(hosts).toEqual(new Set(['proxy.example']));
   });
 
+  it('vouches for the hostname of every configured origin', () => {
+    const hosts = getAllowedRequestHosts([
+      'http://proxy.example',
+      'https://ui.example',
+    ]);
+    expect(hosts).toEqual(new Set(['proxy.example', 'ui.example']));
+  });
+
   it('disables the guard entirely for a wildcard origin', () => {
-    expect(getAllowedRequestHosts('*')).toBeNull();
+    expect(getAllowedRequestHosts(['*'])).toBeNull();
+  });
+
+  it('disables the guard when the wildcard appears alongside a real origin', () => {
+    // `--allow_origins 'http://localhost:4200,*'` opts out of the guard: the
+    // wildcard anywhere in the list turns it off, deliberately.
+    expect(getAllowedRequestHosts(['http://localhost:4200', '*'])).toBeNull();
   });
 
   it('vouches for no host on a malformed origin', () => {
-    expect(getAllowedRequestHosts('not a valid url')).toEqual(new Set());
+    expect(getAllowedRequestHosts(['not a valid url'])).toEqual(new Set());
   });
 
-  it('vouches for no host when allowOrigins is unset', () => {
-    expect(getAllowedRequestHosts(undefined)).toEqual(new Set());
+  it('vouches for no host when no origins are configured', () => {
+    expect(getAllowedRequestHosts([])).toEqual(new Set());
   });
 
   it('merges extraAllowedHosts with the origin-derived host', () => {
-    const hosts = getAllowedRequestHosts('http://proxy.example', [
-      'Other.Example',
-      '  padded.example  ',
-    ]);
+    const hosts = getAllowedRequestHosts(
+      ['http://proxy.example'],
+      ['Other.Example', '  padded.example  '],
+    );
     expect(hosts).toEqual(
       new Set(['proxy.example', 'other.example', 'padded.example']),
     );
   });
 
-  it('accepts extraAllowedHosts with no allowOrigins set at all', () => {
-    const hosts = getAllowedRequestHosts(undefined, ['proxy.example']);
+  it('accepts extraAllowedHosts with no origins set at all', () => {
+    const hosts = getAllowedRequestHosts([], ['proxy.example']);
     expect(hosts).toEqual(new Set(['proxy.example']));
   });
 
   it('ignores empty/whitespace-only entries in extraAllowedHosts', () => {
-    const hosts = getAllowedRequestHosts(undefined, ['', '   ']);
+    const hosts = getAllowedRequestHosts([], ['', '   ']);
     expect(hosts).toEqual(new Set());
   });
 
   it('still disables the guard for "*" even with extraAllowedHosts set', () => {
-    expect(getAllowedRequestHosts('*', ['proxy.example'])).toBeNull();
+    expect(getAllowedRequestHosts(['*'], ['proxy.example'])).toBeNull();
   });
 });
 

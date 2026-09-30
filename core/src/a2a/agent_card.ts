@@ -7,6 +7,7 @@
 import {AgentCard, AgentInterface, AgentSkill} from '@a2a-js/sdk';
 import {DefaultAgentCardResolver} from '@a2a-js/sdk/client';
 import * as fs from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
 import {BaseAgent} from '../agents/base_agent.js';
 import {
   InvocationContext,
@@ -20,6 +21,12 @@ import {isSequentialAgent} from '../agents/sequential_agent.js';
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
+import {
+  isHttpUrl,
+  isLinkLocalAddress,
+  normalizeHost,
+  resolveHostAddresses,
+} from '../utils/ssrf_guard.js';
 import {RunnableRoot} from '../workflow/run_node_as_invocation.js';
 import {isWorkflow} from '../workflow/workflow.js';
 
@@ -69,6 +76,15 @@ export interface ResolveAgentCardOptions {
 
 /**
  * Resolves the AgentCard from the provided source.
+ *
+ * A source is either an {@link AgentCard}, an `http(s)://` URL to fetch it
+ * from, a `file://` URL, or a filesystem path. Any other URL scheme throws: a
+ * source that looks like a URL is never read off the local filesystem.
+ *
+ * The card host must not be, or resolve to, a link-local address, and a
+ * redirect from the card endpoint is refused rather than followed. Loopback and
+ * private addresses stay allowed: they are where a locally served or
+ * VPC-internal peer agent lives.
  */
 export async function resolveAgentCard(
   agentCard: AgentCard | string,
@@ -85,9 +101,37 @@ export async function resolveAgentCard(
     validateCardRpcTargets(card, source, options);
     return card;
   }
+  if (url && url.protocol !== 'file:') {
+    throw new Error(
+      `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
+        'Use http://, https:// or file://, or pass a filesystem path with no scheme.',
+    );
+  }
+  return readAgentCardFile(agentCard, url);
+}
 
+/**
+ * Parses an absolute URL out of a card source, or returns `null` when the
+ * source names a filesystem path.
+ */
+function parseCardUrl(source: string): URL | null {
+  let url: URL;
   try {
-    const content = await fs.readFile(source, 'utf-8');
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  return WINDOWS_DRIVE_PROTOCOL.test(url.protocol) ? null : url;
+}
+
+/** Reads and parses a card from `url` when it is a `file:` URL, else from `source`. */
+async function readAgentCardFile(
+  source: string,
+  url: URL | null,
+): Promise<AgentCard> {
+  try {
+    const path = url ? fileURLToPath(url) : source;
+    const content = await fs.readFile(path, 'utf-8');
     return JSON.parse(content) as AgentCard;
   } catch (err: unknown) {
     throw new Error(
@@ -358,6 +402,15 @@ async function buildLLMAgentSkills(agent: LlmAgent): Promise<AgentSkill[]> {
         }
       }
     }
+  }
+
+  if (agent.codeExecutor) {
+    skills.push({
+      id: `${agent.name}-code-executor`,
+      name: 'code-execution',
+      description: 'Can execute code',
+      tags: ['llm', 'code_execution'],
+    });
   }
 
   return skills;

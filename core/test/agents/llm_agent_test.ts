@@ -12,6 +12,7 @@ import {
   BaseLlmResponseProcessor,
   BasePlugin,
   BaseTool,
+  BuiltInPlanner,
   CONTENT_REQUEST_PROCESSOR,
   Context,
   ContextCompactorRequestProcessor,
@@ -20,12 +21,15 @@ import {
   Event,
   FunctionTool,
   InMemorySessionService,
+  INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   LongRunningFunctionTool,
+  PlanReActPlanner,
   PluginManager,
+  ReadonlyContext,
   RunAsyncToolRequest,
   Runner,
   Session,
@@ -43,6 +47,18 @@ import {
 } from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
+import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/agent_transfer_llm_request_processor.js';
+import {BASIC_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/basic_llm_request_processor.js';
+import {CODE_EXECUTION_REQUEST_PROCESSOR} from '../../src/agents/processors/code_execution_request_processor.js';
+import {IDENTITY_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/identity_llm_request_processor.js';
+import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/instructions_llm_request_processor.js';
+import {
+  NL_PLANNING_REQUEST_PROCESSOR,
+  NL_PLANNING_RESPONSE_PROCESSOR,
+} from '../../src/agents/processors/nl_planning_processor.js';
+import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_confirmation_llm_request_processor.js';
+import {REQUEST_INPUT_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_input_llm_request_processor.js';
+import {TOOL_FILTER_REQUEST_PROCESSOR} from '../../src/agents/processors/tool_filter_request_processor.js';
 import {logger} from '../../src/utils/logger.js';
 
 class MockLlmConnection implements BaseLlmConnection {
@@ -1427,5 +1443,314 @@ describe('LlmAgent unresolvable tool calls', () => {
     expect(responses[0].functionResponse!.response).toHaveProperty('error');
 
     expect(parts.some((p) => p.text === 'Recovered.')).toBe(true);
+  });
+});
+
+/**
+ * Asserts that `actual` holds exactly the `expected` processor instances, in
+ * order. `toEqual` is not enough: it ignores class types, so two stateless
+ * processors compare equal.
+ */
+function expectSameInstances(actual: unknown[], expected: unknown[]) {
+  expect(actual).toHaveLength(expected.length);
+  actual.forEach((item, i) => expect(item).toBe(expected[i]));
+}
+
+describe('LlmAgent planning processor positions', () => {
+  const DEFAULT_REQUEST_PROCESSORS = [
+    BASIC_LLM_REQUEST_PROCESSOR,
+    AUTH_PREPROCESSOR,
+    IDENTITY_LLM_REQUEST_PROCESSOR,
+    INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
+    REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
+    REQUEST_INPUT_LLM_REQUEST_PROCESSOR,
+    CONTENT_REQUEST_PROCESSOR,
+    NL_PLANNING_REQUEST_PROCESSOR,
+    INTERACTIONS_REQUEST_PROCESSOR,
+    CODE_EXECUTION_REQUEST_PROCESSOR,
+    TOOL_FILTER_REQUEST_PROCESSOR,
+    AGENT_TRANSFER_LLM_REQUEST_PROCESSOR,
+  ];
+
+  it('places the planning request processor right after the content processor', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+    const processors = agent.requestProcessors;
+    const planningIndex = processors.indexOf(NL_PLANNING_REQUEST_PROCESSOR);
+
+    expect(processors[processors.indexOf(CONTENT_REQUEST_PROCESSOR) + 1]).toBe(
+      NL_PLANNING_REQUEST_PROCESSOR,
+    );
+    expect(processors.indexOf(INTERACTIONS_REQUEST_PROCESSOR)).toBe(
+      planningIndex + 1,
+    );
+    expectSameInstances(processors, DEFAULT_REQUEST_PROCESSORS);
+  });
+
+  it('keeps the compactor before the content processor', () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      contextCompactors: [{shouldCompact: () => false, compact: () => {}}],
+    });
+    const processors = agent.requestProcessors;
+    const contentIndex = processors.indexOf(CONTENT_REQUEST_PROCESSOR);
+
+    expect(processors[contentIndex - 1]).toEqual(
+      expect.any(ContextCompactorRequestProcessor),
+    );
+    expectSameInstances(
+      processors.filter((_, i) => i !== contentIndex - 1),
+      DEFAULT_REQUEST_PROCESSORS,
+    );
+  });
+
+  it('uses the planning response processor as the only default response processor', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+
+    expect(agent.responseProcessors[0]).toBe(NL_PLANNING_RESPONSE_PROCESSOR);
+    expect(agent.responseProcessors).toHaveLength(1);
+  });
+
+  it('lets caller-supplied processor lists replace the defaults', () => {
+    const requestProcessor = new MockRequestProcessor();
+    const responseProcessor = new MockResponseProcessor();
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+      planner: new PlanReActPlanner(),
+      requestProcessors: [requestProcessor],
+      responseProcessors: [responseProcessor],
+    });
+
+    expectSameInstances(agent.requestProcessors, [requestProcessor]);
+    expectSameInstances(agent.responseProcessors, [responseProcessor]);
+    expect(agent.requestProcessors).not.toContain(
+      NL_PLANNING_REQUEST_PROCESSOR,
+    );
+    expect(agent.responseProcessors).not.toContain(
+      NL_PLANNING_RESPONSE_PROCESSOR,
+    );
+  });
+});
+
+describe('LlmAgent planner configuration', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('stores the planner', () => {
+    const planner = new PlanReActPlanner();
+    const agent = new LlmAgent({name: 'test_agent', planner});
+
+    expect(agent.planner).toBe(planner);
+  });
+
+  it('warns once when both thinking configs are set', () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      planner: new BuiltInPlanner({thinkingConfig: {thinkingBudget: 1024}}),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('test_agent');
+    expect(warnSpy.mock.calls[0][0]).toContain('takes precedence');
+    expect(agent.generateContentConfig?.thinkingConfig).toEqual({
+      thinkingBudget: 0,
+    });
+  });
+
+  it('does not warn when only the planner has a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      planner: new BuiltInPlanner({thinkingConfig: {thinkingBudget: 1024}}),
+      generateContentConfig: {temperature: 0.1},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when only generateContentConfig has a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not warn for a PlanReActPlanner with a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      planner: new PlanReActPlanner(),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('LlmAgent run with a planner', () => {
+  /**
+   * Snapshots every request it receives and yields a new response object on
+   * each call, so that the planning response processor cannot leak state
+   * between calls.
+   */
+  class PlanningCapturingLlm extends BaseLlm {
+    capturedRequests: Array<Pick<LlmRequest, 'contents' | 'config'>> = [];
+
+    constructor() {
+      super({model: 'planning-capturing-llm'});
+    }
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedRequests.push(
+        structuredClone({contents: request.contents, config: request.config}),
+      );
+      yield {
+        content: {
+          role: 'model',
+          parts: [
+            {text: '/*PLANNING*/1. answer'},
+            {text: '/*REASONING*/simple/*FINAL_ANSWER*/42'},
+          ],
+        },
+      };
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  function createSeededSession(): Session {
+    return createSession({
+      id: 'sess_planner',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'earlier',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'first question'}]},
+        }),
+        createEvent({
+          invocationId: 'earlier',
+          author: 'planner_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {text: '/*PLANNING*/old plan', thought: true},
+              {text: 'old answer'},
+            ],
+          },
+        }),
+        createEvent({
+          invocationId: 'inv_planner',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'second question'}]},
+        }),
+      ],
+    });
+  }
+
+  async function runAgent(agent: LlmAgent, session: Session): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(
+      new InvocationContext({
+        invocationId: 'inv_planner',
+        session,
+        agent,
+        pluginManager: new PluginManager(),
+      }),
+    )) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('sends the BuiltInPlanner thinking config instead of generateContentConfig', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
+    const llm = new PlanningCapturingLlm();
+    const plannerThinkingConfig = {includeThoughts: true, thinkingBudget: 512};
+    const agent = new LlmAgent({
+      name: 'planner_agent',
+      model: llm,
+      planner: new BuiltInPlanner({thinkingConfig: plannerThinkingConfig}),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    const events = await runAgent(agent, createSeededSession());
+
+    expect(llm.capturedRequests).toHaveLength(1);
+    expect(llm.capturedRequests[0].config?.thinkingConfig).toEqual(
+      plannerThinkingConfig,
+    );
+    expect(agent.generateContentConfig?.thinkingConfig).toEqual({
+      thinkingBudget: 0,
+    });
+    const modelEvent = events.find((e) => e.author === 'planner_agent');
+    expect(modelEvent?.content?.parts).toEqual([
+      {text: '/*PLANNING*/1. answer'},
+      {text: '/*REASONING*/simple/*FINAL_ANSWER*/42'},
+    ]);
+  });
+
+  it('runs a PlanReActPlanner end to end', async () => {
+    const llm = new PlanningCapturingLlm();
+    const planner = new PlanReActPlanner();
+    const agent = new LlmAgent({
+      name: 'planner_agent',
+      model: llm,
+      instruction: 'Answer questions.',
+      planner,
+    });
+    const session = createSeededSession();
+
+    const events = await runAgent(agent, session);
+
+    expect(llm.capturedRequests).toHaveLength(1);
+    const request = llm.capturedRequests[0];
+    const planningInstruction = planner.buildPlanningInstruction(
+      new ReadonlyContext(
+        new InvocationContext({
+          invocationId: 'inv_planner',
+          session,
+          agent,
+          pluginManager: new PluginManager(),
+        }),
+      ),
+      {contents: [], toolsDict: {}, liveConnectConfig: {}},
+    );
+    expect(request.config?.systemInstruction).toContain('Answer questions.');
+    expect(request.config?.systemInstruction).toContain(planningInstruction);
+
+    const requestParts = request.contents.flatMap((c) => c.parts ?? []);
+    expect(requestParts.some((p) => p.text === '/*PLANNING*/old plan')).toBe(
+      true,
+    );
+    for (const part of requestParts) {
+      expect(part).not.toHaveProperty('thought');
+    }
+    expect(session.events[1].content?.parts?.[0]).toEqual({
+      text: '/*PLANNING*/old plan',
+      thought: true,
+    });
+
+    const modelEvent = events.find((e) => e.author === 'planner_agent');
+    expect(modelEvent?.content?.parts).toEqual([
+      {text: '/*PLANNING*/1. answer', thought: true},
+      {text: '/*REASONING*/simple/*FINAL_ANSWER*/', thought: true},
+      {text: '42'},
+    ]);
   });
 });

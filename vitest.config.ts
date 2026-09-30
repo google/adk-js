@@ -20,8 +20,29 @@ const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
  */
 const INTEGRATION_TEST_TIMEOUT_MS = 60000;
 
+/**
+ * Per-worker setup. `setupFiles` is a project-scoped option, so it has to be
+ * repeated on every project: a root-level one is not inherited.
+ */
+const SETUP_FILES = ['./tests/setup.ts'];
+
+/**
+ * CI logs are non-interactive, so the `default` reporter cannot rewrite lines
+ * in place and appends a permanent one per test file. Use `dot` there instead.
+ * Setting `reporters` at all opts out of the `github-actions` reporter Vitest
+ * would otherwise add on its own, so re-add it to keep inline PR annotations.
+ */
+const reporters = process.env.CI
+  ? process.env.GITHUB_ACTIONS
+    ? ['dot', 'github-actions']
+    : ['dot']
+  : ['default'];
+
 export default defineConfig({
   test: {
+    reporters,
+    // Keep test stdout for failures only; a passing run has nothing to say.
+    silent: process.env.CI ? 'passed-only' : false,
     poolOptions: {
       forks: {
         execArgv: ['--max-old-space-size=8192'],
@@ -35,6 +56,7 @@ export default defineConfig({
         test: {
           name: 'unit:core',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -49,6 +71,7 @@ export default defineConfig({
         test: {
           name: 'unit:dev',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -63,6 +86,7 @@ export default defineConfig({
         test: {
           name: 'unit:integrations',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -77,6 +101,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
           alias: {
@@ -93,6 +118,7 @@ export default defineConfig({
         test: {
           name: 'e2e',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -107,6 +133,7 @@ export default defineConfig({
         test: {
           name: 'cross-language',
           environment: 'node',
+          setupFiles: SETUP_FILES,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -136,6 +163,5 @@ export default defineConfig({
         lines: 86,
       },
     },
-    globalSetup: ['./tests/global_setup.ts'],
   },
 });

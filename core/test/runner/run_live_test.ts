@@ -858,7 +858,12 @@ describe('Runner.runLive', () => {
     const transferCall: Content = {
       role: 'model',
       parts: [
-        {functionCall: {name: 'transfer_to_agent', args: {agentName: 'child'}}},
+        {
+          functionCall: {
+            name: 'transfer_to_agent',
+            args: {agent_name: 'child'},
+          },
+        },
       ],
     };
     const childText: Content = {

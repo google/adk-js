@@ -21,7 +21,10 @@ export const spawnAsync = (
   options: SpawnOptions,
 ) => {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, options);
+    const child = spawn(command, args, {
+      ...options,
+      shell: process.platform === 'win32',
+    });
     child.on('close', (code: number) => {
       if (code === 0) {
         resolve();
@@ -149,15 +152,16 @@ export function createDockerFileContent(
 FROM node:lts-alpine
 WORKDIR /app
 
-# Create a non-root user
-RUN adduser --disabled-password --gecos "" myuser
+# Create a non-root user. WORKDIR creates /app as root, so hand it to myuser:
+# the npm installs below write node_modules and package-lock.json into it.
+RUN adduser --disabled-password --gecos "" myuser && chown myuser:myuser /app
 
 # Switch to the non-root user
 USER myuser
 
 # Set up environment variables - Start
 ENV PATH="/home/myuser/.local/bin:$PATH"
-ENV GOOGLE_GENAI_USE_VERTEXAI=1
+ENV GOOGLE_GENAI_USE_ENTERPRISE=1
 ENV GOOGLE_CLOUD_PROJECT=${options.project}
 ENV GOOGLE_CLOUD_LOCATION=${options.region}
 # Set up environment variables - End
@@ -167,8 +171,6 @@ COPY --chown=myuser:myuser "agents/${options.appName}/" "/app/agents/${
     options.appName
   }/"
 COPY --chown=myuser:myuser "package.json" "/app/package.json"
-COPY --chown=myuser:myuser "package-lock.json" "/app/package-lock.json"
-COPY --chown=myuser:myuser "node_modules" "/app/node_modules"
 # Copy application files
 
 # Install Agent Deps - Start
@@ -236,13 +238,9 @@ export async function createPackageJson(
 
   const targetPackageJsonPath = path.join(targetFolder, 'package.json');
 
-  await Promise.all([
-    fs.mkdir(path.join(targetFolder, 'node_modules')),
-    saveToFile(path.join(targetFolder, 'package-lock.json'), ''),
-    saveToFile(targetPackageJsonPath, {
-      dependencies: packageJson.dependencies,
-    }),
-  ]);
+  await saveToFile(targetPackageJsonPath, {
+    dependencies: packageJson.dependencies,
+  });
 }
 
 export async function resolveDefaultFromGcloudConfig(

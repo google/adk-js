@@ -22,9 +22,17 @@ const {StorageMock, storageMock} = vi.hoisted(() => {
         metadata?: {contentType?: string; metadata?: Record<string, unknown>};
       },
     ): Promise<void> {
+      const metadata = options?.metadata?.metadata ?? {};
+      for (const [key, value] of Object.entries(metadata)) {
+        if (typeof value !== 'string') {
+          throw new TypeError(
+            `GCS custom metadata values must be strings; got ${typeof value} for key "${key}"`,
+          );
+        }
+      }
       this.bucket.files.set(this.name, {
         data: Buffer.isBuffer(data) ? data : Buffer.from(data),
-        metadata: options?.metadata?.metadata || {},
+        metadata,
         contentType: options?.metadata?.contentType ?? options?.contentType,
       });
     }
@@ -48,7 +56,11 @@ const {StorageMock, storageMock} = vi.hoisted(() => {
     }
 
     async delete(): Promise<void> {
-      this.bucket.files.delete(this.name);
+      // Real GCS answers a delete of a missing object with a 404, which the
+      // storage client surfaces as a rejection.
+      if (!this.bucket.files.delete(this.name)) {
+        throw new Error(`File not found: ${this.name}`);
+      }
     }
 
     publicUrl(): string {
@@ -114,6 +126,7 @@ describe('GcsArtifactService', () => {
     async () => {
       storageMock.buckets.clear();
     },
+    true,
   );
 
   describe('customMetadata GCS shape', () => {
@@ -171,6 +184,80 @@ describe('GcsArtifactService', () => {
       });
       expect(loaded?.fileData).toBeUndefined();
       expect(loaded?.text).toBe('actual note content');
+    });
+
+    it('stringifies non-string customMetadata values, matching adk-python', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      const version = await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'counted.txt',
+        artifact: {text: 'hello'},
+        customMetadata: {count: 123, enabled: true, label: 'x'},
+      });
+
+      const entry = storageMock
+        .bucket(bucketName)
+        .files.get('test-app/test-user/test-session/counted.txt/0');
+      expect(entry?.metadata).toEqual({
+        count: '123',
+        enabled: 'true',
+        label: 'x',
+        adkIsText: 'true',
+      });
+
+      const versionMetadata = await service.getArtifactVersion({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'counted.txt',
+        version,
+      });
+      expect(versionMetadata?.customMetadata).toMatchObject({
+        count: '123',
+        enabled: 'true',
+        label: 'x',
+      });
+    });
+
+    it('stringifies customMetadata on the fileData path', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'report.pdf',
+        artifact: {
+          fileData: {
+            fileUri: 'gs://my-bucket/report.pdf',
+            mimeType: 'application/pdf',
+          },
+        },
+        customMetadata: {retries: 0},
+      });
+
+      const entry = storageMock
+        .bucket(bucketName)
+        .files.get('test-app/test-user/test-session/report.pdf/0');
+      expect(entry?.metadata['retries']).toBe('0');
+      expect(entry?.metadata['adkFileUri']).toBe('gs://my-bucket/report.pdf');
+      expect(entry?.metadata['adkFileMimeType']).toBe('application/pdf');
+    });
+
+    it('the fake bucket rejects non-string metadata values, as real GCS does', async () => {
+      storageMock.buckets.clear();
+
+      await expect(
+        storageMock
+          .bucket(bucketName)
+          .file('x')
+          .save('data', {metadata: {metadata: {n: 123}}}),
+      ).rejects.toThrow(TypeError);
     });
   });
 
@@ -361,6 +448,146 @@ describe('GcsArtifactService', () => {
       expect(loaded?.inlineData?.data).toBe(data);
       expect(loaded?.inlineData?.mimeType).toBe('image/png');
       expect(loaded?.inlineData?.displayName).toBe('photo.png');
+    });
+  });
+
+  describe('deleteArtifact against a missing object', () => {
+    const sessionKey = {
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'test-session',
+    };
+
+    it('does not issue a delete for an artifact that was never saved', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'keep.txt',
+        artifact: {text: 'keep me'},
+      });
+
+      await expect(
+        service.deleteArtifact({...sessionKey, filename: 'ghost.txt'}),
+      ).resolves.toBeUndefined();
+
+      expect([...storageMock.bucket(bucketName).files.keys()]).toEqual([
+        'test-app/test-user/test-session/keep.txt/0',
+      ]);
+    });
+
+    it('surfaces the GCS failure when a listed version is already gone', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      const bucket = storageMock.bucket(bucketName);
+      vi.spyOn(bucket, 'getFiles').mockResolvedValue([
+        [bucket.file('test-app/test-user/test-session/vanished.txt/0')],
+      ]);
+
+      await expect(
+        service.deleteArtifact({...sessionKey, filename: 'vanished.txt'}),
+      ).rejects.toThrow(
+        'File not found: test-app/test-user/test-session/vanished.txt/0',
+      );
+    });
+  });
+
+  describe('nested artifacts', () => {
+    const sessionKey = {
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'test-session',
+    };
+
+    it('does not count a nested artifact versions as the parent versions', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      for (let i = 0; i < 3; i++) {
+        await service.saveArtifact({
+          ...sessionKey,
+          filename: 'doc/nested',
+          artifact: {text: `nested v${i}`},
+        });
+      }
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc'}),
+      ).toEqual([0]);
+
+      const loaded = await service.loadArtifact({
+        ...sessionKey,
+        filename: 'doc',
+      });
+      expect(loaded?.text).toBe('parent v0');
+
+      const nextVersion = await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v1'},
+      });
+      expect(nextVersion).toBe(1);
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc/nested'}),
+      ).toEqual([0, 1, 2]);
+    });
+
+    it('excludes a nested artifact from listArtifactVersions', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+        artifact: {text: 'nested v0'},
+      });
+
+      const versions = await service.listArtifactVersions({
+        ...sessionKey,
+        filename: 'doc',
+      });
+
+      expect(versions.map((v) => v.version)).toEqual([0]);
+      expect(versions[0].canonicalUri).toMatch(/\/test-session\/doc\/0$/);
+    });
+
+    it('keeps a nested artifact when the parent is deleted', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc',
+        artifact: {text: 'parent v0'},
+      });
+      await service.saveArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+        artifact: {text: 'nested v0'},
+      });
+
+      await service.deleteArtifact({...sessionKey, filename: 'doc'});
+
+      expect(
+        await service.listVersions({...sessionKey, filename: 'doc'}),
+      ).toEqual([]);
+
+      const nested = await service.loadArtifact({
+        ...sessionKey,
+        filename: 'doc/nested',
+      });
+      expect(nested?.text).toBe('nested v0');
     });
   });
 });

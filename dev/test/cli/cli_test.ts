@@ -5,6 +5,7 @@
  */
 
 import {LogLevel, setLogLevel} from '@google/adk';
+import {Command, CommanderError} from 'commander';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
 import {createProgram} from '../../src/cli/cli.js';
 import {createAgent} from '../../src/cli/cli_create.js';
@@ -49,6 +50,21 @@ vi.mock('@google/adk', async (importOriginal) => {
   };
 });
 
+/**
+ * Under `exitOverride()` commander reports every termination by throwing a
+ * `CommanderError`, the only error out of `parseAsync` that carries an
+ * `exitCode`: 0 for a clean exit such as `--help`, non-zero for a usage error.
+ * There is no `commander.exit` code to compare against.
+ */
+function isCleanCommanderExit(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'exitCode' in error &&
+    error.exitCode === 0
+  );
+}
+
 describe('CLI Entrypoint', () => {
   let program: ReturnType<typeof createProgram>;
 
@@ -67,7 +83,7 @@ describe('CLI Entrypoint', () => {
       process.argv = args;
       await program.parseAsync(['node', 'cli_entrypoint.js', ...args]);
     } catch (e: unknown) {
-      if ((e as {code: string}).code !== 'commander.exit') {
+      if (!isCleanCommanderExit(e)) {
         throw e;
       }
     }
@@ -81,6 +97,30 @@ describe('CLI Entrypoint', () => {
 
       await parse(['-v']);
       expect(logSpy).toHaveBeenCalledWith('1.0.0-test');
+    });
+  });
+
+  describe('parse helper: commander exits', () => {
+    beforeEach(() => {
+      // Commander writes help to stdout and usage errors to stderr; keep the
+      // suite silent.
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+    });
+
+    it('treats a clean commander exit as success', async () => {
+      await expect(parse(['--help'])).resolves.toBeUndefined();
+    });
+
+    it('surfaces a non-zero commander exit for an unknown option', async () => {
+      await expect(parse(['--definitely-not-an-option'])).rejects.toMatchObject(
+        {
+          code: 'commander.unknownOption',
+          exitCode: 1,
+        },
+      );
     });
   });
 
@@ -241,13 +281,14 @@ describe('CLI Entrypoint', () => {
       (runAgent as Mock).mockRejectedValueOnce(
         new Error('Agent file /nope/agent.ts does not exists'),
       );
-      const exit = vi
-        .spyOn(process, 'exit')
-        .mockImplementation((() => undefined) as never);
+      // The handler sets process.exitCode rather than calling process.exit, so
+      // async stderr (the error being surfaced) is not truncated on the way out.
+      const originalExitCode = process.exitCode;
 
       await parse(['run', '/nope/agent.ts']);
 
-      expect(exit).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
+      process.exitCode = originalExitCode;
     });
 
     it('should call runAgent with required args', async () => {
@@ -298,6 +339,36 @@ describe('CLI Entrypoint', () => {
           otelToCloud: true,
         }),
       );
+    });
+  });
+
+  // Minification mangles identifiers and line numbers, so local commands must
+  // leave it off to keep an agent's stack traces readable; only deployment
+  // bundles, where size matters, turn it on.
+  describe('agent bundle minification', () => {
+    it.each([
+      ['run', ['run', 'agent.ts'], () => runAgent],
+      ['web', ['web'], () => AdkApiServer],
+      ['api_server', ['api_server'], () => AdkApiServer],
+    ])('is off for %s', async (_name, args, target) => {
+      await parse(args);
+
+      const call = (target() as unknown as Mock).mock.calls[0][0];
+      expect(call.agentFileLoadOptions.minify).toBe(false);
+    });
+
+    it.each([
+      ['deploy cloud_run', ['deploy', 'cloud_run'], () => deployToCloudRun],
+      [
+        'deploy agent_engine',
+        ['deploy', 'agent_engine'],
+        () => deployToAgentEngine,
+      ],
+    ])('is on for %s', async (_name, args, target) => {
+      await parse(args);
+
+      const call = (target() as unknown as Mock).mock.calls[0][0];
+      expect(call.agentFileLoadOptions.minify).toBe(true);
     });
   });
 
@@ -445,6 +516,61 @@ describe('CLI Entrypoint', () => {
         agentEngineId: '12345',
       });
     });
+
+    it('should pass min_instances and max_instances to deployToAgentEngine when set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        '--min_instances',
+        '2',
+        '--max_instances',
+        '5',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        minInstances: 2,
+        maxInstances: 5,
+      });
+    });
+
+    it('should leave minInstances and maxInstances undefined when not set', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        minInstances: undefined,
+        maxInstances: undefined,
+      });
+    });
+
+    it('should pass staging_bucket to deployToAgentEngine when --staging_bucket is set', async () => {
+      await parse(['deploy', 'agent_engine', '--staging_bucket', 'my-bucket']);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        stagingBucket: 'my-bucket',
+      });
+    });
+
+    it('should leave stagingBucket unset when --staging_bucket is absent', async () => {
+      await parse(['deploy', 'agent_engine']);
+
+      expect(
+        (deployToAgentEngine as Mock).mock.calls[0][0].stagingBucket,
+      ).toBeUndefined();
+    });
+
+    it('should not consume the agents_dir positional when --staging_bucket is set', async () => {
+      await parse([
+        'deploy',
+        'agent_engine',
+        '--staging_bucket=my-bucket',
+        './my-agent-path',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        agentPath: expect.stringContaining('my-agent-path'),
+        stagingBucket: 'my-bucket',
+      });
+    });
   });
 
   describe('command: deploy reasoning_engine', () => {
@@ -467,5 +593,98 @@ describe('CLI Entrypoint', () => {
         agentEngineId: '12345',
       });
     });
+
+    it('should pass staging_bucket to deployToAgentEngine when --staging_bucket is set', async () => {
+      await parse([
+        'deploy',
+        'reasoning_engine',
+        '--staging_bucket',
+        'my-bucket',
+      ]);
+
+      expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
+        stagingBucket: 'my-bucket',
+      });
+    });
+  });
+});
+
+describe('usage errors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const runWithUsageError = async (args: string[]) => {
+    const program = createProgram();
+    let stderr = '';
+    // A subcommand inherits neither of these once it exists: exitOverride()
+    // is a per-command property, and configureOutput() replaces the shared
+    // object instead of mutating it. Without the second call the subcommand
+    // writes to the real stderr and calls the real process.exit(), which kills
+    // the worker.
+    const capture = (command: Command) => {
+      command.configureOutput({
+        writeErr: (str) => {
+          stderr += str;
+        },
+      });
+      command.exitOverride();
+    };
+    capture(program);
+    program.commands.forEach(capture);
+
+    let error: CommanderError | undefined;
+    try {
+      await program.parseAsync(['node', 'cli_entrypoint.js', ...args]);
+    } catch (e: unknown) {
+      // Rethrow anything an action handler raised, so a real failure is
+      // reported as itself instead of as a usage error.
+      if (!(e instanceof CommanderError)) {
+        throw e;
+      }
+      error = e;
+    }
+    return {stderr, error};
+  };
+
+  it('prints the full run help after a missing agent path', async () => {
+    const {stderr} = await runWithUsageError(['run']);
+
+    expect(stderr).toContain("error: missing required argument 'agent'");
+    expect(stderr).toContain('Usage: ADK CLI run [options] <agent>');
+    expect(stderr).toContain('Agent file path (.js or .ts)');
+    expect(stderr).toContain('--save_session [boolean]');
+  });
+
+  it('keeps the exit code and the error code of a missing agent path', async () => {
+    const {error} = await runWithUsageError(['run']);
+
+    expect(error?.exitCode).toBe(1);
+    expect(error?.code).toBe('commander.missingArgument');
+  });
+
+  it('does not run the agent when the agent path is missing', async () => {
+    await runWithUsageError(['run']);
+
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('prints no help when the run succeeds', async () => {
+    const {stderr, error} = await runWithUsageError(['run', 'agent.ts']);
+
+    expect(error).toBeUndefined();
+    expect(stderr).not.toContain('Usage:');
+    expect(runAgent).toHaveBeenCalled();
+  });
+
+  it('prints the full run help after an unknown option', async () => {
+    const {stderr} = await runWithUsageError([
+      'run',
+      'agent.ts',
+      '--definitely-not-an-option',
+    ]);
+
+    expect(stderr).toContain('unknown option');
+    expect(stderr).toContain('Usage: ADK CLI run');
   });
 });

@@ -112,6 +112,7 @@ describe('core/package.json subpath exports', () => {
       './sessions/database',
       './telemetry/gcp',
       './tools/mcp',
+      './tools/webmcp',
     ]);
   });
 

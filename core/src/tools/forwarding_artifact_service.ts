@@ -6,70 +6,75 @@
 
 import {Part} from '@google/genai';
 
-import {InvocationContext} from '../agents/invocation_context.js';
+import {ArtifactVersion} from '../artifacts/base_artifact_service.js';
 import {
-  ArtifactVersion,
-  BaseArtifactService,
-  DeleteArtifactRequest,
-  ListArtifactKeysRequest,
-  ListVersionsRequest,
-  LoadArtifactRequest,
-  SaveArtifactRequest,
-} from '../artifacts/base_artifact_service.js';
-import {SessionArtifactService} from '../artifacts/session_artifact_service.js';
+  SessionArtifactService,
+  SessionLoadArtifactRequest,
+  SessionSaveArtifactRequest,
+} from '../artifacts/session_artifact_service.js';
 
 import {Context} from '../agents/context.js';
 
 /**
+ * A unique symbol to identify session-scoped artifact services.
+ *
+ * Resolves to the same symbol as the one used by `isSessionArtifactService` in
+ * `session_artifact_service.ts` because `Symbol.for` looks up the global
+ * symbol registry.
+ */
+const SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.sessionArtifactService',
+);
+
+/**
  * Artifact service that forwards to the parent tool context.
  */
-export class ForwardingArtifactService implements BaseArtifactService {
-  private readonly invocationContext: InvocationContext;
+export class ForwardingArtifactService implements SessionArtifactService {
+  /**
+   * Brands this class as a session-scoped artifact service.
+   */
+  readonly [SESSION_ARTIFACT_SERVICE_SIGNATURE_SYMBOL] = true;
 
-  constructor(private readonly toolContext: Context) {
-    this.invocationContext = toolContext.invocationContext;
-  }
+  constructor(private readonly toolContext: Context) {}
 
-  async saveArtifact(request: SaveArtifactRequest): Promise<number> {
+  async saveArtifact(request: SessionSaveArtifactRequest): Promise<number> {
     return this.toolContext.saveArtifact(request.filename, request.artifact);
   }
 
-  async loadArtifact(request: LoadArtifactRequest): Promise<Part | undefined> {
+  async loadArtifact(
+    request: SessionLoadArtifactRequest,
+  ): Promise<Part | undefined> {
     return this.toolContext.loadArtifact(request.filename, request.version);
   }
 
-  async listArtifactKeys(_request: ListArtifactKeysRequest): Promise<string[]> {
+  async listArtifactKeys(): Promise<string[]> {
     return this.toolContext.listArtifacts();
   }
 
   private getArtifactService(): SessionArtifactService {
-    const service = this.invocationContext.artifactService;
+    const service = this.toolContext.invocationContext.artifactService;
+
     if (!service) {
       throw new Error('Artifact service is not initialized.');
     }
     return service;
   }
 
-  async deleteArtifact(request: DeleteArtifactRequest): Promise<void> {
-    return this.getArtifactService().deleteArtifact(request.filename);
+  async deleteArtifact(filename: string): Promise<void> {
+    return this.getArtifactService().deleteArtifact(filename);
   }
 
-  async listVersions(request: ListVersionsRequest): Promise<number[]> {
-    return this.getArtifactService().listVersions(request.filename);
+  async listVersions(filename: string): Promise<number[]> {
+    return this.getArtifactService().listVersions(filename);
   }
 
-  async listArtifactVersions(
-    request: ListVersionsRequest,
-  ): Promise<ArtifactVersion[]> {
-    return this.getArtifactService().listArtifactVersions(request.filename);
+  async listArtifactVersions(filename: string): Promise<ArtifactVersion[]> {
+    return this.getArtifactService().listArtifactVersions(filename);
   }
 
   async getArtifactVersion(
-    request: LoadArtifactRequest,
+    request: SessionLoadArtifactRequest,
   ): Promise<ArtifactVersion | undefined> {
-    return this.getArtifactService().getArtifactVersion({
-      filename: request.filename,
-      version: request.version,
-    });
+    return this.getArtifactService().getArtifactVersion(request);
   }
 }

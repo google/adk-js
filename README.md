@@ -121,6 +121,10 @@ agents:
 
 - **Getting Started**: https://adk.dev/get-started/typescript
 - **Samples**: https://github.com/google/adk-samples
+- **Developer guides**: [docs/guides/README.md](./docs/guides/README.md)
+- **Samples in this repository**:
+  [graph workflows](./samples/workflows/README.md),
+  [tools](./samples/tools/README.md)
 
 ## 🤝 Contributing
 
