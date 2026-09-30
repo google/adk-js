@@ -123,36 +123,8 @@ export async function buildGraph(
     const caption = getNodeCaption(toolOrAgent);
     const asCluster = shouldBuildAgentCluster(toolOrAgent);
 
-    if (highlightsPairs) {
-      for (const highlightsPair of highlightsPairs) {
-        if (highlightsPair.includes(name)) {
-          if (asCluster) {
-            const cluster = new Subgraph(`cluster_${name}`, {
-              label: name,
-              style: 'rounded',
-              color: WHITE,
-              fontcolor: LIGHT_GRAY,
-            });
-            graph.addSubgraph(cluster);
-
-            await buildCluster(cluster, rootAgent);
-          } else {
-            graph.addNode(
-              new Node(name, {
-                label: caption,
-                style: 'filled,rounded',
-                fillcolor: DARK_GREEN,
-                color: DARK_GREEN,
-                shape,
-                fontcolor: LIGHT_GRAY,
-              }),
-            );
-          }
-          return;
-        }
-      }
-    }
-
+    // A cluster is drawn the same way whether or not it is highlighted; the
+    // highlight shows on the sub-agents and edges inside it.
     if (asCluster) {
       const cluster = new Subgraph(`cluster_${name}`, {
         label: name,
@@ -165,6 +137,25 @@ export async function buildGraph(
       await buildCluster(cluster, rootAgent);
 
       return;
+    }
+
+    if (highlightsPairs) {
+      for (const highlightsPair of highlightsPairs) {
+        if (highlightsPair.includes(name)) {
+          graph.addNode(
+            new Node(name, {
+              label: caption,
+              style: 'filled,rounded',
+              fillcolor: DARK_GREEN,
+              color: DARK_GREEN,
+              shape,
+              fontcolor: LIGHT_GRAY,
+            }),
+          );
+
+          return;
+        }
+      }
     }
 
     graph.addNode(

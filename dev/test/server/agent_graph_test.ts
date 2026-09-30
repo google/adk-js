@@ -235,8 +235,9 @@ describe('AgentGraph', () => {
   it('outlines a cluster instead of filling it', async () => {
     const dot = await renderDot(sequentialPipeline());
 
-    expect(dot).toContain('color = "#ffffff"');
-    expect(dot).not.toContain('bgcolor = "#ffffff"');
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
     expect(dot).toContain('bgcolor = "#333537"');
   });
 
@@ -245,11 +246,10 @@ describe('AgentGraph', () => {
       ['pipeline (Sequential Agent)', 'caller'],
     ]);
 
-    expect(dot).toContain('subgraph "cluster_pipeline (Sequential Agent)"');
-    expect(dot).toContain('label = "pipeline (Sequential Agent)"');
-    expect(dot).not.toContain('label = "cluster_pipeline (Sequential Agent)"');
-    expect(dot).toContain('color = "#ffffff"');
-    expect(dot).not.toContain('bgcolor = "#ffffff"');
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('label = "pipeline (Sequential Agent)"');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
   });
 
   it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
@@ -322,6 +322,17 @@ function edgeBlock(dot: string, from: string, to: string): string {
   expect(start, `no edge "${from}" -> "${to}"`).toBeGreaterThanOrEqual(0);
 
   return dot.slice(start, dot.indexOf('];', start));
+}
+
+/** Returns a cluster's own attributes, up to its first nested statement. */
+function clusterBlock(dot: string, id: string): string {
+  const start = dot.indexOf(`subgraph "cluster_${id}" {`);
+  expect(start, `no cluster subgraph for "${id}"`).toBeGreaterThanOrEqual(0);
+
+  const end = dot.indexOf('" [', start);
+  expect(end, `cluster "${id}" holds no statement`).toBeGreaterThan(start);
+
+  return dot.slice(start, end);
 }
 
 describe('AgentGraph — graph Workflow', () => {
