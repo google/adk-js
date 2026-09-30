@@ -139,22 +139,20 @@ export async function buildGraph(
       return;
     }
 
-    if (highlightsPairs) {
-      for (const highlightsPair of highlightsPairs) {
-        if (highlightsPair.includes(name)) {
-          graph.addNode(
-            new Node(name, {
-              label: caption,
-              style: 'filled,rounded',
-              fillcolor: DARK_GREEN,
-              color: DARK_GREEN,
-              shape,
-              fontcolor: LIGHT_GRAY,
-            }),
-          );
+    for (const highlightsPair of highlightsPairs) {
+      if (highlightsPair.includes(name)) {
+        graph.addNode(
+          new Node(name, {
+            label: caption,
+            style: 'filled,rounded',
+            fillcolor: DARK_GREEN,
+            color: DARK_GREEN,
+            shape,
+            fontcolor: LIGHT_GRAY,
+          }),
+        );
 
-          return;
-        }
+        return;
       }
     }
 
