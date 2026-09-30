@@ -240,6 +240,18 @@ describe('AgentGraph', () => {
     expect(dot).toContain('bgcolor = "#333537"');
   });
 
+  it('labels and outlines a highlighted Sequential cluster the same way', async () => {
+    const dot = await renderDot(sequentialPipeline(), [
+      ['pipeline (Sequential Agent)', 'caller'],
+    ]);
+
+    expect(dot).toContain('subgraph "cluster_pipeline (Sequential Agent)"');
+    expect(dot).toContain('label = "pipeline (Sequential Agent)"');
+    expect(dot).not.toContain('label = "cluster_pipeline (Sequential Agent)"');
+    expect(dot).toContain('color = "#ffffff"');
+    expect(dot).not.toContain('bgcolor = "#ffffff"');
+  });
+
   it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
     const dot = await renderDot(sequentialPipeline());
 
@@ -252,6 +264,14 @@ describe('AgentGraph', () => {
     const dot = await renderDot(sequentialPipeline(), [['first', 'second']]);
 
     expect(edgeBlock(dot, 'first', 'second')).toContain('color = "#69CB87"');
+  });
+
+  it('keeps a reversed highlight pair inside a cluster green and back-facing', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['second', 'first']]);
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#69CB87"');
+    expect(edge).toContain('dir = "back"');
   });
 
   it('draws an unhighlighted edge inside a Loop cluster in gray', async () => {
