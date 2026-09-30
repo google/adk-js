@@ -240,7 +240,7 @@ function drawWorkflowCluster(
   const cluster = new Subgraph(`cluster_${path}`, {
     label: `🧩 ${workflow.name}`,
     style: 'rounded',
-    color: WHITE,
+    bgcolor: WHITE,
     fontcolor: LIGHT_GRAY,
   });
   container.addSubgraph(cluster);
