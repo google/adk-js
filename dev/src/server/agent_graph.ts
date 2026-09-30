@@ -169,26 +169,24 @@ export async function buildGraph(
   }
 
   function drawEdge(fromName: string, toName: string) {
-    if (highlightsPairs) {
-      for (const [highlightFrom, highlightTo] of highlightsPairs) {
-        if (fromName === highlightFrom && toName === highlightTo) {
-          graph.addEdge(
-            new Edge([graph.node(fromName), graph.node(toName)], {
-              color: LIGHT_GREEN,
-            }),
-          );
-          return;
-        }
+    for (const [highlightFrom, highlightTo] of highlightsPairs) {
+      if (fromName === highlightFrom && toName === highlightTo) {
+        graph.addEdge(
+          new Edge([graph.node(fromName), graph.node(toName)], {
+            color: LIGHT_GREEN,
+          }),
+        );
+        return;
+      }
 
-        if (fromName === highlightTo && toName === highlightFrom) {
-          graph.addEdge(
-            new Edge([graph.node(fromName), graph.node(toName)], {
-              color: LIGHT_GREEN,
-              dir: 'back',
-            }),
-          );
-          return;
-        }
+      if (fromName === highlightTo && toName === highlightFrom) {
+        graph.addEdge(
+          new Edge([graph.node(fromName), graph.node(toName)], {
+            color: LIGHT_GREEN,
+            dir: 'back',
+          }),
+        );
+        return;
       }
     }
 
