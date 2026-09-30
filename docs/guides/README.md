@@ -1,0 +1,41 @@
+# ADK Developer Guides
+
+This directory contains specific developer guides for the ADK TypeScript implementation. For the official ADK documentation, visit [adk.dev](https://adk.dev/). For the generated API reference, run `npm run docs`.
+
+A guide covers one code unit in more depth than the published documentation carries, for a developer calling it from their own application. Guides mirror the source path under `core/src/`, so `core/src/tools/retrieval/files_retrieval.ts` is documented at `tools/retrieval/files_retrieval/index.md`.
+
+This index is the only table of contents. A guide that is not listed here is unreachable, so add the entry in the same change that adds the guide.
+
+## Index
+
+### Artifacts
+
+Versioned binary and text storage (`Part` payloads) scoped to an individual session or shared across a user's sessions via the `user:` prefix.
+
+- [Artifacts](artifacts/index.md) - `BaseArtifactService`, `InMemoryArtifactService`, `FileArtifactService`, `GcsArtifactService`, and session-bound `ctx.artifactService` (`SessionArtifactService`).
+
+### Events
+
+The record of everything that happens during an invocation, and the side effects attached to it.
+
+- [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
+
+### Planners
+
+Planning for an `LlmAgent` through its `planner` option: the model's built-in thinking, or a Plan-ReAct instruction for a model without it.
+
+- [Planners](planners/index.md) - `BasePlanner`, `BuiltInPlanner`, `PlanReActPlanner`, and the `isBasePlanner` and `isBuiltInPlanner` type guards.
+
+### Tools
+
+#### Retrieval
+
+Client-side retrieval tools. The agent calls a one-argument search function, your code answers it, and you choose the store, the chunking and the ranking. Start with `BaseRetrievalTool` if you are deciding between these and server-side retrieval.
+
+- [BaseRetrievalTool](tools/retrieval/base_retrieval_tool/index.md) - The abstract base, and how client-side retrieval differs from `VertexRagRetrievalTool`.
+- [LlamaIndexRetrieval](tools/retrieval/llama_index_retrieval/index.md) - Answers from a LlamaIndex retriever, or anything with a `retrieve` method.
+- [FilesRetrieval](tools/retrieval/files_retrieval/index.md) - Builds the retriever for you from a directory of documents.
+
+#### OpenAPI Tool
+
+- [OpenAPI tool](tools/openapi_tool/index.md) - Turning an OpenAPI specification into one tool per operation, selecting the operations an agent gets, and configuring the credential the requests carry.

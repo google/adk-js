@@ -23,21 +23,41 @@ import {BaseLlmRequestProcessor} from './base_llm_processor.js';
  */
 export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
   private readonly toolName = 'transfer_to_agent' as const;
-  private readonly tool = new FunctionTool({
-    name: this.toolName,
-    description:
-      'Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.',
-    parameters: z.object({
-      agentName: z.string().describe('the agent name to transfer to.'),
-    }),
-    execute: function (args: {agentName: string}, toolContext?: Context) {
-      if (!toolContext) {
-        throw new Error('toolContext is required.');
-      }
-      toolContext.actions.transferToAgent = args.agentName;
-      return 'Transfer queued';
-    },
-  });
+
+  /**
+   * Builds the `transfer_to_agent` tool for one invocation.
+   *
+   * Built per call rather than shared, because the parameter is an enum of the
+   * agents actually reachable from here. That mirrors adk-python's
+   * `TransferToAgentTool`, and it stops the model inventing a target: an
+   * unknown name now fails argument validation and comes back to the model as
+   * a tool error it can retry, instead of silently setting `transferToAgent`
+   * to an agent that does not exist.
+   *
+   * The parameter is `agent_name`, not `agentName`. It is wire format — it
+   * appears in the declaration sent to the model and in the events that get
+   * persisted — and adk-python spells it `agent_name`, so a transcript
+   * produced by one runtime has to be readable by the other.
+   */
+  private buildTool(targetNames: [string, ...string[]]) {
+    return new FunctionTool({
+      name: this.toolName,
+      description:
+        'Transfer the question to another agent. This tool hands off control to another agent when it is more suitable to answer the user question according to the agent description.',
+      parameters: z.object({
+        agent_name: z
+          .enum(targetNames)
+          .describe('the agent name to transfer to.'),
+      }),
+      execute: (args: {agent_name: string}, toolContext?: Context) => {
+        if (!toolContext) {
+          throw new Error('toolContext is required.');
+        }
+        toolContext.actions.transferToAgent = args.agent_name;
+        return 'Transfer queued';
+      },
+    });
+  }
 
   /**
    * Appends transfer instructions and registers the `transfer_to_agent` tool
@@ -68,7 +88,14 @@ export class AgentTransferLlmRequestProcessor extends BaseLlmRequestProcessor {
     ]);
 
     const toolContext = new Context({invocationContext});
-    await this.tool.processLlmRequest({toolContext, llmRequest});
+    const targetNames = transferTargets.map((t) => t.name) as [
+      string,
+      ...string[],
+    ];
+    await this.buildTool(targetNames).processLlmRequest({
+      toolContext,
+      llmRequest,
+    });
   }
 
   private buildTargetAgentsInfo(targetAgent: BaseAgent): string {

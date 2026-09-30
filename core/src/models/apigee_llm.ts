@@ -211,7 +211,7 @@ function validateModel(model: string): boolean {
   if (modelPart.length === 0) {
     return false;
   }
-  const components = modelPart.split('/', -1);
+  const components = modelPart.split('/');
   if (components[components.length - 1].length === 0) {
     return false;
   }

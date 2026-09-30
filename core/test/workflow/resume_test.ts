@@ -131,6 +131,40 @@ describe('Phase 5b — rehydration utility', () => {
       );
     });
 
+    it('hands a numeric-looking reply to a string interrupt back as text', () => {
+      // "42" answering a z.string() interrupt used to unwrap to the number 42,
+      // which crashed the node on its first string method and left the session
+      // unable to resume. Every JSON literal did the same.
+      const interrupt = createRequestInputEvent(
+        new RequestInput({interruptId: 'gate-1', responseSchema: z.string()}),
+      );
+      interrupt.author = 'gate';
+      interrupt.nodeInfo = {path: 'wf.gate'};
+
+      for (const text of ['42', 'true', 'null', '1e3']) {
+        const states = reconstructNodeStates([
+          interrupt,
+          createEvent({
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'gate-1',
+                    name: 'adk_request_input',
+                    response: {result: text},
+                  },
+                },
+              ],
+            },
+          }),
+        ]);
+
+        expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe(text);
+      }
+    });
+
     it('rejects the wrong envelope instead of passing it to the next node', () => {
       // `{response: x}` is not the `{result: x}` envelope, so it is not
       // unwrapped; before this check it reached the successor whole and
@@ -255,6 +289,108 @@ describe('Phase 5b — rehydration utility', () => {
   });
 });
 
+describe('Phase 5b — a reply that answers no open interrupt', () => {
+  /** An interrupt raised by `gate`, as a node event would record it. */
+  function raised(interruptId: string): Event {
+    return createEvent({
+      author: 'gate',
+      nodeInfo: {path: 'wf.gate'},
+      longRunningToolIds: [interruptId],
+    });
+  }
+
+  /** A user turn replying to `interruptId`. */
+  function reply(interruptId: string, result: unknown): Event {
+    return createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: interruptId,
+              name: 'adk_request_input',
+              response: {result},
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  it('refuses an id that names no interrupt, naming what is waiting', () => {
+    expect(() =>
+      reconstructNodeStates([raised('gate-1'), reply('no-such-interrupt', 21)]),
+    ).toThrow(/'no-such-interrupt'.*does not match any interrupt.*'gate-1'/s);
+  });
+
+  it('leaves the real interrupt answerable after refusing one', () => {
+    const states = reconstructNodeStates([
+      raised('gate-1'),
+      reply('no-such-interrupt', 21),
+      reply('gate-1', 'yes'),
+    ]);
+
+    expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe('yes');
+  });
+
+  it('refuses a reply to an interrupt that is already answered', () => {
+    expect(() =>
+      reconstructNodeStates([
+        raised('gate-1'),
+        reply('gate-1', 'yes'),
+        reply('gate-1', 'no'),
+      ]),
+    ).toThrow(/'gate-1' has already been answered/);
+  });
+
+  it('accepts a second answer once the node has asked again', () => {
+    const states = reconstructNodeStates([
+      raised('gate-1'),
+      reply('gate-1', 'shorter'),
+      raised('gate-1'),
+      reply('gate-1', 'approve'),
+    ]);
+
+    expect(states.get('gate')?.resolvedResponses.get('gate-1')).toBe('approve');
+  });
+
+  it('stops refusing once the turn that carried the bad reply has passed', () => {
+    expect(() =>
+      reconstructNodeStates([
+        raised('gate-1'),
+        reply('no-such-interrupt', 21),
+        createEvent({
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'yes'}]},
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
+  it('ignores an ordinary tool response that is not an interrupt reply', () => {
+    const toolResponse = createEvent({
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'call-1',
+              name: 'get_weather',
+              response: {result: 'sunny'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() =>
+      reconstructNodeStates([raised('gate-1'), toolResponse]),
+    ).not.toThrow();
+  });
+});
+
 describe('Phase 5b — HITL resume via the Runner', () => {
   it('resumes an interrupted workflow without re-running completed nodes', async () => {
     let aRuns = 0;
@@ -334,5 +470,100 @@ describe('Phase 5b — HITL resume via the Runner', () => {
     expect(aRuns).toBe(1);
     // The workflow resumed through the gate and completed at c.
     expect(turn2.some((e) => e.output === 'C(A(x)|approved)')).toBe(true);
+  });
+
+  it('re-runs a supervisor whose child interrupted on its ORIGINAL input', async () => {
+    const supervisorInputs: unknown[] = [];
+
+    const worker = node(
+      (ctx: NodeContext, item: unknown) => {
+        if (item !== 'beta') {
+          return `${item}:auto`;
+        }
+        const answer = ctx.resumeInputs['approve-beta'];
+        if (answer === undefined) {
+          return new RequestInput({
+            interruptId: 'approve-beta',
+            message: 'approve beta?',
+          });
+        }
+        return `beta:${answer}`;
+      },
+      {name: 'worker', rerunOnResume: true},
+    );
+    const supervisor = node(
+      async (ctx: NodeContext, input: unknown) => {
+        supervisorInputs.push(input);
+        const items = String(input)
+          .split(',')
+          .map((item) => item.trim());
+        const results: unknown[] = [];
+        for (const item of items) {
+          const run = await ctx.runNode(worker, item, {runId: `item-${item}`});
+          if (run.interruptIds.length > 0) {
+            return undefined;
+          }
+          results.push(run.output);
+        }
+        return results.join('|');
+      },
+      {name: 'supervisor', rerunOnResume: true},
+    );
+    const wf = new Workflow({
+      name: 'supervisor_wf',
+      edges: [['START', supervisor]],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'u1',
+    });
+    const runner = new Runner({
+      appName: 'test_app',
+      agent: wf,
+      sessionService,
+    });
+
+    // --- Turn 1: beta stops to ask ---
+    const turn1: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'u1',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'alpha, beta, gamma'}]},
+    })) {
+      turn1.push(event);
+    }
+    expect(turn1.some(hasRequestInputFunctionCall)).toBe(true);
+    expect(supervisorInputs).toEqual(['alpha, beta, gamma']);
+
+    // --- Turn 2: the human answers ---
+    const turn2: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'u1',
+      sessionId: session.id,
+      newMessage: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'approve-beta',
+              name: 'adk_request_input',
+              response: {result: 'yes'},
+            },
+          },
+        ],
+      },
+    })) {
+      turn2.push(event);
+    }
+
+    expect(supervisorInputs).toEqual([
+      'alpha, beta, gamma',
+      'alpha, beta, gamma',
+    ]);
+    expect(
+      turn2.some((e) => e.output === 'alpha:auto|beta:yes|gamma:auto'),
+    ).toBe(true);
   });
 });

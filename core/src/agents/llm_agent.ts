@@ -28,6 +28,7 @@ import {
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
+import {isDefaultEventActions} from '../events/event_actions.js';
 
 import {BaseExampleProvider} from '../examples/base_example_provider.js';
 import {Example} from '../examples/example.js';
@@ -36,6 +37,8 @@ import {BaseLlmConnection} from '../models/base_llm_connection.js';
 import {LlmRequest} from '../models/llm_request.js';
 import {LlmResponse} from '../models/llm_response.js';
 import {LLMRegistry} from '../models/registry.js';
+import type {BasePlanner} from '../planners/base_planner.js';
+import {isBuiltInPlanner} from '../planners/built_in_planner.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {BaseToolset} from '../tools/base_toolset.js';
@@ -76,6 +79,10 @@ import {ContextCompactorRequestProcessor} from './processors/context_compactor_r
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from './processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from './processors/instructions_llm_request_processor.js';
 import {INTERACTIONS_REQUEST_PROCESSOR} from './processors/interactions_request_processor.js';
+import {
+  NL_PLANNING_REQUEST_PROCESSOR,
+  NL_PLANNING_RESPONSE_PROCESSOR,
+} from './processors/nl_planning_processor.js';
 import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from './processors/request_confirmation_llm_request_processor.js';
 import {REQUEST_INPUT_LLM_REQUEST_PROCESSOR} from './processors/request_input_llm_request_processor.js';
 import {TOOL_FILTER_REQUEST_PROCESSOR} from './processors/tool_filter_request_processor.js';
@@ -189,7 +196,7 @@ export type SingleBeforeModelCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeModelCallback =
   | SingleBeforeModelCallback
@@ -213,7 +220,7 @@ export type SingleAfterModelCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type AfterModelCallback =
   | SingleAfterModelCallback
@@ -241,7 +248,7 @@ export type SingleBeforeToolCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until a callback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type BeforeToolCallback =
   | SingleBeforeToolCallback
@@ -270,7 +277,7 @@ export type SingleAfterToolCallback = (params: {
  * A single callback or a list of callbacks.
  *
  * When a list of callbacks is provided, the callbacks will be called in the
- * order they are listed until acallback does not return None.
+ * order they are listed until a callback does not return `undefined`.
  */
 export type AfterToolCallback =
   | SingleAfterToolCallback
@@ -314,8 +321,12 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /**
    * The additional content generation configurations.
    *
-   * NOTE: not all fields are usable, e.g. tools must be configured via
-   * `tools`, thinking_config must be configured via `planner` in LlmAgent.
+   * Three fields are rejected by the constructor, because the agent owns them:
+   * `tools` (set them through `tools`), `systemInstruction` (through
+   * `instruction`) and `responseSchema` (through `outputSchema`). Every other
+   * field is forwarded to the model as given. That includes `thinkingConfig`,
+   * unless `planner` is a `BuiltInPlanner` with its own `thinkingConfig`: the
+   * planner's `thinkingConfig` then takes precedence.
    *
    * For example: use this config to adjust model temperature, configure safety
    * settings, etc.
@@ -325,7 +336,7 @@ export interface LlmAgentConfig extends BaseAgentConfig {
   /**
    * Disallows LLM-controlled transferring to the parent agent.
    *
-   * NOTE: Setting this as True also prevents this agent to continue reply to
+   * NOTE: Setting this to `true` also prevents this agent to continue reply to
    * the end-user. This behavior prevents one-way transfer, in which end-user
    * may be stuck with one agent that cannot transfer to other agents in the
    * agent tree.
@@ -411,6 +422,14 @@ export interface LlmAgentConfig extends BaseAgentConfig {
    * Instructs the agent to make a plan and execute it step by step.
    */
   codeExecutor?: BaseCodeExecutor;
+
+  /**
+   * Instructs the agent to make a plan and execute it step by step.
+   *
+   * NOTE: to use the model's built-in thinking features, set `thinkingConfig`
+   * on a `BuiltInPlanner`.
+   */
+  planner?: BasePlanner;
 }
 
 async function convertToolUnionToTools(
@@ -500,6 +519,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   requestProcessors: BaseLlmRequestProcessor[];
   responseProcessors: BaseLlmResponseProcessor[];
   codeExecutor?: BaseCodeExecutor;
+  planner?: BasePlanner;
 
   constructor(config: LlmAgentConfig) {
     // Node defaults for an agent used in a graph, matching adk-python's
@@ -535,9 +555,11 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     this.beforeToolCallback = config.beforeToolCallback;
     this.afterToolCallback = config.afterToolCallback;
     this.codeExecutor = config.codeExecutor;
+    this.planner = config.planner;
 
     // TODO - b/425992518: Define these processor arrays.
-    // Orders matter, don't change. Append new processors to the end
+    // The order is load-bearing: processors depend on what earlier ones
+    // wrote to the request. Place a new processor where its inputs are ready.
     this.requestProcessors = config.requestProcessors ?? [
       BASIC_LLM_REQUEST_PROCESSOR,
       AUTH_PREPROCESSOR,
@@ -546,6 +568,10 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
       REQUEST_INPUT_LLM_REQUEST_PROCESSOR,
       CONTENT_REQUEST_PROCESSOR,
+      // Planning clears the thought flags that the planning response
+      // processor sets, so it must run after the contents are built and
+      // before code execution rewrites them.
+      NL_PLANNING_REQUEST_PROCESSOR,
       INTERACTIONS_REQUEST_PROCESSOR,
       CODE_EXECUTION_REQUEST_PROCESSOR,
       TOOL_FILTER_REQUEST_PROCESSOR,
@@ -573,7 +599,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       }
     }
 
-    this.responseProcessors = config.responseProcessors ?? [];
+    this.responseProcessors = config.responseProcessors ?? [
+      NL_PLANNING_RESPONSE_PROCESSOR,
+    ];
 
     // Preserve the agent transfer behavior.
     const agentTransferDisabled =
@@ -599,21 +627,34 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           'Response schema must be set via LlmAgent.output_schema.',
         );
       }
+      if (
+        config.generateContentConfig.thinkingConfig &&
+        isBuiltInPlanner(this.planner) &&
+        this.planner.thinkingConfig
+      ) {
+        logger.warn(
+          `Agent ${this.name}: both generateContentConfig.thinkingConfig and planner.thinkingConfig are set. The planner's thinkingConfig takes precedence.`,
+        );
+      }
     } else {
       this.generateContentConfig = {};
     }
 
     // Validate output schema related configurations.
     if (this.outputSchema) {
-      if (!this.disallowTransferToParent || !this.disallowTransferToPeers) {
+      const transferRequested =
+        config.disallowTransferToParent === false ||
+        config.disallowTransferToPeers === false ||
+        !!this.subAgents?.length;
+      if (transferRequested) {
         logger.warn(
           `Invalid config for agent ${
             this.name
           }: outputSchema cannot co-exist with agent transfer configurations. Setting disallowTransferToParent=true, disallowTransferToPeers=true`,
         );
-        this.disallowTransferToParent = true;
-        this.disallowTransferToPeers = true;
       }
+      this.disallowTransferToParent = true;
+      this.disallowTransferToPeers = true;
     }
   }
 
@@ -903,7 +944,8 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const isEmptyMetadataEvent =
         lastEvent.author === this.name &&
         !lastEvent.partial &&
-        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0);
+        (!lastEvent.content?.parts || lastEvent.content.parts.length === 0) &&
+        isDefaultEventActions(lastEvent.actions);
 
       if (
         isFinalResponse(lastEvent) &&
@@ -2019,7 +2061,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
   // #END LlmFlow Logic
   // --------------------------------------------------------------------------
 
-  // TODO - b/425992518: omitted Py LlmAgent features.
-  // - code_executor
-  // - configurable agents by yaml config
+  // TODO - b/425992518: LlmAgent features not implemented yet.
+  // - codeExecutor
+  // - configuring agents from a YAML file
 }

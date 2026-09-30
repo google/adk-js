@@ -99,6 +99,46 @@ export function isDynamicNodeFailError(e: unknown): e is DynamicNodeFailError {
 }
 
 /**
+ * Raised when a node reported a failure by emitting an error event instead of
+ * throwing, and produced nothing.
+ *
+ * A regular `Error`, so `retryConfig` can retry it via
+ * `exceptions: ['NodeReportedError']`; `code` carries the reported error code.
+ */
+export class NodeReportedError extends Error {
+  readonly code: string;
+  readonly nodeName: string;
+
+  /**
+   * @param options.nodeName The node that reported the error.
+   * @param options.errorCode The code carried on the reported event.
+   * @param options.errorMessage The message carried on the reported event.
+   */
+  constructor(options: {
+    nodeName: string;
+    errorCode?: string;
+    errorMessage?: string;
+  }) {
+    const code = options.errorCode ?? 'UNKNOWN_ERROR';
+    const detail = options.errorMessage ?? code;
+    super(
+      `Node '${options.nodeName}' failed: ${
+        code === 'UNKNOWN_ERROR' ? detail : `${code}: ${detail}`
+      }`,
+    );
+    this.name = 'NodeReportedError';
+    this.code = code;
+    this.nodeName = options.nodeName;
+    Object.setPrototypeOf(this, NodeReportedError.prototype);
+  }
+}
+
+/** Type guard for {@link NodeReportedError} (name-based; see above). */
+export function isNodeReportedError(e: unknown): e is NodeReportedError {
+  return e instanceof Error && e.name === 'NodeReportedError';
+}
+
+/**
  * Raised when the invocation is aborted (e.g. its abort signal fires) while the
  * engine is waiting — currently during a node's retry backoff delay.
  *

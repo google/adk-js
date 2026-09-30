@@ -1,0 +1,60 @@
+---
+openapi: 3.0.0
+info:
+  title: httpbin
+  version: 1.0.0
+servers:
+  - url: https://httpbin.org
+paths:
+  /uuid:
+    get:
+      operationId: getUuid
+      summary: Returns a freshly generated UUID version 4.
+      responses:
+        '200':
+          description: A generated UUID.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uuid:
+                    type: string
+  /get:
+    get:
+      operationId: getEcho
+      summary: Echoes back the query parameters it was called with.
+      parameters:
+        - name: message
+          in: query
+          description: Any text to echo back.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The echoed request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  args:
+                    type: object
+  /bearer:
+    get:
+      operationId: getBearer
+      summary: >-
+        Reports whether the request carried a bearer token, and echoes the
+        token back. Answers 401 when the Authorization header is absent.
+      responses:
+        '200':
+          description: The request was authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                  token:
+                    type: string

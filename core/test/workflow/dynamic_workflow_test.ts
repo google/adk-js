@@ -5,7 +5,13 @@
  */
 
 import {describe, expect, it} from 'vitest';
+import {
+  DynamicNodeFailError,
+  isDynamicNodeFailError,
+} from '../../src/workflow/errors.js';
+import {NodeContext} from '../../src/workflow/node_context.js';
 import {FunctionNode} from '../../src/workflow/nodes/function_node.js';
+import {RequestInput} from '../../src/workflow/request_input.js';
 import {Workflow} from '../../src/workflow/workflow.js';
 import {driveWorkflow} from './test_helpers.js';
 
@@ -162,26 +168,27 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
       });
     }
 
-    it.each(['order-a91', '42', '007'])(
-      'accepts the non-colliding id %s',
+    it('accepts an id that cannot be mistaken for an automatic one', async () => {
+      expect((await driveWorkflow(workflowUsing('order-a91'))).output).toEqual({
+        auto: 'handled auto',
+        custom: 'handled custom',
+      });
+    });
+
+    it.each(['1', '42', '007'])(
+      'rejects the all-digit id %s for an auto-numbered node',
       async (id) => {
-        // Digits are fine in themselves -- ParallelWorker keys its fan-out by
-        // item index. Only an id ADK already handed out is refused.
-        expect((await driveWorkflow(workflowUsing(id))).output).toEqual({
-          auto: 'handled auto',
-          custom: 'handled custom',
-        });
+        // All three share the automatic namespace, so which one collides is a
+        // function of how many runs this turn happens to make. '1' resolved to
+        // the auto run's cached output outright; the others waited for a turn
+        // that ran the node often enough to reach them.
+        await expect(driveWorkflow(workflowUsing(id))).rejects.toThrow(
+          new RegExp(
+            `Invalid runId '${id}' for node 'child'[\\s\\S]*child-${id}`,
+          ),
+        );
       },
     );
-
-    it('rejects an id ADK already used for an automatic run', async () => {
-      // The auto run above took '1'. Before this check, passing '1' here
-      // resolved to that run's cached output -- returning 'handled auto' and
-      // dropping this call's input without executing.
-      await expect(driveWorkflow(workflowUsing('1'))).rejects.toThrow(
-        /Invalid runId '1' for node 'child'[\s\S]*'child-1'/,
-      );
-    });
 
     it('rejects an empty id rather than silently auto-numbering it', async () => {
       await expect(driveWorkflow(workflowUsing('   '))).rejects.toThrow(
@@ -189,23 +196,48 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
       );
     });
 
-    it('numbers around a custom id claimed first, instead of deduping onto it', async () => {
+    it('rejects the same mix in the opposite order', async () => {
+      // The case that used to pass. Numbering around the claimed '1' worked
+      // this turn and broke the next one, so the guard has to be symmetric:
+      // the same program must not be an error in one order and silent data
+      // corruption in the other.
       const child = new FunctionNode('child', (_c, item) => `handled ${item}`);
       const wf = new Workflow({
         name: 'run-ids-reverse',
         dynamicEntry: async (ctx) => {
-          // Custom '1' first, so the automatic sequence would otherwise walk
-          // straight into it on its first call.
           const custom = await ctx.runNode(child, 'custom', {runId: '1'});
           const auto = await ctx.runNode(child, 'auto');
           return {custom: custom.output, auto: auto.output};
         },
       });
 
-      expect((await driveWorkflow(wf)).output).toEqual({
-        custom: 'handled custom',
-        auto: 'handled auto',
+      await expect(driveWorkflow(wf)).rejects.toThrow(
+        /Invalid runId '1' for node 'child'[\s\S]*child-1/,
+      );
+    });
+
+    it('lets a caller that names every run keep using indices', async () => {
+      // No automatic run of `child` here, so the caller owns the whole
+      // namespace and nothing can collide -- this is how ParallelWorker keys
+      // its fan-out by item index.
+      const child = new FunctionNode('child', (_c, item) => `handled ${item}`);
+      const wf = new Workflow({
+        name: 'run-ids-all-custom',
+        dynamicEntry: async (ctx) => {
+          const runs = await Promise.all(
+            ['a', 'b', 'c'].map((item, i) =>
+              ctx.runNode(child, item, {runId: String(i)}),
+            ),
+          );
+          return runs.map((run) => run.output);
+        },
       });
+
+      expect((await driveWorkflow(wf)).output).toEqual([
+        'handled a',
+        'handled b',
+        'handled c',
+      ]);
     });
   });
 
@@ -224,5 +256,62 @@ describe('Phase 4 — dynamic (imperative) workflows', () => {
       edges: [['START', orchestrator]],
     });
     expect((await driveWorkflow(wf)).output).toBe(15);
+  });
+});
+
+describe('Phase 4 — a dynamic child unwinds its caller', () => {
+  it('stops the caller body at a child that asks the user', async () => {
+    const after: string[] = [];
+    const ask = new FunctionNode(
+      'ask',
+      () => new RequestInput({interruptId: 'confirm', message: 'confirm?'}),
+    );
+    const wf = new Workflow({
+      name: 'unwind',
+      dynamicEntry: async (ctx) => {
+        await ctx.runNode(ask);
+        // Everything here would run without an answer, and run again on
+        // resume once the answer arrives.
+        after.push('ran');
+        return 'done';
+      },
+    });
+
+    const {output} = await driveWorkflow(wf, 'x');
+    expect(after).toEqual([]);
+    expect(output).toBeUndefined();
+  });
+
+  it('does not retry the caller when a dynamic child fails', async () => {
+    let callerRuns = 0;
+    let childRuns = 0;
+    const boom = new FunctionNode('boom', () => {
+      childRuns++;
+      throw new Error('child exploded');
+    });
+    const caller = new FunctionNode(
+      'caller',
+      async (ctx: NodeContext) => {
+        callerRuns++;
+        await ctx.runNode(boom);
+        return 'unreachable';
+      },
+      {retryConfig: {maxAttempts: 3, initialDelay: 0, jitter: 0}},
+    );
+    const wf = new Workflow({name: 'nofail', edges: [['START', caller]]});
+
+    const err = await driveWorkflow(wf, 'x').then(
+      () => undefined,
+      (e) => e,
+    );
+
+    // Retrying the caller would re-run every child it already ran.
+    expect(callerRuns).toBe(1);
+    expect(childRuns).toBe(1);
+    expect(isDynamicNodeFailError(err)).toBe(true);
+    expect((err as DynamicNodeFailError).errorNodePath).toContain('boom');
+    expect((err as DynamicNodeFailError).error.message).toBe('child exploded');
+    // The author's own message still reaches the surface.
+    expect((err as Error).message).toContain('child exploded');
   });
 });

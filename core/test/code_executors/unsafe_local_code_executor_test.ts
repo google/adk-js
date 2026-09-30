@@ -19,21 +19,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
-/**
- * Most of these tests spawn a real interpreter. On Windows the shell case means
- * Windows PowerShell, whose cold start on a loaded CI runner costs seconds --
- * enough that `should execute shell code and return stdout` intermittently blew
- * Vitest's 5s default and, through fail-fast, took the macOS and Linux jobs down
- * with it. A healthy Windows run needs ~5.3s for the file as a whole, so the
- * default left no margin.
- *
- * Budget by what is actually under test: the executor's own default timeout is
- * 30s, and a harness that gives up sooner can never observe the behaviour it
- * covers. This is a ceiling, not a delay -- a passing test still finishes in
- * milliseconds.
- */
-vi.setConfig({testTimeout: 30_000});
-
 // Only `spawn` is mocked; it defaults to the real implementation (see
 // `beforeEach`) so the pre-existing tests still execute real scripts.
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -105,6 +90,40 @@ describe('UnsafeLocalCodeExecutor', () => {
 
     expect(result.stdout).toContain('Hello, World!');
     expect(result.stderr).toBe('');
+  });
+
+  it('times out even when the script leaves a child holding the pipes open', async () => {
+    // An interpreter that forks rather than exec's its work leaves a survivor
+    // that keeps stdout/stderr open after the kill. 'close' waits on those
+    // streams, so before the read ends were released this hung forever and no
+    // timeout value bounded it -- the flake behind #622 on Windows.
+    const timeoutSeconds = 0.5;
+    const survivorLifetimeMs = 60_000;
+    const timedOutExecutor = new UnsafeLocalCodeExecutor({timeoutSeconds});
+    const params: ExecuteCodeParams = {
+      invocationContext,
+      codeExecutionInput: {
+        code: [
+          'const {spawn} = require("node:child_process");',
+          `spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${survivorLifetimeMs})'], {`,
+          '  stdio: "inherit",',
+          '});',
+          `setTimeout(() => {}, ${survivorLifetimeMs});`,
+        ].join('\n'),
+        language: CodeExecutionLanguage.JAVASCRIPT,
+        inputFiles: [],
+      },
+    };
+
+    const startedAt = Date.now();
+    const result = await timedOutExecutor.executeCode(params);
+
+    expect(result.stderr).toContain(
+      `Code execution timed out after ${timeoutSeconds} seconds.`,
+    );
+    // Comfortably under the survivor's lifetime: the point is that the wait is
+    // bounded by our timer rather than by the survivor exiting on its own.
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
   });
 
   // The script runs with the temporary directory as its cwd, so it can report

@@ -5,8 +5,8 @@
  */
 
 import express from 'express';
-import type {Server} from 'http';
-import type {AddressInfo} from 'net';
+import type {Server} from 'node:http';
+import type {AddressInfo} from 'node:net';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {toA2a} from '../../src/a2a/agent_to_a2a.js';
 import {BaseAgent} from '../../src/agents/base_agent.js';

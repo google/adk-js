@@ -285,12 +285,52 @@ describe('unwrapResponse', () => {
     expect(unwrapResponse({result: 'approve'})).toBe('approve');
   });
 
-  it('parses any string that is JSON, scalars included', () => {
-    // The envelope does not say whether the text is structured, so a plain
-    // answer that happens to be valid JSON is converted too. Python's
-    // `_unwrap_response` does the same, and the schema check exempts scalars.
+  it('parses any string that is JSON when no schema was declared', () => {
+    // The envelope does not say whether the text is structured, so with nothing
+    // else to go on a plain answer that happens to be valid JSON is converted
+    // too. Python's `_unwrap_response` does the same.
     expect(unwrapResponse({result: '42'})).toBe(42);
     expect(unwrapResponse({result: 'true'})).toBe(true);
+  });
+
+  it('keeps text verbatim when the schema declared a string', () => {
+    const stringSchema = toJsonSchema(z4.string());
+    // "42" answering a z.string() interrupt reached the node as the number 42
+    // and crashed it on the first string method.
+    expect(unwrapResponse({result: '42'}, stringSchema)).toBe('42');
+    expect(unwrapResponse({result: 'true'}, stringSchema)).toBe('true');
+    expect(unwrapResponse({result: 'null'}, stringSchema)).toBe('null');
+    expect(unwrapResponse({result: '1e3'}, stringSchema)).toBe('1e3');
+    expect(unwrapResponse({result: '{"a":1}'}, stringSchema)).toBe('{"a":1}');
+  });
+
+  it('keeps text verbatim for an enum or a union that takes a string', () => {
+    expect(unwrapResponse({result: '42'}, toJsonSchema(z4.enum(['42'])))).toBe(
+      '42',
+    );
+    expect(
+      unwrapResponse({result: '42'}, toJsonSchema(z4.string().nullable())),
+    ).toBe('42');
+    expect(
+      unwrapResponse(
+        {result: '42'},
+        toJsonSchema(z4.union([z4.string(), z4.number()])),
+      ),
+    ).toBe('42');
+  });
+
+  it('still parses text when the schema cannot accept a string', () => {
+    expect(unwrapResponse({result: '42'}, toJsonSchema(z4.number()))).toBe(42);
+    expect(
+      unwrapResponse(
+        {result: '{"a":1}'},
+        toJsonSchema(z4.object({a: z4.number()})),
+      ),
+    ).toEqual({a: 1});
+  });
+
+  it('leaves a non-string result alone whatever the schema says', () => {
+    expect(unwrapResponse({result: 42}, toJsonSchema(z4.string()))).toBe(42);
   });
 
   it('passes a value that is not a {result: x} envelope through', () => {

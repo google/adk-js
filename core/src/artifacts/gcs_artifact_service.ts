@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Bucket, File, Storage, StorageOptions} from '@google-cloud/storage';
+import type {Bucket, File, StorageOptions} from '@google-cloud/storage';
 import {createPartFromBase64, createPartFromText, Part} from '@google/genai';
 import {logger} from '../utils/logger.js';
+import {loadOptionalPeer} from '../utils/optional_peer.js';
 
 import {
   ArtifactVersion,
@@ -24,10 +25,27 @@ const GCS_DISPLAY_NAME_METADATA_KEY = 'adkDisplayName';
 const GCS_IS_TEXT_METADATA_KEY = 'adkIsText';
 
 export class GcsArtifactService implements BaseArtifactService {
-  private readonly bucket: Bucket;
+  private readonly bucketName: string;
+  private readonly storageOptions?: StorageOptions;
+  private bucketPromise?: Promise<Bucket>;
 
   constructor(bucket: string, options?: StorageOptions) {
-    this.bucket = new Storage(options).bucket(bucket);
+    this.bucketName = bucket;
+    this.storageOptions = options;
+  }
+
+  /**
+   * Resolves the GCS bucket handle, loading the `@google-cloud/storage`
+   * optional peer on first use.
+   */
+  private getBucket(): Promise<Bucket> {
+    this.bucketPromise ??= loadOptionalPeer(
+      {packageName: '@google-cloud/storage', feature: 'GcsArtifactService'},
+      () => import('@google-cloud/storage'),
+    ).then(({Storage}) =>
+      new Storage(this.storageOptions).bucket(this.bucketName),
+    );
+    return this.bucketPromise;
   }
 
   async saveArtifact(request: SaveArtifactRequest): Promise<number> {
@@ -41,16 +59,15 @@ export class GcsArtifactService implements BaseArtifactService {
 
     const versions = await this.listVersions(request);
     const version = versions.length > 0 ? Math.max(...versions) + 1 : 0;
-    const file = this.bucket.file(
+    const bucket = await this.getBucket();
+    const file = bucket.file(
       getFileName({
         ...request,
         version,
       }),
     );
 
-    const customMetadata: Record<string, unknown> = {
-      ...request.customMetadata,
-    };
+    const customMetadata = stringifyMetadataValues(request.customMetadata);
 
     if (request.artifact.inlineData) {
       if (request.artifact.inlineData.displayName) {
@@ -107,7 +124,7 @@ export class GcsArtifactService implements BaseArtifactService {
         version = Math.max(...versions);
       }
 
-      const file = this.bucket.file(
+      const file = (await this.getBucket()).file(
         getFileName({
           ...request,
           version,
@@ -165,9 +182,10 @@ export class GcsArtifactService implements BaseArtifactService {
   async listArtifactKeys(request: ListArtifactKeysRequest): Promise<string[]> {
     const sessionPrefix = `${request.appName}/${request.userId}/${request.sessionId}/`;
     const usernamePrefix = `${request.appName}/${request.userId}/user/`;
+    const bucket = await this.getBucket();
     const [[sessionFiles], [userSessionFiles]] = await Promise.all([
-      this.bucket.getFiles({prefix: sessionPrefix}),
-      this.bucket.getFiles({prefix: usernamePrefix}),
+      bucket.getFiles({prefix: sessionPrefix}),
+      bucket.getFiles({prefix: usernamePrefix}),
     ]);
 
     return [
@@ -178,10 +196,11 @@ export class GcsArtifactService implements BaseArtifactService {
 
   async deleteArtifact(request: DeleteArtifactRequest): Promise<void> {
     const versions = await this.listVersions(request);
+    const bucket = await this.getBucket();
 
     await Promise.all(
       versions.map((version) => {
-        const file = this.bucket.file(
+        const file = bucket.file(
           getFileName({
             ...request,
             version,
@@ -199,13 +218,15 @@ export class GcsArtifactService implements BaseArtifactService {
     const prefix = getFileName(request);
     // We need to add a trailing slash to prefix to ensure we only get children
     const searchPrefix = prefix + '/';
-    const [files] = await this.bucket.getFiles({prefix: searchPrefix});
+    const bucket = await this.getBucket();
+    const [files] = await bucket.getFiles({prefix: searchPrefix});
     const versions = [];
     for (const file of files) {
-      const version = file.name.split('/').pop()!;
-      const v = parseInt(version, 10);
-      if (!isNaN(v)) {
-        versions.push(v);
+      // GCS is a flat namespace: 'doc/' also matches 'doc/nested/3', a version
+      // of the distinct artifact 'doc/nested'. Only '{prefix}{digits}' is ours.
+      const suffix = file.name.slice(searchPrefix.length);
+      if (/^\d+$/.test(suffix)) {
+        versions.push(Number(suffix));
       }
     }
 
@@ -245,7 +266,7 @@ export class GcsArtifactService implements BaseArtifactService {
         version = Math.max(...versions);
       }
 
-      const file = this.bucket.file(
+      const file = (await this.getBucket()).file(
         getFileName({
           ...request,
           version,
@@ -285,6 +306,22 @@ function getFileName({
     : `${appName}/${userId}/${sessionId}/${cleanFilename}`;
 
   return version !== undefined ? `${prefix}/${version}` : prefix;
+}
+
+/**
+ * Coerces every custom metadata value to a string, mirroring
+ * `adk-python`'s GCS artifact service. GCS object custom metadata is a
+ * `map<string, string>`, so a number or a boolean is not a storable value.
+ */
+function stringifyMetadataValues(
+  customMetadata: Record<string, unknown> | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(customMetadata ?? {}).map(([key, value]) => [
+      key,
+      String(value),
+    ]),
+  );
 }
 
 function extractArtifactKeys(

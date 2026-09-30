@@ -160,7 +160,7 @@ function getOtelExporters(config = getOtelExportersConfig()): OTelHooks {
         ]
       : [],
     logRecordProcessors: enableLogging
-      ? [new BatchLogRecordProcessor(new OTLPLogExporter())]
+      ? [new BatchLogRecordProcessor({exporter: new OTLPLogExporter()})]
       : [],
   };
 }

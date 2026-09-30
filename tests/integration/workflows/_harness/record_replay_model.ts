@@ -58,13 +58,17 @@ interface ReplayEntry {
   cursor: number;
 }
 
-interface HarnessState {
-  mode: Mode;
-  recorded: RecordedCall[];
+/** The two indexes {@link lookup} consults, and their shared read position. */
+interface ReplayIndexes {
   /** Exact index: contents + config. */
   exact: Map<string, ReplayEntry>;
   /** Fallback index: everything but the system instruction. */
   byRequest: Map<string, ReplayEntry>;
+}
+
+interface HarnessState extends ReplayIndexes {
+  mode: Mode;
+  recorded: RecordedCall[];
   /** Backend used in record mode (default: a real Gemini). Overridable in tests. */
   liveBackend: (model: string) => BaseLlm;
 }
@@ -130,6 +134,34 @@ function normalizeConfig(
   return rest;
 }
 
+/** A framework-generated id: random per run, so never part of a key. */
+const VOLATILE_ID =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Scrubs ids out of the system instruction, which {@link normalizeContents}
+ * cannot reach: a sample that interpolates state holding a function response
+ * prints the id the framework generated for it into the prompt (the HITL
+ * samples do, through `{complaint}`). Left in, the exact key would differ on
+ * every run and such a call could only ever match through the degraded
+ * fallback — which a re-record would not fix, since the next run generates a
+ * new id again.
+ */
+function scrubInstructionIds(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const instruction = config['systemInstruction'];
+  if (instruction === undefined) {
+    return config;
+  }
+  return {
+    ...config,
+    systemInstruction: JSON.parse(
+      JSON.stringify(instruction).replace(VOLATILE_ID, '<id>'),
+    ) as unknown,
+  };
+}
+
 /**
  * Exact fingerprint of a model request: contents + config, id-normalized.
  *
@@ -141,7 +173,7 @@ function normalizeConfig(
 export function fingerprint(req: LlmRequest): string {
   return hash({
     contents: normalizeContents(req.contents),
-    config: normalizeConfig(req.config),
+    config: scrubInstructionIds(normalizeConfig(req.config)),
   });
 }
 
@@ -300,19 +332,52 @@ class RecordReplayModel extends BaseLlm {
 }
 
 /**
+ * Replay indexes already built this process, by fixture. A sample's scenarios
+ * share one fixture file, written in the order they ran, so their read position
+ * has to carry across the `runSample` calls that replay it: restarting each
+ * scenario at the first recorded response serves scenario 1's draft to scenario
+ * 3, and a follow-up call whose conversation quotes scenario 3's draft — the
+ * revise turn of a HITL sample — then matches nothing.
+ */
+const replayIndexes = new Map<string, ReplayIndexes>();
+
+/**
  * Installs the record/replay model into the LLM registry and sets the mode.
  * Call once per test run (before the runner executes).
  *
- * Builds the two indexes {@link lookup} consults. A fixture written before both
- * keys existed lands in neither under a key any request can produce, so it
- * misses and says to re-record — deliberately, rather than matching on
- * something loose enough to hide a dropped tool or `responseSchema`.
+ * Builds the two indexes {@link lookup} consults, keeping them (cursors and
+ * all) under `fixtureId` for the scenarios that replay the same fixture later
+ * in the process. A fixture written before both keys existed lands in neither
+ * under a key any request can produce, so it misses and says to re-record —
+ * deliberately, rather than matching on something loose enough to hide a
+ * dropped tool or `responseSchema`.
  */
 export function installRecordReplay(opts: {
   mode: Mode;
   recordedCalls?: RecordedCall[];
   liveBackend?: (model: string) => BaseLlm;
+  /** The fixture being replayed, identified by path. */
+  fixtureId?: string;
 }): void {
+  const shared = opts.mode === 'replay' ? opts.fixtureId : undefined;
+  let indexes = shared === undefined ? undefined : replayIndexes.get(shared);
+  if (!indexes) {
+    indexes = buildIndexes(opts.recordedCalls ?? []);
+    if (shared !== undefined) {
+      replayIndexes.set(shared, indexes);
+    }
+  }
+  warnedStaleKeys.clear();
+  state = {
+    mode: opts.mode,
+    recorded: [],
+    ...indexes,
+    liveBackend: opts.liveBackend ?? ((model: string) => new Gemini({model})),
+  };
+  LLMRegistry.register(RecordReplayModel);
+}
+
+function buildIndexes(calls: RecordedCall[]): ReplayIndexes {
   const exact = new Map<string, ReplayEntry>();
   const byRequest = new Map<string, ReplayEntry>();
   const index = (map: Map<string, ReplayEntry>, key: string): ReplayEntry => {
@@ -320,19 +385,11 @@ export function installRecordReplay(opts: {
     map.set(key, entry);
     return entry;
   };
-  for (const call of opts.recordedCalls ?? []) {
+  for (const call of calls) {
     index(exact, call.key).responses.push(call.response);
     index(byRequest, call.instructionAgnosticKey).responses.push(call.response);
   }
-  warnedStaleKeys.clear();
-  state = {
-    mode: opts.mode,
-    recorded: [],
-    exact,
-    byRequest,
-    liveBackend: opts.liveBackend ?? ((model: string) => new Gemini({model})),
-  };
-  LLMRegistry.register(RecordReplayModel);
+  return {exact, byRequest};
 }
 
 /** Fallback keys already reported stale this run, so each is warned about once. */

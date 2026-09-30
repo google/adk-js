@@ -364,5 +364,40 @@ describe('injectSessionState', () => {
         '{CityTime.missing}',
       );
     });
+
+    it('does not rescan an injected source-node value for {placeholders}', async () => {
+      const ctx = makeContext({}, undefined, {
+        outputsByNode: {city_generator: {city: '{my_city}'}},
+      });
+      expect(
+        await injectSessionState(
+          'The city is <City.city from city_generator>.',
+          ctx,
+        ),
+      ).toBe('The city is {my_city}.');
+    });
+
+    it('does not rescan an injected {Class.field} value for {placeholders}', async () => {
+      const ctx = makeContext({}, undefined, {input: {city: '{my_city}'}});
+      expect(await injectSessionState('The city is {City.city}.', ctx)).toBe(
+        'The city is {my_city}.',
+      );
+    });
+
+    it('does not rescan an injected state value for {placeholders}', async () => {
+      const ctx = makeContext({city: '{my_city}'});
+      expect(await injectSessionState('The city is {city}.', ctx)).toBe(
+        'The city is {my_city}.',
+      );
+    });
+
+    it('resolves source-node and state placeholders in one pass', async () => {
+      const ctx = makeContext({tone: 'formal'}, undefined, {
+        outputsByNode: {lookup: {city: 'Rome'}},
+      });
+      expect(
+        await injectSessionState('{tone}: <City.city from lookup> now', ctx),
+      ).toBe('formal: Rome now');
+    });
   });
 });

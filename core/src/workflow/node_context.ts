@@ -10,9 +10,14 @@ import {createEventActions, EventActions} from '../events/event_actions.js';
 import {State} from '../sessions/state.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import type {SchemaLike} from '../utils/schema.js';
+import type {BaseNode} from './base_node.js';
+import {NodeInterruptedError} from './errors.js';
 import type {RouteValue, RunnableNode} from './graph.js';
 import {executeChildNode, RunNodeOptions} from './node_runner.js';
-import type {ScheduleDynamicNode} from './schedule_dynamic_node.js';
+import type {
+  ScheduleDynamicNode,
+  ScheduleDynamicNodeOptions,
+} from './schedule_dynamic_node.js';
 import {buildNode} from './utils/workflow_graph_utils.js';
 
 /**
@@ -104,6 +109,12 @@ export class NodeContext {
   interruptIds: string[] = [];
 
   /**
+   * The failure a node reported by emitting an error event rather than by
+   * throwing. Read back at the end of the attempt; cleared per attempt.
+   */
+  reportedError?: {errorCode?: string; errorMessage?: string};
+
+  /**
    * Abort signal for the current node run, set by the engine while the node is
    * executing under a deadline or an external cancellation signal — i.e. when
    * the node declares a `timeout`, when the invocation itself can be aborted, or
@@ -137,8 +148,12 @@ export class NodeContext {
   private readonly dynamicRunCounters = new Map<string, number>();
   /** Run ids this context handed out automatically, per node name. */
   private readonly autoRunIds = new Map<string, Set<string>>();
-  /** Every run id used for a node name here, automatic or caller-supplied. */
-  private readonly usedRunIds = new Map<string, Set<string>>();
+  /**
+   * Caller-supplied run ids shaped like an automatic one (all digits), per node
+   * name — the set {@link assertNoNumericCustomRunIds} refuses to auto-number
+   * around.
+   */
+  private readonly numericCustomRunIds = new Map<string, Set<string>>();
 
   constructor(opts: NodeContextOptions) {
     this.invocationContext = opts.invocationContext;
@@ -243,29 +258,54 @@ export class NodeContext {
     if (this.scheduler) {
       const nodeName = options?.nodeName ?? node.name;
       let runId = options?.runId;
-      const used = mapSet(this.usedRunIds, nodeName);
       if (runId !== undefined) {
         assertCustomRunId(runId, nodeName, mapSet(this.autoRunIds, nodeName));
+        if (isAutoNumberShaped(runId)) {
+          mapSet(this.numericCustomRunIds, nodeName).add(runId);
+        }
       }
       if (!runId) {
-        // Skip anything a caller already claimed, so the automatic sequence
-        // cannot grow into a custom id and silently dedup against it.
-        let next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
-        while (used.has(String(next))) {
-          next++;
-        }
+        assertNoNumericCustomRunIds(
+          nodeName,
+          mapSet(this.numericCustomRunIds, nodeName),
+        );
+        // No need to skip ids a caller already claimed: the counter is
+        // monotonic, so the next value was never handed out automatically, and
+        // a custom id that could equal it is refused by the two asserts above.
+        const next = (this.dynamicRunCounters.get(nodeName) ?? 0) + 1;
         this.dynamicRunCounters.set(nodeName, next);
         runId = String(next);
         mapSet(this.autoRunIds, nodeName).add(runId);
       }
-      used.add(runId);
-      return this.scheduler.schedule(this, node, input, {
+      return this.scheduleAndUnwind(node, input, {
         ...options,
         nodeName,
         runId,
       });
     }
     return executeChildNode({parent: this, node, input, options});
+  }
+
+  /**
+   * Runs a child through the scheduler, raising {@link NodeInterruptedError}
+   * when it comes back waiting on an unanswered interrupt.
+   *
+   * The caller's body must not continue past a child that stopped to ask the
+   * user: everything after the call would run on a missing answer, and would
+   * run again when the turn resumes. The scheduler has already copied the
+   * child's interrupt ids onto this context by the time it returns, so the
+   * runner that catches the throw records this node as waiting.
+   */
+  private async scheduleAndUnwind(
+    node: BaseNode,
+    input: unknown,
+    options: ScheduleDynamicNodeOptions,
+  ): Promise<NodeContext | NodeResult> {
+    const child = await this.scheduler!.schedule(this, node, input, options);
+    if (child.interruptIds.length > 0) {
+      throw new NodeInterruptedError();
+    }
+    return child;
   }
 }
 
@@ -279,8 +319,29 @@ function mapSet(map: Map<string, Set<string>>, key: string): Set<string> {
   return set;
 }
 
+/** Whether a run id is shaped like one of ADK's own: nothing but digits. */
+function isAutoNumberShaped(runId: string): boolean {
+  return /^\d+$/.test(runId);
+}
+
+/** The shared explanation for mixing numeric custom ids with auto-numbering. */
+function numericRunIdMixError(nodeName: string, runId: string): Error {
+  return new Error(
+    `Invalid runId '${runId}' for node '${nodeName}': ADK numbers automatic ` +
+      `runs of a node "1", "2", "3", … per context, so an all-digit custom ` +
+      `id draws from that same namespace. A later turn that issues a ` +
+      `different set of custom ids shifts the automatic sequence onto a ` +
+      `checkpoint path an earlier call already wrote, and the call is ` +
+      `fast-forwarded to that run's cached output with its own input ` +
+      `silently discarded. Give the custom id a non-numeric part, e.g. ` +
+      `'${nodeName}-${runId}', or supply an explicit id for every run of ` +
+      `this node so ADK never numbers one.`,
+  );
+}
+
 /**
- * Rejects a caller-supplied run id that collides with an automatic one.
+ * Rejects a caller-supplied run id that shares the automatic numbering
+ * namespace for a node ADK also numbers automatically.
  *
  * Run ids key the checkpoint lookup that lets a resumed or retried workflow
  * skip work it already did, so an id that names a run the caller never made is
@@ -288,10 +349,16 @@ function mapSet(map: Map<string, Set<string>>, key: string): Set<string> {
  * *its* output, and the input passed here is dropped without executing.
  * Nothing downstream can detect that, so it is refused at the call.
  *
- * Only collisions with ADK's own numbering are refused. Reusing a custom id
- * deliberately is a supported way to dedup concurrent calls onto one run, and
- * `ParallelWorker` keys its fan-out by item index, so neither digits nor
- * repetition can be banned outright.
+ * The refusal is symmetric with {@link assertNoNumericCustomRunIds}, which
+ * covers the other order. Checking only for an id already handed out made the
+ * guard depend on which call ran first: the same program was a hard error when
+ * the automatic run came first and silent data corruption when it came second.
+ *
+ * Digits are refused only for a node that is *also* auto-numbered here, which
+ * is what makes them ambiguous. A caller that names every run itself owns the
+ * whole namespace and cannot collide with anything — `ParallelWorker` keys its
+ * fan-out by item index that way. Reusing a custom id deliberately stays a
+ * supported way to dedup concurrent calls onto one run.
  */
 function assertCustomRunId(
   runId: string,
@@ -304,14 +371,28 @@ function assertCustomRunId(
         `Omit runId to let ADK number the run automatically.`,
     );
   }
-  if (autoRunIds.has(runId)) {
-    throw new Error(
-      `Invalid runId '${runId}' for node '${nodeName}': ADK already numbered ` +
-        `an automatic run of that node '${runId}' in this context, so this ` +
-        `call would resolve to that run's cached output instead of ` +
-        `executing, and the input passed here would be dropped. Automatic ` +
-        `ids are "1", "2", "3" per node; give a custom id a non-numeric ` +
-        `part, e.g. '${nodeName}-${runId}'.`,
-    );
+  if (autoRunIds.size > 0 && isAutoNumberShaped(runId)) {
+    throw numericRunIdMixError(nodeName, runId);
+  }
+}
+
+/**
+ * Refuses to number a run automatically once an all-digit custom id has been
+ * claimed for the same node.
+ *
+ * The mirror image of {@link assertCustomRunId}, and the case the guard used to
+ * miss. Numbering around the claimed id looks harmless within one turn — it
+ * skips to the next free number and everything runs — but the number it skips
+ * to is a function of how many custom ids this turn happened to issue. Issue
+ * one fewer next turn and the automatic call lands on a path a custom run
+ * already wrote, and is answered from that checkpoint instead of executing.
+ */
+function assertNoNumericCustomRunIds(
+  nodeName: string,
+  numericCustomRunIds: ReadonlySet<string>,
+): void {
+  const first = numericCustomRunIds.values().next();
+  if (!first.done) {
+    throw numericRunIdMixError(nodeName, first.value);
   }
 }

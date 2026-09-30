@@ -112,6 +112,33 @@ describe('LlmAgent as a node (single_turn)', () => {
     expect(events.some((e) => e.author === 'echo')).toBe(true);
   });
 
+  it('still emits an attributable event when the model answers with nothing', async () => {
+    // The node runs, its output is the empty string, and that empty value
+    // reaches the next node. What was missing is any way to see that from the
+    // transcript: the event carries no text, so a text-only renderer dropped
+    // it and the node looked as though it had never run.
+    const emptyAgent = new LlmAgent({
+      name: 'city_generator_agent',
+      model: new ScriptedLlm(() => ''),
+    });
+    const downstream = node(
+      (_c: NodeContext, input: unknown) => `city=${JSON.stringify(input)}`,
+      {name: 'downstream'},
+    );
+    const wf = new Workflow({
+      name: 'empty_wf',
+      edges: [['START', emptyAgent, downstream]],
+    });
+
+    const {output, events} = await driveWorkflow(wf, 'go');
+
+    const agentEvent = events.find((e) => e.author === 'city_generator_agent');
+    expect(agentEvent).toBeDefined();
+    expect(agentEvent!.output).toBe('');
+    expect(agentEvent!.nodeInfo?.path).toBe('empty_wf.city_generator_agent');
+    expect(output).toBe('city=""');
+  });
+
   it('lets an agent be used directly in edges, feeding a downstream node (baseline bug #3)', async () => {
     const upper = node(
       (_c: NodeContext, input: string) => input.toUpperCase(),

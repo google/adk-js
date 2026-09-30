@@ -21,6 +21,7 @@ export {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
+  isToolNotFound,
 } from './agents/functions.js';
 export {InvocationContext, requireAgent} from './agents/invocation_context.js';
 export type {
@@ -88,12 +89,14 @@ export type {
   SaveArtifactRequest,
 } from './artifacts/base_artifact_service.js';
 export {InMemoryArtifactService} from './artifacts/in_memory_artifact_service.js';
+export {ScopedArtifactService} from './artifacts/scoped_artifact_service.js';
+export {isSessionArtifactService} from './artifacts/session_artifact_service.js';
 export type {
   SessionArtifactService,
   SessionLoadArtifactRequest,
   SessionSaveArtifactRequest,
 } from './artifacts/session_artifact_service.js';
-export {AuthCredentialTypes} from './auth/auth_credential.js';
+export {AuthCredentialTypes, isAuthCredential} from './auth/auth_credential.js';
 export type {
   AuthCredential,
   HttpAuth,
@@ -146,6 +149,14 @@ export {TruncatingContextCompactor} from './context/truncating_context_compactor
 export type {TruncatingContextCompactorOptions} from './context/truncating_context_compactor.js';
 export {BaseEnvironment} from './environment/base_environment.js';
 export type {ExecutionResult} from './environment/base_environment.js';
+export {AlreadyExistsError} from './errors/already_exists_error.js';
+export {InputValidationError} from './errors/input_validation_error.js';
+export {NotFoundError} from './errors/not_found_error.js';
+export {SessionNotFoundError} from './errors/session_not_found_error.js';
+export {
+  ToolErrorType,
+  ToolExecutionError,
+} from './errors/tool_execution_error.js';
 export {isCompactedEvent, isScratchpadEvent} from './events/compacted_event.js';
 export type {CompactedEvent} from './events/compacted_event.js';
 export {
@@ -187,7 +198,15 @@ export {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './examples/base_example_provider.js';
-export type {Example} from './examples/example.js';
+export {VertexAiExampleStore} from './examples/example.js';
+export type {
+  Example,
+  ExampleStoreApiClient,
+  SearchExamplesRequest,
+  SearchExamplesResponse,
+  SearchExamplesResult,
+  StoredContentsExample,
+} from './examples/example.js';
 export type {
   BaseMemoryService,
   SearchMemoryRequest,
@@ -195,12 +214,29 @@ export type {
 } from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
-export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.js';
-export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
 export type {BaseLlmConnection} from './models/base_llm_connection.js';
+export {
+  ChromeBuiltInLlm,
+  ChromeModelUnavailableError,
+  stripAdkIdentityPreamble,
+} from './models/chrome_prompt_llm.js';
+export type {
+  ChromeBuiltInDiagnostic,
+  ChromeBuiltInLlmParams,
+  ChromeCreateCoreOptions,
+  ChromeCreateMonitor,
+  ChromeCreateOptions,
+  ChromeExpectedModality,
+  ChromeLanguageModelFactory,
+  ChromeLanguageModelSession,
+  ChromeMessage,
+  ChromeMessageContent,
+  ChromeModelAvailability,
+  ChromePromptOptions,
+} from './models/chrome_prompt_llm.js';
 export {Gemini, geminiInitParams} from './models/google_llm.js';
 export type {GeminiParams} from './models/google_llm.js';
 export type {LlmRequest} from './models/llm_request.js';
@@ -209,10 +245,32 @@ export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
+export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
+export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
+export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
+export {
+  GLOBAL_SCOPE_KEY,
+  REFLECT_AND_RETRY_RESPONSE_TYPE,
+  ScopedFailureTracker,
+  TrackingScope,
+  resolveScopeKey,
+  type PerItemFailuresCounter,
+  type ToolFailureResponse,
+} from './plugins/_reflect_retry_utils.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
+export {
+  ADK_HANDLE_MODEL_ERROR_TOOL_NAME,
+  RESERVED_TOOL_CALL_ERROR_TYPE,
+  ReflectAndRetryModelPlugin,
+  type ReflectAndRetryModelPluginOptions,
+} from './plugins/reflect_retry_model_plugin.js';
+export {
+  ReflectAndRetryToolPlugin,
+  type ReflectAndRetryToolPluginOptions,
+} from './plugins/reflect_retry_tool_plugin.js';
 export {
   InMemoryPolicyEngine,
   PolicyOutcome,
@@ -257,6 +315,7 @@ export type {
 } from './tools/base_tool.js';
 export {BaseToolset, isBaseToolset} from './tools/base_toolset.js';
 export type {ToolPredicate} from './tools/base_toolset.js';
+export {BuiltInTool} from './tools/built_in_tool.js';
 export {ConsolidateContextTool} from './tools/consolidate_context_tool.js';
 export {
   ENTERPRISE_WEB_SEARCH,
@@ -269,6 +328,7 @@ export {
   FINISH_TASK_TOOL_NAME,
   FinishTaskTool,
 } from './tools/finish_task_tool.js';
+export {ForwardingArtifactService} from './tools/forwarding_artifact_service.js';
 export {FunctionTool, isFunctionTool} from './tools/function_tool.js';
 export type {
   RequireConfirmation,
@@ -288,15 +348,28 @@ export {
   LoadArtifactsTool,
 } from './tools/load_artifacts_tool.js';
 export {LOAD_MEMORY, LoadMemoryTool} from './tools/load_memory_tool.js';
-export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
-export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {LongRunningFunctionTool} from './tools/long_running_tool.js';
 export {
   PRELOAD_MEMORY,
   PreloadMemoryTool,
 } from './tools/preload_memory_tool.js';
 export {requestInputTool} from './tools/request_input_tool.js';
-export {ToolConfirmation} from './tools/tool_confirmation.js';
+export type {ResumeInputs} from './tools/resume_inputs.js';
+export {BaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
+export {LlamaIndexRetrieval} from './tools/retrieval/llama_index_retrieval.js';
+export type {
+  LlamaIndexNode,
+  LlamaIndexNodeWithScore,
+  LlamaIndexRetrievalParams,
+  LlamaIndexRetriever,
+} from './tools/retrieval/llama_index_retrieval.js';
+export {
+  IntentMismatchError,
+  ToolConfirmation,
+  isIntentMismatchError,
+} from './tools/tool_confirmation.js';
+export type {IntentMismatchReason} from './tools/tool_confirmation.js';
+export {CallbackContext, ToolContext} from './tools/tool_context.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {
@@ -307,11 +380,40 @@ export type {
   VertexAiSearchToolParams,
 } from './tools/vertex_ai_search_tool.js';
 export {VertexRagRetrievalTool} from './tools/vertex_rag_retrieval_tool.js';
+export {WebMCPTool} from './tools/webmcp/webmcp_tool.js';
+export type {WebMCPToolParams} from './tools/webmcp/webmcp_tool.js';
+export {WebMCPToolset} from './tools/webmcp/webmcp_toolset.js';
+export type {WebMCPToolsetOptions} from './tools/webmcp/webmcp_toolset.js';
+export {
+  getModelContext,
+  isWebMCPSupported,
+} from './tools/webmcp/webmcp_types.js';
+export type {
+  WebMCPDocument,
+  WebMCPExecuteToolOptions,
+  WebMCPGetToolsOptions,
+  WebMCPModelContext,
+  WebMCPRegisteredTool,
+  WebMCPToolAnnotations,
+} from './tools/webmcp/webmcp_types.js';
 export {AsyncQueue} from './utils/async_queue.js';
+export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
-export {LogLevel, getLogger, setLogLevel, setLogger} from './utils/logger.js';
+export {
+  LogLevel,
+  getLogger,
+  logger,
+  resetLogger,
+  setLogLevel,
+  setLogger,
+} from './utils/logger.js';
 export type {Logger} from './utils/logger.js';
-export {isGemini2OrAbove, isGemini3xFlashLive} from './utils/model_name.js';
+export {
+  isGemini2OrAbove,
+  isGemini35LiveTranslate,
+  isGemini3xFlashLive,
+  isGemini3xLive,
+} from './utils/model_name.js';
 export type {SchemaLike} from './utils/schema.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
@@ -319,41 +421,17 @@ export type {TaskExecutable} from './utils/task.js';
 export {GoogleLLMVariant} from './utils/variant_utils.js';
 export {version} from './version.js';
 
-export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
-export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
-export {
-  loadAllSkillsInDir,
-  loadSkillFromDir,
-  loadSkillFromZipBuffer,
-  validateSkillDir,
-} from './skills/loader.js';
 export type {Frontmatter, Resources, Script, Skill} from './skills/skill.js';
 export type {SkillRegistry} from './skills/skill_registry.js';
 export {ListSkillsTool} from './tools/skill/list_skills_tool.js';
-export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
 export {LoadSkillTool} from './tools/skill/load_skill_tool.js';
 export {SearchSkillsTool} from './tools/skill/search_skills_tool.js';
-export {SkillToolset} from './tools/skill/skill_toolset.js';
 
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
-export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
-export type {
-  OperationEndpoint,
-  ParsedOperation,
-} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
-export {OperationParser} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
-export type {ApiParameter} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
-export {ToolAuthHandler} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
-export type {AuthPreparationResult} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
-export {OpenAPIToolset} from './tools/openapi_tool/openapi_toolset.js';
-export {
-  RestApiTool,
-  createRestApiTool,
-} from './tools/openapi_tool/rest_api_tool.js';
 
 // Workflow (parity port of google/adk-python `google/adk/workflow`). Named
 // explicitly (not `export *`) so the top-level surface stays intentional and
@@ -367,6 +445,7 @@ export {
   Graph,
   JoinNode,
   NodeContext,
+  NodeReportedError,
   NodeSchemaValidationError,
   NodeStatus,
   NodeTimeoutError,
@@ -383,6 +462,7 @@ export {
   createNodeState,
   createSubBranch,
   isNodeErrorEvent,
+  isNodeReportedError,
   isNodeSchemaValidationError,
   isNodeState,
   isNodeTimeoutError,
@@ -425,7 +505,8 @@ export type {
   WorkflowConfig,
 } from './workflow/index.js';
 
-export * from './apps/app.js';
+export {App, isApp, validateAppName} from './apps/app.js';
+export type {AppOptions} from './apps/app.js';
 export * from './artifacts/base_artifact_service.js';
 export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';

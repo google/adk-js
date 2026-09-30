@@ -21,7 +21,10 @@ describe('getArtifactServiceFromUri', () => {
   it('returns GcsArtifactService for gs uri', () => {
     const service = getArtifactServiceFromUri('gs://my-bucket');
     expect(service).toBeInstanceOf(GcsArtifactService);
-    expect((service as unknown as {bucket: {name: string}}).bucket.name).toBe(
+    // The GCS client is an optional peer loaded on first use, so the bucket
+    // handle does not exist until then; the parsed name is what the registry
+    // is responsible for and it is all that can be asserted synchronously.
+    expect((service as unknown as {bucketName: string}).bucketName).toBe(
       'my-bucket',
     );
   });

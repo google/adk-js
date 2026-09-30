@@ -4,26 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export {AGENT_CARD_PATH, RemoteA2AAgent} from './a2a/a2a_remote_agent.js';
-export type {
-  A2AStreamEventData,
-  AfterA2ARequestCallback,
-  BeforeA2ARequestCallback,
-  RemoteA2AAgentConfig,
-} from './a2a/a2a_remote_agent.js';
-export {getA2AAgentCard} from './a2a/agent_card.js';
-export {A2AAgentExecutor} from './a2a/agent_executor.js';
-export type {
-  AfterEventCallback,
-  AfterExecuteCallback,
-  AgentExecutorConfig,
-  BeforeExecuteCallback,
-  RunnerOrRunnerConfig,
-} from './a2a/agent_executor.js';
-export {toA2a} from './a2a/agent_to_a2a.js';
-export type {A2aUserBuilder, ToA2aOptions} from './a2a/agent_to_a2a.js';
-export {bearerTokenUserBuilder} from './a2a/auth.js';
-export type {ExecutorContext} from './a2a/executor_context.js';
+import {installNodeLogger} from './utils/logger_node.js';
+
+// The Node entry point installs the winston-backed logger. `utils/logger.ts`
+// itself must stay free of Node-only imports so that the browser entry point
+// can reach it; see https://github.com/google/adk-js/issues/611.
+// This call runs after the modules re-exported below are evaluated, so a module
+// must log through the `logger` facade instead of holding the result of
+// `getLogger()`.
+installNodeLogger();
+
+// Also available as `@google/adk/a2a`, which does not evaluate the rest of
+// this barrel.
+export * from './a2a/index.js';
 export {InvocationContext} from './agents/invocation_context.js';
 export type {WorkflowInstructionScope} from './agents/invocation_context.js';
 export {FileArtifactService} from './artifacts/file_artifact_service.js';
@@ -35,12 +28,20 @@ export {
 } from './code_executors/agent_engine_sandbox_code_executor.js';
 export {CodeExecutionLanguage} from './code_executors/code_execution_utils.js';
 export {
+  ContainerCodeExecutor,
+  type ContainerCodeExecutorOptions,
+} from './code_executors/container_code_executor.js';
+export {
   UnsafeLocalCodeExecutor,
   type UnsafeLocalCodeExecutorOptions,
 } from './code_executors/unsafe_local_code_executor.js';
 export * from './common.js';
 export {LocalEnvironment} from './environment/local_environment.js';
 export type {LocalEnvironmentOptions} from './environment/local_environment.js';
+export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.js';
+export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
+export {VertexAiRagMemoryService} from './memory/vertex_ai_rag_memory_service.js';
+export type {VertexAiRagMemoryServiceOptions} from './memory/vertex_ai_rag_memory_service.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
@@ -48,21 +49,82 @@ export type {
   VertexAiCreateSessionRequest,
   VertexAiSessionServiceOptions,
 } from './sessions/vertex_ai_session_service.js';
+export {GCPSkillRegistry} from './skills/gcp_skill_registry.js';
+export type {GCPSkillRegistryOptions} from './skills/gcp_skill_registry.js';
 export {
   loadAllSkillsInDir,
   loadSkillFromDir,
+  loadSkillFromZipBuffer,
   validateSkillDir,
 } from './skills/loader.js';
+export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
+export type {LoadWebPageOptions} from './tools/load_web_page.js';
+export {
+  credentialToParam,
+  dictToAuthScheme,
+  INTERNAL_AUTH_PREFIX,
+  openidDictToSchemeCredential,
+  openidUrlToSchemeCredential,
+  serviceAccountDictToSchemeCredential,
+  serviceAccountSchemeCredential,
+  tokenToSchemeCredential,
+} from './tools/openapi_tool/auth/auth_helpers.js';
+export {AutoAuthCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
+export type {CustomCredentialExchangers} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
+export {
+  AuthCredentialMissingError,
+  BaseAuthCredentialExchanger,
+} from './tools/openapi_tool/auth/credential_exchangers/base_auth_credential_exchanger.js';
+export {
+  exchangeCredential,
+  OAuth2BearerExchanger,
+} from './tools/openapi_tool/auth/credential_exchangers/oauth2_exchanger.js';
+export {ServiceAccountCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';
+export {
+  createApiParameter,
+  generateParamDoc,
+  generateReturnDoc,
+  getTypeHint,
+} from './tools/openapi_tool/common/common.js';
+export type {ApiParameterInit} from './tools/openapi_tool/common/common.js';
+export {OpenApiSpecParser} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
+export type {
+  OperationEndpoint,
+  ParsedOperation,
+} from './tools/openapi_tool/openapi_spec_parser/openapi_spec_parser.js';
+export {OperationParser} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
+export type {ApiParameter} from './tools/openapi_tool/openapi_spec_parser/operation_parser.js';
+export {
+  ToolAuthHandler,
+  ToolContextCredentialStore,
+} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export type {
+  AuthPreparationResult,
+  ToolAuthHandlerOptions,
+} from './tools/openapi_tool/openapi_spec_parser/tool_auth_handler.js';
+export {OpenAPIToolset} from './tools/openapi_tool/openapi_toolset.js';
+export {
+  createRestApiTool,
+  createRestApiToolFromJson,
+  RestApiTool,
+} from './tools/openapi_tool/rest_api_tool.js';
+export type {ParsedOperationInput} from './tools/openapi_tool/rest_api_tool.js';
+export {FilesRetrieval} from './tools/retrieval/files_retrieval.js';
+export type {
+  FilesRetrievalConstructorParams,
+  FilesRetrievalParams,
+} from './tools/retrieval/files_retrieval.js';
+export {LoadSkillResourceTool} from './tools/skill/load_skill_resource_tool.js';
 export {
   RunSkillInlineScriptErrorCode,
   RunSkillInlineScriptTool,
 } from './tools/skill/run_skill_inline_script_tool.js';
 export {RunSkillScriptTool} from './tools/skill/run_skill_script_tool.js';
+export {SkillToolset} from './tools/skill/skill_toolset.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';
-export * from './tools/mcp/load_mcp_resource_tool.js';
-export * from './tools/mcp/mcp_session_manager.js';
-export * from './tools/mcp/mcp_tool.js';
-export * from './tools/mcp/mcp_toolset.js';
+// Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
+// of this barrel.
+export * from './tools/mcp/index.js';

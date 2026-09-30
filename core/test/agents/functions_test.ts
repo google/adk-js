@@ -6,13 +6,16 @@
 import {
   BasePlugin,
   BaseTool,
+  Context,
   createEvent,
   createEventActions,
   Event,
   functionsExportedForTestingOnly,
   FunctionTool,
   InvocationContext,
+  isToolNotFound,
   LlmAgent,
+  LongRunningFunctionTool,
   PluginManager,
   Session,
   SingleAfterToolCallback,
@@ -20,15 +23,18 @@ import {
   ToolConfirmation,
 } from '@google/adk';
 import {FunctionCall} from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import type {MockInstance} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   generateClientFunctionCallId,
+  getConflictingFunctionResponseAuthors,
   getLongRunningFunctionCalls,
   mergeParallelFunctionResponseEvents,
 } from '../../src/agents/functions.js';
+import {logger} from '../../src/utils/logger.js';
 
 // Get the test target function
 const {
@@ -114,13 +120,37 @@ function callFor(tool: BaseTool): FunctionCall {
   return {id: randomIdForTestingOnly(), name: tool.name, args: {}};
 }
 
+/**
+ * Builds a long-running tool that mutates its tool context and then returns no
+ * response.
+ */
+function createStartJobTool(mutate: (toolContext: Context) => void) {
+  return new LongRunningFunctionTool({
+    name: 'startJob',
+    description: 'starts a background job',
+    parameters: z.object({}),
+    execute: async (_args, toolContext) => {
+      mutate(toolContext!);
+      return undefined;
+    },
+  });
+}
+
 describe('handleFunctionCallList', () => {
   let invocationContext: InvocationContext;
   let pluginManager: PluginManager;
   let functionCall: FunctionCall;
   let toolsDict: Record<string, BaseTool>;
+  let warnSpy: MockInstance<typeof logger.warn>;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
+    // These tests deliberately provoke resolution failures; keep the expected
+    // diagnostics out of the suite output.
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     pluginManager = new PluginManager();
     const agent = new LlmAgent({name: 'test_agent', model: 'test_model'});
     invocationContext = new InvocationContext({
@@ -346,6 +376,220 @@ describe('handleFunctionCallList', () => {
     });
   });
 
+  it('should route an unregistered tool name through plugin onToolErrorCallback', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {
+      error: 'no such tool, try testTool',
+    };
+    pluginManager.registerPlugin(plugin);
+    const onToolErrorCallback = vi.spyOn(plugin, 'onToolErrorCallback');
+    const hallucinatedCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {query: 'anything'},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [hallucinatedCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(onToolErrorCallback).toHaveBeenCalledTimes(1);
+    const {tool, toolArgs} = onToolErrorCallback.mock.calls[0][0];
+    expect(tool.name).toBe('google_search');
+    expect(toolArgs).toEqual({query: 'anything'});
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(hallucinatedCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    expect(functionResponse.response).toEqual({
+      error: 'no such tool, try testTool',
+    });
+  });
+
+  it('should answer an unregistered tool name with the resolution error when no plugin handles it', async () => {
+    const unresolvableCall: FunctionCall = {
+      id: randomIdForTestingOnly(),
+      name: 'google_search',
+      args: {},
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [unresolvableCall],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // The call has to be answered, not left dangling: the request is otherwise
+    // identical next iteration, and Gemini rejects an unpaired functionCall.
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    expect(functionResponse.id).toBe(unresolvableCall.id);
+    expect(functionResponse.name).toBe('google_search');
+    const {error} = functionResponse.response as {error: string};
+    expect(error).toContain(
+      'Function google_search is not found in the toolsDict.',
+    );
+    // The inventory and the causes are for an operator, not the model: the
+    // model already has its declarations and would otherwise pay for the whole
+    // toolset on every occurrence.
+    expect(error).not.toContain('Callable tools');
+    expect(error).not.toContain('Possible causes');
+  });
+
+  it('should warn the operator with the inventory and the possible causes', async () => {
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // Without this the only trace of a misconfigured agent is a string the
+    // model sees and the operator never does.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warning = warnSpy.mock.calls[0][0] as string;
+    expect(warning).toContain("Could not resolve tool 'google_search'");
+    expect(warning).toContain('call-1');
+    expect(warning).toContain('Callable tools: testTool.');
+    expect(warning).toContain('Possible causes:');
+    // The cause this change tripped over in SleepyTool has to be listed.
+    expect(warning).toContain('_getDeclaration()');
+    // Built-in tools register themselves now, so they must not be blamed here.
+    expect(warning).not.toContain('google_search`');
+  });
+
+  it('should not warn when a plugin handles the unresolvable call', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {result: 'handled'};
+    pluginManager.registerPlugin(plugin);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    // A plugin that answers these has made them an expected condition; the
+    // sibling path for a registered tool that throws is silent too.
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('should skip the before and after tool callbacks for an unresolvable call', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    pluginManager.registerPlugin(plugin);
+    const beforeToolCallback = vi.spyOn(plugin, 'beforeToolCallback');
+    const afterToolCallback = vi.spyOn(plugin, 'afterToolCallback');
+    const canonicalAfter = vi.fn().mockResolvedValue(undefined);
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [canonicalAfter],
+    });
+
+    // Documented asymmetry with the registered-tool error path, which does run
+    // them. Pin it so the doc comment and the code cannot drift apart.
+    expect(beforeToolCallback).not.toHaveBeenCalled();
+    expect(afterToolCallback).not.toHaveBeenCalled();
+    expect(canonicalAfter).not.toHaveBeenCalled();
+  });
+
+  it('should hand plugins a placeholder that identifies itself and rethrows', async () => {
+    const plugin = new TestPlugin('testPlugin');
+    plugin.onToolErrorCallbackResponse = {result: 'handled'};
+    pluginManager.registerPlugin(plugin);
+    const onToolErrorCallback = vi.spyOn(plugin, 'onToolErrorCallback');
+
+    await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name: 'google_search', args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const {tool} = onToolErrorCallback.mock.calls[0][0];
+    // A plugin can tell an unresolvable name from a registered tool that threw
+    // without matching on the error message.
+    expect(isToolNotFound(tool)).toBe(true);
+    expect(isToolNotFound(testTool)).toBe(false);
+    // Nothing in the framework runs it, but a plugin holding it can, and it
+    // must not invent a second, different message.
+    await expect(
+      tool.runAsync({args: {}, toolContext: {} as Context}),
+    ).rejects.toThrow('Function google_search is not found in the toolsDict.');
+  });
+
+  // `functionCall.name` is model-supplied and `toolsDict` is a plain object, so
+  // an unguarded lookup reaches `Object.prototype`. These names would resolve
+  // to a JS builtin, be treated as found, and skip the whole recovery path —
+  // `constructor` even answers under the name `Object`, breaking the pairing.
+  it.each([
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    '__proto__',
+  ])('should treat the inherited name %s as unresolvable', async (name) => {
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [{id: 'call-1', name, args: {}}],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const functionResponse = event!.content!.parts![0].functionResponse!;
+    // The response has to name the call, or the pair dangles.
+    expect(functionResponse.name).toBe(name);
+    expect(functionResponse.id).toBe('call-1');
+    expect((functionResponse.response as {error: string}).error).toBe(
+      `Function ${name} is not found in the toolsDict.`,
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should answer every call in a batch when one name is unresolvable', async () => {
+    const unresolvableId = randomIdForTestingOnly();
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [
+        callFor(testTool),
+        {id: unresolvableId, name: 'google_search', args: {}},
+        callFor(testTool),
+      ],
+      toolsDict,
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    const responses = event!.content!.parts!.map((p) => p.functionResponse!);
+    expect(responses.map((r) => r.name)).toEqual([
+      'testTool',
+      'google_search',
+      'testTool',
+    ]);
+    expect(responses[0].response).toEqual({result: 'tool executed'});
+    expect(responses[2].response).toEqual({result: 'tool executed'});
+    // The id is what keeps the pairing balanced, so pin it on the
+    // unresolvable slot too — that is the one built off the placeholder.
+    expect(responses[1].id).toBe(unresolvableId);
+    expect(responses[1].response).toHaveProperty('error');
+  });
+
   it('should pass abortSignal to tool execution', async () => {
     const abortController = new AbortController();
     const signal = abortController.signal;
@@ -437,6 +681,102 @@ describe('handleFunctionCallList', () => {
       }),
     ]);
   });
+
+  it.each([
+    [
+      'a stateDelta',
+      (toolContext: Context) => {
+        toolContext.state.set('jobStarted', true);
+      },
+      {stateDelta: {jobStarted: true}},
+    ],
+    [
+      'skipSummarization',
+      (toolContext: Context) => {
+        toolContext.actions.skipSummarization = true;
+      },
+      {skipSummarization: true},
+    ],
+    [
+      'transferToAgent',
+      (toolContext: Context) => {
+        toolContext.actions.transferToAgent = 'other_agent';
+      },
+      {transferToAgent: 'other_agent'},
+    ],
+    [
+      'a requested tool confirmation',
+      (toolContext: Context) => {
+        toolContext.requestConfirmation({hint: 'ok?'});
+      },
+      {
+        requestedToolConfirmations: {
+          'lro_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      },
+    ],
+  ])(
+    'should emit a content-less event carrying %s',
+    async (_label, mutate, expectedActions) => {
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [{id: 'lro_1', name: 'startJob', args: {}}],
+        toolsDict: {'startJob': createStartJobTool(mutate)},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [],
+      });
+
+      expect(event!.content).toBeUndefined();
+      expect(event!.actions).toMatchObject(expectedActions);
+      expect(event!.author).toBe('test_agent');
+      expect(event!.invocationId).toBe('inv_123');
+    },
+  );
+
+  it('should merge the actions of a silent long running tool into the batch event', async () => {
+    const startJob = createStartJobTool((toolContext) => {
+      toolContext.state.set('jobStarted', true);
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(startJob), callFor(testTool)],
+      toolsDict: {startJob, testTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      result: 'tool executed',
+    });
+    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
+  });
+
+  it('should keep the function response of a long running tool that does respond', async () => {
+    const startJob = new LongRunningFunctionTool({
+      name: 'startJob',
+      description: 'starts a background job',
+      parameters: z.object({}),
+      execute: async (_args, toolContext) => {
+        toolContext!.state.set('jobStarted', true);
+        return {status: 'pending'};
+      },
+    });
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(startJob)],
+      toolsDict: {startJob},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event!.content!.parts![0].functionResponse!.response).toEqual({
+      status: 'pending',
+    });
+    expect(event!.actions.stateDelta).toEqual({jobStarted: true});
+  });
 });
 
 describe('generateAuthEvent', () => {
@@ -505,6 +845,27 @@ describe('generateAuthEvent', () => {
     expect(call2).toBeDefined();
     expect(call2!.functionCall!.name).toBe('adk_request_credential');
     expect(call2!.functionCall!.args!['auth_config']).toBe('auth_config_2');
+  });
+
+  it('should default the role to user for a content-less event', () => {
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
+        requestedAuthConfigs: {
+          'call_1': {
+            authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+            credentialKey: 'test-credential-key',
+          },
+        },
+      }),
+    });
+
+    const event = generateAuthEvent(invocationContext, functionResponseEvent);
+
+    expect(event!.content!.role).toBe('user');
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionCall!.name).toBe(
+      'adk_request_credential',
+    );
   });
 });
 
@@ -680,6 +1041,34 @@ describe('generateRequestConfirmationEvent', () => {
     );
     expect(call1).toBeDefined();
   });
+
+  it('should default the role to user for a content-less event', () => {
+    const functionCallEvent = createEvent({
+      content: {
+        role: 'user',
+        parts: [{functionCall: {name: 'tool_1', args: {}, id: 'call_1'}}],
+      },
+    });
+    const functionResponseEvent = createEvent({
+      actions: createEventActions({
+        requestedToolConfirmations: {
+          'call_1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      }),
+    });
+
+    const event = generateRequestConfirmationEvent({
+      invocationContext,
+      functionCallEvent,
+      functionResponseEvent,
+    });
+
+    expect(event!.content!.role).toBe('user');
+    expect(event!.content!.parts!.length).toBe(1);
+    expect(event!.content!.parts![0].functionCall!.name).toBe(
+      'adk_request_confirmation',
+    );
+  });
 });
 
 describe('generateClientFunctionCallId', () => {
@@ -838,5 +1227,246 @@ describe('findMatchingFunctionCall', () => {
     });
     expect(findMatchingFunctionCall([callEvent])).toBeUndefined();
     expect(findMatchingFunctionCall([])).toBeUndefined();
+  });
+
+  it('checks every function response in the last event, not just the first', () => {
+    // response 0 has no matching call (a stale or unmatched id); response 1
+    // is the one that actually resolves. The pre-fix code read only
+    // functionResponses[0] and would have returned undefined here even
+    // though the event does answer a real, resumable call -- this is the
+    // shape "check every response" exists for, and the only test in this
+    // file that fails without the fix for that specific reason (the other
+    // two-response case below happens to pass either way, since it never
+    // puts the resolving response anywhere but last).
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const mixedResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-does-not-exist',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callB, mixedResponses])).toBe(callB);
+  });
+
+  it('resolves multiple responses from the same agent without conflict', () => {
+    // Two responses in one event answering two calls from the SAME agent
+    // (parallel tool calls within a single invocation) must still resolve
+    // normally -- only responses that disagree on author are a conflict.
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callEvent, bothResponses])).toBe(
+      callEvent,
+    );
+  });
+
+  it('resolves to the last match by iteration order when responses conflict, without throwing', () => {
+    // findMatchingFunctionCall is a pure lookup: it does not throw on a
+    // conflict (getConflictingFunctionResponseAuthors, tested below, is
+    // what surfaces that). This pins the documented last-wins behavior
+    // for that case, which is a change from the pre-fix code's effective
+    // first-wins behavior (it only ever read functionResponses[0]).
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(findMatchingFunctionCall([callA, callB, bothResponses])).toBe(callB);
+  });
+});
+
+describe('getConflictingFunctionResponseAuthors', () => {
+  it('returns the conflicting author pair when responses resolve to more than one agent', () => {
+    const callA = createEvent({
+      invocationId: 'inv-a',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-a', name: 'tool_a', args: {}}}],
+      },
+    });
+    const callB = createEvent({
+      invocationId: 'inv-b',
+      author: 'agent_b',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'fc-b', name: 'tool_b', args: {}}}],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-a',
+              name: 'tool_a',
+              response: {result: 'a done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-b',
+              name: 'tool_b',
+              response: {result: 'b done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callA, callB, bothResponses]),
+    ).toEqual(['agent_a', 'agent_b']);
+  });
+
+  it('returns undefined when responses all resolve to the same agent', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'agent_a',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'fc-1', name: 'tool_a', args: {}}},
+          {functionCall: {id: 'fc-2', name: 'tool_b', args: {}}},
+        ],
+      },
+    });
+    const bothResponses = createEvent({
+      invocationId: 'inv-new',
+      author: 'user',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc-1',
+              name: 'tool_a',
+              response: {result: 'done'},
+            },
+          },
+          {
+            functionResponse: {
+              id: 'fc-2',
+              name: 'tool_b',
+              response: {result: 'done'},
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      getConflictingFunctionResponseAuthors([callEvent, bothResponses]),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when there is nothing to resolve', () => {
+    const callEvent = createEvent({
+      invocationId: 'inv-1',
+      author: 'sub-agent',
+      content: {
+        role: 'model',
+        parts: [
+          {functionCall: {id: 'lro-id-123', name: 'longRunningOp', args: {}}},
+        ],
+      },
+    });
+    expect(getConflictingFunctionResponseAuthors([callEvent])).toBeUndefined();
+    expect(getConflictingFunctionResponseAuthors([])).toBeUndefined();
   });
 });

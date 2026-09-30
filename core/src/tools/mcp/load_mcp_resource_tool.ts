@@ -5,7 +5,7 @@
  */
 
 import {FunctionDeclaration, Part, Type} from '@google/genai';
-import {
+import type {
   BlobResourceContents,
   TextResourceContents,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -91,16 +91,49 @@ export class LoadMcpResourceTool extends BaseTool {
       logger.warn(`Failed to list MCP resources: ${e}`);
     }
 
-    const lastContent = llmRequest.contents.at(-1);
-    const functionResponse = lastContent?.parts?.[0]?.functionResponse;
-    if (!functionResponse || functionResponse.name !== this.name) {
+    const contents = llmRequest.contents;
+    if (!contents || contents.length === 0) {
       return;
     }
 
-    const response =
-      (functionResponse.response as Record<string, unknown>) || {};
-    const requestedResourceNames =
-      (response['resource_names'] as string[]) || [];
+    let startIndex = 0;
+    for (let i = contents.length - 1; i >= 0; i--) {
+      const content = contents[i];
+      const hasFunctionResponse = content.parts?.some(
+        (part) => part.functionResponse !== undefined,
+      );
+      const hasFunctionCall = content.parts?.some(
+        (part) => part.functionCall !== undefined,
+      );
+
+      if (
+        (content.role === 'model' && !hasFunctionCall) ||
+        (content.role === 'user' && !hasFunctionResponse)
+      ) {
+        startIndex = i;
+        break;
+      }
+    }
+
+    const requestedResourceNames: string[] = [];
+    for (let i = startIndex; i < contents.length; i++) {
+      const content = contents[i];
+      if (content.role === 'user' && content.parts) {
+        for (const part of content.parts) {
+          const functionResponse = part.functionResponse;
+          if (functionResponse && functionResponse.name === this.name) {
+            const response =
+              (functionResponse.response as Record<string, unknown>) || {};
+            const names = (response['resource_names'] as string[]) || [];
+            for (const name of names) {
+              if (name && !requestedResourceNames.includes(name)) {
+                requestedResourceNames.push(name);
+              }
+            }
+          }
+        }
+      }
+    }
 
     for (const resourceName of requestedResourceNames) {
       try {

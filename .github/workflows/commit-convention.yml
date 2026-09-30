@@ -1,0 +1,30 @@
+name: commit-convention
+
+# A pull request lands on main as a squash commit whose subject is the PR
+# title, so the PR title is the line release-please parses to pick the next
+# version and write the changelog.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  check-pr-title:
+    runs-on: ubuntu-latest
+    # release-please titles its own PRs "Release: v1.2.3", which is deliberately
+    # not a conventional commit.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/check_commit_message.mjs --label "PR title" "$PR_TITLE"

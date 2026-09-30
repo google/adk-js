@@ -5,6 +5,7 @@
  */
 
 import {BaseNode} from '../base_node.js';
+import {isNodeInterruptedError} from '../errors.js';
 import {RunnableNode} from '../graph.js';
 import {NodeContext} from '../node_context.js';
 import {buildNode} from '../utils/workflow_graph_utils.js';
@@ -139,6 +140,13 @@ export class ParallelWorker extends BaseNode {
           }
           results[i] = child.output;
         } catch (err) {
+          // Inside a workflow the engine unwinds an interrupted caller by
+          // throwing rather than returning; that is a pause, not a failure.
+          // The ids are already on `ctx`, put there before the throw.
+          if (isNodeInterruptedError(err)) {
+            interrupted = true;
+            break;
+          }
           if (!failed) {
             failed = true;
             firstError = err;

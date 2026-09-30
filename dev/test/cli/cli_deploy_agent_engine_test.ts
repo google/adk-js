@@ -18,6 +18,7 @@ import {
   isFile,
   isFolderExists,
   loadFileData,
+  saveToFile,
   tryToFindFileRecursively,
 } from '../../src/utils/file_utils.js';
 declare global {
@@ -321,6 +322,25 @@ describe('deployToAgentEngine', () => {
     await expect(fs.access(createdTempFolder)).rejects.toThrow();
   });
 
+  it('should not stage an empty node_modules or package-lock.json', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    const mkdirPaths = (fs.mkdir as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    const savedPaths = (saveToFile as Mock).mock.calls.map((call) =>
+      String(call[0]),
+    );
+    expect(mkdirPaths).not.toContain(path.join(tempFolder, 'node_modules'));
+    expect(savedPaths).not.toContain(
+      path.join(tempFolder, 'package-lock.json'),
+    );
+    expect(saveToFile).toHaveBeenCalledWith(
+      path.join(tempFolder, 'package.json'),
+      {dependencies: {'@google/adk': '^1.0.0'}},
+    );
+  });
+
   it('should deploy successfully with all optional parameters', async () => {
     const optionsWithAll: DeployToAgentEngineOptions = {
       ...defaultOptions,
@@ -372,6 +392,53 @@ describe('deployToAgentEngine', () => {
         },
       },
     });
+  });
+
+  it('should use custom minInstances and maxInstances when provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      minInstances: 2,
+      maxInstances: 5,
+    });
+
+    expect(mockCreateInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          spec: expect.objectContaining({
+            deploymentSpec: expect.objectContaining({
+              minInstances: 2,
+              maxInstances: 5,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('should send Cloud Build logs to the staging bucket when one is provided', async () => {
+    await deployToAgentEngine({
+      ...defaultOptions,
+      stagingBucket: 'custom-bucket',
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['--gcs-log-dir', 'gs://custom-bucket/logs']),
+      expect.any(Object),
+    );
+  });
+
+  it('should send Cloud Build logs to the project bucket when no staging bucket is provided', async () => {
+    await deployToAgentEngine(defaultOptions);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        '--gcs-log-dir',
+        'gs://test-project_cloudbuild/logs',
+      ]),
+      expect.any(Object),
+    );
   });
 
   it('should resolve default project and region from gcloud if not provided', async () => {

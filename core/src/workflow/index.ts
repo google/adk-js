@@ -85,8 +85,10 @@ export type {
 
 // --- Errors ---
 export {
+  NodeReportedError,
   NodeSchemaValidationError,
   NodeTimeoutError,
+  isNodeReportedError,
   isNodeSchemaValidationError,
   isNodeTimeoutError,
 } from './errors.js';

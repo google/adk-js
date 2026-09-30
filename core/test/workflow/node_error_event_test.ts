@@ -6,12 +6,15 @@
 
 import {describe, expect, it} from 'vitest';
 import {InvocationContext} from '../../src/agents/invocation_context.js';
-import {Event} from '../../src/events/event.js';
+import {createEvent, Event} from '../../src/events/event.js';
 import {PluginManager} from '../../src/plugins/plugin_manager.js';
 import {createSession} from '../../src/sessions/session.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {BaseNode} from '../../src/workflow/base_node.js';
-import {isNodeTimeoutError} from '../../src/workflow/errors.js';
+import {
+  isNodeReportedError,
+  isNodeTimeoutError,
+} from '../../src/workflow/errors.js';
 import {NodeContext} from '../../src/workflow/node_context.js';
 import {
   isNodeErrorEvent,
@@ -340,5 +343,72 @@ describe('NodeErrorEvent — retries and timeouts', () => {
     expect(errorEvents[0].errorCode).toBe('UNKNOWN_ERROR');
     expect(errorEvents[0].errorMessage).toContain('timed out');
     expect(errorEvents[0].nodeInfo?.path).toBe('wf.slow');
+  });
+});
+
+describe('NodeErrorEvent — a node that reports an error instead of throwing', () => {
+  /** A node that emits an error event and returns nothing, as an LlmAgent does. */
+  function reportingNode(
+    name: string,
+    errorCode: string,
+    errorMessage: string,
+  ) {
+    return new FunctionNode(name, () =>
+      createEvent({author: name, errorCode, errorMessage}),
+    );
+  }
+
+  it('halts the branch instead of handing the successor undefined', async () => {
+    const ran: string[] = [];
+    const generator = reportingNode(
+      'city_generator_agent',
+      '401',
+      'Request had invalid authentication credentials.',
+    );
+    const successor = new FunctionNode('lookup_time_function', (_c, input) => {
+      ran.push('successor');
+      return (input as string).trim();
+    });
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [
+        ['START', generator],
+        [generator, successor],
+      ],
+    });
+
+    const {thrown} = await driveExpectingFailure(wf, 'x');
+
+    expect(isNodeReportedError(thrown)).toBe(true);
+    expect((thrown as Error).message).toContain('city_generator_agent');
+    expect((thrown as Error).message).toContain('401');
+    expect((thrown as Error).message).toContain(
+      'Request had invalid authentication credentials.',
+    );
+    expect(ran).toEqual([]);
+  });
+
+  it('does not report the failure twice, since the node already did', async () => {
+    const wf = new Workflow({
+      name: 'wf',
+      edges: [['START', reportingNode('agent', '401', 'nope')]],
+    });
+
+    const {events, errorEvents} = await driveExpectingFailure(wf, 'x');
+
+    expect(errorEvents).toHaveLength(0);
+    expect(events.filter((e) => e.errorCode !== undefined)).toHaveLength(1);
+  });
+
+  it('leaves a node that reported an error but still produced output alone', async () => {
+    const recovered = new FunctionNode('recovered', function* () {
+      yield createEvent({errorCode: '503', errorMessage: 'transient'});
+      yield 'recovered anyway';
+    });
+    const wf = new Workflow({name: 'wf', edges: [['START', recovered]]});
+
+    const {thrown} = await driveExpectingFailure(wf, 'x');
+
+    expect(thrown).toBeUndefined();
   });
 });

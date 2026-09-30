@@ -18,7 +18,10 @@ import {
   RunSkillInlineScriptTool,
   SkillToolset,
 } from '@google/adk';
-import {describe, expect, it, vi} from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {ToolConfirmation} from '../../../src/tools/tool_confirmation.js';
 import {materializeFiles} from '../../../src/utils/file_utils.js';
 
@@ -52,6 +55,20 @@ interface ToolErrorResponse {
 }
 
 describe('RunSkillInlineScriptTool', () => {
+  // Running a script resolves an output directory and creates it on disk, even
+  // here where materializeFiles itself is mocked. Point the tests at a temp
+  // directory of their own and remove it in afterEach, so a failing assertion
+  // cannot leave directories behind.
+  let outputDir: string;
+
+  beforeEach(async () => {
+    outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skill_inline_test_'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(outputDir, {recursive: true, force: true});
+  });
+
   function createMockContext(
     agentName = 'test-agent',
     agentExecutor?: BaseCodeExecutor,
@@ -136,7 +153,8 @@ describe('RunSkillInlineScriptTool', () => {
       outputFiles: [],
     };
 
-    const toolset = new SkillToolset([]); // no executor
+    // No executor: the agent's is used instead.
+    const toolset = new SkillToolset([], {scriptOutputDir: outputDir});
     const tool = new RunSkillInlineScriptTool(toolset);
 
     const result = (await tool.runAsync({
@@ -186,7 +204,10 @@ describe('RunSkillInlineScriptTool', () => {
       outputFiles: [],
     };
 
-    const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillInlineScriptTool(toolset);
 
     const mockToolContext = createMockContext('test-agent', undefined, {
@@ -206,6 +227,7 @@ describe('RunSkillInlineScriptTool', () => {
       stdout: 'mock output',
       stderr: 'mock warning',
       outputFiles: [],
+      outputDirectory: outputDir,
     });
 
     expect(mockExecutor.executeCodeParams).toBeDefined();
@@ -247,7 +269,19 @@ describe('RunSkillInlineScriptTool', () => {
       }),
     });
 
-    expect(materializeFiles).toHaveBeenCalledWith([testFile]);
+    // Output file names come from the model-supplied inline script, so they
+    // must be resolved against a dedicated output directory rather than
+    // process.cwd(). This is the one test that exercises the default
+    // directory, so it owns the cleanup: nothing else knows the generated
+    // name.
+    const defaultDir = await toolset.getScriptOutputDir();
+    try {
+      expect(materializeFiles).toHaveBeenCalledWith([testFile], defaultDir);
+      expect(defaultDir).not.toBe(process.cwd());
+      expect(defaultDir.startsWith(os.tmpdir())).toBe(true);
+    } finally {
+      await fs.rm(defaultDir, {recursive: true, force: true});
+    }
   });
 
   it('successfully passes array arguments to code executor', async () => {
@@ -258,7 +292,10 @@ describe('RunSkillInlineScriptTool', () => {
       outputFiles: [],
     };
 
-    const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+    const toolset = new SkillToolset([], {
+      codeExecutor: mockExecutor,
+      scriptOutputDir: outputDir,
+    });
     const tool = new RunSkillInlineScriptTool(toolset);
 
     const mockToolContext = createMockContext('test-agent', undefined, {
@@ -355,7 +392,10 @@ describe('RunSkillInlineScriptTool', () => {
         stderr: '',
         outputFiles: [],
       };
-      const toolset = new SkillToolset([], {codeExecutor: mockExecutor});
+      const toolset = new SkillToolset([], {
+        codeExecutor: mockExecutor,
+        scriptOutputDir: outputDir,
+      });
       const tool = new RunSkillInlineScriptTool(toolset);
 
       const mockToolContext = createMockContext('test-agent', undefined, {

@@ -149,11 +149,15 @@ export abstract class BaseAgent<
    * When a list of callbacks is provided, the callbacks will be called in the
    * order they are listed until a callback does not return undefined.
    *
-   * @param callbackContext: MUST be named 'callbackContext' (enforced).
+   * Each callback takes a single {@link Context} argument. Returning `Content`
+   * skips this agent's own run — its `runAsyncImpl` body and its
+   * `afterAgentCallback` — and emits the returned content as this agent's
+   * response; return `undefined` to let the run proceed.
    *
-   * @return Content: The content to return to the user. When the content is
-   *     present, the agent run will be skipped and the provided content will be
-   *     returned to user.
+   * That skip is scoped to this agent. It sets `endInvocation` on the
+   * invocation context the agent created for itself, which is a copy of its
+   * parent's, so callers above are unaffected: a `SequentialAgent` still runs
+   * the remaining sub-agents.
    */
   readonly beforeAgentCallback: SingleAgentCallback[];
 
@@ -163,11 +167,9 @@ export abstract class BaseAgent<
    * When a list of callbacks is provided, the callbacks will be called in the
    * order they are listed until a callback does not return undefined.
    *
-   * @param callbackContext: MUST be named 'callbackContext' (enforced).
-   *
-   * @return Content: The content to return to the user. When the content is
-   *     present, the provided content will be used as agent response and
-   *     appended to event history as agent response.
+   * Each callback takes a single {@link Context} argument. Returning `Content`
+   * emits it as the agent's response, appended to the event history; return
+   * `undefined` to leave the response as the agent produced it.
    */
   readonly afterAgentCallback: SingleAgentCallback[];
 
@@ -192,15 +194,16 @@ export abstract class BaseAgent<
   /**
    * Creates a copy of this agent with the given config fields overridden.
    *
-   * Mirrors adk-python's `BaseAgent.clone(update=...)`. The clone is a detached
-   * root: its `parentAgent` is always `undefined`. Sub-agents are recursively
-   * cloned (and re-parented to the clone) unless `subAgents` is overridden.
-   * Rebuilding via the concrete constructor re-derives all state, so a cloned
-   * `LlmAgent` gets a fresh `requestProcessors` array rather than sharing the
-   * original's. See google/adk-js#534.
+   * The clone is a detached root: its `parentAgent` is always `undefined`.
+   * Sub-agents are recursively cloned (and re-parented to the clone) unless
+   * `subAgents` is overridden. Rebuilding via the concrete constructor
+   * re-derives all state, so a cloned `LlmAgent` gets a fresh
+   * `requestProcessors` array rather than sharing the original's.
+   * See google/adk-js#534.
    *
    * @param overrides Config fields to override on the clone. Overriding
-   *     `parentAgent` is rejected, matching adk-python.
+   *     `parentAgent` is rejected: parentage is assigned only when a parent
+   *     agent is constructed with its sub-agents.
    * @returns A new detached agent instance of the same concrete class.
    */
   clone(overrides?: Partial<TConfig>): this {
@@ -213,13 +216,12 @@ export abstract class BaseAgent<
 
     const merged: TConfig = {...this.config, ...overrides};
 
-    // A clone is always a detached root (matches adk-python setting parent to
-    // None); the rebuilt parent constructor re-parents any cloned children.
+    // A clone is always a detached root; the rebuilt parent constructor
+    // re-parents any cloned children.
     merged.parentAgent = undefined;
 
-    // Shallow-copy any list-typed field not provided in overrides so the clone
-    // never shares a mutable array (e.g. `tools`) with the original, mirroring
-    // adk-python's per-field list copy.
+    // Shallow-copy any array-typed field not provided in overrides so the
+    // clone never shares a mutable array (e.g. `tools`) with the original.
     const mergedRecord = merged as Record<string, unknown>;
     for (const key of Object.keys(mergedRecord)) {
       if (key === 'subAgents' || (overrides && key in overrides)) {

@@ -48,6 +48,29 @@ describe('workflow routing values', () => {
     expect((await driveNode(wf, 'x')).output).toBe('target(3)');
   });
 
+  it('reuses one sub-workflow instance across two route keys', async () => {
+    const shared = new Workflow({
+      name: 'shared_sub',
+      edges: [['START', echo('wrapped')]],
+    });
+    const build = (route: RouteValue) => {
+      const router = emit('router', route);
+      return new Workflow({
+        name: 'reuse_parent',
+        edges: [
+          ['START', router],
+          [router, {approve: shared, escalate: shared}],
+        ],
+      });
+    };
+    expect((await driveNode(build('approve'), 'x')).output).toBe(
+      'wrapped(approve)',
+    );
+    expect((await driveNode(build('escalate'), 'x')).output).toBe(
+      'wrapped(escalate)',
+    );
+  });
+
   it('fans out from a single route to multiple nodes, then joins', async () => {
     const router = emit('router', 'go');
     const a = echo('a');

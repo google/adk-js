@@ -55,7 +55,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
     invocationContext: InvocationContext,
   ): boolean | Promise<boolean> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -83,7 +86,10 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 
   async compact(invocationContext: InvocationContext): Promise<void> {
     const events = invocationContext.session.events;
-    const activeEvents = getActiveEvents(events);
+    const activeEvents = getActiveEvents(
+      events,
+      invocationContext.isolationScope,
+    );
     const rawEvents = activeEvents.filter((e) => !isCompactedEvent(e));
 
     if (rawEvents.length <= this.eventRetentionSize) {
@@ -119,6 +125,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
       };
     }
 
+    compactedEvent.isolationScope ??= invocationContext.isolationScope;
     invocationContext.session.events.push(compactedEvent);
   }
 }
@@ -126,8 +133,7 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
 /**
  * Returns the most recently observed prompt token count, if available.
  *
- * Mirrors the Python ADK (`apps/compaction.py::_latest_prompt_token_count`):
- * each model response's `usageMetadata.promptTokenCount` is the measured size
+ * Each model response's `usageMetadata.promptTokenCount` is the measured size
  * of the entire request that produced it (system instruction + tools + full
  * history), so the latest one is used directly. These values must not be
  * summed across events: each already includes all prior history, so a sum

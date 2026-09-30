@@ -11,7 +11,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
 } from '../../events/event.js';
-import {ToolConfirmation} from '../../tools/tool_confirmation.js';
+import {ResumeInputs} from '../../tools/resume_inputs.js';
 import {AsyncQueue} from '../../utils/async_queue.js';
 import {isNodeTool} from '../../workflow/nodes/node_tool.js';
 import {
@@ -79,6 +79,14 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
     }
     const pending: Record<string, FunctionCall> = {};
     for (const event of events) {
+      // A pending call is one THIS agent made and has not finished. A client
+      // that writes a node-tool call into the session as an ordinary message is
+      // not reminding the agent of unfinished work — it is asking for work to
+      // start, with arguments and resume inputs of its own choosing — and a
+      // sibling agent's call is that agent's to resume.
+      if (event.author !== agent.name) {
+        continue;
+      }
       for (const fc of getFunctionCalls(event)) {
         if (
           fc.id &&
@@ -94,14 +102,16 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
       return;
     }
 
-    // 4. Re-run each pending node-tool, threading the resume inputs through the
-    //    tool confirmation payload (read by NodeTool as the node's resumeInputs).
-    const toolConfirmationDict: Record<string, ToolConfirmation> = {};
+    // 4. Re-run each pending node-tool, threading the resume inputs through
+    //    their own mapping (read by NodeTool as the node's resumeInputs).
+    //
+    //    Deliberately NOT a ToolConfirmation: answering a node's question is
+    //    not approving an action, and the two must not be interchangeable. A
+    //    node tool that gates on confirmation therefore still gates here, and
+    //    the only thing that can open that gate is an approval a human gave.
+    const resumeInputsDict: Record<string, ResumeInputs> = {};
     for (const id of Object.keys(pending)) {
-      toolConfirmationDict[id] = new ToolConfirmation({
-        confirmed: true,
-        payload: resumeInputs,
-      });
+      resumeInputsDict[id] = resumeInputs;
     }
 
     const eventQueue = new AsyncQueue<Event>();
@@ -115,7 +125,7 @@ export class RequestInputLlmRequestProcessor extends BaseLlmRequestProcessor {
           beforeToolCallbacks: agent.canonicalBeforeToolCallbacks,
           afterToolCallbacks: agent.canonicalAfterToolCallbacks,
           filters: new Set(Object.keys(pending)),
-          toolConfirmationDict,
+          resumeInputsDict,
         });
       } finally {
         eventQueue.close();
@@ -153,12 +163,9 @@ function collectResumeInputs(events: Event[]): Record<string, unknown> {
     let found = false;
     for (const fr of getFunctionResponses(event)) {
       if (fr.name === REQUEST_INPUT_FUNCTION_CALL_NAME && fr.id) {
-        const response = unwrapResponse(fr.response);
-        const mismatch = interruptResponseMismatch(
-          fr.id,
-          response,
-          responseSchemas.get(fr.id),
-        );
+        const schema = responseSchemas.get(fr.id);
+        const response = unwrapResponse(fr.response, schema);
+        const mismatch = interruptResponseMismatch(fr.id, response, schema);
         if (mismatch) {
           if (isCurrentTurn) {
             throw new Error(mismatch);
@@ -215,10 +222,11 @@ function pendingInterruptIds(
       if (!fr.id) {
         continue;
       }
+      const schema = responseSchemas.get(fr.id);
       const mismatch = interruptResponseMismatch(
         fr.id,
-        unwrapResponse(fr.response),
-        responseSchemas.get(fr.id),
+        unwrapResponse(fr.response, schema),
+        schema,
       );
       if (!mismatch) {
         answered.add(fr.id);
@@ -227,6 +235,17 @@ function pendingInterruptIds(
   }
   const pending = new Set<string>();
   for (const event of events) {
+    // An interrupt is raised by the framework, never by the party answering it:
+    // a client-authored one is a question the client asked itself.
+    //
+    // Tested against the client rather than against the agent's own name, which
+    // is what the confirmation and credential paths do: a node raises its
+    // interrupt under the node's name (`workflow/node_runner.ts` stamps it), so
+    // an agent-name test would never match one. The distinction that matters
+    // here is only that the party answering is not the party that asked.
+    if (event.author === 'user') {
+      continue;
+    }
     for (const fc of getFunctionCalls(event)) {
       if (
         fc.name === REQUEST_INPUT_FUNCTION_CALL_NAME &&

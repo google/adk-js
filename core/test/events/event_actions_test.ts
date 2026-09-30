@@ -8,8 +8,11 @@ import {describe, expect, it} from 'vitest';
 import {AuthConfig} from '../../src/auth/auth_tool.js';
 import {
   createEventActions,
+  EventActions,
+  isDefaultEventActions,
   mergeEventActions,
 } from '../../src/events/event_actions.js';
+import {ToolConfirmation} from '../../src/tools/tool_confirmation.js';
 
 function createTestAuthConfig(credentialKey: string): AuthConfig {
   return {
@@ -64,6 +67,44 @@ describe('createEventActions', () => {
     expect(actions.requestedToolConfirmations).toEqual({
       'call-1': confirmation,
     });
+  });
+});
+
+describe('isDefaultEventActions', () => {
+  it('returns true for freshly created actions', () => {
+    expect(isDefaultEventActions(createEventActions())).toBe(true);
+  });
+
+  const nonDefaults: Array<[string, Partial<EventActions>]> = [
+    ['stateDelta has an entry', {stateDelta: {jobStarted: true}}],
+    ['artifactDelta has an entry', {artifactDelta: {'report.pdf': 1}}],
+    [
+      'requestedAuthConfigs has an entry',
+      {
+        requestedAuthConfigs: {
+          'call-1': {
+            authScheme: {type: 'apiKey', name: 'X-API-Key', in: 'header'},
+            credentialKey: 'call-1-key',
+          },
+        },
+      },
+    ],
+    [
+      'requestedToolConfirmations has an entry',
+      {
+        requestedToolConfirmations: {
+          'call-1': new ToolConfirmation({hint: 'ok?', confirmed: false}),
+        },
+      },
+    ],
+    ['skipSummarization is true', {skipSummarization: true}],
+    ['skipSummarization is explicitly false', {skipSummarization: false}],
+    ['transferToAgent is set', {transferToAgent: 'other_agent'}],
+    ['escalate is set', {escalate: true}],
+  ];
+
+  it.each(nonDefaults)('returns false when %s', (_label, overrides) => {
+    expect(isDefaultEventActions(createEventActions(overrides))).toBe(false);
   });
 });
 

@@ -47,6 +47,11 @@ interface OfflineSample {
   turns: string[];
   /** Set for a sample that pauses for a human on its first turn. */
   pausesOnFirstTurn?: boolean;
+  /**
+   * The exact final output, for a sample whose transformation is the point and
+   * so is worth pinning rather than just asserting something came back.
+   */
+  expectedFinalOutput?: unknown;
 }
 
 /**
@@ -81,7 +86,10 @@ const OFFLINE: Record<string, OfflineSample> = {
   'routes/fan_out_join': {turns: ['hello world']},
   'routes/function_node': {turns: ['hello world']},
   'routes/loop_escalation': {turns: ['graph workflows']},
-  'routes/nested_workflow': {turns: ['hello world']},
+  'routes/nested_workflow': {
+    turns: ['ünïcödé strässe ß ǅungla 😀 test'],
+    expectedFinalOutput: '[B] Ünïcödé Strässe ß Ǆungla 😀 Test',
+  },
   'routes/sequence': {turns: ['hello world']},
 };
 
@@ -158,9 +166,11 @@ describe('workflow docs samples', () => {
         expect(isPaused(perTurn[perTurn.length - 1])).toBe(false);
       }
       // The last turn produces the workflow's answer.
-      expect(
-        finalOutput(allEvents([perTurn[perTurn.length - 1]])),
-      ).toBeDefined();
+      const answer = finalOutput(allEvents([perTurn[perTurn.length - 1]]));
+      expect(answer).toBeDefined();
+      if ('expectedFinalOutput' in spec) {
+        expect(answer).toEqual(spec.expectedFinalOutput);
+      }
     });
   });
 });

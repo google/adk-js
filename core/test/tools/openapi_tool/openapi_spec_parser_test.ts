@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {OpenApiSpecParser} from '@google/adk';
+import {OpenApiSpecParser, ParsedOperation} from '@google/adk';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it} from 'vitest';
 
@@ -193,7 +193,7 @@ describe('OpenApiSpecParser', () => {
             },
           ],
           get: {
-            // operationId is missing, should be auto-generated as "get__users__id_"
+            // operationId is missing. It is auto-generated as "users_id_get".
             responses: {},
           },
         },
@@ -205,7 +205,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(parsed.length).toBe(1);
     const op = parsed[0];
-    expect(op.name).toBe('get__users__id_');
+    expect(op.name).toBe('users_id_get');
     expect(op.parameters.length).toBe(1);
     expect(op.parameters[0].name).toBe('id');
   });
@@ -343,4 +343,172 @@ describe('OpenApiSpecParser', () => {
       );
     });
   });
+
+  describe('parsed operation fields', () => {
+    function parseSingleOperation(
+      operation: OpenAPIV3.OperationObject,
+    ): ParsedOperation {
+      const spec: OpenAPIV3.Document = {
+        openapi: '3.0.0',
+        info: {title: 'Fields API', version: '1.0.0'},
+        paths: {'/items': {get: operation}},
+      };
+
+      const parsed = new OpenApiSpecParser().parse(spec);
+      expect(parsed.length).toBe(1);
+      return parsed[0];
+    }
+
+    it('should default the return value schema to an empty schema when no 2xx response declares one', () => {
+      const op = parseSingleOperation({
+        operationId: 'listItems',
+        responses: {'404': {description: 'Not found'}},
+      });
+
+      expect(op.returnValue).toBeDefined();
+      expect(op.returnValue?.name).toBe('return');
+      expect(op.returnValue?.paramSchema).toEqual({});
+    });
+
+    it('should populate the return value schema from the first 2xx response', () => {
+      const op = parseSingleOperation({
+        operationId: 'listItems',
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {type: 'array', items: {type: 'string'}},
+              },
+            },
+          },
+        },
+      });
+
+      expect(op.returnValue?.paramSchema.type).toBe('array');
+    });
+
+    it('should leave authCredential undefined', () => {
+      const op = parseSingleOperation({
+        operationId: 'listItems',
+        responses: {'200': {description: 'OK'}},
+      });
+
+      expect(op.authCredential).toBeUndefined();
+    });
+  });
+
+  describe('shared reference resolution', () => {
+    it('should leave the caller document untouched', () => {
+      const spec: OpenAPIV3.Document = {
+        openapi: '3.0.0',
+        info: {title: 'Untouched API', version: '1.0.0'},
+        paths: {
+          '/items': {
+            get: {
+              responses: {
+                '200': {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {$ref: '#/components/schemas/Item'},
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        components: {
+          schemas: {
+            Item: {type: 'STRING' as OpenAPIV3.NonArraySchemaObjectType},
+          },
+        },
+      };
+      const before = structuredClone(spec);
+
+      new OpenApiSpecParser().parse(spec);
+
+      expect(spec).toEqual(before);
+    });
+
+    it('should give each reference to one schema an independent object', () => {
+      const spec: OpenAPIV3.Document = {
+        openapi: '3.0.0',
+        info: {title: 'Shared Ref API', version: '1.0.0'},
+        paths: {
+          '/first': {
+            get: {
+              operationId: 'getFirst',
+              responses: {
+                '200': {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {$ref: '#/components/schemas/Shared'},
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '/second': {
+            get: {
+              operationId: 'getSecond',
+              responses: {
+                '200': {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {$ref: '#/components/schemas/Shared'},
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '/third': {
+            get: {
+              operationId: 'getThird',
+              responses: {
+                '200': {
+                  description: 'OK',
+                  content: {
+                    'application/json': {
+                      schema: {$ref: '#/components/schemas/Shared'},
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        components: {
+          schemas: {
+            Shared: {type: 'object', properties: {name: {type: 'string'}}},
+          },
+        },
+      };
+
+      const parsed = new OpenApiSpecParser().parse(spec);
+      expect(parsed.length).toBe(3);
+      const first = returnSchema(parsed[0]);
+      const second = returnSchema(parsed[1]);
+      const third = returnSchema(parsed[2]);
+
+      first.title = 'mutated by the first operation';
+      second.title = 'mutated by the second operation';
+
+      expect(second.title).toBe('mutated by the second operation');
+      expect(third.title).toBeUndefined();
+    });
+  });
 });
+
+/** Returns the schema of a parsed operation's return value. */
+function returnSchema(op: ParsedOperation): OpenAPIV3.SchemaObject {
+  if (!op.returnValue) {
+    expect.fail(`operation '${op.name}' has no return value`);
+  }
+  return op.returnValue.paramSchema;
+}

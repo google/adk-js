@@ -32,7 +32,7 @@ const toolContext = {} as unknown as Context;
 
 /** Builds a bare LlmRequest suitable for `processLlmRequest`. */
 function makeLlmRequest(contents: Content[] = []): LlmRequest {
-  return {contents, toolsDict: {}} as unknown as LlmRequest;
+  return {contents, toolsDict: {}, liveConnectConfig: {}};
 }
 
 /** Builds a content whose first part is a `load_mcp_resource` function response. */
@@ -268,6 +268,94 @@ describe('LoadMcpResourceTool', () => {
 
       expect(llmRequest.contents).toHaveLength(3);
       expect(llmRequest.contents[2].parts?.[1].text).toBe('hello content');
+    });
+
+    it('loads MCP resources when called in parallel alongside other tools', async () => {
+      readResource.mockResolvedValue([
+        {uri: 'file:///res1', mimeType: 'text/plain', text: 'parallel content'},
+      ]);
+      const llmRequest = makeLlmRequest([
+        {role: 'user', parts: [{text: 'run tools'}]},
+        {
+          role: 'model',
+          parts: [
+            {functionCall: {name: 'other_tool', args: {}}},
+            {
+              functionCall: {
+                name: 'load_mcp_resource',
+                args: {resource_names: ['res1']},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {functionResponse: {name: 'other_tool', response: {status: 'ok'}}},
+            {
+              functionResponse: {
+                name: 'load_mcp_resource',
+                response: {resource_names: ['res1']},
+              },
+            },
+          ],
+        },
+      ]);
+
+      await tool.processLlmRequest({toolContext, llmRequest});
+
+      expect(llmRequest.contents).toHaveLength(4);
+      expect(llmRequest.contents[3].parts?.[1].text).toBe('parallel content');
+    });
+
+    it('loads MCP resources when called sequentially before other tools in the same turn', async () => {
+      readResource.mockResolvedValue([
+        {
+          uri: 'file:///res1',
+          mimeType: 'text/plain',
+          text: 'sequential content',
+        },
+      ]);
+      const llmRequest = makeLlmRequest([
+        {role: 'user', parts: [{text: 'run tools'}]},
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'load_mcp_resource',
+                args: {resource_names: ['res1']},
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'load_mcp_resource',
+                response: {resource_names: ['res1']},
+              },
+            },
+          ],
+        },
+        {
+          role: 'model',
+          parts: [{functionCall: {name: 'other_tool', args: {}}}],
+        },
+        {
+          role: 'user',
+          parts: [
+            {functionResponse: {name: 'other_tool', response: {status: 'ok'}}},
+          ],
+        },
+      ]);
+
+      await tool.processLlmRequest({toolContext, llmRequest});
+
+      expect(llmRequest.contents).toHaveLength(6);
+      expect(llmRequest.contents[5].parts?.[1].text).toBe('sequential content');
     });
   });
 });

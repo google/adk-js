@@ -7,11 +7,11 @@
 import {Sessions} from '@google-cloud/vertexai/build/src/genai/sessions.js';
 import {
   createEvent,
+  createSession,
   isCompactedEvent,
   State,
   VertexAiSessionService,
 } from '@google/adk';
-import {Session} from '@google/adk/sessions/session.js';
 import {ApiError} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -32,8 +32,10 @@ vi.mock('nodejs-vertexai', () => ({
 
 const clientConstructor = vi.hoisted(() => vi.fn());
 
-// The service imports Client from this deep path, so the mock must target it.
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+// The service imports Client from the package root, so the mock must target
+// the root. Keep the other root exports for the rest of the module graph.
+vi.mock('@google-cloud/vertexai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@google-cloud/vertexai')>()),
   Client: class {
     readonly agentEnginesInternal = {sessions: {}};
 
@@ -1117,13 +1119,13 @@ describe('VertexAiSessionService', () => {
 
   describe('appendEvent', () => {
     it('appends event to session and falls back on empty invocationId/author', async () => {
-      const session = {
+      const session = createSession({
         id: 'append-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      } as unknown as Session;
+      });
 
       const event = createEvent({
         timestamp: 1620000000000,
@@ -1170,12 +1172,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('appends compaction metadata if event is compacted', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1207,12 +1209,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('appends usage metadata if present', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1238,13 +1240,13 @@ describe('VertexAiSessionService', () => {
     });
 
     it('passes provided author and invocationId from Event', async () => {
-      const session = {
+      const session = createSession({
         id: 'append-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      } as unknown as Session;
+      });
 
       const event = createEvent({
         timestamp: 1620000000000,
@@ -1264,12 +1266,12 @@ describe('VertexAiSessionService', () => {
     });
 
     it('handles event without actions in appendEvent', async () => {
-      const session = {
+      const session = createSession({
         id: 's1',
         appName: '12345',
         userId: 'u1',
         events: [],
-      } as unknown as Session;
+      });
       const event = createEvent({
         timestamp: Date.now(),
         content: {role: 'model', parts: []},
@@ -1289,13 +1291,13 @@ describe('VertexAiSessionService', () => {
 
     describe('agent transfer action', () => {
       const transferSession = () =>
-        ({
+        createSession({
           id: 'transfer-session',
           appName: '12345',
           userId: 'testUser',
           events: [],
           lastUpdateTime: Date.now(),
-        }) as unknown as Session;
+        });
 
       it('sends the transfer under the name the API defines', async () => {
         const event = createEvent({
@@ -1375,17 +1377,127 @@ describe('VertexAiSessionService', () => {
         expect('transferAgent' in sent.config.actions).toBe(false);
       });
     });
+
+    describe('unsupported fields and fallback', () => {
+      const appendSession = () =>
+        createSession({
+          id: 'append-session',
+          appName: '12345',
+          userId: 'testUser',
+          events: [],
+          lastUpdateTime: Date.now(),
+        });
+
+      /** The request config captured by the first appendEvent call. */
+      const appendedConfig = () =>
+        mockClient.events.append.mock.calls[0][0].config;
+
+      it('strips partMetadata from content and rawEvent without mutating the event', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {
+            role: 'user',
+            parts: [
+              {text: 'hello', partMetadata: {source: 'portal'}},
+              {text: 'world', partMetadata: {source: 'portal'}},
+            ],
+          },
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(config.rawEvent?.content).toEqual({
+          role: 'user',
+          parts: [{text: 'hello'}, {text: 'world'}],
+        });
+        expect(event.content?.parts?.[0].partMetadata).toEqual({
+          source: 'portal',
+        });
+      });
+
+      it('handles content without parts', async () => {
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user'},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(appendedConfig().content).toEqual({role: 'user'});
+      });
+
+      it('handles an event without content', async () => {
+        const event = createEvent({timestamp: 1620000000000});
+        delete event.content;
+
+        await service.appendEvent({session: appendSession(), event});
+
+        const config = appendedConfig();
+        expect(config.content).toBeUndefined();
+        expect(config.rawEvent).not.toHaveProperty('content');
+      });
+
+      it('retries without rawEvent when the API rejects it with 400', async () => {
+        const loggerSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        // The retry reuses the request object, so record what each attempt
+        // actually carried instead of inspecting it afterwards.
+        const sentRawEvent: boolean[] = [];
+        mockClient.events.append
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            throw new ApiError({message: 'Unknown name', status: 400});
+          })
+          .mockImplementationOnce(async (params) => {
+            sentRawEvent.push(params.config?.rawEvent !== undefined);
+            return {};
+          });
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await service.appendEvent({session: appendSession(), event});
+
+        expect(sentRawEvent).toEqual([true, false]);
+        // Reusing the request is what keeps the retry's invocation id and
+        // timestamp identical to the first attempt's.
+        const [first, second] = mockClient.events.append.mock.calls;
+        expect(second[0]).toBe(first[0]);
+        loggerSpy.mockRestore();
+      });
+
+      it.each([
+        ['a server error', new ApiError({message: 'try later', status: 503})],
+        ['a network error', new Error('socket hang up')],
+      ])('rethrows %s without re-appending', async (_label, failure) => {
+        mockClient.events.append.mockRejectedValueOnce(failure);
+        const event = createEvent({
+          timestamp: 1620000000000,
+          content: {role: 'user', parts: [{text: 'hello'}]},
+        });
+
+        await expect(
+          service.appendEvent({session: appendSession(), event}),
+        ).rejects.toBe(failure);
+        expect(mockClient.events.append).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('workflow event fields', () => {
     const appendSession = () =>
-      ({
+      createSession({
         id: 'wf-session',
         appName: '12345',
         userId: 'testUser',
         events: [],
         lastUpdateTime: Date.now(),
-      }) as unknown as Session;
+      });
 
     /**
      * Replays an API event the way the real service sees it: the request is
@@ -1584,6 +1696,33 @@ describe('VertexAiSessionService', () => {
       expect(isFastForwardable(states.get('fetch')!)).toBe(true);
       expect([...states.get('gate')!.interruptIds]).toEqual(['gate-1']);
       expect(states.get('gate')?.input).toBe('A(x)');
+    });
+  });
+
+  describe('legacy read path', () => {
+    it('restores transferToAgent from a legacy transferToAgent key', async () => {
+      // Sessions written by earlier adk-js versions stored ADK's own
+      // `transferToAgent` key rather than the API's `transferAgent`.
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'reasoningEngines/12345/sessions/s/events/e1',
+            author: 'model',
+            actions: {transferToAgent: 'legacy-specialist'},
+          },
+        ],
+      });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+      expect(session?.events).toHaveLength(1);
+      expect(session!.events[0].actions.transferToAgent).toBe(
+        'legacy-specialist',
+      );
     });
   });
 });

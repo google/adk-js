@@ -26,12 +26,20 @@ function isInsideDir(resolvedPath: string, resolvedBaseDir: string): boolean {
 }
 
 /**
- * Creates files with the given paths in the current working directory.
+ * Writes `files` into `dir`, refusing any entry that resolves outside of it.
+ *
+ * `dir` is deliberately required and has no default: file names typically
+ * originate from a code executor's output (i.e. from model- or skill-controlled
+ * content), so the destination must be a dedicated directory chosen by the
+ * caller. Defaulting to `process.cwd()` would let such content drop files into
+ * the host application's working directory.
+ *
  * @param files The files to materialize.
+ * @param dir The directory to materialize the files into.
  */
 export async function materializeFiles(
   files: File[],
-  dir = process.cwd(),
+  dir: string,
 ): Promise<File[]> {
   const resolvedBaseDir = path.resolve(dir);
   const createdFiles: File[] = [];
@@ -75,9 +83,19 @@ export async function materializeFiles(
     }
 
     await fs.mkdir(path.dirname(finalPath), {recursive: true});
+    // `wx` opens with O_CREAT | O_EXCL, which fails rather than writing when
+    // anything already exists at `finalPath`. That matters for two reasons
+    // beyond the containment check above:
+    //   - A dangling symlink inside `dir` is invisible to the `fs.access`
+    //     collision probe (it reports the link's missing target), so a plain
+    //     write would follow the link and land outside `dir`. O_EXCL refuses
+    //     to follow a symlink at the final path component.
+    //   - It closes the check-then-write race between that probe and this
+    //     write, so a file created in between is never clobbered.
     await fs.writeFile(
       finalPath,
       Buffer.from(file.content, file.contentEncoding),
+      {flag: 'wx'},
     );
 
     createdFiles.push({

@@ -42,8 +42,9 @@ import {BasePlugin} from './base_plugin.js';
  * ```typescript
  * const loggingPlugin = new LoggingPlugin();
  * const runner = new Runner({
- *   agents: [myAgent],
- *   // ...
+ *   appName: 'my_app',
+ *   agent: myAgent,
+ *   sessionService: new InMemorySessionService(),
  *   plugins: [loggingPlugin],
  * });
  * ```

@@ -8,14 +8,12 @@ import {FunctionDeclaration, Part, Type} from '@google/genai';
 
 import {Context} from '../agents/context.js';
 import {appendInstructions, LlmRequest} from '../models/llm_request.js';
-import {getLogger} from '../utils/logger.js';
+import {logger} from '../utils/logger.js';
 import {
   BaseTool,
   RunAsyncToolRequest,
   ToolProcessLlmRequest,
 } from './base_tool.js';
-
-const logger = getLogger();
 
 const GEMINI_SUPPORTED_INLINE_MIME_PREFIXES = ['image/', 'audio/', 'video/'];
 const GEMINI_SUPPORTED_INLINE_MIME_TYPES = new Set(['application/pdf']);
@@ -151,43 +149,72 @@ export class LoadArtifactsTool extends BaseTool {
     ]);
 
     const contents = llmRequest.contents;
-    if (contents && contents.length > 0) {
-      const lastContent = contents[contents.length - 1];
+    if (!contents || contents.length === 0) {
+      return;
+    }
+
+    // Find the start index of the current turn.
+    // A turn begins after the last completed model response (model message with text)
+    // or at the latest user message that is not a tool response (user prompt).
+    let startIndex = 0;
+    for (let i = contents.length - 1; i >= 0; i--) {
+      const content = contents[i];
+      const hasFunctionResponse = content.parts?.some(
+        (part) => part.functionResponse !== undefined,
+      );
+      const hasFunctionCall = content.parts?.some(
+        (part) => part.functionCall !== undefined,
+      );
+
       if (
-        lastContent.role === 'user' &&
-        lastContent.parts &&
-        lastContent.parts.length > 0
+        (content.role === 'model' && !hasFunctionCall) ||
+        (content.role === 'user' && !hasFunctionResponse)
       ) {
-        const functionResponsePart = lastContent.parts[0];
-        const functionResponse = functionResponsePart.functionResponse;
+        startIndex = i;
+        break;
+      }
+    }
 
-        if (functionResponse && functionResponse.name === 'load_artifacts') {
-          const response =
-            (functionResponse.response as Record<string, unknown>) || {};
-          const namesToLoad = (response['artifact_names'] as string[]) || [];
-
-          for (const artifactName of namesToLoad) {
-            let artifact = await toolContext.loadArtifact(artifactName);
-
-            if (!artifact && !artifactName.startsWith('user:')) {
-              const prefixedName = `user:${artifactName}`;
-              artifact = await toolContext.loadArtifact(prefixedName);
+    const namesToLoad: string[] = [];
+    for (let i = startIndex; i < contents.length; i++) {
+      const content = contents[i];
+      if (content.role === 'user' && content.parts) {
+        for (const part of content.parts) {
+          const functionResponse = part.functionResponse;
+          if (functionResponse && functionResponse.name === this.name) {
+            const response =
+              (functionResponse.response as Record<string, unknown>) || {};
+            const artifactNames =
+              (response['artifact_names'] as string[]) || [];
+            for (const name of artifactNames) {
+              if (name && !namesToLoad.includes(name)) {
+                namesToLoad.push(name);
+              }
             }
-
-            if (!artifact) {
-              logger.warn(`Artifact "${artifactName}" not found, skipping`);
-              continue;
-            }
-
-            const artifactPart = asSafePartForLlm(artifact, artifactName);
-
-            llmRequest.contents.push({
-              role: 'user',
-              parts: [{text: `Artifact ${artifactName} is:`}, artifactPart],
-            });
           }
         }
       }
+    }
+
+    for (const artifactName of namesToLoad) {
+      let artifact = await toolContext.loadArtifact(artifactName);
+
+      if (!artifact && !artifactName.startsWith('user:')) {
+        const prefixedName = `user:${artifactName}`;
+        artifact = await toolContext.loadArtifact(prefixedName);
+      }
+
+      if (!artifact) {
+        logger.warn(`Artifact "${artifactName}" not found, skipping`);
+        continue;
+      }
+
+      const artifactPart = asSafePartForLlm(artifact, artifactName);
+
+      llmRequest.contents.push({
+        role: 'user',
+        parts: [{text: `Artifact ${artifactName} is:`}, artifactPart],
+      });
     }
   }
 }

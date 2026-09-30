@@ -11,15 +11,15 @@ import {
   LiveServerGoAway,
   LiveServerMessage,
   LiveServerSessionResumptionUpdate,
+  Session,
 } from '@google/genai';
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {beforeEach, describe, expect, it, Mocked, vi} from 'vitest';
 import {GeminiLlmConnection} from '../../src/models/gemini_llm_connection.js';
 import {AsyncQueue} from '../../src/utils/async_queue.js';
 import {liveServerMessage} from '../utils/live_server_message_test_utils.js';
 
 describe('GeminiLlmConnection', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockSession: any;
+  let mockSession: Mocked<Session>;
   let messageQueue: AsyncQueue<LiveServerMessage>;
 
   beforeEach(() => {
@@ -28,7 +28,7 @@ describe('GeminiLlmConnection', () => {
       sendToolResponse: vi.fn(),
       sendRealtimeInput: vi.fn(),
       close: vi.fn(),
-    };
+    } as unknown as Mocked<Session>;
     messageQueue = new AsyncQueue<LiveServerMessage>();
   });
 
@@ -120,6 +120,28 @@ describe('GeminiLlmConnection', () => {
       });
     });
 
+    it('should use sendClientContent for Gemini 3.5 Live Translate text', async () => {
+      // Live Translate is not a conversational 3.x Live model (adk-python
+      // parity), so text must not be routed through sendRealtimeInput.
+      const connection = new GeminiLlmConnection(
+        mockSession,
+        'gemini-3.5-live-translate-preview',
+      );
+      const content: Content = {
+        parts: [{text: 'hello'}],
+      };
+
+      await connection.sendContent(content);
+
+      expect(mockSession.sendRealtimeInput).not.toHaveBeenCalledWith({
+        text: 'hello',
+      });
+      expect(mockSession.sendClientContent).toHaveBeenCalledWith({
+        turns: [content],
+        turnComplete: true,
+      });
+    });
+
     it('should use sendClientContent for non-Gemini 3.x single-part text', async () => {
       const connection = new GeminiLlmConnection(
         mockSession,
@@ -175,6 +197,30 @@ describe('GeminiLlmConnection', () => {
       expect(mockSession.sendRealtimeInput).toHaveBeenCalledWith({
         audio: blob,
       });
+    });
+
+    it('should use sendRealtimeInput with audio for Gemini 3.x Live ids without "-flash-live"', async () => {
+      // Regression: these were not matched as 3.x, so their audio went to the
+      // legacy media field and the model silently ignored it.
+      for (const model of [
+        'gemini-3.8-live',
+        'gemini-3.8-live-extended-thinking',
+        'gemini-3.5-transcribe-live',
+        'gemini-3.5-live-translate-preview',
+      ]) {
+        mockSession.sendRealtimeInput.mockClear();
+        const connection = new GeminiLlmConnection(mockSession, model);
+        const blob: Blob = {
+          mimeType: 'audio/pcm;rate=16000',
+          data: 'base64data',
+        };
+
+        await connection.sendRealtime(blob);
+
+        expect(mockSession.sendRealtimeInput).toHaveBeenCalledWith({
+          audio: blob,
+        });
+      }
     });
 
     it('should use sendRealtimeInput with video for Gemini 3.x image', async () => {

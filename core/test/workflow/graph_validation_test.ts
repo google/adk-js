@@ -73,6 +73,37 @@ describe('graph validation', () => {
     ).toThrow(/duplicate edge/i);
   });
 
+  it('allows two route keys pointing at the same node', () => {
+    const [router, shared] = [n('router'), n('shared')];
+    const graph = build([
+      ['START', router],
+      [router, {approve: shared, escalate: shared}],
+    ]);
+    expect(graph.getNextPendingNodes('router', 'approve')).toEqual(['shared']);
+    expect(graph.getNextPendingNodes('router', 'escalate')).toEqual(['shared']);
+  });
+
+  it('allows a routed edge alongside an unconditional one to the same node', () => {
+    const [a, b] = [n('a'), n('b')];
+    expect(() =>
+      build([['START', a], [a, b], new Edge(a, b, 'retry')]),
+    ).not.toThrow();
+  });
+
+  it('rejects the same route pointing at the same node twice', () => {
+    const [a, b] = [n('a'), n('b')];
+    expect(() =>
+      build([['START', a], new Edge(a, b, 'go'), new Edge(a, b, 'go')]),
+    ).toThrow(/duplicate edge.*route="go"/i);
+  });
+
+  it('rejects a multi-route edge overlapping a single-route one', () => {
+    const [a, b] = [n('a'), n('b')];
+    expect(() =>
+      build([['START', a], new Edge(a, b, ['x', 'y']), new Edge(a, b, 'y')]),
+    ).toThrow(/duplicate edge.*route="y"/i);
+  });
+
   it('rejects multiple DEFAULT_ROUTE edges from one node', () => {
     const [a, b, c] = [n('a'), n('b'), n('c')];
     expect(() =>

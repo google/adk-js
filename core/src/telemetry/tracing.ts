@@ -15,7 +15,7 @@
  *    constructs of the framework that are not observable by the SDK.
  */
 
-import {Content} from '@google/genai';
+import {Content, HttpOptions} from '@google/genai';
 import {context, Context, trace} from '@opentelemetry/api';
 
 import {BaseAgent} from '../agents/base_agent.js';
@@ -100,17 +100,20 @@ export function traceAgentInvocation({
 export interface TraceWorkflowInvocationParams {
   workflowName: string;
   nodePath: string;
+  sessionId: string;
 }
 
 export function traceWorkflowInvocation({
   workflowName,
   nodePath,
+  sessionId,
 }: TraceWorkflowInvocationParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
 
   span.setAttributes({
     [GEN_AI_OPERATION_NAME]: 'invoke_workflow',
+    [GEN_AI_CONVERSATION_ID]: sessionId,
     [ADK_WORKFLOW_NAME]: workflowName,
     [ADK_NODE_PATH]: nodePath,
   });
@@ -277,6 +280,9 @@ export function traceCallLlm({
   span.setAttributes({
     'gen_ai.system': 'gcp.vertex.agent',
     'gen_ai.request.model': llmRequest.model,
+    ...(invocationContext.agent?.name
+      ? {[GEN_AI_AGENT_NAME]: invocationContext.agent.name}
+      : {}),
     'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
     'gcp.vertex.agent.session_id': invocationContext.session.id,
     'gcp.vertex.agent.event_id': eventId,
@@ -367,6 +373,24 @@ export function traceSendData({
 }
 
 /**
+ * Returns a copy of the HTTP options without the caller-supplied fields that
+ * can carry credentials.
+ *
+ * `headers` commonly holds an Authorization bearer token and `extraBody` is a
+ * free-form request-body passthrough, so neither may reach an exported span
+ * attribute. The remaining fields are useful for debugging and stay.
+ *
+ * @param httpOptions The HTTP options taken from the request config.
+ * @returns A new HttpOptions object without `headers` and `extraBody`.
+ */
+function redactHttpOptions(httpOptions: HttpOptions): HttpOptions {
+  const redacted: HttpOptions = {...httpOptions};
+  delete redacted.headers;
+  delete redacted.extraBody;
+  return redacted;
+}
+
+/**
  * Builds a dictionary representation of the LLM request for tracing.
  *
  * This function prepares a dictionary representation of the LlmRequest
@@ -386,8 +410,10 @@ function buildLlmRequestForTrace(
 
   if (llmRequest.config) {
     // Create a clean config object, pruning responseSchema to reduce noise size
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {responseSchema, ...cleanConfig} = llmRequest.config;
+    const {responseSchema: _responseSchema, ...cleanConfig} = llmRequest.config;
+    if (cleanConfig.httpOptions) {
+      cleanConfig.httpOptions = redactHttpOptions(cleanConfig.httpOptions);
+    }
     result.config = cleanConfig;
   }
 

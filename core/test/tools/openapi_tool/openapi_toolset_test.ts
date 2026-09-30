@@ -10,8 +10,10 @@ import {
   OpenAPIToolset,
   ReadonlyContext,
 } from '@google/adk';
+import yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
+import {logger} from '../../../src/utils/logger.js';
 
 describe('OpenAPIToolset', () => {
   const mockSpec: OpenAPIV3.Document = {
@@ -179,6 +181,98 @@ describe('OpenAPIToolset', () => {
     const toolset = new OpenAPIToolset({specDict: mockSpec});
     await expect(toolset.close()).resolves.toBeUndefined();
   });
+
+  it('should return a parsed tool by name from getTool', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+
+    expect(toolset.getTool('get_users')?.name).toBe('get_users');
+    expect(toolset.getTool('create_user')?.name).toBe('create_user');
+  });
+
+  it('should return undefined from getTool for an unknown name', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec});
+
+    expect(toolset.getTool('no_such_tool')).toBeUndefined();
+  });
+
+  it('should look up the prefixed name in getTool when a prefix is set', () => {
+    const toolset = new OpenAPIToolset({specDict: mockSpec, prefix: 'test'});
+
+    expect(toolset.getTool('test_get_users')?.name).toBe('test_get_users');
+    expect(toolset.getTool('get_users')).toBeUndefined();
+  });
+
+  it('should not apply toolFilter in getTool', async () => {
+    const toolset = new OpenAPIToolset({
+      specDict: mockSpec,
+      toolFilter: ['get_users'],
+    });
+
+    expect((await toolset.getTools()).length).toBe(1);
+    expect(toolset.getTool('create_user')?.name).toBe('create_user');
+  });
+
+  it('should log one line naming each parsed tool', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+    new OpenAPIToolset({specDict: mockSpec});
+
+    expect(infoSpy.mock.calls).toEqual([
+      ['Parsed tool: get_users'],
+      ['Parsed tool: create_user'],
+    ]);
+    infoSpy.mockRestore();
+  });
+
+  it('should auto-detect YAML from a spec string with no specType', async () => {
+    const toolset = new OpenAPIToolset({
+      specStr: `---\n${yaml.dump(mockSpec)}`,
+    });
+    const tools = await toolset.getTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'get_users',
+      'create_user',
+    ]);
+  });
+
+  it('should accept a supported specType on the spec string path', async () => {
+    const toolset = new OpenAPIToolset({
+      specStr: JSON.stringify(mockSpec),
+      specType: 'json',
+    });
+
+    expect((await toolset.getTools()).length).toBe(2);
+  });
+});
+
+describe('OpenAPIToolset spec type', () => {
+  const minimalSpec: OpenAPIV3.Document = {
+    openapi: '3.0.0',
+    info: {title: 'Test', version: '1.0'},
+    paths: {},
+  };
+
+  it('should throw naming the unsupported spec type', () => {
+    expect(() => {
+      // The compiler rejects 'xml' outright, so the only caller that reaches
+      // this branch is untyped JavaScript or configuration read at run time.
+      // The cast is how a typed test stands in for that caller.
+      new OpenAPIToolset({specStr: '{}', specType: 'xml' as 'json'});
+    }).toThrow('Unsupported spec type: xml');
+  });
+
+  it('should accept json and yaml', () => {
+    expect(() => {
+      new OpenAPIToolset({
+        specStr: JSON.stringify(minimalSpec),
+        specType: 'json',
+      });
+    }).not.toThrow();
+    expect(() => {
+      new OpenAPIToolset({specStr: yaml.dump(minimalSpec), specType: 'yaml'});
+    }).not.toThrow();
+  });
 });
 
 describe('OpenApiSpecParser', () => {
@@ -255,7 +349,7 @@ describe('OpenApiSpecParser', () => {
     const operations = parser.parse(specMissingId);
 
     expect(operations.length).toBe(1);
-    expect(operations[0].operation.operationId).toBe('get__test');
+    expect(operations[0].operation.operationId).toBe('test_get');
   });
 
   it('should extract specific security scheme', () => {

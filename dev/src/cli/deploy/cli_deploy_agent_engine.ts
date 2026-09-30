@@ -28,6 +28,8 @@ export interface DeployToAgentEngineOptions extends BaseDeployOptions {
   stagingBucket?: string;
   repository?: string;
   agentEngineId?: string;
+  minInstances?: number;
+  maxInstances?: number;
 }
 
 export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
@@ -148,8 +150,8 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
         },
         deploymentSpec: {
           containerConcurrency: 9,
-          minInstances: 1,
-          maxInstances: 10,
+          minInstances: options.minInstances ?? 1,
+          maxInstances: options.maxInstances ?? 10,
           resourceLimits: {
             cpu: '1',
             memory: '2Gi',

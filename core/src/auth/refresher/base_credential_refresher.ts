@@ -29,7 +29,7 @@ export interface BaseCredentialRefresher {
    *
    * @param authCredential The credential to check.
    * @param authScheme The authentication scheme (optional).
-   * @returns True if the credential needs to be refreshed, False otherwise.
+   * @returns True if the credential needs to be refreshed, false otherwise.
    */
   isRefreshNeeded(
     authCredential: AuthCredential,

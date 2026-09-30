@@ -24,6 +24,7 @@ import {
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import * as http from 'node:http';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
@@ -122,7 +123,7 @@ class HttpClient {
 
     if (response.status > 399) {
       throw {
-        response: {status: response.status},
+        response: {status: response.status, data, text},
         message: (data as {error?: string})?.error || response.statusText,
       };
     }
@@ -262,6 +263,84 @@ describe('AdkWebServer', () => {
       expect(response.status).toBe(200);
       expect(response.data?.version).toBe(version);
       expect(response.data?.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+  });
+
+  /**
+   * Sends a GET with an explicit Host header, bypassing whatever Host `url`'s
+   * hostname would otherwise imply. `fetch()` cannot do this: undici rewrites
+   * Host to match the actual connection target for any request it dispatches,
+   * which is exactly why the DNS-rebinding guard below has to be tested with
+   * a lower-level client that reproduces what a rebound page's browser
+   * actually sends on the wire.
+   */
+  function getWithHost(url: string, hostHeader: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const target = new URL(url);
+      const req = http.request(
+        {
+          host: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: 'GET',
+          headers: {Host: hostHeader},
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  describe('DNS-rebinding guard', () => {
+    // Regression tests for a missing DNS-rebinding guard: the server bound
+    // to loopback with no --allow_origins configured accepted requests
+    // naming an arbitrary Host, which a page reached via a rebound hostname
+    // would send. Origin cannot catch this -- browsers omit it on requests
+    // they consider same-origin, as a rebound page's are -- so the guard
+    // must key off Host instead, on every method including GET.
+    let guardServer: AdkApiServer;
+
+    beforeEach(async () => {
+      guardServer = new AdkApiServer({
+        agentLoader: {
+          listAgents: () => Promise.resolve(['testApp']),
+        } as unknown as AgentLoader,
+      });
+      await guardServer.start();
+    });
+
+    afterEach(async () => {
+      await guardServer.stop();
+    });
+
+    it('accepts a request whose Host names the loopback bind', async () => {
+      const status = await getWithHost(
+        `${guardServer.url}/version`,
+        'localhost',
+      );
+      expect(status).toBe(200);
+    });
+
+    it('rejects a GET whose Host does not name loopback', async () => {
+      const status = await getWithHost(
+        `${guardServer.url}/version`,
+        'evil.attacker.example',
+      );
+      expect(status).toBe(403);
+    });
+
+    it('rejects a read endpoint with no Origin header at all', async () => {
+      // The exact shape of a DNS-rebound page's request: same-origin as far
+      // as the browser is concerned, so no Origin header is sent.
+      const status = await getWithHost(
+        `${guardServer.url}/list-apps`,
+        'evil.attacker.example',
+      );
+      expect(status).toBe(403);
     });
   });
 
@@ -638,6 +717,66 @@ describe('AdkWebServer', () => {
       }
     });
 
+    it('should return the events a failed invocation produced', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'wf',
+                edges: [
+                  [
+                    'START',
+                    node(async () => 'ok', {name: 'first'}),
+                    node(
+                      async () => {
+                        throw new Error('boom');
+                      },
+                      {name: 'second'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'failSession',
+      });
+
+      let status: number | undefined;
+      let body: {error: string; events: Event[]} | undefined;
+      try {
+        await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'failSession',
+          newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+        });
+      } catch (e: unknown) {
+        const response = (e as {response: {status: number; data: typeof body}})
+          .response;
+        status = response.status;
+        body = response.data;
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+
+      expect(status).toBe(500);
+      expect(body?.error).toContain('Failed to run agent');
+      expect(body?.events.some((e) => e.author === 'first')).toBe(true);
+      const nodeError = body?.events.find(
+        (e) => (e as Event & {isNodeError?: boolean}).isNodeError,
+      );
+      expect(nodeError?.nodeInfo?.path).toBe('wf.second');
+    });
+
     it('should pass abortSignal to Runner.runAsync in /run', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -931,6 +1070,45 @@ describe('AdkWebServer', () => {
       expect(event.data).toEqual({some: 'prefixed trace'});
       expect(session.status).toBe(200);
       expect(session.data![0].name).toBe('call_llm');
+    });
+
+    it('serves traces for a workflow with no LLM span', async () => {
+      const workflowSpan = {
+        name: 'invoke_workflow wf',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span3'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'gen_ai.conversation.id': 'session3'},
+        parentSpanContext: undefined,
+      } as unknown as ReadableSpan;
+      const nodeSpan = {
+        name: 'execute_node wf.one',
+        spanContext: () => ({traceId: 'trace3', spanId: 'span4'}),
+        startTime: [1, 0],
+        endTime: [2, 0],
+        attributes: {'adk.node.path': 'wf.one'},
+        parentSpanContext: {spanId: 'span3'},
+      } as unknown as ReadableSpan;
+      (
+        server as unknown as {
+          memoryExporter: {
+            export: (
+              spans: ReadableSpan[],
+              resultCallback: (result: {code: number}) => void,
+            ) => void;
+          };
+        }
+      ).memoryExporter.export([workflowSpan, nodeSpan], () => {});
+
+      const response = await client.get<{name: string}[]>(
+        '/debug/trace/session/session3',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data!.map((s) => s.name)).toEqual([
+        'invoke_workflow wf',
+        'execute_node wf.one',
+      ]);
     });
   });
 
@@ -1529,7 +1707,7 @@ describe('AdkWebServer', () => {
           `Port ${port} is already in use`,
         );
       } finally {
-        await duplicateServer.stop().catch(() => {});
+        await duplicateServer.stop();
       }
     });
 
@@ -1572,6 +1750,92 @@ describe('AdkWebServer', () => {
       } finally {
         await specificServer.stop();
       }
+    });
+  });
+
+  describe('Shutdown', () => {
+    it('should resolve a second stop() and still free the port on the first', async () => {
+      const shutdownServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await shutdownServer.start();
+
+      const port = parseInt(shutdownServer.url.split(':').pop() ?? '0', 10);
+      expect(port).toBeGreaterThan(0);
+
+      await expect(shutdownServer.stop()).resolves.toBeUndefined();
+      await expect(shutdownServer.stop()).resolves.toBeUndefined();
+
+      // The no-op second stop() must not have cost the first one its close.
+      const reboundServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port,
+      });
+      try {
+        await expect(reboundServer.start()).resolves.toBeUndefined();
+      } finally {
+        await reboundServer.stop();
+      }
+    });
+
+    it('should resolve stop() on a server that never started', async () => {
+      const unstartedServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+
+      await expect(unstartedServer.stop()).resolves.toBeUndefined();
+    });
+
+    it('should resolve stop() after start() failed on a port in use', async () => {
+      const port = parseInt(server.url.split(':').pop() ?? '0', 10);
+      expect(port).toBeGreaterThan(0);
+
+      const duplicateServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+        port,
+      });
+
+      await expect(duplicateServer.start()).rejects.toThrow(
+        `Port ${port} is already in use`,
+      );
+      await expect(duplicateServer.stop()).resolves.toBeUndefined();
+    });
+
+    it('should reject when close() reports an error', async () => {
+      const failingServer = new AdkApiServer({
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      const closeError = new Error('close failed');
+      // No real listener fails to close, so stand one in. Same private-field
+      // shape the Startup tests above use to read `address()`.
+      (
+        failingServer as unknown as {
+          server: {
+            listening: boolean;
+            close: (cb: (err?: Error) => void) => void;
+          };
+        }
+      ).server = {
+        listening: true,
+        close: (cb) => cb(closeError),
+      };
+
+      await expect(failingServer.stop()).rejects.toThrow('close failed');
     });
   });
 
