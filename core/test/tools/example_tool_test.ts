@@ -13,6 +13,7 @@ import {
   createSession,
   Example,
   ExampleTool,
+  InputValidationError,
   InvocationContext,
   LlmRequest,
   PluginManager,
@@ -151,6 +152,58 @@ describe('ExampleTool', () => {
 
   it('is importable from @google/adk (public export)', () => {
     expect(new ExampleTool([])).toBeInstanceOf(ExampleTool);
+  });
+});
+
+/**
+ * Presents a deliberately malformed value as the declared constructor
+ * parameter type. The constructor guards values that reach the SDK from
+ * untyped JavaScript or from a configuration file, which a TypeScript call
+ * site cannot express.
+ */
+function asExamplesArg(value: unknown): Example[] | BaseExampleProvider {
+  return value as Example[] | BaseExampleProvider;
+}
+
+describe('ExampleTool construction validation', () => {
+  it('rejects a list holding a malformed example', () => {
+    expect(
+      () => new ExampleTool(asExamplesArg([{input: {parts: [{text: 'q'}]}}])),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects a duck-typed provider', () => {
+    expect(
+      () =>
+        new ExampleTool(asExamplesArg({getExamples: () => [SIMPLE_EXAMPLE]})),
+    ).toThrow(InputValidationError);
+  });
+
+  it('rejects a fully-qualified provider name string', () => {
+    expect(() => new ExampleTool(asExamplesArg('my.module.provider'))).toThrow(
+      InputValidationError,
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+  ])('rejects %s rather than raising a TypeError later', (_label, value) => {
+    expect(() => new ExampleTool(asExamplesArg(value))).toThrow(
+      InputValidationError,
+    );
+  });
+
+  it('keeps the provider reference the caller passed', () => {
+    const provider = new FixedExampleProvider([SIMPLE_EXAMPLE]);
+
+    expect(new ExampleTool(provider).examples).toBe(provider);
+  });
+
+  it('keeps the array reference the caller passed', () => {
+    const examples = [SIMPLE_EXAMPLE];
+
+    expect(new ExampleTool(examples).examples).toBe(examples);
   });
 });
 
