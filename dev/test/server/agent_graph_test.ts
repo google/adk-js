@@ -113,9 +113,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_sequentialAgent (Sequential Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -137,9 +135,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('label = "🤖 agent2";');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain('cluster_sequentialAgent (Sequential Agent)"');
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
@@ -182,7 +178,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
     expect(dotGraph).toContain('subgraph "cluster_loopAgent (Loop Agent)"');
-    expect(dotGraph).toContain('label = "cluster_loopAgent (Loop Agent)"');
+    expect(dotGraph).toContain('label = "loopAgent (Loop Agent)"');
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
@@ -225,9 +221,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_parallelAgent (Parallel Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_parallelAgent (Parallel Agent)"',
-    );
+    expect(dotGraph).toContain('label = "parallelAgent (Parallel Agent)"');
   });
 
   it('labels a Sequential cluster with the agent name, not the graphviz cluster id', async () => {
