@@ -83,6 +83,27 @@ export function quoteFilterLiteral(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * Copies an API-returned state map into a null-prototype map.
+ *
+ * Session state is read with the `in` operator — `State.get`/`State.has`, and
+ * instruction placeholder resolution in `agents/instructions.ts` — so on a map
+ * that inherits from `Object.prototype`, `{toString}` resolves to the inherited
+ * member and lands in the prompt instead of raising "Context variable not
+ * found". The other session services get this from `trimTempState`; state on an
+ * API response is plain `JSON.parse` output and has to be re-homed here.
+ *
+ * Copying onto a null-prototype target also keeps an own `__proto__` key as an
+ * own data property instead of invoking the inherited `__proto__` setter.
+ *
+ * Shallow, like `trimTempState`: only the top level is read with `in`.
+ */
+function toStateMap(
+  state: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return Object.assign(Object.create(null), state);
+}
+
 export interface VertexAiSessionServiceOptions {
   projectId?: string;
   location?: string;
@@ -224,7 +245,7 @@ export class VertexAiSessionService extends BaseSessionService {
       id,
       appName,
       userId,
-      state: getSessionResponse.sessionState,
+      state: toStateMap(getSessionResponse.sessionState),
       events: [],
       lastUpdateTime: getSessionResponse.updateTime
         ? Date.parse(getSessionResponse.updateTime)
@@ -282,7 +303,7 @@ export class VertexAiSessionService extends BaseSessionService {
         id: sessionId,
         appName,
         userId,
-        state: sessionObj.sessionState,
+        state: toStateMap(sessionObj.sessionState),
         events: [],
         lastUpdateTime: sessionObj.updateTime
           ? Date.parse(sessionObj.updateTime)
@@ -347,7 +368,7 @@ export class VertexAiSessionService extends BaseSessionService {
             id,
             appName,
             userId: sessionObj.userId,
-            state: sessionObj.sessionState,
+            state: toStateMap(sessionObj.sessionState),
             events: [],
             lastUpdateTime: sessionObj.updateTime
               ? new Date(sessionObj.updateTime).getTime()
@@ -697,7 +718,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   }
 
   const eventActions: ExtendedEventActions = {
-    stateDelta: (actions['stateDelta'] as {[key: string]: unknown}) || {},
+    stateDelta: toStateMap(
+      actions['stateDelta'] as Record<string, unknown> | undefined,
+    ),
     artifactDelta: (actions['artifactDelta'] as {[key: string]: number}) || {},
     requestedAuthConfigs:
       (actions.requestedAuthConfigs as Record<string, AuthConfig>) || {},
