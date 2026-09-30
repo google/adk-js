@@ -252,6 +252,13 @@ describe('AgentGraph', () => {
     expect(cluster).not.toContain('bgcolor');
   });
 
+  it('fills a highlighted node inside a cluster in dark green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'other']]);
+
+    expect(nodeBlock(dot, 'first')).toContain('fillcolor = "#0F5223"');
+    expect(nodeBlock(dot, 'second')).toContain('fillcolor = "#ffffff"');
+  });
+
   it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
     const dot = await renderDot(sequentialPipeline());
 
