@@ -269,7 +269,11 @@ describe('Runner Streaming and Ephemeral', () => {
         abortController.abort();
       }
 
-      expect(events.length).toBe(1);
+      // The first model event, then the event sealing the aborted invocation.
+      expect(events.length).toBe(2);
+      expect(events[1].errorCode).toBe('INVOCATION_ABORTED');
+      expect(events[1].author).toBe('abort_agent');
+      expect(events[1].content).toBeUndefined();
     });
 
     it('should respect abort signal during tool execution', async () => {
@@ -323,13 +327,16 @@ describe('Runner Streaming and Ephemeral', () => {
       // the signal off its context, and bailed instead of returning.
       expect(sleepyTool.sawAbort).toBe(true);
       expect(sleepyTool.finished).toBe(false);
-      // The runner stops at the functionCall; the tool's error response never
-      // reaches the caller.
+      // The runner stops at the functionCall; the tool's own error response
+      // never reaches the caller. The call is instead sealed with a synthetic
+      // abort response.
       expect(
         events.flatMap((e) =>
-          (e.content?.parts ?? []).filter((p) => p.functionResponse),
+          (e.content?.parts ?? [])
+            .filter((p) => p.functionResponse)
+            .map((p) => p.functionResponse!.response),
         ),
-      ).toHaveLength(0);
+      ).toEqual([{error: 'Invocation was aborted by client.'}]);
     });
   });
 
