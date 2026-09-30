@@ -110,6 +110,18 @@ export interface RunnerConfig {
    * An optional resumability configuration applied to the runner.
    */
   resumabilityConfig?: ResumabilityConfig;
+
+  /**
+   * Whether to create the session when `runAsync` is given a session id that
+   * does not exist. Defaults to `false`, which reports the missing session as
+   * an error instead.
+   *
+   * Enabling this trades a loud failure for a silent one: a caller that
+   * mistypes a session id gets a new empty conversation rather than an error.
+   * Turn it on only where the session id is a key the caller owns and a first
+   * use is expected to create it.
+   */
+  autoCreateSession?: boolean;
 }
 
 /**
@@ -171,6 +183,7 @@ export class Runner {
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
   readonly resumabilityConfig?: ResumabilityConfig;
+  readonly autoCreateSession: boolean;
 
   /**
    * Creates a new Runner instance.
@@ -198,6 +211,24 @@ export class Runner {
     this.credentialService = input.credentialService;
     this.resumabilityConfig =
       input.app?.resumabilityConfig ?? input.resumabilityConfig;
+    this.autoCreateSession = input.autoCreateSession ?? false;
+  }
+
+  /**
+   * Looks the session up, creating it first when `autoCreateSession` is set.
+   *
+   * A runner with no `appName` cannot address a session, so it falls through to
+   * the plain lookup rather than creating one under an undefined app name.
+   */
+  private async resolveSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<Session | undefined> {
+    const key = {appName: this.appName, userId, sessionId};
+    if (this.autoCreateSession && this.appName) {
+      return this.sessionService.getOrCreateSession(key);
+    }
+    return this.sessionService.getSession(key);
   }
 
   /**
@@ -279,11 +310,7 @@ export class Runner {
         ctx,
         this,
         async function* () {
-          const session = await this.sessionService.getSession({
-            appName: this.appName,
-            userId,
-            sessionId,
-          });
+          const session = await this.resolveSession(userId, sessionId);
 
           if (params.abortSignal?.aborted) {
             return;
