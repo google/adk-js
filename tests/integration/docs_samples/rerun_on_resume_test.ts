@@ -23,7 +23,7 @@ import {finalOutput, runSample} from '../workflows/_harness/sample_harness.js';
 
 const COMPLAINT = 'the delivery was a week late';
 
-function routes(events: Event[]): unknown[] {
+function routes(events: Event[]) {
   return events.map((e) => e.route).filter((route) => route !== undefined);
 }
 

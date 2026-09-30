@@ -46,7 +46,6 @@ const processInput = node(
   (ctx: NodeContext, complaint: string) => {
     if (ctx.state.get('complaint') !== undefined) return;
     ctx.state.set('complaint', complaint.trim());
-    ctx.state.set('feedback', '');
   },
   {name: 'process_input'},
 );
