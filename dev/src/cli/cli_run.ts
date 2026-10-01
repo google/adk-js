@@ -153,6 +153,34 @@ interface InputFile {
   queries: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function loadInputFile(filePath: string): Promise<InputFile | undefined> {
+  const absolutePath = getAbsolutePath(filePath);
+  const contents = await loadFileData<unknown>(absolutePath);
+  if (contents === undefined) {
+    return;
+  }
+
+  if (
+    !isRecord(contents) ||
+    !isRecord(contents.state) ||
+    !Array.isArray(contents.queries) ||
+    !contents.queries.every((query) => typeof query === 'string')
+  ) {
+    throw new Error(
+      `Invalid replay file ${absolutePath}: expected an object with an object "state" and an array of string "queries".`,
+    );
+  }
+
+  return {
+    state: contents.state,
+    queries: contents.queries,
+  };
+}
+
 /**
  * The one readline interface for the run, created on first prompt. A fresh
  * interface per prompt discards the lines readline had already read ahead from
@@ -193,15 +221,13 @@ interface RunFromInputFileOptions {
   artifactService: BaseArtifactService;
   sessionService: BaseSessionService;
   memoryService?: BaseMemoryService;
-  filePath: string;
+  fileContent: InputFile | undefined;
 }
 async function runFromInputFile(
   options: RunFromInputFileOptions,
 ): Promise<Session | undefined> {
-  const fileContent = await loadFileData<InputFile>(
-    getAbsolutePath(options.filePath),
-  );
-  if (!fileContent) {
+  const {fileContent} = options;
+  if (fileContent === undefined) {
     return;
   }
 
@@ -346,6 +372,10 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
   // as failed, rather than being swallowed or printed to stdout with exit 0.
   let watcher: fs.FSWatcher | undefined;
   try {
+    const inputFileContent = options.inputFile
+      ? await loadInputFile(options.inputFile)
+      : undefined;
+
     await using agentFile = new AgentFile(
       getAbsolutePath(options.agentPath),
       options.agentFileLoadOptions,
@@ -393,7 +423,7 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
           artifactService,
           sessionService,
           memoryService,
-          filePath: options.inputFile,
+          fileContent: inputFileContent,
         })) || session;
     } else if (options.savedSessionFile) {
       const loadedSession = await loadFileData<Session>(
