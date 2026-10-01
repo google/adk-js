@@ -180,6 +180,14 @@ export type {
 } from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
+export {
+  INTERNAL_METADATA_PREFIX,
+  RESTORED_EVENT_KEY,
+  markRestored,
+  publicEvent,
+  publicMetadata,
+  publicSession,
+} from './events/internal_metadata.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';
 export type {
   ActivityEvent,
