@@ -108,6 +108,7 @@ describe('core/package.json subpath exports', () => {
   it('exports the situational subsystems as their own entry points', () => {
     expect(subpaths.map(([subpath]) => subpath).sort()).toEqual([
       './a2a',
+      './agents/agent-engine',
       './artifacts/gcs',
       './sessions/database',
       './telemetry/gcp',

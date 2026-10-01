@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {AgentEngineClient} from '@google/adk';
 import {describe, expect, it} from 'vitest';
+import {AgentEngineClient} from '../../src/agents/agent_engine_client.js';
 
 describe('AgentEngineClient E2E', () => {
   it.skipIf(!process.env.AGENT_ENGINE_ID)('should run e2e query', async () => {
