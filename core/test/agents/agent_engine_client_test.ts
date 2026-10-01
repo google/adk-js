@@ -5,8 +5,11 @@
  */
 
 import {helpers, v1} from '@google-cloud/aiplatform';
-import {AgentEngineClient, AgentExecutionError} from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  AgentEngineClient,
+  AgentExecutionError,
+} from '../../src/agents/agent_engine_client.js';
 
 // Mock the grpc client. The method mocks are hoisted so the tests can drive
 // them directly instead of reaching into `.mock.instances[0]`, which is typed

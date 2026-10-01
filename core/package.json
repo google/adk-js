@@ -37,6 +37,12 @@
       "require": "./dist/cjs/a2a/index.js",
       "default": "./dist/esm/a2a/index.js"
     },
+    "./agents/agent-engine": {
+      "types": "./dist/types/agents/agent_engine_client.d.ts",
+      "import": "./dist/esm/agents/agent_engine_client.js",
+      "require": "./dist/cjs/agents/agent_engine_client.js",
+      "default": "./dist/esm/agents/agent_engine_client.js"
+    },
     "./artifacts/gcs": {
       "types": "./dist/types/artifacts/gcs_artifact_service.d.ts",
       "import": "./dist/esm/artifacts/gcs_artifact_service.js",
