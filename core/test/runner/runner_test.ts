@@ -23,6 +23,7 @@ import {
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {buildAbortEvents} from '../../src/events/abort_events.js';
 import {logger} from '../../src/utils/logger.js';
 
 const TEST_APP_ID = 'test_app_id';
@@ -104,7 +105,7 @@ class MockPlugin extends BasePlugin {
             text: MockPlugin.ON_EVENT_CALLBACK_MSG,
           },
         ],
-        role: event.content!.role,
+        role: event.content?.role,
       },
     });
   }
@@ -505,6 +506,61 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  it('does not route to a non-transferable agent through a synthetic abort response', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_response',
+    });
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'non_transferable',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'func_456', name: 'test_func', args: {}}}],
+      },
+    });
+    const abortEvents = buildAbortEvents({
+      events: [callEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    for (const event of [callEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+    expect(result).toBe(rootAgent);
+  });
+
+  it('does not route back to the root through a root-authored abort event', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_event',
+    });
+    const replyEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{text: 'Sub response'}]},
+    });
+    const abortEvents = buildAbortEvents({
+      events: [replyEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    expect(abortEvents[0].author).toBe('root_agent');
+    for (const event of [replyEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    expect(determineAgentForResumption(session, rootAgent)).toBe(subAgent1);
   });
 
   it('does not write an inline attachment payload to the debug log', async () => {
@@ -1052,15 +1108,19 @@ describe('Runner with plugins', () => {
       events.push(event);
     }
 
-    expect(events.length).toBe(0);
+    // The agent event is persisted but not streamed; only the abort event that
+    // seals the invocation is.
+    expect(events.length).toBe(1);
+    expect(events[0].errorCode).toBe('INVOCATION_ABORTED');
 
     const session = await sessionService.getSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
       sessionId: TEST_SESSION_ID,
     });
-    expect(session!.events.length).toBe(2);
+    expect(session!.events.length).toBe(3);
     expect(session!.events[1].author).toBe('test_agent');
+    expect(session!.events[2].errorCode).toBe('INVOCATION_ABORTED');
   });
 });
 
