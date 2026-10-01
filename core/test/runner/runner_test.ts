@@ -14,9 +14,11 @@ import {
   Event,
   InMemoryArtifactService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
   isRoutableLlmAgent,
   LlmAgent,
+  RESTORED_EVENT_KEY,
   Runner,
   ScopedArtifactService,
   SessionArtifactService,
@@ -1304,6 +1306,106 @@ describe('Runner customMetadata support', () => {
 
     appendEventSpy.mockRestore();
   });
+
+  it('drops ADK-internal keys from caller-supplied customMetadata', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      customMetadata: {
+        requestId: 'req-1',
+        [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+        [RESTORED_EVENT_KEY]: true,
+      },
+    })) {
+      // iterate
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.author).toBe('user');
+    expect(userEvent.customMetadata).toEqual({requestId: 'req-1'});
+  });
+
+  it.each([
+    [undefined, {pluginKey: 1}],
+    [{own: 2}, {own: 2, pluginKey: 1}],
+  ])(
+    'keeps ADK-internal keys when a plugin replaces an event (replacement metadata %o)',
+    async (replacementExtra, expectedPublic) => {
+      const internalKey = `${INTERNAL_METADATA_PREFIX}agent`;
+      const agent = new (class extends BaseAgent {
+        protected override async *runAsyncImpl(
+          context: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          yield createEvent({
+            invocationId: context.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'hi'}]},
+            customMetadata: {eventKey: 'v', [internalKey]: 'kept'},
+          });
+        }
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {}
+      })({name: 'metadata_agent'});
+      const plugin = new (class extends BasePlugin {
+        override async onEventCallback({event}: {event: Event}) {
+          return createEvent({
+            author: event.author,
+            content: event.content,
+            customMetadata: {...replacementExtra, pluginKey: 1},
+          });
+        }
+      })('replacing');
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        plugins: [plugin],
+      });
+      await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      })) {
+        events.push(event);
+      }
+
+      expect(events[0].customMetadata).toEqual({
+        ...expectedPublic,
+        [internalKey]: 'kept',
+      });
+      const stored = await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+      const agentEvent = stored!.events.find(
+        (e) => e.author === 'metadata_agent',
+      );
+      expect(agentEvent!.customMetadata).toEqual(events[0].customMetadata);
+    },
+  );
 
   it('should default newMessage role to "user" when role is omitted (issue #475)', async () => {
     const session = await sessionService.createSession({
