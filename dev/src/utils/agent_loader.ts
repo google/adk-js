@@ -219,10 +219,6 @@ export class AgentFile {
         parsedPath.name + FILE_MODULE_TYPE_EXTENSION_MAP[moduleType],
       );
       const originalDir = path.dirname(filePath);
-      // Keep the bundle's `external` packages (`@google-cloud/aiplatform`,
-      // `google-gax`, `@grpc/*`) resolvable from the temp dir by symlinking the
-      // project's `node_modules` next to the compiled file. Node resolves the
-      // symlink to its real path, so nested dependencies resolve too.
       await linkProjectNodeModules(outputDir, parsedPath.dir);
 
       // An explicit `minify: false` is a request for a debug build: readable
@@ -286,12 +282,6 @@ export class AgentFile {
                 'lightningcss',
                 'jiti',
                 'jiti/package.json',
-                // @google-cloud/aiplatform contains gRPC native bindings
-                '@google-cloud/aiplatform',
-                '@google-cloud/vertexai',
-                'google-gax',
-                '@grpc/grpc-js',
-                '@grpc/proto-loader',
               ],
             }
           : {}),
