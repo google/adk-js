@@ -7,6 +7,13 @@
 import {LogLevel, Logger} from '@google/adk';
 import * as winston from 'winston';
 
+const WINSTON_LEVEL_NAMES: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+};
+
 /**
  * Options for the ADK CLI logger.
  */
@@ -82,7 +89,7 @@ export class AdkLogger implements Logger {
       return;
     }
 
-    this.logger.log(level.toString(), messages.join(' '));
+    this.logger.log(WINSTON_LEVEL_NAMES[level], messages.join(' '));
   }
 
   debug(...messages: unknown[]): void {
