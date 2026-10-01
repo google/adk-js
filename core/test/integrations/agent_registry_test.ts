@@ -67,6 +67,10 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   };
 });
 
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(() => ({})),
+}));
+
 describe('AgentRegistry Helpers', () => {
   describe('isGoogleApi', () => {
     it('should return true for Google APIs', () => {
@@ -77,6 +81,11 @@ describe('AgentRegistry Helpers', () => {
     it('should return false for non-Google APIs', () => {
       expect(isGoogleApi('https://example.com')).toBe(false);
       expect(isGoogleApi('invalid-url')).toBe(false);
+    });
+
+    it('should return false for Google API hosts over unencrypted HTTP', () => {
+      expect(isGoogleApi('http://googleapis.com')).toBe(false);
+      expect(isGoogleApi('http://bigquery-mcp.googleapis.com/v1')).toBe(false);
     });
   });
 
@@ -820,14 +829,13 @@ describe('AgentRegistry', () => {
       expect(tools.length).toBe(2);
     });
 
-    it('should support getMcpToolset with empty options and verify auth headers added for Google API', async () => {
+    it('should add ADC auth headers to Google API endpoints over HTTPS', async () => {
       const customHeaderRegistry = new AgentRegistry({
         projectId: 'test-project',
         location: 'global',
       });
 
       const serverDetails = {
-        mcpServerId: 'urn:mcp:1234:bigquery',
         interfaces: [
           {
             url: 'https://bigquery-mcp.googleapis.com/v1',
@@ -845,6 +853,48 @@ describe('AgentRegistry', () => {
       );
       const tools = await toolset.getTools({} as ReadonlyContext);
       expect(tools.length).toBe(2);
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      const [url, options] = Transport.mock.calls.at(-1) ?? [];
+      expect(url.href).toBe('https://bigquery-mcp.googleapis.com/v1');
+      expect(options.requestInit.headers).toMatchObject({
+        'Authorization': 'Bearer fake-token',
+        'x-goog-user-project': 'quota-project-123',
+      });
+    });
+
+    it('should not add ADC auth headers to Google API endpoints over HTTP', async () => {
+      const customHeaderRegistry = new AgentRegistry({
+        projectId: 'test-project',
+        location: 'global',
+      });
+
+      vi.spyOn(customHeaderRegistry, 'getMcpServer').mockResolvedValue({
+        interfaces: [
+          {
+            url: 'http://bigquery-mcp.googleapis.com/v1',
+            protocolBinding: 'JSONRPC',
+          },
+        ],
+      });
+
+      const toolset = await customHeaderRegistry.getMcpToolset(
+        'mcpServers/bq',
+        {},
+      );
+      await toolset.getTools({} as ReadonlyContext);
+
+      const Transport = (
+        await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      ).StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+      const [url, options] = Transport.mock.calls.at(-1) ?? [];
+      expect(url.href).toBe('http://bigquery-mcp.googleapis.com/v1');
+      expect(options.requestInit.headers).not.toHaveProperty('Authorization');
+      expect(options.requestInit.headers).not.toHaveProperty(
+        'x-goog-user-project',
+      );
     });
 
     it('should filter tools if toolFilter option is provided', async () => {
