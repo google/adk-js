@@ -9,12 +9,26 @@ import {
   FileContentEncoding,
 } from '../code_executors/code_execution_utils.js';
 
+/**
+ * The one extension -> MIME type table for the package. Keys are dotted and
+ * lowercase, so they match `path.extname()` output directly.
+ */
 const MIME_TYPE_MAP: Record<
   string,
   {mimeType: string; encoding: FileContentEncoding}
 > = {
   '.js': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
+  '.cjs': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
+  '.mjs': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
+  '.ts': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
+  '.cts': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
+  '.mts': {mimeType: 'text/javascript', encoding: FileContentEncoding.UTF8},
   '.py': {mimeType: 'text/x-python', encoding: FileContentEncoding.UTF8},
+  '.sh': {mimeType: 'text/x-shellscript', encoding: FileContentEncoding.UTF8},
+  '.bash': {
+    mimeType: 'text/x-shellscript',
+    encoding: FileContentEncoding.UTF8,
+  },
   '.md': {mimeType: 'text/markdown', encoding: FileContentEncoding.UTF8},
   '.txt': {mimeType: 'text/plain', encoding: FileContentEncoding.UTF8},
   '.html': {mimeType: 'text/html', encoding: FileContentEncoding.UTF8},
@@ -28,6 +42,7 @@ const MIME_TYPE_MAP: Record<
   '.png': {mimeType: 'image/png', encoding: FileContentEncoding.BASE64},
   '.jpg': {mimeType: 'image/jpeg', encoding: FileContentEncoding.BASE64},
   '.jpeg': {mimeType: 'image/jpeg', encoding: FileContentEncoding.BASE64},
+  '.gif': {mimeType: 'image/gif', encoding: FileContentEncoding.BASE64},
   '.pdf': {mimeType: 'application/pdf', encoding: FileContentEncoding.BASE64},
 };
 
