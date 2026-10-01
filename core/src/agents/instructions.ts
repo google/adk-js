@@ -166,7 +166,13 @@ export async function injectSessionState(
     : [];
 
   const pattern = /\{+[^{}]*}+/g;
-  const matches = Array.from(template.matchAll(pattern));
+  // Braces right after `$` or `\` are literal text such as `${expr}`,
+  // `${{expr}}` or `\{expr}`, not a placeholder (as in adk-python). Checked
+  // here rather than with a lookbehind, which the web build targets lack.
+  const matches = Array.from(template.matchAll(pattern)).filter((match) => {
+    const previous = template[match.index! - 1];
+    return previous !== '$' && previous !== '\\';
+  });
 
   if (matches.length === 0 && sourceMatches.length === 0) {
     return template;
