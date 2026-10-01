@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {Type} from '@google/genai';
-import {trace} from '@opentelemetry/api';
+import {ApiError, Type} from '@google/genai';
+import {SpanStatusCode, trace} from '@opentelemetry/api';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {
@@ -16,9 +16,12 @@ import {
   LlmRequest,
   LlmResponse,
   Session,
+  ToolErrorType,
+  ToolExecutionError,
   createEventActions,
 } from '@google/adk';
 import {
+  resolveErrorType,
   traceAgentInvocation,
   traceCallLlm,
   traceMergedToolCalls,
@@ -46,6 +49,8 @@ describe('Telemetry Tracing Functions', () => {
     mockSpan = {
       setAttributes: vi.fn(),
       setAttribute: vi.fn(),
+      setStatus: vi.fn(),
+      recordException: vi.fn(),
     };
 
     mockAgent = {
@@ -184,6 +189,77 @@ describe('Telemetry Tracing Functions', () => {
         'gcp.vertex.agent.tool_response':
           expect.stringContaining('not specified'),
       });
+    });
+
+    it('records a thrown ADK error using its explicit error type', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const error = new ToolExecutionError(
+        'sensitive tool error details',
+        ToolErrorType.BAD_REQUEST,
+      );
+
+      traceToolCall({tool: mockTool, args: {}, error});
+
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        ToolErrorType.BAD_REQUEST,
+      );
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({
+        code: SpanStatusCode.ERROR,
+        message: ToolErrorType.BAD_REQUEST,
+      });
+      expect(mockSpan.setStatus).not.toHaveBeenCalledWith(
+        expect.objectContaining({message: error.message}),
+      );
+    });
+
+    it('records a GenAI API error using its HTTP status', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const error = new ApiError({status: 429, message: 'rate limited'});
+
+      traceToolCall({tool: mockTool, args: {}, error});
+
+      expect(resolveErrorType(error)).toBe('429');
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith('error.type', '429');
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({
+        code: SpanStatusCode.ERROR,
+        message: '429',
+      });
+    });
+
+    it('uses the error class name as the fallback error type', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+      const error = new TypeError('invalid tool arguments');
+
+      traceToolCall({tool: mockTool, args: {}, error});
+
+      expect(resolveErrorType(error)).toBe('TypeError');
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'TypeError',
+      );
+    });
+
+    it('marks a typed error response without recording an exception', () => {
+      vi.mocked(trace.getActiveSpan).mockReturnValue(mockSpan);
+
+      traceToolCall({
+        tool: mockTool,
+        args: {},
+        functionResponseEvent: mockEvent,
+        errorType: 'MCP_TOOL_ERROR',
+      });
+
+      expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+        'error.type',
+        'MCP_TOOL_ERROR',
+      );
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({
+        code: SpanStatusCode.ERROR,
+        message: 'MCP_TOOL_ERROR',
+      });
+      expect(mockSpan.recordException).not.toHaveBeenCalled();
     });
   });
 
