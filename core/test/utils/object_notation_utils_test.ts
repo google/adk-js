@@ -8,6 +8,7 @@ import {describe, expect, it} from 'vitest';
 import {
   toCamelCase,
   toSnakeCase,
+  toSnakeCaseKey,
 } from '../../src/utils/object_notation_utils.js';
 
 describe('toCamelCase', () => {
@@ -149,5 +150,15 @@ describe('toSnakeCase', () => {
     expect(toSnakeCase(123)).toBe(123);
     expect(toSnakeCase(null)).toBe(null);
     expect(toSnakeCase(undefined)).toBe(undefined);
+  });
+});
+
+describe('toSnakeCaseKey', () => {
+  it('converts camelCase, PascalCase, acronyms, and hyphenated keys to snake_case', () => {
+    expect(toSnakeCaseKey('apiKey')).toBe('api_key');
+    expect(toSnakeCaseKey('XApiKey')).toBe('x_api_key');
+    expect(toSnakeCaseKey('X-Api-Key')).toBe('x_api_key');
+    expect(toSnakeCaseKey('Proxy-Authorization')).toBe('proxy_authorization');
+    expect(toSnakeCaseKey('user:apiKey')).toBe('user:api_key');
   });
 });
