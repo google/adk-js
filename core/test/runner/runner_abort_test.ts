@@ -87,7 +87,7 @@ class AbortableAgent extends BaseAgent {
 
 /** Replays one response per call and records every request. */
 class RecordingLlm extends BaseLlm {
-  readonly requests: LlmRequest[] = [];
+  readonly requests: Content[][] = [];
 
   constructor(private readonly replies: Array<string | Part>) {
     super({model: 'recording-llm'});
@@ -96,7 +96,7 @@ class RecordingLlm extends BaseLlm {
   async *generateContentAsync(
     request: LlmRequest,
   ): AsyncGenerator<LlmResponse, void, void> {
-    this.requests.push(structuredClone(request.contents) as never);
+    this.requests.push(structuredClone(request.contents));
     const reply =
       this.replies[Math.min(this.requests.length - 1, this.replies.length - 1)];
     const part: Part = typeof reply === 'string' ? {text: reply} : reply;
@@ -304,9 +304,7 @@ describe('Runner abort sealing', () => {
 
     expect(texts(events.map((e) => e.content))).toEqual(['Recovered']);
     const lastRequest = model.requests[model.requests.length - 1];
-    expect(functionResponsesIn(lastRequest as unknown as Content[])).toEqual([
-      {error: ABORT_MESSAGE},
-    ]);
+    expect(functionResponsesIn(lastRequest)).toEqual([{error: ABORT_MESSAGE}]);
   });
 
   describe.each([
