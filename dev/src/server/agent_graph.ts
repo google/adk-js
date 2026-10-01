@@ -123,41 +123,13 @@ export async function buildGraph(
     const caption = getNodeCaption(toolOrAgent);
     const asCluster = shouldBuildAgentCluster(toolOrAgent);
 
-    if (highlightsPairs) {
-      for (const highlightsPair of highlightsPairs) {
-        if (highlightsPair.includes(name)) {
-          if (asCluster) {
-            const cluster = new Subgraph(`cluster_${name}`, {
-              label: `cluster_${name}`,
-              style: 'rounded',
-              bgcolor: WHITE,
-              fontcolor: LIGHT_GRAY,
-            });
-            graph.addSubgraph(cluster);
-
-            await buildCluster(cluster, rootAgent);
-          } else {
-            graph.addNode(
-              new Node(name, {
-                label: caption,
-                style: 'filled,rounded',
-                fillcolor: DARK_GREEN,
-                color: DARK_GREEN,
-                shape,
-                fontcolor: LIGHT_GRAY,
-              }),
-            );
-          }
-          return;
-        }
-      }
-    }
-
+    // A cluster is drawn the same way whether or not it is highlighted; the
+    // highlight shows on the sub-agents and edges inside it.
     if (asCluster) {
       const cluster = new Subgraph(`cluster_${name}`, {
-        label: `cluster_${name}`,
+        label: name,
         style: 'rounded',
-        bgcolor: WHITE,
+        color: WHITE,
         fontcolor: LIGHT_GRAY,
       });
       graph.addSubgraph(cluster);
@@ -165,6 +137,23 @@ export async function buildGraph(
       await buildCluster(cluster, rootAgent);
 
       return;
+    }
+
+    for (const highlightsPair of highlightsPairs) {
+      if (highlightsPair.includes(name)) {
+        graph.addNode(
+          new Node(name, {
+            label: caption,
+            style: 'filled,rounded',
+            fillcolor: DARK_GREEN,
+            color: DARK_GREEN,
+            shape,
+            fontcolor: LIGHT_GRAY,
+          }),
+        );
+
+        return;
+      }
     }
 
     graph.addNode(
@@ -180,33 +169,31 @@ export async function buildGraph(
   }
 
   function drawEdge(fromName: string, toName: string) {
-    if (highlightsPairs) {
-      for (const [highlightFrom, highlightTo] of highlightsPairs) {
-        if (fromName === highlightFrom && toName === highlightTo) {
-          graph.addEdge(
-            new Edge([graph.node(fromName), graph.node(toName)], {
-              color: LIGHT_GREEN,
-            }),
-          );
-          return;
-        }
+    for (const [highlightFrom, highlightTo] of highlightsPairs) {
+      if (fromName === highlightFrom && toName === highlightTo) {
+        graph.addEdge(
+          new Edge([graph.node(fromName), graph.node(toName)], {
+            color: LIGHT_GREEN,
+          }),
+        );
+        return;
+      }
 
-        if (fromName === highlightTo && toName === highlightFrom) {
-          graph.addEdge(
-            new Edge([graph.node(fromName), graph.node(toName)], {
-              color: LIGHT_GREEN,
-              dir: 'back',
-            }),
-          );
-          return;
-        }
+      if (fromName === highlightTo && toName === highlightFrom) {
+        graph.addEdge(
+          new Edge([graph.node(fromName), graph.node(toName)], {
+            color: LIGHT_GREEN,
+            dir: 'back',
+          }),
+        );
+        return;
       }
     }
 
     if (shouldBuildAgentCluster(rootAgent)) {
       graph.addEdge(
         new Edge([new Node(fromName), new Node(toName)], {
-          color: LIGHT_GREEN,
+          color: LIGHT_GRAY,
         }),
       );
 
