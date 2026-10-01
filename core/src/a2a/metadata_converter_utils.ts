@@ -6,6 +6,7 @@
 
 import {Event as AdkEvent} from '../events/event.js';
 import {EventActions as AdkEventActions} from '../events/event_actions.js';
+import {publicMetadata} from '../events/internal_metadata.js';
 import {A2AEvent, isTask} from './a2a_event.js';
 
 const ADK_METADATA_KEY_PREFIX = 'adk_';
@@ -91,7 +92,7 @@ export function getA2AEventMetadata(
     [A2AMetadataKeys.CITATION_METADATA]: adkEvent.citationMetadata,
     [A2AMetadataKeys.GROUNDING_METADATA]: adkEvent.groundingMetadata,
     [A2AMetadataKeys.USAGE_METADATA]: adkEvent.usageMetadata,
-    [A2AMetadataKeys.CUSTOM_METADATA]: adkEvent.customMetadata,
+    [A2AMetadataKeys.CUSTOM_METADATA]: publicMetadata(adkEvent.customMetadata),
     [A2AMetadataKeys.PARTIAL]: adkEvent.partial,
     [A2AMetadataKeys.IS_LONG_RUNNING]:
       (adkEvent.longRunningToolIds || []).length > 0,

@@ -38,6 +38,10 @@ import {
 import {buildAbortEvents, isAbortEvent} from '../events/abort_events.js';
 import {createEvent, Event} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
+import {
+  internalMetadata,
+  withoutInternalMetadata,
+} from '../events/internal_metadata.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
@@ -414,7 +418,8 @@ export class Runner {
                   ? createEventActions({stateDelta})
                   : undefined,
                 content: newMessage,
-                customMetadata: params.customMetadata,
+                // Callers cannot set ADK-internal keys.
+                customMetadata: withoutInternalMetadata(params.customMetadata),
               }),
             });
             if (params.abortSignal?.aborted) {
@@ -569,7 +574,7 @@ export class Runner {
     });
     const outputEvent = modifiedEvent
       ? {
-          ...modifiedEvent,
+          ...withInternalMetadataOf(event, modifiedEvent),
           id: event.id,
           invocationId: event.invocationId,
           timestamp: event.timestamp,
@@ -857,7 +862,9 @@ export class Runner {
               return;
             }
 
-            const eventToProcess = modifiedEvent ?? event;
+            const eventToProcess = modifiedEvent
+              ? withInternalMetadataOf(event, modifiedEvent)
+              : event;
 
             if (
               !eventToProcess.partial &&
@@ -880,6 +887,22 @@ export class Runner {
       span.end();
     }
   }
+}
+
+/**
+ * Returns a plugin's replacement event carrying the ADK-internal
+ * `customMetadata` keys of the original. Those keys belong to ADK, so a
+ * replacement cannot drop them.
+ */
+function withInternalMetadataOf(original: Event, replacement: Event): Event {
+  const internal = internalMetadata(original.customMetadata);
+  if (Object.keys(internal).length === 0) {
+    return replacement;
+  }
+  return {
+    ...replacement,
+    customMetadata: {...(replacement.customMetadata ?? {}), ...internal},
+  };
 }
 
 /**

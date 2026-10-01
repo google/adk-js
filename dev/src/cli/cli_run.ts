@@ -16,6 +16,8 @@ import {
   InMemoryMemoryService,
   InMemorySessionService,
   isApp,
+  markRestored,
+  publicSession,
   requiresUserInput,
   RunnableRoot,
   Runner,
@@ -76,8 +78,7 @@ function renderUserInputRequest(request: UserInputRequest): string {
   }
 
   const scheme = request.authConfig?.authScheme as
-    | {type?: string; in?: string; name?: string}
-    | undefined;
+    {type?: string; in?: string; name?: string} | undefined;
   if (scheme?.type) {
     const where =
       scheme.in && scheme.name ? ` (${scheme.in} ${scheme.name})` : '';
@@ -431,7 +432,10 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       );
       if (loadedSession) {
         for (const event of loadedSession.events) {
-          await sessionService.appendEvent({session, event});
+          await sessionService.appendEvent({
+            session,
+            event: markRestored(event),
+          });
           printEvent(event, {announcePauses: false});
         }
 
@@ -487,7 +491,10 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
         userId: session.userId,
         sessionId: session.id,
       });
-      await saveToFile(getAbsolutePath(sessionPath), sessionToStore);
+      await saveToFile(
+        getAbsolutePath(sessionPath),
+        sessionToStore && publicSession(sessionToStore),
+      );
 
       console.log('Session saved to', sessionPath);
     }

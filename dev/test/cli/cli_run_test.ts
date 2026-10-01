@@ -8,7 +8,9 @@ import {
   BaseAgent,
   BaseSessionService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   isApp,
+  RESTORED_EVENT_KEY,
   Runner,
 } from '@google/adk';
 import * as path from 'node:path';
@@ -612,6 +614,61 @@ describe('cli_run', () => {
       path.join(process.cwd(), 'agents', 'my-session.session.json'),
       expect.anything(),
     );
+  });
+
+  it('strips ADK-internal metadata from resumed events and marks them restored', async () => {
+    (loadFileData as Mock).mockResolvedValue({
+      id: 'old-session',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {
+          author: 'user',
+          content: {parts: [{text: 'Hi'}]},
+          customMetadata: {
+            keep: 1,
+            [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+            [RESTORED_EVENT_KEY]: false,
+          },
+        },
+      ],
+    });
+    const mockSessionService = createMockSessionService();
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      savedSessionFile: 'session.json',
+      sessionService: mockSessionService,
+    });
+
+    const appended = (mockSessionService.appendEvent as Mock).mock.calls.map(
+      (call) => call[0].event.customMetadata,
+    );
+    expect(appended).toEqual([{keep: 1, [RESTORED_EVENT_KEY]: true}]);
+  });
+
+  it('saves the session without ADK-internal metadata', async () => {
+    const mockSessionService = createMockSessionService();
+    (mockSessionService.getSession as Mock).mockResolvedValue({
+      id: 'session-123',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {author: 'user', customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true}},
+      ],
+    });
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      saveSession: true,
+      sessionId: 'my-session',
+      sessionService: mockSessionService,
+    });
+
+    const saved = (saveToFile as Mock).mock.calls[0][1];
+    expect(
+      saved.events.map((e: {customMetadata?: unknown}) => e.customMetadata),
+    ).toEqual([{keep: 1}]);
   });
 
   it('should prompt for session id if not provided when saving', async () => {
