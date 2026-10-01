@@ -19,6 +19,8 @@ import {
   isApp,
   Logger,
   LogLevel,
+  publicEvent,
+  publicSession,
   RunConfig,
   RunnableRoot,
   Runner,
@@ -607,7 +609,7 @@ export class AdkApiServer {
             return;
           }
 
-          res.json(session);
+          res.json(publicSession(session));
         } catch (e: unknown) {
           const error = `Failed to get session: ${e}`;
 
@@ -629,7 +631,10 @@ export class AdkApiServer {
             userId,
           });
 
-          res.json(sessions);
+          res.json({
+            ...sessions,
+            sessions: sessions.sessions.map((s) => publicSession(s)),
+          });
         } catch (e: unknown) {
           const error = `Failed to list sessions: ${e}`;
 
@@ -668,7 +673,7 @@ export class AdkApiServer {
             sessionId,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -692,7 +697,7 @@ export class AdkApiServer {
             state,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -1270,13 +1275,17 @@ export class AdkApiServer {
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 
-    yield* runner.runAsync({
+    // Every run endpoint streams through here, so events leave without
+    // ADK-internal customMetadata.
+    for await (const event of runner.runAsync({
       userId: options.userId,
       sessionId: options.sessionId,
       newMessage: options.newMessage,
       runConfig: options.runConfig,
       stateDelta: options.stateDelta,
       abortSignal: options.abortSignal,
-    });
+    })) {
+      yield publicEvent(event);
+    }
   }
 }
