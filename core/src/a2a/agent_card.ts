@@ -22,8 +22,8 @@ import {BaseTool, isBaseTool} from '../tools/base_tool.js';
 import {isBaseToolset} from '../tools/base_toolset.js';
 import {logger} from '../utils/logger.js';
 import {
-  isHttpUrl,
   isLinkLocalAddress,
+  isLocalhostHostname,
   normalizeHost,
   resolveHostAddresses,
 } from '../utils/ssrf_guard.js';
@@ -96,11 +96,15 @@ export async function resolveAgentCard(
 
   const source = agentCard as string;
   if (source.startsWith('http://') || source.startsWith('https://')) {
-    const resolver = new DefaultAgentCardResolver();
+    await refuseLinkLocalHost(source);
+    const resolver = new DefaultAgentCardResolver({
+      fetchImpl: refuseRedirectFetch,
+    });
     const card = await resolver.resolve(source);
     validateCardRpcTargets(card, source, options);
     return card;
   }
+  const url = parseCardUrl(source);
   if (url && url.protocol !== 'file:') {
     throw new Error(
       `Unsupported agent card URL scheme "${url.protocol}": ${agentCard}. ` +
@@ -108,6 +112,70 @@ export async function resolveAgentCard(
     );
   }
   return readAgentCardFile(agentCard, url);
+}
+
+/**
+ * Matches the single-letter "protocol" Node's URL parser produces for a
+ * Windows drive-letter path (e.g. `C:\foo` or `C:/foo` parses with
+ * `protocol === 'c:'`), so such a path is treated as a filesystem path
+ * rather than rejected as an unsupported URL scheme.
+ */
+const WINDOWS_DRIVE_PROTOCOL = /^[a-z]:$/i;
+
+/**
+ * Rejects `source` if its host is, or resolves to, a link-local address --
+ * before any fetch happens, so the request itself never reaches the
+ * metadata endpoint a link-local address can expose.
+ *
+ * Checks every address a hostname resolves to, not only the first: DNS can
+ * return several, and `fetch`'s own connection may pick any of them, so one
+ * link-local address among otherwise-global ones is still refused.
+ */
+async function refuseLinkLocalHost(source: string): Promise<void> {
+  const hostname = normalizeHost(new URL(source).hostname);
+  if (isLocalhostHostname(hostname)) {
+    return;
+  }
+  const addresses = await resolveHostAddresses(hostname);
+  if (addresses.some((address) => isLinkLocalAddress(address))) {
+    throw new Error(
+      `Refusing to fetch agent card from a link-local address: ${hostname}`,
+    );
+  }
+}
+
+/**
+ * Fetches `url` with redirects disabled, refusing instead of following one.
+ *
+ * `DefaultAgentCardResolver`'s own fetch follows redirects by default, which
+ * would make the request itself reach wherever a compromised or
+ * misconfigured card endpoint points it -- before this module's own
+ * same-origin check on the card's declared RPC URLs ever runs. A redirect
+ * to an internal or metadata address is a real request either way,
+ * regardless of whether the resulting content later fails that check.
+ *
+ * A response whose `status` is 0 covers both an opaque redirect
+ * (`type: 'opaqueredirect'`, from `redirect: 'manual'` crossing an
+ * actually-followed-elsewhere boundary) and a network error
+ * (`type: 'error'`): neither carries a usable `location`, so both are
+ * refused the same way, with `location` reported as `null`.
+ */
+async function refuseRedirectFetch(
+  url: string | URL | Request,
+  init?: Parameters<typeof fetch>[1],
+): Promise<Response> {
+  const response = await fetch(url, {...init, redirect: 'manual'});
+  if (
+    response.status === 0 ||
+    (response.status >= 300 && response.status < 400)
+  ) {
+    const location = response.headers.get('location');
+    throw new Error(
+      `Refusing to follow a redirect from the agent card endpoint ` +
+        `(status ${response.status}, location ${location}): ${url}`,
+    );
+  }
+  return response;
 }
 
 /**

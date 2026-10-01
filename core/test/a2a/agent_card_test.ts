@@ -4,18 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
 import * as http from 'node:http';
 import type {AddressInfo} from 'node:net';
 import * as os from 'node:os';
-import {describe, expect, it, vi} from 'vitest';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   buildAgentSkills,
   resolveAgentCard,
   ResolveAgentCardOptions,
 } from '../../src/a2a/agent_card.js';
+import {logger} from '../../src/utils/logger.js';
 import {node} from '../../src/workflow/node.js';
 import {Workflow} from '../../src/workflow/workflow.js';
-import {logger} from '../../src/utils/logger.js';
 
 import type {AgentCard} from '@a2a-js/sdk';
 import {
@@ -224,9 +228,7 @@ describe('Agent Card', () => {
         res.writeHead(200, {'Content-Type': 'application/json'});
         res.end(JSON.stringify(cardFactory(port)));
       });
-      await new Promise<void>((resolve) =>
-        server.listen(0, bindHost, resolve),
-      );
+      await new Promise<void>((resolve) => server.listen(0, bindHost, resolve));
       try {
         const port = (server.address() as AddressInfo).port;
         return await fn(`http://${bindHost}:${port}`);
@@ -777,9 +779,17 @@ describe('Agent Card', () => {
     );
 
     it('fetches the card from a private address', async () => {
-      fetchMock.mockResolvedValue(cardResponse());
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ...STUB_CARD,
+            url: 'https://10.0.0.5/a2a/peer_agent/',
+          }),
+          {headers: {'content-type': 'application/json'}},
+        ),
+      );
 
-      const card = await resolveAgentCard('http://10.0.0.5/');
+      const card = await resolveAgentCard('https://10.0.0.5/');
 
       expect(card.name).toBe('peer_agent');
       expect(fetchMock).toHaveBeenCalledTimes(1);
