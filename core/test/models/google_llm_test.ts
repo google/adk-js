@@ -671,6 +671,59 @@ describe('GoogleLlm', () => {
       // We expect at least the text chunk, the flush, and the finalization.
       expect(responses.length).toBeGreaterThanOrEqual(2);
     });
+
+    describe('text interleaved with inline audio', () => {
+      const audioPart = {inlineData: {mimeType: 'audio/pcm', data: 'AAAA'}};
+
+      it('keeps the text buffered across an audio chunk and aggregates it at the end', async () => {
+        const gemini = createStreamingGemini([
+          {candidates: [{content: {role: 'model', parts: [{text: 'Hello '}]}}]},
+          {candidates: [{content: {role: 'model', parts: [audioPart]}}]},
+          {
+            candidates: [
+              {
+                content: {role: 'model', parts: [{text: 'world'}]},
+                finishReason: 'STOP',
+              },
+            ],
+          },
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses.map((r) => [r.content?.parts, r.partial])).toEqual([
+          [[{text: 'Hello '}], true],
+          [[audioPart], false],
+          [[{text: 'world'}], true],
+          [[{text: 'Hello world'}], false],
+        ]);
+      });
+
+      it('still flushes the text before a non-audio, non-text chunk', async () => {
+        const functionCallPart = {
+          functionCall: {id: 'call-1', name: 'lookup', args: {}},
+        };
+        const gemini = createStreamingGemini([
+          {candidates: [{content: {role: 'model', parts: [{text: 'Hello'}]}}]},
+          {
+            candidates: [
+              {
+                content: {role: 'model', parts: [functionCallPart]},
+                finishReason: 'STOP',
+              },
+            ],
+          },
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses.map((r) => [r.content?.parts, r.partial])).toEqual([
+          [[{text: 'Hello'}], true],
+          [[{text: 'Hello'}], false],
+          [[functionCallPart], false],
+        ]);
+      });
+    });
   });
 
   describe('connect', () => {
