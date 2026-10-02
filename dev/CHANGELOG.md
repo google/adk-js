@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.3.0](https://github.com/google/adk-js/compare/devtools-v2.2.0...devtools-v2.3.0) (2026-10-02)
+
+
+### Features
+
+* **dev:** accept customMetadata on the API server run endpoints ([#964](https://github.com/google/adk-js/issues/964)) ([b3e3d2f](https://github.com/google/adk-js/commit/b3e3d2f668be6c69d7e642223a2647a2bbbb821c))
+* **events:** reserve __adk_internal_ customMetadata keys for ADK (adk-python parity) ([#977](https://github.com/google/adk-js/issues/977)) ([2dc6f47](https://github.com/google/adk-js/commit/2dc6f4755594f48df2e7ae260a561e33650b9022))
+
+
+### Bug Fixes
+
+* **dev:** match adk-python's agent-graph cluster label, outline and edge color ([#974](https://github.com/google/adk-js/issues/974)) ([937f2da](https://github.com/google/adk-js/commit/937f2dac9af6d313690c49ae2017283d0b60ec3f))
+* **dev:** validate replay input before running agent ([#954](https://github.com/google/adk-js/issues/954)) ([d5ab177](https://github.com/google/adk-js/commit/d5ab177d47c1920a529308b568af8cacadcb1d37))
+* **logger:** map numeric levels to Winston names ([#960](https://github.com/google/adk-js/issues/960)) ([e894d35](https://github.com/google/adk-js/commit/e894d35d76cca48b40a4f9d05823181bc466dd01))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.2.0 to ^2.3.0
+
 ## [2.2.0](https://github.com/google/adk-js/compare/devtools-v2.1.0...devtools-v2.2.0) (2026-09-30)
 
 
