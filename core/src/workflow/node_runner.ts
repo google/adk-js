@@ -477,7 +477,7 @@ async function runOnce({
   isolationScope,
 }: RunOnceParams): Promise<boolean> {
   let inputRecorded = false;
-  const consume = (event: Event): void => {
+  const consume = async (event: Event): Promise<void> => {
     enrichEvent({event, child, nodeName, branch, isolationScope});
     // An event can carry a state delta that never went through `ctx.state`,
     // so the schema is enforced here too rather than only on the setter.
@@ -521,7 +521,16 @@ async function runOnce({
       };
       inputRecorded = true;
     }
-    child.channel.push(event);
+    // A non-partial event waits until the runner has processed it, so it is in
+    // the session before the node continues. A tool call is then stored (and
+    // seen by plugins) before the tool runs. Partial events are streamed only,
+    // so they do not wait. Mirrors adk-python's
+    // `InvocationContext._enqueue_event`.
+    if (event.partial) {
+      child.channel.push(event);
+    } else {
+      await child.channel.pushAndWait(event);
+    }
   };
 
   const parentSignal = child.invocationContext.abortSignal;
@@ -530,7 +539,7 @@ async function runOnce({
   // Fast path: no per-node deadline and no external cancellation to observe.
   if (!hasTimeout && !parentSignal) {
     for await (const event of node.run(child, input)) {
-      consume(event);
+      await consume(event);
     }
     return inputRecorded;
   }
@@ -545,7 +554,7 @@ async function runOnce({
     child.abortSignal = parentSignal;
     try {
       for await (const event of node.run(child, input)) {
-        consume(event);
+        await consume(event);
       }
     } finally {
       child.abortSignal = undefined;
@@ -600,7 +609,7 @@ async function runOnce({
   try {
     let result = await Promise.race([iterator.next(), aborted]);
     while (!result.done) {
-      consume(result.value);
+      await Promise.race([consume(result.value), aborted]);
       result = await Promise.race([iterator.next(), aborted]);
     }
   } finally {

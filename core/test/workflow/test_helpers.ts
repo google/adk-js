@@ -152,6 +152,19 @@ export function createIc(
   });
 }
 
+/**
+ * Drains the channel the way the runner does, for a test that runs nodes on a
+ * channel of its own. A node waits until each of its events is processed, so it
+ * would block on a channel nobody reads.
+ */
+export function drainInBackground(channel: AsyncQueue<Event>): void {
+  void (async () => {
+    for await (const _ of channel) {
+      // discard
+    }
+  })();
+}
+
 /** Runs a node (or workflow) to completion, returning its events and output. */
 export async function driveNode(
   node: BaseNode,
