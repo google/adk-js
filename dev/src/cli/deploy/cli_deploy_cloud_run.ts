@@ -209,6 +209,7 @@ export async function deployToCloudRun(options: DeployToCloudRunOptions) {
       allowOrigins: options.allowOrigins,
       otelToCloud: options.otelToCloud,
       a2a: options.a2a,
+      agentFileLoadOptions: options.agentFileLoadOptions,
     });
 
     console.info('Deploying to Cloud Run...');
