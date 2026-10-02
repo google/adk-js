@@ -250,6 +250,21 @@ describe('PluginManager', () => {
     }
   });
 
+  it('keeps the plugin exception as the cause of the wrapping error', async () => {
+    const originalException = new Error('original');
+    plugin1.exceptionsToRaise['beforeRunCallback'] = originalException;
+    service.registerPlugin(plugin1);
+
+    const error = await service
+      .runBeforeRunCallback({invocationContext: mockInvocationContext})
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+
+    expect(error?.cause).toBe(originalException);
+  });
+
   it('should support all callbacks', async () => {
     service.registerPlugin(plugin1);
 
