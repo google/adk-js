@@ -954,3 +954,73 @@ describe('StreamingResponseAggregator', () => {
     });
   });
 });
+
+describe('StreamingResponseAggregator with inline audio', () => {
+  async function process(
+    aggregator: StreamingResponseAggregator,
+    responses: GenerateContentResponse[],
+  ) {
+    const results = [];
+    for (const response of responses) {
+      for await (const result of aggregator.processResponse(response)) {
+        results.push(result);
+      }
+    }
+    return results;
+  }
+
+  const audioPart: Part = {inlineData: {mimeType: 'audio/pcm', data: 'AAAA'}};
+
+  it('does not flush buffered text before a chunk that starts with inline data', async () => {
+    const aggregator = new StreamingResponseAggregator(false);
+
+    const results = await process(aggregator, [
+      createResponse({content: {parts: [{text: 'Hello '}]}}),
+      createResponse({content: {role: 'model', parts: [audioPart]}}),
+      createResponse({content: {parts: [{text: 'world'}]}}),
+    ]);
+
+    expect(results.map((r) => [r.content?.parts, r.partial])).toEqual([
+      [[{text: 'Hello '}], true],
+      [[audioPart], false],
+      [[{text: 'world'}], true],
+    ]);
+    expect(aggregator.close()?.content?.parts).toEqual([{text: 'Hello world'}]);
+  });
+
+  it('flushes buffered text when the inline data is not the first part', async () => {
+    const aggregator = new StreamingResponseAggregator(false);
+
+    const results = await process(aggregator, [
+      createResponse({content: {parts: [{text: 'Hello'}]}}),
+      createResponse({
+        content: {role: 'model', parts: [{text: ' there'}, audioPart]},
+      }),
+    ]);
+
+    expect(results.map((r) => [r.content?.parts, r.partial])).toEqual([
+      [[{text: 'Hello'}], true],
+      [[{text: 'Hello there'}], false],
+      [[audioPart], false],
+    ]);
+    expect(aggregator.close()).toBeUndefined();
+  });
+
+  it('keeps flushing buffered text before other non-text parts', async () => {
+    const aggregator = new StreamingResponseAggregator(false);
+    const filePart: Part = {
+      fileData: {mimeType: 'image/png', fileUri: 'gs://bucket/image.png'},
+    };
+
+    const results = await process(aggregator, [
+      createResponse({content: {parts: [{text: 'See'}]}}),
+      createResponse({content: {role: 'model', parts: [filePart]}}),
+    ]);
+
+    expect(results.map((r) => [r.content?.parts, r.partial])).toEqual([
+      [[{text: 'See'}], true],
+      [[{text: 'See'}], false],
+      [[filePart], false],
+    ]);
+  });
+});

@@ -20,6 +20,12 @@ The record of everything that happens during an invocation, and the side effects
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
 
+### Models
+
+The model an `LlmAgent` calls: the `BaseLlm` contract, the request and response shapes, and how a model name resolves to a class.
+
+- [Models](models/index.md) - `BaseLlm`, `LlmRequest`, `LlmResponse`, `LLMRegistry`, and `Gemini`.
+
 ### Planners
 
 Planning for an `LlmAgent` through its `planner` option: the model's built-in thinking, or a Plan-ReAct instruction for a model without it.
