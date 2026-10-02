@@ -51,6 +51,7 @@ import {
   runAsyncGeneratorWithOtelContext,
   traceCallLlm,
   tracer,
+  traceSendData,
 } from '../telemetry/tracing.js';
 import {parseWithSchema, SchemaLike} from '../utils/schema.js';
 import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
@@ -1081,7 +1082,18 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         llmRequest.contents.length > 0 &&
         !invocationContext.liveSessionResumptionHandle
       ) {
-        await connection.sendHistory(llmRequest.contents);
+        await tracer.startActiveSpan('send_data', async (span) => {
+          try {
+            await connection.sendHistory(llmRequest.contents);
+            traceSendData({
+              invocationContext,
+              eventId: createNewEventId(),
+              data: llmRequest.contents,
+            });
+          } finally {
+            span.end();
+          }
+        });
       }
 
       let sendError: unknown;

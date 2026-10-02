@@ -213,6 +213,7 @@ async function callToolAsync(
           toolContext,
           toolContext.invocationContext,
         ),
+        invocationContext: toolContext.invocationContext,
       });
       return result;
     } finally {
@@ -665,12 +666,6 @@ export async function handleFunctionCallList({
       branch: invocationContext.branch,
     });
 
-    // TODO - b/436079721: implement [traceToolCall]
-    logger.debug('traceToolCall', {
-      tool: tool.name,
-      args: functionArgs,
-      functionResponseEvent: functionResponseEvent.id,
-    });
     functionResponseEvents.push(functionResponseEvent);
   }
 
@@ -685,14 +680,10 @@ export async function handleFunctionCallList({
     tracer.startActiveSpan('execute_tool (merged)', (span) => {
       try {
         logger.debug('execute_tool (merged)');
-        // TODO - b/436079721: implement [traceMergedToolCalls]
-        logger.debug('traceMergedToolCalls', {
-          responseEventId: mergedEvent.id,
-          functionResponseEvent: mergedEvent.id,
-        });
         traceMergedToolCalls({
           responseEventId: mergedEvent.id,
           functionResponseEvent: mergedEvent,
+          invocationContext,
         });
       } finally {
         span.end();
