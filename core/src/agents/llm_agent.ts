@@ -1295,104 +1295,115 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     llmRequest: LlmRequest,
     sendAbort: AbortController,
   ): AsyncGenerator<Event, void, void> {
-    for await (const llmResponse of connection.receive()) {
-      if (invocationContext.abortSignal?.aborted) {
-        return;
-      }
-      if (sendAbort.signal.aborted) {
-        return;
-      }
-
-      // Capture the latest server-provided resumption handle on the
-      // invocation context so that any subsequent reconnect attempt can
-      // resume server-side state instead of replaying history.
-      if (llmResponse.liveSessionResumptionUpdate?.newHandle) {
-        invocationContext.liveSessionResumptionHandle =
-          llmResponse.liveSessionResumptionUpdate.newHandle;
-      }
-
-      // GoAway is the server's "I'm about to close; reconnect with your
-      // resumption handle" signal. Throw a sentinel to break the outer
-      // reconnect loop in runLiveFlow.
-      if (llmResponse.goAway) {
-        logger.info('Received goAway from live server; triggering reconnect.');
-        throw new LiveReconnectSignal('goAway');
-      }
-
-      // Input transcriptions are the user speaking; echoed user-role
-      // content (e.g. function responses) likewise belongs to the user side.
-      const author =
-        llmResponse.inputTranscription || llmResponse.content?.role === 'user'
-          ? 'user'
-          : this.name;
-
-      const modelResponseEvent = createEvent({
-        invocationId: invocationContext.invocationId,
-        author,
-        branch: invocationContext.branch,
-      });
-
-      for await (const event of this.postprocessLive(
-        invocationContext,
-        llmRequest,
-        llmResponse,
-        modelResponseEvent,
-      )) {
-        yield event;
-
-        // Send function responses directly through the connection rather
-        // than via the live request queue. The TS LiveRequestQueue rejects
-        // sends after close (strict semantics), and callers commonly close
-        // the queue at end-of-input before the model finishes ferrying tool
-        // results back. Python's queue tolerates post-close sends, but
-        // porting that semantics is out of scope here.
-        if (event.content && getFunctionResponses(event).length > 0) {
-          await connection.sendContent(event.content);
+    // A connection's receive() may end after each model turn, so call it
+    // again until a call yields nothing, which means the connection closed.
+    // A custom BaseLlmConnection must therefore return an empty receive()
+    // once it is closed, or this loop does not end.
+    let receivedAny = true;
+    while (receivedAny) {
+      receivedAny = false;
+      for await (const llmResponse of connection.receive()) {
+        receivedAny = true;
+        if (invocationContext.abortSignal?.aborted) {
+          return;
         }
-
-        const taskCompleted = getFunctionResponses(event).some(
-          (r) => r.name === 'task_completed',
-        );
-        if (taskCompleted) {
-          await sleep(TRANSFER_AGENT_DELAY_MS);
+        if (sendAbort.signal.aborted) {
           return;
         }
 
-        // Handle agent transfer triggered by a transfer_to_agent function
-        // response. The active connection is closed and the destination
-        // sub-agent's runLive is yielded into the same generator.
-        const transferTo = event.actions?.transferToAgent;
-        if (transferTo) {
-          // Brief delay lets the model finish flushing pending audio for
-          // the in-flight turn before we tear down the connection.
-          await sleep(TRANSFER_AGENT_DELAY_MS);
-          // Stop the parent send loop before the sub-agent starts its own,
-          // so the two never consume the shared liveRequestQueue
-          // concurrently (mirrors `send_task.cancel()` in the Python flow).
-          sendAbort.abort();
-          await connection.close();
-          const agent = requireAgent(invocationContext);
-          const subAgent = agent.rootAgent.findAgent(transferTo);
-          if (subAgent) {
-            const previousAgent = invocationContext.agent;
-            invocationContext.agent = subAgent;
-            // Child agent starts its own live session; do not carry over
-            // the parent's resumption handle.
-            const previousHandle =
-              invocationContext.liveSessionResumptionHandle;
-            invocationContext.liveSessionResumptionHandle = undefined;
-            try {
-              for await (const subEvent of subAgent.runLive(
-                invocationContext,
-              )) {
-                yield subEvent;
-              }
-            } finally {
-              invocationContext.agent = previousAgent;
-              invocationContext.liveSessionResumptionHandle = previousHandle;
-            }
+        // Capture the latest server-provided resumption handle on the
+        // invocation context so that any subsequent reconnect attempt can
+        // resume server-side state instead of replaying history.
+        if (llmResponse.liveSessionResumptionUpdate?.newHandle) {
+          invocationContext.liveSessionResumptionHandle =
+            llmResponse.liveSessionResumptionUpdate.newHandle;
+        }
+
+        // GoAway is the server's "I'm about to close; reconnect with your
+        // resumption handle" signal. Throw a sentinel to break the outer
+        // reconnect loop in runLiveFlow.
+        if (llmResponse.goAway) {
+          logger.info(
+            'Received goAway from live server; triggering reconnect.',
+          );
+          throw new LiveReconnectSignal('goAway');
+        }
+
+        // Input transcriptions are the user speaking; echoed user-role
+        // content (e.g. function responses) likewise belongs to the user side.
+        const author =
+          llmResponse.inputTranscription || llmResponse.content?.role === 'user'
+            ? 'user'
+            : this.name;
+
+        const modelResponseEvent = createEvent({
+          invocationId: invocationContext.invocationId,
+          author,
+          branch: invocationContext.branch,
+        });
+
+        for await (const event of this.postprocessLive(
+          invocationContext,
+          llmRequest,
+          llmResponse,
+          modelResponseEvent,
+        )) {
+          yield event;
+
+          // Send function responses directly through the connection rather
+          // than via the live request queue. The TS LiveRequestQueue rejects
+          // sends after close (strict semantics), and callers commonly close
+          // the queue at end-of-input before the model finishes ferrying tool
+          // results back. Python's queue tolerates post-close sends, but
+          // porting that semantics is out of scope here.
+          if (event.content && getFunctionResponses(event).length > 0) {
+            await connection.sendContent(event.content);
           }
-          return;
+
+          const taskCompleted = getFunctionResponses(event).some(
+            (r) => r.name === 'task_completed',
+          );
+          if (taskCompleted) {
+            await sleep(TRANSFER_AGENT_DELAY_MS);
+            return;
+          }
+
+          // Handle agent transfer triggered by a transfer_to_agent function
+          // response. The active connection is closed and the destination
+          // sub-agent's runLive is yielded into the same generator.
+          const transferTo = event.actions?.transferToAgent;
+          if (transferTo) {
+            // Brief delay lets the model finish flushing pending audio for
+            // the in-flight turn before we tear down the connection.
+            await sleep(TRANSFER_AGENT_DELAY_MS);
+            // Stop the parent send loop before the sub-agent starts its own,
+            // so the two never consume the shared liveRequestQueue
+            // concurrently (mirrors `send_task.cancel()` in the Python flow).
+            sendAbort.abort();
+            await connection.close();
+            const agent = requireAgent(invocationContext);
+            const subAgent = agent.rootAgent.findAgent(transferTo);
+            if (subAgent) {
+              const previousAgent = invocationContext.agent;
+              invocationContext.agent = subAgent;
+              // Child agent starts its own live session; do not carry over
+              // the parent's resumption handle.
+              const previousHandle =
+                invocationContext.liveSessionResumptionHandle;
+              invocationContext.liveSessionResumptionHandle = undefined;
+              try {
+                for await (const subEvent of subAgent.runLive(
+                  invocationContext,
+                )) {
+                  yield subEvent;
+                }
+              } finally {
+                invocationContext.agent = previousAgent;
+                invocationContext.liveSessionResumptionHandle = previousHandle;
+              }
+            }
+            return;
+          }
         }
       }
     }

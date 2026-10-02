@@ -299,7 +299,11 @@ class NonProgressiveStrategy implements StreamingStrategy {
       }
 
       if (nonTextParts.length > 0) {
-        if (this.thoughtText || this.text) {
+        // Audio interleaved with text keeps the text buffered, so the text is
+        // delivered once in the final aggregate instead of being split around
+        // each audio chunk.
+        const startsWithInlineData = !!llmResponse.content.parts[0]?.inlineData;
+        if (!startsWithInlineData && (this.thoughtText || this.text)) {
           const parts: Part[] = [];
           if (this.thoughtText) {
             parts.push({text: this.thoughtText, thought: true});
