@@ -290,6 +290,11 @@ export type {
   PolicyCheckResult,
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
+export {
+  ToolCallIntegrityError,
+  ToolCallIntegrityPlugin,
+} from './plugins/tool_call_integrity_plugin.js';
+export type {ToolCallIntegrityPluginOptions} from './plugins/tool_call_integrity_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {
   Runner,
