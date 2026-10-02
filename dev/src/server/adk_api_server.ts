@@ -8,6 +8,7 @@ import {
   App,
   BaseArtifactService,
   BaseMemoryService,
+  BasePlugin,
   BaseSessionService,
   bearerTokenUserBuilder,
   Event,
@@ -21,6 +22,7 @@ import {
   LogLevel,
   publicEvent,
   publicSession,
+  RequestIntercepterPlugin,
   RunConfig,
   RunnableRoot,
   Runner,
@@ -1119,6 +1121,34 @@ export class AdkApiServer {
         return;
       }
 
+      // ---------------------------------------------------------------
+      // Runtime Contract v1.1 · LlmRequest capture (opt-in)
+      //
+      // Three-layer opt-in — capture fires only when ALL of:
+      //   1. Feature deployed (this code).
+      //   2. Server enable: env `ADK_ENABLE_LLM_CAPTURE=1` (ops kill switch).
+      //   3. Per-request: query `?capture=llm_request` (client opts in).
+      //
+      // Fingerprint symmetry: when layer 2 is OFF, the server still
+      // accepts `?capture=` silently (200 with only Event frames, no
+      // capture frames) so an outside observer can't distinguish
+      // capture-enabled from capture-disabled deployments by scanning.
+      //
+      // See spec/runtime-contract-v1.1.openapi.yaml.
+      // ---------------------------------------------------------------
+      const captureEnabled =
+        process.env['ADK_ENABLE_LLM_CAPTURE'] === '1' ||
+        process.env['ADK_ENABLE_LLM_CAPTURE']?.toLowerCase() === 'true';
+      const captureQuery =
+        typeof req.query['capture'] === 'string'
+          ? (req.query['capture'] as string).split(',')
+          : [];
+      const capturingLlmRequest =
+        captureEnabled && captureQuery.includes('llm_request');
+      const intercepter = capturingLlmRequest
+        ? new RequestIntercepterPlugin()
+        : undefined;
+
       const abortController = new AbortController();
       let responseCompleted = false;
 
@@ -1148,8 +1178,27 @@ export class AdkApiServer {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
           abortSignal: abortController.signal,
+          extraPlugins: intercepter ? [intercepter] : undefined,
         })) {
+          // v1.1: drain any new captures BEFORE writing the event they
+          // produced. `beforeModelCallback` runs before the LLM returns,
+          // so captures arrive earlier in wall-clock time than the
+          // corresponding Event. Emit them as `event: llm_request`
+          // frames — v1.0 SSE clients (adk-web) silently ignore them.
+          if (intercepter) {
+            for (const cap of intercepter.drain()) {
+              res.write(`event: llm_request\ndata: ${JSON.stringify(cap)}\n\n`);
+            }
+          }
           res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+
+        // Drain any trailing captures (e.g. if the last LLM call produced
+        // no event or the run ended mid-loop).
+        if (intercepter) {
+          for (const cap of intercepter.drain()) {
+            res.write(`event: llm_request\ndata: ${JSON.stringify(cap)}\n\n`);
+          }
         }
 
         responseCompleted = true;
@@ -1287,12 +1336,42 @@ export class AdkApiServer {
     customMetadata?: Record<string, unknown>;
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
+    /**
+     * Per-request plugins layered on top of the cached Runner's app-level
+     * plugins. When set, this bypasses `runnerCache` and constructs a
+     * fresh Runner that includes both the app's plugins and these extras
+     * — needed for request-scoped plugins like the v1.1
+     * RequestIntercepterPlugin, which must be a new instance per request
+     * to keep its capture buffer isolated.
+     */
+    extraPlugins?: BasePlugin[];
   }): AsyncGenerator<Event> {
     await using agentFile = await this.agentLoader.getAgentFile(
       options.appName,
     );
     const loaded = await agentFile.load();
-    const runner = await this.getRunner(loaded, options.appName);
+
+    // If the caller asked for extra plugins (e.g. v1.1 LlmRequest
+    // capture), build a fresh Runner outside the cache. Its lifetime is
+    // this one request. This keeps the fast/common path (no extras) on
+    // the cached Runner untouched.
+    let runner: Runner;
+    if (options.extraPlugins && options.extraPlugins.length > 0) {
+      const isAppInstance = isApp(loaded);
+      const agent = isAppInstance ? loaded.rootAgent : loaded;
+      const appPlugins = isAppInstance ? (loaded.plugins ?? []) : [];
+      runner = new Runner({
+        app: isAppInstance ? loaded : undefined,
+        appName: options.appName,
+        agent,
+        memoryService: this.memoryService,
+        sessionService: this.sessionService,
+        artifactService: this.artifactService,
+        plugins: [...appPlugins, ...options.extraPlugins],
+      });
+    } else {
+      runner = await this.getRunner(loaded, options.appName);
+    }
 
     // Every run endpoint streams through here, so events leave without
     // ADK-internal customMetadata.
