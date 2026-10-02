@@ -29,10 +29,7 @@ import {
   toForwardableA2AParts,
   toMissingRemoteSessionParts,
 } from './a2a_remote_agent_utils.js';
-import {
-  resolveAgentCard,
-  ResolveAgentCardOptions,
-} from './agent_card.js';
+import {resolveAgentCard, ResolveAgentCardOptions} from './agent_card.js';
 import {toAdkEvent} from './event_converter_utils.js';
 import {getA2ASessionMetadata} from './metadata_converter_utils.js';
 

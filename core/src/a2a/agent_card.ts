@@ -32,8 +32,8 @@ import {isWorkflow} from '../workflow/workflow.js';
 
 /**
  * Options controlling how a fetched agent card's RPC URL(s) are validated
- * against the location the card was fetched from. See {@link
- * validateCardRpcTargets} for what each check defends against and why
+ * against the location the card was fetched from. See `validateCardRpcTargets`
+ * for what each check defends against and why
  * both default to failing closed.
  */
 export interface ResolveAgentCardOptions {

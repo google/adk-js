@@ -17,6 +17,7 @@ export type {
   RemoteA2AAgentConfig,
 } from './a2a_remote_agent.js';
 export {getA2AAgentCard} from './agent_card.js';
+export type {ResolveAgentCardOptions} from './agent_card.js';
 export {A2AAgentExecutor} from './agent_executor.js';
 export type {
   AfterEventCallback,
