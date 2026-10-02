@@ -526,6 +526,7 @@ export async function handleFunctionCallList({
     // response.
     let functionResponse = null;
     let functionResponseError: unknown;
+    let functionResponseErrorOccurred = false;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
@@ -576,11 +577,13 @@ export async function handleFunctionCallList({
             // If the error callback returns undefined, use the error message
             // as the function response error.
             functionResponseError = e.message;
+            functionResponseErrorOccurred = true;
           }
         } else {
           // If the error is not an Error, use the error object as the function
           // response error.
           functionResponseError = e;
+          functionResponseErrorOccurred = true;
         }
       }
     }
@@ -640,7 +643,7 @@ export async function handleFunctionCallList({
       continue;
     }
 
-    if (functionResponseError) {
+    if (functionResponseErrorOccurred) {
       functionResponse = {error: functionResponseError};
     } else if (functionResponse == null) {
       functionResponse = {result: functionResponse};
