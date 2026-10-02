@@ -10,6 +10,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
+import {
+  killProcessTree,
+  processTreeSpawnOptions,
+} from '../utils/process_tree.js';
 import {BaseEnvironment, ExecutionResult} from './base_environment.js';
 
 /** Prefix for the temporary workspace created when no `workingDir` is given. */
@@ -68,10 +72,9 @@ function resolvePathInWorkingDir(workingDir: string, filePath: string): string {
  *   producing unbounded output will grow the heap until it fails.
  * - The child inherits the whole of `process.env`, so any secret in the parent
  *   environment is visible to the command.
- * - A timeout sends `SIGKILL` to the spawned shell; processes it forked itself
- *   may survive, and anything they write after the kill is not captured. On
- *   Windows such a survivor also keeps the working directory locked, so a
- *   {@link close} following a timeout can fail to remove a temporary workspace.
+ * - A timeout or abort terminates the spawned process group/tree. On POSIX this
+ *   uses a dedicated process group; on Windows it uses `taskkill /T /F`. A
+ *   descendant that deliberately detaches from the group may survive.
  * - File paths are confined to the working directory by a lexical check only
  *   (see {@link readFile} and {@link writeFile}).
  */
@@ -119,13 +122,18 @@ export class LocalEnvironment extends BaseEnvironment {
   override async execute(
     command: string,
     timeoutSeconds?: number,
+    abortSignal?: AbortSignal,
   ): Promise<ExecutionResult> {
     this.assertInitialized();
+    if (abortSignal?.aborted) {
+      throw createAbortError();
+    }
 
     const child = spawn(command, {
       shell: true,
       cwd: this.workingDir,
       env: {...process.env, ...this.envVars},
+      ...processTreeSpawnOptions(),
     });
 
     const stdoutChunks: Buffer[] = [];
@@ -135,23 +143,43 @@ export class LocalEnvironment extends BaseEnvironment {
 
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let processClosed = false;
+    let stopReason: 'timeout' | 'abort' | undefined;
+    let termination: Promise<void> | undefined;
+    const stop = (reason: 'timeout' | 'abort') => {
+      if (processClosed || termination !== undefined) {
+        return;
+      }
+      stopReason = reason;
+      timedOut = reason === 'timeout';
+      termination = killProcessTree(child)
+        .catch((error: unknown) => {
+          logger.warn(`Failed to terminate command process tree: ${error}`);
+          child.kill('SIGKILL');
+        })
+        .finally(() => {
+          // Some descendants can escape a process group or retain inherited
+          // pipes. Do not let them hold the command result open indefinitely.
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        });
+    };
+    const onAbort = () => stop('abort');
+    abortSignal?.addEventListener('abort', onAbort, {once: true});
+    // Cover an abort that races with listener registration.
+    if (abortSignal?.aborted) {
+      onAbort();
+    }
+
     if (timeoutSeconds !== undefined) {
-      timer = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGKILL');
-        // Killing the shell does not kill a command it forked rather than
-        // exec'd, and that survivor keeps the pipes open, which would hold
-        // 'close' back until it exits on its own. Release the read ends so
-        // the timeout is actually enforced.
-        child.stdout.destroy();
-        child.stderr.destroy();
-      }, timeoutSeconds * 1000);
+      timer = setTimeout(() => stop('timeout'), timeoutSeconds * 1000);
     }
 
     try {
       const exitCode = await new Promise<number>((resolve, reject) => {
         // 'close' rather than 'exit': the stdio streams are drained by then.
         child.on('close', (code, signal) => {
+          processClosed = true;
           // Node reports either an exit code or the terminating signal; Python
           // reports the negative signal number (`-9` for SIGKILL), so map back.
           resolve(
@@ -160,6 +188,10 @@ export class LocalEnvironment extends BaseEnvironment {
         });
         child.on('error', reject);
       });
+      await termination;
+      if (stopReason === 'abort') {
+        throw createAbortError();
+      }
       return {
         exitCode,
         // Decode once, so a multi-byte character split across two chunks is
@@ -171,6 +203,7 @@ export class LocalEnvironment extends BaseEnvironment {
       };
     } finally {
       clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', onAbort);
     }
   }
 
@@ -207,4 +240,10 @@ export class LocalEnvironment extends BaseEnvironment {
     await fs.mkdir(path.dirname(resolved), {recursive: true});
     await fs.writeFile(resolved, content);
   }
+}
+
+function createAbortError(): Error {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
 }
