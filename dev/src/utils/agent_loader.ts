@@ -558,6 +558,10 @@ export class AgentLoader {
     return appNames.sort();
   }
 
+  /**
+   * Returns a shared file owned by this loader. Callers must not dispose it;
+   * its compiled bundle is cleaned up on invalidation or {@link disposeAll}.
+   */
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
