@@ -22,7 +22,11 @@ import {
   ResumeRequest,
   resumeToken,
 } from '../models/gemini_continuation.js';
-import {createLlmResponse, LlmResponse} from '../models/llm_response.js';
+import {
+  createLlmResponse,
+  GenerateContentResponseFields,
+  LlmResponse,
+} from '../models/llm_response.js';
 
 interface StreamingStrategy {
   processResponse(
@@ -385,7 +389,7 @@ export class GeminiStreamingResponseAggregator {
   private usageMetadata?: GenerateContentResponseUsageMetadata;
   private groundingMetadata?: GroundingMetadata;
   private citationMetadata?: CitationMetadata;
-  private response?: GenerateContentResponse;
+  private response?: GenerateContentResponseFields;
   private finishReason?: FinishReason;
 
   private lastThoughtSignature: {value?: string | Uint8Array} = {};
@@ -489,7 +493,7 @@ export class GeminiStreamingResponseAggregator {
    */
   private recordForContinuation(
     response: GenerateContentResponse,
-  ): GenerateContentResponse | undefined {
+  ): GenerateContentResponseFields | undefined {
     if (!this.continuation) {
       return response;
     }
@@ -522,12 +526,13 @@ export class GeminiStreamingResponseAggregator {
       // complete, empty response.
       return undefined;
     }
-    const resumable = Object.assign(new GenerateContentResponse(), response);
-    resumable.candidates = [
-      {...candidate, finishReason: undefined},
-      ...candidates.slice(1),
-    ];
-    return resumable;
+    return {
+      ...response,
+      candidates: [
+        {...candidate, finishReason: undefined},
+        ...candidates.slice(1),
+      ],
+    };
   }
 
   close(): LlmResponse | undefined {
