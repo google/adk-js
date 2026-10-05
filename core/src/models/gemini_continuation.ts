@@ -99,7 +99,7 @@ export class GeminiContinuation {
     }
     this.token = nextToken;
     this.resumes++;
-    logger.info('The model paused the generation; resuming it.');
+    logger.debug('The model paused the generation; resuming it.');
     return this.nextRequest(nextToken);
   }
 
