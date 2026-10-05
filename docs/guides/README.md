@@ -20,6 +20,12 @@ The record of everything that happens during an invocation, and the side effects
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
 
+### Memory
+
+Cross-session memory ingestion (`addSessionToMemory`) and retrieval (`searchMemory`) across in-memory keyword stores, Vertex AI RAG Engine corpora, and Vertex AI Agent Engine Memory Bank.
+
+- [Memory](memory/index.md) - `BaseMemoryService`, `InMemoryMemoryService`, `VertexAiRagMemoryService`, `VertexAiMemoryBankService`, and the `LOAD_MEMORY` / `PRELOAD_MEMORY` tools.
+
 ### Planners
 
 Planning for an `LlmAgent` through its `planner` option: the model's built-in thinking, or a Plan-ReAct instruction for a model without it.
