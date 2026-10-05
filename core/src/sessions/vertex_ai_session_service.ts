@@ -487,7 +487,10 @@ export class VertexAiSessionService extends BaseSessionService {
     // both the wire content and the `rawEvent` blob it is stored under, so the
     // append is not rejected with 400 INVALID_ARGUMENT.
     const content = dropUnsupportedPartFields(event.content);
-    config.content = content;
+    // @google-cloud/vertexai types Content with its own, older @google/genai,
+    // whose enums lack newer members such as ToolType.TOOL_TYPE_UNSPECIFIED.
+    // The wire format is the same, so only the type needs bridging.
+    config.content = content as AppendAgentEngineSessionEventConfig['content'];
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
