@@ -26,6 +26,12 @@ Cross-session memory ingestion (`addSessionToMemory`) and retrieval (`searchMemo
 
 - [Memory](memory/index.md) - `BaseMemoryService`, `InMemoryMemoryService`, `VertexAiRagMemoryService`, `VertexAiMemoryBankService`, and the `LOAD_MEMORY` / `PRELOAD_MEMORY` tools.
 
+### Models
+
+The model an `LlmAgent` calls: the `BaseLlm` contract, the request and response shapes, and how a model name resolves to a class.
+
+- [Models](models/index.md) - `BaseLlm`, `LlmRequest`, `LlmResponse`, `LLMRegistry`, and `Gemini`.
+
 ### Planners
 
 Planning for an `LlmAgent` through its `planner` option: the model's built-in thinking, or a Plan-ReAct instruction for a model without it.
