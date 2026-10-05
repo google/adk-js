@@ -296,8 +296,7 @@ export class AgentEngineSandboxCodeExecutor extends BaseCodeExecutor {
     // Try to get from session state with language-specific key
     const stateKey = `sandbox_name_${language.toLowerCase()}`;
     let sandboxName = invocationContext.session?.state?.[stateKey] as
-      | string
-      | undefined;
+      string | undefined;
     let createNewSandbox = false;
 
     if (!sandboxName) {

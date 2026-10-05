@@ -685,8 +685,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   let compactionData: {
     startTime: number;
     endTime: number;
@@ -736,8 +735,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
     transferToAgent: (actions['transferAgent'] ??
       (actions as Record<string, unknown>)['transferToAgent']) as
-      | string
-      | undefined,
+      string | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -759,11 +757,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
-      | string[]
-      | undefined,
+      string[] | undefined,
     groundingMetadata: eventMetadata['groundingMetadata'] as
-      | GroundingMetadata
-      | undefined,
+      GroundingMetadata | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };

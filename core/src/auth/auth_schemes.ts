@@ -28,8 +28,7 @@ export interface OpenIdConnectWithConfig
  * OpenIdConnectWithConfig.
  */
 export type AuthScheme =
-  | OpenAPIV3.SecuritySchemeObject
-  | OpenIdConnectWithConfig;
+  OpenAPIV3.SecuritySchemeObject | OpenIdConnectWithConfig;
 
 /**
  * Represents the OAuth2 flow (or grant type).

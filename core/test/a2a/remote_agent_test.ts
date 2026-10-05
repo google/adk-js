@@ -27,10 +27,7 @@ import {
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 type A2AStreamEventData =
-  | Message
-  | Task
-  | TaskStatusUpdateEvent
-  | TaskArtifactUpdateEvent;
+  Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
 
 vi.mock('@a2a-js/sdk/client', () => {
   const DefaultAgentCardResolver = vi.fn().mockImplementation(() => ({

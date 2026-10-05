@@ -481,8 +481,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const invalidPropSchema = schema.properties?.[
@@ -528,8 +527,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const multiPropSchema = schema.properties?.[

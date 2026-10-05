@@ -122,11 +122,9 @@ export function getUserInputRequests(event: Event): UserInputRequest[] {
 
       case REQUEST_CONFIRMATION_FUNCTION_CALL_NAME: {
         const confirmation = args['toolConfirmation'] as
-          | {hint?: unknown; payload?: unknown}
-          | undefined;
+          {hint?: unknown; payload?: unknown} | undefined;
         const originalCall = args['originalFunctionCall'] as
-          | {name?: unknown}
-          | undefined;
+          {name?: unknown} | undefined;
         requests.push({
           ...base,
           kind: 'confirmation',

@@ -166,9 +166,7 @@ export interface RefreshTokenParams {
  * Parameters for creating an OAuth2 token request body.
  */
 export type OAuth2TokenRequestParams =
-  | ClientCredentialsParams
-  | AuthorizationCodeParams
-  | RefreshTokenParams;
+  ClientCredentialsParams | AuthorizationCodeParams | RefreshTokenParams;
 
 /**
  * Creates URLSearchParams for an OAuth2 token request.

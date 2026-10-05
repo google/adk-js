@@ -112,8 +112,7 @@ class FakeLiveLlm extends BaseLlm {
 
   constructor(
     private readonly responses:
-      | Array<LlmResponse | Error>
-      | Array<Array<LlmResponse | Error>>,
+      Array<LlmResponse | Error> | Array<Array<LlmResponse | Error>>,
     model = 'fake-live-llm',
   ) {
     super({model});

@@ -376,9 +376,7 @@ function isRawBody(value: unknown): boolean {
 
 export function prepareRequestBody(
   requestBody:
-    | OpenAPIV3.RequestBodyObject
-    | OpenAPIV3.ReferenceObject
-    | undefined,
+    OpenAPIV3.RequestBodyObject | OpenAPIV3.ReferenceObject | undefined,
   body: unknown,
   bodyData: Record<string, unknown>,
   headers: Record<string, string>,

@@ -217,10 +217,7 @@ describe('A2A Request Metadata Propagation', () => {
       };
 
       const events: (
-        | Message
-        | Task
-        | TaskStatusUpdateEvent
-        | TaskArtifactUpdateEvent
+        Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
       )[] = [];
       for await (const event of handler.sendMessageStream(
         params,
