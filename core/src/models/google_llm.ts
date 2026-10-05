@@ -238,7 +238,7 @@ export class Gemini extends BaseLlm {
         );
         request = continuation.resumeRequest(resumeToken(response));
         if (!request) {
-          yield continuation.complete(llmResponse);
+          yield continuation.complete(response);
         }
       }
     }

@@ -17,7 +17,7 @@ import {
 
 import {removeClientFunctionCallId} from '../agents/processors/content_processor_utils.js';
 import {logger} from '../utils/logger.js';
-import {LlmResponse} from './llm_response.js';
+import {createLlmResponse, LlmResponse} from './llm_response.js';
 
 /** The most times one generation is resumed after the model pauses it. */
 export const MAX_RESUMES = 256;
@@ -108,22 +108,19 @@ export class GeminiContinuation {
   }
 
   /** Returns `response` with the content and usage of all requests, if resumed. */
-  complete(response: LlmResponse): LlmResponse {
+  complete(response: GenerateContentResponse): LlmResponse {
     if (!this.resumed) {
-      return response;
+      return createLlmResponse(response);
     }
-    if (this.parts.length === 0) {
-      return {...response, usageMetadata: this.usage};
-    }
-    // Mirrors createLlmResponse for a candidate with content, which reports
-    // the finish reason but no error.
-    return {
-      content: this.content(),
-      groundingMetadata: response.groundingMetadata,
-      citationMetadata: response.citationMetadata,
+    const candidate = response.candidates?.[0];
+    return createLlmResponse({
+      ...response,
       usageMetadata: this.usage,
-      finishReason: response.finishReason,
-    };
+      candidates:
+        candidate && this.parts.length > 0
+          ? [{...candidate, content: this.content()}]
+          : response.candidates,
+    });
   }
 
   /**

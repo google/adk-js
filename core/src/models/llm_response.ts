@@ -122,7 +122,10 @@ export interface LlmResponse {
  * @returns The LlmResponse.
  */
 export function createLlmResponse(
-  response: GenerateContentResponse,
+  response: Pick<
+    GenerateContentResponse,
+    'candidates' | 'usageMetadata' | 'promptFeedback'
+  >,
 ): LlmResponse {
   const usageMetadata = response.usageMetadata;
 
