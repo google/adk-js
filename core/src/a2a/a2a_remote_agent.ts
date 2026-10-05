@@ -39,10 +39,7 @@ export {AGENT_CARD_PATH};
  * Type alias for A2A stream event data.
  */
 export type A2AStreamEventData =
-  | Message
-  | Task
-  | TaskStatusUpdateEvent
-  | TaskArtifactUpdateEvent;
+  Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
 
 /**
  * Callback called before sending a request to the remote agent.

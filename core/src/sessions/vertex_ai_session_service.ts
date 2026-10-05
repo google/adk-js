@@ -487,7 +487,10 @@ export class VertexAiSessionService extends BaseSessionService {
     // both the wire content and the `rawEvent` blob it is stored under, so the
     // append is not rejected with 400 INVALID_ARGUMENT.
     const content = dropUnsupportedPartFields(event.content);
-    config.content = content;
+    // @google-cloud/vertexai types Content with its own, older @google/genai,
+    // whose enums lack newer members such as ToolType.TOOL_TYPE_UNSPECIFIED.
+    // The wire format is the same, so only the type needs bridging.
+    config.content = content as AppendAgentEngineSessionEventConfig['content'];
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
@@ -682,8 +685,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   let compactionData: {
     startTime: number;
     endTime: number;
@@ -733,8 +735,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
     transferToAgent: (actions['transferAgent'] ??
       (actions as Record<string, unknown>)['transferToAgent']) as
-      | string
-      | undefined,
+      string | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -756,11 +757,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
-      | string[]
-      | undefined,
+      string[] | undefined,
     groundingMetadata: eventMetadata['groundingMetadata'] as
-      | GroundingMetadata
-      | undefined,
+      GroundingMetadata | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };

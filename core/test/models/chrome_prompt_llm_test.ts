@@ -158,8 +158,7 @@ describe('ChromeBuiltInLlm', () => {
     const options = fake.promptCalls[0]!.options;
     expect(options?.omitResponseConstraintInput).toBe(true);
     const constraint = options?.responseConstraint as
-      | {anyOf?: Array<Record<string, unknown>>}
-      | undefined;
+      {anyOf?: Array<Record<string, unknown>>} | undefined;
     expect(constraint?.anyOf).toHaveLength(2);
     // genai's uppercase OBJECT/STRING must be lowercased for JSON Schema.
     expect(JSON.stringify(constraint)).toContain('"type":"string"');

@@ -45,16 +45,14 @@ class TestPlugin extends BasePlugin {
     userMessage: Content;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('onUserMessageCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async beforeRunCallback(_params: {
     invocationContext: InvocationContext;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('beforeRunCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async afterRunCallback(_params: {
@@ -75,8 +73,7 @@ class TestPlugin extends BasePlugin {
     callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('beforeAgentCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async afterAgentCallback(_params: {
@@ -84,8 +81,7 @@ class TestPlugin extends BasePlugin {
     callbackContext: Context;
   }): Promise<Content | undefined> {
     return (await this.handleCallback('afterAgentCallback')) as
-      | Content
-      | undefined;
+      Content | undefined;
   }
 
   override async beforeToolCallback(_params: {
@@ -94,8 +90,7 @@ class TestPlugin extends BasePlugin {
     toolContext: Context;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('beforeToolCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async afterToolCallback(_params: {
@@ -105,8 +100,7 @@ class TestPlugin extends BasePlugin {
     result: Record<string, unknown>;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('afterToolCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async onToolErrorCallback(_params: {
@@ -116,8 +110,7 @@ class TestPlugin extends BasePlugin {
     error: Error;
   }): Promise<Record<string, unknown> | undefined> {
     return (await this.handleCallback('onToolErrorCallback')) as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
   }
 
   override async beforeModelCallback(_params: {
@@ -125,8 +118,7 @@ class TestPlugin extends BasePlugin {
     llmRequest: LlmRequest;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('beforeModelCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async afterModelCallback(_params: {
@@ -134,8 +126,7 @@ class TestPlugin extends BasePlugin {
     llmResponse: LlmResponse;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('afterModelCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async onModelErrorCallback(_params: {
@@ -144,8 +135,7 @@ class TestPlugin extends BasePlugin {
     error: Error;
   }): Promise<LlmResponse | undefined> {
     return (await this.handleCallback('onModelErrorCallback')) as
-      | LlmResponse
-      | undefined;
+      LlmResponse | undefined;
   }
 
   override async beforeContextCompaction(_params: {
