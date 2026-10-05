@@ -474,11 +474,8 @@ export class GeminiStreamingResponseAggregator {
     if (!this.continuation) {
       return undefined;
     }
-    const next = this.continuation.advance(
-      this.requestToken,
-      this.requestParts,
-      this.requestUsage,
-    );
+    this.continuation.addOutput(this.requestParts, this.requestUsage);
+    const next = this.continuation.resumeRequest(this.requestToken);
     this.requestParts = [];
     this.requestUsage = undefined;
     this.requestToken = undefined;

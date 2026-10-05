@@ -232,11 +232,11 @@ export class Gemini extends BaseLlm {
           config: request.config,
         });
         const llmResponse = createLlmResponse(response);
-        request = continuation.advance(
-          resumeToken(response),
+        continuation.addOutput(
           llmResponse.content?.parts ?? [],
           llmResponse.usageMetadata,
         );
+        request = continuation.resumeRequest(resumeToken(response));
         if (!request) {
           yield continuation.complete(llmResponse);
         }

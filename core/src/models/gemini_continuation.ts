@@ -67,20 +67,24 @@ export class GeminiContinuation {
   }
 
   /**
-   * Records one request's output and returns the next request to resume
-   * generation. Returns undefined if generation finished, paused without a new
-   * token, or already resumed {@link MAX_RESUMES} times.
+   * Adds one request's output to the generation: its parts to the content and
+   * its usage to the total.
    */
-  advance(
-    nextToken: string | undefined,
+  addOutput(
     newParts: Part[],
     newUsage: GenerateContentResponseUsageMetadata | undefined,
-  ): ResumeRequest | undefined {
+  ): void {
     this.usage = addUsage(this.usage, newUsage);
-    if (nextToken === undefined && !this.resumed) {
-      return undefined;
-    }
     this.appendParts(newParts);
+  }
+
+  /**
+   * Returns the request that resumes the generation after a request that
+   * ended with `nextToken`. Returns undefined if the request did not pause,
+   * returned the previous token again, or the generation was already resumed
+   * {@link MAX_RESUMES} times.
+   */
+  resumeRequest(nextToken: string | undefined): ResumeRequest | undefined {
     if (nextToken === undefined) {
       return undefined;
     }
@@ -100,7 +104,7 @@ export class GeminiContinuation {
     this.token = nextToken;
     this.resumes++;
     logger.debug('The model paused the generation; resuming it.');
-    return this.nextRequest(nextToken);
+    return this.buildResumeRequest(nextToken);
   }
 
   /** Returns `response` with the content and usage of all requests, if resumed. */
@@ -144,7 +148,7 @@ export class GeminiContinuation {
     return {role: 'model', parts: [...this.parts]};
   }
 
-  private nextRequest(nextToken: string): ResumeRequest {
+  private buildResumeRequest(nextToken: string): ResumeRequest {
     const contents = [...this.contents];
     if (this.parts.length > 0) {
       // Copied because the parts are shared with responses already yielded,
