@@ -15,6 +15,7 @@ import {
   Part,
 } from '@google/genai';
 
+import {removeClientFunctionCallId} from '../agents/processors/content_processor_utils.js';
 import {logger} from '../utils/logger.js';
 import {LlmResponse} from './llm_response.js';
 
@@ -146,7 +147,12 @@ export class GeminiContinuation {
   private nextRequest(nextToken: string): ResumeRequest {
     const contents = [...this.contents];
     if (this.parts.length > 0) {
-      contents.push(this.content());
+      // Copied because the parts are shared with responses already yielded,
+      // where the streaming aggregator assigned client-side function call ids
+      // that must not be sent to the model.
+      const content = structuredClone(this.content());
+      removeClientFunctionCallId(content);
+      contents.push(content);
     }
     return {
       contents,
@@ -174,73 +180,6 @@ export class GeminiContinuation {
       }
     }
   }
-}
-
-/** What one streamed request generated, recorded to resume the generation. */
-export class StreamedOutput {
-  readonly parts: Part[] = [];
-  token?: string;
-  usage?: GenerateContentResponseUsageMetadata;
-
-  constructor(private readonly continuation: GeminiContinuation) {}
-
-  /**
-   * Records a chunk and returns what to aggregate: the chunk, with the finish
-   * reason of a resumed pause cleared since that pause does not end the
-   * generation, or undefined for a resumed pause without output.
-   */
-  record(chunk: GenerateContentResponse): GenerateContentResponse | undefined {
-    if (chunk.usageMetadata) {
-      this.usage = chunk.usageMetadata;
-    }
-    const candidates = chunk.candidates ?? [];
-    if (candidates.length === 0) {
-      return chunk;
-    }
-    const candidate = candidates[0];
-    // A stream terminator carries nothing, and resending it would add an empty
-    // text part.
-    const chunkParts = (candidate.content?.parts ?? []).filter(
-      (part) => !isStreamTerminator(part),
-    );
-    // Copied because the streaming aggregator mutates the parts it receives,
-    // e.g. assigning client-side function call ids that must not be resent.
-    this.parts.push(...structuredClone(chunkParts));
-    const chunkToken = resumeToken(chunk);
-    if (chunkToken === undefined) {
-      return chunk;
-    }
-    this.token = chunkToken;
-    if (!this.continuation.willResume(chunkToken)) {
-      // A pause that is not resumed ends the generation, so it keeps its
-      // finish reason.
-      return chunk;
-    }
-    if (chunkParts.length === 0) {
-      // Drop an empty pause chunk: as the first chunk, it would emit a
-      // complete, empty response.
-      return undefined;
-    }
-    const resumable = Object.assign(new GenerateContentResponse(), chunk);
-    resumable.candidates = [
-      {...candidate, finishReason: undefined},
-      ...candidates.slice(1),
-    ];
-    return resumable;
-  }
-}
-
-/** Returns whether the part is an empty text part and nothing else. */
-function isStreamTerminator(part: Part): boolean {
-  if (part.text !== '') {
-    return false;
-  }
-  return Object.entries(part).every(
-    ([key, value]) =>
-      value === undefined ||
-      key === 'text' ||
-      (key === 'thought' && value === false),
-  );
 }
 
 /** Returns whether two parts are non-empty text of the same kind. */

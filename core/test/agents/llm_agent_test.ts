@@ -1292,7 +1292,7 @@ describe('LlmAgent usage metadata on content-less responses', () => {
     return events;
   }
 
-  // In SSE streaming, StreamingResponseAggregator.close() reports a turn's
+  // In SSE streaming, GeminiStreamingResponseAggregator.close() reports a turn's
   // token counts on a response with no content, because the turn's parts were
   // already yielded. Skipping it loses that turn's usage entirely, and the loss
   // is silent: downstream, "no usage reported" and "zero tokens used" are the
