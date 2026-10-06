@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.1](https://github.com/google/adk-js/compare/integrations-v2.2.0...integrations-v2.2.1) (2026-10-06)
+
+
+### Miscellaneous Chores
+
+* **integrations:** Synchronize adk versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.2.0 to ^2.2.1
+
 ## [2.2.0](https://github.com/google/adk-js/compare/integrations-v2.1.0...integrations-v2.2.0) (2026-09-30)
 
 
