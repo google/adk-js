@@ -1,6 +1,5 @@
 {
   "release-type": "node",
-  "release-as": "2.2.1",
   "force-tag-creation": true,
   "pull-request-header": "Automated Release PR",
   "group-pull-request-title-pattern": "Release: v${version}",
