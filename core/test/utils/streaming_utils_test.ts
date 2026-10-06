@@ -13,8 +13,8 @@ import {
 } from '@google/genai';
 import {describe, expect, it, vi} from 'vitest';
 import {
+  GeminiStreamingResponseAggregator,
   isEmptyContentPart,
-  StreamingResponseAggregator,
 } from '../../src/utils/streaming_utils.js';
 
 // Mock generateClientFunctionCallId to return a fixed ID for testing
@@ -35,10 +35,12 @@ function createResponse(candidate: Candidate): GenerateContentResponse {
   return response;
 }
 
-describe('StreamingResponseAggregator', () => {
+describe('GeminiStreamingResponseAggregator', () => {
   describe('Progressive Mode', () => {
     it('should aggregate text chunks', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Hello '}]},
@@ -69,7 +71,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should aggregate thought chunks', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Thinking ', thought: true} as Part]},
@@ -97,7 +101,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should preserve order of mixed text and thought chunks', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Thinking...', thought: true} as Part]},
@@ -125,7 +131,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should aggregate streaming function calls', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response1 = createResponse({
         content: {
@@ -179,7 +187,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should handle non-streaming function calls', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response = createResponse({
         content: {
@@ -215,7 +225,9 @@ describe('StreamingResponseAggregator', () => {
 
   describe('Non-Progressive Mode', () => {
     it('should aggregate text chunks in close', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Hello '}]},
@@ -240,7 +252,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should separate thought and text chunks in close', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Thinking...', thought: true} as Part]},
@@ -268,7 +282,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should yield partial text chunks as they arrive', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Hello '}]},
@@ -286,7 +302,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should yield partial thought chunks as they arrive', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Thinking...', thought: true} as Part]},
@@ -306,7 +324,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should handle non-text chunks and flush accumulated text', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Some text '}]},
@@ -354,7 +374,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should preserve tool calls without replaying them from close', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response1 = createResponse({
         content: {parts: [{text: 'Let me help with that. '}]},
@@ -415,7 +437,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should split mixed text and tool-call chunks into saveable events', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const response = createResponse({
         content: {
@@ -457,7 +481,9 @@ describe('StreamingResponseAggregator', () => {
 
   describe('JSONPath Plus Integration', () => {
     it('should support bracket notation in paths', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
       const response = createResponse({
         content: {
           parts: [
@@ -492,7 +518,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should not pollute Object.prototype via a malicious jsonPath', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
       const response = createResponse({
         content: {
           parts: [
@@ -524,7 +552,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should handle deeply nested structures and mixed notation', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
       const response = createResponse({
         content: {
           parts: [
@@ -573,7 +603,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should accumulate string chunks across multiple partial updates at the same path', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       const response1 = createResponse({
         content: {
@@ -632,7 +664,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should yield final response when last chunk has no candidates (progressive mode)', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       // First chunk: function call with candidates
       const chunkWithCandidate = createResponse({
@@ -672,7 +706,9 @@ describe('StreamingResponseAggregator', () => {
 
   describe('Non-Progressive Mode', () => {
     it('should return undefined from close() when no data accumulated and last chunk has no candidates', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       const emptyChunk = new GenerateContentResponse();
       emptyChunk.candidates = [];
@@ -703,7 +739,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should capture metadata on trailing empty chunk early return', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       // 1. Simulate function call
       const response1 = createResponse({
@@ -764,7 +802,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should capture metadata on trailing empty chunk with zero parts early return', async () => {
-      const aggregator = new StreamingResponseAggregator(true);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: true,
+      });
 
       // 1. Simulate function call
       const response1 = createResponse({
@@ -814,7 +854,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should preserve metadata in close() when no text parts are accumulated in non-progressive mode', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       // 1. Simulate a chunk carrying a function call (no text parts)
       const response1 = createResponse({
@@ -872,7 +914,9 @@ describe('StreamingResponseAggregator', () => {
 
   describe('Additional Suppressing Tests in Non-Progressive Mode', () => {
     it('should suppress trailing empty STOP chunk with zero parts after a function call in non-progressive mode', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       // 1. Chunk with a function call
       const response1 = createResponse({
@@ -911,7 +955,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should suppress trailing empty STOP chunk for normal text streams in non-progressive mode', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       // 1. Chunk with text
       const response1 = createResponse({
@@ -938,7 +984,9 @@ describe('StreamingResponseAggregator', () => {
     });
 
     it('should NOT suppress trailing empty chunk with non-STOP finish reason in non-progressive mode', async () => {
-      const aggregator = new StreamingResponseAggregator(false);
+      const aggregator = new GeminiStreamingResponseAggregator({
+        isProgressiveMode: false,
+      });
 
       // 1. Trailing empty chunk with SAFETY block
       const response = createResponse({
@@ -955,9 +1003,9 @@ describe('StreamingResponseAggregator', () => {
   });
 });
 
-describe('StreamingResponseAggregator with inline audio', () => {
+describe('GeminiStreamingResponseAggregator with inline audio', () => {
   async function process(
-    aggregator: StreamingResponseAggregator,
+    aggregator: GeminiStreamingResponseAggregator,
     responses: GenerateContentResponse[],
   ) {
     const results = [];
@@ -972,7 +1020,9 @@ describe('StreamingResponseAggregator with inline audio', () => {
   const audioPart: Part = {inlineData: {mimeType: 'audio/pcm', data: 'AAAA'}};
 
   it('does not flush buffered text before a chunk that starts with inline data', async () => {
-    const aggregator = new StreamingResponseAggregator(false);
+    const aggregator = new GeminiStreamingResponseAggregator({
+      isProgressiveMode: false,
+    });
 
     const results = await process(aggregator, [
       createResponse({content: {parts: [{text: 'Hello '}]}}),
@@ -989,7 +1039,9 @@ describe('StreamingResponseAggregator with inline audio', () => {
   });
 
   it('flushes buffered text when the inline data is not the first part', async () => {
-    const aggregator = new StreamingResponseAggregator(false);
+    const aggregator = new GeminiStreamingResponseAggregator({
+      isProgressiveMode: false,
+    });
 
     const results = await process(aggregator, [
       createResponse({content: {parts: [{text: 'Hello'}]}}),
@@ -1007,7 +1059,9 @@ describe('StreamingResponseAggregator with inline audio', () => {
   });
 
   it('keeps flushing buffered text before other non-text parts', async () => {
-    const aggregator = new StreamingResponseAggregator(false);
+    const aggregator = new GeminiStreamingResponseAggregator({
+      isProgressiveMode: false,
+    });
     const filePart: Part = {
       fileData: {mimeType: 'image/png', fileUri: 'gs://bucket/image.png'},
     };

@@ -18,9 +18,14 @@ import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {AsyncQueue} from '../utils/async_queue.js';
-import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
+import {GeminiStreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
+import {
+  GeminiContinuation,
+  ResumeRequest,
+  resumeToken,
+} from './gemini_continuation.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
 import {generateContentViaInteractions} from './interactions_utils.js';
 import {LlmRequest} from './llm_request.js';
@@ -190,30 +195,52 @@ export class Gemini extends BaseLlm {
       llmRequest.config.abortSignal = abortSignal;
     }
 
-    if (stream) {
-      const streamResult = await this.apiClient.models.generateContentStream({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
+    const model = llmRequest.model ?? this.model;
+    const continuation = new GeminiContinuation(
+      llmRequest.contents,
+      llmRequest.config,
+    );
+    // Each time the model pauses the generation with a continuation token,
+    // another request resumes it, until the generation completes.
+    let request: ResumeRequest | undefined = {
+      contents: llmRequest.contents,
+      config: llmRequest.config,
+    };
 
-      const aggregator = new StreamingResponseAggregator();
-      for await (const response of streamResult) {
-        for await (const llmResponse of aggregator.processResponse(response)) {
-          yield llmResponse;
+    if (stream) {
+      const aggregator = new GeminiStreamingResponseAggregator({continuation});
+      while (request) {
+        const streamResult = await this.apiClient.models.generateContentStream({
+          model,
+          contents: request.contents,
+          config: request.config,
+        });
+        for await (const response of streamResult) {
+          yield* aggregator.processResponse(response);
         }
+        request = aggregator.endRequest();
       }
       const finalResponse = aggregator.close();
       if (finalResponse) {
         yield finalResponse;
       }
     } else {
-      const response = await this.apiClient.models.generateContent({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
-      yield createLlmResponse(response);
+      while (request) {
+        const response = await this.apiClient.models.generateContent({
+          model,
+          contents: request.contents,
+          config: request.config,
+        });
+        const llmResponse = createLlmResponse(response);
+        continuation.addOutput(
+          llmResponse.content?.parts ?? [],
+          llmResponse.usageMetadata,
+        );
+        request = continuation.resumeRequest(resumeToken(response));
+        if (!request) {
+          yield continuation.complete(response);
+        }
+      }
     }
   }
 
