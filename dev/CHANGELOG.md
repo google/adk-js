@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.1](https://github.com/google/adk-js/compare/devtools-v2.2.0...devtools-v2.2.1) (2026-10-06)
+
+
+### Features
+
+* **events:** reserve __adk_internal_ customMetadata keys for ADK (adk-python parity) ([#977](https://github.com/google/adk-js/issues/977)) ([96a58e2](https://github.com/google/adk-js/commit/96a58e26d904d7df40bcd724fb9213bd36e3ca00))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @google/adk bumped from ^2.2.0 to ^2.2.1
+
 ## [2.2.0](https://github.com/google/adk-js/compare/devtools-v2.1.0...devtools-v2.2.0) (2026-09-30)
 
 
