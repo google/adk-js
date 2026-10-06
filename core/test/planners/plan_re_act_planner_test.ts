@@ -134,15 +134,33 @@ describe('PlanReActPlanner', () => {
       ]);
     });
 
-    it('keeps only the first call when the response starts with a call', () => {
+    it('keeps consecutive function calls when the response starts with a call', () => {
       const planner = new PlanReActPlanner();
       const parts: Part[] = [
         functionCallPart('tool_a'),
         functionCallPart('tool_b'),
+        functionCallPart('tool_c'),
       ];
 
       expect(planner.processPlanningResponse(makeContext(), parts)).toEqual([
         functionCallPart('tool_a'),
+        functionCallPart('tool_b'),
+        functionCallPart('tool_c'),
+      ]);
+    });
+
+    it('drops the parts after a leading group of function calls', () => {
+      const planner = new PlanReActPlanner();
+      const parts: Part[] = [
+        functionCallPart('tool_a'),
+        functionCallPart('tool_b'),
+        {text: 'after calls'},
+        functionCallPart('tool_c'),
+      ];
+
+      expect(planner.processPlanningResponse(makeContext(), parts)).toEqual([
+        functionCallPart('tool_a'),
+        functionCallPart('tool_b'),
       ]);
     });
 
