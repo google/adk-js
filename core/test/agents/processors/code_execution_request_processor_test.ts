@@ -12,6 +12,7 @@ import {
   PluginManager,
   createSession,
 } from '@google/adk';
+import {execFileSync} from 'node:child_process';
 import {describe, expect, it} from 'vitest';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
@@ -69,6 +70,65 @@ async function collectEvents<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('CodeExecutionRequestProcessor', () => {
+  it('injects a working crop helper for data-file exploration', async () => {
+    const executor = new TestCodeExecutor();
+    executor.optimizeDataFile = true;
+    const agent = new LlmAgent({
+      name: 'data-agent',
+      model: 'gemini-2.5-flash',
+      codeExecutor: executor,
+    });
+    const request = createLlmRequest({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'text/csv',
+                data: Buffer.from('name\nAlice\n').toString('base64'),
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const events = CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(
+      createMockInvocationContext(agent),
+      request,
+    );
+    const {value: event} = await events.next();
+    await events.return();
+    const code = event?.content?.parts?.find((part) => part.executableCode)
+      ?.executableCode?.code;
+    expect(code).toBeDefined();
+
+    // Execute the injected function with Python's standard library so this
+    // regression does not require pandas or a remote code executor.
+    const result = execFileSync(
+      process.env.PYTHON ??
+        (process.platform === 'win32' ? 'python' : 'python3'),
+      [
+        '-c',
+        `import ast, json, sys
+source = ast.parse(sys.stdin.read())
+functions = ast.Module(body=[node for node in source.body
+    if isinstance(node, ast.FunctionDef) and node.name == 'crop'], type_ignores=[])
+namespace = {}
+exec(compile(functions, '<data-file-helper>', 'exec'), namespace)
+crop = namespace['crop']
+print(json.dumps([crop('short'), crop('a' * 65), crop('abcd', 3), crop('abcd', 2)]))`,
+      ],
+      {input: code, encoding: 'utf8'},
+    );
+    expect(JSON.parse(result)).toEqual([
+      'short',
+      'a'.repeat(61) + '...',
+      '...',
+      'ab',
+    ]);
+  });
+
   describe('early-exit paths', () => {
     it('yields no events and leaves request unchanged for a non-LlmAgent', async () => {
       const agent = new MockBaseAgent('non-llm-agent');
