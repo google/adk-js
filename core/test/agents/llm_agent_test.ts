@@ -49,7 +49,10 @@ import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
 import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/agent_transfer_llm_request_processor.js';
 import {BASIC_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/basic_llm_request_processor.js';
-import {CODE_EXECUTION_REQUEST_PROCESSOR} from '../../src/agents/processors/code_execution_request_processor.js';
+import {
+  CODE_EXECUTION_REQUEST_PROCESSOR,
+  responseProcessor as CODE_EXECUTION_RESPONSE_PROCESSOR,
+} from '../../src/agents/processors/code_execution_request_processor.js';
 import {IDENTITY_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/identity_llm_request_processor.js';
 import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/instructions_llm_request_processor.js';
 import {
@@ -1503,11 +1506,13 @@ describe('LlmAgent planning processor positions', () => {
     );
   });
 
-  it('uses the planning response processor as the only default response processor', () => {
+  it('uses the planning and code execution response processors as the defaults', () => {
     const agent = new LlmAgent({name: 'test_agent'});
 
-    expect(agent.responseProcessors[0]).toBe(NL_PLANNING_RESPONSE_PROCESSOR);
-    expect(agent.responseProcessors).toHaveLength(1);
+    expectSameInstances(agent.responseProcessors, [
+      NL_PLANNING_RESPONSE_PROCESSOR,
+      CODE_EXECUTION_RESPONSE_PROCESSOR,
+    ]);
   });
 
   it('lets caller-supplied processor lists replace the defaults', () => {
