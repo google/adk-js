@@ -8,6 +8,7 @@ import {createEvent, Event, InMemorySessionService} from '@google/adk';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe, expect, it} from 'vitest';
 import {AdkApiServer} from '../../../dev/src/server/adk_api_server.js';
 import {
@@ -50,7 +51,8 @@ describe.each([FileModuleType.CJS, FileModuleType.ESM])(
             recursive: true,
           });
           await fs.symlink(
-            path.resolve('core'),
+            // The package exports resolve to dist, so build core before running.
+            fileURLToPath(new URL('../../../core/', import.meta.url)),
             path.join(project, 'node_modules', '@google', 'adk'),
             process.platform === 'win32' ? 'junction' : 'dir',
           );
