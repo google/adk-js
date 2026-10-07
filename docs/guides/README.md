@@ -14,6 +14,12 @@ Versioned binary and text storage (`Part` payloads) scoped to an individual sess
 
 - [Artifacts](artifacts/index.md) - `BaseArtifactService`, `InMemoryArtifactService`, `FileArtifactService`, `GcsArtifactService`, and session-bound `ctx.artifactService` (`SessionArtifactService`).
 
+### Code executors
+
+Executors that let an agent answer by writing code and running it, either server-side in Gemini or client-side in a process, a container or a cloud sandbox.
+
+- [Code executors](code_executors/index.md) - Choosing between server-side and client-side execution, what each executor needs and how safe it is, the code execution processors, and writing a custom executor.
+
 ### Events
 
 The record of everything that happens during an invocation, and the side effects attached to it.

@@ -6,13 +6,16 @@
 
 import {
   BaseAgent,
+  FileContentEncoding,
+  InMemoryArtifactService,
   InvocationContext,
   LlmAgent,
   LlmRequest,
   PluginManager,
+  ScopedArtifactService,
   createSession,
 } from '@google/adk';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {
   CODE_EXECUTION_REQUEST_PROCESSOR,
   CodeExecutionResponseProcessor,
@@ -21,7 +24,11 @@ import {
   BaseCodeExecutor,
   ExecuteCodeParams,
 } from '../../../src/code_executors/base_code_executor.js';
-import {CodeExecutionResult} from '../../../src/code_executors/code_execution_utils.js';
+import {
+  CodeExecutionInput,
+  CodeExecutionResult,
+} from '../../../src/code_executors/code_execution_utils.js';
+import {base64Encode} from '../../../src/utils/env_aware_utils.js';
 
 class MockBaseAgent extends BaseAgent {
   constructor(name: string) {
@@ -37,6 +44,20 @@ class TestCodeExecutor extends BaseCodeExecutor {
   }
 }
 
+class RecordingCodeExecutor extends BaseCodeExecutor {
+  readonly inputs: CodeExecutionInput[] = [];
+
+  constructor(private readonly result: CodeExecutionResult) {
+    super();
+    this.optimizeDataFile = true;
+  }
+
+  async executeCode(params: ExecuteCodeParams): Promise<CodeExecutionResult> {
+    this.inputs.push(params.codeExecutionInput);
+    return this.result;
+  }
+}
+
 function createMockInvocationContext(agent: BaseAgent): InvocationContext {
   return new InvocationContext({
     invocationId: 'test-invocation',
@@ -49,6 +70,31 @@ function createMockInvocationContext(agent: BaseAgent): InvocationContext {
     }),
     pluginManager: new PluginManager([]),
   });
+}
+
+function createContextWithArtifacts(agent: BaseAgent): {
+  ctx: InvocationContext;
+  artifactService: ScopedArtifactService;
+} {
+  const artifactService = new ScopedArtifactService(
+    new InMemoryArtifactService(),
+    'test-app',
+    'test-user',
+    'test-session',
+  );
+  const ctx = new InvocationContext({
+    invocationId: 'test-invocation',
+    agent,
+    session: createSession({
+      id: 'test-session',
+      events: [],
+      appName: 'test-app',
+      userId: 'test-user',
+    }),
+    pluginManager: new PluginManager([]),
+    artifactService,
+  });
+  return {ctx, artifactService};
 }
 
 function createLlmRequest(overrides: Partial<LlmRequest> = {}): LlmRequest {
@@ -67,6 +113,8 @@ async function collectEvents<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   }
   return results;
 }
+
+const CSV_TEXT = 'a,b\n1,2\n';
 
 describe('CodeExecutionRequestProcessor', () => {
   describe('early-exit paths', () => {
@@ -123,6 +171,138 @@ describe('CodeExecutionRequestProcessor', () => {
       expect(events).toHaveLength(0);
       // Content should still be present after processing
       expect(llmRequest.contents).toHaveLength(1);
+    });
+  });
+
+  describe('data files', () => {
+    function createCsvRequest(): LlmRequest {
+      return createLlmRequest({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {text: 'Summarize this file.'},
+              {
+                inlineData: {
+                  mimeType: 'text/csv',
+                  data: base64Encode(CSV_TEXT),
+                },
+              },
+            ],
+          },
+        ],
+      });
+    }
+
+    function createAgent(executor: BaseCodeExecutor): LlmAgent {
+      return new LlmAgent({
+        name: 'data_agent',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+    }
+
+    it('replaces the inline CSV part with a text placeholder and passes the file to the executor', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: 'explored',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+      const llmRequest = createCsvRequest();
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, llmRequest),
+      );
+
+      expect(llmRequest.contents[0].parts![1]).toEqual({
+        text: '\nAvailable file: `data_1_2.csv`\n',
+      });
+      expect(executor.inputs).toHaveLength(1);
+      expect(executor.inputs[0].inputFiles).toEqual([
+        {name: 'data_1_2.csv', content: CSV_TEXT, mimeType: 'text/csv'},
+      ]);
+    });
+
+    it('adds the executor stdout to the request as user text', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: 'Total rows: 1',
+        stderr: '',
+        outputFiles: [],
+      });
+      const {ctx} = createContextWithArtifacts(createAgent(executor));
+      const llmRequest = createCsvRequest();
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, llmRequest),
+      );
+
+      const last = llmRequest.contents[llmRequest.contents.length - 1];
+      expect(last.role).toBe('user');
+      expect(last.parts).toEqual([
+        {
+          text: '```tool_output\nCode execution result:\nTotal rows: 1\n\n```',
+        },
+      ]);
+    });
+
+    it('saves a UTF-8 output file as base64 inline data', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'summary.txt',
+            content: 'hello',
+            contentEncoding: FileContentEncoding.UTF8,
+            mimeType: 'text/plain',
+          },
+        ],
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(
+        createAgent(executor),
+      );
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'summary.txt',
+        artifact: {
+          inlineData: {data: base64Encode('hello'), mimeType: 'text/plain'},
+        },
+      });
+    });
+
+    it('saves a base64 output file unchanged', async () => {
+      const encoded = base64Encode('\x89PNG');
+      const executor = new RecordingCodeExecutor({
+        stdout: '',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'chart.png',
+            content: encoded,
+            contentEncoding: FileContentEncoding.BASE64,
+            mimeType: 'image/png',
+          },
+        ],
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(
+        createAgent(executor),
+      );
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+
+      await collectEvents(
+        CODE_EXECUTION_REQUEST_PROCESSOR.runAsync(ctx, createCsvRequest()),
+      );
+
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'chart.png',
+        artifact: {inlineData: {data: encoded, mimeType: 'image/png'}},
+      });
     });
   });
 });
@@ -216,6 +396,56 @@ describe('CodeExecutionResponseProcessor', () => {
       );
 
       expect(events).toHaveLength(0);
+    });
+  });
+
+  describe('code execution', () => {
+    it('runs the code block, reports the output and saves a UTF-8 file as base64', async () => {
+      const executor = new RecordingCodeExecutor({
+        stdout: '2',
+        stderr: '',
+        outputFiles: [
+          {
+            name: 'result.txt',
+            content: '2',
+            contentEncoding: FileContentEncoding.UTF8,
+            mimeType: 'text/plain',
+          },
+        ],
+      });
+      const agent = new LlmAgent({
+        name: 'agent-with-executor',
+        model: 'gemini-flash-latest',
+        codeExecutor: executor,
+      });
+      const {ctx, artifactService} = createContextWithArtifacts(agent);
+      const saveSpy = vi.spyOn(artifactService, 'saveArtifact');
+      const llmResponse = {
+        partial: false,
+        content: {
+          role: 'model',
+          parts: [{text: '```python\nprint(1 + 1)\n```'}],
+        },
+      };
+
+      const events = await collectEvents(
+        responseProcessor.runAsync(ctx, llmResponse),
+      );
+
+      expect(executor.inputs.map((input) => input.code)).toEqual([
+        'print(1 + 1)',
+      ]);
+      expect(events).toHaveLength(2);
+      expect(events[1].content?.parts?.[0].codeExecutionResult?.output).toBe(
+        'Code execution result:\n2\n\n\nSaved artifacts:\n`result.txt`',
+      );
+      expect(saveSpy).toHaveBeenCalledWith({
+        filename: 'result.txt',
+        artifact: {
+          inlineData: {data: base64Encode('2'), mimeType: 'text/plain'},
+        },
+      });
+      expect(llmResponse.content).toBeUndefined();
     });
   });
 });
