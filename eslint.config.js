@@ -11,7 +11,7 @@ import { defineConfig } from "eslint/config";
 
 export default defineConfig([
   {
-    ignores: ["**/dist/**", "dev/src/browser/**"],
+    ignores: ["**/dist/**"],
   },
   tseslint.configs.recommended,
   {
