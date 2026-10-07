@@ -377,7 +377,7 @@ export async function getConnectionOptionsFromUri(
     return {
       entities: ENTITIES,
       dbName:
-        uri === 'sqlite://:memory:'
+        uri === 'sqlite://:memory:' || uri === 'sqlite:///:memory:'
           ? ':memory:'
           : uri.substring('sqlite://'.length),
       driver: SqliteDriver,

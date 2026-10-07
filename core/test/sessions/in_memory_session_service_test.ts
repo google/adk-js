@@ -883,3 +883,46 @@ describe('InMemorySessionService', () => {
     });
   });
 });
+
+describe('InMemorySessionService createSession session id', () => {
+  const UUID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let service: InMemorySessionService;
+
+  beforeEach(() => {
+    service = new InMemorySessionService();
+  });
+
+  it('stores and returns a padded id without its whitespace', async () => {
+    const session = await service.createSession({
+      appName: 'app',
+      userId: 'user',
+      sessionId: ' abc ',
+    });
+
+    expect(session.id).toBe('abc');
+    const found = await service.getSession({
+      appName: 'app',
+      userId: 'user',
+      sessionId: 'abc',
+    });
+    expect(found?.id).toBe('abc');
+  });
+
+  it('generates an id when the given id is only whitespace', async () => {
+    const session = await service.createSession({
+      appName: 'app',
+      userId: 'user',
+      sessionId: '   ',
+    });
+
+    expect(session.id).toHaveLength(36);
+    expect(session.id).toMatch(UUID_PATTERN);
+    const found = await service.getSession({
+      appName: 'app',
+      userId: 'user',
+      sessionId: session.id,
+    });
+    expect(found?.id).toBe(session.id);
+  });
+});

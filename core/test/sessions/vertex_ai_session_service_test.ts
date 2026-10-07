@@ -157,6 +157,8 @@ describe('VertexAiSessionService', () => {
 
   it('throws an error if no client and no project/location provided', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
 
     expect(() => new VertexAiSessionService({})).toThrow(
       'Project ID and Location are required.',
@@ -170,6 +172,8 @@ describe('VertexAiSessionService', () => {
     beforeEach(() => {
       vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
       vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
     });
 
     it.each([
@@ -1892,5 +1896,65 @@ describe('VertexAiSessionService', () => {
         Object.getPrototypeOf(session!.events[0].actions.stateDelta),
       ).toBeNull();
     });
+  });
+});
+
+describe('VertexAiSessionService environment defaults', () => {
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'env-location');
+  });
+
+  it('builds the client from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION', () => {
+    new VertexAiSessionService({});
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'env-project',
+      location: 'env-location',
+    });
+  });
+
+  it('prefers explicit options over the environment', () => {
+    new VertexAiSessionService({
+      projectId: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'test-project',
+      location: 'us-central1',
+    });
+  });
+
+  it('fills only the option that was not passed', () => {
+    new VertexAiSessionService({projectId: 'test-project'});
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'test-project',
+      location: 'env-location',
+    });
+  });
+
+  it.each(['GOOGLE_CLOUD_LOCATION', 'GOOGLE_CLOUD_PROJECT'])(
+    'still throws when %s is unset',
+    (unset) => {
+      vi.stubEnv(unset, undefined);
+
+      expect(() => new VertexAiSessionService({})).toThrow(
+        'Project ID and Location are required.',
+      );
+      expect(clientConstructor).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the express-mode error for an explicit expressModeApiKey', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+
+    expect(
+      () => new VertexAiSessionService({expressModeApiKey: 'test-api-key'}),
+    ).toThrow('Vertex AI Express Mode');
+    expect(clientConstructor).not.toHaveBeenCalled();
   });
 });
