@@ -481,6 +481,107 @@ describe('ToolAuthHandler exchange failure', () => {
   });
 });
 
+describe('ToolAuthHandler interactive credential without token', () => {
+  it('returns pending and requests a credential when an OAuth2 exchange returns no token', async () => {
+    const context = createToolContext();
+    const requestCredential = vi.spyOn(context, 'requestCredential');
+    const exchanger: BaseCredentialExchanger = {
+      exchange: vi.fn().mockResolvedValue({
+        credential: OAUTH2_CREDENTIAL,
+        wasExchanged: false,
+      }),
+    };
+
+    const result = await new ToolAuthHandler(
+      context,
+      OAUTH2_SCHEME,
+      OAUTH2_CREDENTIAL,
+      {credentialExchanger: exchanger},
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('pending');
+    expect(result.authCredential).toEqual(OAUTH2_CREDENTIAL);
+    expect(requestCredential).toHaveBeenCalledOnce();
+  });
+
+  it('returns pending and requests a credential when an OpenID Connect exchange returns no token', async () => {
+    const {scheme, credential} = getMockOpenidSchemeCredential();
+    const context = createToolContext();
+    const requestCredential = vi.spyOn(context, 'requestCredential');
+    const exchanger: BaseCredentialExchanger = {
+      exchange: vi.fn().mockResolvedValue({
+        credential,
+        wasExchanged: false,
+      }),
+    };
+
+    const result = await new ToolAuthHandler(context, scheme, credential, {
+      credentialExchanger: exchanger,
+    }).prepareAuthCredentials();
+
+    expect(result.state).toBe('pending');
+    expect(result.authCredential).toEqual(credential);
+    expect(requestCredential).toHaveBeenCalledOnce();
+  });
+
+  it('returns done when an unexchanged OAuth2 credential carries a refreshToken', async () => {
+    const context = createToolContext();
+    const requestCredential = vi.spyOn(context, 'requestCredential');
+    const credential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        refreshToken: 'refresh-token',
+      },
+    };
+    const exchanger: BaseCredentialExchanger = {
+      exchange: vi.fn().mockResolvedValue({
+        credential,
+        wasExchanged: false,
+      }),
+    };
+
+    const result = await new ToolAuthHandler(
+      context,
+      OAUTH2_SCHEME,
+      credential,
+      {credentialExchanger: exchanger},
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential).toEqual(credential);
+    expect(requestCredential).not.toHaveBeenCalled();
+  });
+
+  it('returns done when an unexchanged OAuth2 credential already carries http', async () => {
+    const context = createToolContext();
+    const requestCredential = vi.spyOn(context, 'requestCredential');
+    const credential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {clientId: 'client-id', clientSecret: 'client-secret'},
+      http: {scheme: 'bearer', credentials: {token: 'existing-token'}},
+    };
+    const exchanger: BaseCredentialExchanger = {
+      exchange: vi.fn().mockResolvedValue({
+        credential,
+        wasExchanged: false,
+      }),
+    };
+
+    const result = await new ToolAuthHandler(
+      context,
+      OAUTH2_SCHEME,
+      credential,
+      {credentialExchanger: exchanger},
+    ).prepareAuthCredentials();
+
+    expect(result.state).toBe('done');
+    expect(result.authCredential).toEqual(credential);
+    expect(requestCredential).not.toHaveBeenCalled();
+  });
+});
+
 describe('ToolContextCredentialStore', () => {
   function storeOverNewContext(): {
     store: ToolContextCredentialStore;

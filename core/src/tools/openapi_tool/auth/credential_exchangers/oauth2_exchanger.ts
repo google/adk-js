@@ -8,7 +8,7 @@ import {
   AuthCredential,
   AuthCredentialTypes,
 } from '../../../../auth/auth_credential.js';
-import {AuthScheme} from '../../../../auth/auth_schemes.js';
+import {AuthScheme, AuthSchemeType} from '../../../../auth/auth_schemes.js';
 import {
   BaseCredentialExchanger,
   ExchangeResult,
@@ -34,8 +34,10 @@ export function checkSchemeCredentialType(
     );
   }
 
-  // adk-python compares against `AuthSchemeType`; adk-js has no such enum.
-  if (authScheme.type !== 'openIdConnect' && authScheme.type !== 'oauth2') {
+  if (
+    authScheme.type !== AuthSchemeType.OPEN_ID_CONNECT &&
+    authScheme.type !== AuthSchemeType.OAUTH2
+  ) {
     throw new Error(
       'Invalid security scheme, expect AuthSchemeType.openIdConnect or ' +
         `AuthSchemeType.oauth2 auth scheme, but got ${authScheme.type}`,

@@ -20,6 +20,7 @@ import {
   credentialToParam,
   dictToAuthScheme,
   INTERNAL_AUTH_PREFIX,
+  OpenIdConfig,
   openidDictToSchemeCredential,
   openidUrlToSchemeCredential,
   ServiceAccount,
@@ -931,5 +932,69 @@ describe('dictToAuthScheme', () => {
       name: 'X-API-Key',
       'x-vendor-hint': 'keep me',
     });
+  });
+});
+
+describe('credentialToParam bearer description', () => {
+  const bearerCredential: AuthCredential = {
+    authType: AuthCredentialTypes.HTTP,
+    http: {scheme: 'bearer', credentials: {token: 'test_token'}},
+  };
+
+  it('falls back to Bearer token for an empty HTTP scheme description', () => {
+    const authScheme: AuthScheme = {
+      type: 'http',
+      scheme: 'bearer',
+      description: '',
+    };
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Bearer token');
+  });
+
+  it('falls back to Bearer token for an empty OAuth2 scheme description', () => {
+    const authScheme: AuthScheme = {type: 'oauth2', flows: {}, description: ''};
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Bearer token');
+  });
+
+  it('keeps a non-empty scheme description', () => {
+    const authScheme: AuthScheme = {
+      type: 'http',
+      scheme: 'bearer',
+      description: 'Service token',
+    };
+
+    const [param] = credentialToParam(authScheme, bearerCredential);
+
+    expect(param?.description).toBe('Service token');
+  });
+});
+
+describe('OpenIdConfig', () => {
+  it('accepts a config without a redirect URI', () => {
+    const config: OpenIdConfig = {
+      clientId: 'client_id',
+      authUri: 'https://example.com/auth',
+      tokenUri: 'https://example.com/token',
+      clientSecret: 'client_secret',
+    };
+
+    expect(config.redirectUri).toBeUndefined();
+  });
+
+  it('accepts a config with a redirect URI', () => {
+    const config: OpenIdConfig = {
+      clientId: 'client_id',
+      authUri: 'https://example.com/auth',
+      tokenUri: 'https://example.com/token',
+      clientSecret: 'client_secret',
+      redirectUri: 'https://example.com/callback',
+    };
+
+    expect(config.redirectUri).toBe('https://example.com/callback');
   });
 });

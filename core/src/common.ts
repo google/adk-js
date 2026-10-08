@@ -109,7 +109,11 @@ export type {
 export {AuthHandler} from './auth/auth_handler.js';
 export {AUTH_PREPROCESSOR, AuthPreprocessor} from './auth/auth_preprocessor.js';
 export {AuthProviderRegistry} from './auth/auth_provider_registry.js';
-export {OAuthGrantType} from './auth/auth_schemes.js';
+export {
+  AuthSchemeType,
+  OAuthGrantType,
+  getOAuthGrantTypeFromFlow,
+} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';

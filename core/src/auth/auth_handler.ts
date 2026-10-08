@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {cloneDeep} from 'lodash-es';
+
 import {State} from '../sessions/state.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
@@ -24,7 +26,12 @@ const S256_CODE_CHALLENGE_METHOD = 'S256';
  * This class should only be used by Agent Development Kit.
  */
 export class AuthHandler {
-  constructor(private readonly authConfig: AuthConfig) {}
+  /**
+   * @param authConfig The auth config this handler reads. It stays readable
+   *     and replaceable after construction; each method reads the current
+   *     value.
+   */
+  constructor(public authConfig: AuthConfig) {}
 
   getAuthResponse(state: State): AuthCredential | undefined {
     const credentialKey = 'temp:' + this.authConfig.credentialKey;
@@ -62,15 +69,33 @@ export class AuthHandler {
     }
   }
 
+  /**
+   * Builds the auth request to send to the client.
+   *
+   * The result is always a new object, and its `exchangedAuthCredential` is
+   * never an object held by {@link authConfig}. A caller that fills in the
+   * response, for example `exchangedAuthCredential.oauth2.authResponseUri`,
+   * therefore leaves the handler's credentials unchanged.
+   *
+   * When the config is returned as is, because the scheme is not OAuth2 or
+   * OpenID Connect or the exchanged credential already has an auth URI, the
+   * result is a deep copy of the whole config. In the other branches only the
+   * exchanged credential is guaranteed independent: `authScheme` and
+   * `rawAuthCredential` are the handler's own objects.
+   *
+   * @return The auth config to request from the client.
+   * @throws Error: If an OAuth2 or OpenID Connect scheme has no raw
+   *     credential, no `oauth2` on it, or no client ID and secret.
+   */
   generateAuthRequest(): AuthConfig {
     const authSchemeType = this.authConfig.authScheme.type;
 
     if (!['oauth2', 'openIdConnect'].includes(authSchemeType)) {
-      return this.authConfig;
+      return cloneDeep(this.authConfig);
     }
 
     if (this.authConfig.exchangedAuthCredential?.oauth2?.authUri) {
-      return this.authConfig;
+      return cloneDeep(this.authConfig);
     }
 
     if (!this.authConfig.rawAuthCredential) {
@@ -88,7 +113,7 @@ export class AuthHandler {
         credentialKey: this.authConfig.credentialKey,
         authScheme: this.authConfig.authScheme,
         rawAuthCredential: this.authConfig.rawAuthCredential,
-        exchangedAuthCredential: this.authConfig.rawAuthCredential,
+        exchangedAuthCredential: cloneDeep(this.authConfig.rawAuthCredential),
       };
     }
 
@@ -115,6 +140,10 @@ export class AuthHandler {
    * When the credential requests PKCE, the URI also carries the S256 code
    * challenge derived from the credential's code verifier, and the returned
    * credential carries the verifier the later token exchange must send.
+   *
+   * The URI leaves out `redirect_uri` when the credential has no
+   * `redirectUri`, so the provider uses the redirect registered for the
+   * client, and leaves out `scope` when the scheme lists no scopes.
    *
    * @return An AuthCredential object containing the auth URI and state.
    * @throws Error: If the authorization endpoint is not configured in the
@@ -174,9 +203,13 @@ export class AuthHandler {
     const state = randomUUID();
     const url = new URL(authorizationEndpoint);
     url.searchParams.set('client_id', oauth2.clientId || '');
-    url.searchParams.set('redirect_uri', oauth2.redirectUri || '');
+    if (oauth2.redirectUri) {
+      url.searchParams.set('redirect_uri', oauth2.redirectUri);
+    }
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', scopes.join(' '));
+    if (scopes.length > 0) {
+      url.searchParams.set('scope', scopes.join(' '));
+    }
     url.searchParams.set('state', state);
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');

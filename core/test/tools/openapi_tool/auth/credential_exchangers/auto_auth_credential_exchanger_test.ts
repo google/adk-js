@@ -21,6 +21,7 @@ import {
   CredentialExchangeError,
   ExchangeResult,
   OAuth2CredentialExchanger,
+  ServiceAccountCredentialExchanger,
 } from '@google/adk';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
@@ -242,5 +243,232 @@ describe('AutoAuthCredentialExchanger adk-js specific behaviour', () => {
         authCredential: credentialOf(AuthCredentialTypes.OAUTH2),
       }),
     ).rejects.toBe(failure);
+  });
+});
+
+describe('AutoAuthCredentialExchanger default OAuth2 and OpenID Connect exchange', () => {
+  const oauth2Scheme: AuthScheme = {
+    type: 'oauth2',
+    flows: {
+      authorizationCode: {
+        authorizationUrl: 'https://example.com/auth',
+        tokenUrl: 'https://example.com/token',
+        scopes: {},
+      },
+    },
+  };
+  const clientCredentialsScheme: AuthScheme = {
+    type: 'oauth2',
+    flows: {
+      clientCredentials: {
+        tokenUrl: 'https://example.com/token',
+        scopes: {},
+      },
+    },
+  };
+  const openIdScheme: AuthScheme = {
+    type: 'openIdConnect',
+    openIdConnectUrl: 'https://example.com/.well-known/openid-configuration',
+  };
+
+  it('converts an OAuth2 access token into an HTTP bearer credential', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+
+    const result = await autoExchanger.exchange({
+      authScheme: oauth2Scheme,
+      authCredential: {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {accessToken: 'oauth2-access-token'},
+      },
+    });
+
+    expect(result).toEqual({
+      credential: {
+        authType: AuthCredentialTypes.HTTP,
+        http: {scheme: 'bearer', credentials: {token: 'oauth2-access-token'}},
+      },
+      wasExchanged: true,
+    });
+  });
+
+  it('converts an OpenID Connect access token into an HTTP bearer credential', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+
+    const result = await autoExchanger.exchange({
+      authScheme: openIdScheme,
+      authCredential: {
+        authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+        oauth2: {accessToken: 'oidc-access-token'},
+      },
+    });
+
+    expect(result).toEqual({
+      credential: {
+        authType: AuthCredentialTypes.HTTP,
+        http: {scheme: 'bearer', credentials: {token: 'oidc-access-token'}},
+      },
+      wasExchanged: true,
+    });
+  });
+
+  it('fetches a client-credentials token and converts it into an HTTP bearer credential', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'client-credentials-token',
+          token_type: 'Bearer',
+        }),
+        {status: 200, headers: {'Content-Type': 'application/json'}},
+      ),
+    );
+    const autoExchanger = new AutoAuthCredentialExchanger();
+
+    const result = await autoExchanger.exchange({
+      authScheme: clientCredentialsScheme,
+      authCredential: {
+        authType: AuthCredentialTypes.OAUTH2,
+        oauth2: {clientId: 'client-id', clientSecret: 'client-secret'},
+      },
+    });
+
+    expect(result).toEqual({
+      credential: {
+        authType: AuthCredentialTypes.HTTP,
+        http: {
+          scheme: 'bearer',
+          credentials: {token: 'client-credentials-token'},
+        },
+      },
+      wasExchanged: true,
+    });
+  });
+
+  it('returns an unexchanged result for an authorization-code OAuth2 credential that holds no token', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {clientId: 'client-id', clientSecret: 'client-secret'},
+    };
+
+    const result = await autoExchanger.exchange({
+      authScheme: oauth2Scheme,
+      authCredential,
+    });
+
+    expect(result).toEqual({credential: authCredential, wasExchanged: false});
+  });
+
+  it('returns an unexchanged result for an OpenID Connect credential that holds no token', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OPEN_ID_CONNECT,
+      oauth2: {clientId: 'client-id', clientSecret: 'client-secret'},
+    };
+
+    const result = await autoExchanger.exchange({
+      authScheme: openIdScheme,
+      authCredential,
+    });
+
+    expect(result).toEqual({credential: authCredential, wasExchanged: false});
+  });
+
+  it('returns the delegate result when a custom exchanger returns no token', async () => {
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      oauth2: {clientId: 'client-id'},
+    };
+    const passThroughExchanger = {
+      exchange: vi.fn(
+        async (_params: {
+          authScheme?: AuthScheme;
+          authCredential: AuthCredential;
+        }): Promise<ExchangeResult> => ({
+          credential: authCredential,
+          wasExchanged: false,
+        }),
+      ),
+    };
+    const autoExchanger = new AutoAuthCredentialExchanger({
+      [AuthCredentialTypes.OAUTH2]: passThroughExchanger,
+    });
+
+    const result = await autoExchanger.exchange({
+      authScheme: oauth2Scheme,
+      authCredential,
+    });
+
+    expect(passThroughExchanger.exchange).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({credential: authCredential, wasExchanged: false});
+  });
+
+  it('passes through an OAuth2 credential that already carries http', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+    const authCredential: AuthCredential = {
+      authType: AuthCredentialTypes.OAUTH2,
+      http: {scheme: 'bearer', credentials: {token: 'existing-token'}},
+    };
+
+    const result = await autoExchanger.exchange({
+      authScheme: oauth2Scheme,
+      authCredential,
+    });
+
+    expect(result).toEqual({credential: authCredential, wasExchanged: false});
+    expect(result.credential).toBe(authCredential);
+  });
+});
+
+describe('AutoAuthCredentialExchanger exchangers map', () => {
+  it('exposes the default exchanger for each built-in type', () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+
+    expect(
+      autoExchanger.exchangers.get(AuthCredentialTypes.OAUTH2),
+    ).toBeDefined();
+    expect(
+      autoExchanger.exchangers.get(AuthCredentialTypes.OPEN_ID_CONNECT),
+    ).toBeDefined();
+    expect(
+      autoExchanger.exchangers.get(AuthCredentialTypes.SERVICE_ACCOUNT),
+    ).toBeInstanceOf(ServiceAccountCredentialExchanger);
+    expect(autoExchanger.exchangers.has(AuthCredentialTypes.API_KEY)).toBe(
+      false,
+    );
+  });
+
+  it('uses an exchanger added after construction', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+    const mockExchanger = createMockExchanger(exchangedCredential);
+    const authCredential = credentialOf(AuthCredentialTypes.API_KEY);
+
+    autoExchanger.exchangers.set(AuthCredentialTypes.API_KEY, mockExchanger);
+    const result = await autoExchanger.exchange({authScheme, authCredential});
+
+    expect(mockExchanger.exchange).toHaveBeenCalledWith({
+      authScheme,
+      authCredential,
+    });
+    expect(result).toEqual({
+      credential: exchangedCredential,
+      wasExchanged: true,
+    });
+  });
+
+  it('uses an exchanger that replaces a default after construction', async () => {
+    const autoExchanger = new AutoAuthCredentialExchanger();
+    const mockExchanger = createMockExchanger(exchangedCredential);
+
+    autoExchanger.exchangers.set(AuthCredentialTypes.OAUTH2, mockExchanger);
+    const result = await autoExchanger.exchange({
+      authScheme,
+      authCredential: credentialOf(AuthCredentialTypes.OAUTH2),
+    });
+
+    expect(mockExchanger.exchange).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      credential: exchangedCredential,
+      wasExchanged: true,
+    });
   });
 });
