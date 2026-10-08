@@ -2108,5 +2108,100 @@ describe('AdkWebServer', () => {
         expect(response.status).toBe(404);
       }
     });
+
+    it('replaces the cached Runner when an app reloads with a new agent instance', async () => {
+      const getRunner = (
+        server as unknown as {
+          getRunner: (agent: unknown, appName: string) => Promise<Runner>;
+        }
+      ).getRunner.bind(server);
+
+      const firstRunner = await getRunner(TEST_AGENT, 'testApp');
+      const sameRunner = await getRunner(TEST_AGENT, 'testApp');
+      expect(sameRunner).toBe(firstRunner);
+
+      const reloadedAgent = new LlmAgent({
+        name: 'testAgentReloaded',
+        description: 'reloaded agent',
+      });
+      const reloadedRunner = await getRunner(reloadedAgent, 'testApp');
+      expect(reloadedRunner).not.toBe(firstRunner);
+      expect(reloadedRunner.agent).toBe(reloadedAgent);
+    });
+
+    it('acquires and releases agentFile.retain() lease across /run requests, including failed runs', async () => {
+      const originalGetAgentFile = agentLoader.getAgentFile;
+      let activeLeases = 0;
+      let maxConcurrentLeases = 0;
+      let releaseCount = 0;
+      let shouldThrow = false;
+
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          retain() {
+            activeLeases++;
+            maxConcurrentLeases = Math.max(maxConcurrentLeases, activeLeases);
+            return {
+              async [Symbol.asyncDispose]() {
+                activeLeases--;
+                releaseCount++;
+              },
+            };
+          },
+          load: () =>
+            Promise.resolve(
+              new Workflow({
+                name: 'lease_wf',
+                edges: [
+                  [
+                    'START',
+                    node(
+                      async () => {
+                        if (shouldThrow) {
+                          throw new Error('run failed');
+                        }
+                        return 'ok';
+                      },
+                      {name: 'step'},
+                    ),
+                  ],
+                ],
+              }),
+            ),
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'leaseSession',
+      });
+
+      try {
+        const okRes = await client.post('/run', {
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'leaseSession',
+          newMessage: {role: 'user', parts: [{text: 'hi'}]},
+        });
+        expect(okRes.status).toBe(200);
+        expect(maxConcurrentLeases).toBe(1);
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(1);
+
+        shouldThrow = true;
+        await expect(
+          client.post('/run', {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'leaseSession',
+            newMessage: {role: 'user', parts: [{text: 'fail'}]},
+          }),
+        ).rejects.toThrow();
+        expect(activeLeases).toBe(0);
+        expect(releaseCount).toBe(2);
+      } finally {
+        agentLoader.getAgentFile = originalGetAgentFile;
+      }
+    });
   });
 });
