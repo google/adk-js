@@ -13,6 +13,7 @@ import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
 import {BaseSessionService} from '../sessions/base_session_service.js';
 import {Session} from '../sessions/session.js';
+import type {BaseTool} from '../tools/base_tool.js';
 import {AsyncQueue} from '../utils/async_queue.js';
 import {randomUUID} from '../utils/env_aware_utils.js';
 
@@ -64,6 +65,10 @@ export interface InvocationContextParams {
    * Request-level metadata passed from an incoming A2A request or caller.
    */
   a2aMetadata?: Record<string, unknown>;
+  /**
+   * Per-invocation cache of resolved canonical tools for the active agent.
+   */
+  canonicalToolsCache?: BaseTool[];
 }
 
 /**
@@ -268,6 +273,11 @@ export class InvocationContext {
   readonly a2aMetadata?: Record<string, unknown>;
 
   /**
+   * Per-invocation cache of resolved canonical tools for the active agent.
+   */
+  canonicalToolsCache?: BaseTool[];
+
+  /**
    * @param params The parameters for creating an invocation context.
    */
   constructor(params: InvocationContextParams) {
@@ -289,6 +299,7 @@ export class InvocationContext {
     this.isolationScope = params.isolationScope;
     this.nodeToolDepth = params.nodeToolDepth ?? 0;
     this.a2aMetadata = params.a2aMetadata;
+    this.canonicalToolsCache = params.canonicalToolsCache;
     // Inherit the parent invocation's cost manager when one is available.
 
     // Child contexts created for sub-agents, agent transfers and loop
