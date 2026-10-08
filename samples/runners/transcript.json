@@ -1,0 +1,26 @@
+[
+  {
+    "author": "user",
+    "text": "I land in Lisbon on 3 March. Which hotel did we settle on?"
+  },
+  {
+    "author": "archive_assistant",
+    "text": "You are booked into the Alfama Riverside Hotel, room 412, from 3 March to 9 March."
+  },
+  {
+    "author": "user",
+    "text": "Please remember that I am allergic to shellfish."
+  },
+  {
+    "author": "archive_assistant",
+    "text": "Noted. I recorded a shellfish allergy against the booking, and the hotel restaurant has it on file."
+  },
+  {
+    "author": "user",
+    "text": "And the flight home?"
+  },
+  {
+    "author": "archive_assistant",
+    "text": "Your return flight is TP1234, leaving Lisbon at 18:40 on 9 March and landing in Boston at 21:55."
+  }
+]
