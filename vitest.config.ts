@@ -38,6 +38,21 @@ const reporters = process.env.CI
     : ['dot']
   : ['default'];
 
+/**
+ * Compiled-agent bundles to keep out of Vite's SSR transform in the
+ * `integration` project. `AgentLoader` (`dev/src/utils/agent_loader.ts`)
+ * esbuilds every discovered agent into a throwaway minified bundle under
+ * `<tmpdir>/adk_agent_loader-<random>/`, then imports it. Vitest inlines that
+ * import because the path sits outside the project root and holds no
+ * `node_modules` segment, so it pushes ~6 MB of generated JavaScript per
+ * agent through the transform pipeline. Externalizing hands the bundle to
+ * Node's own loader instead, which is the path the ADK CLI takes outside
+ * Vitest. `[\\/]` matches the Windows separator too. Rename the
+ * `createTempDir('adk_agent_loader')` prefix in `agent_loader.ts` and this
+ * pattern stops matching: the suite gets slow again, it does not fail.
+ */
+const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
+
 export default defineConfig({
   test: {
     reporters,
@@ -104,6 +119,7 @@ export default defineConfig({
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
