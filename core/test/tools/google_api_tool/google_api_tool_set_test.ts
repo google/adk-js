@@ -15,6 +15,7 @@ import {
   LlmAgent,
   PluginManager,
   ReadonlyContext,
+  RestApiTool,
 } from '@google/adk';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -184,7 +185,7 @@ describe('GoogleApiToolSet', () => {
     const openapiToolset = GoogleApiToolSet.loadToolSetWithOidcAuth({
       specDict: MOCK_OPENAPI_SPEC,
     });
-    const restTools = await openapiToolset.getTools();
+    const restTools = (await openapiToolset.getTools()) as RestApiTool[];
     const listFilteredToolset = new GoogleApiToolSet(restTools, {
       toolFilter: ['get_calendar'],
     });
