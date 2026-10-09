@@ -50,6 +50,11 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 
 - [Planners](planners/index.md) - `BasePlanner`, `BuiltInPlanner`, `PlanReActPlanner`, and the `isBasePlanner` and `isBuiltInPlanner` type guards.
 
+### Sessions
+
+Conversations and their state: the events of each session, and the `app:`, `user:` and `temp:` scopes that state keys can carry.
+
+- [Sessions](sessions/index.md) - `Session`, `State`, `BaseSessionService`, `InMemorySessionService`, `DatabaseSessionService`, `VertexAiSessionService`, and `getSessionServiceFromUri`.
 ### Runners
 
 - [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.

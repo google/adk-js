@@ -773,6 +773,110 @@ describe('DatabaseSessionService entities', () => {
   });
 });
 
+describe('DatabaseSessionService stale-session reload', () => {
+  const key = {appName: 'test-app', userId: 'test-user', sessionId: 's1'};
+  let service: DatabaseSessionService;
+
+  beforeEach(async () => {
+    service = new DatabaseSessionService({
+      dbName: ':memory:',
+      driver: SqliteDriver,
+      allowGlobalContext: true,
+    });
+    await service.createSession({...key, state: {count: 0}});
+  });
+
+  afterEach(async () => {
+    await (service as unknown as {orm?: MikroORM}).orm?.close();
+  });
+
+  it('reloads stored events and state into a stale copy before appending', async () => {
+    const copyA = (await service.getSession(key))!;
+    const copyB = (await service.getSession(key))!;
+
+    const eventA = createEvent({
+      timestamp: copyA.lastUpdateTime + 1000,
+      actions: createEventActions({
+        stateDelta: {
+          count: 1,
+          fromA: 'yes',
+          [`${State.USER_PREFIX}pref`]: 'A',
+          [`${State.APP_PREFIX}theme`]: 'dark',
+        },
+      }),
+    });
+    await service.appendEvent({session: copyA, event: eventA});
+
+    const eventB = createEvent({
+      timestamp: copyA.lastUpdateTime + 2000,
+      actions: createEventActions({
+        stateDelta: {
+          count: 2,
+          fromB: 'yes',
+        },
+      }),
+    });
+    await service.appendEvent({session: copyB, event: eventB});
+
+    expect(copyB.events.map((event) => event.id)).toEqual([
+      eventA.id,
+      eventB.id,
+    ]);
+    expect(copyB.state['count']).toBe(2);
+    expect(copyB.state['fromA']).toBe('yes');
+    expect(copyB.state['fromB']).toBe('yes');
+    expect(copyB.state[`${State.USER_PREFIX}pref`]).toBe('A');
+    expect(copyB.state[`${State.APP_PREFIX}theme`]).toBe('dark');
+    expect(copyB.lastUpdateTime).toBe(eventB.timestamp);
+
+    const stored = (await service.getSession(key))!;
+    expect(stored.events.map((event) => event.id)).toEqual([
+      eventA.id,
+      eventB.id,
+    ]);
+    expect(stored.state).toEqual(copyB.state);
+  });
+});
+
+describe('DatabaseSessionService with sqlite:///:memory:', () => {
+  const services: DatabaseSessionService[] = [];
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) {
+      await (service as unknown as {orm?: MikroORM}).orm?.close();
+    }
+  });
+
+  it('opens an in-memory database that is not shared', async () => {
+    const first = new DatabaseSessionService('sqlite:///:memory:');
+    services.push(first);
+    await first.init();
+    await first.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+      state: {key: 'value'},
+    });
+
+    const readBack = await first.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+    });
+    expect(readBack?.state['key']).toBe('value');
+
+    const second = new DatabaseSessionService('sqlite:///:memory:');
+    services.push(second);
+    await second.init();
+    const unseen = await second.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'memory-session',
+    });
+    expect(unseen).toBeUndefined();
+  });
+});
+
 describe('isDatabaseConnectionString', () => {
   it('should identify valid URI connection strings', () => {
     expect(
