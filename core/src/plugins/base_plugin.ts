@@ -439,16 +439,6 @@ export abstract class BasePlugin {
 
   /**
    * Callback executed when a tool call encounters an error.
-    tool: BaseTool;
-    toolArgs: Record<string, unknown>;
-    toolContext: Context;
-    result: Record<string, unknown>;
-  }): Promise<Record<string, unknown> | undefined> {
-    return;
-  }
-
-  /**
-   * Callback executed when a tool call encounters an error.
    *
    * This callback provides an opportunity to handle tool errors gracefully,
    * potentially providing alternative responses or recovery mechanisms.
