@@ -91,6 +91,30 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('--a2a');
   });
 
+  it('should skip container compile/bundle when the staged file is already an esbuild output (default)', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should skip container compile/bundle when agentFileLoadOptions had compile or bundle on', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: true},
+    });
+    expect(content).toContain('--compile=false');
+    expect(content).toContain('--bundle=false');
+  });
+
+  it('should leave container compile/bundle at their own defaults when staging did neither', () => {
+    const content = createDockerFileContent({
+      ...defaultOptions,
+      agentFileLoadOptions: {compile: false, bundle: false},
+    });
+    expect(content).not.toContain('--compile=');
+    expect(content).not.toContain('--bundle=');
+  });
+
   it('should use web command when withUi is true', () => {
     const content = createDockerFileContent({
       ...defaultOptions,
