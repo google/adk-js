@@ -38,6 +38,17 @@ const reporters = process.env.CI
     : ['dot']
   : ['default'];
 
+/**
+ * Compiled-agent-bundle paths to keep out of Vite's SSR transform in the
+ * `integration` project. AgentLoader esbuilds each agent into a throwaway
+ * multi-MB bundle under `<tmpdir>/adk_agent_loader-<random>/`; Vitest inlines
+ * it because the path is outside the project root with no `node_modules`
+ * segment. Externalizing hands the bundle to Node's native loader, which is
+ * the path production takes, and drops app_loader_test.ts's transform total
+ * from 36.6s to 1.0s. `[\\/]` keeps the match working on Windows.
+ */
+const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
+
 export default defineConfig({
   test: {
     reporters,
@@ -104,6 +115,7 @@ export default defineConfig({
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
