@@ -8,6 +8,14 @@ import path from 'path';
 import {defineConfig} from 'vitest/config';
 
 /**
+ * Test budget (ms) for the `unit:core` and `unit:dev` projects: Vitest's 5s
+ * default has been observed to expire when these share a worker pool with the
+ * install-heavy `integration` fixtures under `npm run test:coverage`. A project
+ * entry does not inherit the root `test` timeout, so it is set per project.
+ */
+const UNIT_TEST_TIMEOUT_MS = 30000;
+
+/**
  * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
  * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
  * exceeds Vitest's 10s default on a slow or loaded machine.
@@ -57,6 +65,7 @@ export default defineConfig({
           name: 'unit:core',
           environment: 'node',
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -72,6 +81,7 @@ export default defineConfig({
           name: 'unit:dev',
           environment: 'node',
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
