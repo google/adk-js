@@ -46,6 +46,15 @@ const reporters = process.env.CI
     : ['dot']
   : ['default'];
 
+/**
+ * Compiled-agent bundles to keep out of Vite's SSR transform. `AgentLoader`
+ * (`dev/src/utils/agent_loader.ts`) esbuilds each agent into a
+ * `<tmpdir>/adk_agent_loader-<random>/` bundle, outside the root with no
+ * `node_modules` segment, so Vitest inlines and transforms ~6 MB per agent.
+ * Rename that `createTempDir` prefix and the suite silently goes slow again.
+ */
+const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
+
 export default defineConfig({
   test: {
     reporters,
@@ -114,6 +123,7 @@ export default defineConfig({
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
