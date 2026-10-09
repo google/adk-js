@@ -1,17 +1,14 @@
 [
   {
-    "key": "b386c4192eb9fd20",
-    "instructionAgnosticKey": "7b8db6467af3e028",
+    "key": "1f76f78b9db7f74c",
+    "instructionAgnosticKey": "26b93cacce995f87",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "AI"
             }
           ]
         }
@@ -30,7 +27,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Triple Threat: Handling 3 Topics, One Swift Stroke."
+                "text": "AI: Intelligence Unleashed."
               }
             ]
           },
@@ -38,39 +35,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 46,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 90,
+        "promptTokenCount": 30,
+        "candidatesTokenCount": 6,
+        "totalTokenCount": 228,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 46
+            "tokenCount": 30
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 12
+            "tokenCount": 6
           }
         ],
-        "thoughtsTokenCount": 32
+        "thoughtsTokenCount": 192
       }
     }
   },
   {
-    "key": "b386c4192eb9fd20",
-    "instructionAgnosticKey": "7b8db6467af3e028",
+    "key": "d47ed3ca07fb7c99",
+    "instructionAgnosticKey": "5a5dc8bc4f4c2dc4",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "Quantum Computing"
             }
           ]
         }
@@ -89,7 +83,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Triple Threat: Parallel Processing Engaged."
+                "text": "Quantum Computing: The Impossible, Now Computable."
               }
             ]
           },
@@ -97,39 +91,36 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 46,
-        "candidatesTokenCount": 8,
-        "totalTokenCount": 811,
+        "promptTokenCount": 31,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 647,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 46
+            "tokenCount": 31
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 8
+            "tokenCount": 10
           }
         ],
-        "thoughtsTokenCount": 757
+        "thoughtsTokenCount": 606
       }
     }
   },
   {
-    "key": "b386c4192eb9fd20",
-    "instructionAgnosticKey": "7b8db6467af3e028",
+    "key": "e865115f2ea17ce7",
+    "instructionAgnosticKey": "a79e113cbf6130ec",
     "request": {
       "contents": [
         {
           "role": "user",
           "parts": [
             {
-              "text": "For context:"
-            },
-            {
-              "text": "[orchestrator] said: Processing 3 topics in parallel."
+              "text": "Cloud Computing"
             }
           ]
         }
@@ -148,7 +139,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "**3-Way Flow: Parallel Processing Unleashed!**"
+                "text": "Cloud Computing: Unleash Your Potential, Anywhere."
               }
             ]
           },
@@ -156,23 +147,23 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 46,
-        "candidatesTokenCount": 12,
-        "totalTokenCount": 893,
+        "promptTokenCount": 31,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 766,
         "trafficType": "ON_DEMAND",
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 46
+            "tokenCount": 31
           }
         ],
         "candidatesTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 12
+            "tokenCount": 10
           }
         ],
-        "thoughtsTokenCount": 835
+        "thoughtsTokenCount": 725
       }
     }
   }
