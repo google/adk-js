@@ -71,6 +71,12 @@ export interface EventActions {
    * execution for this invocation. Mirrors Python `EventActions.end_of_agent`.
    */
   endOfAgent?: boolean;
+
+  /**
+   * Indicates that the event is rewinding the session to the state before the
+   * specified invocation ID. Mirrors Python `EventActions.rewind_before_invocation_id`.
+   */
+  rewindBeforeInvocationId?: string;
 }
 
 /**
