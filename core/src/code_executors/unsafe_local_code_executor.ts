@@ -11,6 +11,10 @@ import * as path from 'node:path';
 import {getMimeTypeAndEncoding} from '../utils/file_extension_utils.js';
 import {materializeFiles} from '../utils/file_utils.js';
 import {logger} from '../utils/logger.js';
+import {
+  killProcessTree,
+  processTreeSpawnOptions,
+} from '../utils/process_tree.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {
   CodeExecutionLanguage,
@@ -230,7 +234,10 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         stderr: string;
         exitCode: number | null;
       }>((resolve) => {
-        const child = spawn(command, args, {cwd: tempDir});
+        const child = spawn(command, args, {
+          cwd: tempDir,
+          ...processTreeSpawnOptions(),
+        });
 
         let stdout = '';
         let stderr = '';
@@ -245,9 +252,17 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         // the timeout is actually enforced. Mirrors LocalEnvironment.execute.
         const timer = setTimeout(() => {
           timedOut = true;
-          child.kill('SIGKILL');
-          child.stdout?.destroy();
-          child.stderr?.destroy();
+          void killProcessTree(child)
+            .catch((error: unknown) => {
+              logger.warn(
+                `Failed to terminate code executor process tree: ${error}`,
+              );
+              child.kill('SIGKILL');
+            })
+            .finally(() => {
+              child.stdout?.destroy();
+              child.stderr?.destroy();
+            });
         }, this.timeoutSeconds * 1000);
 
         if (child.stdout) {
