@@ -8,6 +8,7 @@ import {cloneDeep} from 'lodash-es';
 import {Context} from '../../../agents/context.js';
 import {
   AuthCredential,
+  AuthCredentialTypes,
   isAuthCredential,
 } from '../../../auth/auth_credential.js';
 import {AuthScheme} from '../../../auth/auth_schemes.js';
@@ -24,6 +25,28 @@ import {AuthCredentialMissingError} from '../auth/credential_exchangers/base_aut
 
 /** Credential key used when the tool declares none of its own. */
 const DEFAULT_CREDENTIAL_KEY = 'default_openapi_key';
+
+/** Credential types that carry a token only after an exchange or sign-in. */
+const INTERACTIVE_CREDENTIAL_TYPES: ReadonlySet<AuthCredentialTypes> = new Set([
+  AuthCredentialTypes.OAUTH2,
+  AuthCredentialTypes.OPEN_ID_CONNECT,
+]);
+
+/**
+ * Reports whether an exchange produced nothing usable for an OAuth2 or OpenID
+ * Connect credential: it was not exchanged, and the credential holds neither
+ * an HTTP credential nor an access or refresh token to send.
+ */
+function isMissingInteractiveToken(result: ExchangeResult): boolean {
+  const {credential, wasExchanged} = result;
+  return (
+    !wasExchanged &&
+    INTERACTIVE_CREDENTIAL_TYPES.has(credential.authType) &&
+    !credential.http &&
+    !credential.oauth2?.accessToken &&
+    !credential.oauth2?.refreshToken
+  );
+}
 
 /** The outcome of preparing a tool's credential. */
 export interface AuthPreparationResult {
@@ -227,7 +250,8 @@ export class ToolAuthHandler {
   }
 
   /**
-   * Exchanges `credential`, or returns `undefined` when the exchange failed.
+   * Exchanges `credential`, or returns `undefined` when the exchange failed or
+   * produced an interactive credential that still holds no token.
    *
    * An exchange failure is transient far more often than it is fatal, so it
    * becomes a `pending` result the client can resume from rather than an
@@ -241,10 +265,11 @@ export class ToolAuthHandler {
     const exchanger =
       this.credentialExchanger ?? new AutoAuthCredentialExchanger();
     try {
-      return await exchanger.exchange({
+      const result = await exchanger.exchange({
         authScheme: this.authScheme,
         authCredential: credential,
       });
+      return isMissingInteractiveToken(result) ? undefined : result;
     } catch (e: unknown) {
       logger.error(
         `Failed to exchange credential: ${e instanceof Error ? e.message : e}`,

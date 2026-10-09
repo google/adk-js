@@ -73,6 +73,7 @@ export {
   serviceAccountSchemeCredential,
   tokenToSchemeCredential,
 } from './tools/openapi_tool/auth/auth_helpers.js';
+export type {OpenIdConfig} from './tools/openapi_tool/auth/auth_helpers.js';
 export {AutoAuthCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 export type {CustomCredentialExchangers} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 export {
@@ -81,6 +82,7 @@ export {
 } from './tools/openapi_tool/auth/credential_exchangers/base_auth_credential_exchanger.js';
 export {
   exchangeCredential,
+  generateAuthToken,
   OAuth2BearerExchanger,
 } from './tools/openapi_tool/auth/credential_exchangers/oauth2_exchanger.js';
 export {ServiceAccountCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';

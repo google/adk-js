@@ -14,6 +14,12 @@ Versioned binary and text storage (`Part` payloads) scoped to an individual sess
 
 - [Artifacts](artifacts/index.md) - `BaseArtifactService`, `InMemoryArtifactService`, `FileArtifactService`, `GcsArtifactService`, and session-bound `ctx.artifactService` (`SessionArtifactService`).
 
+### Auth
+
+Credentials for tools that call protected APIs: how a credential is described, how the agent asks the user for one, and how it is exchanged for the credential a request carries.
+
+- [Auth](auth/index.md) - `AuthCredential`, `AuthConfig`, `AuthHandler`, `AuthPreprocessor`, `AuthSchemeType`, and the OpenAPI credential exchangers.
+
 ### Code executors
 
 Executors that let an agent answer by writing code and running it, either server-side in Gemini or client-side in a process, a container or a cloud sandbox.
