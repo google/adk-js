@@ -37,6 +37,12 @@
       "require": "./dist/cjs/a2a/index.js",
       "default": "./dist/esm/a2a/index.js"
     },
+    "./agents/agent-engine": {
+      "types": "./dist/types/agents/agent_engine_client.d.ts",
+      "import": "./dist/esm/agents/agent_engine_client.js",
+      "require": "./dist/cjs/agents/agent_engine_client.js",
+      "default": "./dist/esm/agents/agent_engine_client.js"
+    },
     "./artifacts/gcs": {
       "types": "./dist/types/artifacts/gcs_artifact_service.d.ts",
       "import": "./dist/esm/artifacts/gcs_artifact_service.js",
@@ -83,6 +89,7 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^0.3.10",
+    "@google-cloud/aiplatform": "^6.10.0",
     "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^2.27.0",
     "@mikro-orm/core": "^7.2.0",
