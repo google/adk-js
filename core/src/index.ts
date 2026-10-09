@@ -61,6 +61,41 @@ export {
   loadSkillFromZipBuffer,
   validateSkillDir,
 } from './skills/loader.js';
+export {
+  ApplicationIntegrationToolset,
+  type ApplicationIntegrationToolsetOptions,
+} from './tools/application_integration_tool/application_integration_toolset.js';
+export {
+  actionRequest,
+  actionResponse,
+  ConnectionsClient,
+  CONNECTOR_BASE_SPEC,
+  connectorPayload,
+  createOperation,
+  createOperationRequest,
+  deleteOperation,
+  deleteOperationRequest,
+  executeCustomQueryRequest,
+  getActionOperation,
+  getOperation,
+  getOperationRequest,
+  listOperation,
+  listOperationRequest,
+  updateOperation,
+  updateOperationRequest,
+  type ActionSchema,
+  type ConnectionDetails,
+  type ConnectionsClientOptions,
+  type ConnectorSpec,
+  type EntityOperationOptions,
+  type EntitySchemaAndOperations,
+  type EntitySchemaOperationOptions,
+  type GetActionOperationOptions,
+} from './tools/application_integration_tool/clients/connections_client.js';
+export {
+  IntegrationClient,
+  type IntegrationClientOptions,
+} from './tools/application_integration_tool/clients/integration_client.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
@@ -127,6 +162,7 @@ export {
 } from './tools/skill/run_skill_inline_script_tool.js';
 export {RunSkillScriptTool} from './tools/skill/run_skill_script_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
+export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
 export * from './telemetry/google_cloud.js';
