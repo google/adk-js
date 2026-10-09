@@ -82,6 +82,10 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
 
+#### API Hub Tool
+
+- [API Hub tool](tools/apihub_tool/index.md) - Building tools from an API registered in Google Cloud API Hub, the resource names it accepts, custom spec clients, and `SecretManagerClient`.
+
 ### Telemetry
 
 - [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.

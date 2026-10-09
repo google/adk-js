@@ -113,6 +113,7 @@
   "devDependencies": {
     "@google-cloud/opentelemetry-cloud-monitoring-exporter": "^0.21.0",
     "@google-cloud/opentelemetry-cloud-trace-exporter": "^3.0.0",
+    "@google-cloud/secret-manager": "^7.1.1",
     "@google-cloud/storage": "^7.17.1",
     "@mikro-orm/sqlite": "^7.2.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -126,6 +127,7 @@
   "peerDependencies": {
     "@google-cloud/opentelemetry-cloud-monitoring-exporter": "^0.21.0",
     "@google-cloud/opentelemetry-cloud-trace-exporter": "^3.0.0",
+    "@google-cloud/secret-manager": "^7.1.1",
     "@google-cloud/storage": "^7.17.1",
     "@mikro-orm/mariadb": "^7.2.0",
     "@mikro-orm/mssql": "^7.2.0",
@@ -140,6 +142,9 @@
       "optional": true
     },
     "@google-cloud/opentelemetry-cloud-trace-exporter": {
+      "optional": true
+    },
+    "@google-cloud/secret-manager": {
       "optional": true
     },
     "@google-cloud/storage": {
