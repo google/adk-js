@@ -44,6 +44,7 @@ const pkg: CorePackageJson = JSON.parse(
 const OPTIONAL_SUBSYSTEM_PEERS = [
   '@google-cloud/opentelemetry-cloud-monitoring-exporter',
   '@google-cloud/opentelemetry-cloud-trace-exporter',
+  '@google-cloud/secret-manager',
   '@google-cloud/storage',
   '@mikro-orm/mariadb',
   '@mikro-orm/mssql',

@@ -69,6 +69,7 @@ Left unset, the sample runs on the corpus written into the file.
 | ---------------------------------------- | --------------------------------------------------------------------------------------- | --- | ------------------------------------------ |
 | `retrieval`                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`  | ✅  | `llamaindex` for the `FilesRetrieval` half |
 | [`openapi_tool`](openapi_tool/README.md) | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call | ✅  |                                            |
+| [`apihub_tool`](apihub_tool/README.md)   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource     | ✅  |                                            |
 
 ## Worth knowing
 
@@ -113,4 +114,5 @@ Left unset, the sample runs on the corpus written into the file.
 - [LlamaIndexRetrieval](../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - Answers from any object with a `retrieve` method.
 - [FilesRetrieval](../../docs/guides/tools/retrieval/files_retrieval/index.md) - Builds the retriever from a directory of documents.
 - [OpenAPI tool](../../docs/guides/tools/openapi_tool/index.md) - Building a toolset from a spec, selecting tools, and configuring the credential the requests carry.
+- [API Hub tool](../../docs/guides/tools/apihub_tool/index.md) - Building a toolset from an API Hub resource, and supplying your own spec client.
 - [Graph workflow samples](../workflows/README.md) - The other sample category, one directory per section of the graph documentation.

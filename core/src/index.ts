@@ -61,6 +61,21 @@ export {
   loadSkillFromZipBuffer,
   validateSkillDir,
 } from './skills/loader.js';
+export {
+  APIHubToolset,
+  type APIHubToolsetOptions,
+} from './tools/apihub_tool/apihub_toolset.js';
+export {
+  APIHubClient,
+  type APIHubApi,
+  type APIHubApiVersion,
+  type APIHubClientOptions,
+  type BaseAPIHubClient,
+} from './tools/apihub_tool/clients/apihub_client.js';
+export {
+  SecretManagerClient,
+  type SecretManagerClientOptions,
+} from './tools/apihub_tool/clients/secret_client.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
