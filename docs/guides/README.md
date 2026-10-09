@@ -55,6 +55,7 @@ Planning for an `LlmAgent` through its `planner` option: the model's built-in th
 Conversations and their state: the events of each session, and the `app:`, `user:` and `temp:` scopes that state keys can carry.
 
 - [Sessions](sessions/index.md) - `Session`, `State`, `BaseSessionService`, `InMemorySessionService`, `DatabaseSessionService`, `VertexAiSessionService`, and `getSessionServiceFromUri`.
+
 ### Runners
 
 - [Runner](runners/index.md) - Running an agent for an application, the entry points, which agent answers a resumed conversation, and archiving a finished conversation into memory.
@@ -73,15 +74,14 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [OpenAPI tool](tools/openapi_tool/index.md) - Turning an OpenAPI specification into one tool per operation, selecting the operations an agent gets, and configuring the credential the requests carry.
 
-<<<<<<< ours
+#### Application Integration Tool
+
+- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
+
+#### Google API Tool
+
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+
 ### Telemetry
 
 - [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.
-=======
-#### Application Integration Tool
-
-- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
->>>>>>> theirs
-#### Application Integration Tool
-
-- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
