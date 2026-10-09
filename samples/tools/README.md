@@ -70,7 +70,7 @@ Left unset, the sample runs on the corpus written into the file.
 | `retrieval`                                                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`       | ✅  | `llamaindex` for the `FilesRetrieval` half |
 | [`openapi_tool`](openapi_tool/README.md)                                 | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call      | ✅  |                                            |
 | [`application_integration_tool`](application_integration_tool/README.md) | An Application Integration trigger or an Integration Connectors connection as a set of tools | ✅  | A Google Cloud project and credentials     |
-| `google_api_tool` | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth | — | |
+| `google_api_tool`                                                        | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth          | —   |                                            |
 
 ## Worth knowing
 
