@@ -78,6 +78,10 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
 
+#### Google API Tool
+
+- [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+
 #### API Hub Tool
 
 - [API Hub tool](tools/apihub_tool/index.md) - Building tools from an API registered in Google Cloud API Hub, the resource names it accepts, custom spec clients, and `SecretManagerClient`.

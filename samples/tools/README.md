@@ -70,6 +70,7 @@ Left unset, the sample runs on the corpus written into the file.
 | `retrieval`                                                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`       | ✅  | `llamaindex` for the `FilesRetrieval` half |
 | [`openapi_tool`](openapi_tool/README.md)                                 | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call      | ✅  |                                            |
 | [`application_integration_tool`](application_integration_tool/README.md) | An Application Integration trigger or an Integration Connectors connection as a set of tools | ✅  | A Google Cloud project and credentials     |
+| `google_api_tool`                                                        | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth          | —   |                                            |
 | [`apihub_tool`](apihub_tool/README.md)                                   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource          | ✅  |                                            |
 
 ## Worth knowing
@@ -117,4 +118,6 @@ Left unset, the sample runs on the corpus written into the file.
 - [OpenAPI tool](../../docs/guides/tools/openapi_tool/index.md) - Building a toolset from a spec, selecting tools, and configuring the credential the requests carry.
 - [API Hub tool](../../docs/guides/tools/apihub_tool/index.md) - Building a toolset from an API Hub resource, and supplying your own spec client.
 - [Application Integration tool](../../docs/guides/tools/application_integration_tool/index.md) - Tools for an Application Integration trigger or an Integration Connectors connection.
+- [Google API tool](../../docs/guides/tools/google_api_tool/index.md) - Converting a Google Discovery spec into tools and configuring OpenID Connect credentials.
+- [Google API tool sample](google_api_tool/README.md) - Running Discovery conversion, tool filtering, and OpenID Connect configuration offline.
 - [Graph workflow samples](../workflows/README.md) - The other sample category, one directory per section of the graph documentation.
