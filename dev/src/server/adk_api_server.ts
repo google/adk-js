@@ -446,7 +446,8 @@ export class AdkApiServer {
 
           const functionCalls = getFunctionCalls(event);
           const functionResponses = getFunctionResponses(event);
-          await using agentFile = await this.agentLoader.getAgentFile(appName);
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          await using _bundleLease = agentFile.retain?.();
           const loaded = await agentFile.load();
           const rootAgent = isApp(loaded) ? loaded.rootAgent : loaded;
 
@@ -1252,7 +1253,8 @@ export class AdkApiServer {
       return undefined;
     }
 
-    await using agentFile = await this.agentLoader.getAgentFile(appName);
+    const agentFile = await this.agentLoader.getAgentFile(appName);
+    await using _bundleLease = agentFile.retain?.();
     const loaded = await agentFile.load();
 
     return isApp(loaded) ? loaded.rootAgent : loaded;
@@ -1262,9 +1264,12 @@ export class AdkApiServer {
     agentOrApp: RunnableRoot | App,
     appName: string,
   ): Promise<Runner> {
-    if (!(appName in this.runnerCache)) {
-      const isAppInstance = isApp(agentOrApp);
-      const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    const isAppInstance = isApp(agentOrApp);
+    const agent = isAppInstance ? agentOrApp.rootAgent : agentOrApp;
+    if (
+      !(appName in this.runnerCache) ||
+      this.runnerCache[appName].agent !== agent
+    ) {
       this.runnerCache[appName] = new Runner({
         app: isAppInstance ? agentOrApp : undefined,
         appName,
@@ -1288,9 +1293,8 @@ export class AdkApiServer {
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
-    await using agentFile = await this.agentLoader.getAgentFile(
-      options.appName,
-    );
+    const agentFile = await this.agentLoader.getAgentFile(options.appName);
+    await using _bundleLease = agentFile.retain?.();
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 

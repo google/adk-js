@@ -180,6 +180,14 @@ export class AgentFile {
   private cleanupFilePath: string | undefined;
   private cleanupDirPath: string | undefined;
   private disposed = false;
+  private retired = false;
+  private activeUsers = 0;
+  private disposePromise?: Promise<void>;
+  private retirePromise?: Promise<void>;
+  private retireCallbacks?: {
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  };
   private agent?: RunnableRoot;
   private app?: App;
 
@@ -404,22 +412,84 @@ export class AgentFile {
     return this.cleanupFilePath || this.filePath;
   }
 
+  /**
+   * Acquires a lease that keeps the compiled bundle on disk until the
+   * returned disposable is released.
+   */
+  retain(): AsyncDisposable {
+    if (this.disposed) {
+      throw new Error('Agent is disposed and can not be used');
+    }
+
+    this.activeUsers++;
+    let released = false;
+    return {
+      [Symbol.asyncDispose]: async () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        this.activeUsers--;
+        if (this.activeUsers === 0 && this.retired) {
+          await this.dispose();
+        }
+      },
+    };
+  }
+
+  /**
+   * Marks this file as retired so it is disposed immediately if idle, or
+   * as soon as its last active lease from {@link retain} is released.
+   */
+  retire(): Promise<void> {
+    this.retired = true;
+    if (this.activeUsers === 0) {
+      return this.dispose();
+    }
+
+    this.retirePromise ??= new Promise<void>((resolve, reject) => {
+      this.retireCallbacks = {resolve, reject};
+    });
+    return this.retirePromise;
+  }
+
   async [Symbol.asyncDispose](): Promise<void> {
     return this.dispose();
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) {
+    if (this.disposePromise) {
+      return this.disposePromise;
+    }
+
+    if (!this.cleanupFilePath) {
+      this.retireCallbacks?.resolve();
       return;
     }
 
-    if (this.cleanupFilePath) {
-      this.disposed = true;
-      await fsPromises.unlink(this.cleanupFilePath);
-      if (this.cleanupDirPath) {
-        await removeFolder(this.cleanupDirPath);
+    this.disposed = true;
+    const cleanupFilePath = this.cleanupFilePath;
+    const cleanupDirPath = this.cleanupDirPath;
+    this.disposePromise = (async () => {
+      await fsPromises.unlink(cleanupFilePath).catch((e: {code?: string}) => {
+        if (e?.code !== 'ENOENT') {
+          throw e;
+        }
+      });
+      if (cleanupDirPath) {
+        await removeFolder(cleanupDirPath);
       }
-    }
+    })().then(
+      () => {
+        this.retireCallbacks?.resolve();
+      },
+      (err) => {
+        this.retireCallbacks?.reject(err);
+        throw err;
+      },
+    );
+
+    return this.disposePromise;
   }
 }
 
@@ -437,7 +507,9 @@ export class AgentFile {
 export class AgentLoader {
   private agentsAlreadyPreloaded = false;
   private preloadInFlight?: Promise<void>;
+  private invalidationGeneration = 0;
   private readonly preloadedAgents: Record<string, AgentFile> = {};
+  private readonly retiredAgents = new Set<AgentFile>();
   private readonly loadFailures: Record<string, AgentLoadFailure> = {};
   private watcher?: fs.FSWatcher;
 
@@ -501,11 +573,20 @@ export class AgentLoader {
   }
 
   /**
-   * Disposes all cached agents and marks them for reload on the next request.
+   * Retires all cached agents and marks them for reload on the next request.
+   * Bundles still in use by active requests remain on disk until their last
+   * lease is released.
    */
   private invalidateAll(): void {
+    this.invalidationGeneration++;
     for (const agentFile of Object.values(this.preloadedAgents)) {
-      agentFile.dispose().catch(() => {});
+      this.retiredAgents.add(agentFile);
+      agentFile
+        .retire()
+        .catch(() => {})
+        .finally(() => {
+          this.retiredAgents.delete(agentFile);
+        });
     }
 
     for (const key of Object.keys(this.preloadedAgents)) {
@@ -558,6 +639,11 @@ export class AgentLoader {
     return appNames.sort();
   }
 
+  /**
+   * Returns a shared file owned by this loader. Callers must not dispose it
+   * directly; use {@link AgentFile.retain} while a request is using the bundle
+   * so invalidation defers cleanup until active users finish.
+   */
   async getAgentFile(agentName: string): Promise<AgentFile> {
     await this.preloadAgents();
 
@@ -589,29 +675,37 @@ export class AgentLoader {
   async disposeAll(): Promise<void> {
     this.watcher?.close();
     this.watcher = undefined;
-    await Promise.all(
-      Object.values(this.preloadedAgents).map((f) => f.dispose()),
-    );
+    const filesToDispose = [
+      ...Object.values(this.preloadedAgents),
+      ...this.retiredAgents,
+    ];
+    this.retiredAgents.clear();
+    await Promise.all(filesToDispose.map((f) => f.dispose()));
   }
 
   async preloadAgents(): Promise<void> {
-    if (this.agentsAlreadyPreloaded) {
-      return;
+    while (!this.agentsAlreadyPreloaded) {
+      // Callers overlap in practice: `adk web` serves concurrent requests and
+      // lists agents from several routes. Without sharing the in-flight pass,
+      // every caller that arrives before the first one finishes bundles all
+      // agents again — three overlapping callers turned 4 esbuild builds into
+      // 12 and 5.1s into 13.6s on the app_loader fixture.
+      const generation = this.invalidationGeneration;
+      const pass = (this.preloadInFlight ??= this.runPreload(
+        generation,
+      ).finally(() => {
+        if (this.preloadInFlight === pass) {
+          this.preloadInFlight = undefined;
+        }
+      }));
+
+      await pass;
     }
-
-    // Callers overlap in practice: `adk web` serves concurrent requests and
-    // lists agents from several routes. Without sharing the in-flight pass,
-    // every caller that arrives before the first one finishes bundles all
-    // agents again — three overlapping callers turned 4 esbuild builds into
-    // 12 and 5.1s into 13.6s on the app_loader fixture.
-    this.preloadInFlight ??= this.runPreload().finally(() => {
-      this.preloadInFlight = undefined;
-    });
-
-    return this.preloadInFlight;
   }
 
-  private async runPreload(): Promise<void> {
+  private async runPreload(
+    generation = this.invalidationGeneration,
+  ): Promise<void> {
     const files = (await isFile(this.agentsDirPath))
       ? [await getFileMetadata(this.agentsDirPath)]
       : await getDirFiles(this.agentsDirPath);
@@ -619,7 +713,7 @@ export class AgentLoader {
     await Promise.all(
       files.map(async (fileOrDir: FileMetadata) => {
         if (fileOrDir.isFile && isJsFile(fileOrDir.ext)) {
-          return this.loadAgentFromFile(fileOrDir);
+          return this.loadAgentFromFile(fileOrDir, generation);
         }
 
         if (fileOrDir.isDirectory) {
@@ -629,10 +723,14 @@ export class AgentLoader {
           ) {
             return;
           }
-          return this.loadAgentFromDirectory(fileOrDir);
+          return this.loadAgentFromDirectory(fileOrDir, generation);
         }
       }),
     );
+
+    if (this.invalidationGeneration !== generation) {
+      return;
+    }
 
     this.agentsAlreadyPreloaded = true;
 
@@ -643,17 +741,29 @@ export class AgentLoader {
     return;
   }
 
-  private async loadAgentFromFile(file: FileMetadata): Promise<void> {
+  private async loadAgentFromFile(
+    file: FileMetadata,
+    generation = this.invalidationGeneration,
+  ): Promise<void> {
     try {
       const agentFile = new AgentFile(file.path, this.options);
       await agentFile.load();
+      if (this.invalidationGeneration !== generation) {
+        await agentFile.dispose();
+        return;
+      }
       this.preloadedAgents[file.name] = agentFile;
     } catch (e) {
-      this.recordLoadFailure(file.name, file.path, e);
+      if (this.invalidationGeneration === generation) {
+        this.recordLoadFailure(file.name, file.path, e);
+      }
     }
   }
 
-  private async loadAgentFromDirectory(dir: FileMetadata): Promise<void> {
+  private async loadAgentFromDirectory(
+    dir: FileMetadata,
+    generation = this.invalidationGeneration,
+  ): Promise<void> {
     const subFiles = await getDirFiles(dir.path);
     const possibleEntryFile =
       subFiles.find((f) => f.isFile && f.name === 'app' && isJsFile(f.ext)) ??
@@ -666,9 +776,15 @@ export class AgentLoader {
     try {
       const agentFile = new AgentFile(possibleEntryFile.path, this.options);
       await agentFile.load();
+      if (this.invalidationGeneration !== generation) {
+        await agentFile.dispose();
+        return;
+      }
       this.preloadedAgents[dir.name] = agentFile;
     } catch (e) {
-      this.recordLoadFailure(dir.name, possibleEntryFile.path, e);
+      if (this.invalidationGeneration === generation) {
+        this.recordLoadFailure(dir.name, possibleEntryFile.path, e);
+      }
     }
   }
 
