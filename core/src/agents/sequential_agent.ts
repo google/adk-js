@@ -58,8 +58,18 @@ export class SequentialAgent extends BaseAgent {
     context: InvocationContext,
   ): AsyncGenerator<Event, void, void> {
     for (const subAgent of this.subAgents) {
+      let pauseInvocation = false;
       for await (const event of subAgent.runAsync(context)) {
+        if (context.abortSignal?.aborted) {
+          return;
+        }
         yield event;
+        if (context.shouldPauseInvocation(event)) {
+          pauseInvocation = true;
+        }
+      }
+      if (pauseInvocation) {
+        return;
       }
     }
   }
@@ -103,8 +113,18 @@ export class SequentialAgent extends BaseAgent {
     }
 
     for (const subAgent of this.subAgents) {
+      let pauseInvocation = false;
       for await (const event of subAgent.runLive(context)) {
+        if (context.abortSignal?.aborted) {
+          return;
+        }
         yield event;
+        if (context.shouldPauseInvocation(event)) {
+          pauseInvocation = true;
+        }
+      }
+      if (pauseInvocation) {
+        return;
       }
     }
   }
