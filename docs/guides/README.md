@@ -73,6 +73,15 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [OpenAPI tool](tools/openapi_tool/index.md) - Turning an OpenAPI specification into one tool per operation, selecting the operations an agent gets, and configuring the credential the requests carry.
 
+<<<<<<< ours
 ### Telemetry
 
 - [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.
+=======
+#### Application Integration Tool
+
+- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.
+>>>>>>> theirs
+#### Application Integration Tool
+
+- [Application Integration tool](tools/application_integration_tool/index.md) - Tools for a Google Cloud Application Integration API trigger, or for the entities and actions of an Integration Connectors connection, and the credential they carry.

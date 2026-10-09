@@ -5,7 +5,7 @@
  */
 
 import {describe, expect, it} from 'vitest';
-import {formatError} from '../../src/utils/error_utils.js';
+import {formatError, getErrorMessage} from '../../src/utils/error_utils.js';
 
 const TRUNCATION_MARKER = '... [truncated]';
 const MAX_RESPONSE_BODY_LENGTH = 1000;
@@ -16,6 +16,26 @@ function httpError(status: number, body: string, statusText?: string): Error {
     response: {status, statusText, data: body},
   });
 }
+
+describe('getErrorMessage', () => {
+  it('returns the message of an Error instance without unwrapping cause', () => {
+    const err = new Error('outer message', {cause: new Error('inner cause')});
+    expect(getErrorMessage(err)).toBe('outer message');
+  });
+
+  it('returns the message property of a plain object', () => {
+    expect(getErrorMessage({message: 'plain object message'})).toBe(
+      'plain object message',
+    );
+  });
+
+  it('stringifies primitives and objects without a string message', () => {
+    expect(getErrorMessage('direct string')).toBe('direct string');
+    expect(getErrorMessage(404)).toBe('404');
+    expect(getErrorMessage(null)).toBe('null');
+    expect(getErrorMessage({message: 123})).toBe('[object Object]');
+  });
+});
 
 describe('formatError', () => {
   it('returns the message of a single plain error', () => {
