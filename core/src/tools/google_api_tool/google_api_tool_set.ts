@@ -214,8 +214,7 @@ export class GoogleApiToolSet extends BaseToolset {
       apiVersion,
     ).convert();
     const oauth2Scheme = specDict.components?.securitySchemes?.['oauth2'] as
-      | OpenAPIV3.OAuth2SecurityScheme
-      | undefined;
+      OpenAPIV3.OAuth2SecurityScheme | undefined;
     const scopesMap = oauth2Scheme?.flows?.authorizationCode?.scopes ?? {};
     const firstScope = Object.keys(scopesMap)[0];
     const scopes = firstScope ? [firstScope] : undefined;

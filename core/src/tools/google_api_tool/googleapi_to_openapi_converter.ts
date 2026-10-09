@@ -290,8 +290,7 @@ export function convertSchemaObject(
   }
 
   return result as unknown as
-    | OpenAPIV3.SchemaObject
-    | OpenAPIV3.ReferenceObject;
+    OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject;
 }
 
 /**
