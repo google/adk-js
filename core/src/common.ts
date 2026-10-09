@@ -295,6 +295,10 @@ export {
   type ReflectAndRetryToolPluginOptions,
 } from './plugins/reflect_retry_tool_plugin.js';
 export {
+  RequestIntercepterPlugin,
+  type CapturedLlmRequest,
+} from './plugins/request_intercepter_plugin.js';
+export {
   InMemoryPolicyEngine,
   PolicyOutcome,
   SecurityPlugin,
