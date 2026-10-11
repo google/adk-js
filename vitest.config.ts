@@ -8,6 +8,16 @@ import path from 'path';
 import {defineConfig} from 'vitest/config';
 
 /**
+ * Per-worker V8 old-space ceiling (MB) for the `forks` pool. The heaviest test
+ * file in the repository, `tests/integration/app_loader/app_loader_test.ts`,
+ * peaks at ~1 GB under `--coverage`; every other file stays under 105 MB. The
+ * ceiling also has to fit the smallest runner in the `run-tests` matrix:
+ * `macos-latest` is a 3 vCPU / 7 GB machine, and Vitest sizes the pool at
+ * `cores - 1`, so two workers plus the main process share 7 GB there.
+ */
+const WORKER_MAX_OLD_SPACE_MB = 2048;
+
+/**
  * Test budget (ms) for the `unit:core` and `unit:dev` projects: Vitest's 5s
  * default has been observed to expire when these share a worker pool with the
  * install-heavy `integration` fixtures under `npm run test:coverage`. A project
@@ -62,10 +72,7 @@ export default defineConfig({
     silent: process.env.CI ? 'passed-only' : false,
     poolOptions: {
       forks: {
-        execArgv: ['--max-old-space-size=8192'],
-      },
-      threads: {
-        execArgv: ['--max-old-space-size=8192'],
+        execArgv: [`--max-old-space-size=${WORKER_MAX_OLD_SPACE_MB}`],
       },
     },
     projects: [
