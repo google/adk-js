@@ -173,14 +173,14 @@ export default defineConfig({
         'dev/src/**/*.ts',
         'integrations/src/**/*.ts',
       ],
-      // Those values are from the npm run test:coverage command run on 2026-02-06
+      // Those values are from the npm run test:coverage command run on 2026-07-30
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 86,
-        branches: 87,
-        functions: 88,
-        lines: 86,
+        statements: 90,
+        branches: 88,
+        functions: 90,
+        lines: 90,
       },
     },
   },
