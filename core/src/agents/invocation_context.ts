@@ -253,7 +253,7 @@ export class InvocationContext {
    * The live request queue feeding the model on the bidirectional (live) path.
    * Set only for invocations started via `runner.runLive`.
    */
-  readonly liveRequestQueue?: LiveRequestQueue;
+  liveRequestQueue?: LiveRequestQueue;
 
   /**
    * The most recent session resumption handle observed on the live path.
