@@ -21,6 +21,14 @@ prints each event decomposed into its fields. From the repository root:
 npx tsx samples/events/agent.ts
 ```
 
+This sample runs offline and requires no API key. You can also run the exported
+`rootAgent` through the ADK CLI after building the workspace:
+
+```bash
+npm run build
+npm run sample -- samples/events/agent.ts
+```
+
 `samples/` is not an npm workspace, so it is type-checked separately, in CI and
 locally:
 
@@ -31,3 +39,4 @@ npm run ts:check:samples
 ## Related Guides
 
 - [Event](../../docs/guides/events/event/index.md) - The `Event` and `EventActions` shapes and the helper functions this sample calls.
+- [Events](../../docs/guides/events/index.md) - `Event`, `CreateEventParams`, `createEvent`, `EventActions`, `createEventActions`, and the event inspection and thought helpers.

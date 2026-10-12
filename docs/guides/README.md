@@ -36,6 +36,7 @@ Executors that let an agent answer by writing code and running it, either server
 The record of everything that happens during an invocation, and the side effects attached to it.
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
+- [Events](events/index.md) - `Event`, `CreateEventParams`, `createEvent`, `EventActions`, `createEventActions`, and the event inspection and thought helpers.
 
 ### Flows
 

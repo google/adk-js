@@ -20,6 +20,7 @@
  * `InMemoryRunner` and prints each event decomposed into those fields, which is
  * what the CLI does not show. Run it with:
  *   npx tsx samples/events/agent.ts
+ *   npm run sample -- samples/events/agent.ts
  */
 
 import {
@@ -78,6 +79,7 @@ class EventsShowcaseAgent extends BaseAgent {
         filename: RECEIPT_FILENAME,
         artifact: {
           text: JSON.stringify({
+            appName: ctx.appName,
             orderId: 'ORD-42',
             status: 'SHIPPED',
             carrier: 'FastShip',
