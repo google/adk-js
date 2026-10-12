@@ -72,6 +72,12 @@ Left unset, the sample runs on the corpus written into the file.
 | [`application_integration_tool`](application_integration_tool/README.md) | An Application Integration trigger or an Integration Connectors connection as a set of tools | ✅  | A Google Cloud project and credentials     |
 | `google_api_tool`                                                        | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth          | —   |                                            |
 | [`apihub_tool`](apihub_tool/README.md)                                   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource          | ✅  |                                            |
+| Sample                                   | Shows                                                                                   | Key | Extra                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- | --- | ------------------------------------------ |
+| `retrieval`                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`  | ✅  | `llamaindex` for the `FilesRetrieval` half |
+| [`openapi_tool`](openapi_tool/README.md) | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call | ✅  |                                            |
+| [`apihub_tool`](apihub_tool/README.md)   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource     | ✅  |                                            |
+| `agent.ts`                               | `FunctionTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, `EXIT_LOOP`  | —   | `npx tsx samples/tools/agent.ts`           |
 
 ## Worth knowing
 
@@ -109,9 +115,16 @@ Left unset, the sample runs on the corpus written into the file.
   request a client answers. The slot `ToolAuthHandler` caches the exchanged
   credential in is derived from the auth scheme and the credential, so two
   tools sharing a `credentialKey` still cache separately.
+- **`AgentTool` validates `inputSchema` and `outputSchema` on `LlmAgent`.**
+  Null and `undefined` fields are stripped after schema validation on both the
+  input arguments and the JSON output object.
+- **`FunctionTool._callLive` injects `inputStream` from `ctx.activeStreamingTools`.**
+  When `ctx.activeStreamingTools[tool.name]?.stream` is populated, `_callLive`
+  passes that `LiveRequestQueue` as `inputStream` to the tool's async generator.
 
 ## See also
 
+- [Tools](../../docs/guides/tools/index.md) - `BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, and `ToolboxTool`.
 - [BaseRetrievalTool](../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - The abstract base, and how client-side retrieval differs from `VertexRagRetrievalTool`.
 - [LlamaIndexRetrieval](../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - Answers from any object with a `retrieve` method.
 - [FilesRetrieval](../../docs/guides/tools/retrieval/files_retrieval/index.md) - Builds the retriever from a directory of documents.

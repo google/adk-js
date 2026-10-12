@@ -540,3 +540,27 @@ export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
+
+export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
+export type {
+  CrewaiSchemaLike,
+  CrewaiToolConfig,
+  CrewaiToolLike,
+} from './tools/crewai_tool.js';
+export {
+  buildFunctionDeclarationForLangchain,
+  buildFunctionDeclarationForParamsForCrewai,
+  buildFunctionDeclarationUtil,
+} from './tools/function_tool.js';
+export type {CallLiveToolRequest} from './tools/function_tool.js';
+export {LangchainTool, isLangchainTool} from './tools/langchain_tool.js';
+export type {
+  LangchainSchemaLike,
+  LangchainToolConfig,
+  LangchainToolLike,
+} from './tools/langchain_tool.js';
+export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
+export type {
+  ToolboxClientLike,
+  ToolboxToolOptions,
+} from './tools/toolbox_tool.js';
