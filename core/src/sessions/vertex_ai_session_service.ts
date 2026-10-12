@@ -282,14 +282,15 @@ export class VertexAiSessionService extends BaseSessionService {
 
     try {
       let getSessionResponse: VertexAiSession | undefined;
-      let eventsIterator: VertexAiSessionEvent[] = [];
+      const eventsIterator: VertexAiSessionEvent[] = [];
+      const listConfig: Record<string, string> = {};
+      let pageToken: string | undefined;
 
       if (config && config.numRecentEvents === 0) {
         getSessionResponse = (await this.sessions.get({
           name: sessionResourceName,
         })) as VertexAiSession;
       } else {
-        const listConfig: Record<string, string> = {};
         if (config && config.afterTimestamp) {
           listConfig.filter = `timestamp>="${new Date(
             config.afterTimestamp,
@@ -304,9 +305,12 @@ export class VertexAiSessionService extends BaseSessionService {
           }),
         ]);
         getSessionResponse = sessionRes as VertexAiSession;
-        eventsIterator =
-          (eventsRes as {sessionEvents?: VertexAiSessionEvent[]})
-            .sessionEvents || [];
+        const firstPage = eventsRes as {
+          sessionEvents?: VertexAiSessionEvent[];
+          nextPageToken?: string;
+        };
+        eventsIterator.push(...(firstPage.sessionEvents || []));
+        pageToken = firstPage.nextPageToken;
       }
 
       const sessionObj = getSessionResponse!;
@@ -315,6 +319,21 @@ export class VertexAiSessionService extends BaseSessionService {
         throw new Error(
           `Session ${sessionId} does not belong to user ${userId}.`,
         );
+      }
+
+      while (pageToken) {
+        const eventsRes = (await this.sessions.events.listInternal({
+          name: sessionResourceName,
+          config: {
+            ...listConfig,
+            pageToken,
+          },
+        })) as {
+          sessionEvents?: VertexAiSessionEvent[];
+          nextPageToken?: string;
+        };
+        eventsIterator.push(...(eventsRes.sessionEvents || []));
+        pageToken = eventsRes.nextPageToken;
       }
 
       const session = createSession({
@@ -703,7 +722,8 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
-    Record<string, unknown> | undefined;
+    | Record<string, unknown>
+    | undefined;
   let compactionData: {
     startTime: number;
     endTime: number;
@@ -753,7 +773,8 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
     transferToAgent: (actions['transferAgent'] ??
       (actions as Record<string, unknown>)['transferToAgent']) as
-      string | undefined,
+      | string
+      | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -775,9 +796,11 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
-      string[] | undefined,
+      | string[]
+      | undefined,
     groundingMetadata: eventMetadata['groundingMetadata'] as
-      GroundingMetadata | undefined,
+      | GroundingMetadata
+      | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };
