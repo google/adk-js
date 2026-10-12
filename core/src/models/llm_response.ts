@@ -115,6 +115,38 @@ export interface LlmResponse {
 }
 
 /**
+ * Usage metadata with the prompt size of the first request of a generation
+ * that @google/genai resumed after continuation pauses.
+ *
+ * TODO: Remove once the @google/genai dependency declares
+ * initialPromptTokenCount on GenerateContentResponseUsageMetadata.
+ */
+export type UsageMetadataWithInitialPrompt =
+  GenerateContentResponseUsageMetadata & {initialPromptTokenCount?: number};
+
+/**
+ * Returns `usage` with initialPromptTokenCount as an own enumerable field.
+ *
+ * @google/genai defines it as a non-enumerable getter, which spreading an
+ * event or serializing it to JSON drops, and the summed promptTokenCount of a
+ * resumed generation overstates the request size.
+ */
+function withOwnInitialPromptTokenCount(
+  usage: GenerateContentResponseUsageMetadata | undefined,
+): UsageMetadataWithInitialPrompt | undefined {
+  const source: UsageMetadataWithInitialPrompt | undefined = usage;
+  const initialPromptTokenCount = source?.initialPromptTokenCount;
+  if (
+    !usage ||
+    initialPromptTokenCount === undefined ||
+    Object.prototype.propertyIsEnumerable.call(usage, 'initialPromptTokenCount')
+  ) {
+    return usage;
+  }
+  return {...usage, initialPromptTokenCount};
+}
+
+/**
  * Creates an LlmResponse from a GenerateContentResponse.
  *
  * @param response The GenerateContentResponse to create the
@@ -124,7 +156,7 @@ export interface LlmResponse {
 export function createLlmResponse(
   response: GenerateContentResponse,
 ): LlmResponse {
-  const usageMetadata = response.usageMetadata;
+  const usageMetadata = withOwnInitialPromptTokenCount(response.usageMetadata);
 
   if (response.candidates && response.candidates.length > 0) {
     const candidate = response.candidates[0];

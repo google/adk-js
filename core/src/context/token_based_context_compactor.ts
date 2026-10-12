@@ -8,6 +8,7 @@ import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
+import {UsageMetadataWithInitialPrompt} from '../models/llm_response.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {
   calculateRetainStartIndex,
@@ -138,13 +139,19 @@ export class TokenBasedContextCompactor implements BaseContextCompactor {
  * history), so the latest one is used directly. These values must not be
  * summed across events: each already includes all prior history, so a sum
  * grows with call count rather than context size.
+ *
+ * For a generation that @google/genai resumed after continuation pauses,
+ * promptTokenCount is summed over every resumed request, each of which resent
+ * the prompt, so `initialPromptTokenCount` is used instead when present.
  */
 function latestPromptTokenCount(
   activeEvents: Event[],
   invocationContext: InvocationContext,
 ): number | undefined {
   for (let i = activeEvents.length - 1; i >= 0; i--) {
-    const count = activeEvents[i].usageMetadata?.promptTokenCount;
+    const usage: UsageMetadataWithInitialPrompt | undefined =
+      activeEvents[i].usageMetadata;
+    const count = usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
     if (count !== undefined) {
       return count;
     }
