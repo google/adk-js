@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {getEncodedFileContent as barrelGetEncodedFileContent} from '@google/adk';
 import {Content, Language, Outcome, Part} from '@google/genai';
 import {describe, expect, it} from 'vitest';
 import {
@@ -17,6 +18,8 @@ import {
   getCodeBlockLanguage,
   getEncodedFileContent,
 } from '../../src/code_executors/code_execution_utils.js';
+import {getEncodedFileContent as commonGetEncodedFileContent} from '../../src/common.js';
+import {getEncodedFileContent as indexGetEncodedFileContent} from '../../src/index.js';
 import {base64Encode} from '../../src/utils/env_aware_utils.js';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +41,46 @@ describe('getEncodedFileContent', () => {
     const result = getEncodedFileContent('');
     // empty string is valid base64 (empty), so it should come back unchanged or encoded
     expect(typeof result).toBe('string');
+  });
+});
+
+describe('getEncodedFileContent with Uint8Array', () => {
+  it('is re-exported from common, index, and @google/adk', () => {
+    expect(commonGetEncodedFileContent).toBe(getEncodedFileContent);
+    expect(indexGetEncodedFileContent).toBe(getEncodedFileContent);
+    expect(
+      barrelGetEncodedFileContent(new TextEncoder().encode('hello world')),
+    ).toBe(base64Encode('hello world'));
+  });
+
+  it('base64-encodes raw UTF-8 bytes in a Uint8Array', () => {
+    const rawBytes = new TextEncoder().encode('hello world');
+    expect(getEncodedFileContent(rawBytes)).toBe(base64Encode('hello world'));
+  });
+
+  it('returns string without double-encoding when Uint8Array holds base64 bytes', () => {
+    const encoded = base64Encode('hello world');
+    const encodedBytes = new TextEncoder().encode(encoded);
+    expect(getEncodedFileContent(encodedBytes)).toBe(encoded);
+  });
+
+  it('does not double-encode a base64 string representing non-UTF-8 binary bytes', () => {
+    const pngHeader = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const encodedPng = base64Encode(pngHeader);
+    expect(getEncodedFileContent(encodedPng)).toBe(encodedPng);
+  });
+
+  it('encodes raw binary Uint8Array and preserves already-encoded binary Uint8Array', () => {
+    const pngHeader = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const encodedPng = getEncodedFileContent(pngHeader);
+    expect(encodedPng).toBe('iVBORw0KGgo=');
+    expect(getEncodedFileContent(new TextEncoder().encode(encodedPng))).toBe(
+      'iVBORw0KGgo=',
+    );
   });
 });
 

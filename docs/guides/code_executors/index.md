@@ -1,4 +1,4 @@
-# Code executors (`BaseCodeExecutor`, `BuiltInCodeExecutor`, `UnsafeLocalCodeExecutor`, `ContainerCodeExecutor`, and `AgentEngineSandboxCodeExecutor`)
+# Code executors (`BaseCodeExecutor`, `BuiltInCodeExecutor`, `UnsafeLocalCodeExecutor`, `ContainerCodeExecutor`, `VertexAiCodeExecutor`, and `AgentEngineSandboxCodeExecutor`)
 
 A code executor lets an `LlmAgent` answer by writing code and running it. This
 guide covers the executors in `core/src/code_executors/`, the two ways they run
@@ -18,9 +18,10 @@ You give an agent a code executor through the `codeExecutor` field of
   with its own code execution tool. The code runs on Google's side, inside the
   model call, and nothing runs in your process.
 - **Client-side execution.** `UnsafeLocalCodeExecutor`,
-  `ContainerCodeExecutor` and `AgentEngineSandboxCodeExecutor` run code that
-  ADK extracts from the model response. The code runs where the executor sends
-  it: a local subprocess, a Docker container or a managed cloud sandbox.
+  `ContainerCodeExecutor`, `VertexAiCodeExecutor`, and
+  `AgentEngineSandboxCodeExecutor` run code that ADK extracts from the model
+  response. The code runs where the executor sends it: a local subprocess, a
+  Docker container, or a managed cloud sandbox.
 
 | Executor                         | Where the code runs              | What it needs                                               | Isolation                         |
 | :------------------------------- | :------------------------------- | :---------------------------------------------------------- | :-------------------------------- |
@@ -28,6 +29,7 @@ You give an agent a code executor through the `codeExecutor` field of
 | `UnsafeLocalCodeExecutor`        | A subprocess on your host        | `python3` on `PATH`, `python` on Windows                    | None                              |
 | `ContainerCodeExecutor`          | A Docker container               | A Docker daemon, the optional `dockerode` package, an image | Container, network off by default |
 | `AgentEngineSandboxCodeExecutor` | A Vertex AI Agent Engine sandbox | A Google Cloud project, and a location or `us-central1`     | Managed remote sandbox            |
+| `VertexAiCodeExecutor`           | Vertex AI Code Interpreter       | A Vertex AI extension resource name or Google Cloud project | Managed remote extension          |
 
 ### Choosing between server-side and client-side execution
 
@@ -191,6 +193,42 @@ export const sandboxAgent = new LlmAgent({
 });
 ````
 
+### VertexAiCodeExecutor
+
+`VertexAiCodeExecutor` runs Python code through a Vertex AI Code Interpreter
+extension. You can pass an existing extension resource name via `resourceName`
+in the format `projects/{project}/locations/{location}/extensions/{extension}`,
+set the `CODE_INTERPRETER_EXTENSION_NAME` environment variable, or inject a
+custom `codeInterpreterExtension` client implementing
+`CodeInterpreterExtension`. When `resourceName` is passed to the constructor and
+does not match the expected format, the constructor throws an error. When
+`CODE_INTERPRETER_EXTENSION_NAME` is malformed, it logs a warning and leaves
+`resourceName` unset so a new extension is imported on first execution.
+
+Before each run, `VertexAiCodeExecutor` prepends standard data-science imports
+such as `io`, `math`, `re`, `matplotlib.pyplot as plt`, `numpy as np`,
+`pandas as pd`, and `scipy`, along with the `crop` and `explore_df` helper
+functions used when `optimizeDataFile` is enabled. Output files returned by the
+extension are renamed with a `YYYYMMDD_HHMMSS_` timestamp prefix, with `plot_`
+prepended for `.png`, `.jpg`, and `.jpeg` images and `data_` prepended for
+`.csv` files, and assigned their corresponding MIME types.
+
+````ts
+import {LlmAgent, VertexAiCodeExecutor} from '@google/adk';
+
+export const vertexAgent = new LlmAgent({
+  name: 'vertex_code_interpreter_agent',
+  model: 'gemini-flash-latest',
+  instruction: 'Write Python in a ```python block to analyze data.',
+  codeExecutor: new VertexAiCodeExecutor({
+    resourceName:
+      'projects/my-project/locations/us-central1/extensions/123456789',
+    stateful: true,
+    optimizeDataFile: true,
+  }),
+});
+````
+
 ### What the request processor does
 
 The request processor runs before every model call for an agent that has a
@@ -289,12 +327,13 @@ each `CodeExecutionInput`. The id is the session id, stored in session state
 the first time it is needed. It gives an executor a key to keep interpreter
 state, such as variables and imports, between runs in one session.
 
-None of the executors in `@google/adk` reads `executionId`. The field is there
-for a custom executor. `ContainerCodeExecutor` fixes `stateful` and
-`optimizeDataFile` at `false` and throws in strict mode if you assign either.
-`UnsafeLocalCodeExecutor` sets both to `false` but lets you assign them.
-Setting `optimizeDataFile` on it turns on the data-file step, and setting
-`stateful` changes nothing, because it does not read `executionId`.
+`VertexAiCodeExecutor` passes `executionId` as `session_id` to the Code
+Interpreter extension, and a custom executor can read `executionId` as well.
+`ContainerCodeExecutor` fixes `stateful` and `optimizeDataFile` at `false` and
+throws in strict mode if you assign either. `UnsafeLocalCodeExecutor` sets both
+to `false` but lets you assign them. Setting `optimizeDataFile` on it turns on
+the data-file step, and setting `stateful` changes nothing, because it does not
+read `executionId`.
 
 ## Configuration options
 
@@ -338,6 +377,13 @@ The executors add their own constructor options.
 | `AgentEngineSandboxCodeExecutor` | `agentEngineResourceName` | None, and one is created                     | The Agent Engine that owns new sandboxes. |
 | `AgentEngineSandboxCodeExecutor` | `projectId`               | `GOOGLE_CLOUD_PROJECT`                       | The Google Cloud project.                 |
 | `AgentEngineSandboxCodeExecutor` | `location`                | `GOOGLE_CLOUD_LOCATION`, then `us-central1`  | The Google Cloud region.                  |
+| `VertexAiCodeExecutor`           | `resourceName`            | `CODE_INTERPRETER_EXTENSION_NAME`            | Existing extension resource name.         |
+
+`VertexAiCodeExecutor` also accepts an injected `CodeInterpreterExtension`
+client via `codeInterpreterExtension` and the `BaseCodeExecutor` fields in its
+constructor options. `ContainerCodeExecutor` exposes `baseUrl`, `image`, and
+`dockerPath`, resolved to an absolute path when set, as public `readonly`
+properties on the instance.
 
 This example tells the model to use Python fences and gives it one retry.
 
@@ -442,6 +488,33 @@ service can keep one interpreter per session. Each `File` in `inputFiles` has a
 `name`, a `content` and a `mimeType`, and the service writes them where the
 code can open them by name.
 
+### Inspecting execution state and encoding file content
+
+`CodeExecutorContext` wraps a session `State` object and manages the persistent
+code execution state across turns: the stateful `executionId`, processed data
+file names, staged `inputFiles`, per-invocation error counts, and execution
+result logs. It is exported from `@google/adk` so custom processors or tools can
+inspect or update code execution state directly. When staging input files from
+raw `string` or `Uint8Array` payloads, `getEncodedFileContent` returns a
+base64-encoded string and leaves payloads that are already base64-encoded
+unchanged:
+
+```ts
+import {CodeExecutorContext, getEncodedFileContent, State} from '@google/adk';
+
+const state = new State();
+const context = new CodeExecutorContext(state);
+context.setExecutionId('session-123');
+const rawBytes = new TextEncoder().encode('col1,col2\n1,2');
+context.addInputFiles([
+  {
+    name: 'report.csv',
+    content: getEncodedFileContent(rawBytes),
+    mimeType: 'text/csv',
+  },
+]);
+```
+
 ## Limitations
 
 Code execution in this release has these limits.
@@ -465,19 +538,19 @@ Code execution in this release has these limits.
   to `LlmAgent` cannot include it. Without it, `BuiltInCodeExecutor` adds no
   tool, and earlier code and results stay as parts in the history. Leave
   `requestProcessors` unset on an agent with a code executor.
-- **The data-file summary fails outside Vertex AI.** The helper that summarizes
-  a CSV calls a `crop` function that none of the executors in `@google/adk`
-  defines, so it fails with a `NameError` and counts as a failed run. adk-python
-  0.1.0 has the same defect: only its Vertex AI executor defines `crop`.
+- **The data-file summary requires `VertexAiCodeExecutor` or a custom `crop`
+  helper.** The helper that summarizes a CSV calls `crop` and `explore_df`,
+  which `VertexAiCodeExecutor` prepends by default. Other executors do not
+  define `crop` unless your environment provides it, so the summary step fails
+  with a `NameError` and counts as a failed run on those executors.
 - **`BuiltInCodeExecutor` rejects model aliases.** It needs a Gemini version
   in the model name, so `gemini-flash-latest` and other `-latest` aliases throw.
   Use a versioned name such as `gemini-2.5-flash`.
-- **There is no Vertex AI Code Interpreter executor.** adk-python has a
-  `VertexAiCodeExecutor` that calls the Vertex AI Code Interpreter extension.
-  Neither `@google-cloud/vertexai` nor `@google/genai` has a client for Vertex
-  AI Extensions, and the service is a deprecated Preview offering. Use
-  `AgentEngineSandboxCodeExecutor` to run code in a managed Google Cloud
-  sandbox instead.
+- **`VertexAiCodeExecutor` runs Python through the Vertex AI Code Interpreter
+  Preview extension.** It prepends Python data-science imports to every snippet
+  and calls the Vertex AI Extensions REST API. To run Python or JavaScript in a
+  Vertex AI Agent Engine sandbox instead, use
+  `AgentEngineSandboxCodeExecutor`.
 - **`ContainerCodeExecutor` does not move files.** It copies no input files
   into the container and returns no output files.
 
@@ -485,6 +558,7 @@ Code execution in this release has these limits.
 
 - [Code execution](../../../samples/code_execution/README.md) - A data science agent that answers with `BuiltInCodeExecutor` by default, or with `UnsafeLocalCodeExecutor` or `ContainerCodeExecutor`.
 - [JavaScript code execution](../../../samples/code_execution/javascript/README.md) - An agent that writes JavaScript and runs it with Node.js through `UnsafeLocalCodeExecutor` or `ContainerCodeExecutor`, with `codeBlockDelimiters` limited to the JavaScript fences.
+- [Local code execution](../../../samples/code_execution/local_code_execution/README.md) - A standalone Python agent configured directly with `UnsafeLocalCodeExecutor`.
 
 ## Related guides
 

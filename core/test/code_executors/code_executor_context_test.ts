@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {CodeExecutorContext as BarrelCodeExecutorContext} from '@google/adk';
 import {describe, expect, it} from 'vitest';
 import {File} from '../../src/code_executors/code_execution_utils.js';
 import {CodeExecutorContext} from '../../src/code_executors/code_executor_context.js';
+import {CodeExecutorContext as CommonCodeExecutorContext} from '../../src/common.js';
+import {CodeExecutorContext as IndexCodeExecutorContext} from '../../src/index.js';
 import {State} from '../../src/sessions/state.js';
 
 function makeContext(initial: Record<string, unknown> = {}): {
@@ -253,5 +256,16 @@ describe('CodeExecutorContext', () => {
       });
       expect(new CodeExecutorContext(state).getExecutionId()).toBe('s-7');
     });
+  });
+});
+
+describe('CodeExecutorContext barrel export', () => {
+  it('re-exports CodeExecutorContext from common, index, and @google/adk', () => {
+    expect(CommonCodeExecutorContext).toBe(CodeExecutorContext);
+    expect(IndexCodeExecutorContext).toBe(CodeExecutorContext);
+    const state = new State();
+    const ctx = new BarrelCodeExecutorContext(state);
+    ctx.setExecutionId('barrel-session');
+    expect(ctx.getExecutionId()).toBe('barrel-session');
   });
 });

@@ -193,11 +193,12 @@ export class CodeExecutorContext {
 
   /**
    * Updates the code execution result.
-   * @param invocationId The invocation ID to update the code execution result
-   *     for.
-   * @param code The code to execute.
-   * @param resultStdout The standard output of the code execution.
-   * @param resultStderr The standard error of the code execution.
+   * @param params The parameters for updating the code execution result.
+   * @param params.invocationId The invocation ID to update the code execution
+   *     result for.
+   * @param params.code The code to execute.
+   * @param params.resultStdout The standard output of the code execution.
+   * @param params.resultStderr The standard error of the code execution.
    */
   updateCodeExecutionResult({
     invocationId,

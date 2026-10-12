@@ -35,6 +35,16 @@ export {
   UnsafeLocalCodeExecutor,
   type UnsafeLocalCodeExecutorOptions,
 } from './code_executors/unsafe_local_code_executor.js';
+export {
+  VertexAiCodeExecutor,
+  type CodeInterpreterExecuteParams,
+  type CodeInterpreterExtension,
+  type CodeInterpreterInputFile,
+  type CodeInterpreterOperationParams,
+  type CodeInterpreterOutputFile,
+  type CodeInterpreterResponse,
+  type VertexAiCodeExecutorOptions,
+} from './code_executors/vertex_ai_code_executor.js';
 export * from './common.js';
 export {LocalEnvironment} from './environment/local_environment.js';
 export type {LocalEnvironmentOptions} from './environment/local_environment.js';

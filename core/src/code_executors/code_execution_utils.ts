@@ -103,13 +103,50 @@ export interface CodeExecutionResult {
   outputFiles: File[];
 }
 
+function isBase64String(str: string): boolean {
+  if (isBase64Encoded(str)) {
+    return true;
+  }
+  try {
+    let bytes: Uint8Array;
+    if (typeof globalThis.atob === 'function') {
+      const binaryString = globalThis.atob(str);
+      bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+    } else if (typeof Buffer !== 'undefined') {
+      bytes = new Uint8Array(Buffer.from(str, 'base64'));
+    } else {
+      return false;
+    }
+    return base64Encode(bytes) === str;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Gets the file content as a base64-encoded bytes.
  *
  * @param data The file content bytes.
  * @return The file content as a base64-encoded bytes.
  */
-export function getEncodedFileContent(data: string): string {
+export function getEncodedFileContent(data: string | Uint8Array): string {
+  if (typeof data !== 'string') {
+    try {
+      const decoded = new TextDecoder('utf-8', {fatal: true}).decode(data);
+      if (isBase64String(decoded)) {
+        return decoded;
+      }
+    } catch {
+      // Binary payload is not valid UTF-8 text; encode raw bytes below.
+    }
+    return base64Encode(data);
+  }
+  if (isBase64String(data)) {
+    return data;
+  }
   return isBase64Encoded(data) ? data : base64Encode(data);
 }
 

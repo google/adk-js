@@ -24,6 +24,7 @@ With `built_in`, the ` ```tool_code ` fences in the instruction are only example
 The sample pins `gemini-2.5-flash` rather than the `gemini-flash-latest` alias the other samples use. `BuiltInCodeExecutor` reads the Gemini version from the model name and throws for any name it cannot parse as version 2 or later, and that includes the alias.
 
 To have the model write JavaScript and run it with Node.js instead, see the [JavaScript code execution sample](./javascript/README.md).
+For a standalone Python sample configured directly with `UnsafeLocalCodeExecutor`, see the [Local code execution sample](./local_code_execution/README.md).
 
 ## Sample Inputs
 

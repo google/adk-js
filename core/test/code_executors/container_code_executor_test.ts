@@ -16,6 +16,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {PassThrough} from 'node:stream';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {ContainerCodeExecutor as SourceContainerCodeExecutor} from '../../src/code_executors/container_code_executor.js';
 import {logger} from '../../src/utils/logger.js';
 
 // Mock the dynamically-imported dockerode module so the lazy client
@@ -607,6 +608,37 @@ describe('ContainerCodeExecutor', () => {
       await expect(getExitHandler()('SIGTERM')).resolves.toBeUndefined();
 
       expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('public properties', () => {
+    it('exposes baseUrl, image, and dockerPath as public properties', () => {
+      const {docker} = createMockDocker();
+      const dockerPath = createDockerContext();
+      const withImage = new SourceContainerCodeExecutor({
+        baseUrl: 'tcp://127.0.0.1:2375',
+        image: 'custom:tag',
+        docker: asDocker(docker),
+      });
+      expect(withImage.baseUrl).toBe('tcp://127.0.0.1:2375');
+      expect(withImage.image).toBe('custom:tag');
+      expect(withImage.dockerPath).toBeUndefined();
+
+      const withDockerPath = new SourceContainerCodeExecutor({
+        dockerPath,
+        docker: asDocker(docker),
+      });
+      expect(withDockerPath.baseUrl).toBeUndefined();
+      expect(withDockerPath.image).toBe('adk-code-executor:latest');
+      expect(withDockerPath.dockerPath).toBe(path.resolve(dockerPath));
+
+      const fromBarrel = new ContainerCodeExecutor({
+        baseUrl: 'tcp://127.0.0.1:2375',
+        image: 'custom:tag',
+        docker: asDocker(docker),
+      });
+      expect(fromBarrel.baseUrl).toBe('tcp://127.0.0.1:2375');
+      expect(fromBarrel.image).toBe('custom:tag');
     });
   });
 });

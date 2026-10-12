@@ -112,7 +112,9 @@ const LANGUAGE_RUNTIME_COMMAND_MAP: Partial<
  */
 @experimental
 export class ContainerCodeExecutor extends BaseCodeExecutor {
-  private readonly dockerPath?: string;
+  readonly baseUrl?: string;
+  readonly image: string;
+  readonly dockerPath?: string;
   private readonly containerOptions: DockerContainerOptions;
   private readonly timeoutSeconds: number;
   private container?: DockerContainer;
@@ -131,6 +133,8 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
         'timeoutSeconds must be greater than 0 for ContainerCodeExecutor.',
       );
     }
+    this.baseUrl = options.baseUrl;
+    this.image = options.image ?? DEFAULT_IMAGE_TAG;
     this.dockerPath = options.dockerPath
       ? path.resolve(options.dockerPath)
       : undefined;
