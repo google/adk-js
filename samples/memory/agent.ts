@@ -104,6 +104,18 @@ class MemoryShowcaseAgent extends BaseAgent {
             ],
           },
         }),
+        createEvent({
+          author: 'user',
+          timestamp: Date.parse('2025-02-10T09:17:00.000Z'),
+          content: {
+            role: 'user',
+            parts: [
+              {
+                text: 'Saved Café Nicola booking order#2024 for 東京 stopover.',
+              },
+            ],
+          },
+        }),
       ],
     });
 
@@ -291,6 +303,15 @@ async function main() {
   });
   process.stdout.write(
     `Memories visible to unindexed-user: ${JSON.stringify(unindexedUserCheck?.memories ?? [])}\n`,
+  );
+
+  const nonAsciiAndNumericCheck = await runner.memoryService?.searchMemory({
+    appName,
+    userId,
+    query: 'café order#2024 東京',
+  });
+  process.stdout.write(
+    `Non-ASCII and numeric query matches: ${nonAsciiAndNumericCheck?.memories.length ?? 0}\n`,
   );
 }
 

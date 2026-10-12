@@ -66,6 +66,7 @@ export class InMemoryMemoryService implements BaseMemoryService {
           .filter((text) => !!text)
           .join(' ');
         const wordsInEvent = extractWordsLower(joinedText);
+        addSubstringMatchedQueryWords(joinedText, wordsInQuery, wordsInEvent);
         if (!wordsInEvent.size) {
           continue;
         }
@@ -86,6 +87,8 @@ export class InMemoryMemoryService implements BaseMemoryService {
     return response;
   }
 }
+
+const ASCII_WORD_REGEX = /^[a-z]+$/;
 
 /**
  * Constructs the user key from the app name and user ID.
@@ -108,6 +111,31 @@ function extractWordsLower(text: string): Set<string> {
   return new Set(
     [...text.matchAll(/[A-Za-z]+/g)].map((match) => match[0].toLowerCase()),
   );
+}
+
+/**
+ * Adds non-ASCII or non-alphabetic query words that appear as substrings of
+ * the lowercased event text to the event's word set.
+ *
+ * @param text The joined event text.
+ * @param queryWords The lowercased whitespace-split query words.
+ * @param wordsInEvent The set of words extracted from the event.
+ */
+function addSubstringMatchedQueryWords(
+  text: string,
+  queryWords: readonly string[],
+  wordsInEvent: Set<string>,
+): void {
+  const lowerText = text.toLowerCase();
+  for (const queryWord of queryWords) {
+    if (
+      queryWord.length > 0 &&
+      !ASCII_WORD_REGEX.test(queryWord) &&
+      lowerText.includes(queryWord)
+    ) {
+      wordsInEvent.add(queryWord);
+    }
+  }
 }
 
 /**

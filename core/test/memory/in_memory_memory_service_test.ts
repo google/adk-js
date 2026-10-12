@@ -296,4 +296,164 @@ describe('InMemoryMemoryService', () => {
       expect(result.memories).toHaveLength(1);
     });
   });
+
+  describe('non-ASCII and numeric query matching', () => {
+    it('matches query words containing accented Latin characters', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [{text: 'We met at Café Flore in Paris'}],
+        },
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'café',
+      });
+
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].content).toEqual(event.content);
+    });
+
+    it('matches events written only in non-Latin scripts', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: '2025年 東京 旅行'}]},
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: '東京',
+      });
+
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].content).toEqual(event.content);
+    });
+
+    it('returns empty memories when a non-Latin query does not match', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: '2025年 東京 旅行'}]},
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const result = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: '大阪',
+      });
+
+      expect(result.memories).toEqual([]);
+    });
+
+    it('matches numeric and punctuated query tokens', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [{text: 'Invoice for 2024 under reference order#123'}],
+        },
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const yearResult = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: '2024',
+      });
+      const orderResult = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'ORDER#123',
+      });
+
+      expect(yearResult.memories).toHaveLength(1);
+      expect(orderResult.memories).toHaveLength(1);
+    });
+
+    it('returns empty memories for an empty or whitespace-only query', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'hello world 2024 東京'}]},
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const emptyResult = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: '',
+      });
+      const whitespaceResult = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: '   ',
+      });
+
+      expect(emptyResult.memories).toEqual([]);
+      expect(whitespaceResult.memories).toEqual([]);
+    });
+
+    it('continues to require whole-word matches for pure ASCII alphabetic query words', async () => {
+      const event = createEvent({
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'We booked flights to Lisbon'}]},
+      });
+      const session = await sessionService.createSession({
+        appName: 'myApp',
+        userId: 'alice',
+      });
+      await sessionService.appendEvent({session, event});
+
+      await service.addSessionToMemory(session);
+
+      const partialMatch = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'flight',
+      });
+      const wholeWordMatch = await service.searchMemory({
+        appName: 'myApp',
+        userId: 'alice',
+        query: 'flights',
+      });
+
+      expect(partialMatch.memories).toEqual([]);
+      expect(wholeWordMatch.memories).toHaveLength(1);
+    });
+  });
 });

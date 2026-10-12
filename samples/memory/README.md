@@ -16,6 +16,10 @@ This sample demonstrates how ADK agents ingest completed sessions into `ctx.memo
 
   _Exercises `searchMemory` for the hotel and check-in terms in `adk web` and surfaces both the `recallUserMemories` tool chip and the `memory_digest.json` artifact chip._
 
+- `café order#2024 東京`
+
+  _Exercises substring matching in `InMemoryMemoryService.searchMemory` for accented Latin words, numeric tokens, and non-Latin scripts._
+
 ## Running the Sample
 
 Run the self-contained `InMemoryRunner` script directly to inspect each emitted `Event` and confirm that an unindexed user sees zero memories:
