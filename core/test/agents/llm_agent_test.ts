@@ -5,6 +5,7 @@
  */
 
 import {
+  ActiveStreamingTool,
   AUTH_PREPROCESSOR,
   BaseLlm,
   BaseLlmConnection,
@@ -17,12 +18,14 @@ import {
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createRunConfig,
   createSession,
   Event,
   FunctionTool,
   InMemorySessionService,
   INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
+  LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
@@ -33,9 +36,10 @@ import {
   RunAsyncToolRequest,
   Runner,
   Session,
+  StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
-import {Content, Schema, Type} from '@google/genai';
+import {Content, Modality, Schema, Type} from '@google/genai';
 import {
   afterEach,
   beforeEach,
@@ -1757,5 +1761,426 @@ describe('LlmAgent run with a planner', () => {
       {text: '/*REASONING*/simple/*FINAL_ANSWER*/', thought: true},
       {text: '42'},
     ]);
+  });
+});
+
+describe('LlmAgent live streaming tools and supportCfc', () => {
+  class ScriptedLiveConnection extends MockLlmConnection {
+    sentContents: Content[] = [];
+    sentBlobs: Array<{data: string; mimeType: string}> = [];
+    closed = false;
+    private yielded = false;
+
+    constructor(private readonly responses: LlmResponse[]) {
+      super();
+    }
+
+    override async sendContent(content: Content): Promise<void> {
+      this.sentContents.push(content);
+    }
+
+    override async sendRealtime(blob: {
+      data: string;
+      mimeType: string;
+    }): Promise<void> {
+      this.sentBlobs.push(blob);
+    }
+
+    override async *receive(): AsyncGenerator<LlmResponse, void, void> {
+      if (this.closed || this.yielded) {
+        return;
+      }
+      this.yielded = true;
+      for (const response of this.responses) {
+        if (this.closed) {
+          return;
+        }
+        yield response;
+      }
+    }
+
+    override async close(): Promise<void> {
+      this.closed = true;
+    }
+  }
+
+  class ScriptedLiveLlm extends BaseLlm {
+    lastConnectedRequest?: LlmRequest;
+
+    constructor(private readonly connection: ScriptedLiveConnection) {
+      super({model: 'gemini-2.0-flash'});
+    }
+
+    async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+      yield* [];
+      throw new Error('generateContentAsync should not be called in live/CFC');
+    }
+
+    async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      this.lastConnectedRequest = llmRequest;
+      return this.connection;
+    }
+  }
+
+  it('sets responseModalities to [Modality.TEXT], runs afterModelCallback, filters partial responses unless SSE, and closes queue on turnComplete when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'partial chunk'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'final cfc answer'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const afterSeen: string[] = [];
+    const agent = new LlmAgent({
+      name: 'cfc_agent',
+      model: llm,
+      afterModelCallback: ({response}) => {
+        const text = response.content?.parts?.[0]?.text;
+        if (text) {
+          afterSeen.push(text);
+        }
+        if (text === 'final cfc answer') {
+          return {
+            ...response,
+            content: {
+              role: 'model',
+              parts: [{text: 'final cfc answer (callback)'}],
+            },
+          };
+        }
+        return undefined;
+      },
+    });
+    const session = createSession({
+      id: 'sess_cfc_none',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_none',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'run cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_none',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.NONE,
+        responseModalities: [Modality.AUDIO],
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.responseModalities,
+    ).toEqual([Modality.TEXT]);
+    expect(afterSeen).toEqual(['partial chunk', 'final cfc answer']);
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts).toEqual([
+      {text: 'final cfc answer (callback)'},
+    ]);
+    expect(connection.closed).toBe(true);
+  });
+
+  it('yields partial events in callLlmAsync when supportCfc is true and streamingMode is SSE', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'sse partial'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'sse final'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_sse_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_sse',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_sse',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'stream cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_sse',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.SSE,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      events.map((e) => ({
+        partial: e.partial,
+        text: e.content?.parts?.[0]?.text,
+      })),
+    ).toEqual([
+      {partial: true, text: 'sse partial'},
+      {partial: false, text: 'sse final'},
+    ]);
+  });
+
+  it('forwards liveRequestQueue items to activeStreamingTools streams and executes streaming tools in postprocessLive', async () => {
+    const toolStream = new LiveRequestQueue();
+    const streamTool = new FunctionTool({
+      name: 'liveStreamTool',
+      description: 'yields live updates',
+      parameters: z4.object({topic: z4.string()}),
+      execute: async function* ({topic}) {
+        yield `update:${topic}`;
+      },
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-live-stream-1',
+                name: 'liveStreamTool',
+                args: {topic: 'weather'},
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'live_stream_agent',
+      model: llm,
+      tools: [streamTool],
+    });
+    const session = createSession({
+      id: 'sess_live_stream',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    const ctx = new InvocationContext({
+      invocationId: 'inv_live_stream',
+      session,
+      agent,
+      liveRequestQueue,
+      activeStreamingTools: {
+        existingListener: new ActiveStreamingTool({stream: toolStream}),
+      },
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    const forwardedBlob = await toolStream.get();
+    expect(forwardedBlob.blob).toEqual({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+
+    const functionResponseEvent = events.find(
+      (e) => e.content?.parts?.[0]?.functionResponse !== undefined,
+    );
+    expect(functionResponseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-live-stream-1',
+          name: 'liveStreamTool',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('executes a tool call and responseProcessors exactly once when supportCfc is true', async () => {
+    const toolExecute = vi.fn().mockResolvedValue({sum: 7});
+    const addTool = new FunctionTool({
+      name: 'add_numbers',
+      description: 'Adds two numbers',
+      parameters: z4.object({a: z4.number(), b: z4.number()}),
+      execute: toolExecute,
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-cfc-1',
+                name: 'add_numbers',
+                args: {a: 3, b: 4},
+              },
+            },
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'The sum is 7.'}],
+        },
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    let responseProcessorRuns = 0;
+    class CountingResponseProcessor extends BaseLlmResponseProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        responseProcessorRuns += 1;
+        yield* [];
+      }
+    }
+    const agent = new LlmAgent({
+      name: 'cfc_tool_agent',
+      model: llm,
+      tools: [addTool],
+      responseProcessors: [new CountingResponseProcessor()],
+    });
+    const session = createSession({
+      id: 'sess_cfc_tool',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_tool',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'add 3 and 4'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_tool',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(toolExecute).toHaveBeenCalledTimes(1);
+    expect(toolExecute).toHaveBeenCalledWith({a: 3, b: 4}, expect.anything());
+    expect(responseProcessorRuns).toBe(2);
+    expect(events).toHaveLength(3);
+    expect(events[0].content?.parts?.[0]?.functionCall?.name).toBe(
+      'add_numbers',
+    );
+    expect(events[1].content?.parts?.[0]?.functionResponse?.response).toEqual({
+      sum: 7,
+    });
+    expect(events[2].content?.parts?.[0]?.text).toBe('The sum is 7.');
+  });
+
+  it('enforces maxLlmCalls, preserves an existing liveRequestQueue, and closes the queue on early exit when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'first event'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'second event'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_lifecycle_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_lifecycle',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_lifecycle',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'test lifecycle'}]},
+        }),
+      ],
+    });
+    const existingQueue = new LiveRequestQueue();
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_lifecycle',
+      session,
+      agent,
+      liveRequestQueue: existingQueue,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        maxLlmCalls: 1,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    // Break early after the first yielded event (before turnComplete).
+    for await (const event of agent.runAsync(ctx)) {
+      expect(event.content?.parts?.[0]?.text).toBe('first event');
+      break;
+    }
+
+    expect(ctx.liveRequestQueue).toBe(existingQueue);
+    expect(() =>
+      existingQueue.sendContent({role: 'user', parts: [{text: 'late'}]}),
+    ).toThrow(/Cannot send to a closed queue/);
+
+    // A second call on the same context exceeds maxLlmCalls (1).
+    const secondRunEvents: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      secondRunEvents.push(event);
+    }
+    expect(secondRunEvents).toHaveLength(1);
+    expect(secondRunEvents[0].errorMessage).toMatch(
+      /Max number of llm calls limit of 1 exceeded/,
+    );
   });
 });

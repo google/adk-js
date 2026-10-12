@@ -21,6 +21,7 @@ export {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
+  handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
 export {InvocationContext, requireAgent} from './agents/invocation_context.js';
@@ -66,7 +67,7 @@ export {
 export {ReadonlyContext} from './agents/readonly_context.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
-export {StreamingMode} from './agents/run_config.js';
+export {StreamingMode, createRunConfig} from './agents/run_config.js';
 export type {RunConfig} from './agents/run_config.js';
 export {SequentialAgent, isSequentialAgent} from './agents/sequential_agent.js';
 export type {TranscriptionEntry} from './agents/transcription_entry.js';
