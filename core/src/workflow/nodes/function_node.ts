@@ -19,11 +19,7 @@ import {
  * A value a {@link FunctionNodeHandler} may return or yield.
  */
 export type FunctionNodeResult<TOutput> =
-  | TOutput
-  | Event
-  | null
-  | undefined
-  | void;
+  TOutput | Event | null | undefined | void;
 
 /**
  * The handler wrapped by a {@link FunctionNode}.

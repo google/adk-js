@@ -8,6 +8,7 @@ import type {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import type {StdioServerParameters} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type {StreamableHTTPClientTransportOptions} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import {mergeTrackingHeaders} from '../../utils/client_labels.js';
 import {formatError} from '../../utils/error_utils.js';
 import {logger} from '../../utils/logger.js';
 import {loadOptionalPeer, OptionalPeer} from '../../utils/optional_peer.js';
@@ -69,8 +70,32 @@ export interface StreamableHTTPConnectionParams {
  * A union of all supported MCP connection parameter types.
  */
 export type MCPConnectionParams =
-  | StdioConnectionParams
-  | StreamableHTTPConnectionParams;
+  StdioConnectionParams | StreamableHTTPConnectionParams;
+
+/**
+ * Builds the options for a streamable HTTP transport, with the ADK tracking
+ * headers merged into `requestInit.headers`.
+ *
+ * The deprecated `header` field is used only when
+ * `transportOptions.requestInit` is undefined. The result is a new object, so
+ * the caller's `transportOptions` is never modified.
+ */
+function buildTransportOptions(
+  params: StreamableHTTPConnectionParams,
+): StreamableHTTPClientTransportOptions {
+  const {transportOptions, header} = params;
+  const callerHeaders =
+    transportOptions?.requestInit === undefined
+      ? (header as Record<string, string> | undefined)
+      : transportOptions.requestInit.headers;
+  return {
+    ...transportOptions,
+    requestInit: {
+      ...transportOptions?.requestInit,
+      headers: mergeTrackingHeaders(callerHeaders),
+    },
+  };
+}
 
 /**
  * Manages Model Context Protocol (MCP) client sessions.
@@ -115,24 +140,13 @@ export class MCPSessionManager {
           break;
         }
         case 'StreamableHTTPConnectionParams': {
-          const options = this.connectionParams.transportOptions ?? {};
-
-          if (
-            !options.requestInit &&
-            this.connectionParams.header !== undefined
-          ) {
-            options.requestInit = {
-              headers: this.connectionParams.header as Record<string, string>,
-            };
-          }
-
           const {StreamableHTTPClientTransport} = await loadOptionalPeer(
             MCP_SDK,
             () => import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
           );
           const transport = new StreamableHTTPClientTransport(
             new URL(this.connectionParams.url),
-            options,
+            buildTransportOptions(this.connectionParams),
           );
           transport.onerror = logTransportError;
           await client.connect(transport);

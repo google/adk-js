@@ -42,6 +42,10 @@ export {VertexAiMemoryBankService} from './memory/vertex_ai_memory_bank_service.
 export type {VertexAiMemoryBankServiceOptions} from './memory/vertex_ai_memory_bank_service.js';
 export {VertexAiRagMemoryService} from './memory/vertex_ai_rag_memory_service.js';
 export type {VertexAiRagMemoryServiceOptions} from './memory/vertex_ai_rag_memory_service.js';
+export {
+  DebugLoggingPlugin,
+  isDebugLoggingPlugin,
+} from './plugins/debug_logging_plugin.js';
 export {DatabaseSessionService} from './sessions/database_session_service.js';
 export {getSessionServiceFromUri} from './sessions/registry.js';
 export {VertexAiSessionService} from './sessions/vertex_ai_session_service.js';
@@ -57,6 +61,56 @@ export {
   loadSkillFromZipBuffer,
   validateSkillDir,
 } from './skills/loader.js';
+export {
+  APIHubToolset,
+  type APIHubToolsetOptions,
+} from './tools/apihub_tool/apihub_toolset.js';
+export {
+  APIHubClient,
+  type APIHubApi,
+  type APIHubApiVersion,
+  type APIHubClientOptions,
+  type BaseAPIHubClient,
+} from './tools/apihub_tool/clients/apihub_client.js';
+export {
+  SecretManagerClient,
+  type SecretManagerClientOptions,
+} from './tools/apihub_tool/clients/secret_client.js';
+export {
+  ApplicationIntegrationToolset,
+  type ApplicationIntegrationToolsetOptions,
+} from './tools/application_integration_tool/application_integration_toolset.js';
+export {
+  actionRequest,
+  actionResponse,
+  ConnectionsClient,
+  CONNECTOR_BASE_SPEC,
+  connectorPayload,
+  createOperation,
+  createOperationRequest,
+  deleteOperation,
+  deleteOperationRequest,
+  executeCustomQueryRequest,
+  getActionOperation,
+  getOperation,
+  getOperationRequest,
+  listOperation,
+  listOperationRequest,
+  updateOperation,
+  updateOperationRequest,
+  type ActionSchema,
+  type ConnectionDetails,
+  type ConnectionsClientOptions,
+  type ConnectorSpec,
+  type EntityOperationOptions,
+  type EntitySchemaAndOperations,
+  type EntitySchemaOperationOptions,
+  type GetActionOperationOptions,
+} from './tools/application_integration_tool/clients/connections_client.js';
+export {
+  IntegrationClient,
+  type IntegrationClientOptions,
+} from './tools/application_integration_tool/clients/integration_client.js';
 export {LOAD_WEB_PAGE, loadWebPage} from './tools/load_web_page.js';
 export type {LoadWebPageOptions} from './tools/load_web_page.js';
 export {
@@ -69,6 +123,7 @@ export {
   serviceAccountSchemeCredential,
   tokenToSchemeCredential,
 } from './tools/openapi_tool/auth/auth_helpers.js';
+export type {OpenIdConfig} from './tools/openapi_tool/auth/auth_helpers.js';
 export {AutoAuthCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 export type {CustomCredentialExchangers} from './tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js';
 export {
@@ -77,6 +132,7 @@ export {
 } from './tools/openapi_tool/auth/credential_exchangers/base_auth_credential_exchanger.js';
 export {
   exchangeCredential,
+  generateAuthToken,
   OAuth2BearerExchanger,
 } from './tools/openapi_tool/auth/credential_exchangers/oauth2_exchanger.js';
 export {ServiceAccountCredentialExchanger} from './tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';
@@ -121,10 +177,12 @@ export {
 } from './tools/skill/run_skill_inline_script_tool.js';
 export {RunSkillScriptTool} from './tools/skill/run_skill_script_tool.js';
 export {SkillToolset} from './tools/skill/skill_toolset.js';
+export type {JsonObject} from './utils/json_utils.js';
 
 export * from './integrations/agent_registry/agent_registry.js';
 export * from './telemetry/google_cloud.js';
 export * from './telemetry/setup.js';
+export * from './tools/google_api_tool/index.js';
 // Also available as `@google/adk/tools/mcp`, which does not evaluate the rest
 // of this barrel.
 export * from './tools/mcp/index.js';

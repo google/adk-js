@@ -35,8 +35,13 @@ import {
   BuiltInCodeExecutor,
   isBuiltInCodeExecutor,
 } from '../code_executors/built_in_code_executor.js';
+import {buildAbortEvents, isAbortEvent} from '../events/abort_events.js';
 import {createEvent, Event} from '../events/event.js';
 import {createEventActions} from '../events/event_actions.js';
+import {
+  internalMetadata,
+  withoutInternalMetadata,
+} from '../events/internal_metadata.js';
 import {BaseMemoryService} from '../memory/base_memory_service.js';
 import {BasePlugin} from '../plugins/base_plugin.js';
 import {PluginManager} from '../plugins/plugin_manager.js';
@@ -110,6 +115,18 @@ export interface RunnerConfig {
    * An optional resumability configuration applied to the runner.
    */
   resumabilityConfig?: ResumabilityConfig;
+
+  /**
+   * Whether to create the session when `runAsync` is given a session id that
+   * does not exist. Defaults to `false`, which reports the missing session as
+   * an error instead.
+   *
+   * Enabling this trades a loud failure for a silent one: a caller that
+   * mistypes a session id gets a new empty conversation rather than an error.
+   * Turn it on only where the session id is a key the caller owns and a first
+   * use is expected to create it.
+   */
+  autoCreateSession?: boolean;
 }
 
 /**
@@ -171,6 +188,7 @@ export class Runner {
   readonly memoryService?: BaseMemoryService;
   readonly credentialService?: BaseCredentialService;
   readonly resumabilityConfig?: ResumabilityConfig;
+  readonly autoCreateSession: boolean;
 
   /**
    * Creates a new Runner instance.
@@ -198,6 +216,24 @@ export class Runner {
     this.credentialService = input.credentialService;
     this.resumabilityConfig =
       input.app?.resumabilityConfig ?? input.resumabilityConfig;
+    this.autoCreateSession = input.autoCreateSession ?? false;
+  }
+
+  /**
+   * Looks the session up, creating it first when `autoCreateSession` is set.
+   *
+   * A runner with no `appName` cannot address a session, so it falls through to
+   * the plain lookup rather than creating one under an undefined app name.
+   */
+  private async resolveSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<Session | undefined> {
+    const key = {appName: this.appName, userId, sessionId};
+    if (this.autoCreateSession && this.appName) {
+      return this.sessionService.getOrCreateSession(key);
+    }
+    return this.sessionService.getSession(key);
   }
 
   /**
@@ -279,11 +315,7 @@ export class Runner {
         ctx,
         this,
         async function* () {
-          const session = await this.sessionService.getSession({
-            appName: this.appName,
-            userId,
-            sessionId,
-          });
+          const session = await this.resolveSession(userId, sessionId);
 
           if (params.abortSignal?.aborted) {
             return;
@@ -386,7 +418,8 @@ export class Runner {
                   ? createEventActions({stateDelta})
                   : undefined,
                 content: newMessage,
-                customMetadata: params.customMetadata,
+                // Callers cannot set ADK-internal keys.
+                customMetadata: withoutInternalMetadata(params.customMetadata),
               }),
             });
             if (params.abortSignal?.aborted) {
@@ -441,39 +474,49 @@ export class Runner {
               yield earlyExitEvent;
             } else {
               // Step 2: Otherwise continue with normal execution
-              for await (const event of this.runRoot(invocationContext)) {
-                if (params.abortSignal?.aborted) {
-                  return;
-                }
+              let abortSealed = false;
+              const sealAbortedInvocation = () => {
+                abortSealed = true;
+                return this.synthesizeAbortEvents(invocationContext);
+              };
+              try {
+                for await (const event of this.runRoot(invocationContext)) {
+                  if (params.abortSignal?.aborted) {
+                    break;
+                  }
 
-                // Step 3: Run the on_event callbacks before persisting so callback
-                // changes are stored in the session and match the streamed event.
-                const modifiedEvent =
-                  await this.pluginManager.runOnEventCallback({
+                  // Step 3: Run the on_event callbacks before persisting so
+                  // callback changes are stored in the session and match the
+                  // streamed event.
+                  const outputEvent = await this.processAndAppendEvent(
                     invocationContext,
                     event,
-                  });
-                const outputEvent = modifiedEvent
-                  ? {
-                      ...modifiedEvent,
-                      id: event.id,
-                      invocationId: event.invocationId,
-                      timestamp: event.timestamp,
-                      author: modifiedEvent.author || event.author,
-                      branch: modifiedEvent.branch ?? event.branch,
-                    }
-                  : event;
-                if (!event.partial) {
-                  await this.sessionService.appendEvent({
-                    session,
-                    event: outputEvent,
-                  });
+                  );
+                  if (params.abortSignal?.aborted) {
+                    break;
+                  }
+
+                  yield outputEvent;
                 }
                 if (params.abortSignal?.aborted) {
+                  for (const abortEvent of await sealAbortedInvocation()) {
+                    yield abortEvent;
+                  }
                   return;
                 }
-
-                yield outputEvent;
+              } finally {
+                if (params.abortSignal?.aborted && !abortSealed) {
+                  // Best-effort: only reached on early close or error, where
+                  // throwing would mask the in-flight exception.
+                  try {
+                    await sealAbortedInvocation();
+                  } catch (e) {
+                    logger.error(
+                      `Failed to seal aborted invocation ${invocationContext.invocationId}.`,
+                      e,
+                    );
+                  }
+                }
               }
               // Step 4: Run the after_run callbacks to optionally modify the context.
               await this.pluginManager.runAfterRunCallback({invocationContext});
@@ -513,6 +556,64 @@ export class Runner {
       return;
     }
     yield* runNodeAsInvocation(this.agent, invocationContext);
+  }
+
+  /**
+   * Runs the on_event plugin callbacks on an event and appends the result to
+   * the session unless it is partial.
+   *
+   * @returns The event as streamed to the caller.
+   */
+  private async processAndAppendEvent(
+    invocationContext: InvocationContext,
+    event: Event,
+  ): Promise<Event> {
+    const modifiedEvent = await this.pluginManager.runOnEventCallback({
+      invocationContext,
+      event,
+    });
+    const outputEvent = modifiedEvent
+      ? {
+          ...withInternalMetadataOf(event, modifiedEvent),
+          id: event.id,
+          invocationId: event.invocationId,
+          timestamp: event.timestamp,
+          author: modifiedEvent.author || event.author,
+          branch: modifiedEvent.branch ?? event.branch,
+        }
+      : event;
+    if (!event.partial) {
+      await this.sessionService.appendEvent({
+        session: invocationContext.session,
+        event: outputEvent,
+      });
+    }
+    return outputEvent;
+  }
+
+  /**
+   * Seals an aborted invocation in session history: answers its dangling
+   * function calls with error responses, or records a plain abort event when
+   * there is nothing to answer.
+   *
+   * @returns The synthetic events after plugin processing and persistence.
+   */
+  private async synthesizeAbortEvents(
+    invocationContext: InvocationContext,
+  ): Promise<Event[]> {
+    const abortEvents = buildAbortEvents({
+      events: invocationContext.session.events,
+      invocationId: invocationContext.invocationId,
+      rootAgentName: this.agent.name,
+      branch: invocationContext.branch,
+    });
+    const outputEvents: Event[] = [];
+    for (const event of abortEvents) {
+      outputEvents.push(
+        await this.processAndAppendEvent(invocationContext, event),
+      );
+    }
+    return outputEvents;
   }
 
   /**
@@ -761,7 +862,9 @@ export class Runner {
               return;
             }
 
-            const eventToProcess = modifiedEvent ?? event;
+            const eventToProcess = modifiedEvent
+              ? withInternalMetadataOf(event, modifiedEvent)
+              : event;
 
             if (
               !eventToProcess.partial &&
@@ -784,6 +887,22 @@ export class Runner {
       span.end();
     }
   }
+}
+
+/**
+ * Returns a plugin's replacement event carrying the ADK-internal
+ * `customMetadata` keys of the original. Those keys belong to ADK, so a
+ * replacement cannot drop them.
+ */
+function withInternalMetadataOf(original: Event, replacement: Event): Event {
+  const internal = internalMetadata(original.customMetadata);
+  if (Object.keys(internal).length === 0) {
+    return replacement;
+  }
+  return {
+    ...replacement,
+    customMetadata: {...(replacement.customMetadata ?? {}), ...internal},
+  };
 }
 
 /**
@@ -824,7 +943,13 @@ export function determineAgentForResumption(
   // Case 1: If the last event is a function response and resumability is enabled,
   // this returns the agent that made the original function call.
   // =========================================================================
-  const event = findEventByLastFunctionResponseId(session.events);
+  // A synthetic abort response seals a cancelled call; it must not route the
+  // next turn back to the agent that issued the call.
+  const lastEvent = session.events[session.events.length - 1];
+  const event =
+    lastEvent && !isAbortEvent(lastEvent)
+      ? findEventByLastFunctionResponseId(session.events)
+      : null;
   const isResumable = Boolean(resumabilityConfig?.isResumable);
   if (event && event.author && isResumable) {
     // Checked here, not inside findEventByLastFunctionResponseId /
@@ -866,7 +991,9 @@ export function determineAgentForResumption(
   for (let i = session.events.length - 1; i >= 0; i--) {
     logger.debug('event:', stringifyWithRedactedInlineData(session.events[i]));
     const event = session.events[i];
-    if (event.author === 'user' || !event.author) {
+    // Abort-sealing events are skipped too: the root-authored one would
+    // otherwise route the next turn back to the root.
+    if (event.author === 'user' || !event.author || isAbortEvent(event)) {
       continue;
     }
 

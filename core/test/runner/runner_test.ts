@@ -14,15 +14,18 @@ import {
   Event,
   InMemoryArtifactService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
   isRoutableLlmAgent,
   LlmAgent,
+  RESTORED_EVENT_KEY,
   Runner,
   ScopedArtifactService,
   SessionArtifactService,
 } from '@google/adk';
 import {Content, FunctionCall, FunctionResponse} from '@google/genai';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {buildAbortEvents} from '../../src/events/abort_events.js';
 import {logger} from '../../src/utils/logger.js';
 
 const TEST_APP_ID = 'test_app_id';
@@ -104,7 +107,7 @@ class MockPlugin extends BasePlugin {
             text: MockPlugin.ON_EVENT_CALLBACK_MSG,
           },
         ],
-        role: event.content!.role,
+        role: event.content?.role,
       },
     });
   }
@@ -505,6 +508,61 @@ describe('Runner.determineAgentForResumption', () => {
       createResumabilityConfig({isResumable: true}),
     );
     expect(result.name).toBe('sub_agent1');
+  });
+
+  it('does not route to a non-transferable agent through a synthetic abort response', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_response',
+    });
+    const callEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'non_transferable',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {id: 'func_456', name: 'test_func', args: {}}}],
+      },
+    });
+    const abortEvents = buildAbortEvents({
+      events: [callEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    for (const event of [callEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    const result = determineAgentForResumption(
+      session,
+      rootAgent,
+      createResumabilityConfig({isResumable: true}),
+    );
+    expect(result).toBe(rootAgent);
+  });
+
+  it('does not route back to the root through a root-authored abort event', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: 'session_abort_event',
+    });
+    const replyEvent = createEvent({
+      invocationId: 'inv1',
+      author: 'sub_agent1',
+      content: {role: 'model', parts: [{text: 'Sub response'}]},
+    });
+    const abortEvents = buildAbortEvents({
+      events: [replyEvent],
+      invocationId: 'inv1',
+      rootAgentName: 'root_agent',
+    });
+    expect(abortEvents[0].author).toBe('root_agent');
+    for (const event of [replyEvent, ...abortEvents]) {
+      await sessionService.appendEvent({session, event});
+    }
+
+    expect(determineAgentForResumption(session, rootAgent)).toBe(subAgent1);
   });
 
   it('does not write an inline attachment payload to the debug log', async () => {
@@ -1052,15 +1110,19 @@ describe('Runner with plugins', () => {
       events.push(event);
     }
 
-    expect(events.length).toBe(0);
+    // The agent event is persisted but not streamed; only the abort event that
+    // seals the invocation is.
+    expect(events.length).toBe(1);
+    expect(events[0].errorCode).toBe('INVOCATION_ABORTED');
 
     const session = await sessionService.getSession({
       appName: TEST_APP_ID,
       userId: TEST_USER_ID,
       sessionId: TEST_SESSION_ID,
     });
-    expect(session!.events.length).toBe(2);
+    expect(session!.events.length).toBe(3);
     expect(session!.events[1].author).toBe('test_agent');
+    expect(session!.events[2].errorCode).toBe('INVOCATION_ABORTED');
   });
 });
 
@@ -1244,6 +1306,106 @@ describe('Runner customMetadata support', () => {
 
     appendEventSpy.mockRestore();
   });
+
+  it('drops ADK-internal keys from caller-supplied customMetadata', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+
+    for await (const _ of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      customMetadata: {
+        requestId: 'req-1',
+        [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+        [RESTORED_EVENT_KEY]: true,
+      },
+    })) {
+      // iterate
+    }
+
+    const updatedSession = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    const userEvent = updatedSession!.events[0];
+    expect(userEvent.author).toBe('user');
+    expect(userEvent.customMetadata).toEqual({requestId: 'req-1'});
+  });
+
+  it.each([
+    [undefined, {pluginKey: 1}],
+    [{own: 2}, {own: 2, pluginKey: 1}],
+  ])(
+    'keeps ADK-internal keys when a plugin replaces an event (replacement metadata %o)',
+    async (replacementExtra, expectedPublic) => {
+      const internalKey = `${INTERNAL_METADATA_PREFIX}agent`;
+      const agent = new (class extends BaseAgent {
+        protected override async *runAsyncImpl(
+          context: InvocationContext,
+        ): AsyncGenerator<Event, void, void> {
+          yield createEvent({
+            invocationId: context.invocationId,
+            author: this.name,
+            content: {role: 'model', parts: [{text: 'hi'}]},
+            customMetadata: {eventKey: 'v', [internalKey]: 'kept'},
+          });
+        }
+        protected override async *runLiveImpl(): AsyncGenerator<
+          Event,
+          void,
+          void
+        > {}
+      })({name: 'metadata_agent'});
+      const plugin = new (class extends BasePlugin {
+        override async onEventCallback({event}: {event: Event}) {
+          return createEvent({
+            author: event.author,
+            content: event.content,
+            customMetadata: {...replacementExtra, pluginKey: 1},
+          });
+        }
+      })('replacing');
+      const runner = new Runner({
+        appName: TEST_APP_ID,
+        agent,
+        sessionService,
+        plugins: [plugin],
+      });
+      await sessionService.createSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+
+      const events: Event[] = [];
+      for await (const event of runner.runAsync({
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+        newMessage: {role: 'user', parts: [{text: 'Hello'}]},
+      })) {
+        events.push(event);
+      }
+
+      expect(events[0].customMetadata).toEqual({
+        ...expectedPublic,
+        [internalKey]: 'kept',
+      });
+      const stored = await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: TEST_SESSION_ID,
+      });
+      const agentEvent = stored!.events.find(
+        (e) => e.author === 'metadata_agent',
+      );
+      expect(agentEvent!.customMetadata).toEqual(events[0].customMetadata);
+    },
+  );
 
   it('should default newMessage role to "user" when role is omitted (issue #475)', async () => {
     const session = await sessionService.createSession({
@@ -1915,5 +2077,154 @@ describe('Runner artifactService handling', () => {
     expect(capturedInvocationContext!.artifactService).not.toBeInstanceOf(
       ScopedArtifactService,
     );
+  });
+});
+
+describe('Runner autoCreateSession', () => {
+  const MISSING_SESSION_ID = 'non_existent_session_id';
+
+  let sessionService: InMemorySessionService;
+  let artifactService: InMemoryArtifactService;
+  let agent: MockLlmAgent;
+
+  beforeEach(() => {
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    agent = new MockLlmAgent('test_agent');
+  });
+
+  function createRunner(autoCreateSession: boolean): Runner {
+    return new Runner({
+      appName: TEST_APP_ID,
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession,
+    });
+  }
+
+  async function collectEvents(
+    runner: Runner,
+    sessionId: string,
+  ): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: TEST_USER_ID,
+      sessionId,
+      newMessage: {role: 'user', parts: [{text: TEST_MESSAGE}]},
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('creates the missing session and runs in it when enabled', async () => {
+    const events = await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    const agentEvent = events.find((e) => e.author === 'test_agent');
+    expect(agentEvent?.content?.parts).toEqual([{text: 'Test LLM response'}]);
+
+    const created = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
+    expect(created).toBeDefined();
+    expect(created!.id).toBe(MISSING_SESSION_ID);
+    expect(created!.appName).toBe(TEST_APP_ID);
+    expect(created!.userId).toBe(TEST_USER_ID);
+    expect(created!.events.map((e) => e.author)).toEqual([
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('throws and creates nothing when disabled', async () => {
+    let error: Error | null = null;
+    try {
+      await collectEvents(createRunner(false), MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      `Session not found: ${MISSING_SESSION_ID}`,
+    );
+    expect(
+      await sessionService.getSession({
+        appName: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        sessionId: MISSING_SESSION_ID,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('reuses an existing session instead of clobbering it when enabled', async () => {
+    const session = await sessionService.createSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    await sessionService.appendEvent({
+      session,
+      event: createEvent({
+        invocationId: 'earlier_invocation',
+        author: 'test_agent',
+        content: {role: 'model', parts: [{text: 'Earlier turn'}]},
+      }),
+    });
+
+    await collectEvents(createRunner(true), TEST_SESSION_ID);
+
+    const updated = await sessionService.getSession({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(updated!.events[0].content?.parts).toEqual([{text: 'Earlier turn'}]);
+    expect(updated!.events.map((e) => e.author)).toEqual([
+      'test_agent',
+      'user',
+      'test_agent',
+    ]);
+  });
+
+  it('reports the missing appName instead of creating a session', async () => {
+    // `appName` is optional on RunnerConfig, so an unconfigured runner cannot
+    // address a session and must not create one under an undefined app name.
+    const runner = new Runner({
+      agent,
+      sessionService,
+      artifactService,
+      autoCreateSession: true,
+    });
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    let error: Error | null = null;
+    try {
+      await collectEvents(runner, MISSING_SESSION_ID);
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain(
+      'appName must be provided in runner constructor',
+    );
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('creates the session once, with the requested identifiers', async () => {
+    const createSession = vi.spyOn(sessionService, 'createSession');
+
+    await collectEvents(createRunner(true), MISSING_SESSION_ID);
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith({
+      appName: TEST_APP_ID,
+      userId: TEST_USER_ID,
+      sessionId: MISSING_SESSION_ID,
+    });
   });
 });

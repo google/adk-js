@@ -490,6 +490,40 @@ export function runArtifactServiceTests(
     });
   });
 
+  describe('canonicalUri', () => {
+    it('records a canonical URI on every saved version', async () => {
+      // The scheme differs per implementation, so only presence is asserted.
+      for (const filename of ['canonical.txt', 'user:canonical.txt']) {
+        const version = await service.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: {text: '.'},
+        });
+
+        const fetched = await service.getArtifactVersion({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          version,
+        });
+        expect(fetched?.canonicalUri).toEqual(expect.any(String));
+        expect(fetched?.canonicalUri).not.toBe('');
+
+        const versions = await service.listArtifactVersions({
+          appName,
+          userId,
+          sessionId,
+          filename,
+        });
+        expect(versions).toHaveLength(1);
+        expect(versions[0].canonicalUri).toBe(fetched?.canonicalUri);
+      }
+    });
+  });
+
   describe('fileData artifacts', () => {
     it('saves and loads an external gs:// URI reference', async () => {
       const filename = 'report.pdf';

@@ -7,6 +7,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {File} from '../code_executors/code_execution_utils.js';
+import {getMimeTypeAndEncoding} from './file_extension_utils.js';
 
 /**
  * Reports whether resolvedPath is resolvedBaseDir itself, or a path nested
@@ -107,28 +108,12 @@ export async function materializeFiles(
   return createdFiles;
 }
 
-export const EXTENSION_TO_MIME_TYPE: Record<string, string> = {
-  'pdf': 'application/pdf',
-  'jpg': 'image/jpeg',
-  'jpeg': 'image/jpeg',
-  'png': 'image/png',
-  'gif': 'image/gif',
-  'csv': 'text/csv',
-  'json': 'application/json',
-  'xml': 'application/xml',
-  'sh': 'text/x-shellscript',
-  'bash': 'text/x-shellscript',
-  'py': 'text/x-python',
-  'js': 'text/javascript',
-  'cjs': 'text/javascript',
-  'mjs': 'text/javascript',
-  'ts': 'text/javascript',
-  'cts': 'text/javascript',
-  'mts': 'text/javascript',
-};
-
+/**
+ * Guesses the MIME type of a file from its extension.
+ * @param filePath A file name or path.
+ * @returns The MIME type, or 'application/octet-stream' if the extension is
+ *     unknown or absent.
+ */
 export function guessMimeType(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() || '';
-
-  return EXTENSION_TO_MIME_TYPE[ext] || 'application/octet-stream';
+  return getMimeTypeAndEncoding(path.extname(filePath)).mimeType;
 }

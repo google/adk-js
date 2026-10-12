@@ -215,10 +215,17 @@ async function callToolAsync(
           toolContext.invocationContext,
         ),
         errorType: getToolResponseErrorType(result),
+        invocationContext: toolContext.invocationContext,
       });
       return result;
     } catch (error: unknown) {
-      traceToolCall({tool, args, span, error});
+      traceToolCall({
+        tool,
+        args,
+        span,
+        error,
+        invocationContext: toolContext.invocationContext,
+      });
       throw error;
     } finally {
       span.end();
@@ -557,6 +564,7 @@ export async function handleFunctionCallList({
     // response.
     let functionResponse = null;
     let functionResponseError: unknown;
+    let functionResponseErrorOccurred = false;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
@@ -607,11 +615,13 @@ export async function handleFunctionCallList({
             // If the error callback returns undefined, use the error message
             // as the function response error.
             functionResponseError = e.message;
+            functionResponseErrorOccurred = true;
           }
         } else {
           // If the error is not an Error, use the error object as the function
           // response error.
           functionResponseError = e;
+          functionResponseErrorOccurred = true;
         }
       }
     }
@@ -671,7 +681,7 @@ export async function handleFunctionCallList({
       continue;
     }
 
-    if (functionResponseError) {
+    if (functionResponseErrorOccurred) {
       functionResponse = {error: functionResponseError};
     } else if (functionResponse == null) {
       functionResponse = {result: functionResponse};
@@ -693,12 +703,6 @@ export async function handleFunctionCallList({
       branch: invocationContext.branch,
     });
 
-    // TODO - b/436079721: implement [traceToolCall]
-    logger.debug('traceToolCall', {
-      tool: tool.name,
-      args: functionArgs,
-      functionResponseEvent: functionResponseEvent.id,
-    });
     functionResponseEvents.push(functionResponseEvent);
   }
 
@@ -713,14 +717,10 @@ export async function handleFunctionCallList({
     tracer.startActiveSpan('execute_tool (merged)', (span) => {
       try {
         logger.debug('execute_tool (merged)');
-        // TODO - b/436079721: implement [traceMergedToolCalls]
-        logger.debug('traceMergedToolCalls', {
-          responseEventId: mergedEvent.id,
-          functionResponseEvent: mergedEvent.id,
-        });
         traceMergedToolCalls({
           responseEventId: mergedEvent.id,
           functionResponseEvent: mergedEvent,
+          invocationContext,
         });
       } finally {
         span.end();

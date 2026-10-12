@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {MCPConnectionParams, MCPSessionManager} from '@google/adk';
+import {
+  getClientLabels,
+  MCPConnectionParams,
+  MCPSessionManager,
+  runWithClientLabel,
+} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -37,6 +42,11 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
     StreamableHTTPClientTransport: vi.fn(),
   };
 });
+
+function trackingHeaders(): Record<string, string> {
+  const value = getClientLabels().join(' ');
+  return {'x-goog-api-client': value, 'user-agent': value};
+}
 
 describe('MCPSessionManager', () => {
   it('creates an stdio client', async () => {
@@ -84,7 +94,7 @@ describe('MCPSessionManager', () => {
       new URL('http://test-url'),
       {
         requestInit: {
-          headers: {'x-test-header': 'test-value'},
+          headers: {'x-test-header': 'test-value', ...trackingHeaders()},
         },
       },
     );
@@ -102,11 +112,11 @@ describe('MCPSessionManager', () => {
 
     await manager.createSession();
 
-    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
+    expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
       new URL('http://test-url'),
       {
         requestInit: {
-          headers: {'x-test-header': 'test-value'},
+          headers: {'x-test-header': 'test-value', ...trackingHeaders()},
         },
       },
     );
@@ -134,7 +144,7 @@ describe('MCPSessionManager', () => {
       expect.any(URL),
       {
         requestInit: {
-          headers: {'x-priority': 'headers'},
+          headers: {'x-priority': 'headers', ...trackingHeaders()},
         },
       },
     );
@@ -157,9 +167,178 @@ describe('MCPSessionManager', () => {
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
       expect.any(URL),
       {
-        requestInit: {},
+        requestInit: {headers: trackingHeaders()},
       },
     );
+    const options = vi
+      .mocked(StreamableHTTPClientTransport)
+      .mock.calls.at(-1)?.[1];
+    expect(options?.requestInit?.headers).not.toHaveProperty('x-priority');
+  });
+
+  describe('tracking headers', () => {
+    function lastTransportOptions() {
+      return vi.mocked(StreamableHTTPClientTransport).mock.calls.at(-1)?.[1];
+    }
+
+    it('sends the tracking headers when no headers are given', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      });
+
+      await manager.createSession();
+
+      expect(StreamableHTTPClientTransport).toHaveBeenLastCalledWith(
+        new URL('http://test-url'),
+        {requestInit: {headers: trackingHeaders()}},
+      );
+    });
+
+    it('merges a caller User-Agent from transportOptions', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          requestInit: {
+            headers: {'User-Agent': 'my-app/1.0', 'x-test-header': 'value'},
+          },
+        },
+      });
+
+      await manager.createSession();
+
+      const adk = getClientLabels().join(' ');
+      expect(lastTransportOptions()?.requestInit?.headers).toEqual({
+        'x-test-header': 'value',
+        'x-goog-api-client': adk,
+        'user-agent': `${adk} my-app/1.0`,
+      });
+    });
+
+    it('merges a caller User-Agent from the deprecated header', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        header: {'User-Agent': 'my-app/1.0'},
+      });
+
+      await manager.createSession();
+
+      const adk = getClientLabels().join(' ');
+      expect(lastTransportOptions()).toEqual({
+        requestInit: {
+          headers: {
+            'x-goog-api-client': adk,
+            'user-agent': `${adk} my-app/1.0`,
+          },
+        },
+      });
+    });
+
+    it('keeps other transportOptions fields when requestInit is absent', async () => {
+      const customFetch = vi.fn();
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          fetch: customFetch,
+          sessionId: 'session-1',
+        },
+      });
+
+      await manager.createSession();
+
+      expect(lastTransportOptions()).toEqual({
+        fetch: customFetch,
+        sessionId: 'session-1',
+        requestInit: {headers: trackingHeaders()},
+      });
+    });
+
+    it('keeps other requestInit fields', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: {
+          requestInit: {
+            credentials: 'include',
+            headers: {'x-test-header': 'value'},
+          },
+        },
+      });
+
+      await manager.createSession();
+
+      expect(lastTransportOptions()).toEqual({
+        requestInit: {
+          credentials: 'include',
+          headers: {'x-test-header': 'value', ...trackingHeaders()},
+        },
+      });
+    });
+
+    it('does not mutate the caller transportOptions', async () => {
+      const withHeaders = {
+        requestInit: {
+          credentials: 'include' as const,
+          headers: {'User-Agent': 'my-app/1.0'},
+        },
+      };
+      const withoutRequestInit = {sessionId: 'session-1'};
+      const withHeadersClone = structuredClone(withHeaders);
+      const withoutRequestInitClone = structuredClone(withoutRequestInit);
+
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: withHeaders,
+      }).createSession();
+      await new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+        transportOptions: withoutRequestInit,
+        header: {'x-test-header': 'value'},
+      }).createSession();
+
+      expect(withHeaders).toEqual(withHeadersClone);
+      expect(withoutRequestInit).toEqual(withoutRequestInitClone);
+      expect(withoutRequestInit).not.toHaveProperty('requestInit');
+    });
+
+    it('includes a runWithClientLabel label', async () => {
+      const manager = new MCPSessionManager({
+        type: 'StreamableHTTPConnectionParams',
+        url: 'http://test-url',
+      });
+
+      await runWithClientLabel('my-label', () => manager.createSession());
+
+      const headers = lastTransportOptions()?.requestInit?.headers;
+      expect(headers).toHaveProperty(
+        'user-agent',
+        expect.stringContaining('my-label'),
+      );
+      expect(headers).toHaveProperty(
+        'x-goog-api-client',
+        expect.stringContaining('my-label'),
+      );
+    });
+
+    it('passes only serverParams to the stdio transport', async () => {
+      const serverParams = {command: 'test-command', args: ['arg1']};
+      const manager = new MCPSessionManager({
+        type: 'StdioConnectionParams',
+        serverParams,
+      });
+
+      await manager.createSession();
+
+      expect(StdioClientTransport).toHaveBeenLastCalledWith(serverParams);
+      expect(vi.mocked(StdioClientTransport).mock.lastCall).toEqual([
+        {command: 'test-command', args: ['arg1']},
+      ]);
+    });
   });
 
   it('tracks active sessions and cleans them up', async () => {

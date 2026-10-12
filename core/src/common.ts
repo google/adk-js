@@ -53,6 +53,7 @@ export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './agents/processors/base_llm_processor.js';
+export {CodeExecutionResponseProcessor} from './agents/processors/code_execution_request_processor.js';
 export {
   CONTENT_REQUEST_PROCESSOR,
   ContentRequestProcessor,
@@ -108,7 +109,11 @@ export type {
 export {AuthHandler} from './auth/auth_handler.js';
 export {AUTH_PREPROCESSOR, AuthPreprocessor} from './auth/auth_preprocessor.js';
 export {AuthProviderRegistry} from './auth/auth_provider_registry.js';
-export {OAuthGrantType} from './auth/auth_schemes.js';
+export {
+  AuthSchemeType,
+  OAuthGrantType,
+  getOAuthGrantTypeFromFlow,
+} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';
@@ -180,6 +185,14 @@ export type {
 } from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
+export {
+  INTERNAL_METADATA_PREFIX,
+  RESTORED_EVENT_KEY,
+  markRestored,
+  publicEvent,
+  publicMetadata,
+  publicSession,
+} from './events/internal_metadata.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';
 export type {
   ActivityEvent,
@@ -198,7 +211,15 @@ export {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './examples/base_example_provider.js';
-export type {Example} from './examples/example.js';
+export {VertexAiExampleStore} from './examples/example.js';
+export type {
+  Example,
+  ExampleStoreApiClient,
+  SearchExamplesRequest,
+  SearchExamplesResponse,
+  SearchExamplesResult,
+  StoredContentsExample,
+} from './examples/example.js';
 export type {
   BaseMemoryService,
   SearchMemoryRequest,
@@ -231,8 +252,13 @@ export type {
 } from './models/chrome_prompt_llm.js';
 export {Gemini, geminiInitParams} from './models/google_llm.js';
 export type {GeminiParams} from './models/google_llm.js';
+export {appendInstructions} from './models/llm_request.js';
 export type {LlmRequest} from './models/llm_request.js';
-export type {LlmResponse} from './models/llm_response.js';
+export {createLlmResponse} from './models/llm_response.js';
+export type {
+  GenerateContentResponseFields,
+  LlmResponse,
+} from './models/llm_response.js';
 export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
@@ -250,6 +276,11 @@ export {
   type ToolFailureResponse,
 } from './plugins/_reflect_retry_utils.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
+export type {
+  DebugEntry,
+  DebugLoggingPluginOptions,
+  InvocationDebugState,
+} from './plugins/debug_logging_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
@@ -274,6 +305,11 @@ export type {
   PolicyCheckResult,
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
+export {
+  ToolCallIntegrityError,
+  ToolCallIntegrityPlugin,
+} from './plugins/tool_call_integrity_plugin.js';
+export type {ToolCallIntegrityPluginOptions} from './plugins/tool_call_integrity_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {
   Runner,

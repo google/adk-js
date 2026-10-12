@@ -43,7 +43,13 @@ export class CodeExecutorContext {
   };
 
   constructor(private readonly sessionState: State) {
-    this.context = sessionState.get(CONTEXT_KEY) ?? {};
+    // Store the context object in state before reading it back, as adk-python
+    // does, so that the setters below mutate the object that state holds and
+    // a later CodeExecutorContext over the same state sees the writes.
+    if (!sessionState.has(CONTEXT_KEY)) {
+      sessionState.set(CONTEXT_KEY, {});
+    }
+    this.context = sessionState.get(CONTEXT_KEY)!;
     this.sessionState = sessionState;
   }
 
