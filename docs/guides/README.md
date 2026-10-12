@@ -92,6 +92,10 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 
 - [API Hub tool](tools/apihub_tool/index.md) - Building tools from an API registered in Google Cloud API Hub, the resource names it accepts, custom spec clients, and `SecretManagerClient`.
 
+#### MCP Tool
+
+- [MCP tool](tools/mcp_tool/index.md) - Connecting `MCPToolset` over stdio, Streamable HTTP, or SSE, loading MCP resources with `LoadMcpResourceTool`, and converting schemas with `toGeminiSchema` and `genaiSchemaToJsonSchema`.
+
 ### Telemetry
 
 - [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.

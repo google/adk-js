@@ -427,6 +427,9 @@ export type {
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
+export {toGeminiSchema} from './utils/gemini_schema_util.js';
+export type {MCPToolSchema} from './utils/gemini_schema_util.js';
+export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
 export {
   LogLevel,
   getLogger,
@@ -442,6 +445,7 @@ export {
   isGemini3xFlashLive,
   isGemini3xLive,
 } from './utils/model_name.js';
+export {toJsonSchema} from './utils/schema.js';
 export type {SchemaLike} from './utils/schema.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';

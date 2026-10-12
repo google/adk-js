@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type {SseConnectionParams, SseServerParams} from '@google/adk';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js';
 import {describe, expect, it, vi} from 'vitest';
 import {ReadonlyContext} from '../../../src/agents/readonly_context.js';
 import {MCPConnectionParams} from '../../../src/tools/mcp/mcp_session_manager.js';
@@ -46,6 +48,12 @@ const noop = () => vi.fn().mockResolvedValue(undefined);
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
   return {
     StdioClientTransport: vi.fn(),
+  };
+});
+
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
+  return {
+    SSEClientTransport: vi.fn(),
   };
 });
 
@@ -331,6 +339,48 @@ describe('MCPToolset', () => {
           0,
         );
       });
+    });
+  });
+
+  describe('SseConnectionParams', () => {
+    it('discovers tools over SSE transport with SseConnectionParams', async () => {
+      const sseParams: SseConnectionParams = {
+        type: 'SseConnectionParams',
+        url: 'http://localhost:8090/sse',
+        headers: {'Authorization': 'Bearer sse-token'},
+      };
+      const toolset = new MCPToolset(sseParams);
+
+      const tools = await toolset.getTools();
+
+      expect(SSEClientTransport).toHaveBeenCalledWith(
+        new URL('http://localhost:8090/sse'),
+        expect.objectContaining({
+          requestInit: expect.objectContaining({
+            headers: expect.objectContaining({
+              'Authorization': 'Bearer sse-token',
+            }),
+          }),
+        }),
+      );
+      expect(tools).toHaveLength(2);
+      expect(tools[0].name).toBe('test-tool');
+      expect(tools[1].name).toBe('other-tool');
+    });
+
+    it('accepts the SseServerParams alias with prefix and filter', async () => {
+      const sseParams: SseServerParams = {
+        type: 'SseConnectionParams',
+        url: 'http://localhost:8090/sse',
+        timeout: 5,
+        sseReadTimeout: 300,
+      };
+      const toolset = new MCPToolset(sseParams, ['sse_test-tool'], 'sse');
+
+      const tools = await toolset.getTools();
+
+      expect(tools).toHaveLength(1);
+      expect(tools[0].name).toBe('sse_test-tool');
     });
   });
 });
