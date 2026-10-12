@@ -12,7 +12,10 @@ import {
   isApp,
   RESTORED_EVENT_KEY,
   Runner,
+  setLogger,
 } from '@google/adk';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
@@ -1019,6 +1022,35 @@ describe('cli_run', () => {
       );
       expect(console.log).not.toHaveBeenCalledWith(expect.any(Error));
       expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('environment and logging setup', () => {
+    it('loads .env from the agent directory and supports logToTmp', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-run-env-'),
+      );
+      const agentFile = path.join(tempDir, 'agent.ts');
+      fs.writeFileSync(agentFile, '');
+      fs.writeFileSync(
+        path.join(tempDir, '.env'),
+        'ADK_CLI_RUN_DOTENV_TEST=loaded_from_env\n',
+      );
+
+      try {
+        await runAgent({
+          agentPath: agentFile,
+          logToTmp: true,
+          sessionService: createMockSessionService(),
+        });
+
+        expect(process.env['ADK_CLI_RUN_DOTENV_TEST']).toBe('loaded_from_env');
+        expect(AgentFile).toHaveBeenCalledWith(agentFile, undefined);
+      } finally {
+        setLogger(null);
+        delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
     });
   });
 });

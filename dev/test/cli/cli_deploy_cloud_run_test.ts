@@ -539,4 +539,18 @@ describe('deployToCloudRun', () => {
       expect.stringContaining('\x1b[0m'),
     );
   });
+
+  describe('appName option', () => {
+    it('uses options.appName when provided instead of deriving from agentPath', async () => {
+      await deployToCloudRun({
+        ...defaultOptions,
+        appName: 'custom-app-name',
+      });
+
+      expect(saveToFile).toHaveBeenCalledWith(
+        path.join('/tmp/test-deploy', 'Dockerfile'),
+        expect.stringContaining('agents/custom-app-name'),
+      );
+    });
+  });
 });

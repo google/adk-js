@@ -546,6 +546,15 @@ export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
 
+export {
+  convertSessionToEvalFormat,
+  createEmptyState,
+} from './cli/utils/evals.js';
+export type {
+  EvaluationItem,
+  IntermediateAgentResponseItem,
+  ToolUseItem,
+} from './cli/utils/evals.js';
 export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
 export type {
   CrewaiSchemaLike,
@@ -564,6 +573,7 @@ export type {
   LangchainToolConfig,
   LangchainToolLike,
 } from './tools/langchain_tool.js';
+export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
 export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
 export type {
   ToolboxClientLike,
