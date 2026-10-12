@@ -80,20 +80,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     }
     const pathStr = typeof path === 'string' ? path : String(path || '');
     const tempFolder = globalThis.fsMockTempFolder;
-    process.stdout.write(
-      `[GLOBAL MOCK readdir] path: ${pathStr}, tempFolder: ${tempFolder}\n`,
-    );
     if (tempFolder && pathStr.startsWith(tempFolder)) {
       const mockReaddirFn = globalThis.fsMockReaddir;
-      process.stdout.write(
-        `[GLOBAL MOCK readdir] matched tempFolder, mockReaddirFn: ${mockReaddirFn ? 'DEFINED' : 'UNDEFINED'}\n`,
-      );
       if (mockReaddirFn) {
-        const res = mockReaddirFn(path, opts);
-        process.stdout.write(
-          `[GLOBAL MOCK readdir] mockReaddirFn returned: ${res} (type: ${typeof res})\n`,
-        );
-        return res;
+        return mockReaddirFn(path, opts);
       }
       return Promise.resolve([]);
     }
@@ -247,10 +237,6 @@ describe('deployToAgentEngine', () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-  });
-
-  it('debug: fs.readdir is mock', () => {
-    console.warn('XXX fs.readdir is mock?', vi.isMockFunction(fs.readdir));
   });
 
   it('should deploy successfully with explicit options', async () => {
