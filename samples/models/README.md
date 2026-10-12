@@ -50,6 +50,12 @@ Set `ADK_SAMPLE_MODEL` to use a different registered model. A Gemini model needs
 GEMINI_API_KEY=... ADK_SAMPLE_MODEL=gemini-flash-latest npm run sample -- samples/models/agent.ts
 ```
 
+The sample also registers `Claude` with `LLMRegistry.register(Claude)` so that `claude-3-…` model names resolve to Anthropic Claude on Vertex AI. Running with a Claude model requires the optional `@anthropic-ai/vertex-sdk` peer package, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`:
+
+```bash
+GOOGLE_CLOUD_PROJECT=... GOOGLE_CLOUD_LOCATION=us-east5 ADK_SAMPLE_MODEL=claude-3-5-sonnet-v2@20241022 npm run sample -- samples/models/agent.ts
+```
+
 `samples/` is not an npm workspace, so it is type-checked separately:
 
 ```bash

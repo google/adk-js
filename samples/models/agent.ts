@@ -30,6 +30,11 @@
  * ADK_SAMPLE_MODEL=gemini-flash-latest. That REQUIRES an API key. Set
  * GEMINI_API_KEY, then:
  *   ADK_SAMPLE_MODEL=gemini-flash-latest npm run sample -- samples/models/agent.ts
+ *
+ * Set ADK_SAMPLE_MODEL=claude-3-5-sonnet-v2@20241022 to resolve Anthropic
+ * Claude through LLMRegistry. That REQUIRES @anthropic-ai/vertex-sdk,
+ * GOOGLE_CLOUD_PROJECT, and GOOGLE_CLOUD_LOCATION:
+ *   ADK_SAMPLE_MODEL=claude-3-5-sonnet-v2@20241022 npm run sample -- samples/models/agent.ts
  */
 
 import {
@@ -37,6 +42,7 @@ import {
   BaseAgent,
   BaseLlm,
   BaseLlmConnection,
+  Claude,
   createEvent,
   createLlmResponse,
   Event,
@@ -88,6 +94,7 @@ function systemInstructionLength(llmRequest: LlmRequest): number {
 }
 
 LLMRegistry.register(EchoLlm);
+LLMRegistry.register(Claude);
 
 class ModelsShowcaseAgent extends BaseAgent {
   constructor(private readonly modelName: string) {

@@ -8,6 +8,7 @@ All models extend `BaseLlm`. The package exports these implementations:
 - `ApigeeLlm` - A `Gemini` subclass that reaches the provider through an Apigee proxy. It is registered by default, so an `apigee/…` name resolves to it.
 - `ChromeBuiltInLlm` - Calls Chrome's built-in on-device model through the Prompt API. It is registered by default, so a `chrome-on-device` or `chrome/…` name resolves to it.
 - `RoutedLlm` - Delegates each request to one of several models that a router function selects. You create it directly; it has no name pattern.
+- `Claude` - Calls Anthropic Claude models on Vertex AI through the optional `@anthropic-ai/vertex-sdk` package. Register it with `LLMRegistry.register(Claude)` so that a `claude-3-…` name resolves to it.
 
 ## Introduction
 
@@ -83,6 +84,36 @@ With streaming on, `Gemini` yields each text chunk as a partial response, and th
 `connect` returns a `BaseLlmConnection` for bidirectional streaming. `receive()` on a `Gemini` connection yields the messages of one turn and ends after the message that completes the turn. Call `receive()` again for the next turn. `LlmAgent` does this for you in `runLive`: it calls `receive()` again until a call yields nothing.
 
 When the model is interrupted, the connection yields the text it has so far, and then always yields a response with `interrupted: true`.
+
+### Anthropic Claude on Vertex AI
+
+`Claude` adapts Anthropic Claude models hosted on Vertex AI to the `BaseLlm` interface. Its `supportedModels` list matches `/claude-3-.*/`, and its default `model` is `'claude-3-5-sonnet-v2@20241022'`. Register `Claude` with `LLMRegistry.register(Claude)` before resolving `claude-3-…` model names through `LLMRegistry` or `LlmAgent`, or pass a `Claude` instance directly to `LlmAgent`:
+
+```ts
+import {Claude, LLMRegistry, LlmAgent} from '@google/adk';
+
+LLMRegistry.register(Claude);
+
+export const claudeAgent = new LlmAgent({
+  name: 'claude_assistant',
+  model: 'claude-3-5-sonnet-v2@20241022',
+  instruction: 'Answer in one sentence.',
+});
+```
+
+`Claude` loads the optional `@anthropic-ai/vertex-sdk` peer package on first use when `generateContentAsync` runs. When no `client` is passed in `ClaudeParams`, `Claude` reads `project` and `location` from `ClaudeParams` or from the `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` environment variables, and throws an error when either value is missing. Live connections through `connect` are not supported for `Claude` and reject with an error.
+
+| Symbol                                                                    | Purpose                                                                                                                                                                                   |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Claude`                                                                  | `BaseLlm` implementation for Anthropic Claude models on Vertex AI, using `MAX_TOKEN`, which is `1024`, as `max_tokens`.                                                                   |
+| `ClaudeParams`                                                            | Constructor options: optional `model`, `project`, `location`, and pre-configured `client` of type `AnthropicVertexClient`.                                                                |
+| `ClaudeRequest`                                                           | Request shape holding `systemInstruction`, `messages`, and `tools`.                                                                                                                       |
+| `isClaude(obj)`                                                           | Type guard that returns `true` when `obj` is a `Claude` instance across package copies.                                                                                                   |
+| `toClaudeRole(role)`                                                      | Maps `'model'` and `'assistant'` to `'assistant'`, and any other role to `'user'`.                                                                                                        |
+| `toGoogleGenaiFinishReason(stopReason)`                                   | Maps `'end_turn'`, `'stop_sequence'`, and `'tool_use'` to `FinishReason.STOP`, `'max_tokens'` to `FinishReason.MAX_TOKENS`, and other values to `FinishReason.FINISH_REASON_UNSPECIFIED`. |
+| `partToMessageBlock(part)` / `contentToMessageParam(content)`             | Convert `@google/genai` `Part` and `Content` turns into Anthropic message parameters.                                                                                                     |
+| `contentBlockToPart(block)` / `messageToGenerateContentResponse(message)` | Convert Anthropic `text` and `tool_use` content blocks and messages into `@google/genai` `Part` objects and an `LlmResponse`.                                                             |
+| `functionDeclarationToToolParam(declaration)`                             | Converts a `FunctionDeclaration` into an Anthropic `AnthropicToolParam` with lowercased property schema types.                                                                            |
 
 ## Related samples
 

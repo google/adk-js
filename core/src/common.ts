@@ -228,6 +228,42 @@ export type {
 } from './memory/base_memory_service.js';
 export {InMemoryMemoryService} from './memory/in_memory_memory_service.js';
 export type {MemoryEntry} from './memory/memory_entry.js';
+export {
+  Claude,
+  MAX_TOKEN,
+  contentBlockToPart,
+  contentToMessageParam,
+  functionDeclarationToToolParam,
+  isClaude,
+  messageToGenerateContentResponse,
+  partToMessageBlock,
+  toClaudeRole,
+  toGoogleGenaiFinishReason,
+} from './models/anthropic_llm.js';
+export type {
+  AnthropicContentBlock,
+  AnthropicImageBlockParam,
+  AnthropicImageBlockSource,
+  AnthropicInputSchema,
+  AnthropicMessage,
+  AnthropicMessageBlockParam,
+  AnthropicMessageCreateParams,
+  AnthropicMessageParam,
+  AnthropicRequestOptions,
+  AnthropicTextBlock,
+  AnthropicTextBlockParam,
+  AnthropicThinkingBlock,
+  AnthropicToolChoiceAutoParam,
+  AnthropicToolParam,
+  AnthropicToolResultBlockParam,
+  AnthropicToolUseBlock,
+  AnthropicToolUseBlockParam,
+  AnthropicUsage,
+  AnthropicVertexClient,
+  ClaudeParams,
+  ClaudeRequest,
+  ClaudeRole,
+} from './models/anthropic_llm.js';
 export {ApigeeLlm} from './models/apigee_llm.js';
 export type {ApigeeLlmParams} from './models/apigee_llm.js';
 export {BaseLlm, isBaseLlm} from './models/base_llm.js';
