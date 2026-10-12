@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {Storage} from '@google-cloud/storage';
 import {GcsArtifactService} from '@google/adk';
 import {describe, expect, it, vi} from 'vitest';
 import {runArtifactServiceTests} from './artifact_service_test_utils.js';
@@ -588,6 +589,302 @@ describe('GcsArtifactService', () => {
         filename: 'doc/nested',
       });
       expect(nested?.text).toBe('nested v0');
+    });
+  });
+
+  describe('public storage handles and options', () => {
+    function createMockStorageClient(): Storage {
+      const isolatedBuckets = new Map<
+        string,
+        ReturnType<typeof storageMock.bucket>
+      >();
+      StorageMock.mockImplementationOnce(() => ({
+        buckets: isolatedBuckets,
+        bucket(name: string) {
+          let b = isolatedBuckets.get(name);
+          if (!b) {
+            b = storageMock.bucket(name);
+            storageMock.buckets.delete(name);
+            isolatedBuckets.set(name, b);
+          }
+          return b;
+        },
+      }));
+      const client = new Storage();
+      StorageMock.mockClear();
+      return client;
+    }
+
+    function createMockGcsArtifactService(): GcsArtifactService {
+      const service = new GcsArtifactService('test_bucket');
+      service.storageClient = createMockStorageClient();
+      service.bucket = service.storageClient.bucket('test_bucket');
+      return service;
+    }
+
+    it('exposes bucketName on construction and populates storageClient and bucket after first access', async () => {
+      storageMock.buckets.clear();
+      StorageMock.mockClear();
+      const service = new GcsArtifactService(bucketName, {
+        projectId: 'custom-project',
+      });
+
+      expect(service.bucketName).toBe(bucketName);
+      expect(service.storageClient).toBeUndefined();
+      expect(service.bucket).toBeUndefined();
+
+      await service.listVersions({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'doc.txt',
+      });
+
+      expect(StorageMock).toHaveBeenCalledWith({projectId: 'custom-project'});
+      expect(service.storageClient).toBe(storageMock);
+      expect(service.bucket).toBe(storageMock.bucket(bucketName));
+    });
+
+    it('uses storageClient from GcsArtifactServiceOptions without loading default Storage', async () => {
+      storageMock.buckets.clear();
+      const customClient = createMockStorageClient();
+      const service = new GcsArtifactService(bucketName, {
+        storageClient: customClient,
+      });
+
+      expect(service.bucketName).toBe(bucketName);
+      expect(service.storageClient).toBe(customClient);
+      expect(service.bucket).toBeUndefined();
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'custom.txt',
+        artifact: {text: 'via custom client'},
+      });
+
+      expect(StorageMock).not.toHaveBeenCalled();
+      expect(service.bucket).toBe(customClient.bucket(bucketName));
+      expect(storageMock.buckets.has(bucketName)).toBe(false);
+
+      const loaded = await service.loadArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'custom.txt',
+      });
+      expect(loaded?.text).toBe('via custom client');
+    });
+
+    it('uses bucket from GcsArtifactServiceOptions without loading default Storage', async () => {
+      storageMock.buckets.clear();
+      const customClient = createMockStorageClient();
+      const customBucket = customClient.bucket('injected-bucket');
+      const service = new GcsArtifactService(bucketName, {
+        bucket: customBucket,
+      });
+
+      expect(service.bucketName).toBe(bucketName);
+      expect(service.bucket).toBe(customBucket);
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'injected.txt',
+        artifact: {text: 'via custom bucket'},
+      });
+
+      expect(StorageMock).not.toHaveBeenCalled();
+      expect(storageMock.buckets.size).toBe(0);
+
+      const loaded = await service.loadArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'injected.txt',
+      });
+      expect(loaded?.text).toBe('via custom bucket');
+    });
+
+    it('uses storageClient and bucket assigned on the instance after construction', async () => {
+      storageMock.buckets.clear();
+      const service = new GcsArtifactService(bucketName);
+      const customClient = createMockStorageClient();
+      service.storageClient = customClient;
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'assigned.txt',
+        artifact: {text: 'assigned client'},
+      });
+
+      expect(StorageMock).not.toHaveBeenCalled();
+      expect(service.bucket).toBe(customClient.bucket(bucketName));
+
+      const secondClient = createMockStorageClient();
+      const secondBucket = secondClient.bucket('second-bucket');
+      service.bucket = secondBucket;
+
+      await service.saveArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'swapped.txt',
+        artifact: {text: 'swapped bucket'},
+      });
+
+      expect(
+        await service.loadArtifact({
+          appName: 'test-app',
+          userId: 'test-user',
+          sessionId: 'test-session',
+          filename: 'assigned.txt',
+        }),
+      ).toBeUndefined();
+      const loadedSwapped = await service.loadArtifact({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 'test-session',
+        filename: 'swapped.txt',
+      });
+      expect(loadedSwapped?.text).toBe('swapped bucket');
+    });
+
+    it('test_load_empty', async () => {
+      const artifactService = createMockGcsArtifactService();
+      expect(
+        await artifactService.loadArtifact({
+          appName: 'test_app',
+          userId: 'test_user',
+          sessionId: 'session_id',
+          filename: 'filename',
+        }),
+      ).toBeUndefined();
+      expect(StorageMock).not.toHaveBeenCalled();
+    });
+
+    it('test_save_load_delete', async () => {
+      const artifactService = createMockGcsArtifactService();
+      const artifact = {
+        inlineData: {
+          data: Buffer.from('test_data').toString('base64'),
+          mimeType: 'text/plain',
+        },
+      };
+      const appName = 'app0';
+      const userId = 'user0';
+      const sessionId = '123';
+      const filename = 'file456';
+
+      await artifactService.saveArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+        artifact,
+      });
+      // GcsArtifactService decodes text/plain blobs without a displayName into
+      // text Parts on load so legacy text artifacts round-trip as text.
+      expect(
+        await artifactService.loadArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+        }),
+      ).toEqual({text: 'test_data'});
+
+      await artifactService.deleteArtifact({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+      expect(
+        await artifactService.loadArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+        }),
+      ).toBeUndefined();
+      expect(StorageMock).not.toHaveBeenCalled();
+    });
+
+    it('test_list_keys', async () => {
+      const artifactService = createMockGcsArtifactService();
+      const artifact = {
+        inlineData: {
+          data: Buffer.from('test_data').toString('base64'),
+          mimeType: 'text/plain',
+        },
+      };
+      const appName = 'app0';
+      const userId = 'user0';
+      const sessionId = '123';
+      const filename = 'filename';
+      const filenames = Array.from({length: 5}, (_, i) => `${filename}${i}`);
+
+      for (const f of filenames) {
+        await artifactService.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename: f,
+          artifact,
+        });
+      }
+
+      expect(
+        await artifactService.listArtifactKeys({
+          appName,
+          userId,
+          sessionId,
+        }),
+      ).toEqual(filenames);
+      expect(StorageMock).not.toHaveBeenCalled();
+    });
+
+    it('test_list_versions', async () => {
+      const artifactService = createMockGcsArtifactService();
+      const appName = 'app0';
+      const userId = 'user0';
+      const sessionId = '123';
+      const filename = 'filename';
+      const versions = Array.from({length: 3}, (_, i) => {
+        const buf = Buffer.alloc(2);
+        buf.writeUInt16BE(i);
+        return {
+          inlineData: {
+            data: buf.toString('base64'),
+            mimeType: 'text/plain',
+          },
+        };
+      });
+
+      for (let i = 0; i < 3; i++) {
+        await artifactService.saveArtifact({
+          appName,
+          userId,
+          sessionId,
+          filename,
+          artifact: versions[i],
+        });
+      }
+
+      const responseVersions = await artifactService.listVersions({
+        appName,
+        userId,
+        sessionId,
+        filename,
+      });
+
+      expect(responseVersions).toEqual([0, 1, 2]);
+      expect(StorageMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -76,7 +76,7 @@ console.log('Session + user keys:', keys); // ['quarterly_report.md', 'user:repo
 1. **Zero-based revision numbering (`saveArtifact`)**: The first save for a given `{appName, userId, sessionId, filename}` tuple stores revision `0` and returns `0`. Each subsequent save appends the next integer (`1`, `2`, ...) without overwriting prior revisions. Every backend validates that `artifact` contains at least one of `inlineData`, `text`, or `fileData`, rejecting with `Error('Artifact must have either inlineData or text content.')` when all three are absent.
 2. **Session vs. user namespace (`user:` prefix)**: Filenames that start with `'user:'` (for example, `'user:report_theme.json'`) are stored under the user's namespace (`{appName}/{userId}/user/...`) instead of a single session. `listArtifactKeys` merges both the active session's keys and the user's `'user:'`-prefixed keys in lexicographical order, making `'user:'` artifacts readable from every session belonging to that `userId`.
 3. **Loading latest or pinned revisions (`loadArtifact`)**: Leaving `version` as `undefined` loads the highest revision number for `filename`. Passing an explicit `version: number` retrieves that historical snapshot. If the artifact or version does not exist, `loadArtifact` resolves to `undefined` (whereas `adk-python` returns `None`).
-4. **Version metadata inspection (`listArtifactVersions`, `getArtifactVersion`)**: Beyond `adk-python` v0.1.0, `BaseArtifactService` in TypeScript includes `listArtifactVersions` and `getArtifactVersion`, which return `ArtifactVersion` objects carrying `version`, `mimeType`, `customMetadata`, and `canonicalUri`.
+4. **Version metadata inspection (`listArtifactVersions`, `getArtifactVersion`)**: Beyond `adk-python` v0.2.0, `BaseArtifactService` in TypeScript includes `listArtifactVersions` and `getArtifactVersion`, which return `ArtifactVersion` objects carrying `version`, `mimeType`, `customMetadata`, and `canonicalUri`.
 5. **Session-scoped delegation (`ctx.artifactService`)**: When `Runner` constructs an `InvocationContext`, it wraps the configured `BaseArtifactService` in a `ScopedArtifactService` implementing `SessionArtifactService` (identifiable via `isSessionArtifactService`). Inside `BaseAgent.runAsyncImpl` or tool callbacks, callers pass `{filename, artifact, customMetadata?}` to `ctx.artifactService.saveArtifact(...)` without repeating `appName`, `userId`, or `sessionId`, and then record `{[filename]: revision}` on `EventActions.artifactDelta`.
 
 ## Configuration options
@@ -122,6 +122,17 @@ console.log('Session + user keys:', keys); // ['quarterly_report.md', 'user:repo
 | `canonicalUri`   | `string`                  | `undefined` | Storage URI (`file://...` on `FileArtifactService`, public blob URL on `GcsArtifactService`). |
 | `customMetadata` | `Record<string, unknown>` | `undefined` | Caller-supplied metadata stored with the revision.                                            |
 | `mimeType`       | `string`                  | `undefined` | Content MIME type recorded for binary or `fileData` payloads.                                 |
+
+### `GcsArtifactService` and `GcsArtifactServiceOptions`
+
+`new GcsArtifactService(bucket, options?)` accepts a bucket name and optional `GcsArtifactServiceOptions` (which extends `StorageOptions` from `@google-cloud/storage`).
+
+| Property / Option   | Type             | Default     | Description                                                                                                                                |
+| :------------------ | :--------------- | :---------- | :----------------------------------------------------------------------------------------------------------------------------------------- |
+| `bucketName`        | `string`         | Required    | Read-only bucket name set from the `bucket` constructor parameter.                                                                         |
+| `storageClient`     | `Storage`        | `undefined` | Pre-configured `@google-cloud/storage` `Storage` client via `GcsArtifactServiceOptions` or instance assignment; populated on first access. |
+| `bucket`            | `Bucket`         | `undefined` | Pre-configured `@google-cloud/storage` `Bucket` handle via `GcsArtifactServiceOptions` or instance assignment; populated on first access.  |
+| `...StorageOptions` | `StorageOptions` | `undefined` | Additional `@google-cloud/storage` client options forwarded to `new Storage(options)` when `storageClient` and `bucket` are omitted.       |
 
 ## Advanced applications
 

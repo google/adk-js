@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {Bucket, File, StorageOptions} from '@google-cloud/storage';
+import type {
+  Bucket,
+  File,
+  Storage,
+  StorageOptions,
+} from '@google-cloud/storage';
 import {createPartFromBase64, createPartFromText, Part} from '@google/genai';
 import {logger} from '../utils/logger.js';
 import {loadOptionalPeer} from '../utils/optional_peer.js';
@@ -24,27 +29,59 @@ const GCS_FILE_MIME_TYPE_METADATA_KEY = 'adkFileMimeType';
 const GCS_DISPLAY_NAME_METADATA_KEY = 'adkDisplayName';
 const GCS_IS_TEXT_METADATA_KEY = 'adkIsText';
 
+/**
+ * Options for configuring {@link GcsArtifactService}.
+ */
+export interface GcsArtifactServiceOptions extends StorageOptions {
+  /** Pre-configured Google Cloud Storage client instance. */
+  storageClient?: Storage;
+  /** Pre-configured Google Cloud Storage bucket handle. */
+  bucket?: Bucket;
+}
+
+/**
+ * An artifact service implementation using Google Cloud Storage (GCS).
+ */
 export class GcsArtifactService implements BaseArtifactService {
-  private readonly bucketName: string;
+  readonly bucketName: string;
+  storageClient?: Storage;
+  bucket?: Bucket;
   private readonly storageOptions?: StorageOptions;
   private bucketPromise?: Promise<Bucket>;
 
-  constructor(bucket: string, options?: StorageOptions) {
+  constructor(bucket: string, options?: GcsArtifactServiceOptions) {
     this.bucketName = bucket;
-    this.storageOptions = options;
+    if (options?.storageClient !== undefined || options?.bucket !== undefined) {
+      const {storageClient, bucket: bucketHandle, ...storageOptions} = options;
+      this.storageClient = storageClient;
+      this.bucket = bucketHandle;
+      this.storageOptions =
+        Object.keys(storageOptions).length > 0 ? storageOptions : undefined;
+    } else {
+      this.storageOptions = options;
+    }
   }
 
   /**
    * Resolves the GCS bucket handle, loading the `@google-cloud/storage`
-   * optional peer on first use.
+   * optional peer on first use when no bucket or client is provided.
    */
   private getBucket(): Promise<Bucket> {
+    if (this.bucket) {
+      return Promise.resolve(this.bucket);
+    }
+    if (this.storageClient) {
+      this.bucket = this.storageClient.bucket(this.bucketName);
+      return Promise.resolve(this.bucket);
+    }
     this.bucketPromise ??= loadOptionalPeer(
       {packageName: '@google-cloud/storage', feature: 'GcsArtifactService'},
       () => import('@google-cloud/storage'),
-    ).then(({Storage}) =>
-      new Storage(this.storageOptions).bucket(this.bucketName),
-    );
+    ).then(({Storage}) => {
+      this.storageClient = new Storage(this.storageOptions);
+      this.bucket = this.storageClient.bucket(this.bucketName);
+      return this.bucket;
+    });
     return this.bucketPromise;
   }
 
