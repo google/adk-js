@@ -144,7 +144,7 @@ const mockCreateInternal = vi.fn();
 const mockUpdateInternal = vi.fn();
 const mockGetAgentOperationInternal = vi.fn();
 
-vi.mock('@google-cloud/vertexai/build/src/genai/client.js', () => ({
+vi.mock('@google-cloud/vertexai', () => ({
   Client: class {
     agentEnginesInternal = {
       createInternal: mockCreateInternal,
@@ -292,6 +292,12 @@ describe('deployToAgentEngine', () => {
         },
       },
     });
+
+    expect(console.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Successfully deployed Reasoning Engine: projects/test-project/locations/us-central1/reasoningEngines/123',
+      ),
+    );
 
     // Verify tempFolder was cleaned up
     let exists = true;
@@ -706,6 +712,11 @@ describe('deployToAgentEngine', () => {
       },
     });
     expect(mockCreateInternal).not.toHaveBeenCalled();
+    expect(console.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Successfully updated Reasoning Engine: projects/test-project/locations/us-central1/reasoningEngines/12345',
+      ),
+    );
   });
 
   it('should update existing Reasoning Engine successfully when full resource name agentEngineId is provided', async () => {
