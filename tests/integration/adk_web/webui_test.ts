@@ -21,11 +21,10 @@ const __dirname = path.dirname(__filename);
 const SERVER_START_TIMEOUT = 20000;
 
 /**
- * Budget (ms) for `afterAll`. Equal to Vitest's default `hookTimeout`, so it
- * changes nothing today; it is stated because `AdkApiServer.stop()` is
- * `http.Server.close()`, which settles only once every open connection has
- * drained. Teardown that cheap should not inherit a project-wide `hookTimeout`
- * raised for suites that run `npm install` in a hook.
+ * Budget (ms) for `afterAll`: `stop()` is `http.Server.close()`, which settles
+ * only once every open connection has drained. Stated explicitly so a socket
+ * that never closes fails fast here, rather than on whatever hook budget the
+ * `integration` project supplies.
  */
 const SERVER_STOP_TIMEOUT = 10000;
 
