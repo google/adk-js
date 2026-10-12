@@ -99,7 +99,7 @@ describe('UnsafeLocalCodeExecutor', () => {
     // streams, so before the read ends were released this hung forever and no
     // timeout value bounded it -- the flake behind #622 on Windows.
     const timeoutSeconds = 0.5;
-    const survivorLifetimeMs = 10_000;
+    const survivorLifetimeMs = 60_000;
     const timedOutExecutor = new UnsafeLocalCodeExecutor({timeoutSeconds});
     const markerDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'adk-executor-process-tree-test-'),
@@ -589,9 +589,11 @@ async function waitForFileSize(filePath: string): Promise<number> {
         return size;
       }
     } catch (error) {
-      if (
-        !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      ) {
+      if (!(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      )) {
         throw error;
       }
     }
