@@ -72,12 +72,8 @@ Left unset, the sample runs on the corpus written into the file.
 | [`application_integration_tool`](application_integration_tool/README.md) | An Application Integration trigger or an Integration Connectors connection as a set of tools | ✅  | A Google Cloud project and credentials     |
 | `google_api_tool`                                                        | Google Discovery spec converted to OpenAPI, tool filtering, and OpenID Connect auth          | —   |                                            |
 | [`apihub_tool`](apihub_tool/README.md)                                   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource          | ✅  |                                            |
-| Sample                                   | Shows                                                                                   | Key | Extra                                      |
-| ---------------------------------------- | --------------------------------------------------------------------------------------- | --- | ------------------------------------------ |
-| `retrieval`                              | `LlamaIndexRetrieval` over a hand-written retriever, plus an optional `FilesRetrieval`  | ✅  | `llamaindex` for the `FilesRetrieval` half |
-| [`openapi_tool`](openapi_tool/README.md) | An OpenAPI spec as a set of tools, one tool selected by name, and an authenticated call | ✅  |                                            |
-| [`apihub_tool`](apihub_tool/README.md)   | An API Hub spec as a set of tools, from a local stand-in or a real API Hub resource     | ✅  |                                            |
-| `agent.ts`                               | `FunctionTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, `EXIT_LOOP`  | —   | `npx tsx samples/tools/agent.ts`           |
+| [`mcp_tool`](mcp_tool/README.md)                                         | `MCPToolset` over stdio or SSE, `LoadMcpResourceTool`, and `genaiSchemaToJsonSchema`         | ✅  | `@modelcontextprotocol/sdk`                |
+| `agent.ts`                                                               | `FunctionTool`, `AgentTool`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, `EXIT_LOOP`       | —   | `npx tsx samples/tools/agent.ts`           |
 
 ## Worth knowing
 
@@ -133,4 +129,5 @@ Left unset, the sample runs on the corpus written into the file.
 - [Application Integration tool](../../docs/guides/tools/application_integration_tool/index.md) - Tools for an Application Integration trigger or an Integration Connectors connection.
 - [Google API tool](../../docs/guides/tools/google_api_tool/index.md) - Converting a Google Discovery spec into tools and configuring OpenID Connect credentials.
 - [Google API tool sample](google_api_tool/README.md) - Running Discovery conversion, tool filtering, and OpenID Connect configuration offline.
+- [MCP tool](../../docs/guides/tools/mcp_tool/index.md) - Connecting `MCPToolset` over stdio, Streamable HTTP, or SSE, reading MCP resources, and converting ADK tool schemas.
 - [Graph workflow samples](../workflows/README.md) - The other sample category, one directory per section of the graph documentation.

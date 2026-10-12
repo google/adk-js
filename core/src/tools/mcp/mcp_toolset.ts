@@ -21,6 +21,11 @@ import {BaseToolset, ToolPredicate} from '../base_toolset.js';
 import {MCPConnectionParams, MCPSessionManager} from './mcp_session_manager.js';
 import {MCPTool} from './mcp_tool.js';
 
+export type {
+  SseConnectionParams,
+  SseServerParams,
+} from './mcp_session_manager.js';
+
 /**
  * A toolset that dynamically discovers and provides tools from a Model Context
  * Protocol (MCP) server.
@@ -49,6 +54,20 @@ import {MCPTool} from './mcp_tool.js';
  *
  * const mcpToolset = new MCPToolset(connectionParams);
  * const tools = await mcpToolset.getTools();
+ * ```
+ *
+ * @example
+ * ```ts
+ * import {MCPToolset} from '@google/adk';
+ * import type {SseConnectionParams} from '@google/adk';
+ *
+ * const sseParams: SseConnectionParams = {
+ *   type: 'SseConnectionParams',
+ *   url: 'http://localhost:8090/sse',
+ * };
+ *
+ * const sseToolset = new MCPToolset(sseParams);
+ * const sseTools = await sseToolset.getTools();
  * ```
  */
 export class MCPToolset extends BaseToolset {
