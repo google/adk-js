@@ -13,6 +13,10 @@ import {isZodObject, zodObjectToSchema} from '../utils/simple_zod_to_json.js';
 import {Context} from '../agents/context.js';
 import {BaseTool, RunAsyncToolRequest} from './base_tool.js';
 
+import {InvocationContext} from '../agents/invocation_context.js';
+import {toGeminiSchema} from '../utils/gemini_schema_util.js';
+import {SchemaLike, toJsonSchema} from '../utils/schema.js';
+
 /**
  * Input parameters of the function tool.
  */
@@ -87,6 +91,8 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   name?: string;
   description: string;
   parameters?: TParameters;
+  /** Optional schema describing the tool's return value. */
+  response?: SchemaLike;
   execute: ToolExecuteFunction<TParameters>;
   isLongRunning?: boolean;
   /**
@@ -109,6 +115,15 @@ export type ToolOptions<TParameters extends ToolInputParameters> = {
   requireConfirmation?: RequireConfirmation<TParameters>;
 };
 
+/**
+ * The parameters for `_callLive`.
+ */
+export interface CallLiveToolRequest {
+  args: Record<string, unknown>;
+  toolContext: Context;
+  invocationContext: InvocationContext;
+}
+
 function toSchema<TParameters extends ToolInputParameters>(
   parameters: TParameters,
 ): Schema {
@@ -121,6 +136,40 @@ function toSchema<TParameters extends ToolInputParameters>(
   }
 
   return parameters;
+}
+
+function toResponseSchema(response: SchemaLike): Schema {
+  if (isZodObject(response)) {
+    return zodObjectToSchema(response);
+  }
+  if (
+    typeof response === 'object' &&
+    response !== null &&
+    'safeParse' in response &&
+    typeof (response as {safeParse?: unknown}).safeParse === 'function'
+  ) {
+    return (
+      toGeminiSchema(
+        toJsonSchema(response) as Parameters<typeof toGeminiSchema>[0],
+      ) ?? {type: Type.TYPE_UNSPECIFIED}
+    );
+  }
+  return response as Schema;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Symbol.asyncIterator in value &&
+    typeof (value as {[Symbol.asyncIterator]?: unknown})[
+      Symbol.asyncIterator
+    ] === 'function'
+  );
 }
 
 /**
@@ -171,6 +220,8 @@ export class FunctionTool<
   private readonly execute: ToolExecuteFunction<TParameters>;
   // Typed input parameters.
   private readonly parameters?: TParameters;
+  // Optional schema describing the tool's return value.
+  private readonly response?: SchemaLike;
   // Whether the tool requires user confirmation before running.
   private readonly requireConfirmation: RequireConfirmation<TParameters>;
 
@@ -192,6 +243,7 @@ export class FunctionTool<
     });
     this.execute = options.execute;
     this.parameters = options.parameters;
+    this.response = options.response;
     this.requireConfirmation = options.requireConfirmation ?? false;
   }
 
@@ -200,6 +252,14 @@ export class FunctionTool<
    * and parameter schema.
    */
   override _getDeclaration(): FunctionDeclaration {
+    if (this.response !== undefined) {
+      return {
+        name: this.name,
+        description: this.description,
+        parameters: toSchema(this.parameters),
+        response: toResponseSchema(this.response),
+      };
+    }
     return {
       name: this.name,
       description: this.description,
@@ -234,6 +294,45 @@ export class FunctionTool<
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       throw new Error(`Error in tool '${this.name}': ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Invokes the tool in live streaming mode, injecting any active input stream
+   * from the invocation context and yielding items from the returned stream.
+   *
+   * @param req The live tool invocation request.
+   */
+  async *_callLive(
+    req: CallLiveToolRequest,
+  ): AsyncGenerator<unknown, void, void> {
+    const validatedArgs = this.validateArgs(req.args);
+    const argsToCall: Record<string, unknown> = isPlainRecord(validatedArgs)
+      ? {...validatedArgs}
+      : {...req.args};
+    const activeTool = req.invocationContext.activeStreamingTools?.[this.name];
+    if (activeTool?.stream) {
+      argsToCall['inputStream'] = activeTool.stream;
+    }
+    const rawResult = this.execute(
+      argsToCall as ToolExecuteArgument<TParameters>,
+      req.toolContext,
+    );
+    if (isAsyncIterable(rawResult)) {
+      for await (const item of rawResult) {
+        yield item;
+      }
+      return;
+    }
+    const awaited = await rawResult;
+    if (isAsyncIterable(awaited)) {
+      for await (const item of awaited) {
+        yield item;
+      }
+      return;
+    }
+    if (awaited !== undefined) {
+      yield awaited;
     }
   }
 
@@ -317,4 +416,319 @@ export class FunctionTool<
     }
     return undefined;
   }
+}
+
+const SCHEMA_TYPE_MAP: Readonly<Record<string, Type>> = {
+  str: Type.STRING,
+  int: Type.INTEGER,
+  float: Type.NUMBER,
+  bool: Type.BOOLEAN,
+  string: Type.STRING,
+  integer: Type.INTEGER,
+  number: Type.NUMBER,
+  boolean: Type.BOOLEAN,
+  list: Type.ARRAY,
+  array: Type.ARRAY,
+  tuple: Type.ARRAY,
+  object: Type.OBJECT,
+  Dict: Type.OBJECT,
+  List: Type.ARRAY,
+  Tuple: Type.ARRAY,
+  Any: Type.TYPE_UNSPECIFIED,
+  STRING: Type.STRING,
+  INTEGER: Type.INTEGER,
+  NUMBER: Type.NUMBER,
+  BOOLEAN: Type.BOOLEAN,
+  ARRAY: Type.ARRAY,
+  OBJECT: Type.OBJECT,
+  NULL: Type.NULL,
+  null: Type.NULL,
+  TYPE_UNSPECIFIED: Type.TYPE_UNSPECIFIED,
+};
+
+function annotateNullableFields(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (!isPlainRecord(propertySchema)) {
+      continue;
+    }
+    const anyOf = propertySchema['anyOf'];
+    if (!Array.isArray(anyOf)) {
+      continue;
+    }
+    for (let i = 0; i < anyOf.length; i++) {
+      const branch = anyOf[i];
+      if (
+        isPlainRecord(branch) &&
+        (branch['type'] === 'null' || branch['type'] === Type.NULL)
+      ) {
+        propertySchema['nullable'] = true;
+        anyOf.splice(i, 1);
+        break;
+      }
+    }
+  }
+}
+
+function annotateRequiredFields(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    schema['required'] = [];
+    return;
+  }
+  const required: string[] = [];
+  for (const [fieldName, fieldSchema] of Object.entries(properties)) {
+    if (
+      isPlainRecord(fieldSchema) &&
+      !fieldSchema['nullable'] &&
+      !('default' in fieldSchema)
+    ) {
+      required.push(fieldName);
+    }
+  }
+  schema['required'] = required;
+}
+
+function removeAnyOf(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (!isPlainRecord(propertySchema)) {
+      continue;
+    }
+    const unionTypes = propertySchema['anyOf'];
+    delete propertySchema['anyOf'];
+    if (Array.isArray(unionTypes)) {
+      for (const branch of unionTypes) {
+        if (
+          isPlainRecord(branch) &&
+          branch['type'] !== 'null' &&
+          branch['type'] !== Type.NULL
+        ) {
+          Object.assign(propertySchema, branch);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function removeDefault(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (isPlainRecord(propertySchema)) {
+      delete propertySchema['default'];
+    }
+  }
+}
+
+function removeNullable(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (isPlainRecord(propertySchema)) {
+      delete propertySchema['nullable'];
+    }
+  }
+}
+
+function removeTitle(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (isPlainRecord(propertySchema)) {
+      delete propertySchema['title'];
+    }
+  }
+}
+
+function processParameterSchema(
+  vertexai: boolean,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  annotateNullableFields(schema);
+  annotateRequiredFields(schema);
+  if (!vertexai) {
+    removeAnyOf(schema);
+    removeDefault(schema);
+    removeNullable(schema);
+    removeTitle(schema);
+  }
+  return schema;
+}
+
+function mapPropertySchemaType(propertySchema: Record<string, unknown>): void {
+  if (typeof propertySchema['type'] === 'string') {
+    propertySchema['type'] =
+      SCHEMA_TYPE_MAP[propertySchema['type']] ?? Type.TYPE_UNSPECIFIED;
+    if (
+      propertySchema['type'] === Type.ARRAY &&
+      isPlainRecord(propertySchema['items'])
+    ) {
+      mapPropertySchemaType(propertySchema['items']);
+    }
+  }
+  if (isPlainRecord(propertySchema['properties'])) {
+    for (const nestedProp of Object.values(propertySchema['properties'])) {
+      if (isPlainRecord(nestedProp)) {
+        mapPropertySchemaType(nestedProp);
+      }
+    }
+  }
+  if (Array.isArray(propertySchema['anyOf'])) {
+    for (const branch of propertySchema['anyOf']) {
+      if (isPlainRecord(branch) && typeof branch['type'] === 'string') {
+        branch['type'] =
+          SCHEMA_TYPE_MAP[branch['type']] ?? Type.TYPE_UNSPECIFIED;
+        propertySchema['type'] = branch['type'];
+      }
+    }
+  }
+}
+
+function mapSchemaTypes(schema: Record<string, unknown>): void {
+  const properties = schema['properties'];
+  if (!isPlainRecord(properties)) {
+    return;
+  }
+  for (const propertySchema of Object.values(properties)) {
+    if (isPlainRecord(propertySchema)) {
+      mapPropertySchemaType(propertySchema);
+    }
+  }
+}
+
+function resolveReturnSchema(
+  func: unknown,
+  beforeParamSchema: Record<string, unknown>,
+): Schema | undefined {
+  const funcObj =
+    typeof func === 'function' || isPlainRecord(func)
+      ? (func as {response?: SchemaLike; returnType?: string})
+      : undefined;
+  const responseCandidate =
+    funcObj?.response ??
+    (beforeParamSchema['response'] as SchemaLike | undefined);
+  if (responseCandidate !== undefined) {
+    return toResponseSchema(responseCandidate);
+  }
+  const returnTypeCandidate =
+    funcObj?.returnType ??
+    (typeof beforeParamSchema['returnType'] === 'string'
+      ? beforeParamSchema['returnType']
+      : undefined);
+  if (typeof returnTypeCandidate === 'string') {
+    return {
+      type: SCHEMA_TYPE_MAP[returnTypeCandidate] ?? Type.TYPE_UNSPECIFIED,
+    };
+  }
+  if (typeof func === 'function') {
+    return {type: Type.TYPE_UNSPECIFIED};
+  }
+  return undefined;
+}
+
+/**
+ * Builds a `FunctionDeclaration` from a normalized parameter schema.
+ */
+export function buildFunctionDeclarationUtil(
+  vertexai: boolean,
+  name: string,
+  description: string,
+  func: unknown,
+  beforeParamSchema: Record<string, unknown>,
+): FunctionDeclaration {
+  const schemaCopy = structuredClone(beforeParamSchema);
+  mapSchemaTypes(schemaCopy);
+  const properties = isPlainRecord(schemaCopy['properties'])
+    ? (schemaCopy['properties'] as Record<string, Schema>)
+    : {};
+  const hasProperties = Object.keys(properties).length > 0;
+  const declaration: FunctionDeclaration = {
+    name,
+    description,
+  };
+  if (hasProperties) {
+    const parameters: Schema = {
+      type: Type.OBJECT,
+      properties,
+    };
+    if (
+      Array.isArray(schemaCopy['required']) &&
+      schemaCopy['required'].length > 0
+    ) {
+      parameters.required = schemaCopy['required'] as string[];
+    }
+    declaration.parameters = parameters;
+  }
+  if (vertexai) {
+    const responseSchema = resolveReturnSchema(func, schemaCopy);
+    if (responseSchema !== undefined) {
+      declaration.response = responseSchema;
+    }
+  }
+  return declaration;
+}
+
+/**
+ * Builds a `FunctionDeclaration` for a LangChain tool parameter map.
+ */
+export function buildFunctionDeclarationForLangchain(
+  vertexai: boolean,
+  name: string,
+  description: string,
+  func: unknown,
+  paramSchema: Record<string, unknown>,
+): FunctionDeclaration {
+  const rawCopy = structuredClone(paramSchema);
+  const explicitRequired = Array.isArray(rawCopy['required'])
+    ? (rawCopy['required'] as string[])
+    : undefined;
+  delete rawCopy['required'];
+  const wrapped = processParameterSchema(vertexai, {
+    properties: rawCopy,
+  });
+  const properties = isPlainRecord(wrapped['properties'])
+    ? {...wrapped['properties']}
+    : {};
+  const computedRequired = Array.isArray(wrapped['required'])
+    ? (wrapped['required'] as string[])
+    : [];
+  const requiredFields =
+    explicitRequired !== undefined ? explicitRequired : computedRequired;
+  return buildFunctionDeclarationUtil(vertexai, name, description, func, {
+    properties,
+    required: requiredFields,
+  });
+}
+
+/**
+ * Builds a `FunctionDeclaration` for a CrewAI tool parameter schema.
+ */
+export function buildFunctionDeclarationForParamsForCrewai(
+  vertexai: boolean,
+  name: string,
+  description: string,
+  func: unknown,
+  paramSchema: Record<string, unknown>,
+): FunctionDeclaration {
+  const processed = processParameterSchema(
+    vertexai,
+    structuredClone(paramSchema),
+  );
+  return buildFunctionDeclarationUtil(vertexai, name, description, func, {
+    ...processed,
+  });
 }

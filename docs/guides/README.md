@@ -62,6 +62,10 @@ Conversations and their state: the events of each session, and the `app:`, `user
 
 ### Tools
 
+Function, agent, ecosystem-adapter, and built-in model tools (`BaseTool`, `FunctionTool`, `LongRunningFunctionTool`, `AgentTool`, `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in grounding and control-flow tools).
+
+- [Tools](tools/index.md) - `BaseTool`, `FunctionTool` (with `response` schema and `_callLive` streaming), `LongRunningFunctionTool`, `AgentTool` (with `inputSchema` and `outputSchema`), `ToolContext`, `CrewaiTool`, `LangchainTool`, `ToolboxTool`, and built-in utility tools.
+
 #### Retrieval
 
 Client-side retrieval tools. The agent calls a one-argument search function, your code answers it, and you choose the store, the chunking and the ranking. Start with `BaseRetrievalTool` if you are deciding between these and server-side retrieval.
@@ -81,6 +85,8 @@ Client-side retrieval tools. The agent calls a one-argument search function, you
 #### Google API Tool
 
 - [Google API tool](tools/google_api_tool/index.md) - Converting Google API Discovery documents into OpenAPI v3 tools, configuring OpenID Connect credentials, and using pre-configured Google API toolsets.
+
+- [Telemetry](telemetry/index.md) - The spans and attributes ADK writes, attaching exporters with `maybeSetOtelProviders`, and turning off message content in spans.
 
 #### API Hub Tool
 
