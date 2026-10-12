@@ -80,11 +80,14 @@ export function getContents(
       continue;
     }
 
-    filteredEvents.push(
-      isEventFromAnotherAgent(agentName, event)
-        ? convertForeignEvent(event)
-        : event,
-    );
+    if (isEventFromAnotherAgent(agentName, event)) {
+      const converted = convertForeignEvent(event);
+      if (converted) {
+        filteredEvents.push(converted);
+      }
+    } else {
+      filteredEvents.push(event);
+    }
   }
 
   let resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
@@ -190,7 +193,11 @@ export function getCurrentTurnContents(
     ) {
       continue;
     }
-    if (event.author === 'user' || isEventFromAnotherAgent(agentName, event)) {
+    if (
+      event.author === 'user' ||
+      (isEventFromAnotherAgent(agentName, event) &&
+        convertForeignEvent(event) !== undefined)
+    ) {
       return getContents(
         events.slice(turnStart(events, i)),
         agentName,
@@ -303,9 +310,10 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  *
  * @param event The event to convert.
  *
- * @returns The converted event.
+ * @returns The converted event, or `undefined` if no parts remain after
+ *     excluding thought parts.
  */
-function convertForeignEvent(event: Event): Event {
+function convertForeignEvent(event: Event): Event | undefined {
   if (!event.content?.parts?.length) {
     return event;
   }
@@ -322,7 +330,10 @@ function convertForeignEvent(event: Event): Event {
   for (const part of event.content.parts) {
     // Exclude thoughts from the context.
     // TODO - b/425992518: filtring should be configurable.
-    if (part.text && !part.thought) {
+    if (part.thought) {
+      continue;
+    }
+    if (part.text) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });
@@ -341,6 +352,10 @@ function convertForeignEvent(event: Event): Event {
     } else {
       content.parts?.push(cloneDeep(part));
     }
+  }
+
+  if (content.parts!.length === 1) {
+    return undefined;
   }
 
   return createEvent({
