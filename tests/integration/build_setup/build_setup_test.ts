@@ -118,21 +118,23 @@ describe('Build setup', () => {
     );
 
     afterAll(async () => {
-      // Teardown is deliberately non-fatal: a fixture that cannot be cleaned
-      // must not turn a passing suite red, but it does change the next run's
-      // install, so it has to be visible rather than swallowed.
-      try {
-        await fs.rm(`${projectPath}/node_modules`, {
-          recursive: true,
-          force: true,
-        });
-        await fs.rm(`${projectPath}/package-lock.json`, {force: true});
+      const targets = ['node_modules', 'package-lock.json'];
+      if (buildSetup.startsWith('ts_')) {
+        targets.push('dist');
+      }
 
-        if (buildSetup.startsWith('ts_')) {
-          await fs.rm(`${projectPath}/dist`, {recursive: true, force: true});
-        }
-      } catch (error: unknown) {
-        console.error(`Teardown failed for ${buildSetup}:`, error);
+      // One target that cannot be removed must not stop the others, and must
+      // not turn a passing suite red. It does change the next run's install
+      // though, so report it.
+      for (const target of targets) {
+        await fs
+          .rm(`${projectPath}/${target}`, {recursive: true, force: true})
+          .catch((error: unknown) => {
+            console.error(
+              `Teardown failed for ${buildSetup} at ${target}:`,
+              error,
+            );
+          });
       }
     }, HOOK_TIMEOUT);
   });
