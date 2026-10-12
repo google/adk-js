@@ -5,7 +5,9 @@
  */
 
 import {FunctionCall, Part} from '@google/genai';
+import {z} from 'zod';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
 import {getFunctionResponses} from '../events/event.js';
 import {Session} from '../sessions/session.js';
 import {logger} from '../utils/logger.js';
@@ -14,6 +16,51 @@ import {
   isBaseExampleProvider,
 } from './base_example_provider.js';
 import {Example} from './example.js';
+
+const contentSchema = z
+  .object({
+    role: z.string().optional(),
+    parts: z.array(z.object({}).loose()).optional(),
+  })
+  .loose();
+
+/**
+ * Runtime shape check for a list of {@link Example}s.
+ *
+ * The check is deliberately shallow. `Content` and `Part` carry many optional
+ * fields, so both objects stay open, and the schema pins only the invariants
+ * the few-shot renderer depends on.
+ */
+const examplesSchema = z.array(
+  z.object({input: contentSchema, output: z.array(contentSchema)}),
+);
+
+/**
+ * Throws unless `examples` is a well-formed list of {@link Example}s.
+ *
+ * Mirrors `TypeAdapter(list[Example]).validate_python` in the adk-python
+ * `ExampleTool` constructor. {@link Example} is erased at compile time, so a
+ * value that reaches the SDK from untyped JavaScript or from a configuration
+ * file is otherwise unchecked, and a malformed entry only fails later while the
+ * few-shot instruction is rendered.
+ *
+ * The value is checked but not replaced, so it keeps reference identity and no
+ * defensive copy is made.
+ *
+ * @param examples - The value to check.
+ * @throws {InputValidationError} When the value is not a list of well-formed
+ *   examples. The message names the path of each failing field.
+ */
+export function validateExamples(
+  examples: unknown,
+): asserts examples is Example[] {
+  const result = examplesSchema.safeParse(examples);
+  if (!result.success) {
+    throw new InputValidationError(
+      `Invalid few-shot examples:\n${z.prettifyError(result.error)}`,
+    );
+  }
+}
 
 const EXAMPLES_INTRO =
   '<EXAMPLES>\nBegin few-shot\nThe following are examples of user queries and' +

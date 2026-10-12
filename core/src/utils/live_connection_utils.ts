@@ -223,12 +223,11 @@ export class LiveResponseAggregator {
           yield this.buildFullTextResponse(this.text, this.isThought);
           this.text = '';
           this.isThought = false;
-        } else {
-          yield {
-            interrupted: serverContent.interrupted,
-            ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
-          };
         }
+        yield {
+          interrupted: serverContent.interrupted,
+          ...(this.modelVersion ? {modelVersion: this.modelVersion} : {}),
+        };
       }
     }
 

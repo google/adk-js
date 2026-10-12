@@ -33,11 +33,7 @@ export const DEFAULT_ROUTE = '__DEFAULT__';
  * Phase 3 via `build_node`.)
  */
 export type NodeLike =
-  | BaseNode
-  | BaseAgent
-  | BaseTool
-  | ((...args: never[]) => unknown)
-  | 'START';
+  BaseNode | BaseAgent | BaseTool | ((...args: never[]) => unknown) | 'START';
 
 /**
  * What `ctx.runNode()` accepts: everything an edge accepts except the `'START'`

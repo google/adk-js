@@ -17,6 +17,13 @@
 import * as winston from 'winston';
 import {Logger, LogLevel, setLogger} from './logger.js';
 
+const WINSTON_LEVEL_NAMES: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'debug',
+  [LogLevel.INFO]: 'info',
+  [LogLevel.WARN]: 'warn',
+  [LogLevel.ERROR]: 'error',
+};
+
 /** The default logger on Node. Writes through winston. */
 export class WinstonLogger implements Logger {
   private readonly logger: winston.Logger;
@@ -56,7 +63,7 @@ export class WinstonLogger implements Logger {
       return;
     }
 
-    this.logger.log(level.toString(), messages.join(' '));
+    this.logger.log(WINSTON_LEVEL_NAMES[level], messages.join(' '));
   }
 
   debug(...messages: unknown[]): void {

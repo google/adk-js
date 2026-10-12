@@ -70,8 +70,7 @@ export interface StreamableHTTPConnectionParams {
  * A union of all supported MCP connection parameter types.
  */
 export type MCPConnectionParams =
-  | StdioConnectionParams
-  | StreamableHTTPConnectionParams;
+  StdioConnectionParams | StreamableHTTPConnectionParams;
 
 /**
  * Builds the options for a streamable HTTP transport, with the ADK tracking

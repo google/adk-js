@@ -62,6 +62,18 @@ const errorTool = new FunctionTool({
   },
 });
 
+class ThrowingTool extends BaseTool {
+  constructor(private readonly thrownValue: unknown) {
+    super({name: 'throwingTool', description: 'throws a test value'});
+  }
+
+  override async runAsync(
+    _request: Parameters<BaseTool['runAsync']>[0],
+  ): Promise<unknown> {
+    throw this.thrownValue;
+  }
+}
+
 // Plugin for testing
 class TestPlugin extends BasePlugin {
   beforeToolCallbackResponse?: Record<string, unknown>;
@@ -180,6 +192,31 @@ describe('handleFunctionCallList', () => {
     expect(definedEvent.content!.parts![0].functionResponse!.response).toEqual({
       result: 'tool executed',
     });
+  });
+
+  it.each([
+    ['empty Error message', new Error('')],
+    ['empty string', ''],
+    ['zero', 0],
+    ['false', false],
+    ['null', null],
+    ['undefined', undefined],
+  ])('preserves a thrown %s as an error response', async (_label, thrown) => {
+    const tool = new ThrowingTool(thrown);
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(tool)],
+      toolsDict: {[tool.name]: tool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(event).not.toBeNull();
+    const response = (event as Event).content!.parts![0].functionResponse!
+      .response;
+    const expectedError = thrown instanceof Error ? thrown.message : thrown;
+    expect(response).toHaveProperty('error', expectedError);
+    expect(response).not.toHaveProperty('result');
   });
 
   it('should wrap array responses into a {results: array} object', async () => {

@@ -9,7 +9,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {materializeFiles} from '../../src/utils/file_utils.js';
+import {getMimeTypeAndEncoding} from '../../src/utils/file_extension_utils.js';
+import {guessMimeType, materializeFiles} from '../../src/utils/file_utils.js';
 
 describe('file_utils', () => {
   let tempDir: string;
@@ -212,5 +213,110 @@ describe('file_utils', () => {
       );
       expect(content3).toBe('third');
     });
+  });
+});
+
+/** Every extension the consolidated MIME table knows. */
+const ALL_MIME_TABLE_EXTENSIONS = [
+  '.js',
+  '.cjs',
+  '.mjs',
+  '.ts',
+  '.cts',
+  '.mts',
+  '.py',
+  '.sh',
+  '.bash',
+  '.md',
+  '.txt',
+  '.html',
+  '.css',
+  '.json',
+  '.csv',
+  '.svg',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.pdf',
+];
+
+describe('guessMimeType', () => {
+  describe('extensions gained from the consolidated table', () => {
+    it.each([
+      ['README.md', 'text/markdown'],
+      ['notes.txt', 'text/plain'],
+      ['page.html', 'text/html'],
+      ['style.css', 'text/css'],
+      ['icon.svg', 'image/svg+xml'],
+      ['config.yaml', 'text/yaml'],
+      ['config.yml', 'text/yaml'],
+    ])('resolves %s', (filePath, expectedMime) => {
+      expect(guessMimeType(filePath)).toBe(expectedMime);
+    });
+  });
+
+  describe('extensions the consolidation must not lose', () => {
+    it.each([
+      ['doc.pdf', 'application/pdf'],
+      ['photo.jpg', 'image/jpeg'],
+      ['photo.jpeg', 'image/jpeg'],
+      ['photo.png', 'image/png'],
+      ['anim.gif', 'image/gif'],
+      ['data.csv', 'text/csv'],
+      ['data.json', 'application/json'],
+      ['data.xml', 'application/xml'],
+      ['deploy.sh', 'text/x-shellscript'],
+      ['deploy.bash', 'text/x-shellscript'],
+      ['main.py', 'text/x-python'],
+      ['main.js', 'text/javascript'],
+      ['main.cjs', 'text/javascript'],
+      ['main.mjs', 'text/javascript'],
+      ['main.ts', 'text/javascript'],
+      ['main.cts', 'text/javascript'],
+      ['main.mts', 'text/javascript'],
+    ])('still resolves %s', (filePath, expectedMime) => {
+      expect(guessMimeType(filePath)).toBe(expectedMime);
+    });
+  });
+
+  describe('path and case handling', () => {
+    it('reads the extension of a nested path', () => {
+      expect(guessMimeType('a/b/c/helper.py')).toBe('text/x-python');
+    });
+
+    it('ignores extension case', () => {
+      expect(guessMimeType('IMG.PNG')).toBe('image/png');
+    });
+
+    it('uses only the last extension of a double extension', () => {
+      expect(guessMimeType('archive.tar.gz')).toBe('application/octet-stream');
+    });
+  });
+
+  describe('names without an extension', () => {
+    it('falls back for a bare name', () => {
+      expect(guessMimeType('output_file')).toBe('application/octet-stream');
+    });
+
+    it('falls back for a dotfile', () => {
+      expect(guessMimeType('.gitignore')).toBe('application/octet-stream');
+    });
+
+    it('falls back for a bare name that spells an extension', () => {
+      // 'png' is the whole file name here, so the file has no extension.
+      expect(guessMimeType('png')).toBe('application/octet-stream');
+    });
+  });
+
+  it('agrees with getMimeTypeAndEncoding on every known extension', () => {
+    for (const ext of ALL_MIME_TABLE_EXTENSIONS) {
+      expect(guessMimeType(`file${ext}`)).toBe(
+        getMimeTypeAndEncoding(ext).mimeType,
+      );
+    }
   });
 });

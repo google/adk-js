@@ -90,3 +90,27 @@ describe('LLMRegistry', () => {
     expect(agent.canonicalModel).toBeInstanceOf(TestLlmModel);
   });
 });
+
+class AlternationLlmModel extends TestLlmModel {
+  static override readonly supportedModels = ['model-a|model-b'];
+}
+
+describe('LLMRegistry.resolve with alternation patterns', () => {
+  beforeAll(() => {
+    LLMRegistry.register(AlternationLlmModel);
+  });
+
+  it('resolves every alternative of the pattern', () => {
+    expect(LLMRegistry.resolve('model-a')).toBe(AlternationLlmModel);
+    expect(LLMRegistry.resolve('model-b')).toBe(AlternationLlmModel);
+  });
+
+  it('rejects a name that only starts or ends with an alternative', () => {
+    expect(() => LLMRegistry.resolve('model-a-extra')).toThrow(
+      'Model model-a-extra not found.',
+    );
+    expect(() => LLMRegistry.resolve('prefix-model-b')).toThrow(
+      'Model prefix-model-b not found.',
+    );
+  });
+});
