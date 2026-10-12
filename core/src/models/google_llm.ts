@@ -262,6 +262,7 @@ export class Gemini extends BaseLlm {
       });
     } else {
       this._apiClient = new GoogleGenAI({
+        vertexai: false,
         apiKey: this.apiKey,
         httpOptions: this.getHttpOptions(),
       });
@@ -305,6 +306,7 @@ export class Gemini extends BaseLlm {
         });
       } else {
         this._liveApiClient = new GoogleGenAI({
+          vertexai: false,
           apiKey: this.apiKey,
           httpOptions: this.getLiveHttpOptions(),
         });
@@ -417,7 +419,7 @@ export function geminiInitParams({
   const params: GeminiParams = {model, vertexai, project, location, apiKey};
 
   params.vertexai = !!vertexai;
-  if (!params.vertexai && !isBrowser()) {
+  if (vertexai === undefined && !isBrowser()) {
     params.vertexai = isEnterpriseModeEnabled();
   }
 
