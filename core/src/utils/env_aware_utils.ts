@@ -70,19 +70,21 @@ export function randomUUID(): string {
 /**
  * Encodes the given string or Uint8Array to base64.
  *
+ * `window.btoa` is byte-oriented and throws on any code unit above `U+00FF`,
+ * so a string is first encoded to UTF-8 bytes. Node's `Buffer` encodes a
+ * string as UTF-8 too, which keeps both environments on one contract and lets
+ * `base64Decode` round-trip its output.
+ *
  * @param data The data to encode.
  * @return The base64-encoded string.
  */
 export function base64Encode(data: string | Uint8Array): string {
   if (isBrowser()) {
+    const bytes =
+      typeof data === 'string' ? new TextEncoder().encode(data) : data;
     let strData = '';
-    if (typeof data === 'string') {
-      strData = data;
-    } else {
-      const len = data.byteLength;
-      for (let i = 0; i < len; i++) {
-        strData += String.fromCharCode(data[i]);
-      }
+    for (let i = 0; i < bytes.length; i++) {
+      strData += String.fromCharCode(bytes[i]);
     }
     // eslint-disable-next-line no-undef
     return window.btoa(strData);
@@ -92,15 +94,28 @@ export function base64Encode(data: string | Uint8Array): string {
 }
 
 /**
- * Decodes the given base64 string to a string.
+ * Decodes the given base64 string to UTF-8 text.
+ *
+ * `window.atob` is byte-oriented: it returns a latin1 "binary string" with one
+ * code unit per decoded byte, so a multi-byte UTF-8 sequence surfaces as
+ * mojibake. Node's `Buffer` decodes the same bytes as UTF-8, so the browser
+ * branch recovers the bytes from `atob` and decodes them explicitly. That keeps
+ * both environments on the single contract `File.content` and
+ * `materializeFiles` already assume.
+ *
+ * `ignoreBOM` keeps a leading byte order mark as `U+FEFF`, which is what
+ * `Buffer` does. `TextDecoder` strips it by default, so a spreadsheet CSV
+ * exported as UTF-8 with a BOM would otherwise lose a character.
  *
  * @param data The base64-encoded string.
- * @return The decoded string.
+ * @return The decoded UTF-8 string.
  */
 export function base64Decode(data: string): string {
   if (isBrowser()) {
     // eslint-disable-next-line no-undef
-    return window.atob(data);
+    const binary = window.atob(data);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder('utf-8', {ignoreBOM: true}).decode(bytes);
   }
 
   return Buffer.from(data, 'base64').toString();

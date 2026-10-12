@@ -55,13 +55,16 @@ function truncateBody(body: string): string {
     : body;
 }
 
-/** Returns the plain, non-recursive message for a single value. */
-function baseMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  if (typeof err === 'string') {
-    return err;
+/**
+ * Returns the plain, non-recursive message for a single thrown value.
+ *
+ * Reads `.message` from any object that carries a string `message` property,
+ * and falls back to `String(err)` for primitives and other values.
+ */
+export function getErrorMessage(err: unknown): string {
+  const record = asRecord(err);
+  if (record !== undefined && typeof record['message'] === 'string') {
+    return record['message'];
   }
   return String(err);
 }
@@ -117,7 +120,7 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
   }
   if (typeof err === 'object') {
     if (seen.has(err)) {
-      return baseMessage(err);
+      return getErrorMessage(err);
     }
     seen.add(err);
   }
@@ -125,7 +128,7 @@ function formatErrorRecursive(err: unknown, seen: Set<unknown>): string {
     return err.errors.map((sub) => formatErrorRecursive(sub, seen)).join(' | ');
   }
   const http = extractHttpDetails(err);
-  const base = baseMessage(err);
+  const base = getErrorMessage(err);
   // Cycles (including a direct `err.cause === err`) are handled by `seen`.
   const cause = asRecord(err)?.['cause'];
   const causeMessage =

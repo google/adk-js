@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {createLlmResponse as createLlmResponseFromPackage} from '@google/adk';
 import {
   BlockedReason,
   FinishReason,
@@ -217,5 +218,41 @@ describe('createLlmResponse', () => {
       const result = createLlmResponse(makeResponse({candidates: []}));
       expect(result.errorCode).toBe('UNKNOWN_ERROR');
     });
+  });
+});
+
+describe('createLlmResponse from the package entry point', () => {
+  it('is the same function as the module export', () => {
+    expect(createLlmResponseFromPackage).toBe(createLlmResponse);
+  });
+
+  it('builds a response from a GenerateContentResponse', () => {
+    const content = {parts: [{text: 'hello'}], role: 'model'};
+    expect(
+      createLlmResponseFromPackage(
+        makeResponse({
+          candidates: [{content, finishReason: FinishReason.STOP}],
+        }),
+      ),
+    ).toEqual({
+      content,
+      groundingMetadata: undefined,
+      citationMetadata: undefined,
+      usageMetadata: undefined,
+      finishReason: FinishReason.STOP,
+    });
+  });
+
+  it('reports a blocked prompt as an error', () => {
+    const result = createLlmResponseFromPackage(
+      makeResponse({
+        promptFeedback: {
+          blockReason: BlockedReason.SAFETY,
+          blockReasonMessage: 'Blocked.',
+        },
+      }),
+    );
+    expect(result.errorCode).toBe(BlockedReason.SAFETY);
+    expect(result.errorMessage).toBe('Blocked.');
   });
 });

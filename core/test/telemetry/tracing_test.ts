@@ -138,14 +138,17 @@ describe('Telemetry Tracing Functions', () => {
         tool: mockTool,
         args,
         functionResponseEvent: mockEvent,
+        invocationContext: mockInvocationContext,
       });
 
       // Assert
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.system': 'gcp.vertex.agent',
         'gen_ai.tool.description': 'A test tool',
         'gen_ai.tool.name': 'test-tool',
         'gen_ai.tool.type': 'FunctionTool',
+        'gcp.vertex.agent.invocation_id': 'test-invocation-id',
         'gcp.vertex.agent.llm_request': '{}',
         'gcp.vertex.agent.llm_response': '{}',
         'gcp.vertex.agent.tool_call_args': expect.stringContaining('param1'),
@@ -175,6 +178,7 @@ describe('Telemetry Tracing Functions', () => {
         tool: mockTool,
         args: {},
         functionResponseEvent: eventWithoutResponse,
+        invocationContext: mockInvocationContext,
       });
 
       // Assert
@@ -210,14 +214,17 @@ describe('Telemetry Tracing Functions', () => {
       traceMergedToolCalls({
         responseEventId: 'merged-event-id',
         functionResponseEvent: mockEventWithJson as unknown as Event,
+        invocationContext: mockInvocationContext,
       });
 
       // Assert - setAttributes is called without tool_response
       expect(mockSpan.setAttributes).toHaveBeenCalledWith({
         'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.system': 'gcp.vertex.agent',
         'gen_ai.tool.name': '(merged tools)',
         'gen_ai.tool.description': '(merged tools)',
         'gen_ai.tool.call.id': 'merged-event-id',
+        'gcp.vertex.agent.invocation_id': 'test-invocation-id',
         'gcp.vertex.agent.tool_call_args': 'N/A',
         'gcp.vertex.agent.event_id': 'merged-event-id',
         'gcp.vertex.agent.llm_request': '{}',

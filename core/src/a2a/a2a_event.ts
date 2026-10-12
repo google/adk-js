@@ -38,10 +38,7 @@ export enum TaskState {
  * A2A event.
  */
 export type A2AEvent =
-  | Task
-  | Message
-  | TaskStatusUpdateEvent
-  | TaskArtifactUpdateEvent;
+  Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
 
 /**
  * Checks if the event is an A2A TaskStatusUpdateEvent.

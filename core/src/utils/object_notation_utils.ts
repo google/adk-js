@@ -37,8 +37,16 @@ const toCamelCaseKey = (key: string) =>
     letter.toUpperCase(),
   );
 
-const toSnakeCaseKey = (key: string) =>
-  key.replace(/[A-Z]/g, (g) => '_' + g.toLowerCase());
+const CAMEL_BOUNDARY = /(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/g;
+
+/**
+ * Converts a camelCase, PascalCase, or hyphenated key to snake_case.
+ *
+ * @param key The key to convert.
+ * @returns The snake_case key.
+ */
+export const toSnakeCaseKey = (key: string): string =>
+  key.replace(CAMEL_BOUNDARY, '_').toLowerCase().replace(/-/g, '_');
 
 function toNotation(
   obj: unknown,

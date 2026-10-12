@@ -228,6 +228,40 @@ describe('RunSkillScriptTool', () => {
     expect(binaryFile?.contentEncoding).toBe('base64');
   });
 
+  it('sends a TypeScript script resource as UTF-8 text', async () => {
+    const typescriptSkill: Skill = {
+      frontmatter: {
+        name: 'typescript-skill',
+        description: 'A skill with a TypeScript script',
+      },
+      instructions: 'Test instructions',
+      resources: {
+        scripts: {'helper.ts': {src: 'export const x = 1;'}},
+      },
+    };
+    const mockExecutor = new MockCodeExecutor();
+    const toolset = new SkillToolset([typescriptSkill], {
+      codeExecutor: mockExecutor,
+    });
+    const tool = new RunSkillScriptTool(toolset);
+
+    await tool.runAsync({
+      args: {
+        skill_name: 'typescript-skill',
+        script_path: 'scripts/helper.ts',
+      },
+      toolContext: createMockContext(),
+    });
+
+    const helper =
+      mockExecutor.executeCodeParams?.codeExecutionInput.inputFiles?.find(
+        (f) => f.name === 'scripts/helper.ts',
+      );
+    expect(helper?.contentEncoding).toBe(FileContentEncoding.UTF8);
+    expect(helper?.mimeType).toBe('text/javascript');
+    expect(helper?.content).toBe('export const x = 1;');
+  });
+
   it('calls materializeFiles with output files from executor', async () => {
     const mockExecutor = new MockCodeExecutor();
     const testFile: File = {

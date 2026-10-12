@@ -8,6 +8,14 @@ import path from 'path';
 import {defineConfig} from 'vitest/config';
 
 /**
+ * Test budget (ms) for the `unit:core` and `unit:dev` projects: Vitest's 5s
+ * default has been observed to expire when these share a worker pool with the
+ * install-heavy `integration` fixtures under `npm run test:coverage`. A project
+ * entry does not inherit the root `test` timeout, so it is set per project.
+ */
+const UNIT_TEST_TIMEOUT_MS = 30000;
+
+/**
  * Hook budget (ms) for the `integration` project: install-heavy `beforeAll`
  * hooks run `npm install` (and sometimes `npm run build`) per fixture, which
  * exceeds Vitest's 10s default on a slow or loaded machine.
@@ -38,6 +46,15 @@ const reporters = process.env.CI
     : ['dot']
   : ['default'];
 
+/**
+ * Compiled-agent bundles to keep out of Vite's SSR transform. `AgentLoader`
+ * (`dev/src/utils/agent_loader.ts`) esbuilds each agent into a
+ * `<tmpdir>/adk_agent_loader-<random>/` bundle, outside the root with no
+ * `node_modules` segment, so Vitest inlines and transforms ~6 MB per agent.
+ * Rename that `createTempDir` prefix and the suite silently goes slow again.
+ */
+const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
+
 export default defineConfig({
   test: {
     reporters,
@@ -57,6 +74,7 @@ export default defineConfig({
           name: 'unit:core',
           environment: 'node',
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -72,6 +90,7 @@ export default defineConfig({
           name: 'unit:dev',
           environment: 'node',
           setupFiles: SETUP_FILES,
+          testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -104,6 +123,7 @@ export default defineConfig({
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
             '@google/adk': path.resolve(__dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
@@ -153,14 +173,14 @@ export default defineConfig({
         'dev/src/**/*.ts',
         'integrations/src/**/*.ts',
       ],
-      // Those values are from the npm run test:coverage command run on 2026-02-06
+      // Those values are from the npm run test:coverage command run on 2026-07-30
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 86,
-        branches: 87,
-        functions: 88,
-        lines: 86,
+        statements: 90,
+        branches: 88,
+        functions: 90,
+        lines: 90,
       },
     },
   },

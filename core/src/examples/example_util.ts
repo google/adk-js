@@ -5,12 +5,62 @@
  */
 
 import {FunctionCall, Part} from '@google/genai';
+import {z} from 'zod';
 
+import {InputValidationError} from '../errors/input_validation_error.js';
+import {getFunctionResponses} from '../events/event.js';
+import {Session} from '../sessions/session.js';
+import {logger} from '../utils/logger.js';
 import {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './base_example_provider.js';
 import {Example} from './example.js';
+
+const contentSchema = z
+  .object({
+    role: z.string().optional(),
+    parts: z.array(z.object({}).loose()).optional(),
+  })
+  .loose();
+
+/**
+ * Runtime shape check for a list of {@link Example}s.
+ *
+ * The check is deliberately shallow. `Content` and `Part` carry many optional
+ * fields, so both objects stay open, and the schema pins only the invariants
+ * the few-shot renderer depends on.
+ */
+const examplesSchema = z.array(
+  z.object({input: contentSchema, output: z.array(contentSchema)}),
+);
+
+/**
+ * Throws unless `examples` is a well-formed list of {@link Example}s.
+ *
+ * Mirrors `TypeAdapter(list[Example]).validate_python` in the adk-python
+ * `ExampleTool` constructor. {@link Example} is erased at compile time, so a
+ * value that reaches the SDK from untyped JavaScript or from a configuration
+ * file is otherwise unchecked, and a malformed entry only fails later while the
+ * few-shot instruction is rendered.
+ *
+ * The value is checked but not replaced, so it keeps reference identity and no
+ * defensive copy is made.
+ *
+ * @param examples - The value to check.
+ * @throws {InputValidationError} When the value is not a list of well-formed
+ *   examples. The message names the path of each failing field.
+ */
+export function validateExamples(
+  examples: unknown,
+): asserts examples is Example[] {
+  const result = examplesSchema.safeParse(examples);
+  if (!result.success) {
+    throw new InputValidationError(
+      `Invalid few-shot examples:\n${z.prettifyError(result.error)}`,
+    );
+  }
+}
 
 const EXAMPLES_INTRO =
   '<EXAMPLES>\nBegin few-shot\nThe following are examples of user queries and' +
@@ -98,6 +148,33 @@ export function convertExamplesToText(
 }
 
 /**
+ * Gets the latest message from the user.
+ *
+ * @param session - The session to inspect.
+ * @returns The latest message from the user. If not found, returns an empty
+ *   string.
+ */
+export function getLatestMessageFromUser(session: Session): string {
+  const events = session.events;
+  if (!events || events.length === 0) {
+    return '';
+  }
+
+  const event = events[events.length - 1];
+  if (event.author === 'user' && getFunctionResponses(event).length === 0) {
+    if (event.content?.parts && event.content.parts[0]?.text) {
+      return event.content.parts[0].text;
+    } else {
+      logger.warn('No message from user for fetching example.');
+    }
+  }
+
+  return '';
+}
+
+export const _getLatestMessageFromUser = getLatestMessageFromUser;
+
+/**
  * Builds the few-shot portion of a system instruction from a list of examples
  * or a {@link BaseExampleProvider}.
  *
@@ -108,20 +185,21 @@ export function convertExamplesToText(
  *   when `examples` is a provider. Ignored when `examples` is an array.
  * @param model - Optional model name forwarded to
  *   {@link convertExamplesToText} to select the function-call fence style.
- * @returns A formatted string ready to be appended to a system instruction.
+ * @returns A promise resolving to a formatted string ready to be appended to a
+ *   system instruction.
  * @throws {Error} When `examples` is neither an array nor a
  *   {@link BaseExampleProvider}.
  */
-export function buildExampleSi(
+export async function buildExampleSi(
   examples: Example[] | BaseExampleProvider,
   query: string,
   model?: string,
-): string {
+): Promise<string> {
   if (Array.isArray(examples)) {
     return convertExamplesToText(examples, model);
   }
   if (isBaseExampleProvider(examples)) {
-    return convertExamplesToText(examples.getExamples(query), model);
+    return convertExamplesToText(await examples.getExamples(query), model);
   }
 
   throw new Error('Invalid example configuration');

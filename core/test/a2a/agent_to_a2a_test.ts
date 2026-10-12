@@ -174,7 +174,12 @@ describe('toA2a', () => {
       allowUnauthenticated: true,
     });
 
-    expect(resolveAgentCard).toHaveBeenCalledWith('path/to/card.json');
+    // Second argument is resolveAgentCardOptions, forwarded from
+    // ToA2aOptions and undefined here since this call doesn't set it.
+    expect(resolveAgentCard).toHaveBeenCalledWith(
+      'path/to/card.json',
+      undefined,
+    );
     expect(getA2AAgentCard).not.toHaveBeenCalled();
   });
 
@@ -185,8 +190,20 @@ describe('toA2a', () => {
       allowUnauthenticated: true,
     });
 
-    expect(resolveAgentCard).toHaveBeenCalledWith(card);
+    expect(resolveAgentCard).toHaveBeenCalledWith(card, undefined);
     expect(getA2AAgentCard).not.toHaveBeenCalled();
+  });
+
+  it('forwards resolveAgentCardOptions to resolveAgentCard when provided', async () => {
+    await toA2a(agent, {
+      agentCard: 'path/to/card.json',
+      allowUnauthenticated: true,
+      resolveAgentCardOptions: {allowCrossOriginRpc: true},
+    });
+
+    expect(resolveAgentCard).toHaveBeenCalledWith('path/to/card.json', {
+      allowCrossOriginRpc: true,
+    });
   });
 
   describe('authentication', () => {

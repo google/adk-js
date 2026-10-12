@@ -12,6 +12,14 @@ const ADK_LABEL = 'google-adk';
 const LANGUAGE_LABEL = 'gl-typescript';
 const AGENT_ENGINE_TELEMETRY_TAG = 'remote_reasoning_engine';
 const AGENT_ENGINE_TELEMETRY_ENV_VARIABLE_NAME = 'GOOGLE_CLOUD_AGENT_ENGINE_ID';
+const TRACKING_HEADER_NAMES = ['x-goog-api-client', 'user-agent'] as const;
+
+/**
+ * The header shapes that `fetch` accepts. This matches the DOM library's
+ * `HeadersInit`, which is not used by name because the lint configuration
+ * defines only Node globals and its `no-undef` rule rejects it.
+ */
+type HeadersInput = Headers | Array<[string, string]> | Record<string, string>;
 
 const clientLabelLocalStorage = new AsyncLocalStorage<string>();
 
@@ -82,4 +90,96 @@ export function getClientLabels(): string[] {
     labels.push(contextLabel);
   }
   return labels;
+}
+
+/**
+ * Returns the HTTP headers that identify a request as coming from ADK.
+ *
+ * Both headers carry the current client labels, including a label set with
+ * {@link runWithClientLabel} when called inside that context.
+ */
+export function getTrackingHeaders(): Record<string, string> {
+  const headerValue = getClientLabels().join(' ');
+  return {
+    'x-goog-api-client': headerValue,
+    'user-agent': headerValue,
+  };
+}
+
+function isTrackingHeaderName(name: string): boolean {
+  return TRACKING_HEADER_NAMES.some((trackingName) => trackingName === name);
+}
+
+function isHeaders(
+  headers: Headers | Record<string, string>,
+): headers is Headers {
+  return typeof headers.forEach === 'function';
+}
+
+function headerEntries(headers?: HeadersInput): Array<[string, string]> {
+  if (!headers) {
+    return [];
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, value]);
+  }
+  if (isHeaders(headers)) {
+    const entries: Array<[string, string]> = [];
+    headers.forEach((value, name) => {
+      entries.push([name, value]);
+    });
+    return entries;
+  }
+  return Object.entries(headers);
+}
+
+/**
+ * Returns a copy of `headers` with the ADK tracking headers merged in.
+ *
+ * HTTP header names are case-insensitive, so a caller's `User-Agent` or
+ * `X-Goog-Api-Client` in any casing is folded onto the lower-case name and the
+ * header is sent once. For each tracking header, the ADK tokens come first,
+ * followed by every caller token that is not already present. Caller values
+ * are split on whitespace and empty tokens are dropped; adk-python splits on a
+ * single space, so the two differ only for values with repeated or non-space
+ * whitespace. Commas are not treated as separators, so a `Headers` object that
+ * joined two values of one header with `, ` keeps the comma on the first
+ * token. All other headers keep the caller's name and value.
+ *
+ * The input is never mutated.
+ *
+ * @param headers The caller's headers, in any `HeadersInit` shape.
+ * @return A new plain object with the merged headers.
+ */
+export function mergeTrackingHeaders(
+  headers?: HeadersInput,
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const callerValues = new Map<string, string[]>();
+
+  for (const [name, value] of headerEntries(headers)) {
+    const lowerName = name.toLowerCase();
+    if (isTrackingHeaderName(lowerName)) {
+      callerValues.set(lowerName, [
+        ...(callerValues.get(lowerName) ?? []),
+        value,
+      ]);
+    } else {
+      merged[name] = value;
+    }
+  }
+
+  for (const [name, trackingValue] of Object.entries(getTrackingHeaders())) {
+    const tokens = trackingValue.split(' ');
+    for (const value of callerValues.get(name) ?? []) {
+      for (const token of value.split(/\s+/)) {
+        if (token && !tokens.includes(token)) {
+          tokens.push(token);
+        }
+      }
+    }
+    merged[name] = tokens.join(' ');
+  }
+
+  return merged;
 }

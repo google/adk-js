@@ -16,11 +16,14 @@ import {
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
   LlmAgent,
   node,
+  RESTORED_EVENT_KEY,
   Runner,
   Session,
+  StreamingMode,
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
@@ -804,6 +807,177 @@ describe('AdkWebServer', () => {
 
       spy.mockRestore();
     });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+
+      spy.mockRestore();
+    });
+
+    it('leaves customMetadata undefined when the body omits it', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toBeUndefined();
+
+      spy.mockRestore();
+    });
+
+    it('stamps customMetadata onto the user message event persisted in the session', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123'},
+      });
+
+      expect(response.status).toBe(200);
+      const session = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      const userEvent = session?.events.find((e) => e.author === 'user');
+      expect(userEvent?.customMetadata).toEqual({requestId: 'abc-123'});
+    });
+  });
+
+  describe('ADK-internal customMetadata', () => {
+    const INTERNAL_KEY = `${INTERNAL_METADATA_PREFIX}stamp`;
+    const runBody = {
+      appName: 'testApp',
+      userId: 'testUser',
+      sessionId: 'sessionId',
+      newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+    };
+
+    beforeEach(async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+    });
+
+    it('is hidden from session endpoints but kept in storage', async () => {
+      const session = (await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      }))!;
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          author: 'user',
+          customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true},
+        }),
+      });
+
+      const fetched = await client.get<Session>(
+        '/apps/testApp/users/testUser/sessions/sessionId',
+      );
+      const listed = await client.get<{sessions: Session[]}>(
+        '/apps/testApp/users/testUser/sessions',
+      );
+
+      expect(fetched.data?.events[0].customMetadata).toEqual({keep: 1});
+      const listedSession = listed.data?.sessions.find(
+        (s) => s.id === 'sessionId',
+      );
+      // The in-memory service lists sessions without events; others may not.
+      for (const event of listedSession?.events ?? []) {
+        expect(event.customMetadata).toEqual({keep: 1});
+      }
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      expect(stored?.events[0].customMetadata).toEqual({
+        keep: 1,
+        [RESTORED_EVENT_KEY]: true,
+      });
+    });
+
+    it.each(['/run', '/run_sse'])(
+      'is hidden from events streamed by %s',
+      async (endpoint) => {
+        const spy = vi
+          .spyOn(Runner.prototype, 'runAsync')
+          .mockImplementation(async function* () {
+            yield createEvent({
+              author: 'testAgent',
+              content: {role: 'model', parts: [{text: 'reply'}]},
+              customMetadata: {keep: 1, [INTERNAL_KEY]: 'x'},
+            });
+          });
+
+        const response = await client.post<Event[]>(endpoint, runBody);
+
+        const events =
+          endpoint === '/run'
+            ? response.data!
+            : response
+                .text!.split('\n')
+                .filter((line) => line.startsWith('data: '))
+                .map(
+                  (line) => JSON.parse(line.slice('data: '.length)) as Event,
+                );
+        expect(events.map((e) => e.customMetadata)).toEqual([{keep: 1}]);
+        spy.mockRestore();
+      },
+    );
   });
 
   describe('run_sse', () => {
@@ -941,6 +1115,40 @@ describe('AdkWebServer', () => {
       const runAsyncParams = spy.mock.calls[0][0];
       expect(runAsyncParams.abortSignal).toBeDefined();
       expect(runAsyncParams.abortSignal).toBeInstanceOf(AbortSignal);
+
+      spy.mockRestore();
+    });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run_sse', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        streaming: true,
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+      // The metadata travels beside runConfig, so streaming is unaffected.
+      expect(runAsyncParams.runConfig?.streamingMode).toBe(StreamingMode.SSE);
 
       spy.mockRestore();
     });
@@ -1590,6 +1798,40 @@ describe('AdkWebServer', () => {
       expect(response.data?.output[0].content?.parts?.[0].text).toBe(
         "Hello user! I'm streaming you events now!",
       );
+    });
+
+    it('forwards customMetadata from the reasoning engine input to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+            customMetadata: {requestId: 'abc-123'},
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+      });
+
+      spy.mockRestore();
     });
 
     it('should auto-create session if not exists on reasoning_engine query', async () => {

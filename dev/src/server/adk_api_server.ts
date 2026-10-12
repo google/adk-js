@@ -19,6 +19,8 @@ import {
   isApp,
   Logger,
   LogLevel,
+  publicEvent,
+  publicSession,
   RunConfig,
   RunnableRoot,
   Runner,
@@ -607,7 +609,7 @@ export class AdkApiServer {
             return;
           }
 
-          res.json(session);
+          res.json(publicSession(session));
         } catch (e: unknown) {
           const error = `Failed to get session: ${e}`;
 
@@ -629,7 +631,10 @@ export class AdkApiServer {
             userId,
           });
 
-          res.json(sessions);
+          res.json({
+            ...sessions,
+            sessions: sessions.sessions.map((s) => publicSession(s)),
+          });
         } catch (e: unknown) {
           const error = `Failed to list sessions: ${e}`;
 
@@ -668,7 +673,7 @@ export class AdkApiServer {
             sessionId,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -692,7 +697,7 @@ export class AdkApiServer {
             state,
           });
 
-          res.json(createdSession);
+          res.json(publicSession(createdSession));
         } catch (e: unknown) {
           const error = `Failed to create session: ${e}`;
 
@@ -956,7 +961,14 @@ export class AdkApiServer {
 
     // -------------------------- Run related endpoints ------------------------
     app.post('/run', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, stateDelta} = req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        stateDelta,
+        customMetadata,
+      } = req.body;
       const session = await this.sessionService.getSession({
         appName,
         userId,
@@ -988,6 +1000,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           abortSignal: abortController.signal,
         })) {
           events.push(e);
@@ -1017,6 +1030,7 @@ export class AdkApiServer {
           input.sessionId || body.sessionId || 'default-session';
         const newMessage = input.newMessage || body.newMessage;
         const stateDelta = input.stateDelta || body.stateDelta;
+        const customMetadata = input.customMetadata || body.customMetadata;
         if (!appName) {
           res.status(400).json({error: 'appName is required in input'});
           return;
@@ -1039,6 +1053,7 @@ export class AdkApiServer {
             sessionId,
             newMessage,
             stateDelta,
+            customMetadata,
             abortSignal: abortController.signal,
           })) {
             events.push(e);
@@ -1080,8 +1095,15 @@ export class AdkApiServer {
     });
 
     app.post('/run_sse', async (req: Request, res: Response) => {
-      const {appName, userId, sessionId, newMessage, streaming, stateDelta} =
-        req.body;
+      const {
+        appName,
+        userId,
+        sessionId,
+        newMessage,
+        streaming,
+        stateDelta,
+        customMetadata,
+      } = req.body;
 
       const session = await this.sessionService.getSession({
         appName,
@@ -1121,6 +1143,7 @@ export class AdkApiServer {
           sessionId,
           newMessage,
           stateDelta,
+          customMetadata,
           runConfig: {
             streamingMode: streaming ? StreamingMode.SSE : StreamingMode.NONE,
           },
@@ -1261,6 +1284,7 @@ export class AdkApiServer {
     sessionId: string;
     newMessage: Content;
     stateDelta?: Record<string, unknown>;
+    customMetadata?: Record<string, unknown>;
     runConfig?: RunConfig;
     abortSignal: AbortSignal;
   }): AsyncGenerator<Event> {
@@ -1270,13 +1294,18 @@ export class AdkApiServer {
     const loaded = await agentFile.load();
     const runner = await this.getRunner(loaded, options.appName);
 
-    yield* runner.runAsync({
+    // Every run endpoint streams through here, so events leave without
+    // ADK-internal customMetadata.
+    for await (const event of runner.runAsync({
       userId: options.userId,
       sessionId: options.sessionId,
       newMessage: options.newMessage,
       runConfig: options.runConfig,
       stateDelta: options.stateDelta,
+      customMetadata: options.customMetadata,
       abortSignal: options.abortSignal,
-    });
+    })) {
+      yield publicEvent(event);
+    }
   }
 }

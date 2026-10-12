@@ -83,8 +83,37 @@ export function quoteFilterLiteral(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * Copies an API-returned state map into a null-prototype map.
+ *
+ * Session state is read with the `in` operator by instruction placeholder
+ * resolution in `agents/instructions.ts`, so on a map that inherits from
+ * `Object.prototype`, `{toString}` resolves to the inherited member and lands
+ * in the prompt instead of raising "Context variable not found". The other
+ * session services get this from `trimTempState`; state on an API response is
+ * plain `JSON.parse` output and has to be re-homed here.
+ *
+ * Copying onto a null-prototype target also keeps an own `__proto__` key as an
+ * own data property instead of invoking the inherited `__proto__` setter.
+ *
+ * Shallow, like `trimTempState`: only the top level is read with `in`.
+ */
+function toStateMap(
+  state: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return Object.assign(Object.create(null), state);
+}
+
 export interface VertexAiSessionServiceOptions {
+  /**
+   * Google Cloud project ID. Defaults to `process.env.GOOGLE_CLOUD_PROJECT`
+   * unless `expressModeApiKey` is passed.
+   */
   projectId?: string;
+  /**
+   * Google Cloud location. Defaults to `process.env.GOOGLE_CLOUD_LOCATION`
+   * unless `expressModeApiKey` is passed.
+   */
   location?: string;
   agentEngineId?: string;
   expressModeApiKey?: string;
@@ -119,13 +148,23 @@ export class VertexAiSessionService extends BaseSessionService {
   constructor(options: VertexAiSessionServiceOptions) {
     super();
     this.agentEngineId = options.agentEngineId;
-    this.projectId = options.projectId;
-    this.location = options.location;
+    // Only the options the caller passed decide express mode. Resolving the
+    // environment first would make an explicit `expressModeApiKey` clash with
+    // an ambient GOOGLE_CLOUD_PROJECT.
     this.expressModeApiKey = getExpressModeApiKey(
-      this.projectId,
-      this.location,
+      options.projectId,
+      options.location,
       options.expressModeApiKey,
     );
+    // A key the caller passed must never be dropped in favor of the
+    // environment, so the fallback only applies when no key was passed.
+    const useEnvironment = !options.expressModeApiKey;
+    this.projectId =
+      options.projectId ||
+      (useEnvironment ? process.env['GOOGLE_CLOUD_PROJECT'] : undefined);
+    this.location =
+      options.location ||
+      (useEnvironment ? process.env['GOOGLE_CLOUD_LOCATION'] : undefined);
 
     // sessions is primarily for testing to inject a mock client.
     if (options.sessions) {
@@ -224,7 +263,7 @@ export class VertexAiSessionService extends BaseSessionService {
       id,
       appName,
       userId,
-      state: getSessionResponse.sessionState,
+      state: toStateMap(getSessionResponse.sessionState),
       events: [],
       lastUpdateTime: getSessionResponse.updateTime
         ? Date.parse(getSessionResponse.updateTime)
@@ -282,7 +321,7 @@ export class VertexAiSessionService extends BaseSessionService {
         id: sessionId,
         appName,
         userId,
-        state: sessionObj.sessionState,
+        state: toStateMap(sessionObj.sessionState),
         events: [],
         lastUpdateTime: sessionObj.updateTime
           ? Date.parse(sessionObj.updateTime)
@@ -347,7 +386,7 @@ export class VertexAiSessionService extends BaseSessionService {
             id,
             appName,
             userId: sessionObj.userId,
-            state: sessionObj.sessionState,
+            state: toStateMap(sessionObj.sessionState),
             events: [],
             lastUpdateTime: sessionObj.updateTime
               ? new Date(sessionObj.updateTime).getTime()
@@ -466,7 +505,10 @@ export class VertexAiSessionService extends BaseSessionService {
     // both the wire content and the `rawEvent` blob it is stored under, so the
     // append is not rejected with 400 INVALID_ARGUMENT.
     const content = dropUnsupportedPartFields(event.content);
-    config.content = content;
+    // @google-cloud/vertexai types Content with its own, older @google/genai,
+    // whose enums lack newer members such as ToolType.TOOL_TYPE_UNSPECIFIED.
+    // The wire format is the same, so only the type needs bridging.
+    config.content = content as AppendAgentEngineSessionEventConfig['content'];
 
     config.eventMetadata = {
       ...partialCopy<EventMetadata>(event, [
@@ -661,8 +703,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   const eventMetadata = apiEventObj.eventMetadata || {};
 
   let customMetadata = eventMetadata.customMetadata as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   let compactionData: {
     startTime: number;
     endTime: number;
@@ -697,7 +738,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
   }
 
   const eventActions: ExtendedEventActions = {
-    stateDelta: (actions['stateDelta'] as {[key: string]: unknown}) || {},
+    stateDelta: toStateMap(
+      actions['stateDelta'] as Record<string, unknown> | undefined,
+    ),
     artifactDelta: (actions['artifactDelta'] as {[key: string]: number}) || {},
     requestedAuthConfigs:
       (actions.requestedAuthConfigs as Record<string, AuthConfig>) || {},
@@ -710,8 +753,7 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     // verbatim, so sessions they wrote store ADK's own `transferToAgent` key.
     transferToAgent: (actions['transferAgent'] ??
       (actions as Record<string, unknown>)['transferToAgent']) as
-      | string
-      | undefined,
+      string | undefined,
     escalate: actions['escalate'] as boolean | undefined,
     compaction: compactionData || undefined,
   };
@@ -733,11 +775,9 @@ function _fromApiEvent(apiEventObj: VertexAiSessionEvent): Event {
     branch: eventMetadata['branch'] as string | undefined,
     customMetadata,
     longRunningToolIds: eventMetadata['longRunningToolIds'] as
-      | string[]
-      | undefined,
+      string[] | undefined,
     groundingMetadata: eventMetadata['groundingMetadata'] as
-      | GroundingMetadata
-      | undefined,
+      GroundingMetadata | undefined,
     usageMetadata:
       usageMetadataData as unknown as GenerateContentResponseUsageMetadata,
   };

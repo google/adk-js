@@ -70,7 +70,9 @@ export class InMemorySessionService extends BaseSessionService {
   }: CreateSessionRequest): Promise<Session> {
     const filteredState = state ? trimTempState(state) : undefined;
     const session = createSession({
-      id: sessionId || randomUUID(),
+      // Surrounding whitespace is dropped so that a later lookup by the bare
+      // id finds the session, and a blank id gets a generated one.
+      id: sessionId?.trim() || randomUUID(),
       appName,
       userId,
       state: filteredState,
