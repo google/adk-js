@@ -37,6 +37,12 @@ The record of everything that happens during an invocation, and the side effects
 
 - [Event](events/event/index.md) - The `Event` and `EventActions` shapes, `isFinalResponse`, and the fields that diverge from adk-python.
 
+### Examples
+
+Few-shot examples and dynamic example retrieval for steering model behavior: static `Example` lists, custom `BaseExampleProvider` implementations, managed Vertex AI Example Store search (`VertexAiExampleStore` and `VertexAiExampleStoreApiClient`), `ExampleTool`, and prompt-formatting utilities.
+
+- [Examples](examples/index.md) - `Example`, `BaseExampleProvider`, `isBaseExampleProvider`, `VertexAiExampleStore`, `VertexAiExampleStoreApiClient`, `ExampleTool`, `convertExamplesToText`, `buildExampleSi`, `getLatestMessageFromUser`, and `validateExamples`.
+
 ### Flows
 
 The `LlmAgent` request/response processor pipeline, live streaming function-call dispatch (`handleFunctionCallsLive` and `stop_streaming`), and Compositional Function Calling (`supportCfc`).

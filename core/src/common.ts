@@ -212,7 +212,10 @@ export {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './examples/base_example_provider.js';
-export {VertexAiExampleStore} from './examples/example.js';
+export {
+  VertexAiExampleStore,
+  VertexAiExampleStoreApiClient,
+} from './examples/example.js';
 export type {
   Example,
   ExampleStoreApiClient,
@@ -220,7 +223,15 @@ export type {
   SearchExamplesResponse,
   SearchExamplesResult,
   StoredContentsExample,
+  VertexAiExampleStoreApiClientOptions,
 } from './examples/example.js';
+export {
+  _getLatestMessageFromUser,
+  buildExampleSi,
+  convertExamplesToText,
+  getLatestMessageFromUser,
+  validateExamples,
+} from './examples/example_util.js';
 export type {
   BaseMemoryService,
   SearchMemoryRequest,
