@@ -17,16 +17,7 @@ import {
 import {JSONPath} from 'jsonpath-plus';
 import {generateClientFunctionCallId} from '../events/event.js';
 import {FeatureName, isFeatureEnabled} from '../features/feature_registry.js';
-import {
-  GeminiContinuation,
-  ResumeRequest,
-  resumeToken,
-} from '../models/gemini_continuation.js';
-import {
-  createLlmResponse,
-  GenerateContentResponseFields,
-  LlmResponse,
-} from '../models/llm_response.js';
+import {createLlmResponse, LlmResponse} from '../models/llm_response.js';
 
 interface StreamingStrategy {
   processResponse(
@@ -371,12 +362,6 @@ export interface GeminiStreamingResponseAggregatorOptions {
    * PROGRESSIVE_SSE_STREAMING feature flag.
    */
   isProgressiveMode?: boolean;
-  /**
-   * The generation the streams belong to. When set, the aggregator records
-   * each request's output so that a generation paused by the model can be
-   * resumed, and aggregates all the requests as one stream.
-   */
-  continuation?: GeminiContinuation;
 }
 
 /**
@@ -389,35 +374,23 @@ export class GeminiStreamingResponseAggregator {
   private usageMetadata?: GenerateContentResponseUsageMetadata;
   private groundingMetadata?: GroundingMetadata;
   private citationMetadata?: CitationMetadata;
-  private response?: GenerateContentResponseFields;
+  private response?: GenerateContentResponse;
   private finishReason?: FinishReason;
 
   private lastThoughtSignature: {value?: string | Uint8Array} = {};
   private readonly strategy: StreamingStrategy;
-  private readonly continuation?: GeminiContinuation;
-
-  // The output of the current request, recorded to resume the generation.
-  private requestParts: Part[] = [];
-  private requestUsage?: GenerateContentResponseUsageMetadata;
-  private requestToken?: string;
 
   constructor({
     isProgressiveMode = isFeatureEnabled(FeatureName.PROGRESSIVE_SSE_STREAMING),
-    continuation,
   }: GeminiStreamingResponseAggregatorOptions = {}) {
     this.strategy = isProgressiveMode
       ? new ProgressiveStrategy()
       : new NonProgressiveStrategy();
-    this.continuation = continuation;
   }
 
   async *processResponse(
-    rawResponse: GenerateContentResponse,
+    response: GenerateContentResponse,
   ): AsyncGenerator<LlmResponse, void, void> {
-    const response = this.recordForContinuation(rawResponse);
-    if (!response) {
-      return;
-    }
     const llmResponse = createLlmResponse(response);
     const parts = llmResponse.content?.parts ?? [];
 
@@ -470,71 +443,6 @@ export class GeminiStreamingResponseAggregator {
     yield* this.strategy.processResponse(llmResponse);
   }
 
-  /**
-   * Ends the current request and returns the request that resumes the
-   * generation, or undefined if the generation is over.
-   */
-  endRequest(): ResumeRequest | undefined {
-    if (!this.continuation) {
-      return undefined;
-    }
-    this.continuation.addOutput(this.requestParts, this.requestUsage);
-    const next = this.continuation.resumeRequest(this.requestToken);
-    this.requestParts = [];
-    this.requestUsage = undefined;
-    this.requestToken = undefined;
-    return next;
-  }
-
-  /**
-   * Records a chunk's output and returns what to aggregate: the chunk, with
-   * the finish reason of a resumed pause cleared since that pause does not end
-   * the generation, or undefined for a resumed pause without output.
-   */
-  private recordForContinuation(
-    response: GenerateContentResponse,
-  ): GenerateContentResponseFields | undefined {
-    if (!this.continuation) {
-      return response;
-    }
-    if (response.usageMetadata) {
-      this.requestUsage = response.usageMetadata;
-    }
-    const candidates = response.candidates ?? [];
-    if (candidates.length === 0) {
-      return response;
-    }
-    const candidate = candidates[0];
-    // An empty part carries nothing worth resending, unless it holds a
-    // thought signature.
-    const parts = (candidate.content?.parts ?? []).filter(
-      (part) => !isEmptyContentPart(part) || part.thoughtSignature,
-    );
-    this.requestParts.push(...parts);
-    const token = resumeToken(response);
-    if (token === undefined) {
-      return response;
-    }
-    this.requestToken = token;
-    if (!this.continuation.willResume(token)) {
-      // A pause that is not resumed ends the generation, so it keeps its
-      // finish reason.
-      return response;
-    }
-    if (parts.length === 0) {
-      // Drop an empty pause chunk: as the first chunk, it would emit a
-      // complete, empty response.
-      return undefined;
-    }
-    return {
-      ...response,
-      candidates: [
-        {...candidate, finishReason: undefined},
-        ...candidates.slice(1),
-      ],
-    };
-  }
-
   close(): LlmResponse | undefined {
     const finalParts = this.strategy.close();
     const hasMetadata =
@@ -552,7 +460,7 @@ export class GeminiStreamingResponseAggregator {
     const candidate = this.response?.candidates?.[0];
     const finishReason = this.finishReason ?? candidate?.finishReason;
 
-    const finalResponse: LlmResponse = {
+    return {
       // Only attach a model `content` when there are actual parts to emit. When
       // the turn accumulated no parts (e.g. a function call that was already
       // flushed, followed by a trailing STOP chunk that carries only usage
@@ -574,9 +482,6 @@ export class GeminiStreamingResponseAggregator {
       finishReason: finishReason,
       partial: false,
     };
-    return this.continuation
-      ? this.continuation.withSummedUsage(finalResponse)
-      : finalResponse;
   }
 }
 

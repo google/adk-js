@@ -115,15 +115,6 @@ export interface LlmResponse {
 }
 
 /**
- * The fields of a GenerateContentResponse that an LlmResponse is created from,
- * so a plain copy of a response can be passed where the SDK class is not.
- */
-export type GenerateContentResponseFields = Pick<
-  GenerateContentResponse,
-  'candidates' | 'usageMetadata' | 'promptFeedback'
->;
-
-/**
  * Creates an LlmResponse from a GenerateContentResponse.
  *
  * @param response The GenerateContentResponse to create the
@@ -131,7 +122,7 @@ export type GenerateContentResponseFields = Pick<
  * @returns The LlmResponse.
  */
 export function createLlmResponse(
-  response: GenerateContentResponseFields,
+  response: GenerateContentResponse,
 ): LlmResponse {
   const usageMetadata = response.usageMetadata;
 
