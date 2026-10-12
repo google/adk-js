@@ -81,6 +81,13 @@ export GEMINI_API_KEY=...
 npm run sample -- samples/tools/retrieval/agent.ts
 ```
 
+To type-check the sample against the built `@google/adk` declarations:
+
+```bash
+npm run build
+npm run ts:check:samples
+```
+
 ## Configuration
 
 The sample is self-contained. `employee_handbook` reads a corpus declared in
@@ -125,6 +132,7 @@ retriever interface stays the subject.
 
 ## Related Guides
 
+- [Retrieval tools](../../../docs/guides/tools/retrieval/index.md) - Overview of `BaseRetrievalTool`, `isBaseRetrievalTool`, `LlamaIndexRetrieval`, and `FilesRetrieval`.
 - [LlamaIndexRetrieval](../../../docs/guides/tools/retrieval/llama_index_retrieval/index.md) - The class this sample is built on.
 - [FilesRetrieval](../../../docs/guides/tools/retrieval/files_retrieval/index.md) - The optional half, and its peer dependencies.
 - [BaseRetrievalTool](../../../docs/guides/tools/retrieval/base_retrieval_tool/index.md) - How client-side retrieval differs from `VertexRagRetrievalTool`.
