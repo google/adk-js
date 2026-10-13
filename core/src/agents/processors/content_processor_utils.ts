@@ -3,7 +3,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Content, createUserContent} from '@google/genai';
+import {Content, createUserContent, Part} from '@google/genai';
 import {cloneDeep} from 'lodash-es';
 
 import {
@@ -196,7 +196,7 @@ export function getCurrentTurnContents(
     if (
       event.author === 'user' ||
       (isEventFromAnotherAgent(agentName, event) &&
-        convertForeignEvent(event) !== undefined)
+        event.content!.parts?.some(isVisibleForeignPart))
     ) {
       return getContents(
         events.slice(turnStart(events, i)),
@@ -302,6 +302,17 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
 }
 
 /**
+ * Whether a part from another agent's event produces visible context.
+ *
+ * Thought parts are excluded unless they carry a `functionCall` or
+ * `functionResponse`, which are summarized as plain text without thought
+ * metadata (matching `adk-python`'s `_is_part_invisible`).
+ */
+function isVisibleForeignPart(part: Part): boolean {
+  return Boolean(!part.thought || part.functionCall || part.functionResponse);
+}
+
+/**
  * Formats an event authored by another agent to a user-content event.
  *
  * This is to provide another agent's output as context to the current agent,
@@ -328,12 +339,13 @@ function convertForeignEvent(event: Event): Event | undefined {
   };
 
   for (const part of event.content.parts) {
-    // Exclude thoughts from the context.
+    // Exclude thoughts from the context, except function calls and responses
+    // which are summarized as plain text without thought metadata.
     // TODO - b/425992518: filtring should be configurable.
-    if (part.thought) {
+    if (!isVisibleForeignPart(part)) {
       continue;
     }
-    if (part.text) {
+    if (part.text && !part.thought) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });

@@ -1024,6 +1024,64 @@ describe('getContents', () => {
     ]);
   });
 
+  it('should summarize thought-marked functionCall and functionResponse parts in convertForeignEvent without leaking thought metadata', () => {
+    const events = [
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'model',
+          parts: [
+            {
+              thought: true,
+              thoughtSignature: 'c2lnLXRvb2wtY2FsbA==',
+              functionCall: {
+                name: 'lookup_weather',
+                args: {city: 'Paris'},
+              },
+            },
+          ],
+        },
+      }),
+      createEvent({
+        author: 'other_agent',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              thought: true,
+              functionResponse: {
+                name: 'lookup_weather',
+                response: {temp: '20C'},
+              },
+            },
+          ],
+        },
+      }),
+    ];
+
+    const contents = getContents(events, 'current_agent');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] called tool `lookup_weather` with parameters: {"city":"Paris"}',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            text: '[other_agent] tool `lookup_weather` returned result: {"temp":"20C"}',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('should handle media parts in convertForeignEvent', () => {
     const event = createEvent({
       author: 'other_agent',
