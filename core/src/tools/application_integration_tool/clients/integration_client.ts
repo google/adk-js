@@ -245,22 +245,25 @@ export class IntegrationClient {
     for (const action of this.actions) {
       const {inputSchema, outputSchema, displayName} =
         await connectionsClient.getActionSchema(action);
+      const actionDisplayName = displayName.replace(/ /g, '');
       let operation = 'EXECUTE_ACTION';
       if (action === EXECUTE_CUSTOM_QUERY_ACTION) {
-        schemas[`${action}_Request`] = executeCustomQueryRequest();
+        schemas[`${actionDisplayName}_Request`] = executeCustomQueryRequest();
         operation = 'EXECUTE_QUERY';
       } else {
-        schemas[`${displayName}_Request`] = actionRequest(displayName);
-        schemas[`connectorInputPayload_${displayName}`] =
+        schemas[`${actionDisplayName}_Request`] =
+          actionRequest(actionDisplayName);
+        schemas[`connectorInputPayload_${actionDisplayName}`] =
           connectorPayload(inputSchema);
       }
-      schemas[`connectorOutputPayload_${displayName}`] =
+      schemas[`connectorOutputPayload_${actionDisplayName}`] =
         connectorPayload(outputSchema);
-      schemas[`${displayName}_Response`] = actionResponse(displayName);
+      schemas[`${actionDisplayName}_Response`] =
+        actionResponse(actionDisplayName);
       connectorSpec.paths[`${pathPrefix}#${action}`] = getActionOperation({
         action,
         operation,
-        actionDisplayName: displayName,
+        actionDisplayName,
         toolName,
         toolInstructions,
       });
