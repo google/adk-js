@@ -57,10 +57,11 @@ export class RoutedLlm extends BaseLlm {
   async *generateContentAsync(
     llmRequest: LlmRequest,
     stream?: boolean,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     logger.info(`Routing request via ${this.model}`);
     yield* runWithRouting(this.models, llmRequest, this.router, (model) =>
-      model.generateContentAsync(llmRequest, stream),
+      model.generateContentAsync(llmRequest, stream, abortSignal),
     );
   }
 
