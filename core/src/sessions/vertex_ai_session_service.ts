@@ -134,6 +134,11 @@ export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
   expireTime?: string;
 }
 
+type EventsPage = {
+  sessionEvents?: VertexAiSessionEvent[];
+  nextPageToken?: string;
+};
+
 /**
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
@@ -305,10 +310,7 @@ export class VertexAiSessionService extends BaseSessionService {
           }),
         ]);
         getSessionResponse = sessionRes as VertexAiSession;
-        const firstPage = eventsRes as {
-          sessionEvents?: VertexAiSessionEvent[];
-          nextPageToken?: string;
-        };
+        const firstPage = eventsRes as EventsPage;
         eventsIterator.push(...(firstPage.sessionEvents || []));
         pageToken = firstPage.nextPageToken;
       }
@@ -321,6 +323,9 @@ export class VertexAiSessionService extends BaseSessionService {
         );
       }
 
+      // The Agent Engine events.list API returns events oldest-first and does
+      // not support reverse ordering, so all pages must be fetched to reach the
+      // newest events at the end of the stream.
       while (pageToken) {
         const eventsRes = (await this.sessions.events.listInternal({
           name: sessionResourceName,
@@ -328,10 +333,7 @@ export class VertexAiSessionService extends BaseSessionService {
             ...listConfig,
             pageToken,
           },
-        })) as {
-          sessionEvents?: VertexAiSessionEvent[];
-          nextPageToken?: string;
-        };
+        })) as EventsPage;
         eventsIterator.push(...(eventsRes.sessionEvents || []));
         pageToken = eventsRes.nextPageToken;
       }
@@ -347,12 +349,13 @@ export class VertexAiSessionService extends BaseSessionService {
           : Date.now(),
       });
 
-      for (const event of eventsIterator) {
-        session.events.push(_fromApiEvent(event));
-      }
+      const recentEvents =
+        config && config.numRecentEvents
+          ? eventsIterator.slice(-config.numRecentEvents)
+          : eventsIterator;
 
-      if (config && config.numRecentEvents) {
-        session.events = session.events.slice(-config.numRecentEvents);
+      for (const event of recentEvents) {
+        session.events.push(_fromApiEvent(event));
       }
 
       return session;
