@@ -51,17 +51,11 @@ export class InMemoryRunner extends Runner {
     plugins?: BasePlugin[];
     resumabilityConfig?: ResumabilityConfig;
   }) {
-    const {
-      agent,
-      appName = 'InMemoryRunner',
-      plugins = [],
-      app,
-      resumabilityConfig,
-    } = params;
+    const {agent, appName, plugins = [], app, resumabilityConfig} = params;
 
     super({
       app,
-      appName,
+      appName: appName ?? app?.name ?? 'InMemoryRunner',
       agent,
       plugins,
       artifactService: new InMemoryArtifactService(),
