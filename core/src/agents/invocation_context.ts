@@ -67,6 +67,43 @@ export interface InvocationContextParams {
 }
 
 /**
+ * A unique symbol to identify {@link LlmCallsLimitExceededError} instances.
+ */
+const LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL = Symbol.for(
+  'google.adk.llmCallsLimitExceededError',
+);
+
+/**
+ * Error thrown when the number of LLM calls in an invocation exceeds {@link RunConfig.maxLlmCalls}.
+ */
+export class LlmCallsLimitExceededError extends Error {
+  readonly [LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmCallsLimitExceededError';
+    Object.setPrototypeOf(this, LlmCallsLimitExceededError.prototype);
+  }
+}
+
+/**
+ * Type guard to check if an object is an instance of {@link LlmCallsLimitExceededError}.
+ *
+ * @param obj The object to check.
+ * @returns True if the object is an instance of {@link LlmCallsLimitExceededError}.
+ */
+export function isLlmCallsLimitExceededError(
+  obj: unknown,
+): obj is LlmCallsLimitExceededError {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL in obj &&
+    obj[LLM_CALLS_LIMIT_EXCEEDED_ERROR_SIGNATURE_SYMBOL] === true
+  );
+}
+
+/**
  * A container to keep track of the cost of invocation.
  *
  * While we don't expect the metrics captured here to be a direct
@@ -90,7 +127,7 @@ class InvocationCostManager {
       runConfig.maxLlmCalls! > 0 &&
       this.numberOfLlmCalls > runConfig.maxLlmCalls!
     ) {
-      throw new Error(
+      throw new LlmCallsLimitExceededError(
         `Max number of llm calls limit of ${runConfig.maxLlmCalls!} exceeded`,
       );
     }
