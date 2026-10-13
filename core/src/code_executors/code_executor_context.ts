@@ -9,7 +9,7 @@ import {State} from '../sessions/state.js';
 
 import {File} from './code_execution_utils.js';
 
-const CONTEXT_KEY = '_code_execution_context';
+export const CONTEXT_KEY = '_code_execution_context';
 const SESSION_ID_KEY = 'execution_session_id';
 const PROCESSED_FILE_NAMES_KEY = 'processed_input_files';
 const INPUT_FILE_KEY = '_code_executor_input_files';
