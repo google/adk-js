@@ -54,6 +54,13 @@ export class InMemoryArtifactService implements BaseArtifactService {
     const version = this.artifacts[path].length;
     const metadata: ArtifactVersion = {
       version,
+      canonicalUri: getCanonicalUri(
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version,
+      ),
       customMetadata,
     };
 
@@ -218,6 +225,34 @@ function artifactPath(
 
 function artifactPrefix(scope: string, ...parts: string[]): string {
   return `${[scope, ...parts].map(encodeURIComponent).join('/')}/`;
+}
+
+/**
+ * Builds the canonical URI for an artifact version.
+ *
+ * Segments are interpolated raw, which matches the `memory://` URIs the other
+ * ADK language implementations produce. The URI is metadata only; the storage
+ * key from `artifactPath()` stays URL-encoded and remains the lookup key.
+ *
+ * @param appName The app name.
+ * @param userId The user ID.
+ * @param sessionId The session ID.
+ * @param filename The filename.
+ * @param version The zero-based version number.
+ * @return The canonical URI for the artifact version.
+ */
+function getCanonicalUri(
+  appName: string,
+  userId: string,
+  sessionId: string,
+  filename: string,
+  version: number,
+): string {
+  if (fileHasUserNamespace(filename)) {
+    return `memory://apps/${appName}/users/${userId}/artifacts/${filename}/versions/${version}`;
+  }
+
+  return `memory://apps/${appName}/users/${userId}/sessions/${sessionId}/artifacts/${filename}/versions/${version}`;
 }
 
 /**

@@ -746,10 +746,7 @@ describe('A2A Remote Agent', () => {
 
   const runRemoteAgentTest = async (
     events: (
-      | Message
-      | Task
-      | TaskStatusUpdateEvent
-      | TaskArtifactUpdateEvent
+      Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent
     )[],
     beforeCallbacks?: BeforeA2ARequestCallback[],
     afterCallbacks?: AfterA2ARequestCallback[],

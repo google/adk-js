@@ -240,5 +240,18 @@ describe('CodeExecutorContext', () => {
       const result = ctx.getCodeExecutionContext() as Record<string, unknown>;
       expect(result['execution_session_id']).toBe('s-42');
     });
+
+    it('keeps writes in state when state starts without the context key', () => {
+      const state = new State();
+      const ctx = new CodeExecutorContext(state);
+      ctx.setExecutionId('s-7');
+      ctx.addProcessedFileNames(['data_1_1.csv']);
+
+      expect(state.get('_code_execution_context')).toEqual({
+        execution_session_id: 's-7',
+        processed_input_files: ['data_1_1.csv'],
+      });
+      expect(new CodeExecutorContext(state).getExecutionId()).toBe('s-7');
+    });
   });
 });

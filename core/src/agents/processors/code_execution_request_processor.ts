@@ -15,8 +15,9 @@ import {
   CodeExecutionLanguage,
   CodeExecutionResult,
   convertCodeExecutionParts,
-  extractCodeAndTruncateContent,
+  extractCodeBlockAndTruncateContent,
   File,
+  FileContentEncoding,
 } from '../../code_executors/code_execution_utils.js';
 import {CodeExecutorContext} from '../../code_executors/code_executor_context.js';
 import {createEvent, Event} from '../../events/event.js';
@@ -24,7 +25,7 @@ import {createEventActions} from '../../events/event_actions.js';
 import {LlmRequest} from '../../models/llm_request.js';
 import {LlmResponse} from '../../models/llm_response.js';
 import {State} from '../../sessions/state.js';
-import {base64Decode} from '../../utils/env_aware_utils.js';
+import {base64Decode, base64Encode} from '../../utils/env_aware_utils.js';
 import {InvocationContext, requireAgent} from '../invocation_context.js';
 import {isLlmAgent} from '../llm_agent.js';
 import {
@@ -336,7 +337,7 @@ async function* runPostProcessor(
   // [Step 1] Extract code from the model predict response and truncate the
   // content to the part with the first code block
   const responseContent = llmResponse.content;
-  const codeStr = extractCodeAndTruncateContent(
+  const {code: codeStr, language} = extractCodeBlockAndTruncateContent(
     responseContent,
     codeExecutor.codeBlockDelimiters,
   );
@@ -362,7 +363,7 @@ async function* runPostProcessor(
     invocationContext,
     codeExecutionInput: {
       code: codeStr,
-      language: CodeExecutionLanguage.PYTHON,
+      language,
       inputFiles: codeExecutorContext.getInputFiles(),
       executionId,
     },
@@ -418,10 +419,7 @@ function extractAndReplaceInlineFiles(
         continue;
       }
 
-      // Replace the inline data file with a file name placeholder
       const fileName = `data_${i + 1}_${j + 1}${DATA_FILE_UTIL_MAP[mimeType].extension}`;
-
-      part.text = `\nAvailable file: \`${fileName}\`\n`;
 
       // Add the inline data as input file to the code executor context
       const file: File = {
@@ -429,6 +427,11 @@ function extractAndReplaceInlineFiles(
         content: base64Decode(part.inlineData.data!),
         mimeType,
       };
+
+      // Replace the inline data file with a file name placeholder. The inline
+      // data is removed so that the file bytes are not sent to the model.
+      part.text = `\nAvailable file: \`${fileName}\`\n`;
+      delete part.inlineData;
 
       if (!savedFileNames.has(fileName)) {
         codeExecutorContext.addInputFiles([file]);
@@ -505,7 +508,13 @@ async function postProcessCodeExecutionResult(
     const version = await invocationContext.artifactService.saveArtifact({
       filename: outputFile.name,
       artifact: {
-        inlineData: {data: outputFile.content, mimeType: outputFile.mimeType},
+        inlineData: {
+          data:
+            outputFile.contentEncoding === FileContentEncoding.UTF8
+              ? base64Encode(outputFile.content)
+              : outputFile.content,
+          mimeType: outputFile.mimeType,
+        },
       },
     });
 

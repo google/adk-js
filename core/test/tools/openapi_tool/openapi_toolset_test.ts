@@ -10,7 +10,7 @@ import {
   OpenAPIToolset,
   ReadonlyContext,
 } from '@google/adk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it, vi} from 'vitest';
 import {logger} from '../../../src/utils/logger.js';
@@ -481,8 +481,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const invalidPropSchema = schema.properties?.[
@@ -528,8 +527,7 @@ describe('OpenApiSpecParser', () => {
 
     expect(operations.length).toBe(1);
     const response = operations[0].operation.responses?.['200'] as
-      | OpenAPIV3.ResponseObject
-      | undefined;
+      OpenAPIV3.ResponseObject | undefined;
     const schema = response?.content?.['application/json']
       ?.schema as OpenAPIV3.SchemaObject;
     const multiPropSchema = schema.properties?.[

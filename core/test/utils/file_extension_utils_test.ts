@@ -29,6 +29,13 @@ describe('getMimeTypeAndEncoding', () => {
       ['.xml', 'application/xml'],
       ['.yaml', 'text/yaml'],
       ['.yml', 'text/yaml'],
+      ['.cjs', 'text/javascript'],
+      ['.mjs', 'text/javascript'],
+      ['.ts', 'text/javascript'],
+      ['.cts', 'text/javascript'],
+      ['.mts', 'text/javascript'],
+      ['.sh', 'text/x-shellscript'],
+      ['.bash', 'text/x-shellscript'],
     ])('returns correct MIME type for %s', (ext, expectedMime) => {
       const result = getMimeTypeAndEncoding(ext);
       expect(result.mimeType).toBe(expectedMime);
@@ -42,6 +49,7 @@ describe('getMimeTypeAndEncoding', () => {
       ['.jpg', 'image/jpeg'],
       ['.jpeg', 'image/jpeg'],
       ['.pdf', 'application/pdf'],
+      ['.gif', 'image/gif'],
     ])('returns correct MIME type for %s', (ext, expectedMime) => {
       const result = getMimeTypeAndEncoding(ext);
       expect(result.mimeType).toBe(expectedMime);

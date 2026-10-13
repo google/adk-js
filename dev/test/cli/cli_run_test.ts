@@ -8,9 +8,14 @@ import {
   BaseAgent,
   BaseSessionService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   isApp,
+  RESTORED_EVENT_KEY,
   Runner,
+  setLogger,
 } from '@google/adk';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {afterEach, beforeEach, describe, expect, it, Mock, vi} from 'vitest';
@@ -42,29 +47,33 @@ vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation(() => ({
-      runAsync: vi.fn().mockImplementation(async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      }),
-    })),
+    Runner: vi.fn().mockImplementation(function () {
+      return {
+        runAsync: vi.fn().mockImplementation(async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        }),
+      };
+    }),
     InMemoryArtifactService: vi.fn(),
-    InMemorySessionService: vi.fn().mockImplementation(() => ({
-      createSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-      appendEvent: vi.fn(),
-      getSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-    })),
+    InMemorySessionService: vi.fn().mockImplementation(function () {
+      return {
+        createSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+        appendEvent: vi.fn(),
+        getSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+      };
+    }),
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
   };
@@ -77,8 +86,8 @@ vi.mock('node:readline', () => ({
 /** The two-argument `readline.question` overload the REPL calls. */
 type AskUser = (query: string, cb: (answer: string) => void) => void;
 
-const createMockSessionService = () =>
-  ({
+function createMockSessionService() {
+  return {
     createSession: vi.fn().mockResolvedValue({
       id: 'session-123',
       appName: 'test-agent',
@@ -92,7 +101,8 @@ const createMockSessionService = () =>
       userId: 'test_user',
       events: [],
     }),
-  }) as unknown as BaseSessionService;
+  } as unknown as BaseSessionService;
+}
 
 describe('cli_run', () => {
   let mockAgentFile: AgentFile;
@@ -116,13 +126,15 @@ describe('cli_run', () => {
     // Re-established every test: `restoreAllMocks` drops the implementations
     // set in the module factory, which would otherwise leave the runner and
     // the session service inert from the second test onwards.
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      },
-    }));
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        },
+      };
+    });
     (InMemorySessionService as unknown as Mock).mockImplementation(
       createMockSessionService,
     );
@@ -137,7 +149,9 @@ describe('cli_run', () => {
       [Symbol.asyncDispose]: vi.fn(),
     } as unknown as AgentFile;
 
-    (AgentFile as unknown as Mock).mockImplementation(() => mockAgentFile);
+    (AgentFile as unknown as Mock).mockImplementation(function () {
+      return mockAgentFile;
+    });
 
     mockRl = {
       question: vi.fn((query: string, cb: (answer: string) => void) => {
@@ -168,15 +182,17 @@ describe('cli_run', () => {
   it('keeps the REPL alive when a turn fails', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     let turn = 0;
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        turn++;
-        if (turn === 1) {
-          throw new Error('Context variable not found: `my_city`.');
-        }
-        yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
-      },
-    }));
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          turn++;
+          if (turn === 1) {
+            throw new Error('Context variable not found: `my_city`.');
+          }
+          yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
+        },
+      };
+    });
     (mockRl.question as Mock)
       .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
         cb('boom'),
@@ -281,9 +297,9 @@ describe('cli_run', () => {
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
   const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
-    vi.mocked(Runner).mockImplementation(
-      () => ({runAsync}) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function () {
+      return {runAsync} as unknown as Runner;
+    });
     return runAsync;
   };
 
@@ -375,7 +391,7 @@ describe('cli_run', () => {
   });
 
   it('should handle missing input file', async () => {
-    (loadFileData as Mock).mockResolvedValue(null);
+    (loadFileData as Mock).mockResolvedValue(undefined);
     const mockSessionService = createMockSessionService();
 
     await runAgent({
@@ -385,6 +401,37 @@ describe('cli_run', () => {
     });
     expect(loadFileData).toHaveBeenCalled();
   });
+
+  it.each([
+    ['a missing state object', {queries: ['go']}],
+    ['a missing queries array', {state: {}}],
+    ['queries provided as a string', {state: {}, queries: 'hi'}],
+    ['a non-string query', {state: {}, queries: ['go', 1]}],
+    ['a non-object state', {state: [], queries: ['go']}],
+    ['a null JSON document', null],
+  ])(
+    'rejects replay input with %s before creating a session or running the agent',
+    async (_description, content) => {
+      (loadFileData as Mock).mockResolvedValue(content);
+      const mockSessionService = createMockSessionService();
+
+      await runAgent({
+        agentPath: 'agent.ts',
+        inputFile: 'input.json',
+        sessionService: mockSessionService,
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Invalid replay file'),
+        }),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(AgentFile).not.toHaveBeenCalled();
+      expect(Runner).not.toHaveBeenCalled();
+    },
+  );
 
   it('honours an absolute --replay path instead of rebasing it on cwd', async () => {
     // `path.join(cwd, '/abs/input.json')` silently strips the leading
@@ -581,6 +628,61 @@ describe('cli_run', () => {
       path.join(process.cwd(), 'agents', 'my-session.session.json'),
       expect.anything(),
     );
+  });
+
+  it('strips ADK-internal metadata from resumed events and marks them restored', async () => {
+    (loadFileData as Mock).mockResolvedValue({
+      id: 'old-session',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {
+          author: 'user',
+          content: {parts: [{text: 'Hi'}]},
+          customMetadata: {
+            keep: 1,
+            [`${INTERNAL_METADATA_PREFIX}planted`]: 'x',
+            [RESTORED_EVENT_KEY]: false,
+          },
+        },
+      ],
+    });
+    const mockSessionService = createMockSessionService();
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      savedSessionFile: 'session.json',
+      sessionService: mockSessionService,
+    });
+
+    const appended = (mockSessionService.appendEvent as Mock).mock.calls.map(
+      (call) => call[0].event.customMetadata,
+    );
+    expect(appended).toEqual([{keep: 1, [RESTORED_EVENT_KEY]: true}]);
+  });
+
+  it('saves the session without ADK-internal metadata', async () => {
+    const mockSessionService = createMockSessionService();
+    (mockSessionService.getSession as Mock).mockResolvedValue({
+      id: 'session-123',
+      appName: 'test-agent',
+      userId: 'test_user',
+      events: [
+        {author: 'user', customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true}},
+      ],
+    });
+
+    await runAgent({
+      agentPath: 'agent.ts',
+      saveSession: true,
+      sessionId: 'my-session',
+      sessionService: mockSessionService,
+    });
+
+    const saved = (saveToFile as Mock).mock.calls[0][1];
+    expect(
+      saved.events.map((e: {customMetadata?: unknown}) => e.customMetadata),
+    ).toEqual([{keep: 1}]);
   });
 
   it('should prompt for session id if not provided when saving', async () => {
@@ -931,6 +1033,35 @@ describe('cli_run', () => {
       );
       expect(console.log).not.toHaveBeenCalledWith(expect.any(Error));
       expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('environment and logging setup', () => {
+    it('loads .env from the agent directory and supports logToTmp', async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-cli-run-env-'),
+      );
+      const agentFile = path.join(tempDir, 'agent.ts');
+      fs.writeFileSync(agentFile, '');
+      fs.writeFileSync(
+        path.join(tempDir, '.env'),
+        'ADK_CLI_RUN_DOTENV_TEST=loaded_from_env\n',
+      );
+
+      try {
+        await runAgent({
+          agentPath: agentFile,
+          logToTmp: true,
+          sessionService: createMockSessionService(),
+        });
+
+        expect(process.env['ADK_CLI_RUN_DOTENV_TEST']).toBe('loaded_from_env');
+        expect(AgentFile).toHaveBeenCalledWith(agentFile, undefined);
+      } finally {
+        setLogger(null);
+        delete process.env['ADK_CLI_RUN_DOTENV_TEST'];
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
     });
   });
 });

@@ -7,6 +7,7 @@
 import {
   Gemini,
   GeminiParams,
+  GoogleLLMVariant,
   LlmRequest,
   LlmResponse,
   geminiInitParams,
@@ -25,26 +26,35 @@ vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
   return {
     ...actual,
-    GoogleGenAI: vi.fn().mockImplementation((options) => ({
-      apiClient: {
-        clientOptions: {
-          httpOptions: options.httpOptions,
+    GoogleGenAI: vi.fn().mockImplementation(function (options) {
+      return {
+        apiClient: {
+          clientOptions: {
+            httpOptions: options.httpOptions,
+          },
         },
-      },
-      models: {
-        generateContentStream: vi.fn(),
-        generateContent: vi.fn(),
-      },
-      live: {
-        connect: vi.fn().mockResolvedValue({
-          sendClientContent: vi.fn(),
-          sendToolResponse: vi.fn(),
-          sendRealtimeInput: vi.fn(),
-          close: vi.fn(),
-        }),
-      },
-      vertexai: options.vertexai || false,
-    })),
+        models: {
+          generateContentStream: vi.fn(),
+          generateContent: vi.fn(),
+        },
+        live: {
+          connect: vi.fn().mockResolvedValue({
+            sendClientContent: vi.fn(),
+            sendToolResponse: vi.fn(),
+            sendRealtimeInput: vi.fn(),
+            close: vi.fn(),
+          }),
+        },
+        vertexai:
+          options.vertexai ??
+          (['true', '1'].includes(
+            process.env['GOOGLE_GENAI_USE_ENTERPRISE'] ?? '',
+          ) ||
+            ['true', '1'].includes(
+              process.env['GOOGLE_GENAI_USE_VERTEXAI'] ?? '',
+            )),
+      };
+    }),
   };
 });
 
@@ -387,6 +397,28 @@ describe('GoogleLlm', () => {
       expect(params.vertexai).toBe(false);
     });
 
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+      process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+      process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+      process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
+    it('should not use Vertex AI when vertexai is explicitly false even if GOOGLE_GENAI_USE_VERTEXAI is set', () => {
+      process.env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+      const params = geminiInitParams({
+        model: 'gemini-1.5-flash',
+        vertexai: false,
+        apiKey: 'test-key',
+      });
+      expect(params.vertexai).toBe(false);
+    });
+
     it('should throw error if project is missing for Vertex AI', () => {
       const input = {
         model: 'gemini-1.5-flash',
@@ -395,6 +427,39 @@ describe('GoogleLlm', () => {
       };
       expect(() => geminiInitParams(input)).toThrow(/VertexAI project/);
     });
+  });
+
+  it('should use GEMINI_API backend and pass vertexai: false to clients when vertexai is explicitly false and GOOGLE_GENAI_USE_ENTERPRISE is set', () => {
+    process.env['GOOGLE_GENAI_USE_ENTERPRISE'] = 'true';
+    process.env['GOOGLE_CLOUD_PROJECT'] = 'env-project';
+    process.env['GOOGLE_CLOUD_LOCATION'] = 'env-location';
+
+    const spy = vi.mocked(GoogleGenAI);
+    spy.mockClear();
+
+    const llm = new TestGemini({
+      model: 'gemini-2.5-flash',
+      vertexai: false,
+      apiKey: 'test-key',
+    });
+
+    expect(llm.apiBackend).toBe(GoogleLLMVariant.GEMINI_API);
+    expect(llm.liveApiVersion).toBe('v1alpha');
+    expect(llm.liveApiClient.vertexai).toBe(false);
+    expect(spy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
+    expect(spy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        vertexai: false,
+        apiKey: 'test-key',
+      }),
+    );
   });
 
   describe('generateContentAsync', () => {
@@ -670,6 +735,59 @@ describe('GoogleLlm', () => {
       // still be yielded (along with the flush of accumulated text).
       // We expect at least the text chunk, the flush, and the finalization.
       expect(responses.length).toBeGreaterThanOrEqual(2);
+    });
+
+    describe('text interleaved with inline audio', () => {
+      const audioPart = {inlineData: {mimeType: 'audio/pcm', data: 'AAAA'}};
+
+      it('keeps the text buffered across an audio chunk and aggregates it at the end', async () => {
+        const gemini = createStreamingGemini([
+          {candidates: [{content: {role: 'model', parts: [{text: 'Hello '}]}}]},
+          {candidates: [{content: {role: 'model', parts: [audioPart]}}]},
+          {
+            candidates: [
+              {
+                content: {role: 'model', parts: [{text: 'world'}]},
+                finishReason: 'STOP',
+              },
+            ],
+          },
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses.map((r) => [r.content?.parts, r.partial])).toEqual([
+          [[{text: 'Hello '}], true],
+          [[audioPart], false],
+          [[{text: 'world'}], true],
+          [[{text: 'Hello world'}], false],
+        ]);
+      });
+
+      it('still flushes the text before a non-audio, non-text chunk', async () => {
+        const functionCallPart = {
+          functionCall: {id: 'call-1', name: 'lookup', args: {}},
+        };
+        const gemini = createStreamingGemini([
+          {candidates: [{content: {role: 'model', parts: [{text: 'Hello'}]}}]},
+          {
+            candidates: [
+              {
+                content: {role: 'model', parts: [functionCallPart]},
+                finishReason: 'STOP',
+              },
+            ],
+          },
+        ]);
+
+        const responses = await collectResponses(gemini, true);
+
+        expect(responses.map((r) => [r.content?.parts, r.partial])).toEqual([
+          [[{text: 'Hello'}], true],
+          [[{text: 'Hello'}], false],
+          [[functionCallPart], false],
+        ]);
+      });
     });
   });
 

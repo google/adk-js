@@ -18,7 +18,7 @@ import {logger} from '../utils/logger.js';
 import {GoogleLLMVariant} from '../utils/variant_utils.js';
 
 import {AsyncQueue} from '../utils/async_queue.js';
-import {StreamingResponseAggregator} from '../utils/streaming_utils.js';
+import {GeminiStreamingResponseAggregator} from '../utils/streaming_utils.js';
 import {BaseLlm} from './base_llm.js';
 import {BaseLlmConnection} from './base_llm_connection.js';
 import {GeminiLlmConnection} from './gemini_llm_connection.js';
@@ -198,29 +198,27 @@ export class Gemini extends BaseLlm {
       llmRequest.config.abortSignal = abortSignal;
     }
 
-    if (stream) {
-      const streamResult = await this.apiClient.models.generateContentStream({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
+    // The SDK resumes generations that the model pauses with a continuation
+    // token, so a paused generation still arrives as one response or stream.
+    const params = {
+      model: llmRequest.model ?? this.model,
+      contents: llmRequest.contents,
+      config: llmRequest.config,
+    };
 
-      const aggregator = new StreamingResponseAggregator();
+    if (stream) {
+      const streamResult =
+        await this.apiClient.models.generateContentStream(params);
+      const aggregator = new GeminiStreamingResponseAggregator();
       for await (const response of streamResult) {
-        for await (const llmResponse of aggregator.processResponse(response)) {
-          yield llmResponse;
-        }
+        yield* aggregator.processResponse(response);
       }
       const finalResponse = aggregator.close();
       if (finalResponse) {
         yield finalResponse;
       }
     } else {
-      const response = await this.apiClient.models.generateContent({
-        model: llmRequest.model ?? this.model,
-        contents: llmRequest.contents,
-        config: llmRequest.config,
-      });
+      const response = await this.apiClient.models.generateContent(params);
       yield createLlmResponse(response);
     }
   }
@@ -243,6 +241,7 @@ export class Gemini extends BaseLlm {
       });
     } else {
       this._apiClient = new GoogleGenAI({
+        vertexai: false,
         apiKey: this.apiKey,
         httpOptions: this.getHttpOptions(),
       });
@@ -286,6 +285,7 @@ export class Gemini extends BaseLlm {
         });
       } else {
         this._liveApiClient = new GoogleGenAI({
+          vertexai: false,
           apiKey: this.apiKey,
           httpOptions: this.getLiveHttpOptions(),
         });
@@ -332,8 +332,7 @@ export class Gemini extends BaseLlm {
     // regardless of backend.
     if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
       const resumption = llmRequest.liveConnectConfig.sessionResumption as
-        | {transparent?: boolean}
-        | undefined;
+        {transparent?: boolean} | undefined;
       if (resumption) {
         delete resumption.transparent;
       }
@@ -399,7 +398,7 @@ export function geminiInitParams({
   const params: GeminiParams = {model, vertexai, project, location, apiKey};
 
   params.vertexai = !!vertexai;
-  if (!params.vertexai && !isBrowser()) {
+  if (vertexai === undefined && !isBrowser()) {
     params.vertexai = isEnterpriseModeEnabled();
   }
 

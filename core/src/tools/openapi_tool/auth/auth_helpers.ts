@@ -25,6 +25,26 @@ import {ApiParameter} from '../openapi_spec_parser/operation_parser.js';
  */
 export const INTERNAL_AUTH_PREFIX = '_auth_prefix_vaf_';
 
+/**
+ * The client settings an application registers with an OpenID Connect
+ * provider.
+ */
+export interface OpenIdConfig {
+  /** The client ID the provider issued to the application. */
+  clientId: string;
+  /** The provider's authorization endpoint. */
+  authUri: string;
+  /** The provider's token endpoint. */
+  tokenUri: string;
+  /** The client secret the provider issued to the application. */
+  clientSecret: string;
+  /**
+   * Where the provider sends the user after sign-in. When unset, the provider
+   * uses the redirect URI registered for the client.
+   */
+  redirectUri?: string;
+}
+
 /** Locations an OpenAPI API key may travel in. */
 const API_KEY_LOCATIONS = ['header', 'query', 'cookie'] as const;
 
@@ -224,7 +244,7 @@ function bearerTokenParam(
     originalName: 'Authorization',
     paramLocation: 'header',
     paramSchema: {type: 'string'},
-    description: authScheme.description ?? 'Bearer token',
+    description: authScheme.description || 'Bearer token',
     name: `${INTERNAL_AUTH_PREFIX}Authorization`,
     required: true,
   };

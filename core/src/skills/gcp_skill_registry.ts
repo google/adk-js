@@ -91,11 +91,9 @@ export class GCPSkillRegistry implements SkillRegistry {
     const response = await httpResponse.json();
     const skillsList = isSearch
       ? (response.retrievedSkills as
-          | Array<Record<string, unknown>>
-          | undefined) ||
+          Array<Record<string, unknown>> | undefined) ||
         (response.retrieved_skills as
-          | Array<Record<string, unknown>>
-          | undefined)
+          Array<Record<string, unknown>> | undefined)
       : (response.skills as Array<Record<string, unknown>> | undefined);
 
     const results: Frontmatter[] = [];

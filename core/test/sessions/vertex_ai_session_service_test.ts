@@ -19,17 +19,6 @@ import {
   reconstructNodeStates,
 } from '../../src/workflow/utils/rehydration_utils.js';
 
-// Mock the unreleased nodejs-vertexai package so the import resolves
-vi.mock('nodejs-vertexai', () => ({
-  SessionsClient: class {
-    create = vi.fn();
-    get = vi.fn();
-    list = vi.fn();
-    delete = vi.fn();
-    events = {append: vi.fn()};
-  },
-}));
-
 const clientConstructor = vi.hoisted(() => vi.fn());
 
 // The service imports Client from the package root, so the mock must target
@@ -157,6 +146,8 @@ describe('VertexAiSessionService', () => {
 
   it('throws an error if no client and no project/location provided', () => {
     vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
 
     expect(() => new VertexAiSessionService({})).toThrow(
       'Project ID and Location are required.',
@@ -170,6 +161,8 @@ describe('VertexAiSessionService', () => {
     beforeEach(() => {
       vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
       vi.stubEnv('GOOGLE_API_KEY', 'env-api-key');
+      vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
+      vi.stubEnv('GOOGLE_CLOUD_LOCATION', undefined);
     });
 
     it.each([
@@ -550,6 +543,78 @@ describe('VertexAiSessionService', () => {
 
       expect(session?.events).toHaveLength(1);
       expect(session?.events[0].id).toBe('e2');
+    });
+
+    it('follows nextPageToken across all event pages and preserves filter config', async () => {
+      const afterTimestamp = 1700000000000;
+      const expectedFilter = `timestamp>="${new Date(
+        afterTimestamp,
+      ).toISOString()}"`;
+
+      mockClient.events.listInternal
+        .mockResolvedValueOnce({
+          sessionEvents: [
+            {name: 'projects/p/locations/l/sessions/s/events/e1'},
+            {name: 'projects/p/locations/l/sessions/s/events/e2'},
+          ],
+          nextPageToken: 'page-2-token',
+        })
+        .mockResolvedValueOnce({
+          // Page with omitted sessionEvents to cover empty fallback on follow-up page
+          nextPageToken: 'page-3-token',
+        })
+        .mockResolvedValueOnce({
+          sessionEvents: [
+            {name: 'projects/p/locations/l/sessions/s/events/e3'},
+          ],
+        });
+
+      const session = await service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+        config: {afterTimestamp, numRecentEvents: 2},
+      });
+
+      expect(mockClient.events.listInternal).toHaveBeenCalledTimes(3);
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(1, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter},
+      });
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(2, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter, pageToken: 'page-2-token'},
+      });
+      expect(mockClient.events.listInternal).toHaveBeenNthCalledWith(3, {
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        config: {filter: expectedFilter, pageToken: 'page-3-token'},
+      });
+      expect(session?.events.map((e) => e.id)).toEqual(['e2', 'e3']);
+    });
+
+    it('does not fetch subsequent event pages if session does not belong to user', async () => {
+      const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        userId: 'otherUser',
+      });
+      mockClient.events.listInternal.mockResolvedValueOnce({
+        sessionEvents: [{name: 'projects/p/locations/l/sessions/s/events/e1'}],
+        nextPageToken: 'page-2-token',
+      });
+
+      await expect(
+        service.getSession({
+          appName: '12345',
+          userId: 'testUser',
+          sessionId: 'my-session-id',
+        }),
+      ).rejects.toThrow(
+        'Session my-session-id does not belong to user testUser',
+      );
+
+      expect(mockClient.events.listInternal).toHaveBeenCalledTimes(1);
+      loggerSpy.mockRestore();
     });
 
     it('returns undefined if session does not exist (code 5)', async () => {
@@ -1724,5 +1789,233 @@ describe('VertexAiSessionService', () => {
         'legacy-specialist',
       );
     });
+  });
+
+  describe('null-prototype state', () => {
+    // Reverting the fix lets a `__proto__` state key land on `Object.prototype`
+    // and leak into the ~1500 lines of tests that run afterwards. Clearing the
+    // keys around every test makes a revert fail here instead.
+    const POLLUTED_KEYS = ['isAdmin'];
+
+    const clearPollution = () => {
+      for (const key of POLLUTED_KEYS) {
+        delete (Object.prototype as Record<string, unknown>)[key];
+      }
+    };
+
+    beforeEach(clearPollution);
+    afterEach(clearPollution);
+
+    // A `'__proto__': value` pair in an object literal invokes the prototype
+    // setter instead of creating an own key, so it cannot express what the API
+    // actually returns. `JSON.parse` is what the transport does to the response
+    // body, and it does produce an own `__proto__` key.
+    const parseBody = (json: string): Record<string, unknown> =>
+      JSON.parse(json) as Record<string, unknown>;
+
+    const getTestSession = () =>
+      service.getSession({
+        appName: '12345',
+        userId: 'testUser',
+        sessionId: 'my-session-id',
+      });
+
+    it('createSession returns state with a null prototype', async () => {
+      mockClient.getSessionOperationInternal.mockResolvedValue({
+        done: true,
+        response: {
+          name: 'projects/p/locations/l/sessions/test-id',
+          sessionState: parseBody('{"persona":"pirate"}'),
+        },
+      });
+
+      const session = await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      expect(Object.getPrototypeOf(session.state)).toBeNull();
+      expect(session.state['persona']).toBe('pirate');
+    });
+
+    it('createSession returns a null-prototype state when the API returns none', async () => {
+      mockClient.getSessionOperationInternal.mockResolvedValue({
+        done: true,
+        response: {name: 'projects/p/locations/l/sessions/test-id'},
+      });
+
+      const session = await service.createSession({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      // Pins the `state: params.state || {}` fallback in `createSession`, which
+      // would otherwise hand back a prototype-rooted map.
+      expect(Object.getPrototypeOf(session.state)).toBeNull();
+      expect(Object.keys(session.state)).toEqual([]);
+    });
+
+    it('getSession returns state with a null prototype', async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        userId: 'testUser',
+        sessionState: parseBody('{"persona":"pirate"}'),
+      });
+
+      const session = await getTestSession();
+
+      expect(Object.getPrototypeOf(session!.state)).toBeNull();
+      expect(session!.state['persona']).toBe('pirate');
+    });
+
+    it('getSession state does not resolve inherited members', async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        userId: 'testUser',
+        sessionState: parseBody('{"persona":"pirate"}'),
+      });
+
+      const session = await getTestSession();
+
+      // `in` is the exact predicate instruction resolution uses to decide
+      // whether to inject a `{placeholder}`, so an inherited hit renders
+      // `function toString() { [native code] }` into the prompt.
+      expect('toString' in session!.state).toBe(false);
+      expect('constructor' in session!.state).toBe(false);
+      expect('persona' in session!.state).toBe(true);
+    });
+
+    it('getSession keeps a __proto__ state key as an own property', async () => {
+      mockClient.get.mockResolvedValue({
+        name: 'reasoningEngines/12345/sessions/my-session-id',
+        userId: 'testUser',
+        sessionState: parseBody('{"__proto__": {"isAdmin": true}}'),
+      });
+
+      const session = await getTestSession();
+
+      expect(Object.getPrototypeOf(session!.state)).toBeNull();
+      expect(session!.state['__proto__']).toEqual({isAdmin: true});
+      expect(({} as Record<string, unknown>)['isAdmin']).toBeUndefined();
+    });
+
+    it('listSessions returns state with a null prototype for every session', async () => {
+      mockClient.listInternal.mockResolvedValue({
+        sessions: [
+          {
+            name: 'projects/p/locations/l/sessions/s1',
+            userId: 'testUser',
+            sessionState: parseBody('{"a":1}'),
+          },
+          {name: 'projects/p/locations/l/sessions/s2', userId: 'testUser'},
+        ],
+      });
+
+      const response = await service.listSessions({
+        appName: '12345',
+        userId: 'testUser',
+      });
+
+      expect(Object.getPrototypeOf(response.sessions[0].state)).toBeNull();
+      expect(response.sessions[0].state['a']).toBe(1);
+      expect(Object.getPrototypeOf(response.sessions[1].state)).toBeNull();
+    });
+
+    it('getSession returns event state deltas with a null prototype', async () => {
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'projects/p/locations/l/sessions/s/events/e1',
+            invocationId: 'inv-1',
+            author: 'user',
+            actions: {stateDelta: parseBody('{"k":"v"}')},
+          },
+        ],
+      });
+
+      const session = await getTestSession();
+
+      const stateDelta = session!.events[0].actions.stateDelta;
+      expect(Object.getPrototypeOf(stateDelta)).toBeNull();
+      expect(stateDelta['k']).toBe('v');
+    });
+
+    it('getSession returns a null-prototype state delta when the event carries none', async () => {
+      mockClient.events.listInternal.mockResolvedValue({
+        sessionEvents: [
+          {
+            name: 'projects/p/locations/l/sessions/s/events/e1',
+            invocationId: 'inv-1',
+            author: 'user',
+          },
+        ],
+      });
+
+      const session = await getTestSession();
+
+      expect(
+        Object.getPrototypeOf(session!.events[0].actions.stateDelta),
+      ).toBeNull();
+    });
+  });
+});
+
+describe('VertexAiSessionService environment defaults', () => {
+  beforeEach(() => {
+    vi.stubEnv('GOOGLE_GENAI_USE_ENTERPRISE', undefined);
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', undefined);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'env-project');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', 'env-location');
+  });
+
+  it('builds the client from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION', () => {
+    new VertexAiSessionService({});
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'env-project',
+      location: 'env-location',
+    });
+  });
+
+  it('prefers explicit options over the environment', () => {
+    new VertexAiSessionService({
+      projectId: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'test-project',
+      location: 'us-central1',
+    });
+  });
+
+  it('fills only the option that was not passed', () => {
+    new VertexAiSessionService({projectId: 'test-project'});
+
+    expect(clientConstructor).toHaveBeenCalledWith({
+      project: 'test-project',
+      location: 'env-location',
+    });
+  });
+
+  it.each(['GOOGLE_CLOUD_LOCATION', 'GOOGLE_CLOUD_PROJECT'])(
+    'still throws when %s is unset',
+    (unset) => {
+      vi.stubEnv(unset, undefined);
+
+      expect(() => new VertexAiSessionService({})).toThrow(
+        'Project ID and Location are required.',
+      );
+      expect(clientConstructor).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the express-mode error for an explicit expressModeApiKey', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', 'true');
+
+    expect(
+      () => new VertexAiSessionService({expressModeApiKey: 'test-api-key'}),
+    ).toThrow('Vertex AI Express Mode');
+    expect(clientConstructor).not.toHaveBeenCalled();
   });
 });

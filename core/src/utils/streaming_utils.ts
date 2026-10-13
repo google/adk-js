@@ -299,7 +299,11 @@ class NonProgressiveStrategy implements StreamingStrategy {
       }
 
       if (nonTextParts.length > 0) {
-        if (this.thoughtText || this.text) {
+        // Audio interleaved with text keeps the text buffered, so the text is
+        // delivered once in the final aggregate instead of being split around
+        // each audio chunk.
+        const startsWithInlineData = !!llmResponse.content.parts[0]?.inlineData;
+        if (!startsWithInlineData && (this.thoughtText || this.text)) {
           const parts: Part[] = [];
           if (this.thoughtText) {
             parts.push({text: this.thoughtText, thought: true});
@@ -351,13 +355,22 @@ class NonProgressiveStrategy implements StreamingStrategy {
   }
 }
 
+/** Options for {@link GeminiStreamingResponseAggregator}. */
+export interface GeminiStreamingResponseAggregatorOptions {
+  /**
+   * Whether to flush parts as they arrive. Defaults to the
+   * PROGRESSIVE_SSE_STREAMING feature flag.
+   */
+  isProgressiveMode?: boolean;
+}
+
 /**
- * Aggregates partial streaming responses.
+ * Aggregates partial Gemini streaming responses.
  *
  * It aggregates content from partial responses, and generates LlmResponses for
  * individual (partial) model responses, as well as for aggregated content.
  */
-export class StreamingResponseAggregator {
+export class GeminiStreamingResponseAggregator {
   private usageMetadata?: GenerateContentResponseUsageMetadata;
   private groundingMetadata?: GroundingMetadata;
   private citationMetadata?: CitationMetadata;
@@ -367,12 +380,10 @@ export class StreamingResponseAggregator {
   private lastThoughtSignature: {value?: string | Uint8Array} = {};
   private readonly strategy: StreamingStrategy;
 
-  constructor(
-    private readonly isProgressiveMode: boolean = isFeatureEnabled(
-      FeatureName.PROGRESSIVE_SSE_STREAMING,
-    ),
-  ) {
-    this.strategy = this.isProgressiveMode
+  constructor({
+    isProgressiveMode = isFeatureEnabled(FeatureName.PROGRESSIVE_SSE_STREAMING),
+  }: GeminiStreamingResponseAggregatorOptions = {}) {
+    this.strategy = isProgressiveMode
       ? new ProgressiveStrategy()
       : new NonProgressiveStrategy();
   }

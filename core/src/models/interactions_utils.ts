@@ -915,7 +915,7 @@ async function waitForInteraction(
   interaction: ExtendedInteraction,
   options?: GenerateContentViaInteractionsOptions,
 ): Promise<ExtendedInteraction> {
-  logger.info(
+  logger.debug(
     `Interaction ${interaction.id} is ${interaction.status}; waiting for the result.`,
   );
   const interactionId = interaction.id;
@@ -931,12 +931,7 @@ async function waitForInteraction(
     await sleep(delay, options?.abortSignal);
     delay = Math.min(delay * 2, POLL_MAX_DELAY_MS);
     try {
-      const interactionsApi = apiClient.interactions as unknown as {
-        get: (
-          idOrParams: string | {id: string},
-        ) => Promise<ExtendedInteraction>;
-      };
-      current = await interactionsApi.get(interactionId);
+      current = await apiClient.interactions.get(interactionId);
     } catch (e: unknown) {
       if (options?.abortSignal?.aborted) {
         throw e;
@@ -957,7 +952,9 @@ async function waitForInteraction(
     logger.debug(`Interaction ${interactionId} is ${current.status}.`);
   }
 
-  logger.info(`Interaction ${interactionId} reached status ${current.status}.`);
+  logger.debug(
+    `Interaction ${interactionId} reached status ${current.status}.`,
+  );
   return current;
 }
 

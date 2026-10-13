@@ -117,7 +117,7 @@ export class LLMRegistry {
       // with ^...$; `RegExp.test` would otherwise match anywhere in the string.
       // TODO - b/425992518: validate it works well.
       const pattern = new RegExp(
-        `^${regex instanceof RegExp ? regex.source : regex}$`,
+        `^(?:${regex instanceof RegExp ? regex.source : regex})$`,
         regex instanceof RegExp ? regex.flags : undefined,
       );
       if (pattern.test(model)) {

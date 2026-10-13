@@ -951,6 +951,10 @@ describe('GeminiLlmConnection', () => {
         modelVersion: 'gemini-2.5-flash',
       });
 
+      expect((await generator.next()).value).toEqual({
+        interrupted: true,
+        modelVersion: 'gemini-2.5-flash',
+      });
       expect((await generator.next()).done).toBe(true);
     });
 
@@ -1109,5 +1113,196 @@ describe('GeminiLlmConnection', () => {
 
       expect((await generator.next()).done).toBe(true);
     });
+  });
+});
+
+async function drain(
+  generator: AsyncGenerator<unknown, void, void>,
+): Promise<unknown[]> {
+  const results: unknown[] = [];
+  for await (const result of generator) {
+    results.push(result);
+  }
+  return results;
+}
+
+describe('GeminiLlmConnection interrupted turns', () => {
+  let session: Mocked<Session>;
+  let queue: AsyncQueue<LiveServerMessage>;
+
+  beforeEach(() => {
+    session = {close: vi.fn()} as unknown as Mocked<Session>;
+    queue = new AsyncQueue<LiveServerMessage>();
+  });
+
+  it('interrupted without modelTurn keeps the flag after the buffered text', async () => {
+    const connection = new GeminiLlmConnection(
+      session,
+      'gemini-2.5-flash',
+      queue,
+    );
+    queue.push(
+      liveServerMessage({
+        serverContent: {modelTurn: {parts: [{text: 'Partial answer'}]}},
+      }),
+    );
+    queue.push(liveServerMessage({serverContent: {interrupted: true}}));
+    queue.close();
+
+    expect(await drain(connection.receive())).toEqual([
+      {
+        content: {parts: [{text: 'Partial answer'}]},
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Partial answer'}]},
+        partial: false,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {interrupted: true, modelVersion: 'gemini-2.5-flash'},
+    ]);
+  });
+
+  it('interrupted after buffered text yields the merged text then interrupted', async () => {
+    const connection = new GeminiLlmConnection(
+      session,
+      'gemini-2.5-flash',
+      queue,
+    );
+    queue.push(
+      liveServerMessage({
+        serverContent: {modelTurn: {parts: [{text: 'Partial'}]}},
+      }),
+    );
+    queue.push(
+      liveServerMessage({
+        serverContent: {
+          modelTurn: {parts: [{text: ' answer'}]},
+          interrupted: true,
+        },
+      }),
+    );
+    queue.close();
+
+    expect(await drain(connection.receive())).toEqual([
+      {
+        content: {parts: [{text: 'Partial'}]},
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        content: {parts: [{text: ' answer'}]},
+        interrupted: true,
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Partial answer'}]},
+        partial: false,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {interrupted: true, modelVersion: 'gemini-2.5-flash'},
+    ]);
+  });
+});
+
+describe('GeminiLlmConnection receive per turn', () => {
+  let session: Mocked<Session>;
+  let queue: AsyncQueue<LiveServerMessage>;
+
+  beforeEach(() => {
+    session = {close: vi.fn()} as unknown as Mocked<Session>;
+    queue = new AsyncQueue<LiveServerMessage>();
+  });
+
+  it('receive ends after turnComplete and the next receive continues with the next turn', async () => {
+    const connection = new GeminiLlmConnection(
+      session,
+      'gemini-2.5-flash',
+      queue,
+    );
+    queue.push(
+      liveServerMessage({
+        serverContent: {modelTurn: {parts: [{text: 'First'}]}},
+      }),
+    );
+    queue.push(liveServerMessage({serverContent: {turnComplete: true}}));
+    queue.push(
+      liveServerMessage({
+        serverContent: {modelTurn: {parts: [{text: 'Second'}]}},
+      }),
+    );
+    queue.push(liveServerMessage({serverContent: {turnComplete: true}}));
+
+    expect(await drain(connection.receive())).toEqual([
+      {
+        content: {parts: [{text: 'First'}]},
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        content: {role: 'model', parts: [{text: 'First'}]},
+        partial: false,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {turnComplete: true, modelVersion: 'gemini-2.5-flash'},
+    ]);
+    expect(queue.size).toBe(2);
+
+    expect(await drain(connection.receive())).toEqual([
+      {
+        content: {parts: [{text: 'Second'}]},
+        partial: true,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Second'}]},
+        partial: false,
+        modelVersion: 'gemini-2.5-flash',
+      },
+      {turnComplete: true, modelVersion: 'gemini-2.5-flash'},
+    ]);
+
+    queue.close();
+    expect(await drain(connection.receive())).toEqual([]);
+  });
+
+  it('delivers the rest of the turnComplete message before ending', async () => {
+    const connection = new GeminiLlmConnection(
+      session,
+      'gemini-2.5-flash',
+      queue,
+    );
+    queue.push(
+      liveServerMessage({
+        serverContent: {turnComplete: true},
+        sessionResumptionUpdate: {newHandle: 'handle-1', resumable: true},
+      }),
+    );
+
+    expect(await drain(connection.receive())).toEqual([
+      {turnComplete: true, modelVersion: 'gemini-2.5-flash'},
+      {
+        liveSessionResumptionUpdate: {newHandle: 'handle-1', resumable: true},
+        modelVersion: 'gemini-2.5-flash',
+      },
+    ]);
+  });
+
+  it('continues a generator-backed message source across receive calls', async () => {
+    async function* messages(): AsyncGenerator<LiveServerMessage> {
+      yield liveServerMessage({serverContent: {turnComplete: true}});
+      yield liveServerMessage({serverContent: {turnComplete: true}});
+    }
+    const connection = new GeminiLlmConnection(
+      session,
+      'gemini-2.5-flash',
+      messages(),
+    );
+
+    expect(await drain(connection.receive())).toHaveLength(1);
+    expect(await drain(connection.receive())).toHaveLength(1);
+    expect(await drain(connection.receive())).toEqual([]);
   });
 });

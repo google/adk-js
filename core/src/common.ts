@@ -21,13 +21,38 @@ export {
   findEventByFunctionCallId,
   findMatchingFunctionCall,
   functionsExportedForTestingOnly,
+  handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
-export {InvocationContext, requireAgent} from './agents/invocation_context.js';
+export {
+  InvocationContext,
+  LlmCallsLimitExceededError,
+  isLlmCallsLimitExceededError,
+  requireAgent,
+} from './agents/invocation_context.js';
 export type {
   InvocationContextParams,
   WorkflowInstructionScope,
 } from './agents/invocation_context.js';
+export {
+  LangGraphAgent,
+  getLastHumanMessages,
+  isLangGraphAgent,
+} from './agents/langgraph_agent.js';
+export type {
+  CompiledGraphLike,
+  LangGraphAIMessage,
+  LangGraphAgentConfig,
+  LangGraphContentPart,
+  LangGraphHumanMessage,
+  LangGraphInvokeInput,
+  LangGraphInvokeOutput,
+  LangGraphMessageContent,
+  LangGraphMessageLike,
+  LangGraphRunnableConfig,
+  LangGraphStateSnapshot,
+  LangGraphSystemMessage,
+} from './agents/langgraph_agent.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
 export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
@@ -53,6 +78,7 @@ export {
   BaseLlmRequestProcessor,
   BaseLlmResponseProcessor,
 } from './agents/processors/base_llm_processor.js';
+export {CodeExecutionResponseProcessor} from './agents/processors/code_execution_request_processor.js';
 export {
   CONTENT_REQUEST_PROCESSOR,
   ContentRequestProcessor,
@@ -63,6 +89,11 @@ export {
   InteractionsRequestProcessor,
 } from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
+export {RemoteAgent, isRemoteAgent} from './agents/remote_agent.js';
+export type {
+  RemoteAgentConfig,
+  RemoteAgentFetch,
+} from './agents/remote_agent.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode, createRunConfig} from './agents/run_config.js';
@@ -108,7 +139,11 @@ export type {
 export {AuthHandler} from './auth/auth_handler.js';
 export {AUTH_PREPROCESSOR, AuthPreprocessor} from './auth/auth_preprocessor.js';
 export {AuthProviderRegistry} from './auth/auth_provider_registry.js';
-export {OAuthGrantType} from './auth/auth_schemes.js';
+export {
+  AuthSchemeType,
+  OAuthGrantType,
+  getOAuthGrantTypeFromFlow,
+} from './auth/auth_schemes.js';
 export type {AuthScheme, OpenIdConnectWithConfig} from './auth/auth_schemes.js';
 export type {AuthConfig} from './auth/auth_tool.js';
 export type {BaseAuthProvider} from './auth/base_auth_provider.js';
@@ -180,6 +215,14 @@ export type {
 } from './events/event.js';
 export {createEventActions} from './events/event_actions.js';
 export type {EventActions} from './events/event_actions.js';
+export {
+  INTERNAL_METADATA_PREFIX,
+  RESTORED_EVENT_KEY,
+  markRestored,
+  publicEvent,
+  publicMetadata,
+  publicSession,
+} from './events/internal_metadata.js';
 export {EventType, toStructuredEvents} from './events/structured_events.js';
 export type {
   ActivityEvent,
@@ -198,7 +241,15 @@ export {
   BaseExampleProvider,
   isBaseExampleProvider,
 } from './examples/base_example_provider.js';
-export type {Example} from './examples/example.js';
+export {VertexAiExampleStore} from './examples/example.js';
+export type {
+  Example,
+  ExampleStoreApiClient,
+  SearchExamplesRequest,
+  SearchExamplesResponse,
+  SearchExamplesResult,
+  StoredContentsExample,
+} from './examples/example.js';
 export type {
   BaseMemoryService,
   SearchMemoryRequest,
@@ -231,13 +282,18 @@ export type {
 } from './models/chrome_prompt_llm.js';
 export {Gemini, geminiInitParams} from './models/google_llm.js';
 export type {GeminiParams} from './models/google_llm.js';
+export {appendInstructions} from './models/llm_request.js';
 export type {LlmRequest} from './models/llm_request.js';
+export {createLlmResponse} from './models/llm_response.js';
 export type {LlmResponse} from './models/llm_response.js';
 export {LLMRegistry} from './models/registry.js';
 export type {BaseLlmType} from './models/registry.js';
 export {RoutedLlm} from './models/routed_llm.js';
 export type {LlmRouter} from './models/routed_llm.js';
 export {ServiceTier} from './models/service_tier.js';
+export {BasePlanner, isBasePlanner} from './planners/base_planner.js';
+export {BuiltInPlanner, isBuiltInPlanner} from './planners/built_in_planner.js';
+export {PlanReActPlanner} from './planners/plan_re_act_planner.js';
 export {
   GLOBAL_SCOPE_KEY,
   REFLECT_AND_RETRY_RESPONSE_TYPE,
@@ -248,6 +304,11 @@ export {
   type ToolFailureResponse,
 } from './plugins/_reflect_retry_utils.js';
 export {BasePlugin, ContextCompactionTrigger} from './plugins/base_plugin.js';
+export type {
+  DebugEntry,
+  DebugLoggingPluginOptions,
+  InvocationDebugState,
+} from './plugins/debug_logging_plugin.js';
 export {GlobalInstructionPlugin} from './plugins/global_instruction_plugin.js';
 export {LoggingPlugin} from './plugins/logging_plugin.js';
 export {PluginManager} from './plugins/plugin_manager.js';
@@ -272,6 +333,11 @@ export type {
   PolicyCheckResult,
   ToolCallPolicyContext,
 } from './plugins/security_plugin.js';
+export {
+  ToolCallIntegrityError,
+  ToolCallIntegrityPlugin,
+} from './plugins/tool_call_integrity_plugin.js';
+export type {ToolCallIntegrityPluginOptions} from './plugins/tool_call_integrity_plugin.js';
 export {InMemoryRunner} from './runner/in_memory_runner.js';
 export {
   Runner,
@@ -359,6 +425,7 @@ export {
   isIntentMismatchError,
 } from './tools/tool_confirmation.js';
 export type {IntentMismatchReason} from './tools/tool_confirmation.js';
+export {CallbackContext, ToolContext} from './tools/tool_context.js';
 export {URL_CONTEXT, UrlContextTool} from './tools/url_context_tool.js';
 export {VertexAiSearchTool} from './tools/vertex_ai_search_tool.js';
 export type {
@@ -388,9 +455,13 @@ export type {
 export {AsyncQueue} from './utils/async_queue.js';
 export {renameReservedKeywords, toSnakeCaseName} from './utils/case_utils.js';
 export {getClientLabels, runWithClientLabel} from './utils/client_labels.js';
+export {toGeminiSchema} from './utils/gemini_schema_util.js';
+export type {MCPToolSchema} from './utils/gemini_schema_util.js';
+export {genaiSchemaToJsonSchema} from './utils/genai_schema_to_json.js';
 export {
   LogLevel,
   getLogger,
+  logger,
   resetLogger,
   setLogLevel,
   setLogger,
@@ -402,6 +473,7 @@ export {
   isGemini3xFlashLive,
   isGemini3xLive,
 } from './utils/model_name.js';
+export {toJsonSchema} from './utils/schema.js';
 export type {SchemaLike} from './utils/schema.js';
 export {zodObjectToSchema} from './utils/simple_zod_to_json.js';
 export {Task} from './utils/task.js';
@@ -500,3 +572,37 @@ export * from './features/feature_registry.js';
 export * from './memory/base_memory_service.js';
 export * from './sessions/base_session_service.js';
 export * from './tools/base_tool.js';
+
+export {
+  convertSessionToEvalFormat,
+  createEmptyState,
+} from './cli/utils/evals.js';
+export type {
+  EvaluationItem,
+  IntermediateAgentResponseItem,
+  ToolUseItem,
+} from './cli/utils/evals.js';
+export {CrewaiTool, isCrewaiTool} from './tools/crewai_tool.js';
+export type {
+  CrewaiSchemaLike,
+  CrewaiToolConfig,
+  CrewaiToolLike,
+} from './tools/crewai_tool.js';
+export {
+  buildFunctionDeclarationForLangchain,
+  buildFunctionDeclarationForParamsForCrewai,
+  buildFunctionDeclarationUtil,
+} from './tools/function_tool.js';
+export type {CallLiveToolRequest} from './tools/function_tool.js';
+export {LangchainTool, isLangchainTool} from './tools/langchain_tool.js';
+export type {
+  LangchainSchemaLike,
+  LangchainToolConfig,
+  LangchainToolLike,
+} from './tools/langchain_tool.js';
+export {isBaseRetrievalTool} from './tools/retrieval/base_retrieval_tool.js';
+export {ToolboxTool, isToolboxTool} from './tools/toolbox_tool.js';
+export type {
+  ToolboxClientLike,
+  ToolboxToolOptions,
+} from './tools/toolbox_tool.js';

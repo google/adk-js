@@ -18,6 +18,9 @@ import {
 import {Content, Language, Outcome, Part, ToolType} from '@google/genai';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
+const TEST_PROJECT = 'test-project';
+const TEST_LOCATION = 'us-central1';
+
 const clientConstructor = vi.hoisted(() => vi.fn());
 
 // The service imports Client from the package root, so the mock must target it.
@@ -127,7 +130,7 @@ describe('VertexAiMemoryBankService', () => {
     it.each([
       ['an expressModeApiKey option', {expressModeApiKey: 'test-api-key'}],
       ['an API key from the environment', {}],
-      ['an API key and only a project', {projectId: 'test-project'}],
+      ['an API key and only a project', {projectId: TEST_PROJECT}],
     ])('throws for %s instead of dropping the key', (_, options) => {
       expect(
         () =>
@@ -142,13 +145,13 @@ describe('VertexAiMemoryBankService', () => {
     it('keeps using project and location when an API key is also in the environment', () => {
       new VertexAiMemoryBankService({
         agentEngineId: 'test-engine-id',
-        projectId: 'test-project',
-        location: 'us-central1',
+        projectId: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
 
       expect(clientConstructor).toHaveBeenCalledWith({
-        project: 'test-project',
-        location: 'us-central1',
+        project: TEST_PROJECT,
+        location: TEST_LOCATION,
       });
     });
 
@@ -379,6 +382,106 @@ describe('VertexAiMemoryBankService', () => {
           },
         }),
       );
+    });
+
+    it('forwards the entry id as memoryId', async () => {
+      const memories: MemoryEntry[] = [
+        {id: 'mem-123', content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'mem-123'}),
+        }),
+      );
+    });
+
+    it('prefers a request-level memoryId over the entry id', async () => {
+      const memories: MemoryEntry[] = [
+        {id: 'from-entry', content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {memoryId: 'explicit'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'explicit'}),
+        }),
+      );
+    });
+
+    it('prefers an entry customMetadata memoryId over the entry id', async () => {
+      const memories: MemoryEntry[] = [
+        {
+          id: 'from-entry-id',
+          content: {parts: [{text: 'fact one'}]},
+          customMetadata: {memoryId: 'from-entry-metadata'},
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {memoryId: 'from-request'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({memoryId: 'from-entry-metadata'}),
+        }),
+      );
+    });
+
+    it('prefers entry customMetadata over the request-level value', async () => {
+      const memories: MemoryEntry[] = [
+        {
+          content: {parts: [{text: 'fact one'}]},
+          customMetadata: {sharedKey: 'from-entry'},
+        },
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+        customMetadata: {sharedKey: 'from-request'},
+      });
+
+      expect(mockMemories.createInternal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            metadata: {sharedKey: {stringValue: 'from-entry'}},
+          }),
+        }),
+      );
+    });
+
+    it('omits memoryId when the entry sets no id', async () => {
+      const memories: MemoryEntry[] = [
+        {content: {parts: [{text: 'fact one'}]}},
+      ];
+
+      await service.addMemory({
+        appName: 'test-app',
+        userId: 'test-user',
+        memories,
+      });
+
+      const config = mockMemories.createInternal.mock.calls[0][0].config;
+      expect(config).not.toHaveProperty('memoryId');
+      expect(config).toEqual({waitForCompletion: false});
     });
 
     it('throws error if memories list is empty', async () => {
@@ -707,7 +810,7 @@ describe('VertexAiMemoryBankService', () => {
         {
           content: {parts: [{text: 'fact 1'}]} as Content,
           customMetadata: {entryKey: 'entryValue'},
-        } as unknown as MemoryEntry, // cast to pass customMetadata
+        },
       ];
 
       await service.addMemory({

@@ -7,7 +7,7 @@
 import {Schema, Type} from '@google/genai';
 import {toSnakeCaseName} from './case_utils.js';
 
-type MCPToolSchema = {
+export type MCPToolSchema = {
   type: 'object';
   properties?: Record<string, unknown>;
   required?: string[];
@@ -54,14 +54,35 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function recursiveConvert(mcp: any): Schema {
+    // JSON Schema allows boolean schemas: `true` accepts any value and `false`
+    // rejects all values. Gemini has no equivalent for either, so both are
+    // approximated as an unconstrained object schema, matching adk-python.
+    if (typeof mcp === 'boolean') {
+      mcp = {type: 'object'};
+    }
+
     const sourceType = mcp.anyOf ?? mcp.type;
     let isNullable = false;
     let nonNullTypes;
     if (Array.isArray(sourceType)) {
-      nonNullTypes = sourceType.filter(
+      // JSON Schema allows a boolean where a schema is expected: `true` accepts
+      // any value and `false` accepts none. Gemini has no equivalent for
+      // either, so both become an unconstrained object, as adk-python does.
+      // `anyOf` holds schemas while `type` holds type names, hence the two
+      // replacement shapes.
+      const fromAnyOf = Boolean(mcp.anyOf);
+      const branches: MCPTypeArrayItem[] = sourceType.map(
+        (branch: MCPTypeArrayItem | boolean) => {
+          if (typeof branch !== 'boolean') return branch;
+          return fromAnyOf ? {type: 'object'} : 'object';
+        },
+      );
+      mcp = fromAnyOf ? {...mcp, anyOf: branches} : {...mcp, type: branches};
+
+      nonNullTypes = branches.filter(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) !== 'null',
       );
-      isNullable = sourceType.some(
+      isNullable = branches.some(
         (t: MCPTypeArrayItem) => getTypeFromArrayItem(t) === 'null',
       );
 
@@ -153,7 +174,9 @@ export function toGeminiSchema(mcpSchema?: MCPToolSchema): Schema | undefined {
         geminiSchema.required = mcp.required;
       }
     } else if (geminiType === Type.ARRAY) {
-      if (mcp.items) {
+      // `items: false` is a schema node, so a bare truthiness test would drop
+      // it. Other falsy values are not schemas and stay skipped.
+      if (mcp.items || mcp.items === false) {
         geminiSchema.items = recursiveConvert(mcp.items);
       }
     }

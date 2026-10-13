@@ -26,23 +26,51 @@ import {LlmResponse} from '../models/llm_response.js';
 import {BaseTool} from '../tools/base_tool.js';
 import {version} from '../version.js';
 
-const GEN_AI_AGENT_DESCRIPTION = 'gen_ai.agent.description';
-const GEN_AI_AGENT_NAME = 'gen_ai.agent.name';
-const GEN_AI_CONVERSATION_ID = 'gen_ai.conversation.id';
-const GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
-const GEN_AI_TOOL_CALL_ID = 'gen_ai.tool.call.id';
-const GEN_AI_TOOL_DESCRIPTION = 'gen_ai.tool.description';
-const GEN_AI_TOOL_NAME = 'gen_ai.tool.name';
-const GEN_AI_TOOL_TYPE = 'gen_ai.tool.type';
+/** OpenTelemetry GenAI semantic-convention span attribute keys. */
+enum GenAiAttr {
+  AGENT_DESCRIPTION = 'gen_ai.agent.description',
+  AGENT_NAME = 'gen_ai.agent.name',
+  CONVERSATION_ID = 'gen_ai.conversation.id',
+  OPERATION_NAME = 'gen_ai.operation.name',
+  SYSTEM = 'gen_ai.system',
+  TOOL_CALL_ID = 'gen_ai.tool.call.id',
+  TOOL_DESCRIPTION = 'gen_ai.tool.description',
+  TOOL_NAME = 'gen_ai.tool.name',
+  TOOL_TYPE = 'gen_ai.tool.type',
+  REQUEST_MODEL = 'gen_ai.request.model',
+  REQUEST_TOP_P = 'gen_ai.request.top_p',
+  REQUEST_MAX_TOKENS = 'gen_ai.request.max_tokens',
+  USAGE_INPUT_TOKENS = 'gen_ai.usage.input_tokens',
+  USAGE_OUTPUT_TOKENS = 'gen_ai.usage.output_tokens',
+  RESPONSE_FINISH_REASONS = 'gen_ai.response.finish_reasons',
+}
 
-const ADK_WORKFLOW_NAME = 'adk.workflow.name';
-const ADK_NODE_PATH = 'adk.node.path';
-const ADK_NODE_RUN_ID = 'adk.node.run_id';
-const ADK_NODE_ATTEMPT = 'adk.node.attempt';
-const ADK_NODE_STATUS = 'adk.node.status';
-const ADK_NODE_INTERRUPT_COUNT = 'adk.node.interrupt_count';
+/** ADK-specific workflow and node span attribute keys. */
+enum AdkAttr {
+  WORKFLOW_NAME = 'adk.workflow.name',
+  NODE_PATH = 'adk.node.path',
+  NODE_RUN_ID = 'adk.node.run_id',
+  NODE_ATTEMPT = 'adk.node.attempt',
+  NODE_STATUS = 'adk.node.status',
+  NODE_INTERRUPT_COUNT = 'adk.node.interrupt_count',
+}
 
-export const tracer = trace.getTracer('gcp.vertex.agent', version);
+/** GCP Vertex agent span attribute keys, consumed by the Vertex trace UI. */
+enum GcpAttr {
+  INVOCATION_ID = 'gcp.vertex.agent.invocation_id',
+  SESSION_ID = 'gcp.vertex.agent.session_id',
+  EVENT_ID = 'gcp.vertex.agent.event_id',
+  LLM_REQUEST = 'gcp.vertex.agent.llm_request',
+  LLM_RESPONSE = 'gcp.vertex.agent.llm_response',
+  TOOL_CALL_ARGS = 'gcp.vertex.agent.tool_call_args',
+  TOOL_RESPONSE = 'gcp.vertex.agent.tool_response',
+  DATA = 'gcp.vertex.agent.data',
+}
+
+/** `gen_ai.system` value identifying the ADK on Vertex as the emitter. */
+const GEN_AI_SYSTEM_VALUE = 'gcp.vertex.agent';
+
+export const tracer = trace.getTracer(GEN_AI_SYSTEM_VALUE, version);
 
 /**
  * Convert any JavaScript object to a JSON-serializable string.
@@ -89,11 +117,11 @@ export function traceAgentInvocation({
 
   // Required
   span.setAttributes({
-    [GEN_AI_OPERATION_NAME]: 'invoke_agent',
+    [GenAiAttr.OPERATION_NAME]: 'invoke_agent',
     // Conditionally Required
-    [GEN_AI_AGENT_DESCRIPTION]: agent.description,
-    [GEN_AI_AGENT_NAME]: agent.name,
-    [GEN_AI_CONVERSATION_ID]: invocationContext.session.id,
+    [GenAiAttr.AGENT_DESCRIPTION]: agent.description,
+    [GenAiAttr.AGENT_NAME]: agent.name,
+    [GenAiAttr.CONVERSATION_ID]: invocationContext.session.id,
   });
 }
 
@@ -112,10 +140,10 @@ export function traceWorkflowInvocation({
   if (!span) return;
 
   span.setAttributes({
-    [GEN_AI_OPERATION_NAME]: 'invoke_workflow',
-    [GEN_AI_CONVERSATION_ID]: sessionId,
-    [ADK_WORKFLOW_NAME]: workflowName,
-    [ADK_NODE_PATH]: nodePath,
+    [GenAiAttr.OPERATION_NAME]: 'invoke_workflow',
+    [GenAiAttr.CONVERSATION_ID]: sessionId,
+    [AdkAttr.WORKFLOW_NAME]: workflowName,
+    [AdkAttr.NODE_PATH]: nodePath,
   });
 }
 
@@ -140,12 +168,12 @@ export function traceNodeExecution({
   if (!span) return;
 
   span.setAttributes({
-    [GEN_AI_OPERATION_NAME]: 'execute_node',
-    [ADK_NODE_PATH]: nodePath,
-    [ADK_NODE_RUN_ID]: runId,
-    [ADK_NODE_ATTEMPT]: attempt,
-    [ADK_NODE_STATUS]: status,
-    [ADK_NODE_INTERRUPT_COUNT]: interruptCount,
+    [GenAiAttr.OPERATION_NAME]: 'execute_node',
+    [AdkAttr.NODE_PATH]: nodePath,
+    [AdkAttr.NODE_RUN_ID]: runId,
+    [AdkAttr.NODE_ATTEMPT]: attempt,
+    [AdkAttr.NODE_STATUS]: status,
+    [AdkAttr.NODE_INTERRUPT_COUNT]: interruptCount,
   });
 }
 
@@ -153,6 +181,7 @@ export interface TraceToolCallParams {
   tool: BaseTool;
   args: Record<string, unknown>;
   functionResponseEvent: Event;
+  invocationContext: InvocationContext;
 }
 
 /**
@@ -164,21 +193,24 @@ export function traceToolCall({
   tool,
   args,
   functionResponseEvent,
+  invocationContext,
 }: TraceToolCallParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
 
   span.setAttributes({
-    [GEN_AI_OPERATION_NAME]: 'execute_tool',
-    [GEN_AI_TOOL_DESCRIPTION]: tool.description || '',
-    [GEN_AI_TOOL_NAME]: tool.name,
+    [GenAiAttr.OPERATION_NAME]: 'execute_tool',
+    [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
+    [GenAiAttr.TOOL_DESCRIPTION]: tool.description || '',
+    [GenAiAttr.TOOL_NAME]: tool.name,
     // e.g. FunctionTool
-    [GEN_AI_TOOL_TYPE]: tool.constructor.name,
+    [GenAiAttr.TOOL_TYPE]: tool.constructor.name,
+    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
     // Setting empty llm request and response (as UI expect these) while not
     // applicable for tool_response.
-    'gcp.vertex.agent.llm_request': '{}',
-    'gcp.vertex.agent.llm_response': '{}',
-    'gcp.vertex.agent.tool_call_args': shouldAddRequestResponseToSpans()
+    [GcpAttr.LLM_REQUEST]: '{}',
+    [GcpAttr.LLM_RESPONSE]: '{}',
+    [GcpAttr.TOOL_CALL_ARGS]: shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(args)
       : '{}',
   });
@@ -202,9 +234,9 @@ export function traceToolCall({
   }
 
   span.setAttributes({
-    [GEN_AI_TOOL_CALL_ID]: toolCallId,
-    'gcp.vertex.agent.event_id': functionResponseEvent.id,
-    'gcp.vertex.agent.tool_response': shouldAddRequestResponseToSpans()
+    [GenAiAttr.TOOL_CALL_ID]: toolCallId,
+    [GcpAttr.EVENT_ID]: functionResponseEvent.id,
+    [GcpAttr.TOOL_RESPONSE]: shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(toolResponse)
       : '{}',
   });
@@ -213,6 +245,7 @@ export function traceToolCall({
 export interface TraceMergedToolCallsParams {
   responseEventId: string;
   functionResponseEvent: Event;
+  invocationContext: InvocationContext;
 }
 
 /**
@@ -226,25 +259,28 @@ export interface TraceMergedToolCallsParams {
 export function traceMergedToolCalls({
   responseEventId,
   functionResponseEvent,
+  invocationContext,
 }: TraceMergedToolCallsParams): void {
   const span = trace.getActiveSpan();
   if (!span) return;
 
   span.setAttributes({
-    [GEN_AI_OPERATION_NAME]: 'execute_tool',
-    [GEN_AI_TOOL_NAME]: '(merged tools)',
-    [GEN_AI_TOOL_DESCRIPTION]: '(merged tools)',
-    [GEN_AI_TOOL_CALL_ID]: responseEventId,
-    'gcp.vertex.agent.tool_call_args': 'N/A',
-    'gcp.vertex.agent.event_id': responseEventId,
+    [GenAiAttr.OPERATION_NAME]: 'execute_tool',
+    [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
+    [GenAiAttr.TOOL_NAME]: '(merged tools)',
+    [GenAiAttr.TOOL_DESCRIPTION]: '(merged tools)',
+    [GenAiAttr.TOOL_CALL_ID]: responseEventId,
+    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
+    [GcpAttr.TOOL_CALL_ARGS]: 'N/A',
+    [GcpAttr.EVENT_ID]: responseEventId,
     // Setting empty llm request and response (as UI expect these) while not
     // applicable for tool_response.
-    'gcp.vertex.agent.llm_request': '{}',
-    'gcp.vertex.agent.llm_response': '{}',
+    [GcpAttr.LLM_REQUEST]: '{}',
+    [GcpAttr.LLM_RESPONSE]: '{}',
   });
 
   span.setAttribute(
-    'gcp.vertex.agent.tool_response',
+    GcpAttr.TOOL_RESPONSE,
     shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(functionResponseEvent)
       : '{}',
@@ -278,47 +314,47 @@ export function traceCallLlm({
   if (!span) return;
 
   span.setAttributes({
-    'gen_ai.system': 'gcp.vertex.agent',
-    'gen_ai.request.model': llmRequest.model,
+    [GenAiAttr.SYSTEM]: GEN_AI_SYSTEM_VALUE,
+    [GenAiAttr.REQUEST_MODEL]: llmRequest.model,
     ...(invocationContext.agent?.name
-      ? {[GEN_AI_AGENT_NAME]: invocationContext.agent.name}
+      ? {[GenAiAttr.AGENT_NAME]: invocationContext.agent.name}
       : {}),
-    'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
-    'gcp.vertex.agent.session_id': invocationContext.session.id,
-    'gcp.vertex.agent.event_id': eventId,
+    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
+    [GcpAttr.SESSION_ID]: invocationContext.session.id,
+    [GcpAttr.EVENT_ID]: eventId,
     // Consider removing once GenAI SDK provides a way to record this info.
-    'gcp.vertex.agent.llm_request': shouldAddRequestResponseToSpans()
+    [GcpAttr.LLM_REQUEST]: shouldAddRequestResponseToSpans()
       ? safeJsonSerialize(buildLlmRequestForTrace(llmRequest))
       : '{}',
   });
 
   // Consider removing once GenAI SDK provides a way to record this info.
   if (llmRequest.config?.topP) {
-    span.setAttribute('gen_ai.request.top_p', llmRequest.config.topP);
+    span.setAttribute(GenAiAttr.REQUEST_TOP_P, llmRequest.config.topP);
   }
 
   if (llmRequest.config?.maxOutputTokens !== undefined) {
     span.setAttribute(
-      'gen_ai.request.max_tokens',
+      GenAiAttr.REQUEST_MAX_TOKENS,
       llmRequest.config.maxOutputTokens,
     );
   }
 
   span.setAttribute(
-    'gcp.vertex.agent.llm_response',
+    GcpAttr.LLM_RESPONSE,
     shouldAddRequestResponseToSpans() ? safeJsonSerialize(llmResponse) : '{}',
   );
 
   if (llmResponse.usageMetadata) {
     span.setAttribute(
-      'gen_ai.usage.input_tokens',
+      GenAiAttr.USAGE_INPUT_TOKENS,
       llmResponse.usageMetadata.promptTokenCount || 0,
     );
   }
 
   if (llmResponse.usageMetadata?.candidatesTokenCount) {
     span.setAttribute(
-      'gen_ai.usage.output_tokens',
+      GenAiAttr.USAGE_OUTPUT_TOKENS,
       llmResponse.usageMetadata.candidatesTokenCount,
     );
   }
@@ -329,7 +365,7 @@ export function traceCallLlm({
       typeof llmResponse.finishReason === 'string'
         ? llmResponse.finishReason.toLowerCase()
         : String(llmResponse.finishReason).toLowerCase();
-    span.setAttribute('gen_ai.response.finish_reasons', [finishReasonValue]);
+    span.setAttribute(GenAiAttr.RESPONSE_FINISH_REASONS, [finishReasonValue]);
   }
 }
 
@@ -359,15 +395,15 @@ export function traceSendData({
   if (!span) return;
 
   span.setAttributes({
-    'gcp.vertex.agent.invocation_id': invocationContext.invocationId,
-    'gcp.vertex.agent.event_id': eventId,
+    [GcpAttr.INVOCATION_ID]: invocationContext.invocationId,
+    [GcpAttr.EVENT_ID]: eventId,
   });
 
   // Once instrumentation is added to the GenAI SDK, consider whether this
   // information still needs to be recorded by the Agent Development Kit.
 
   span.setAttribute(
-    'gcp.vertex.agent.data',
+    GcpAttr.DATA,
     shouldAddRequestResponseToSpans() ? safeJsonSerialize(data) : '{}',
   );
 }

@@ -105,6 +105,101 @@ describe('getContents', () => {
     expect(textPart?.text).toContain('[object Object]');
   });
 
+  it('should not render the text "undefined" when toJSON returns nothing', () => {
+    const args: Record<string, unknown> = {toJSON: () => undefined};
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'to_json_nothing_tool', args}}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('to_json_nothing_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `to_json_nothing_tool` with parameters: [object Object]',
+    );
+  });
+
+  it('should serialize a null-prototype argument object', () => {
+    const args: Record<string, unknown> = Object.create(null);
+    args['a'] = 1;
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'null_proto_tool', args}}],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('null_proto_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `null_proto_tool` with parameters: {"a":1}',
+    );
+  });
+
+  it('should not throw on a circular null-prototype argument object', () => {
+    const args: Record<string, unknown> = Object.create(null);
+    args['self'] = args;
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionCall: {name: 'null_proto_circular_tool', args}}],
+      },
+    });
+
+    expect(() => getContents([event], 'current_agent')).not.toThrow();
+
+    const contents = getContents([event], 'current_agent');
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('null_proto_circular_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] called tool `null_proto_circular_tool` with parameters: <unstringifiable value>',
+    );
+  });
+
+  it('should not throw when both toJSON and toString throw', () => {
+    const response: Record<string, unknown> = {
+      toJSON: () => {
+        throw new Error('toJSON failed');
+      },
+      toString: () => {
+        throw new Error('toString failed');
+      },
+    };
+
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [{functionResponse: {name: 'hostile_tool', response}}],
+      },
+    });
+
+    expect(() => getContents([event], 'current_agent')).not.toThrow();
+
+    const contents = getContents([event], 'current_agent');
+    const textPart = contents[0].parts?.find((p) =>
+      p.text?.includes('hostile_tool'),
+    );
+    expect(textPart?.text).toBe(
+      '[other_agent] tool `hostile_tool` returned result: <unstringifiable value>',
+    );
+  });
+
   it('should rearrange basic function call and response events correctly', () => {
     const e0 = createEvent({
       author: 'user',

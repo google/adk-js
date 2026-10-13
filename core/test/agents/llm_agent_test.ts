@@ -5,6 +5,7 @@
  */
 
 import {
+  ActiveStreamingTool,
   AUTH_PREPROCESSOR,
   BaseLlm,
   BaseLlmConnection,
@@ -12,26 +13,33 @@ import {
   BaseLlmResponseProcessor,
   BasePlugin,
   BaseTool,
+  BuiltInPlanner,
   CONTENT_REQUEST_PROCESSOR,
   Context,
   ContextCompactorRequestProcessor,
   createEvent,
+  createRunConfig,
   createSession,
   Event,
   FunctionTool,
   InMemorySessionService,
+  INTERACTIONS_REQUEST_PROCESSOR,
   InvocationContext,
+  LiveRequestQueue,
   LlmAgent,
   LlmRequest,
   LlmResponse,
   LongRunningFunctionTool,
+  PlanReActPlanner,
   PluginManager,
+  ReadonlyContext,
   RunAsyncToolRequest,
   Runner,
   Session,
+  StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
-import {Content, Schema, Type} from '@google/genai';
+import {Content, Modality, Schema, Type} from '@google/genai';
 import {
   afterEach,
   beforeEach,
@@ -43,6 +51,21 @@ import {
 } from 'vitest';
 import {z as z3} from 'zod/v3';
 import {z as z4} from 'zod/v4';
+import {AGENT_TRANSFER_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/agent_transfer_llm_request_processor.js';
+import {BASIC_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/basic_llm_request_processor.js';
+import {
+  CODE_EXECUTION_REQUEST_PROCESSOR,
+  responseProcessor as CODE_EXECUTION_RESPONSE_PROCESSOR,
+} from '../../src/agents/processors/code_execution_request_processor.js';
+import {IDENTITY_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/identity_llm_request_processor.js';
+import {INSTRUCTIONS_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/instructions_llm_request_processor.js';
+import {
+  NL_PLANNING_REQUEST_PROCESSOR,
+  NL_PLANNING_RESPONSE_PROCESSOR,
+} from '../../src/agents/processors/nl_planning_processor.js';
+import {REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_confirmation_llm_request_processor.js';
+import {REQUEST_INPUT_LLM_REQUEST_PROCESSOR} from '../../src/agents/processors/request_input_llm_request_processor.js';
+import {TOOL_FILTER_REQUEST_PROCESSOR} from '../../src/agents/processors/tool_filter_request_processor.js';
 import {logger} from '../../src/utils/logger.js';
 
 class MockLlmConnection implements BaseLlmConnection {
@@ -1276,7 +1299,7 @@ describe('LlmAgent usage metadata on content-less responses', () => {
     return events;
   }
 
-  // In SSE streaming, StreamingResponseAggregator.close() reports a turn's
+  // In SSE streaming, GeminiStreamingResponseAggregator.close() reports a turn's
   // token counts on a response with no content, because the turn's parts were
   // already yielded. Skipping it loses that turn's usage entirely, and the loss
   // is silent: downstream, "no usage reported" and "zero tokens used" are the
@@ -1326,6 +1349,79 @@ describe('LlmAgent usage metadata on content-less responses', () => {
     const events = await runAndCollect();
 
     expect(events.find((e) => e.usageMetadata)).toBeUndefined();
+  });
+
+  it('does not call the parent model again after transfer_to_agent when a trailing usage-only chunk arrives in SSE mode', async () => {
+    const usage = {
+      promptTokenCount: 10,
+      candidatesTokenCount: 2,
+      totalTokenCount: 12,
+    };
+    const childModel = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'child answer'}]},
+          partial: false,
+        },
+        {usageMetadata: usage},
+      ],
+    ]);
+    const parentModel = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'child'},
+                },
+              },
+            ],
+          },
+        },
+        {usageMetadata: usage},
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'parent answers again'}]},
+        },
+      ],
+    ]);
+
+    const child = new LlmAgent({name: 'child', model: childModel});
+    const parent = new LlmAgent({
+      name: 'parent',
+      subAgents: [child],
+      model: parentModel,
+    });
+
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+      sessionId: 's',
+    });
+    const runner = new Runner({appName: 'app', agent: parent, sessionService});
+
+    const texts: Array<[string | undefined, string]> = [];
+    for await (const event of runner.runAsync({
+      userId: 'u',
+      sessionId: 's',
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      runConfig: {streamingMode: StreamingMode.SSE},
+    })) {
+      for (const part of event.content?.parts ?? []) {
+        if (part.text) {
+          texts.push([event.author, part.text]);
+        }
+      }
+    }
+
+    expect(parentModel.callCount).toBe(1);
+    expect(childModel.callCount).toBe(1);
+    expect(texts).toEqual([['child', 'child answer']]);
   });
 });
 
@@ -1427,5 +1523,827 @@ describe('LlmAgent unresolvable tool calls', () => {
     expect(responses[0].functionResponse!.response).toHaveProperty('error');
 
     expect(parts.some((p) => p.text === 'Recovered.')).toBe(true);
+  });
+});
+
+/**
+ * Asserts that `actual` holds exactly the `expected` processor instances, in
+ * order. `toEqual` is not enough: it ignores class types, so two stateless
+ * processors compare equal.
+ */
+function expectSameInstances(actual: unknown[], expected: unknown[]) {
+  expect(actual).toHaveLength(expected.length);
+  actual.forEach((item, i) => expect(item).toBe(expected[i]));
+}
+
+describe('LlmAgent planning processor positions', () => {
+  const DEFAULT_REQUEST_PROCESSORS = [
+    BASIC_LLM_REQUEST_PROCESSOR,
+    AUTH_PREPROCESSOR,
+    IDENTITY_LLM_REQUEST_PROCESSOR,
+    INSTRUCTIONS_LLM_REQUEST_PROCESSOR,
+    REQUEST_CONFIRMATION_LLM_REQUEST_PROCESSOR,
+    REQUEST_INPUT_LLM_REQUEST_PROCESSOR,
+    CONTENT_REQUEST_PROCESSOR,
+    NL_PLANNING_REQUEST_PROCESSOR,
+    INTERACTIONS_REQUEST_PROCESSOR,
+    CODE_EXECUTION_REQUEST_PROCESSOR,
+    TOOL_FILTER_REQUEST_PROCESSOR,
+    AGENT_TRANSFER_LLM_REQUEST_PROCESSOR,
+  ];
+
+  it('places the planning request processor right after the content processor', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+    const processors = agent.requestProcessors;
+    const planningIndex = processors.indexOf(NL_PLANNING_REQUEST_PROCESSOR);
+
+    expect(processors[processors.indexOf(CONTENT_REQUEST_PROCESSOR) + 1]).toBe(
+      NL_PLANNING_REQUEST_PROCESSOR,
+    );
+    expect(processors.indexOf(INTERACTIONS_REQUEST_PROCESSOR)).toBe(
+      planningIndex + 1,
+    );
+    expectSameInstances(processors, DEFAULT_REQUEST_PROCESSORS);
+  });
+
+  it('keeps the compactor before the content processor', () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      contextCompactors: [{shouldCompact: () => false, compact: () => {}}],
+    });
+    const processors = agent.requestProcessors;
+    const contentIndex = processors.indexOf(CONTENT_REQUEST_PROCESSOR);
+
+    expect(processors[contentIndex - 1]).toEqual(
+      expect.any(ContextCompactorRequestProcessor),
+    );
+    expectSameInstances(
+      processors.filter((_, i) => i !== contentIndex - 1),
+      DEFAULT_REQUEST_PROCESSORS,
+    );
+  });
+
+  it('uses the planning and code execution response processors as the defaults', () => {
+    const agent = new LlmAgent({name: 'test_agent'});
+
+    expectSameInstances(agent.responseProcessors, [
+      NL_PLANNING_RESPONSE_PROCESSOR,
+      CODE_EXECUTION_RESPONSE_PROCESSOR,
+    ]);
+  });
+
+  it('lets caller-supplied processor lists replace the defaults', () => {
+    const requestProcessor = new MockRequestProcessor();
+    const responseProcessor = new MockResponseProcessor();
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      disallowTransferToParent: true,
+      disallowTransferToPeers: true,
+      planner: new PlanReActPlanner(),
+      requestProcessors: [requestProcessor],
+      responseProcessors: [responseProcessor],
+    });
+
+    expectSameInstances(agent.requestProcessors, [requestProcessor]);
+    expectSameInstances(agent.responseProcessors, [responseProcessor]);
+    expect(agent.requestProcessors).not.toContain(
+      NL_PLANNING_REQUEST_PROCESSOR,
+    );
+    expect(agent.responseProcessors).not.toContain(
+      NL_PLANNING_RESPONSE_PROCESSOR,
+    );
+  });
+});
+
+describe('LlmAgent planner configuration', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('stores the planner', () => {
+    const planner = new PlanReActPlanner();
+    const agent = new LlmAgent({name: 'test_agent', planner});
+
+    expect(agent.planner).toBe(planner);
+  });
+
+  it('warns once when both thinking configs are set', () => {
+    const agent = new LlmAgent({
+      name: 'test_agent',
+      planner: new BuiltInPlanner({thinkingConfig: {thinkingBudget: 1024}}),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('test_agent');
+    expect(warnSpy.mock.calls[0][0]).toContain('takes precedence');
+    expect(agent.generateContentConfig?.thinkingConfig).toEqual({
+      thinkingBudget: 0,
+    });
+  });
+
+  it('does not warn when only the planner has a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      planner: new BuiltInPlanner({thinkingConfig: {thinkingBudget: 1024}}),
+      generateContentConfig: {temperature: 0.1},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when only generateContentConfig has a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not warn for a PlanReActPlanner with a thinking config', () => {
+    new LlmAgent({
+      name: 'test_agent',
+      planner: new PlanReActPlanner(),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('LlmAgent run with a planner', () => {
+  /**
+   * Snapshots every request it receives and yields a new response object on
+   * each call, so that the planning response processor cannot leak state
+   * between calls.
+   */
+  class PlanningCapturingLlm extends BaseLlm {
+    capturedRequests: Array<Pick<LlmRequest, 'contents' | 'config'>> = [];
+
+    constructor() {
+      super({model: 'planning-capturing-llm'});
+    }
+
+    async *generateContentAsync(
+      request: LlmRequest,
+    ): AsyncGenerator<LlmResponse, void, void> {
+      this.capturedRequests.push(
+        structuredClone({contents: request.contents, config: request.config}),
+      );
+      yield {
+        content: {
+          role: 'model',
+          parts: [
+            {text: '/*PLANNING*/1. answer'},
+            {text: '/*REASONING*/simple/*FINAL_ANSWER*/42'},
+          ],
+        },
+      };
+    }
+
+    async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      return new MockLlmConnection();
+    }
+  }
+
+  function createSeededSession(): Session {
+    return createSession({
+      id: 'sess_planner',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'earlier',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'first question'}]},
+        }),
+        createEvent({
+          invocationId: 'earlier',
+          author: 'planner_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {text: '/*PLANNING*/old plan', thought: true},
+              {text: 'old answer'},
+            ],
+          },
+        }),
+        createEvent({
+          invocationId: 'inv_planner',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'second question'}]},
+        }),
+      ],
+    });
+  }
+
+  async function runAgent(agent: LlmAgent, session: Session): Promise<Event[]> {
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(
+      new InvocationContext({
+        invocationId: 'inv_planner',
+        session,
+        agent,
+        pluginManager: new PluginManager(),
+      }),
+    )) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it('sends the BuiltInPlanner thinking config instead of generateContentConfig', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
+    const llm = new PlanningCapturingLlm();
+    const plannerThinkingConfig = {includeThoughts: true, thinkingBudget: 512};
+    const agent = new LlmAgent({
+      name: 'planner_agent',
+      model: llm,
+      planner: new BuiltInPlanner({thinkingConfig: plannerThinkingConfig}),
+      generateContentConfig: {thinkingConfig: {thinkingBudget: 0}},
+    });
+
+    const events = await runAgent(agent, createSeededSession());
+
+    expect(llm.capturedRequests).toHaveLength(1);
+    expect(llm.capturedRequests[0].config?.thinkingConfig).toEqual(
+      plannerThinkingConfig,
+    );
+    expect(agent.generateContentConfig?.thinkingConfig).toEqual({
+      thinkingBudget: 0,
+    });
+    const modelEvent = events.find((e) => e.author === 'planner_agent');
+    expect(modelEvent?.content?.parts).toEqual([
+      {text: '/*PLANNING*/1. answer'},
+      {text: '/*REASONING*/simple/*FINAL_ANSWER*/42'},
+    ]);
+  });
+
+  it('runs a PlanReActPlanner end to end', async () => {
+    const llm = new PlanningCapturingLlm();
+    const planner = new PlanReActPlanner();
+    const agent = new LlmAgent({
+      name: 'planner_agent',
+      model: llm,
+      instruction: 'Answer questions.',
+      planner,
+    });
+    const session = createSeededSession();
+
+    const events = await runAgent(agent, session);
+
+    expect(llm.capturedRequests).toHaveLength(1);
+    const request = llm.capturedRequests[0];
+    const planningInstruction = planner.buildPlanningInstruction(
+      new ReadonlyContext(
+        new InvocationContext({
+          invocationId: 'inv_planner',
+          session,
+          agent,
+          pluginManager: new PluginManager(),
+        }),
+      ),
+      {contents: [], toolsDict: {}, liveConnectConfig: {}},
+    );
+    expect(request.config?.systemInstruction).toContain('Answer questions.');
+    expect(request.config?.systemInstruction).toContain(planningInstruction);
+
+    const requestParts = request.contents.flatMap((c) => c.parts ?? []);
+    expect(requestParts.some((p) => p.text === '/*PLANNING*/old plan')).toBe(
+      true,
+    );
+    for (const part of requestParts) {
+      expect(part).not.toHaveProperty('thought');
+    }
+    expect(session.events[1].content?.parts?.[0]).toEqual({
+      text: '/*PLANNING*/old plan',
+      thought: true,
+    });
+
+    const modelEvent = events.find((e) => e.author === 'planner_agent');
+    expect(modelEvent?.content?.parts).toEqual([
+      {text: '/*PLANNING*/1. answer', thought: true},
+      {text: '/*REASONING*/simple/*FINAL_ANSWER*/', thought: true},
+      {text: '42'},
+    ]);
+  });
+});
+
+describe('LlmAgent live streaming tools and supportCfc', () => {
+  class ScriptedLiveConnection extends MockLlmConnection {
+    sentContents: Content[] = [];
+    sentBlobs: Array<{data: string; mimeType: string}> = [];
+    closed = false;
+    private yielded = false;
+
+    constructor(private readonly responses: LlmResponse[]) {
+      super();
+    }
+
+    override async sendContent(content: Content): Promise<void> {
+      this.sentContents.push(content);
+    }
+
+    override async sendRealtime(blob: {
+      data: string;
+      mimeType: string;
+    }): Promise<void> {
+      this.sentBlobs.push(blob);
+    }
+
+    override async *receive(): AsyncGenerator<LlmResponse, void, void> {
+      if (this.closed || this.yielded) {
+        return;
+      }
+      this.yielded = true;
+      for (const response of this.responses) {
+        if (this.closed) {
+          return;
+        }
+        yield response;
+      }
+    }
+
+    override async close(): Promise<void> {
+      this.closed = true;
+    }
+  }
+
+  class ScriptedLiveLlm extends BaseLlm {
+    lastConnectedRequest?: LlmRequest;
+
+    constructor(private readonly connection: ScriptedLiveConnection) {
+      super({model: 'gemini-2.0-flash'});
+    }
+
+    async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+      yield* [];
+      throw new Error('generateContentAsync should not be called in live/CFC');
+    }
+
+    async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+      this.lastConnectedRequest = llmRequest;
+      return this.connection;
+    }
+  }
+
+  it('sets responseModalities to [Modality.TEXT], runs afterModelCallback, filters partial responses unless SSE, and closes queue on turnComplete when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'partial chunk'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'final cfc answer'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const afterSeen: string[] = [];
+    const agent = new LlmAgent({
+      name: 'cfc_agent',
+      model: llm,
+      afterModelCallback: ({response}) => {
+        const text = response.content?.parts?.[0]?.text;
+        if (text) {
+          afterSeen.push(text);
+        }
+        if (text === 'final cfc answer') {
+          return {
+            ...response,
+            content: {
+              role: 'model',
+              parts: [{text: 'final cfc answer (callback)'}],
+            },
+          };
+        }
+        return undefined;
+      },
+    });
+    const session = createSession({
+      id: 'sess_cfc_none',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_none',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'run cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_none',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.NONE,
+        responseModalities: [Modality.AUDIO],
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      llm.lastConnectedRequest?.liveConnectConfig?.responseModalities,
+    ).toEqual([Modality.TEXT]);
+    expect(afterSeen).toEqual(['partial chunk', 'final cfc answer']);
+    expect(events).toHaveLength(1);
+    expect(events[0].content?.parts).toEqual([
+      {text: 'final cfc answer (callback)'},
+    ]);
+    expect(connection.closed).toBe(true);
+  });
+
+  it('yields partial events in callLlmAsync when supportCfc is true and streamingMode is SSE', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'sse partial'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'sse final'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_sse_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_sse',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_sse',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'stream cfc'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_sse',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        streamingMode: StreamingMode.SSE,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(
+      events.map((e) => ({
+        partial: e.partial,
+        text: e.content?.parts?.[0]?.text,
+      })),
+    ).toEqual([
+      {partial: true, text: 'sse partial'},
+      {partial: false, text: 'sse final'},
+    ]);
+  });
+
+  it('forwards liveRequestQueue items to activeStreamingTools streams and executes streaming tools in postprocessLive', async () => {
+    const toolStream = new LiveRequestQueue();
+    const streamTool = new FunctionTool({
+      name: 'liveStreamTool',
+      description: 'yields live updates',
+      parameters: z4.object({topic: z4.string()}),
+      execute: async function* ({topic}) {
+        yield `update:${topic}`;
+      },
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-live-stream-1',
+                name: 'liveStreamTool',
+                args: {topic: 'weather'},
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'live_stream_agent',
+      model: llm,
+      tools: [streamTool],
+    });
+    const session = createSession({
+      id: 'sess_live_stream',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.sendRealtime({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+    liveRequestQueue.close();
+
+    const ctx = new InvocationContext({
+      invocationId: 'inv_live_stream',
+      session,
+      agent,
+      liveRequestQueue,
+      activeStreamingTools: {
+        existingListener: new ActiveStreamingTool({stream: toolStream}),
+      },
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runLive(ctx)) {
+      events.push(event);
+    }
+
+    const forwardedBlob = await toolStream.get();
+    expect(forwardedBlob.blob).toEqual({
+      data: 'audio-bytes',
+      mimeType: 'audio/pcm',
+    });
+
+    const functionResponseEvent = events.find(
+      (e) => e.content?.parts?.[0]?.functionResponse !== undefined,
+    );
+    expect(functionResponseEvent?.content?.parts).toEqual([
+      {
+        functionResponse: {
+          id: 'fc-live-stream-1',
+          name: 'liveStreamTool',
+          response: {
+            status:
+              'The function is running asynchronously and the results are pending.',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('executes a tool call and responseProcessors exactly once when supportCfc is true', async () => {
+    const toolExecute = vi.fn().mockResolvedValue({sum: 7});
+    const addTool = new FunctionTool({
+      name: 'add_numbers',
+      description: 'Adds two numbers',
+      parameters: z4.object({a: z4.number(), b: z4.number()}),
+      execute: toolExecute,
+    });
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'fc-cfc-1',
+                name: 'add_numbers',
+                args: {a: 3, b: 4},
+              },
+            },
+          ],
+        },
+      },
+      {
+        content: {
+          role: 'model',
+          parts: [{text: 'The sum is 7.'}],
+        },
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    let responseProcessorRuns = 0;
+    class CountingResponseProcessor extends BaseLlmResponseProcessor {
+      async *runAsync(): AsyncGenerator<Event, void, void> {
+        responseProcessorRuns += 1;
+        yield* [];
+      }
+    }
+    const agent = new LlmAgent({
+      name: 'cfc_tool_agent',
+      model: llm,
+      tools: [addTool],
+      responseProcessors: [new CountingResponseProcessor()],
+    });
+    const session = createSession({
+      id: 'sess_cfc_tool',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_tool',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'add 3 and 4'}]},
+        }),
+      ],
+    });
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_tool',
+      session,
+      agent,
+      runConfig: createRunConfig({
+        supportCfc: true,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    const events: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      events.push(event);
+    }
+
+    expect(toolExecute).toHaveBeenCalledTimes(1);
+    expect(toolExecute).toHaveBeenCalledWith({a: 3, b: 4}, expect.anything());
+    expect(responseProcessorRuns).toBe(2);
+    expect(events).toHaveLength(3);
+    expect(events[0].content?.parts?.[0]?.functionCall?.name).toBe(
+      'add_numbers',
+    );
+    expect(events[1].content?.parts?.[0]?.functionResponse?.response).toEqual({
+      sum: 7,
+    });
+    expect(events[2].content?.parts?.[0]?.text).toBe('The sum is 7.');
+  });
+
+  it('enforces maxLlmCalls, preserves an existing liveRequestQueue, and closes the queue on early exit when supportCfc is true', async () => {
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'first event'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'second event'}]},
+        partial: false,
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'cfc_lifecycle_agent',
+      model: llm,
+    });
+    const session = createSession({
+      id: 'sess_cfc_lifecycle',
+      appName: 'test-app',
+      userId: 'test-user',
+      events: [
+        createEvent({
+          invocationId: 'inv_cfc_lifecycle',
+          author: 'user',
+          content: {role: 'user', parts: [{text: 'test lifecycle'}]},
+        }),
+      ],
+    });
+    const existingQueue = new LiveRequestQueue();
+    const ctx = new InvocationContext({
+      invocationId: 'inv_cfc_lifecycle',
+      session,
+      agent,
+      liveRequestQueue: existingQueue,
+      runConfig: createRunConfig({
+        supportCfc: true,
+        maxLlmCalls: 1,
+      }),
+      pluginManager: new PluginManager(),
+    });
+
+    // Break early after the first yielded event (before turnComplete).
+    for await (const event of agent.runAsync(ctx)) {
+      expect(event.content?.parts?.[0]?.text).toBe('first event');
+      break;
+    }
+
+    expect(ctx.liveRequestQueue).toBe(existingQueue);
+    expect(() =>
+      existingQueue.sendContent({role: 'user', parts: [{text: 'late'}]}),
+    ).toThrow(/Cannot send to a closed queue/);
+
+    // A second call on the same context exceeds maxLlmCalls (1).
+    const secondRunEvents: Event[] = [];
+    for await (const event of agent.runAsync(ctx)) {
+      secondRunEvents.push(event);
+    }
+    expect(secondRunEvents).toHaveLength(1);
+    expect(secondRunEvents[0].errorMessage).toMatch(
+      /Max number of llm calls limit of 1 exceeded/,
+    );
+  });
+
+  it('keeps one event id across partial chunks and final event of a streamed response, minting a fresh id only after a complete event', async () => {
+    class MultiResponseLlm extends BaseLlm {
+      constructor(private readonly responses: LlmResponse[]) {
+        super({model: 'multi-response-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        for (const response of this.responses) {
+          yield response;
+        }
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const llm = new MultiResponseLlm([
+      {
+        content: {role: 'model', parts: [{text: 'Hello '}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'world!'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Hello world!'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Second distinct response'}]},
+        partial: false,
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'streaming_id_agent',
+      model: llm,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'sess_stream_ids',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'stream please'}]},
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(4);
+    expect(events[0].partial).toBe(true);
+    expect(events[1].partial).toBe(true);
+    expect(events[2].partial).toBe(false);
+    expect(events[3].partial).toBe(false);
+
+    // Partial chunks and the final complete event of the first response share one id.
+    expect(events[1].id).toBe(events[0].id);
+    expect(events[2].id).toBe(events[0].id);
+
+    // A subsequent complete response gets a newly minted id.
+    expect(events[3].id).not.toBe(events[0].id);
+
+    // Stored session events match the complete event IDs.
+    const reloadedSession = await sessionService.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: session.id,
+    });
+    const storedAgentEvents = reloadedSession!.events.filter(
+      (e) => e.author === 'streaming_id_agent',
+    );
+    expect(storedAgentEvents.map((e) => e.id)).toEqual([
+      events[0].id,
+      events[3].id,
+    ]);
   });
 });

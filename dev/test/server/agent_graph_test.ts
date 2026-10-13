@@ -5,6 +5,7 @@
  */
 
 import {
+  BaseRetrievalTool,
   createEvent,
   DEFAULT_ROUTE,
   Edge,
@@ -15,6 +16,7 @@ import {
   LoopAgent,
   node,
   ParallelAgent,
+  RunnableRoot,
   SequentialAgent,
   Workflow,
 } from '@google/adk';
@@ -22,6 +24,7 @@ import {parse} from 'ts-graphviz/ast';
 import {describe, expect, it} from 'vitest';
 
 import {
+  getAgentGraph,
   getAgentGraphAsDot,
   getWorkflowHighlights,
 } from '../../src/server/agent_graph.js';
@@ -112,9 +115,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_sequentialAgent (Sequential Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph with highlighted nodes', async () => {
@@ -136,9 +137,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('label = "🤖 agent2";');
     expect(dotGraph).toContain('"agent1" -> "agent2"');
     expect(dotGraph).toContain('cluster_sequentialAgent (Sequential Agent)"');
-    expect(dotGraph).toContain(
-      'label = "cluster_sequentialAgent (Sequential Agent)"',
-    );
+    expect(dotGraph).toContain('label = "sequentialAgent (Sequential Agent)"');
   });
 
   it('generates a DOT graph for a LoopAgent', async () => {
@@ -181,7 +180,7 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain('"agent1" -> "tool1"');
     expect(dotGraph).toContain('"agent2" -> "tool2"');
     expect(dotGraph).toContain('subgraph "cluster_loopAgent (Loop Agent)"');
-    expect(dotGraph).toContain('label = "cluster_loopAgent (Loop Agent)"');
+    expect(dotGraph).toContain('label = "loopAgent (Loop Agent)"');
   });
 
   it('generates a DOT graph for a ParallelAgent', async () => {
@@ -224,16 +223,94 @@ describe('AgentGraph', () => {
     expect(dotGraph).toContain(
       'subgraph "cluster_parallelAgent (Parallel Agent)"',
     );
-    expect(dotGraph).toContain(
-      'label = "cluster_parallelAgent (Parallel Agent)"',
-    );
+    expect(dotGraph).toContain('label = "parallelAgent (Parallel Agent)"');
+  });
+
+  it('labels a Sequential cluster with the agent name, not the graphviz cluster id', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    expect(dot).toContain('subgraph "cluster_pipeline (Sequential Agent)"');
+    expect(dot).toContain('label = "pipeline (Sequential Agent)"');
+    expect(dot).not.toContain('label = "cluster_pipeline (Sequential Agent)"');
+  });
+
+  it('outlines a cluster instead of filling it', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
+    expect(dot).toContain('bgcolor = "#333537"');
+  });
+
+  it('labels and outlines a highlighted Sequential cluster the same way', async () => {
+    const dot = await renderDot(sequentialPipeline(), [
+      ['pipeline (Sequential Agent)', 'caller'],
+    ]);
+
+    const cluster = clusterBlock(dot, 'pipeline (Sequential Agent)');
+    expect(cluster).toContain('label = "pipeline (Sequential Agent)"');
+    expect(cluster).toContain('color = "#ffffff"');
+    expect(cluster).not.toContain('bgcolor');
+  });
+
+  it('fills a highlighted node inside a cluster in dark green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'other']]);
+
+    expect(nodeBlock(dot, 'first')).toContain('fillcolor = "#0F5223"');
+    expect(nodeBlock(dot, 'second')).toContain('fillcolor = "#ffffff"');
+  });
+
+  it('draws an unhighlighted edge inside a Sequential cluster in gray', async () => {
+    const dot = await renderDot(sequentialPipeline());
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#cccccc"');
+    expect(edge).not.toContain('#69CB87');
+  });
+
+  it('keeps a highlighted edge inside a Sequential cluster green', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['first', 'second']]);
+
+    expect(edgeBlock(dot, 'first', 'second')).toContain('color = "#69CB87"');
+  });
+
+  it('keeps a reversed highlight pair inside a cluster green and back-facing', async () => {
+    const dot = await renderDot(sequentialPipeline(), [['second', 'first']]);
+
+    const edge = edgeBlock(dot, 'first', 'second');
+    expect(edge).toContain('color = "#69CB87"');
+    expect(edge).toContain('dir = "back"');
+  });
+
+  it('draws an unhighlighted edge inside a Loop cluster in gray', async () => {
+    const loop = new LoopAgent({
+      name: 'pipeline',
+      subAgents: [
+        new LlmAgent({name: 'first'}),
+        new LlmAgent({name: 'second'}),
+      ],
+    });
+
+    const dot = await renderDot(loop);
+
+    const wrapAround = edgeBlock(dot, 'second', 'first');
+    expect(wrapAround).toContain('color = "#cccccc"');
+    expect(wrapAround).not.toContain('#69CB87');
   });
 });
+
+function sequentialPipeline(): SequentialAgent {
+  return new SequentialAgent({
+    name: 'pipeline',
+    subAgents: [new LlmAgent({name: 'first'}), new LlmAgent({name: 'second'})],
+  });
+}
 
 const noopHandler = async () => 'ok';
 
 async function renderDot(
-  agent: Workflow | SequentialAgent,
+  agent: RunnableRoot,
   highlights: Array<[string, string]> = [],
 ): Promise<string> {
   const dot = await getAgentGraphAsDot(agent, highlights);
@@ -254,6 +331,17 @@ function edgeBlock(dot: string, from: string, to: string): string {
   expect(start, `no edge "${from}" -> "${to}"`).toBeGreaterThanOrEqual(0);
 
   return dot.slice(start, dot.indexOf('];', start));
+}
+
+/** Returns a cluster's own attributes, up to its first nested statement. */
+function clusterBlock(dot: string, id: string): string {
+  const start = dot.indexOf(`subgraph "cluster_${id}" {`);
+  expect(start, `no cluster subgraph for "${id}"`).toBeGreaterThanOrEqual(0);
+
+  const end = dot.indexOf('" [', start);
+  expect(end, `cluster "${id}" holds no statement`).toBeGreaterThan(start);
+
+  return dot.slice(start, end);
 }
 
 describe('AgentGraph — graph Workflow', () => {
@@ -550,5 +638,33 @@ describe('AgentGraph — workflow execution highlights', () => {
     const event = createEvent({invocationId: 'inv-1', author: 'agent'});
 
     expect(getWorkflowHighlights([event], event)).toBeUndefined();
+  });
+});
+
+describe('AgentGraph — retrieval tools', () => {
+  it('renders BaseRetrievalTool with a magnifying glass icon and cylinder shape', async () => {
+    class TestRetrievalTool extends BaseRetrievalTool {
+      constructor() {
+        super({name: 'doc_retriever', description: 'Retrieves docs'});
+      }
+      override async runAsync(): Promise<unknown> {
+        return 'doc';
+      }
+    }
+
+    const agent = new LlmAgent({
+      name: 'ragAgent',
+      tools: [new TestRetrievalTool()],
+    });
+
+    const dotGraph = await getAgentGraphAsDot(agent, []);
+    expect(dotGraph).toContain('label = "🔎 doc_retriever"');
+    expect(dotGraph).toContain('shape = "cylinder"');
+
+    const digraph = await getAgentGraph(agent, [], false);
+    expect(Buffer.isBuffer(digraph)).toBe(false);
+    if (!Buffer.isBuffer(digraph)) {
+      expect(digraph.id).toBe('ragAgent');
+    }
   });
 });

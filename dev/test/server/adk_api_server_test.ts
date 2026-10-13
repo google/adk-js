@@ -6,25 +6,34 @@
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
 import {
+  App,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
   createEvent,
   createSession,
+  EVAL_SESSION_ID_PREFIX,
+  EvalStatus,
   Event,
   FunctionTool,
   InMemoryArtifactService,
   InMemoryMemoryService,
   InMemorySessionService,
+  INTERNAL_METADATA_PREFIX,
   InvocationContext,
   LlmAgent,
   node,
+  RESTORED_EVENT_KEY,
   Runner,
   Session,
+  StreamingMode,
   Workflow,
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 
@@ -643,6 +652,39 @@ describe('AdkWebServer', () => {
       );
     });
 
+    it('should find session in /run when exported App.name differs from route appName', async () => {
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load() {
+            return Promise.resolve(
+              new App({name: 'real_name', rootAgent: TEST_AGENT}),
+            );
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await client.post<Session>(
+        '/apps/my_file/users/testUser/sessions/sessionId',
+        {},
+      );
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'my_file',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.data)).toBe(true);
+      expect(response.data!.length).toBe(3);
+    });
+
     it('should update session state if stateDelta is provided', async () => {
       await sessionService.createSession({
         appName: 'testApp',
@@ -804,6 +846,177 @@ describe('AdkWebServer', () => {
 
       spy.mockRestore();
     });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+
+      spy.mockRestore();
+    });
+
+    it('leaves customMetadata undefined when the body omits it', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toBeUndefined();
+
+      spy.mockRestore();
+    });
+
+    it('stamps customMetadata onto the user message event persisted in the session', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        customMetadata: {requestId: 'abc-123'},
+      });
+
+      expect(response.status).toBe(200);
+      const session = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      const userEvent = session?.events.find((e) => e.author === 'user');
+      expect(userEvent?.customMetadata).toEqual({requestId: 'abc-123'});
+    });
+  });
+
+  describe('ADK-internal customMetadata', () => {
+    const INTERNAL_KEY = `${INTERNAL_METADATA_PREFIX}stamp`;
+    const runBody = {
+      appName: 'testApp',
+      userId: 'testUser',
+      sessionId: 'sessionId',
+      newMessage: {parts: [{text: 'Hello'}], role: 'user'},
+    };
+
+    beforeEach(async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+    });
+
+    it('is hidden from session endpoints but kept in storage', async () => {
+      const session = (await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      }))!;
+      await sessionService.appendEvent({
+        session,
+        event: createEvent({
+          author: 'user',
+          customMetadata: {keep: 1, [RESTORED_EVENT_KEY]: true},
+        }),
+      });
+
+      const fetched = await client.get<Session>(
+        '/apps/testApp/users/testUser/sessions/sessionId',
+      );
+      const listed = await client.get<{sessions: Session[]}>(
+        '/apps/testApp/users/testUser/sessions',
+      );
+
+      expect(fetched.data?.events[0].customMetadata).toEqual({keep: 1});
+      const listedSession = listed.data?.sessions.find(
+        (s) => s.id === 'sessionId',
+      );
+      // The in-memory service lists sessions without events; others may not.
+      for (const event of listedSession?.events ?? []) {
+        expect(event.customMetadata).toEqual({keep: 1});
+      }
+      const stored = await sessionService.getSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      expect(stored?.events[0].customMetadata).toEqual({
+        keep: 1,
+        [RESTORED_EVENT_KEY]: true,
+      });
+    });
+
+    it.each(['/run', '/run_sse'])(
+      'is hidden from events streamed by %s',
+      async (endpoint) => {
+        const spy = vi
+          .spyOn(Runner.prototype, 'runAsync')
+          .mockImplementation(async function* () {
+            yield createEvent({
+              author: 'testAgent',
+              content: {role: 'model', parts: [{text: 'reply'}]},
+              customMetadata: {keep: 1, [INTERNAL_KEY]: 'x'},
+            });
+          });
+
+        const response = await client.post<Event[]>(endpoint, runBody);
+
+        const events =
+          endpoint === '/run'
+            ? response.data!
+            : response
+                .text!.split('\n')
+                .filter((line) => line.startsWith('data: '))
+                .map(
+                  (line) => JSON.parse(line.slice('data: '.length)) as Event,
+                );
+        expect(events.map((e) => e.customMetadata)).toEqual([{keep: 1}]);
+        spy.mockRestore();
+      },
+    );
   });
 
   describe('run_sse', () => {
@@ -941,6 +1154,40 @@ describe('AdkWebServer', () => {
       const runAsyncParams = spy.mock.calls[0][0];
       expect(runAsyncParams.abortSignal).toBeDefined();
       expect(runAsyncParams.abortSignal).toBeInstanceOf(AbortSignal);
+
+      spy.mockRestore();
+    });
+
+    it('forwards customMetadata from the request body to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post('/run_sse', {
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+        streaming: true,
+        customMetadata: {requestId: 'abc-123', tenant: 'acme'},
+      });
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const runAsyncParams = spy.mock.calls[0][0];
+      expect(runAsyncParams.customMetadata).toEqual({
+        requestId: 'abc-123',
+        tenant: 'acme',
+      });
+      // The metadata travels beside runConfig, so streaming is unaffected.
+      expect(runAsyncParams.runConfig?.streamingMode).toBe(StreamingMode.SSE);
 
       spy.mockRestore();
     });
@@ -1545,6 +1792,9 @@ describe('AdkWebServer', () => {
 
         expect(response.status).toBe(200);
         expect(response.data?.name).toBe('testAgent');
+        expect(response.data?.url).toBe(
+          `${a2aServer!.url}/a2a/testApp/jsonrpc`,
+        );
       },
     );
 
@@ -1643,6 +1893,40 @@ describe('AdkWebServer', () => {
       expect(response.data?.output[0].content?.parts?.[0].text).toBe(
         "Hello user! I'm streaming you events now!",
       );
+    });
+
+    it('forwards customMetadata from the reasoning engine input to Runner.runAsync', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+
+      const spy = vi.spyOn(Runner.prototype, 'runAsync');
+
+      const response = await client.post<{output: Event[]}>(
+        '/api/reasoning_engine',
+        {
+          input: {
+            appName: 'testApp',
+            userId: 'testUser',
+            sessionId: 'sessionId',
+            newMessage: {
+              parts: [{text: 'Hello'}],
+              role: 'user',
+            },
+            customMetadata: {requestId: 'abc-123'},
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].customMetadata).toEqual({
+        requestId: 'abc-123',
+      });
+
+      spy.mockRestore();
     });
 
     it('should auto-create session if not exists on reasoning_engine query', async () => {
@@ -1917,6 +2201,243 @@ describe('AdkWebServer', () => {
       for (const eventId of INHERITED_KEYS) {
         const response = await fetch(`${server.url}/debug/trace/${eventId}`);
         expect(response.status).toBe(404);
+      }
+    });
+  });
+
+  describe('Eval sets, artifact versions, and live WebSocket endpoints', () => {
+    it('filters out eval sessions starting with EVAL_SESSION_ID_PREFIX in list_sessions', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'normal_session',
+      });
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: `${EVAL_SESSION_ID_PREFIX}hidden_session`,
+      });
+
+      const response = await client.get<{sessions: Session[]}>(
+        '/apps/testApp/users/testUser/sessions',
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.data?.sessions.map((s) => s.id)).toEqual([
+        'normal_session',
+      ]);
+    });
+
+    it('supports optional ?version query param on load_artifact endpoint', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+      });
+      await artifactService.saveArtifact({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        filename: 'doc.txt',
+        artifact: {text: 'v0-text'},
+      });
+      await artifactService.saveArtifact({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        filename: 'doc.txt',
+        artifact: {text: 'v1-text'},
+      });
+
+      const v0 = await client.get<{text: string}>(
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/doc.txt?version=0',
+      );
+      const latest = await client.get<{text: string}>(
+        '/apps/testApp/users/testUser/sessions/sessionId/artifacts/doc.txt',
+      );
+
+      expect(v0.data).toEqual({text: 'v0-text'});
+      expect(latest.data).toEqual({text: 'v1-text'});
+    });
+
+    it('streams live events over the /run_live WebSocket endpoint (test_websocket_endpoint)', async () => {
+      await sessionService.createSession({
+        appName: 'testApp',
+        userId: 'testUser',
+        sessionId: 'liveSessionId',
+      });
+
+      const target = new URL(
+        `${server.url}/run_live?app_name=testApp&user_id=testUser&session_id=liveSessionId&modalities=TEXT`,
+      );
+
+      const receivedEvent = await new Promise<Event>((resolve, reject) => {
+        const req = http.request({
+          host: target.hostname,
+          port: target.port,
+          path: `${target.pathname}${target.search}`,
+          method: 'GET',
+          headers: {
+            Connection: 'Upgrade',
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Key':
+              Buffer.from('1234567890123456').toString('base64'),
+            'Sec-WebSocket-Version': '13',
+          },
+        });
+
+        req.on('upgrade', (_res, socket, head) => {
+          let buf = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+
+          const tryParseFrame = () => {
+            if (buf.length < 2) {
+              return;
+            }
+            const opcode = buf[0] & 0x0f;
+            let len = buf[1] & 0x7f;
+            let offset = 2;
+            if (len === 126) {
+              if (buf.length < 4) {
+                return;
+              }
+              len = buf.readUInt16BE(2);
+              offset = 4;
+            }
+            if (buf.length < offset + len) {
+              return;
+            }
+            const payload = buf.subarray(offset, offset + len);
+            buf = buf.subarray(offset + len);
+            if (opcode === 0x01) {
+              socket.destroy();
+              resolve(JSON.parse(payload.toString('utf-8')) as Event);
+            }
+          };
+
+          socket.on('data', (chunk: Buffer) => {
+            buf = Buffer.concat([buf, Buffer.from(chunk)]);
+            tryParseFrame();
+          });
+          socket.on('error', reject);
+
+          // Send a masked client text frame with a LiveRequest message.
+          const msg = Buffer.from(
+            JSON.stringify({
+              content: {role: 'user', parts: [{text: 'Hello live'}]},
+            }),
+            'utf-8',
+          );
+          const mask = Buffer.from([1, 2, 3, 4]);
+          const masked = Buffer.alloc(msg.length);
+          for (let i = 0; i < msg.length; i++) {
+            masked[i] = msg[i] ^ mask[i % 4];
+          }
+          socket.write(
+            Buffer.concat([
+              Buffer.from([0x81, 0x80 | msg.length]),
+              mask,
+              masked,
+            ]),
+          );
+          tryParseFrame();
+        });
+
+        req.on('error', reject);
+        req.end();
+      });
+
+      expect(receivedEvent.author).toBe('testAgent');
+      expect(receivedEvent.content?.parts?.[0].text).toBe('test live content');
+    });
+
+    it('creates, lists, populates, and runs eval sets through the eval_sets endpoints', async () => {
+      const tempAgentsDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'adk-eval-api-test-'),
+      );
+      const evalServer = new AdkApiServer({
+        agentsDir: tempAgentsDir,
+        agentLoader,
+        sessionService,
+        memoryService,
+        artifactService,
+      });
+      await evalServer.start();
+      const evalClient = new HttpClient(evalServer.url);
+
+      try {
+        // 1. Create an eval set
+        const createRes = await evalClient.post(
+          '/apps/testApp/eval_sets/set_one',
+          {},
+        );
+        expect(createRes.status).toBe(200);
+
+        // 2. Reject invalid eval set ID
+        await expect(
+          evalClient.post('/apps/testApp/eval_sets/invalid-id!', {}),
+        ).rejects.toMatchObject({response: {status: 400}});
+
+        // 3. List eval sets
+        const listSetsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_sets',
+        );
+        expect(listSetsRes.data).toEqual(['set_one']);
+
+        // 4. Create a session and run a turn so it has events
+        const sess = await sessionService.createSession({
+          appName: 'testApp',
+          userId: 'testUser',
+          sessionId: 'sessForEval',
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'user',
+            content: {role: 'user', parts: [{text: 'Hi'}]},
+          }),
+        });
+        await sessionService.appendEvent({
+          session: sess,
+          event: createEvent({
+            author: 'testAgent',
+            content: {role: 'model', parts: [{text: 'Event 2'}]},
+          }),
+        });
+
+        // 5. Add the session to the eval set
+        const addRes = await evalClient.post(
+          '/apps/testApp/eval_sets/set_one/add_session',
+          {
+            evalId: 'case_1',
+            sessionId: 'sessForEval',
+            userId: 'testUser',
+          },
+        );
+        expect(addRes.status).toBe(200);
+
+        // 6. List evals in the eval set
+        const listEvalsRes = await evalClient.get<string[]>(
+          '/apps/testApp/eval_sets/set_one/evals',
+        );
+        expect(listEvalsRes.data).toEqual(['case_1']);
+
+        // 7. Run the eval set
+        const runEvalRes = await evalClient.post<
+          Array<{evalId: string; finalEvalStatus: EvalStatus}>
+        >('/apps/testApp/eval_sets/set_one/run_eval', {
+          evalIds: ['case_1'],
+          evalMetrics: [
+            {metric_name: 'tool_trajectory_avg_score', threshold: 1.0},
+            {metric_name: 'response_match_score', threshold: 0.8},
+          ],
+        });
+        expect(runEvalRes.status).toBe(200);
+        expect(runEvalRes.data).toHaveLength(1);
+        expect(runEvalRes.data?.[0].evalId).toBe('case_1');
+        expect(runEvalRes.data?.[0].finalEvalStatus).toBe(EvalStatus.PASSED);
+      } finally {
+        await evalServer.stop();
+        fs.rmSync(tempAgentsDir, {recursive: true, force: true});
       }
     });
   });
