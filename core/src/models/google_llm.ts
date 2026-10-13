@@ -324,8 +324,7 @@ export class Gemini extends BaseLlm {
     // regardless of backend.
     if (this.apiBackend === GoogleLLMVariant.GEMINI_API) {
       const resumption = llmRequest.liveConnectConfig.sessionResumption as
-        | {transparent?: boolean}
-        | undefined;
+        {transparent?: boolean} | undefined;
       if (resumption) {
         delete resumption.transparent;
       }
