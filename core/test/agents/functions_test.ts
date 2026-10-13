@@ -820,6 +820,155 @@ describe('handleFunctionCallList', () => {
     });
     expect(event!.actions.stateDelta).toEqual({jobStarted: true});
   });
+
+  it.each([
+    [
+      'object return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns object',
+        execute: async () => ({ok: true}),
+      }),
+      {ok: true},
+    ],
+    [
+      'primitive string return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns string',
+        execute: async () => 'hello',
+      }),
+      {result: 'hello'},
+    ],
+    [
+      'array return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns array',
+        execute: async () => [1, 2],
+      }),
+      {results: [1, 2]},
+    ],
+    [
+      'null return',
+      new FunctionTool({
+        name: 't',
+        description: 'returns null',
+        execute: async () => null,
+      }),
+      {result: null},
+    ],
+    [
+      'thrown Error with no onToolErrorCallback override',
+      new FunctionTool({
+        name: 't',
+        description: 'throws Error',
+        execute: async () => {
+          throw new Error('boom');
+        },
+      }),
+      {error: "Error in tool 't': boom"},
+    ],
+    [
+      'thrown non-Error value',
+      new ThrowingTool('raw failure'),
+      {error: 'raw failure'},
+    ],
+  ])(
+    'normalizes %s to a Record<string, unknown> before plugin and canonical afterToolCallbacks run',
+    async (_label, tool, expectedNormalized) => {
+      let pluginSeen: Record<string, unknown> | undefined;
+      let canonicalSeen: Record<string, unknown> | undefined;
+
+      class InspectingPlugin extends BasePlugin {
+        constructor() {
+          super('inspect');
+        }
+        override async afterToolCallback({
+          result,
+        }: Parameters<BasePlugin['afterToolCallback']>[0]): Promise<
+          Record<string, unknown> | undefined
+        > {
+          // Verify that `'error' in result` never throws TypeError.
+          void ('error' in result);
+          pluginSeen = result;
+          return undefined;
+        }
+      }
+
+      pluginManager.registerPlugin(new InspectingPlugin());
+      const canonicalAfter: SingleAfterToolCallback = async ({response}) => {
+        void ('error' in response);
+        canonicalSeen = response;
+        return undefined;
+      };
+
+      const event = await handleFunctionCallList({
+        invocationContext,
+        functionCalls: [callFor(tool)],
+        toolsDict: {[tool.name]: tool},
+        beforeToolCallbacks: [],
+        afterToolCallbacks: [canonicalAfter],
+      });
+
+      expect(pluginSeen).toStrictEqual(expectedNormalized);
+      expect(canonicalSeen).toStrictEqual(expectedNormalized);
+      expect(
+        event?.content?.parts?.[0].functionResponse?.response,
+      ).toStrictEqual(expectedNormalized);
+    },
+  );
+
+  it('hands afterToolCallback an empty record when a long-running tool returns nullish, while still deferring the event', async () => {
+    let pluginSeen: Record<string, unknown> | undefined;
+    class InspectingPlugin extends BasePlugin {
+      constructor() {
+        super('inspect');
+      }
+      override async afterToolCallback({
+        result,
+      }: Parameters<BasePlugin['afterToolCallback']>[0]): Promise<
+        Record<string, unknown> | undefined
+      > {
+        expect('error' in result).toBe(false);
+        pluginSeen = result;
+        return undefined;
+      }
+    }
+    pluginManager.registerPlugin(new InspectingPlugin());
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(silentLongRunningTool)],
+      toolsDict: {silentLongRunningTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [],
+    });
+
+    expect(pluginSeen).toStrictEqual({});
+    expect(event).toBeNull();
+  });
+
+  it('allows afterToolCallback to override an unhandled tool error response', async () => {
+    const afterToolCallback: SingleAfterToolCallback = async ({response}) => {
+      if ('error' in response) {
+        return {recoveredFrom: response['error']};
+      }
+      return undefined;
+    };
+
+    const event = await handleFunctionCallList({
+      invocationContext,
+      functionCalls: [callFor(errorTool)],
+      toolsDict: {errorTool},
+      beforeToolCallbacks: [],
+      afterToolCallbacks: [afterToolCallback],
+    });
+
+    expect(event?.content?.parts?.[0].functionResponse?.response).toEqual({
+      recoveredFrom: "Error in tool 'errorTool': tool error message content",
+    });
+  });
 });
 
 describe('generateAuthEvent', () => {
