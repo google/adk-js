@@ -188,10 +188,10 @@ export default defineConfig({
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 90,
+        statements: 92,
         branches: 85,
-        functions: 90,
-        lines: 90,
+        functions: 94,
+        lines: 92,
       },
     },
   },
