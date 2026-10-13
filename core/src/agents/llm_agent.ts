@@ -928,6 +928,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
+      let stepTransferred = false;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -945,6 +946,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         ) {
           stepHadToolCalls = true;
         }
+        if (event.author === this.name && event.actions.transferToAgent) {
+          stepTransferred = true;
+        }
         this.maybeSaveOutputToState(event);
         yield event;
       }
@@ -961,7 +965,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
       if (
         isFinalResponse(lastEvent) &&
-        !(isEmptyMetadataEvent && stepHadToolCalls)
+        !(isEmptyMetadataEvent && stepHadToolCalls && !stepTransferred)
       ) {
         break;
       }
