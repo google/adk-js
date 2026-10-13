@@ -147,7 +147,7 @@ describe('RoutedLlm', () => {
         super({model: modelName});
       }
 
-      // eslint-disable-next-line require-yield
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
       async *generateContentAsync(
         _llmRequest: LlmRequest,
         _stream?: boolean,
@@ -302,7 +302,7 @@ describe('RoutedLlm', () => {
         super({model: modelName});
       }
 
-      // eslint-disable-next-line require-yield
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
       async *generateContentAsync(
         _llmRequest: LlmRequest,
         _stream?: boolean,
@@ -392,7 +392,7 @@ describe('RoutedLlm', () => {
         super({model: 'model-failing'});
       }
 
-      // eslint-disable-next-line require-yield
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
       async *generateContentAsync(
         _llmRequest: LlmRequest,
         _stream?: boolean,
