@@ -18,6 +18,7 @@ import {describe, expect, it} from 'vitest';
 
 class MockLlm extends BaseLlm {
   receivedStream: boolean | undefined;
+  receivedModel: string | undefined;
   receivedAbortSignal: AbortSignal | undefined;
 
   constructor(modelName: string) {
@@ -30,6 +31,7 @@ class MockLlm extends BaseLlm {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     this.receivedStream = stream;
+    this.receivedModel = llmRequest.model;
     this.receivedAbortSignal = abortSignal;
     yield {
       content: {
@@ -39,7 +41,8 @@ class MockLlm extends BaseLlm {
     } as LlmResponse;
   }
 
-  async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+  async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+    this.receivedModel = llmRequest.model;
     return {} as BaseLlmConnection;
   }
 }
@@ -383,6 +386,111 @@ describe('RoutedLlm', () => {
     await generator.next();
 
     expect(model.receivedStream).toBe(true);
+  });
+
+  it('should set llmRequest.model to the selected route model in generateContentAsync and connect, including on failover', async () => {
+    const seenByFailingGenerate: Array<string | undefined> = [];
+    const seenByFailingConnect: Array<string | undefined> = [];
+
+    class FailingRouteLlm extends BaseLlm {
+      constructor(modelName: string) {
+        super({model: modelName});
+      }
+
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
+      async *generateContentAsync(
+        llmRequest: LlmRequest,
+      ): AsyncGenerator<LlmResponse, void> {
+        seenByFailingGenerate.push(llmRequest.model);
+        throw new Error('primary failed');
+      }
+
+      async connect(llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        seenByFailingConnect.push(llmRequest.model);
+        throw new Error('primary connect failed');
+      }
+    }
+
+    const primary = new FailingRouteLlm('gemini-2.5-flash');
+    const backup = new MockLlm('gemini-2.5-pro');
+    const routedLlm = new RoutedLlm({
+      models: [primary, backup],
+      router: (_models, _req, errorContext) =>
+        errorContext ? 'gemini-2.5-pro' : 'gemini-2.5-flash',
+    });
+
+    const generateRequest: LlmRequest = {
+      model: routedLlm.model,
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const gen = routedLlm.generateContentAsync(generateRequest);
+    await gen.next();
+
+    expect(seenByFailingGenerate).toEqual(['gemini-2.5-flash']);
+    expect(backup.receivedModel).toBe('gemini-2.5-pro');
+    expect(generateRequest.model).toBe('gemini-2.5-pro');
+
+    backup.receivedModel = undefined;
+    const connectRequest: LlmRequest = {
+      model: routedLlm.model,
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    await routedLlm.connect(connectRequest);
+
+    expect(seenByFailingConnect).toEqual(['gemini-2.5-flash']);
+    expect(backup.receivedModel).toBe('gemini-2.5-pro');
+    expect(connectRequest.model).toBe('gemini-2.5-pro');
+  });
+
+  it('calls the selected Gemini route with its own model name when driven through LlmAgent and InMemoryRunner', async () => {
+    let calledModel: string | undefined;
+    function stubbedGemini(model: string): Gemini {
+      const llm = new Gemini({model, apiKey: 'unused'});
+      Object.defineProperty(llm, 'apiClient', {
+        value: {
+          models: {
+            generateContent: async (params: {model: string}) => {
+              calledModel = params.model;
+              return {
+                candidates: [{content: {role: 'model', parts: [{text: 'ok'}]}}],
+              };
+            },
+          },
+        },
+      });
+      return llm;
+    }
+
+    const routed = new RoutedLlm({
+      models: [
+        stubbedGemini('gemini-2.5-flash'),
+        stubbedGemini('gemini-2.5-pro'),
+      ],
+      router: (models) => Object.keys(models)[1],
+    });
+    const agent = new LlmAgent({
+      name: 'a',
+      model: routed,
+      instruction: 'Be brief.',
+    });
+    const runner = new InMemoryRunner({agent, appName: 'repro'});
+    const session = await runner.sessionService.createSession({
+      appName: 'repro',
+      userId: 'u',
+    });
+    for await (const _ of runner.runAsync({
+      userId: 'u',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+    })) {
+      // consume events
+    }
+
+    expect(calledModel).toBe('gemini-2.5-pro');
   });
 
   it('should propagate abortSignal parameter to selected model, including on failover', async () => {
