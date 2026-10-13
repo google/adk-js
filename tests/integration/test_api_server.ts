@@ -32,7 +32,7 @@ export class AdkTsApiServer extends BaseTestServer {
   private params: TestApiServerParams;
 
   constructor(params: TestApiServerParams) {
-    super('localhost', params.port || 0);
+    super('localhost', params.port);
     this.params = params;
   }
 
@@ -40,10 +40,7 @@ export class AdkTsApiServer extends BaseTestServer {
     await this.startProcess({
       spawnProcess: () => {
         return spawn('node', this.getAdkCliArgs(this.params), {
-          env: {
-            ...process.env,
-            TEST_API_SERVER_PORT: this.port.toString(),
-          },
+          env: process.env,
         });
       },
       startMessage: 'ADK API Server started',

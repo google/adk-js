@@ -98,7 +98,11 @@ describe('UnsafeLocalCodeExecutor', () => {
     // streams, so before the read ends were released this hung forever and no
     // timeout value bounded it -- the flake behind #622 on Windows.
     const timeoutSeconds = 0.5;
-    const survivorLifetimeMs = 60_000;
+    // Keep the survivor's lifetime comfortably longer than `timeoutSeconds`
+    // (so the test proves we didn't wait for the survivor to exit before
+    // resolving `executeCode` on POSIX), while short enough that Windows's
+    // `fs.rm` retry loop in `finally` can remove the temp dir once it exits.
+    const survivorLifetimeMs = 2_000;
     const timedOutExecutor = new UnsafeLocalCodeExecutor({timeoutSeconds});
     const params: ExecuteCodeParams = {
       invocationContext,
