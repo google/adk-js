@@ -53,7 +53,7 @@ When an agent resolves tools from a `GoogleApiToolSet`, three stages run in sequ
 - **Servers**: joins `rootUrl` and `servicePath`, strips any trailing slash, and writes a single entry in `servers`.
 - **Security schemes**: maps `auth.oauth2.scopes` into an `authorizationCode` flow under `components.securitySchemes.oauth2` and adds a query-parameter `apiKey` scheme under `components.securitySchemes.apiKey`.
 - **Schemas**: recursively translates object properties, required property flags, arrays, `any` schemas, and `$ref` targets into `components.schemas`.
-- **Resources and methods**: walks nested resource trees and top-level methods, extracts `{param}` and `{+param}` placeholders (including custom-verb segments like `{documentId}:batchUpdate`), normalizes `{+param}` to `{param}` in the OpenAPI path, and builds operations using each parameter's declared `location`.
+- **Resources and methods**: walks nested resource trees and top-level methods, resolves each method path from `flatPath` before falling back to `path` and `'/'`, extracts `{param}` and `{+param}` placeholders (including custom-verb segments like `{documentId}:batchUpdate`), normalizes `{+param}` to `{param}` in the OpenAPI path, and builds operations using each parameter's declared `location`.
 
 ### 2. OpenID Connect toolset creation
 
