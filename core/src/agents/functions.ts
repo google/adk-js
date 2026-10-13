@@ -613,6 +613,8 @@ export async function handleFunctionCallList({
               invocationContext,
             })
           : await callToolAsync(tool, functionArgs, toolContext);
+        // Keep a long-running nullish return as undefined so the deferral below fires;
+        // wrap a normal nullish return as {result: null}.
         if (rawFunctionResponse == null && !tool.isLongRunning) {
           functionResponse = {result: rawFunctionResponse};
         } else {
