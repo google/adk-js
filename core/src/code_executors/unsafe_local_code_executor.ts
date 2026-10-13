@@ -328,7 +328,15 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
       };
     } finally {
       if (tempDir) {
-        await fs.rm(tempDir, {recursive: true, force: true});
+        // A script killed by a timeout can leave a descendant process running
+        // briefly in `tempDir`; on Windows, a live process's cwd stays locked
+        // until it exits, so retry removal to avoid EBUSY races.
+        await fs.rm(tempDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 500,
+        });
       }
     }
   }

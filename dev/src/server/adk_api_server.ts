@@ -133,14 +133,18 @@ export class AdkApiServer {
   private readonly host: string;
   private readonly port: number;
 
-  get url(): string {
+  private get effectivePort(): number {
     if (this.server) {
       const address = this.server.address();
       if (address && typeof address !== 'string') {
-        return `http://${this.host}:${address.port}`;
+        return address.port;
       }
     }
-    return `http://${this.host}:${this.port}`;
+    return this.port;
+  }
+
+  get url(): string {
+    return `http://${this.host}:${this.effectivePort}`;
   }
 
   readonly app: express.Application;
@@ -260,7 +264,7 @@ export class AdkApiServer {
       await toA2a(agent, {
         protocol: 'http',
         host: this.host,
-        port: this.port,
+        port: this.effectivePort,
         basePath: `/a2a/${appName}`,
         sessionService: this.sessionService,
         memoryService: this.memoryService,
@@ -1437,6 +1441,7 @@ export class AdkApiServer {
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, this.host, async () => {
         try {
+          process.env.ADK_API_SERVER_PORT = this.effectivePort.toString();
           if (this.a2a) {
             await this.initA2A();
           }

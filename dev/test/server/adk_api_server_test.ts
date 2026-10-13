@@ -1739,6 +1739,9 @@ describe('AdkWebServer', () => {
 
         expect(response.status).toBe(200);
         expect(response.data?.name).toBe('testAgent');
+        expect(response.data?.url).toBe(
+          `${a2aServer!.url}/a2a/testApp/jsonrpc`,
+        );
       },
     );
 
