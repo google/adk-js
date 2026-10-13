@@ -7,6 +7,13 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "skipLibCheck": true,
+    // gts 7 replaces `declaration: true` with `composite: true` and enables
+    // `stripInternal: true`. Keep the gts 5 settings: the root check follows
+    // imports into excluded `samples` (rejected under `composite`), and
+    // TypeDoc relies on `@internal` declarations (`RagApiClient`).
+    "composite": false,
+    "declaration": true,
+    "stripInternal": false,
     "experimentalDecorators": true,
     // Mirrors the aliases in vitest.config.ts so that a test importing
     // `@google/adk` type-checks against the same sources it runs against.
