@@ -573,8 +573,6 @@ export async function handleFunctionCallList({
     // Step 1: Check if plugin before_tool_callback overrides the function
     // response.
     let functionResponse = null;
-    let functionResponseError: unknown;
-    let functionResponseErrorOccurred = false;
     functionResponse =
       await invocationContext.pluginManager.runBeforeToolCallback({
         tool: tool,
@@ -606,7 +604,7 @@ export async function handleFunctionCallList({
     if (functionResponse == null) {
       // Cover both null and undefined
       try {
-        functionResponse = isLive
+        const rawFunctionResponse = isLive
           ? await processFunctionLiveHelper({
               tool,
               toolContext,
@@ -615,6 +613,11 @@ export async function handleFunctionCallList({
               invocationContext,
             })
           : await callToolAsync(tool, functionArgs, toolContext);
+        if (rawFunctionResponse == null && !tool.isLongRunning) {
+          functionResponse = {result: rawFunctionResponse};
+        } else {
+          functionResponse = normalizeCallbackResponse(rawFunctionResponse);
+        }
       } catch (e: unknown) {
         if (e instanceof Error) {
           const onToolErrorResponse =
@@ -632,26 +635,25 @@ export async function handleFunctionCallList({
           } else {
             // If the error callback returns undefined, use the error message
             // as the function response error.
-            functionResponseError = e.message;
-            functionResponseErrorOccurred = true;
+            functionResponse = {error: e.message};
           }
         } else {
           // If the error is not an Error, use the error object as the function
           // response error.
-          functionResponseError = e;
-          functionResponseErrorOccurred = true;
+          functionResponse = {error: e};
         }
       }
     }
 
     // Step 4: Check if plugin after_tool_callback overrides the function
     // response.
+    const callbackResult = functionResponse ?? {};
     let alteredFunctionResponse =
       await invocationContext.pluginManager.runAfterToolCallback({
         tool: tool,
         toolArgs: functionArgs,
         toolContext: toolContext,
-        result: functionResponse,
+        result: callbackResult,
       });
 
     // Step 5: If no overrides are provided from the plugins, further run the
@@ -663,7 +665,7 @@ export async function handleFunctionCallList({
           tool: tool,
           args: functionArgs,
           context: toolContext,
-          response: functionResponse,
+          response: callbackResult,
         });
         if (alteredFunctionResponse) {
           break;
@@ -697,14 +699,6 @@ export async function handleFunctionCallList({
         );
       }
       continue;
-    }
-
-    if (functionResponseErrorOccurred) {
-      functionResponse = {error: functionResponseError};
-    } else if (functionResponse == null) {
-      functionResponse = {result: functionResponse};
-    } else {
-      functionResponse = normalizeCallbackResponse(functionResponse);
     }
 
     const functionResponseEvent = createEvent({
