@@ -23,11 +23,8 @@ export interface TestApiServerParams {
 }
 
 /**
- * Start watchdog for the spawned CLI server, used when the caller passes no
- * `startFailureTimeout`. Both this and any caller-supplied value must stay
- * below the `integration` project's `hookTimeout` (vitest.config.ts): whichever
- * budget expires first decides what a failed start reports, and only this one
- * reports what the server actually did.
+ * Start watchdog for the spawned CLI server. Keep it below the `integration`
+ * project's `hookTimeout` so a failed start is reported here, not by vitest.
  */
 const DEFAULT_TIMEOUT = 60000;
 
