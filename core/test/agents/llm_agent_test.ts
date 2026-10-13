@@ -1350,6 +1350,79 @@ describe('LlmAgent usage metadata on content-less responses', () => {
 
     expect(events.find((e) => e.usageMetadata)).toBeUndefined();
   });
+
+  it('does not call the parent model again after transfer_to_agent when a trailing usage-only chunk arrives in SSE mode', async () => {
+    const usage = {
+      promptTokenCount: 10,
+      candidatesTokenCount: 2,
+      totalTokenCount: 12,
+    };
+    const childModel = new CountingMockLlm([
+      [
+        {
+          content: {role: 'model', parts: [{text: 'child answer'}]},
+          partial: false,
+        },
+        {usageMetadata: usage},
+      ],
+    ]);
+    const parentModel = new CountingMockLlm([
+      [
+        {
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  name: 'transfer_to_agent',
+                  args: {agent_name: 'child'},
+                },
+              },
+            ],
+          },
+        },
+        {usageMetadata: usage},
+      ],
+      [
+        {
+          content: {role: 'model', parts: [{text: 'parent answers again'}]},
+        },
+      ],
+    ]);
+
+    const child = new LlmAgent({name: 'child', model: childModel});
+    const parent = new LlmAgent({
+      name: 'parent',
+      subAgents: [child],
+      model: parentModel,
+    });
+
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: 'app',
+      userId: 'u',
+      sessionId: 's',
+    });
+    const runner = new Runner({appName: 'app', agent: parent, sessionService});
+
+    const texts: Array<[string | undefined, string]> = [];
+    for await (const event of runner.runAsync({
+      userId: 'u',
+      sessionId: 's',
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      runConfig: {streamingMode: StreamingMode.SSE},
+    })) {
+      for (const part of event.content?.parts ?? []) {
+        if (part.text) {
+          texts.push([event.author, part.text]);
+        }
+      }
+    }
+
+    expect(parentModel.callCount).toBe(1);
+    expect(childModel.callCount).toBe(1);
+    expect(texts).toEqual([['child', 'child answer']]);
+  });
 });
 
 describe('LlmAgent unresolvable tool calls', () => {
