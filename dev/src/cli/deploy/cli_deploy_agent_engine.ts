@@ -6,8 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import {Client} from '@google-cloud/vertexai/build/src/genai/client.js';
-import {ReasoningEngine as VertexReasoningEngine} from '@google-cloud/vertexai/build/src/genai/types.js';
+import {Client} from '@google-cloud/vertexai';
 
 import {AgentLoader} from '../../utils/agent_loader.js';
 import {createTempDir, isFile, isFolderExists} from '../../utils/file_utils.js';
@@ -204,7 +203,7 @@ export async function deployToAgentEngine(options: DeployToAgentEngineOptions) {
       );
     }
 
-    const response = apiResponse.response as VertexReasoningEngine;
+    const response = apiResponse.response!;
     console.info(
       `\x1b[32mSuccessfully ${options.agentEngineId ? 'updated' : 'deployed'} Reasoning Engine: ${response.name}\x1b[0m`,
     );
