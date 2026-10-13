@@ -196,7 +196,7 @@ export class Runner {
    * @param input The configuration for the runner.
    */
   constructor(input: RunnerConfig) {
-    const appName = input.app?.name ?? input.appName;
+    const appName = input.appName ?? input.app?.name;
     const agent = input.app?.rootAgent ?? input.agent;
     if (!agent) {
       throw new Error(
