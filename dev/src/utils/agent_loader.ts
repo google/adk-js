@@ -405,18 +405,28 @@ export class AgentFile {
   }
 
   /**
-   * The path the agent was discovered at, before any bundling.
+   * The agent's `README.md`, if one sits beside its source file.
    *
-   * Distinct from {@link getFilePath}, which returns the temporary bundle when
-   * one exists. A caller looking for files that sit *beside* the agent — its
-   * README, its fixtures — needs the original directory, and the bundle lives
-   * somewhere else entirely.
+   * Read from the path the loader discovered the agent at — never from a
+   * caller-supplied name — so there is no path to traverse out of. This
+   * deliberately uses the original source path, not {@link getFilePath}, which
+   * returns the temporary bundle when one exists; the README sits beside the
+   * source.
    *
-   * Available before the agent loads, because it is only ever the path the
-   * loader already resolved.
+   * A missing README is the normal case and returns undefined. Any other read
+   * error is logged and also returns undefined, so a documentation file never
+   * fails the caller.
    */
-  getSourceFilePath(): string {
-    return this.filePath;
+  async readReadme(): Promise<string | undefined> {
+    const readmePath = path.join(path.dirname(this.filePath), 'README.md');
+    try {
+      return await fsPromises.readFile(readmePath, 'utf-8');
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        logger.warn(`Could not read ${readmePath}: ${e}`);
+      }
+      return undefined;
+    }
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

@@ -30,7 +30,6 @@ import {
 } from '@google/adk';
 import {ReadableSpan} from '@opentelemetry/sdk-trace-base';
 import * as fs from 'node:fs';
-import * as fsPromises from 'node:fs/promises';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -1446,14 +1445,11 @@ describe('AdkWebServer', () => {
 
   describe('Structure graph', () => {
     /** Points the loader at `agent` for the rest of the test. */
-    function loadInstead(
-      agent: unknown,
-      sourceFilePath = '/nonexistent/agent.ts',
-    ) {
+    function loadInstead(agent: unknown, readme?: string) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
           load: () => Promise.resolve(agent),
-          getSourceFilePath: () => sourceFilePath,
+          readReadme: () => Promise.resolve(readme),
           async [Symbol.asyncDispose](): Promise<void> {
             return;
           },
@@ -1512,18 +1508,10 @@ describe('AdkWebServer', () => {
         ]);
       });
 
-      it('returns the README.md sitting beside the agent', async () => {
-        const dir = await fsPromises.mkdtemp(
-          path.join(os.tmpdir(), 'adk-readme-'),
-        );
-        await fsPromises.writeFile(
-          path.join(dir, 'README.md'),
-          '# Sample\n\nWhat it shows.\n',
-          'utf-8',
-        );
+      it('includes the README.md the agent file resolves', async () => {
         loadInstead(
           new LlmAgent({name: 'documented'}),
-          path.join(dir, 'agent.ts'),
+          '# Sample\n\nWhat it shows.\n',
         );
 
         const response = await client.get<{readme?: string}>(
@@ -1534,9 +1522,7 @@ describe('AdkWebServer', () => {
         expect(response.data?.readme).toBe('# Sample\n\nWhat it shows.\n');
       });
 
-      it('omits readme when the agent has no README.md', async () => {
-        // The common case today: none of the samples carries one yet, so a
-        // missing file must be silent rather than a 500 or a logged error.
+      it('omits readme when the agent file resolves none', async () => {
         loadInstead(new LlmAgent({name: 'undocumented'}));
 
         const response = await client.get<{name: string; readme?: string}>(
