@@ -24,11 +24,35 @@ export {
   handleFunctionCallsLive,
   isToolNotFound,
 } from './agents/functions.js';
-export {InvocationContext, requireAgent} from './agents/invocation_context.js';
+export {
+  InvocationContext,
+  LlmCallsLimitExceededError,
+  isLlmCallsLimitExceededError,
+  requireAgent,
+} from './agents/invocation_context.js';
 export type {
   InvocationContextParams,
   WorkflowInstructionScope,
 } from './agents/invocation_context.js';
+export {
+  LangGraphAgent,
+  getLastHumanMessages,
+  isLangGraphAgent,
+} from './agents/langgraph_agent.js';
+export type {
+  CompiledGraphLike,
+  LangGraphAIMessage,
+  LangGraphAgentConfig,
+  LangGraphContentPart,
+  LangGraphHumanMessage,
+  LangGraphInvokeInput,
+  LangGraphInvokeOutput,
+  LangGraphMessageContent,
+  LangGraphMessageLike,
+  LangGraphRunnableConfig,
+  LangGraphStateSnapshot,
+  LangGraphSystemMessage,
+} from './agents/langgraph_agent.js';
 export {LiveRequestQueue} from './agents/live_request_queue.js';
 export type {LiveRequest} from './agents/live_request_queue.js';
 export {LlmAgent as Agent, LlmAgent, isLlmAgent} from './agents/llm_agent.js';
@@ -65,6 +89,11 @@ export {
   InteractionsRequestProcessor,
 } from './agents/processors/interactions_request_processor.js';
 export {ReadonlyContext} from './agents/readonly_context.js';
+export {RemoteAgent, isRemoteAgent} from './agents/remote_agent.js';
+export type {
+  RemoteAgentConfig,
+  RemoteAgentFetch,
+} from './agents/remote_agent.js';
 export {RoutedAgent, isRoutedAgent} from './agents/routed_agent.js';
 export type {AgentRouter, RoutedAgentConfig} from './agents/routed_agent.js';
 export {StreamingMode, createRunConfig} from './agents/run_config.js';
