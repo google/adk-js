@@ -533,6 +533,59 @@ describe('AgentLoader', () => {
       expect(await agentFile.readReadme()).toBe('# Sample\n\nWhat it shows.\n');
     });
 
+    it('reads a README.txt beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'txt_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.txt'),
+        'Plain text docs.\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('Plain text docs.\n');
+    });
+
+    it('reads an extensionless README beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'bare_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(path.join(tempAgentsDir, 'README'), 'No extension.\n');
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('No extension.\n');
+    });
+
+    it('reads a lowercase readme.md beside the agent source', async () => {
+      const agentPath = path.join(tempAgentsDir, 'lower_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'readme.md'),
+        '# lowercase\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('# lowercase\n');
+    });
+
+    it('prefers README.md over README.txt when both are present', async () => {
+      const agentPath = path.join(tempAgentsDir, 'both_agent.js');
+      await fs.writeFile(agentPath, agent1JsContent);
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.md'),
+        '# Markdown wins\n',
+      );
+      await fs.writeFile(
+        path.join(tempAgentsDir, 'README.txt'),
+        'Text loses.\n',
+      );
+
+      const agentFile = new AgentFile(agentPath);
+
+      expect(await agentFile.readReadme()).toBe('# Markdown wins\n');
+    });
+
     it('returns undefined when no README.md sits beside the agent', async () => {
       const agentPath = path.join(tempAgentsDir, 'undocumented_agent.js');
       await fs.writeFile(agentPath, agent1JsContent);
