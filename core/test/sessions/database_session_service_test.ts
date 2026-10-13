@@ -13,7 +13,7 @@ import {
 } from '@google/adk';
 import {MikroORM} from '@mikro-orm/core';
 import {SqliteDriver} from '@mikro-orm/sqlite';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {isDatabaseConnectionString} from '../../src/sessions/database_session_service.js';
 import {validateDatabaseSchemaVersion} from '../../src/sessions/db/operations.js';
 import {
@@ -297,6 +297,82 @@ describe('DatabaseSessionService', () => {
     });
     expect(after2?.events.length).toBe(1);
     expect(after2?.events[0].id).toBe(e3.id);
+  });
+
+  it('should refresh events on a stale session object in appendEvent', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+
+    // A second handle on the same session appends an event, making the
+    // first handle stale.
+    const otherHandle = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    const now = Date.now();
+    const concurrentEvent = createEvent({timestamp: now + 10});
+    await service.appendEvent({session: otherHandle!, event: concurrentEvent});
+
+    // Older than the concurrent event: this is the contended case, where the
+    // caller built its event and then waited on the row lock while another
+    // handle committed. Reloading after the commit sorts the caller's event
+    // into its timestamp position instead of appending it at the tail.
+    const ownEvent = createEvent({timestamp: now + 5});
+    await service.appendEvent({session, event: ownEvent});
+
+    // The stale handle must see both events in timestamp order, without
+    // duplicates, and keep its own event object.
+    expect(session.events.map((e) => e.id)).toEqual([
+      ownEvent.id,
+      concurrentEvent.id,
+    ]);
+    expect(session.events[0]).toBe(ownEvent);
+  });
+
+  it('should keep a stale session usable when the event reload fails', async () => {
+    const session = await service.createSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+
+    const otherHandle = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    const now = Date.now();
+    await service.appendEvent({
+      session: otherHandle!,
+      event: createEvent({timestamp: now + 10}),
+    });
+
+    const orm = (service as unknown as {orm: MikroORM}).orm;
+    const fork = orm.em.fork.bind(orm.em);
+    vi.spyOn(orm.em, 'fork').mockImplementation((...args) => {
+      const em = fork(...args);
+      vi.spyOn(em, 'find').mockRejectedValue(new Error('reload failed'));
+      return em;
+    });
+
+    const ownEvent = createEvent({timestamp: now + 20});
+    await expect(service.appendEvent({session, event: ownEvent})).resolves.toBe(
+      ownEvent,
+    );
+
+    vi.restoreAllMocks();
+
+    // The append committed even though the in-memory reload could not run.
+    const reloaded = await service.getSession({
+      appName: 'test-app',
+      userId: 'user1',
+      sessionId: 's1',
+    });
+    expect(reloaded?.events.map((e) => e.id)).toContain(ownEvent.id);
   });
 
   it('should filter sessions by userId in listSessions', async () => {
