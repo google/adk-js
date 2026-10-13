@@ -232,6 +232,18 @@ describe('createDockerFileContent', () => {
     expect(content).toContain('agents/my-agent_v2.1/');
     expect(content).toContain('GOOGLE_CLOUD_PROJECT=my-project.example-123');
   });
+
+  it('should pin the base image to an explicit Node major', () => {
+    // The tag is spelled out here rather than imported from the source, so
+    // that changing the pin has to be a deliberate edit of this expectation.
+    const content = createDockerFileContent(defaultOptions);
+    expect(content.trimStart().split('\n')[0]).toBe('FROM node:24-alpine');
+  });
+
+  it('should not use a floating Node base image tag', () => {
+    const content = createDockerFileContent(defaultOptions);
+    expect(content).not.toMatch(/FROM node:(lts|latest|current)/);
+  });
 });
 
 describe('deployToCloudRun', () => {
