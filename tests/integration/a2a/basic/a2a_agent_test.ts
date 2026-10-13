@@ -15,6 +15,8 @@ import turn2ExpectedEvents from './events_turn_2.json' with {type: 'json'};
 describe('A2A: Remote Agent Basic', () => {
   let server: AdkTsApiServer;
 
+  // Deliberately no hook budget: inheriting the project hookTimeout keeps this
+  // hook alive past the server's own start watchdog (see test_api_server.ts).
   beforeAll(async () => {
     server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'remote_a2a/'),
@@ -22,7 +24,7 @@ describe('A2A: Remote Agent Basic', () => {
       startFailureTimeout: 60000,
     });
     await server.start();
-  }, 60000);
+  });
 
   afterAll(async () => {
     await server.stop();

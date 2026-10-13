@@ -34,6 +34,10 @@ describe('WebUI Integration Test', () => {
       let server: AdkApiServer | AdkCliApiServer;
       let url: string;
 
+      // Deliberately no hook budget: inheriting the project hookTimeout keeps
+      // this hook alive past AdkTsApiServer's 60s start watchdog (see
+      // test_api_server.ts). AdkApiServer runs in-process with no watchdog of
+      // its own, so there the project budget is the only bound.
       beforeAll(async () => {
         server = new serverClass({
           agentsDir: path.resolve(__dirname, './agent'),
@@ -42,7 +46,7 @@ describe('WebUI Integration Test', () => {
         });
         await server.start();
         url = server.url;
-      }, 20000);
+      });
 
       afterAll(async () => {
         if (server) {

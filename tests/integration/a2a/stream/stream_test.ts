@@ -10,19 +10,21 @@ import * as path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {AdkTsApiServer} from '../../test_api_server.js';
 
-const TEST_TIMEOUT = 60000;
+const SERVER_START_TIMEOUT_MS = 60000;
 
 describe('A2A: RemoteAgent Streaming', () => {
   let server: AdkTsApiServer;
 
+  // Deliberately no hook budget: inheriting the project hookTimeout keeps this
+  // hook alive past the server's own start watchdog (see test_api_server.ts).
   beforeAll(async () => {
     server = new AdkTsApiServer({
       agentsDir: path.join(__dirname, 'test_agents'),
       a2a: true,
-      startFailureTimeout: TEST_TIMEOUT,
+      startFailureTimeout: SERVER_START_TIMEOUT_MS,
     });
     await server.start();
-  }, TEST_TIMEOUT);
+  });
 
   afterAll(async () => {
     await server.stop();
