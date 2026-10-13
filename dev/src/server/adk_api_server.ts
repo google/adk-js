@@ -547,7 +547,10 @@ export class AdkApiServer {
             return res.status(404).json({error: `App not found: ${appName}`});
           }
 
-          return res.json(serializeAppInfo(appName, rootAgent));
+          const agentFile = await this.agentLoader.getAgentFile(appName);
+          return res.json(
+            serializeAppInfo(appName, rootAgent, await agentFile.readReadme()),
+          );
         } catch (e) {
           const error = `Failed to get app info: ${e}`;
 

@@ -48,6 +48,18 @@ const FILE_MODULE_TYPE_EXTENSION_MAP = {
 };
 
 /**
+ * README file names served to the web UI, in preference order. Matched
+ * case-insensitively against the files beside the agent source, so `README.md`,
+ * `readme.txt`, or a bare `README` all resolve. The first name present wins.
+ */
+const README_BASENAMES = [
+  'readme.md',
+  'readme.markdown',
+  'readme.txt',
+  'readme',
+];
+
+/**
  * Metadata for a file.
  */
 interface FileMetadata {
@@ -402,6 +414,54 @@ export class AgentFile {
     }
 
     return this.cleanupFilePath || this.filePath;
+  }
+
+  /**
+   * The agent's README, if one sits beside its source file.
+   *
+   * Any common README name resolves: `README.md`, `README.markdown`,
+   * `README.txt`, or a bare `README`, in any letter case (see
+   * {@link README_BASENAMES}). The name is matched against the directory
+   * listing — never built from a caller-supplied value — so there is no path to
+   * traverse out of. This deliberately uses the original source path, not
+   * {@link getFilePath}, which returns the temporary bundle when one exists; the
+   * README sits beside the source.
+   *
+   * A missing README is the normal case and returns undefined. Any other read
+   * error is logged and also returns undefined, so a documentation file never
+   * fails the caller.
+   */
+  async readReadme(): Promise<string | undefined> {
+    const dir = path.dirname(this.filePath);
+    let entries: string[];
+    try {
+      entries = await fsPromises.readdir(dir);
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        logger.warn(`Could not read directory ${dir}: ${e}`);
+      }
+      return undefined;
+    }
+
+    const byLowerName = new Map(
+      entries.map((name) => [name.toLowerCase(), name]),
+    );
+    const match = README_BASENAMES.map((name) => byLowerName.get(name)).find(
+      (name): name is string => name !== undefined,
+    );
+    if (match === undefined) {
+      return undefined;
+    }
+
+    const readmePath = path.join(dir, match);
+    try {
+      return await fsPromises.readFile(readmePath, 'utf-8');
+    } catch (e) {
+      if ((e as {code?: string}).code !== 'ENOENT') {
+        logger.warn(`Could not read ${readmePath}: ${e}`);
+      }
+      return undefined;
+    }
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

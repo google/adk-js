@@ -1479,10 +1479,11 @@ describe('AdkWebServer', () => {
 
   describe('Structure graph', () => {
     /** Points the loader at `agent` for the rest of the test. */
-    function loadInstead(agent: unknown) {
+    function loadInstead(agent: unknown, readme?: string) {
       agentLoader.getAgentFile = (() =>
         Promise.resolve({
           load: () => Promise.resolve(agent),
+          readReadme: () => Promise.resolve(readme),
           async [Symbol.asyncDispose](): Promise<void> {
             return;
           },
@@ -1539,6 +1540,32 @@ describe('AdkWebServer', () => {
         expect(response.data?.root_agent.sub_agents).toEqual([
           expect.objectContaining({name: 'child', description: 'a child'}),
         ]);
+      });
+
+      it('includes the README.md the agent file resolves', async () => {
+        loadInstead(
+          new LlmAgent({name: 'documented'}),
+          '# Sample\n\nWhat it shows.\n',
+        );
+
+        const response = await client.get<{readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.readme).toBe('# Sample\n\nWhat it shows.\n');
+      });
+
+      it('omits readme when the agent file resolves none', async () => {
+        loadInstead(new LlmAgent({name: 'undocumented'}));
+
+        const response = await client.get<{name: string; readme?: string}>(
+          '/dev/apps/testApp/build_graph',
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.data?.name).toBe('testApp');
+        expect(response.data?.readme).toBeUndefined();
       });
 
       // A workflow keeps its structure in its edges, so a serializer that only
