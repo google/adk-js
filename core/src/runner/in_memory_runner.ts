@@ -40,7 +40,8 @@ export class InMemoryRunner extends Runner {
    * @param params The configuration for the runner.
    * @param params.app An optional application instance to run.
    * @param params.agent The root agent to run.
-   * @param params.appName The application name. Defaults to `'InMemoryRunner'`.
+   * @param params.appName The application name. Defaults to `app.name` when
+   *     `app` is provided, or `'InMemoryRunner'` otherwise.
    * @param params.plugins An optional list of plugins.
    * @param params.resumabilityConfig An optional resumability configuration.
    */
