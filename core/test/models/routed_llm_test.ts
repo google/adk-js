@@ -7,6 +7,9 @@
 import {
   BaseLlm,
   BaseLlmConnection,
+  Gemini,
+  InMemoryRunner,
+  LlmAgent,
   LlmRequest,
   LlmResponse,
   RoutedLlm,
@@ -15,6 +18,7 @@ import {describe, expect, it} from 'vitest';
 
 class MockLlm extends BaseLlm {
   receivedStream: boolean | undefined;
+  receivedAbortSignal: AbortSignal | undefined;
 
   constructor(modelName: string) {
     super({model: modelName});
@@ -23,8 +27,10 @@ class MockLlm extends BaseLlm {
   async *generateContentAsync(
     llmRequest: LlmRequest,
     stream?: boolean,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     this.receivedStream = stream;
+    this.receivedAbortSignal = abortSignal;
     yield {
       content: {
         role: 'model',
@@ -141,7 +147,7 @@ describe('RoutedLlm', () => {
         super({model: modelName});
       }
 
-      // eslint-disable-next-line require-yield
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
       async *generateContentAsync(
         _llmRequest: LlmRequest,
         _stream?: boolean,
@@ -296,7 +302,7 @@ describe('RoutedLlm', () => {
         super({model: modelName});
       }
 
-      // eslint-disable-next-line require-yield
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
       async *generateContentAsync(
         _llmRequest: LlmRequest,
         _stream?: boolean,
@@ -377,5 +383,96 @@ describe('RoutedLlm', () => {
     await generator.next();
 
     expect(model.receivedStream).toBe(true);
+  });
+
+  it('should propagate abortSignal parameter to selected model, including on failover', async () => {
+    let failingReceivedSignal: AbortSignal | undefined;
+    class FailingSignalLlm extends BaseLlm {
+      constructor() {
+        super({model: 'model-failing'});
+      }
+
+      // eslint-disable-next-line require-yield -- the test double throws before it can yield
+      async *generateContentAsync(
+        _llmRequest: LlmRequest,
+        _stream?: boolean,
+        abortSignal?: AbortSignal,
+      ): AsyncGenerator<LlmResponse, void> {
+        failingReceivedSignal = abortSignal;
+        throw new Error('Primary failed');
+      }
+
+      async connect(_llmRequest: LlmRequest): Promise<BaseLlmConnection> {
+        return {} as BaseLlmConnection;
+      }
+    }
+
+    const failingModel = new FailingSignalLlm();
+    const fallbackModel = new MockLlm('model-fallback');
+    const routedLlm = new RoutedLlm({
+      models: [failingModel, fallbackModel],
+      router: (_models, _req, ctx) =>
+        ctx?.failedKeys.has('model-failing')
+          ? 'model-fallback'
+          : 'model-failing',
+    });
+    const request: LlmRequest = {
+      contents: [],
+      toolsDict: {},
+      liveConnectConfig: {},
+    };
+    const signal = new AbortController().signal;
+
+    const generator = routedLlm.generateContentAsync(request, false, signal);
+    await generator.next();
+
+    expect(failingReceivedSignal).toBe(signal);
+    expect(fallbackModel.receivedAbortSignal).toBe(signal);
+  });
+
+  it('delivers abortSignal from LlmAgent and InMemoryRunner to a routed Gemini model', async () => {
+    let routedSignal: AbortSignal | undefined;
+    const gemini = new Gemini({model: 'gemini-2.5-flash', apiKey: 'unused'});
+    Object.defineProperty(gemini, 'apiClient', {
+      value: {
+        models: {
+          generateContent: async (params: {
+            config?: {abortSignal?: AbortSignal};
+          }) => {
+            routedSignal = params.config?.abortSignal;
+            return {
+              candidates: [{content: {role: 'model', parts: [{text: 'ok'}]}}],
+            };
+          },
+        },
+      },
+    });
+
+    const routed = new RoutedLlm({
+      models: [gemini],
+      router: (models) => Object.keys(models)[0],
+    });
+    const agent = new LlmAgent({
+      name: 'a',
+      model: routed,
+      instruction: 'Be brief.',
+    });
+    const runner = new InMemoryRunner({agent, appName: 'repro'});
+    const session = await runner.sessionService.createSession({
+      appName: 'repro',
+      userId: 'u',
+    });
+    const signal = new AbortController().signal;
+
+    for await (const _ of runner.runAsync({
+      userId: 'u',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+      abortSignal: signal,
+    })) {
+      // drain
+    }
+
+    expect(routedSignal).toBe(signal);
   });
 });
