@@ -647,8 +647,12 @@ describe('ContainerCodeExecutor', () => {
         docker: asDocker(docker),
       });
 
-      await executor.executeCode(makeParams('print(1)', undefined, 'session-a'));
-      await executor.executeCode(makeParams('print(2)', undefined, 'session-b'));
+      await executor.executeCode(
+        makeParams('print(1)', undefined, 'session-a'),
+      );
+      await executor.executeCode(
+        makeParams('print(2)', undefined, 'session-b'),
+      );
 
       expect(docker.createContainer).toHaveBeenCalledTimes(2);
     });
@@ -661,21 +665,29 @@ describe('ContainerCodeExecutor', () => {
       });
 
       await executor.executeCode(makeParams('x = 1', undefined, 'session-a'));
-      await executor.executeCode(makeParams('print(x)', undefined, 'session-a'));
-      await executor.executeCode(makeParams('print(x)', undefined, 'session-a'));
+      await executor.executeCode(
+        makeParams('print(x)', undefined, 'session-a'),
+      );
+      await executor.executeCode(
+        makeParams('print(x)', undefined, 'session-a'),
+      );
 
       expect(docker.createContainer).toHaveBeenCalledTimes(1);
     });
 
-    it('close() stops every session\'s container', async () => {
+    it("close() stops every session's container", async () => {
       const {docker, container} = createMockDocker();
       const executor = new ContainerCodeExecutor({
         image: 'test-image',
         docker: asDocker(docker),
       });
 
-      await executor.executeCode(makeParams('print(1)', undefined, 'session-a'));
-      await executor.executeCode(makeParams('print(2)', undefined, 'session-b'));
+      await executor.executeCode(
+        makeParams('print(1)', undefined, 'session-a'),
+      );
+      await executor.executeCode(
+        makeParams('print(2)', undefined, 'session-b'),
+      );
 
       await executor.close();
 

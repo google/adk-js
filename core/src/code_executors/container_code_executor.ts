@@ -260,7 +260,9 @@ export class ContainerCodeExecutor extends BaseCodeExecutor {
  * string so that no combination of appName/userId/session id values can
  * collide into the same key regardless of what characters they contain.
  */
-function sessionKey(invocationContext: ExecuteCodeParams['invocationContext']): string {
+function sessionKey(
+  invocationContext: ExecuteCodeParams['invocationContext'],
+): string {
   const session = invocationContext.session;
   return JSON.stringify([session.appName, session.userId, session.id]);
 }
