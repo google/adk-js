@@ -26,33 +26,35 @@ vi.mock('@google/genai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/genai')>();
   return {
     ...actual,
-    GoogleGenAI: vi.fn().mockImplementation((options) => ({
-      apiClient: {
-        clientOptions: {
-          httpOptions: options.httpOptions,
+    GoogleGenAI: vi.fn().mockImplementation(function (options) {
+      return {
+        apiClient: {
+          clientOptions: {
+            httpOptions: options.httpOptions,
+          },
         },
-      },
-      models: {
-        generateContentStream: vi.fn(),
-        generateContent: vi.fn(),
-      },
-      live: {
-        connect: vi.fn().mockResolvedValue({
-          sendClientContent: vi.fn(),
-          sendToolResponse: vi.fn(),
-          sendRealtimeInput: vi.fn(),
-          close: vi.fn(),
-        }),
-      },
-      vertexai:
-        options.vertexai ??
-        (['true', '1'].includes(
-          process.env['GOOGLE_GENAI_USE_ENTERPRISE'] ?? '',
-        ) ||
-          ['true', '1'].includes(
-            process.env['GOOGLE_GENAI_USE_VERTEXAI'] ?? '',
-          )),
-    })),
+        models: {
+          generateContentStream: vi.fn(),
+          generateContent: vi.fn(),
+        },
+        live: {
+          connect: vi.fn().mockResolvedValue({
+            sendClientContent: vi.fn(),
+            sendToolResponse: vi.fn(),
+            sendRealtimeInput: vi.fn(),
+            close: vi.fn(),
+          }),
+        },
+        vertexai:
+          options.vertexai ??
+          (['true', '1'].includes(
+            process.env['GOOGLE_GENAI_USE_ENTERPRISE'] ?? '',
+          ) ||
+            ['true', '1'].includes(
+              process.env['GOOGLE_GENAI_USE_VERTEXAI'] ?? '',
+            )),
+      };
+    }),
   };
 });
 

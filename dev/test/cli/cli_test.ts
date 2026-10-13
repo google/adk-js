@@ -16,9 +16,11 @@ import {AdkApiServer} from '../../src/server/adk_api_server.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
   return {
-    AdkApiServer: vi.fn(() => ({
-      start: vi.fn(),
-    })),
+    AdkApiServer: vi.fn(function () {
+      return {
+        start: vi.fn(),
+      };
+    }),
   };
 });
 

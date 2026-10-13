@@ -26,11 +26,13 @@ vi.mock('../../src/runner/runner.js', async (importOriginal) => {
     await importOriginal<typeof import('../../src/runner/runner.js')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation((config) => ({
-      appName: config?.appName,
-      sessionService: config?.sessionService,
-      runAsync: vi.fn(),
-    })),
+    Runner: vi.fn().mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -76,7 +78,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -144,7 +146,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -199,7 +201,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -282,7 +284,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -338,7 +340,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -387,14 +389,13 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation(
-      (config) =>
-        ({
-          appName: config?.appName,
-          sessionService: config?.sessionService,
-          runAsync: mockRunAsync,
-        }) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
 
     await tool.runAsync({args: {request: 'go'}, toolContext});
 
@@ -436,14 +437,13 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation(
-      (config) =>
-        ({
-          appName: config?.appName,
-          sessionService: config?.sessionService,
-          runAsync: mockRunAsync,
-        }) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function (config) {
+      return {
+        appName: config?.appName,
+        sessionService: config?.sessionService,
+        runAsync: mockRunAsync,
+      } as unknown as Runner;
+    });
 
     await tool.runAsync({args: {request: 'go'}, toolContext});
 
@@ -488,7 +488,7 @@ describe('AgentTool', () => {
       });
     };
 
-    vi.mocked(Runner).mockImplementation((config) => {
+    vi.mocked(Runner).mockImplementation(function (config) {
       return {
         appName: config?.appName,
         sessionService: config?.sessionService,
@@ -566,7 +566,7 @@ describe('AgentTool', () => {
         });
       });
 
-      vi.mocked(Runner).mockImplementation((config) => {
+      vi.mocked(Runner).mockImplementation(function (config) {
         return {
           appName: config?.appName,
           sessionService: config?.sessionService,
@@ -628,7 +628,7 @@ describe('AgentTool', () => {
         });
       };
 
-      vi.mocked(Runner).mockImplementation((config) => {
+      vi.mocked(Runner).mockImplementation(function (config) {
         return {
           appName: config?.appName,
           sessionService: config?.sessionService,

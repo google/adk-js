@@ -10,7 +10,7 @@ import {
   OpenAPIToolset,
   ReadonlyContext,
 } from '@google/adk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {describe, expect, it, vi} from 'vitest';
 import {logger} from '../../../src/utils/logger.js';

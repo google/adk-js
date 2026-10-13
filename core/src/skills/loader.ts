@@ -5,7 +5,7 @@
  */
 
 import AdmZip from 'adm-zip';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {isUtf8} from 'node:buffer';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';

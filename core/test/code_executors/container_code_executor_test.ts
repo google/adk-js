@@ -522,7 +522,9 @@ describe('ContainerCodeExecutor', () => {
 
     it('lazily loads dockerode and builds a default client when none is injected', async () => {
       const {docker} = createMockDocker();
-      vi.mocked(Dockerode).mockReturnValue(asDocker(docker));
+      vi.mocked(Dockerode).mockImplementation(function () {
+        return asDocker(docker);
+      });
 
       const executor = new ContainerCodeExecutor({image: 'test-image'});
       await executor.executeCode(makeParams('print(1)'));
@@ -547,7 +549,9 @@ describe('ContainerCodeExecutor', () => {
       ],
     ])('maps base url %s to dockerode options', async (baseUrl, expected) => {
       const {docker} = createMockDocker();
-      vi.mocked(Dockerode).mockReturnValue(asDocker(docker));
+      vi.mocked(Dockerode).mockImplementation(function () {
+        return asDocker(docker);
+      });
 
       const executor = new ContainerCodeExecutor({
         image: 'test-image',

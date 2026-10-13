@@ -15,12 +15,19 @@ const {accessSecretVersion, getClient} = vi.hoisted(() => ({
 }));
 
 vi.mock('@google-cloud/secret-manager', () => ({
-  SecretManagerServiceClient: vi.fn(() => ({accessSecretVersion})),
+  SecretManagerServiceClient: vi.fn(function () {
+    return {accessSecretVersion};
+  }),
 }));
 
 vi.mock('google-auth-library', async (importOriginal) => {
   const actual = await importOriginal<typeof import('google-auth-library')>();
-  return {...actual, GoogleAuth: vi.fn(() => ({getClient}))};
+  return {
+    ...actual,
+    GoogleAuth: vi.fn(function () {
+      return {getClient};
+    }),
+  };
 });
 
 const SECRET_NAME = 'projects/my-project/secrets/my-secret/versions/latest';

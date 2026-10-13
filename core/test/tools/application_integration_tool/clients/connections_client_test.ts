@@ -31,7 +31,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn(() => ({getAccessToken: mocks.getAccessToken})),
+  GoogleAuth: vi.fn(function () {
+    return {getAccessToken: mocks.getAccessToken};
+  }),
 }));
 
 const PROJECT = 'test-project';

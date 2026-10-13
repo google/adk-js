@@ -47,29 +47,33 @@ vi.mock('@google/adk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@google/adk')>();
   return {
     ...actual,
-    Runner: vi.fn().mockImplementation(() => ({
-      runAsync: vi.fn().mockImplementation(async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      }),
-    })),
+    Runner: vi.fn().mockImplementation(function () {
+      return {
+        runAsync: vi.fn().mockImplementation(async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        }),
+      };
+    }),
     InMemoryArtifactService: vi.fn(),
-    InMemorySessionService: vi.fn().mockImplementation(() => ({
-      createSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-      appendEvent: vi.fn(),
-      getSession: vi.fn().mockResolvedValue({
-        id: 'session-123',
-        appName: 'test-agent',
-        userId: 'test_user',
-        events: [],
-      }),
-    })),
+    InMemorySessionService: vi.fn().mockImplementation(function () {
+      return {
+        createSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+        appendEvent: vi.fn(),
+        getSession: vi.fn().mockResolvedValue({
+          id: 'session-123',
+          appName: 'test-agent',
+          userId: 'test_user',
+          events: [],
+        }),
+      };
+    }),
     InMemoryMemoryService: vi.fn(),
     isApp: vi.fn().mockReturnValue(false),
   };
@@ -82,8 +86,8 @@ vi.mock('node:readline', () => ({
 /** The two-argument `readline.question` overload the REPL calls. */
 type AskUser = (query: string, cb: (answer: string) => void) => void;
 
-const createMockSessionService = () =>
-  ({
+function createMockSessionService() {
+  return {
     createSession: vi.fn().mockResolvedValue({
       id: 'session-123',
       appName: 'test-agent',
@@ -97,7 +101,8 @@ const createMockSessionService = () =>
       userId: 'test_user',
       events: [],
     }),
-  }) as unknown as BaseSessionService;
+  } as unknown as BaseSessionService;
+}
 
 describe('cli_run', () => {
   let mockAgentFile: AgentFile;
@@ -121,13 +126,15 @@ describe('cli_run', () => {
     // Re-established every test: `restoreAllMocks` drops the implementations
     // set in the module factory, which would otherwise leave the runner and
     // the session service inert from the second test onwards.
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        for (const event of runnerState.events) {
-          yield event;
-        }
-      },
-    }));
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          for (const event of runnerState.events) {
+            yield event;
+          }
+        },
+      };
+    });
     (InMemorySessionService as unknown as Mock).mockImplementation(
       createMockSessionService,
     );
@@ -142,7 +149,9 @@ describe('cli_run', () => {
       [Symbol.asyncDispose]: vi.fn(),
     } as unknown as AgentFile;
 
-    (AgentFile as unknown as Mock).mockImplementation(() => mockAgentFile);
+    (AgentFile as unknown as Mock).mockImplementation(function () {
+      return mockAgentFile;
+    });
 
     mockRl = {
       question: vi.fn((query: string, cb: (answer: string) => void) => {
@@ -173,15 +182,17 @@ describe('cli_run', () => {
   it('keeps the REPL alive when a turn fails', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     let turn = 0;
-    (Runner as unknown as Mock).mockImplementation(() => ({
-      runAsync: async function* () {
-        turn++;
-        if (turn === 1) {
-          throw new Error('Context variable not found: `my_city`.');
-        }
-        yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
-      },
-    }));
+    (Runner as unknown as Mock).mockImplementation(function () {
+      return {
+        runAsync: async function* () {
+          turn++;
+          if (turn === 1) {
+            throw new Error('Context variable not found: `my_city`.');
+          }
+          yield {author: 'model', content: {parts: [{text: 'recovered'}]}};
+        },
+      };
+    });
     (mockRl.question as Mock)
       .mockImplementationOnce((_p: string, cb: (a: string) => void) =>
         cb('boom'),
@@ -286,9 +297,9 @@ describe('cli_run', () => {
   /** Replaces the mocked Runner with one whose runAsync the test can watch. */
   const watchRunner = () => {
     const runAsync = vi.fn(async function* () {});
-    vi.mocked(Runner).mockImplementation(
-      () => ({runAsync}) as unknown as Runner,
-    );
+    vi.mocked(Runner).mockImplementation(function () {
+      return {runAsync} as unknown as Runner;
+    });
     return runAsync;
   };
 
