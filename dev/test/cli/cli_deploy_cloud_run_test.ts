@@ -50,13 +50,15 @@ vi.mock('node:fs/promises', () => {
 });
 
 vi.mock('../../src/utils/agent_loader.js', () => ({
-  AgentLoader: vi.fn().mockImplementation(() => ({
-    listAgents: vi.fn().mockResolvedValue(['agent1']),
-    getAgentFile: vi.fn().mockResolvedValue({
-      getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-    }),
-    disposeAll: vi.fn().mockResolvedValue(undefined),
-  })),
+  AgentLoader: vi.fn().mockImplementation(function () {
+    return {
+      listAgents: vi.fn().mockResolvedValue(['agent1']),
+      getAgentFile: vi.fn().mockResolvedValue({
+        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+      }),
+      disposeAll: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock('../../src/utils/file_utils.js', () => ({
@@ -277,13 +279,15 @@ describe('deployToCloudRun', () => {
       },
     });
 
-    (AgentLoader as Mock).mockImplementation(() => ({
-      listAgents: vi.fn().mockResolvedValue(['agent1']),
-      getAgentFile: vi.fn().mockResolvedValue({
-        getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
-      }),
-      disposeAll: vi.fn().mockResolvedValue(undefined),
-    }));
+    (AgentLoader as Mock).mockImplementation(function () {
+      return {
+        listAgents: vi.fn().mockResolvedValue(['agent1']),
+        getAgentFile: vi.fn().mockResolvedValue({
+          getFilePath: vi.fn().mockReturnValue('path/to/agent1.ts'),
+        }),
+        disposeAll: vi.fn().mockResolvedValue(undefined),
+      };
+    });
 
     execMock.mockImplementation((cmd: string, callback: Callback) => {
       if (cmd.includes('config get-value project')) {

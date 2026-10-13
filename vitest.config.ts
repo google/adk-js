@@ -65,27 +65,26 @@ const reporters = process.env.CI
  */
 const AGENT_LOADER_BUNDLE_PATTERN = /[\\/]adk_agent_loader/;
 
+const EXEC_ARGV = [`--max-old-space-size=${WORKER_MAX_OLD_SPACE_MB}`];
+
 export default defineConfig({
   test: {
     reporters,
     // Keep test stdout for failures only; a passing run has nothing to say.
     silent: process.env.CI ? 'passed-only' : false,
-    poolOptions: {
-      forks: {
-        execArgv: [`--max-old-space-size=${WORKER_MAX_OLD_SPACE_MB}`],
-      },
-    },
+    execArgv: EXEC_ARGV,
     projects: [
       {
         test: {
           name: 'unit:core',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -96,12 +95,13 @@ export default defineConfig({
         test: {
           name: 'unit:dev',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           testTimeout: UNIT_TEST_TIMEOUT_MS,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -112,11 +112,12 @@ export default defineConfig({
         test: {
           name: 'unit:integrations',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -127,14 +128,15 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
           server: {deps: {external: [AGENT_LOADER_BUNDLE_PATTERN]}},
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -145,11 +147,12 @@ export default defineConfig({
         test: {
           name: 'e2e',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -160,11 +163,12 @@ export default defineConfig({
         test: {
           name: 'cross-language',
           environment: 'node',
+          execArgv: EXEC_ARGV,
           setupFiles: SETUP_FILES,
           alias: {
-            '@google/adk': path.resolve(__dirname, './core/src'),
+            '@google/adk': path.resolve(import.meta.dirname, './core/src'),
             '@google/adk-integrations': path.resolve(
-              __dirname,
+              import.meta.dirname,
               './integrations/src',
             ),
           },
@@ -180,14 +184,14 @@ export default defineConfig({
         'dev/src/**/*.ts',
         'integrations/src/**/*.ts',
       ],
-      // Those values are from the npm run test:coverage command run on 2026-07-30
+      // Those values are from the npm run test:coverage command run on 2026-10-13
       // and are used to ensure that the test coverage does not decrease.
       // Once the test coverage increases, these values should be updated (manually).
       thresholds: {
-        statements: 90,
-        branches: 88,
-        functions: 90,
-        lines: 90,
+        statements: 92,
+        branches: 85,
+        functions: 94,
+        lines: 92,
       },
     },
   },

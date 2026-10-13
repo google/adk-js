@@ -88,15 +88,17 @@ vi.mock(
   '../../../src/tools/openapi_tool/auth/credential_exchangers/auto_auth_credential_exchanger.js',
   () => {
     return {
-      AutoAuthCredentialExchanger: vi.fn().mockImplementation(() => ({
-        exchange: vi.fn().mockResolvedValue({
-          credential: {
-            authType: AuthCredentialTypes.HTTP,
-            http: {scheme: 'bearer', credentials: {token: 'exchanged-token'}},
-          },
-          wasExchanged: true,
-        }),
-      })),
+      AutoAuthCredentialExchanger: vi.fn().mockImplementation(function () {
+        return {
+          exchange: vi.fn().mockResolvedValue({
+            credential: {
+              authType: AuthCredentialTypes.HTTP,
+              http: {scheme: 'bearer', credentials: {token: 'exchanged-token'}},
+            },
+            wasExchanged: true,
+          }),
+        };
+      }),
     };
   },
 );
@@ -286,15 +288,14 @@ describe('ToolAuthHandler', () => {
     };
     // The real exchanger has no exchanger registered for apiKey/http, so it
     // hands the credential straight back.
-    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(
-      () =>
-        ({
-          exchange: vi.fn().mockResolvedValue({
-            credential: staticCredential,
-            wasExchanged: false,
-          }),
-        }) as unknown as AutoAuthCredentialExchanger,
-    );
+    vi.mocked(AutoAuthCredentialExchanger).mockImplementationOnce(function () {
+      return {
+        exchange: vi.fn().mockResolvedValue({
+          credential: staticCredential,
+          wasExchanged: false,
+        }),
+      } as unknown as AutoAuthCredentialExchanger;
+    });
 
     const state = new State();
     const mockContext = {

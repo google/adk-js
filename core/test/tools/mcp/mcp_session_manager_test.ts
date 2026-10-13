@@ -27,10 +27,12 @@ vi.hoisted(() => {
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   return {
-    Client: vi.fn().mockImplementation(() => ({
-      connect: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    })),
+    Client: vi.fn().mockImplementation(function () {
+      return {
+        connect: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+    }),
   };
 });
 
@@ -386,22 +388,21 @@ describe('MCPSessionManager', () => {
 
   describe('connection error handling', () => {
     it('wraps a connect failure with a formatted message', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                Object.assign(
-                  new Error(
-                    'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
-                  ),
-                  {code: 403},
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(
+                new Error(
+                  'Streamable HTTP error: Error POSTing to endpoint: Forbidden',
                 ),
+                {code: 403},
               ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -419,13 +420,12 @@ describe('MCPSessionManager', () => {
 
     it('preserves the original error as the cause', async () => {
       const original = Object.assign(new Error('boom'), {code: 401});
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi.fn().mockRejectedValue(original),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(original),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StreamableHTTPConnectionParams',
@@ -437,17 +437,16 @@ describe('MCPSessionManager', () => {
     });
 
     it('wraps an AggregateError connect failure with joined leaves', async () => {
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi
-              .fn()
-              .mockRejectedValue(
-                new AggregateError([new Error('err A'), new Error('err B')]),
-              ),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi
+            .fn()
+            .mockRejectedValue(
+              new AggregateError([new Error('err A'), new Error('err B')]),
+            ),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'StdioConnectionParams',
@@ -591,13 +590,12 @@ describe('MCPSessionManager', () => {
 
     it('wraps an SSE connect failure with the original error as cause', async () => {
       const cause = new Error('SSE endpoint unreachable');
-      vi.mocked(Client).mockImplementationOnce(
-        () =>
-          ({
-            connect: vi.fn().mockRejectedValue(cause),
-            close: vi.fn().mockResolvedValue(undefined),
-          }) as unknown as Client,
-      );
+      vi.mocked(Client).mockImplementationOnce(function () {
+        return {
+          connect: vi.fn().mockRejectedValue(cause),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as unknown as Client;
+      });
 
       const manager = new MCPSessionManager({
         type: 'SseConnectionParams',
