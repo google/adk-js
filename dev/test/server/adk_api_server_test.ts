@@ -6,6 +6,7 @@
 
 import {AGENT_CARD_PATH, AgentCard} from '@a2a-js/sdk';
 import {
+  App,
   BaseArtifactService,
   BaseMemoryService,
   BaseSessionService,
@@ -649,6 +650,39 @@ describe('AdkWebServer', () => {
       expect((response.data as Event[])[0].content!.parts![0].text).toBe(
         "Hello user! I'm streaming you events now!",
       );
+    });
+
+    it('should find session in /run when exported App.name differs from route appName', async () => {
+      agentLoader.getAgentFile = (() =>
+        Promise.resolve({
+          load() {
+            return Promise.resolve(
+              new App({name: 'real_name', rootAgent: TEST_AGENT}),
+            );
+          },
+          async [Symbol.asyncDispose](): Promise<void> {
+            return;
+          },
+        })) as unknown as AgentLoader['getAgentFile'];
+
+      await client.post<Session>(
+        '/apps/my_file/users/testUser/sessions/sessionId',
+        {},
+      );
+
+      const response = await client.post<Event[]>('/run', {
+        appName: 'my_file',
+        userId: 'testUser',
+        sessionId: 'sessionId',
+        newMessage: {
+          parts: [{text: 'Hello test agent!'}],
+          role: 'user',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.data)).toBe(true);
+      expect(response.data!.length).toBe(3);
     });
 
     it('should update session state if stateDelta is provided', async () => {

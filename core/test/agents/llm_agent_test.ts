@@ -2183,4 +2183,94 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
       /Max number of llm calls limit of 1 exceeded/,
     );
   });
+
+  it('keeps one event id across partial chunks and final event of a streamed response, minting a fresh id only after a complete event', async () => {
+    class MultiResponseLlm extends BaseLlm {
+      constructor(private readonly responses: LlmResponse[]) {
+        super({model: 'multi-response-llm'});
+      }
+
+      async *generateContentAsync(): AsyncGenerator<LlmResponse, void, void> {
+        for (const response of this.responses) {
+          yield response;
+        }
+      }
+
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const llm = new MultiResponseLlm([
+      {
+        content: {role: 'model', parts: [{text: 'Hello '}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'world!'}]},
+        partial: true,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Hello world!'}]},
+        partial: false,
+      },
+      {
+        content: {role: 'model', parts: [{text: 'Second distinct response'}]},
+        partial: false,
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'streaming_id_agent',
+      model: llm,
+    });
+    const sessionService = new InMemorySessionService();
+    const session = await sessionService.createSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: 'sess_stream_ids',
+    });
+    const runner = new Runner({
+      appName: 'test-app',
+      agent,
+      sessionService,
+    });
+
+    const events: Event[] = [];
+    for await (const event of runner.runAsync({
+      userId: 'test-user',
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'stream please'}]},
+      runConfig: createRunConfig({streamingMode: StreamingMode.SSE}),
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(4);
+    expect(events[0].partial).toBe(true);
+    expect(events[1].partial).toBe(true);
+    expect(events[2].partial).toBe(false);
+    expect(events[3].partial).toBe(false);
+
+    // Partial chunks and the final complete event of the first response share one id.
+    expect(events[1].id).toBe(events[0].id);
+    expect(events[2].id).toBe(events[0].id);
+
+    // A subsequent complete response gets a newly minted id.
+    expect(events[3].id).not.toBe(events[0].id);
+
+    // Stored session events match the complete event IDs.
+    const reloadedSession = await sessionService.getSession({
+      appName: 'test-app',
+      userId: 'test-user',
+      sessionId: session.id,
+    });
+    const storedAgentEvents = reloadedSession!.events.filter(
+      (e) => e.author === 'streaming_id_agent',
+    );
+    expect(storedAgentEvents.map((e) => e.id)).toEqual([
+      events[0].id,
+      events[3].id,
+    ]);
+  });
 });

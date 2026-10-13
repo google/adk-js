@@ -57,13 +57,14 @@ export class RoutedLlm extends BaseLlm {
   async *generateContentAsync(
     llmRequest: LlmRequest,
     stream?: boolean,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<LlmResponse, void> {
     logger.info(`Routing request via ${this.model}`);
     yield* runWithRouting(this.models, llmRequest, this.router, (model) => {
       // Models read the name off the request, which the flow filled in from
       // this wrapper. Point it at the delegate or it calls the wrong model.
       llmRequest.model = model.model;
-      return model.generateContentAsync(llmRequest, stream);
+      return model.generateContentAsync(llmRequest, stream, abortSignal);
     });
   }
 
