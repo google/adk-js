@@ -1671,9 +1671,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
                 return;
               }
 
-              // Update the mutable event id to avoid conflict
-              modelResponseEvent.id = createNewEventId();
-              modelResponseEvent.timestamp = new Date().getTime();
+              // Partial chunks of one streaming response share the base id;
+              // mint a fresh id only after a complete event so distinct
+              // responses differ.
+              if (!event.partial) {
+                modelResponseEvent.id = createNewEventId();
+                modelResponseEvent.timestamp = new Date().getTime();
+              }
               yield event;
             }
           }
