@@ -8,7 +8,6 @@ import {InvocationContext, requireAgent} from '../agents/invocation_context.js';
 import {getContents} from '../agents/processors/content_processor_utils.js';
 import {isCompactedEvent} from '../events/compacted_event.js';
 import {Event} from '../events/event.js';
-import {UsageMetadataWithInitialPrompt} from '../models/llm_response.js';
 import {BaseContextCompactor} from './base_context_compactor.js';
 import {
   calculateRetainStartIndex,
@@ -149,8 +148,7 @@ function latestPromptTokenCount(
   invocationContext: InvocationContext,
 ): number | undefined {
   for (let i = activeEvents.length - 1; i >= 0; i--) {
-    const usage: UsageMetadataWithInitialPrompt | undefined =
-      activeEvents[i].usageMetadata;
+    const usage = activeEvents[i].usageMetadata;
     const count = usage?.initialPromptTokenCount ?? usage?.promptTokenCount;
     if (count !== undefined) {
       return count;

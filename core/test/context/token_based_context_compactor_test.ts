@@ -15,7 +15,6 @@ import {
   TokenBasedContextCompactor,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
-import {UsageMetadataWithInitialPrompt} from '../../src/models/llm_response.js';
 
 class MockSummarizer implements BaseSummarizer {
   async summarize(events: Event[]): Promise<CompactedEvent> {
@@ -250,11 +249,7 @@ describe('TokenBasedContextCompactor', () => {
       summarizer: new MockSummarizer(),
     });
     const resumed = createMockEvent('3');
-    const usageMetadata: UsageMetadataWithInitialPrompt = {
-      promptTokenCount: 27,
-      initialPromptTokenCount: 9,
-    };
-    resumed.usageMetadata = usageMetadata;
+    resumed.usageMetadata = {promptTokenCount: 27, initialPromptTokenCount: 9};
     const context = createMockInvocationContext([
       createMockEvent('1', 6),
       createMockEvent('2', 7),

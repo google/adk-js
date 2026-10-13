@@ -115,16 +115,6 @@ export interface LlmResponse {
 }
 
 /**
- * Usage metadata with the prompt size of the first request of a generation
- * that @google/genai resumed after continuation pauses.
- *
- * TODO: Remove once the @google/genai dependency declares
- * initialPromptTokenCount on GenerateContentResponseUsageMetadata.
- */
-export type UsageMetadataWithInitialPrompt =
-  GenerateContentResponseUsageMetadata & {initialPromptTokenCount?: number};
-
-/**
  * Returns `usage` with initialPromptTokenCount as an own enumerable field.
  *
  * @google/genai defines it as a non-enumerable getter, which spreading an
@@ -133,9 +123,8 @@ export type UsageMetadataWithInitialPrompt =
  */
 function withOwnInitialPromptTokenCount(
   usage: GenerateContentResponseUsageMetadata | undefined,
-): UsageMetadataWithInitialPrompt | undefined {
-  const source: UsageMetadataWithInitialPrompt | undefined = usage;
-  const initialPromptTokenCount = source?.initialPromptTokenCount;
+): GenerateContentResponseUsageMetadata | undefined {
+  const initialPromptTokenCount = usage?.initialPromptTokenCount;
   if (
     !usage ||
     initialPromptTokenCount === undefined ||
