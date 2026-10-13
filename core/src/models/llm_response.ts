@@ -115,11 +115,14 @@ export interface LlmResponse {
 }
 
 /**
- * Returns `usage` with initialPromptTokenCount as an own enumerable field.
+ * Returns `usage` with initialPromptTokenCount as an own enumerable field when
+ * it differs from promptTokenCount.
  *
  * @google/genai defines it as a non-enumerable getter, which spreading an
  * event or serializing it to JSON drops, and the summed promptTokenCount of a
- * resumed generation overstates the request size.
+ * resumed generation overstates the request size. The getter falls back to
+ * promptTokenCount for every other response, where copying it would only add
+ * a redundant field to serialized events.
  */
 function withOwnInitialPromptTokenCount(
   usage: GenerateContentResponseUsageMetadata | undefined,
@@ -128,6 +131,7 @@ function withOwnInitialPromptTokenCount(
   if (
     !usage ||
     initialPromptTokenCount === undefined ||
+    initialPromptTokenCount === usage.promptTokenCount ||
     Object.prototype.propertyIsEnumerable.call(usage, 'initialPromptTokenCount')
   ) {
     return usage;

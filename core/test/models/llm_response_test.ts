@@ -265,6 +265,17 @@ describe('createLlmResponse with a resumed generation', () => {
 
     expect(Object.keys(usageMetadata)).toEqual(['promptTokenCount']);
   });
+
+  it('keeps the SDK usage object of a generation that was not resumed', () => {
+    const usageMetadata = resumedUsage({
+      promptTokenCount: 10,
+      initialPromptTokenCount: 10,
+    });
+
+    const result = createLlmResponse(makeResponse({usageMetadata}));
+
+    expect(result.usageMetadata).toBe(usageMetadata);
+  });
 });
 
 describe('createLlmResponse from the package entry point', () => {
