@@ -1634,60 +1634,63 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     const span = tracer.startSpan('call_llm');
     const ctx = trace.setSpan(context.active(), span);
-    yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
-      ctx,
-      this,
-      async function* () {
-        const responsesGenerator = async function* (this: LlmAgent) {
-          for await (const llmResponse of this.callLlmAsync(
-            invocationContext,
-            llmRequest,
-            modelResponseEvent,
-          )) {
-            if (invocationContext.abortSignal?.aborted) {
-              return;
-            }
-
-            if (
-              invocationContext.runConfig?.supportCfc &&
-              isEvent(llmResponse)
-            ) {
-              modelResponseEvent.id = createNewEventId();
-              modelResponseEvent.timestamp = new Date().getTime();
-              yield llmResponse;
-              continue;
-            }
-
-            // ======================================================================
-            // Postprocess after calling the LLM
-            // ======================================================================
-            for await (const event of this.postprocess(
+    try {
+      yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
+        ctx,
+        this,
+        async function* () {
+          const responsesGenerator = async function* (this: LlmAgent) {
+            for await (const llmResponse of this.callLlmAsync(
               invocationContext,
               llmRequest,
-              llmResponse,
               modelResponseEvent,
             )) {
               if (invocationContext.abortSignal?.aborted) {
                 return;
               }
 
-              // Update the mutable event id to avoid conflict
-              modelResponseEvent.id = createNewEventId();
-              modelResponseEvent.timestamp = new Date().getTime();
-              yield event;
-            }
-          }
-        };
+              if (
+                invocationContext.runConfig?.supportCfc &&
+                isEvent(llmResponse)
+              ) {
+                modelResponseEvent.id = createNewEventId();
+                modelResponseEvent.timestamp = new Date().getTime();
+                yield llmResponse;
+                continue;
+              }
 
-        yield* this.runAndHandleError(
-          responsesGenerator.call(this),
-          invocationContext,
-          llmRequest,
-          modelResponseEvent,
-        );
-      },
-    );
-    span.end();
+              // ======================================================================
+              // Postprocess after calling the LLM
+              // ======================================================================
+              for await (const event of this.postprocess(
+                invocationContext,
+                llmRequest,
+                llmResponse,
+                modelResponseEvent,
+              )) {
+                if (invocationContext.abortSignal?.aborted) {
+                  return;
+                }
+
+                // Update the mutable event id to avoid conflict
+                modelResponseEvent.id = createNewEventId();
+                modelResponseEvent.timestamp = new Date().getTime();
+                yield event;
+              }
+            }
+          };
+
+          yield* this.runAndHandleError(
+            responsesGenerator.call(this),
+            invocationContext,
+            llmRequest,
+            modelResponseEvent,
+          );
+        },
+      );
+    } finally {
+      span.end();
+    }
   }
 
   private async *postprocess(
