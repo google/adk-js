@@ -1,5 +1,56 @@
 # Changelog
 
+## [2.3.0](https://github.com/google/adk-js/compare/adk-v2.2.0...adk-v2.3.0) (2026-10-13)
+
+
+### Features
+
+* **agents:** port agents features from adk-python ([#1070](https://github.com/google/adk-js/issues/1070)) ([31a56e8](https://github.com/google/adk-js/commit/31a56e8eded2f7ab5b09c4f3d9548f2e710f41eb))
+* **auth:** bring auth to parity with adk-python v0.1.0 ([#1013](https://github.com/google/adk-js/issues/1013)) ([4cefafc](https://github.com/google/adk-js/commit/4cefafcd114fb597f08d511eb34c4f8c69394df7))
+* **cli:** bring cli to parity with adk-python v0.1.0 ([#1049](https://github.com/google/adk-js/issues/1049)) ([ecb6bd1](https://github.com/google/adk-js/commit/ecb6bd13d69ad9e442d1936e5c23da08cd0d398e))
+* **events:** reserve __adk_internal_ customMetadata keys for ADK (adk-python parity) ([#977](https://github.com/google/adk-js/issues/977)) ([2dc6f47](https://github.com/google/adk-js/commit/2dc6f4755594f48df2e7ae260a561e33650b9022))
+* **flows:** bring flows to parity with adk-python v0.1.0 ([#1048](https://github.com/google/adk-js/issues/1048)) ([94b547b](https://github.com/google/adk-js/commit/94b547be3a1807bcc7979044a9ad269b642453bf))
+* **models:** bring models to parity with adk-python v0.1.0 (Scott's foundry impl with task generation pipeline and one task for subsystem) ([#981](https://github.com/google/adk-js/issues/981)) ([03206c8](https://github.com/google/adk-js/commit/03206c8b91d8889ebdf072191c9ceb9e2c378a7a))
+* **plugins:** add DebugLoggingPlugin with full Python parity ([#920](https://github.com/google/adk-js/issues/920)) ([6482917](https://github.com/google/adk-js/commit/64829176aadb51c09dcc79219a6682dd2cee530e))
+* **plugins:** add ToolCallIntegrityPlugin (adk-python parity) ([#979](https://github.com/google/adk-js/issues/979)) ([d7b6f04](https://github.com/google/adk-js/commit/d7b6f04f56242c55e76905ab3d0a7aefe26c276a))
+* **runner:** add opt-in autoCreateSession (adk-python parity) ([#967](https://github.com/google/adk-js/issues/967)) ([5ad45af](https://github.com/google/adk-js/commit/5ad45af3f6aa3151ad80554ec136539569b10d87))
+* **sessions:** bring sessions to parity with adk-python v0.1.0 ([#1004](https://github.com/google/adk-js/issues/1004)) ([a4e3cb5](https://github.com/google/adk-js/commit/a4e3cb51135f3f2a3172902bbcc18498747c2611))
+* **telemetry:** bring telemetry to parity with adk-python v0.1.0 ([#963](https://github.com/google/adk-js/issues/963)) ([4395fad](https://github.com/google/adk-js/commit/4395fad8da70a4123cb0b49da98c89883541b0ea))
+* **tools:** bring apihub_tool to parity with adk-python v0.1.0 ([#1015](https://github.com/google/adk-js/issues/1015)) ([0e78193](https://github.com/google/adk-js/commit/0e7819345a26a600d3e02214785304c6889c62fc))
+* **tools:** bring application_integration_tool to parity with adk-python v0.1.0 ([#1016](https://github.com/google/adk-js/issues/1016)) ([d315993](https://github.com/google/adk-js/commit/d315993add90f43b630a13ee4c8dbbf19f1d90e2))
+* **tools:** bring google_api_tool to parity with adk-python v0.1.0 ([#1014](https://github.com/google/adk-js/issues/1014)) ([ef1b383](https://github.com/google/adk-js/commit/ef1b3830b05a0e5922160dd28239ad6d10266176))
+* **tools:** bring mcp_tool to parity with adk-python v0.1.0 ([#1047](https://github.com/google/adk-js/issues/1047)) ([6362192](https://github.com/google/adk-js/commit/63621924f009acd6421fce030b4c76d812148fd8))
+* **tools:** bring tools to parity with adk-python v0.1.0 ([#1046](https://github.com/google/adk-js/issues/1046)) ([e4bb8ee](https://github.com/google/adk-js/commit/e4bb8ee66f966d95c85569401389e785f4736680))
+* **tools:** validate ExampleTool examples at construction ([#968](https://github.com/google/adk-js/issues/968)) ([46c6feb](https://github.com/google/adk-js/commit/46c6feb851be096ac701bd3de7850162fbdcb1d3))
+
+
+### Bug Fixes
+
+* **artifacts:** populate canonicalUri on in-memory artifact versions ([#966](https://github.com/google/adk-js/issues/966)) ([8657909](https://github.com/google/adk-js/commit/86579095ac18de0f35b605cfaac05ba8803a1cca))
+* **code_executors:** run client-side code by default and match adk-python output ([#1003](https://github.com/google/adk-js/issues/1003)) ([9839754](https://github.com/google/adk-js/commit/9839754d8e718ecc99ef63cf522685406658a811))
+* **core:** consolidate the two extension to MIME type tables ([#972](https://github.com/google/adk-js/issues/972)) ([6c52d29](https://github.com/google/adk-js/commit/6c52d2942f9e74550f1dbdf3b1b09dd0c930da1f))
+* **core:** convert JSON Schema boolean nodes to object schemas in toGeminiSchema ([#937](https://github.com/google/adk-js/issues/937)) ([5d13f15](https://github.com/google/adk-js/commit/5d13f15bd85bd703f16f66354600368502571b92))
+* **core:** end call_llm span in finally when runAsync exits early ([#1068](https://github.com/google/adk-js/issues/1068)) ([966d49c](https://github.com/google/adk-js/commit/966d49c7eb072611fc49766d09355a11823680d9))
+* **core:** give VertexAiSessionService a null-prototype Session.state ([#971](https://github.com/google/adk-js/issues/971)) ([31dc067](https://github.com/google/adk-js/commit/31dc06796e807d2672083a5ee278945e1e45ef1a))
+* **core:** keep ${...} and escaped braces in instructions as literal text ([#959](https://github.com/google/adk-js/issues/959)) ([ebf94c6](https://github.com/google/adk-js/commit/ebf94c672cb8c50e09b1f4bd0bfc6bfefd2faf4e))
+* **core:** keep one event id across partial chunks of a streamed response ([#1042](https://github.com/google/adk-js/issues/1042)) ([#1069](https://github.com/google/adk-js/issues/1069)) ([5e31749](https://github.com/google/adk-js/commit/5e317493a1b7291920b03daa3b0a33a7a10e401e))
+* **core:** normalize tool responses before afterToolCallback runs ([#1035](https://github.com/google/adk-js/issues/1035)) ([#1061](https://github.com/google/adk-js/issues/1061)) ([43ba911](https://github.com/google/adk-js/commit/43ba9117415806ef85767f07b635c2839b9f9c42))
+* **core:** persist sandbox name in _code_execution_context state delta ([#1039](https://github.com/google/adk-js/issues/1039)) ([#1065](https://github.com/google/adk-js/issues/1065)) ([3700444](https://github.com/google/adk-js/commit/370044469b74497885403fc690e3943a9ab163ae))
+* **core:** prefer explicit appName over app.name in Runner ([#1040](https://github.com/google/adk-js/issues/1040)) ([#1066](https://github.com/google/adk-js/issues/1066)) ([67ea8a6](https://github.com/google/adk-js/commit/67ea8a6e99ce7e79d6a567c2895734f30ce6025e))
+* **core:** require HTTPS for implicit Google API auth ([#952](https://github.com/google/adk-js/issues/952)) ([98cb542](https://github.com/google/adk-js/commit/98cb5428f30c9c7af7a3d2a412f382d1323cc9e3))
+* **core:** set llmRequest.model to selected route model in RoutedLlm ([#1062](https://github.com/google/adk-js/issues/1062)) ([5e7af7e](https://github.com/google/adk-js/commit/5e7af7e767f29c13de30320403fe84b26b163a94))
+* **core:** stop parent step loop after transfer_to_agent in SSE mode ([#1063](https://github.com/google/adk-js/issues/1063)) ([f42e5c2](https://github.com/google/adk-js/commit/f42e5c29cda850063e0f7cab4abbb688d5fe7c8d))
+* **core:** use ^1.9.0 range for @opentelemetry/api ([#1041](https://github.com/google/adk-js/issues/1041)) ([#1067](https://github.com/google/adk-js/issues/1067)) ([47fadc9](https://github.com/google/adk-js/commit/47fadc9ab1855ea03bc2ef75d8295d3fa4a03da8))
+* **logger:** map numeric levels to Winston names ([#960](https://github.com/google/adk-js/issues/960)) ([e894d35](https://github.com/google/adk-js/commit/e894d35d76cca48b40a4f9d05823181bc466dd01))
+* **models:** forward abortSignal in RoutedLlm.generateContentAsync ([#1038](https://github.com/google/adk-js/issues/1038)) ([#1064](https://github.com/google/adk-js/issues/1064)) ([8efe0fe](https://github.com/google/adk-js/commit/8efe0fe60e1c743aed929b96aec9953f784a1ae1))
+* **models:** respect explicit vertexai: false when enterprise env vars are set ([#1044](https://github.com/google/adk-js/issues/1044)) ([ce75d16](https://github.com/google/adk-js/commit/ce75d1639cb2cbb650a46ed90422daafc946705b))
+* pin a fetched agent card's RPC url(s) to the origin it was fetched from ([#829](https://github.com/google/adk-js/issues/829)) ([8429fce](https://github.com/google/adk-js/commit/8429fce63edaf5d910e3055ed014c602dfc10105))
+* **planners:** keep all leading parallel function calls ([#991](https://github.com/google/adk-js/issues/991)) ([f744748](https://github.com/google/adk-js/commit/f744748870a97d948fc30db2dfb4b1e2891ffece))
+* preserve falsy tool errors ([#957](https://github.com/google/adk-js/issues/957)) ([4f21d6f](https://github.com/google/adk-js/commit/4f21d6f64b352276ab3569d071905c2f4235a593))
+* **runner:** seal aborted invocations in session history ([#976](https://github.com/google/adk-js/issues/976)) ([d77bbb1](https://github.com/google/adk-js/commit/d77bbb1659dc612bb26c18834f7840ee9e7500eb))
+* **sessions:** follow nextPageToken when listing events in VertexAiSessionService.getSession ([#1029](https://github.com/google/adk-js/issues/1029)) ([#1043](https://github.com/google/adk-js/issues/1043)) ([245ba2e](https://github.com/google/adk-js/commit/245ba2e2931153ca85d71e84cf5b406c0182efd1))
+* **utils:** decode base64 as UTF-8 in the browser ([#965](https://github.com/google/adk-js/issues/965)) ([0550cb0](https://github.com/google/adk-js/commit/0550cb0d9395610e59197f2e717b281aae822220))
+
 ## [2.2.0](https://github.com/google/adk-js/compare/adk-v2.1.0...adk-v2.2.0) (2026-09-30)
 
 
