@@ -12,8 +12,8 @@ import {getResponse, sendInput} from '../test_case_utils.js';
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 
-// The fixture install and build happen in the hooks, so each test only spawns
-// the sample app. This is a per-test budget, not an install budget.
+// Hooks do the install/build; each test only runs a short command inside the
+// installed fixture. Per-test budget, not an install budget.
 const TEST_EXECUTION_TIMEOUT = 20000;
 
 describe('Build setup', () => {

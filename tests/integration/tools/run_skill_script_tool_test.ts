@@ -21,13 +21,11 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 const IS_WINDOWS = os.platform() === 'win32';
 const IS_UNIX = os.platform() === 'linux' || os.platform() === 'darwin';
 
-// The `integration` project sets testTimeout to 60000, and a per-test argument
-// replaces that budget rather than raising it, so 40000 tightens it on purpose.
-// It stays above UnsafeLocalCodeExecutor's default timeoutSeconds (30) so a hung
-// script surfaces the executor's own timeout error first; see
-// core/src/code_executors/unsafe_local_code_executor.ts. The 10s margin covers
-// what vitest times but that timer does not: temp-dir setup, the PowerShell or
-// cmd spawn, and the output-file scan, all slowest on windows-latest.
+// 40000 tightens the project's 60000 testTimeout, which a per-test argument
+// replaces rather than raises. It stays above UnsafeLocalCodeExecutor's default
+// timeoutSeconds (30) so the executor's own timeout error surfaces first; see
+// core/src/code_executors/unsafe_local_code_executor.ts. Only the four
+// it.skipIf(!IS_WINDOWS) tests pass it, where shell cold-start is slowest.
 const TEST_EXECUTION_TIMEOUT = 40000;
 
 describe('RunSkillScriptTool Integration with UnsafeLocalCodeExecutor', () => {

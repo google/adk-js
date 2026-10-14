@@ -29,9 +29,8 @@ const UNIT_TEST_TIMEOUT_MS = 30000;
  * Hook budget (ms) for the `integration` project. The `beforeAll` hooks run
  * `npm install` (and sometimes `npm run build`) per fixture, and the `afterAll`
  * hooks remove `node_modules` recursively, which exceeds Vitest's 10s default.
- * The build_setup suite's twelve hook runs cost ~16s combined on ubuntu-latest,
- * but a cold, network-bound install has been measured at ~70s, so 120s covers
- * the worst case. Trade-off: a stuck hook takes this long to surface.
+ * A cold, network-bound install has been measured at ~70s, so 120s covers the
+ * worst case. Trade-off: a stuck hook takes this long to surface.
  */
 const INTEGRATION_HOOK_TIMEOUT_MS = 120000;
 
