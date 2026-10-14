@@ -307,7 +307,7 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
  * Thought parts and empty-text parts (such as trailing `{text: '',
  * thoughtSignature}` chunks from streamed responses) are excluded unless they
  * carry a `functionCall` or `functionResponse`, which are summarized as plain
- * text without thought metadata (matching `adk-python`'s `_is_part_invisible`).
+ * text without thought metadata.
  */
 function isVisibleForeignPart(part: Part): boolean {
   if (part.functionCall || part.functionResponse) {
