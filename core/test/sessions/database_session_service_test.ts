@@ -821,6 +821,115 @@ describe('DatabaseSessionService', () => {
       expect(storedSession.updateTime.getTime()).toBe(timestamp);
     });
   });
+
+  describe('appendEvent event payload persistence', () => {
+    it('should preserve inlineData parts when appending and retrieving events', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-inline-data',
+      });
+      const inlinePart = {
+        inlineData: {
+          data: Buffer.from('test_image_data').toString('base64'),
+          mimeType: 'image/png',
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [inlinePart],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toHaveLength(1);
+      expect(session.events[0].content?.parts?.[0]).toEqual(inlinePart);
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+      expect(loadedSession?.events).toHaveLength(1);
+      expect(loadedSession?.events[0].content?.parts?.[0]).toEqual(inlinePart);
+    });
+
+    it('should persist and restore a complete event with all metadata and actions fields', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-complete-event',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        branch: 'main',
+        content: {
+          role: 'user',
+          parts: [{text: 'test_text'}],
+        },
+        turnComplete: true,
+        partial: false,
+        actions: createEventActions({
+          artifactDelta: {file: 0},
+          transferToAgent: 'agent',
+          escalate: true,
+        }),
+        longRunningToolIds: ['tool1'],
+        errorCode: 'error_code',
+        errorMessage: 'error_message',
+        interrupted: true,
+        groundingMetadata: {
+          webSearchQueries: ['query1'],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+
+      expect(loadedSession?.events).toHaveLength(1);
+      expect(loadedSession?.events[0]).toEqual(
+        Object.fromEntries(Object.entries(event)),
+      );
+    });
+
+    it('should skip persistence when appending a partial event with content', async () => {
+      const session = await service.createSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: 's-partial-event',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'model',
+        content: {
+          role: 'model',
+          parts: [{text: 'partial_text'}],
+        },
+        partial: true,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toEqual([]);
+
+      const loadedSession = await service.getSession({
+        appName: 'test-app',
+        userId: 'test-user',
+        sessionId: session.id,
+      });
+      expect(loadedSession?.events).toEqual([]);
+    });
+  });
 });
 
 describe('DatabaseSessionService entities', () => {

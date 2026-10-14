@@ -674,6 +674,110 @@ describe('InMemorySessionService', () => {
     });
   });
 
+  describe('appendEvent event payload persistence', () => {
+    it('preserves inlineData parts when appending and retrieving events', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const inlinePart = {
+        inlineData: {
+          data: Buffer.from('test_image_data').toString('base64'),
+          mimeType: 'image/png',
+        },
+      };
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [inlinePart],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toHaveLength(1);
+      expect(session.events[0].content?.parts?.[0]).toEqual(inlinePart);
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession?.events).toHaveLength(1);
+      expect(retrievedSession?.events[0].content?.parts?.[0]).toEqual(
+        inlinePart,
+      );
+    });
+
+    it('persists and restores a complete event with all metadata and actions fields', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'user',
+        branch: 'main',
+        content: {
+          role: 'user',
+          parts: [{text: 'test_text'}],
+        },
+        turnComplete: true,
+        partial: false,
+        actions: createEventActions({
+          artifactDelta: {file: 0},
+          transferToAgent: 'agent',
+          escalate: true,
+        }),
+        longRunningToolIds: ['tool1'],
+        errorCode: 'error_code',
+        errorMessage: 'error_message',
+        interrupted: true,
+        groundingMetadata: {
+          webSearchQueries: ['query1'],
+        },
+      });
+
+      await service.appendEvent({session, event});
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession).toEqual(session);
+    });
+
+    it('ignores partial events with content', async () => {
+      const session = await service.createSession({
+        appName: 'app',
+        userId: 'user',
+      });
+      const event = createEvent({
+        invocationId: 'invocation',
+        author: 'model',
+        content: {
+          role: 'model',
+          parts: [{text: 'partial_text'}],
+        },
+        partial: true,
+      });
+
+      await service.appendEvent({session, event});
+
+      expect(session.events).toEqual([]);
+
+      const retrievedSession = await service.getSession({
+        appName: 'app',
+        userId: 'user',
+        sessionId: session.id,
+      });
+      expect(retrievedSession?.events).toEqual([]);
+    });
+  });
+
   describe('prototype pollution', () => {
     // Every key that any test below can plant on `Object.prototype` when the
     // fix is reverted, so that reverting it fails these tests instead of
