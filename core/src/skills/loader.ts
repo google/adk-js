@@ -251,6 +251,16 @@ export async function validateSkillDir(skillDir: string): Promise<string[]> {
   const problems: string[] = [];
   const resolvedDir = path.resolve(skillDir);
 
+  try {
+    const stats = await fs.stat(resolvedDir);
+    if (!stats.isDirectory()) {
+      return [`'${resolvedDir}' is not a directory.`];
+    }
+  } catch {
+    // Any stat failure reports "does not exist", matching adk-python Path.exists().
+    return [`Directory '${resolvedDir}' does not exist.`];
+  }
+
   let skill;
   try {
     skill = await loadSkillFile(resolvedDir);
