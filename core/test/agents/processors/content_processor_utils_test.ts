@@ -945,6 +945,10 @@ describe('getContents', () => {
               thought: true,
               thoughtSignature: 'sig-1',
             },
+            {
+              text: '',
+              thoughtSignature: 'sig-2',
+            },
           ],
         },
       });
@@ -960,6 +964,60 @@ describe('getContents', () => {
         },
       ]);
     });
+  });
+
+  it('should handle media parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+    expect(contents).toHaveLength(1);
+    expect(contents[0].parts).toHaveLength(2); // 'For context:' part and the inlineData part
+    expect(contents[0].parts?.[1]).toEqual({
+      inlineData: {
+        mimeType: 'image/png',
+        data: 'base64data',
+      },
+    });
+  });
+
+  it('should not mutate original event media parts in convertForeignEvent', () => {
+    const event = createEvent({
+      author: 'other_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+          },
+        ],
+      },
+    });
+
+    const contents = getContents([event], 'current_agent');
+
+    // Mutate the returned content
+    if (contents[0].parts?.[1]?.inlineData) {
+      contents[0].parts[1].inlineData.data = 'mutated';
+    }
+
+    // Check if original event was mutated
+    expect(event.content?.parts?.[0]?.inlineData?.data).toBe('base64data');
   });
 
   it('should exclude thought parts and thoughtSignature in convertForeignEvent', () => {
@@ -1082,34 +1140,25 @@ describe('getContents', () => {
     ]);
   });
 
-  it('should handle media parts in convertForeignEvent', () => {
+  it('should skip trailing empty-text thoughtSignature parts in convertForeignEvent', () => {
     const event = createEvent({
       author: 'other_agent',
       content: {
         role: 'model',
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'image/png',
-              data: 'base64data',
-            },
-          },
-        ],
+        parts: [{text: 'answer'}, {text: '', thoughtSignature: 'sig-a'}],
       },
     });
 
     const contents = getContents([event], 'current_agent');
-    expect(contents).toHaveLength(1);
-    expect(contents[0].parts).toHaveLength(2); // 'For context:' part and the inlineData part
-    expect(contents[0].parts?.[1]).toEqual({
-      inlineData: {
-        mimeType: 'image/png',
-        data: 'base64data',
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [{text: 'For context:'}, {text: '[other_agent] said: answer'}],
       },
-    });
+    ]);
   });
 
-  it('should not mutate original event media parts in convertForeignEvent', () => {
+  it('should strip thoughtSignature from non-thought media parts in convertForeignEvent', () => {
     const event = createEvent({
       author: 'other_agent',
       content: {
@@ -1120,20 +1169,27 @@ describe('getContents', () => {
               mimeType: 'image/png',
               data: 'base64data',
             },
+            thoughtSignature: 'sig-b',
           },
         ],
       },
     });
 
     const contents = getContents([event], 'current_agent');
-
-    // Mutate the returned content
-    if (contents[0].parts?.[1]?.inlineData) {
-      contents[0].parts[1].inlineData.data = 'mutated';
-    }
-
-    // Check if original event was mutated
-    expect(event.content?.parts?.[0]?.inlineData?.data).toBe('base64data');
+    expect(contents).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {text: 'For context:'},
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: 'base64data',
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   describe('mergeFunctionResponseEvents', () => {

@@ -304,12 +304,16 @@ function isEventFromAnotherAgent(agentName: string, event: Event): boolean {
 /**
  * Whether a part from another agent's event produces visible context.
  *
- * Thought parts are excluded unless they carry a `functionCall` or
- * `functionResponse`, which are summarized as plain text without thought
- * metadata (matching `adk-python`'s `_is_part_invisible`).
+ * Thought parts and empty-text parts (such as trailing `{text: '',
+ * thoughtSignature}` chunks from streamed responses) are excluded unless they
+ * carry a `functionCall` or `functionResponse`, which are summarized as plain
+ * text without thought metadata (matching `adk-python`'s `_is_part_invisible`).
  */
 function isVisibleForeignPart(part: Part): boolean {
-  return Boolean(!part.thought || part.functionCall || part.functionResponse);
+  if (part.functionCall || part.functionResponse) {
+    return true;
+  }
+  return !part.thought && part.text !== '';
 }
 
 /**
@@ -322,7 +326,7 @@ function isVisibleForeignPart(part: Part): boolean {
  * @param event The event to convert.
  *
  * @returns The converted event, or `undefined` if no parts remain after
- *     excluding thought parts.
+ *     excluding invisible parts.
  */
 function convertForeignEvent(event: Event): Event | undefined {
   if (!event.content?.parts?.length) {
@@ -339,13 +343,14 @@ function convertForeignEvent(event: Event): Event | undefined {
   };
 
   for (const part of event.content.parts) {
-    // Exclude thoughts from the context, except function calls and responses
-    // which are summarized as plain text without thought metadata.
+    // Exclude thoughts and empty-text signature parts from the context, except
+    // function calls and responses which are summarized as plain text without
+    // thought metadata.
     // TODO - b/425992518: filtring should be configurable.
     if (!isVisibleForeignPart(part)) {
       continue;
     }
-    if (part.text && !part.thought) {
+    if (part.text) {
       content.parts?.push({
         text: `[${event.author}] said: ${part.text}`,
       });
@@ -362,11 +367,18 @@ function convertForeignEvent(event: Event): Event | undefined {
         )}`,
       });
     } else {
-      content.parts?.push(cloneDeep(part));
+      const {
+        thought: _thought,
+        thoughtSignature: _thoughtSignature,
+        ...rest
+      } = part;
+      content.parts?.push(cloneDeep(rest));
     }
   }
 
-  if (content.parts!.length === 1) {
+  // Only the "For context:" preamble is present when all parts were filtered out.
+  const preambleOnly = content.parts!.length === 1;
+  if (preambleOnly) {
     return undefined;
   }
 
