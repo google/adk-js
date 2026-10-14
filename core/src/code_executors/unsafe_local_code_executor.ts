@@ -13,7 +13,7 @@ import {materializeFiles} from '../utils/file_utils.js';
 import {logger} from '../utils/logger.js';
 import {
   killProcessTree,
-  processTreeSpawnOptions,
+  PROCESS_TREE_SPAWN_OPTIONS,
 } from '../utils/process_tree.js';
 import {BaseCodeExecutor, ExecuteCodeParams} from './base_code_executor.js';
 import {
@@ -236,7 +236,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
       }>((resolve) => {
         const child = spawn(command, args, {
           cwd: tempDir,
-          ...processTreeSpawnOptions(),
+          ...PROCESS_TREE_SPAWN_OPTIONS,
         });
 
         let stdout = '';

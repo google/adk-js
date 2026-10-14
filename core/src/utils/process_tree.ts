@@ -10,13 +10,13 @@ import {spawn, type ChildProcess} from 'node:child_process';
  * Spawn options that give a process its own killable process group on POSIX.
  * Windows descendants are terminated with `taskkill /T` instead.
  */
-export function processTreeSpawnOptions(): {detached: boolean} {
-  return {detached: process.platform !== 'win32'};
-}
+export const PROCESS_TREE_SPAWN_OPTIONS = {
+  detached: process.platform !== 'win32',
+};
 
 /**
  * Terminates a process and descendants that remain in its process group/tree.
- * The child must have been spawned with {@link processTreeSpawnOptions} so a
+ * The child must have been spawned with {@link PROCESS_TREE_SPAWN_OPTIONS} so a
  * POSIX group signal cannot reach the current process group. A descendant that
  * deliberately detaches from that group may survive.
  */
@@ -50,9 +50,11 @@ export async function killProcessTree(child: ChildProcess): Promise<void> {
     // `detached: true`, including descendants that inherited that group.
     process.kill(-pid, 'SIGKILL');
   } catch (error) {
-    if (
-      !(error instanceof Error && 'code' in error && error.code === 'ESRCH')
-    ) {
+    if (!(
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ESRCH'
+    )) {
       throw error;
     }
   }

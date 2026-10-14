@@ -12,7 +12,7 @@ import {experimental} from '../utils/experimental.js';
 import {logger} from '../utils/logger.js';
 import {
   killProcessTree,
-  processTreeSpawnOptions,
+  PROCESS_TREE_SPAWN_OPTIONS,
 } from '../utils/process_tree.js';
 import {BaseEnvironment, ExecutionResult} from './base_environment.js';
 
@@ -133,7 +133,7 @@ export class LocalEnvironment extends BaseEnvironment {
       shell: true,
       cwd: this.workingDir,
       env: {...process.env, ...this.envVars},
-      ...processTreeSpawnOptions(),
+      ...PROCESS_TREE_SPAWN_OPTIONS,
     });
 
     const stdoutChunks: Buffer[] = [];
