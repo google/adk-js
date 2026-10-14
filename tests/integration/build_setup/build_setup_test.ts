@@ -7,12 +7,16 @@ import {exec, spawn} from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import {promisify} from 'node:util';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {getResponse, sendInput} from '../test_case_utils.js';
+import {
+  getResponse,
+  PLATFORM_TIMEOUT_MULTIPLIER,
+  sendInput,
+} from '../test_case_utils.js';
 
 const execAsync = promisify(exec);
 const dirname = process.cwd();
 
-const TEST_EXECUTION_TIMEOUT = 20000;
+const TEST_EXECUTION_TIMEOUT = 20000 * PLATFORM_TIMEOUT_MULTIPLIER;
 
 // These hooks run `npm install` (plus `npm run build` for ts_* setups) and the
 // recursive node_modules teardown, overrunning vitest's default 10s hookTimeout

@@ -19,7 +19,26 @@ import {
   GoogleGenAI,
 } from '@google/genai';
 import {ChildProcessWithoutNullStreams} from 'node:child_process';
+import * as os from 'node:os';
 import {expect} from 'vitest';
+
+/**
+ * Multiplier applied to the subprocess-bound per-test budgets under
+ * `tests/integration`.
+ *
+ * These suites spend nearly all of their time in spawned subprocesses -- an
+ * `npm install` per fixture, `npm run build`, an agent driven over stdio -- and
+ * process spawn plus filesystem work is markedly slower on the `windows-latest`
+ * runner: across recent `validation.yaml` runs the same job took 416-539s
+ * there against 264-342s on ubuntu-latest. Budgets sized on Linux therefore
+ * expire on Windows alone, which surfaces as a flake that a plain re-run
+ * clears.
+ *
+ * 2x covers the worst platform ratio measured with headroom, and leaves the
+ * ubuntu-latest and macos-latest budgets untouched so a genuine hang still
+ * fails fast there. Widen this one number rather than a per-suite literal.
+ */
+export const PLATFORM_TIMEOUT_MULTIPLIER = os.platform() === 'win32' ? 2 : 1;
 
 /**
  * Represents a raw generate content response.
