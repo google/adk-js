@@ -242,6 +242,8 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         let stdout = '';
         let stderr = '';
         let timedOut = false;
+        let processClosed = false;
+        let termination: Promise<void> | undefined;
 
         // `spawn`'s own `timeout` option kills the interpreter and then leaves
         // us waiting on 'close', which only fires once every stdio stream is
@@ -251,8 +253,11 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         // timer here instead and release the read ends along with the kill, so
         // the timeout is actually enforced. Mirrors LocalEnvironment.execute.
         const timer = setTimeout(() => {
+          if (processClosed) {
+            return;
+          }
           timedOut = true;
-          void killProcessTree(child)
+          termination = killProcessTree(child)
             .catch((error: unknown) => {
               logger.warn(
                 `Failed to terminate code executor process tree: ${error}`,
@@ -282,6 +287,7 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
         });
 
         child.on('close', (exitCode, signal) => {
+          processClosed = true;
           clearTimeout(timer);
           // Prefer the flag over the signal: Windows does not report a
           // terminating signal the way POSIX does, so a killed child can close
@@ -293,7 +299,10 @@ export class UnsafeLocalCodeExecutor extends BaseCodeExecutor {
               stderr = `Exit code ${exitCode}`;
             }
           }
-          resolve({stdout, stderr, exitCode});
+          void (async () => {
+            await termination;
+            resolve({stdout, stderr, exitCode});
+          })();
         });
       });
 

@@ -352,7 +352,7 @@ describe('LocalEnvironment', () => {
       'kills descendants on timeout and preserves output written before it',
       async () => {
         const markerPath = path.join(env.workingDir, 'survivor.marker');
-        const childScript = `setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
+        const childScript = `require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'started'); setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
         await env.writeFile(
           'spawn_survivor.cjs',
           [
@@ -372,7 +372,8 @@ describe('LocalEnvironment', () => {
         expect(result.stdout).toBe('before-timeout');
         expect(Date.now() - startedAt).toBeLessThan(TIMED_OUT_BY_MS);
 
-        const sizeAfterTimeout = await waitForFileSize(markerPath);
+        const sizeAfterTimeout = (await fs.stat(markerPath)).size;
+        expect(sizeAfterTimeout).toBeGreaterThan(0);
         await new Promise((resolve) => setTimeout(resolve, 150));
         expect((await fs.stat(markerPath)).size).toBe(sizeAfterTimeout);
       },
@@ -465,9 +466,11 @@ async function waitForFileSize(filePath: string): Promise<number> {
         return size;
       }
     } catch (error) {
-      if (
-        !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      ) {
+      if (!(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      )) {
         throw error;
       }
     }

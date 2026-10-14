@@ -105,7 +105,7 @@ describe('UnsafeLocalCodeExecutor', () => {
       path.join(os.tmpdir(), 'adk-executor-process-tree-test-'),
     );
     const markerPath = path.join(markerDir, 'survivor.marker');
-    const survivorCode = `setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
+    const survivorCode = `require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'started'); setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x'), 50)`;
 
     try {
       const params: ExecuteCodeParams = {
@@ -132,7 +132,8 @@ describe('UnsafeLocalCodeExecutor', () => {
       // The returned result is bounded by the timer, and the descendant must
       // stop writing rather than merely losing access to its inherited pipes.
       expect(Date.now() - startedAt).toBeLessThan(15_000);
-      const sizeAfterTimeout = await waitForFileSize(markerPath);
+      const sizeAfterTimeout = (await fs.stat(markerPath)).size;
+      expect(sizeAfterTimeout).toBeGreaterThan(0);
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect((await fs.stat(markerPath)).size).toBe(sizeAfterTimeout);
     } finally {
@@ -579,25 +580,3 @@ describe('UnsafeLocalCodeExecutor', () => {
     });
   });
 });
-
-async function waitForFileSize(filePath: string): Promise<number> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    try {
-      const {size} = await fs.stat(filePath);
-      if (size > 0) {
-        return size;
-      }
-    } catch (error) {
-      if (!(
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      )) {
-        throw error;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for file to contain data: ${filePath}`);
-}
