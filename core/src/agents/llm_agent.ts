@@ -43,7 +43,7 @@ import type {BasePlanner} from '../planners/base_planner.js';
 import {isBuiltInPlanner} from '../planners/built_in_planner.js';
 
 import {BaseTool, isBaseTool} from '../tools/base_tool.js';
-import {BaseToolset} from '../tools/base_toolset.js';
+import {BaseToolset, isBaseToolset} from '../tools/base_toolset.js';
 
 import {logger} from '../utils/logger.js';
 import {canUseOutputSchemaWithTools} from '../utils/output_schema_utils.js';
@@ -1202,6 +1202,12 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
     for (const toolUnion of this.tools) {
       const toolContext = new Context({invocationContext});
+      if (isBaseToolset(toolUnion)) {
+        await toolUnion.processLlmRequest(toolContext, llmRequest);
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+      }
       const tools = (
         await convertToolUnionToTools(
           toolUnion,
@@ -1596,6 +1602,14 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         invocationContext,
         eventActions: modelResponseEvent.actions,
       });
+
+      if (isBaseToolset(toolUnion)) {
+        await toolUnion.processLlmRequest(toolContext, llmRequest);
+
+        if (invocationContext.abortSignal?.aborted) {
+          return;
+        }
+      }
 
       // process all tools from this tool union
       const tools = (

@@ -13,6 +13,7 @@ import {
   BaseLlmResponseProcessor,
   BasePlugin,
   BaseTool,
+  BaseToolset,
   BuiltInPlanner,
   CONTENT_REQUEST_PROCESSOR,
   Context,
@@ -36,6 +37,7 @@ import {
   RunAsyncToolRequest,
   Runner,
   Session,
+  SkillToolset,
   StreamingMode,
   ToolProcessLlmRequest,
 } from '@google/adk';
@@ -1266,6 +1268,135 @@ describe('LlmAgent outputSchema with tools', () => {
     });
     expect(sessionAfterTurn2?.state?.['probe_counter']).toBe(2);
   });
+
+  it('calls BaseToolset.processLlmRequest before tool hooks and persists state writes across turns', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warnSpy.mockRestore());
+
+    const callOrder: string[] = [];
+
+    class OrderProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'order_probe_tool', description: 'test order'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        callOrder.push('tool');
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return {result: 'ok'};
+      }
+    }
+
+    class InstructionToolset extends BaseToolset {
+      constructor() {
+        super([]);
+      }
+      override async getTools(): Promise<BaseTool[]> {
+        return [new OrderProbeTool()];
+      }
+      override async close(): Promise<void> {}
+      override async processLlmRequest(
+        toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        callOrder.push('toolset');
+        const count = toolContext.state.get<number>('toolset_counter') ?? 0;
+        toolContext.state.set('toolset_counter', count + 1);
+        llmRequest.config ??= {};
+        llmRequest.config.systemInstruction = `${llmRequest.config.systemInstruction ?? ''}\n\nTOOLSET INSTRUCTION`;
+      }
+    }
+
+    const seenInstructions: Array<string | undefined> = [];
+    class RecordingLlm extends BaseLlm {
+      constructor() {
+        super({model: 'recording-llm'});
+      }
+      async *generateContentAsync(
+        llmRequest: LlmRequest,
+      ): AsyncGenerator<LlmResponse, void, void> {
+        seenInstructions.push(
+          llmRequest.config?.systemInstruction as string | undefined,
+        );
+        yield {content: {role: 'model', parts: [{text: 'ok'}]}};
+      }
+      async connect(): Promise<BaseLlmConnection> {
+        return new MockLlmConnection();
+      }
+    }
+
+    const skillToolset = new SkillToolset([
+      {
+        frontmatter: {name: 'demo', description: 'demo skill'},
+        instructions: 'Do the demo.',
+      },
+    ]);
+
+    const agent = new LlmAgent({
+      name: 'a',
+      model: new RecordingLlm(),
+      instruction: 'Be brief.',
+      tools: [new InstructionToolset(), skillToolset],
+    });
+
+    const sessionService = new InMemorySessionService();
+    const runner = new Runner({
+      appName: 'test_app',
+      agent,
+      sessionService,
+    });
+    const session = await sessionService.createSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 1'}]},
+    })) {
+      // Consume stream
+    }
+
+    expect(callOrder).toEqual(['toolset', 'tool']);
+    expect(seenInstructions).toHaveLength(1);
+    expect(seenInstructions[0]).toContain('TOOLSET INSTRUCTION');
+    expect(seenInstructions[0]).toContain('<available_skills>');
+    expect(seenInstructions[0]).toContain('<name>demo</name>');
+
+    const sessionAfterTurn1 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn1?.state?.['toolset_counter']).toBe(1);
+
+    for await (const _event of runner.runAsync({
+      userId: session.userId,
+      sessionId: session.id,
+      newMessage: {role: 'user', parts: [{text: 'Turn 2'}]},
+    })) {
+      // Consume stream
+    }
+
+    const sessionAfterTurn2 = await sessionService.getSession({
+      appName: 'test_app',
+      userId: 'test_user',
+      sessionId: 'test_session',
+    });
+    expect(sessionAfterTurn2?.state?.['toolset_counter']).toBe(2);
+  });
 });
 
 describe('LlmAgent usage metadata on content-less responses', () => {
@@ -2254,6 +2385,87 @@ describe('LlmAgent live streaming tools and supportCfc', () => {
     expect(secondRunEvents).toHaveLength(1);
     expect(secondRunEvents[0].errorMessage).toMatch(
       /Max number of llm calls limit of 1 exceeded/,
+    );
+  });
+
+  it('calls BaseToolset.processLlmRequest before tool hooks in runLivePreprocess', async () => {
+    const callOrder: string[] = [];
+
+    class LiveProbeTool extends BaseTool {
+      constructor() {
+        super({name: 'live_probe_tool', description: 'live probe'});
+      }
+      override _getDeclaration() {
+        return {
+          name: this.name,
+          description: this.description,
+          parameters: {type: Type.OBJECT, properties: {}},
+        };
+      }
+      override async processLlmRequest(
+        request: ToolProcessLlmRequest,
+      ): Promise<void> {
+        await super.processLlmRequest(request);
+        callOrder.push('tool');
+      }
+      async runAsync(_request: RunAsyncToolRequest): Promise<unknown> {
+        return {result: 'ok'};
+      }
+    }
+
+    class LiveInstructionToolset extends BaseToolset {
+      constructor() {
+        super([]);
+      }
+      override async getTools(): Promise<BaseTool[]> {
+        return [new LiveProbeTool()];
+      }
+      override async close(): Promise<void> {}
+      override async processLlmRequest(
+        _toolContext: Context,
+        llmRequest: LlmRequest,
+      ): Promise<void> {
+        callOrder.push('toolset');
+        llmRequest.config ??= {};
+        llmRequest.config.systemInstruction = `${llmRequest.config.systemInstruction ?? ''}\n\nLIVE TOOLSET INSTRUCTION`;
+      }
+    }
+
+    const connection = new ScriptedLiveConnection([
+      {
+        content: {role: 'model', parts: [{text: 'live done'}]},
+        turnComplete: true,
+      },
+    ]);
+    const llm = new ScriptedLiveLlm(connection);
+    const agent = new LlmAgent({
+      name: 'live_toolset_agent',
+      model: llm,
+      instruction: 'Be brief.',
+      tools: [new LiveInstructionToolset()],
+    });
+    const session = createSession({
+      id: 'sess_live_toolset',
+      appName: 'test-app',
+      userId: 'test-user',
+    });
+    const liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.close();
+    const ctx = new InvocationContext({
+      invocationId: 'inv_live_toolset',
+      session,
+      agent,
+      liveRequestQueue,
+      pluginManager: new PluginManager(),
+    });
+
+    for await (const _event of agent.runLive(ctx)) {
+      // Consume stream
+    }
+
+    expect(callOrder).toEqual(['toolset', 'tool']);
+    expect(llm.lastConnectedRequest?.config?.systemInstruction).toContain(
+      'LIVE TOOLSET INSTRUCTION',
     );
   });
 
