@@ -28,7 +28,14 @@ declare global {
 
 /**
  * Writes a TypeScript agent project to `dir` whose tool reads its own
- * compiled bundle file (`__filename`) at execution time.
+ * compiled bundle file (`module.filename`) at execution time.
+ *
+ * Note: `replaceDirnamePlugin` rewrites `__filename` to the original `.ts`
+ * source path whenever `filePath` is already a resolved realpath (which is
+ * always true for `os.tmpdir()` on Linux and Windows, and true on macOS once
+ * `fsp.realpath` resolves `/var` -> `/private/var`). Reading `module.filename`
+ * inspects the actual compiled `.cjs` bundle in the temp directory across all
+ * platforms.
  *
  * This reproduces the exact failure mode of issue #969: the agent has a
  * `FunctionTool` that loads a resource relative to the compiled bundle
@@ -113,17 +120,18 @@ const checkBundleExistsTool = new FunctionTool({
   description: 'Checks whether the compiled bundle still exists on disk.',
   parameters: z.object({}),
   execute: async () => {
+    const bundlePath = module.filename;
     const hook = (
       globalThis as {
         __adkTestOnToolExecute?: (bundlePath: string) => Promise<void> | void;
       }
     ).__adkTestOnToolExecute;
     if (hook) {
-      await hook(__filename);
+      await hook(bundlePath);
     }
-    const exists = fs.existsSync(__filename);
+    const exists = fs.existsSync(bundlePath);
     return {
-      bundlePath: __filename,
+      bundlePath,
       exists,
     };
   },
@@ -148,8 +156,8 @@ describe('Agent bundle lifetime during AdkApiServer requests (issues #969, #1002
   let sessionService: InMemorySessionService;
 
   beforeAll(async () => {
-    tempDir = await fsp.mkdtemp(
-      path.join(os.tmpdir(), 'adk_bundle_lifetime_test_'),
+    tempDir = await fsp.realpath(
+      await fsp.mkdtemp(path.join(os.tmpdir(), 'adk_bundle_lifetime_test_')),
     );
     await writeAgentProject(tempDir, repoRoot);
 
@@ -352,6 +360,7 @@ describe('Agent bundle lifetime during AdkApiServer requests (issues #969, #1002
           firstTexts.some((t) => t.startsWith('BUNDLE_EXISTS:true:')),
         ).toBe(true);
         expect(invalidatedBundlePath).toBeDefined();
+        expect(invalidatedBundlePath).toMatch(/agent\.cjs$/);
 
         // Once the in-flight /run completes and releases its retain() lease,
         // the retired bundle must be disposed from disk.
@@ -385,6 +394,7 @@ describe('Agent bundle lifetime during AdkApiServer requests (issues #969, #1002
       const reloadedBundlePath = reloadedReply!.slice(
         'BUNDLE_EXISTS:true:'.length,
       );
+      expect(reloadedBundlePath).toMatch(/agent\.cjs$/);
       expect(reloadedBundlePath).not.toBe(invalidatedBundlePath);
       expect(fs.existsSync(reloadedBundlePath)).toBe(true);
     },
