@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {OpenAPIV3} from 'openapi-types';
 import {ReadonlyContext} from '../../agents/readonly_context.js';
 import {AuthCredential} from '../../auth/auth_credential.js';
@@ -175,6 +175,9 @@ export class APIHubToolset extends BaseToolset {
     const spec = await this.apihubClient.getSpecContent(
       this.apihubResourceName,
     );
+    if (!spec.trim()) {
+      return undefined;
+    }
     const specDict = yaml.load(spec) as OpenAPIV3.Document | undefined;
     if (!specDict) {
       return undefined;

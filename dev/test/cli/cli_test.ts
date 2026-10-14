@@ -16,9 +16,11 @@ import {AdkApiServer} from '../../src/server/adk_api_server.js';
 
 vi.mock('../../src/server/adk_api_server', () => {
   return {
-    AdkApiServer: vi.fn(() => ({
-      start: vi.fn(),
-    })),
+    AdkApiServer: vi.fn(function () {
+      return {
+        start: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -605,6 +607,43 @@ describe('CLI Entrypoint', () => {
       expect((deployToAgentEngine as Mock).mock.calls[0][0]).toMatchObject({
         stagingBucket: 'my-bucket',
       });
+    });
+  });
+  describe('additional CLI options and eval command', () => {
+    it('maps --log_level warning and critical to WARN and ERROR', async () => {
+      await parse(['web', '--log_level', 'warning']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.WARN);
+
+      await parse(['web', '--log_level', 'critical']);
+      expect(setLogLevel).toHaveBeenCalledWith(LogLevel.ERROR);
+    });
+
+    it('passes --log_to_tmp to runAgent', async () => {
+      await parse(['run', 'agent.ts', '--log_to_tmp']);
+
+      expect(runAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          logToTmp: true,
+        }),
+      );
+    });
+
+    it('passes --app_name and --with_cloud_trace to deployToCloudRun', async () => {
+      await parse([
+        'deploy',
+        'cloud_run',
+        'my_agent',
+        '--app_name',
+        'custom_app',
+        '--with_cloud_trace',
+      ]);
+
+      expect(deployToCloudRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appName: 'custom_app',
+          otelToCloud: true,
+        }),
+      );
     });
   });
 });

@@ -30,7 +30,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn(() => ({getAccessToken: mocks.getAccessToken})),
+  GoogleAuth: vi.fn(function () {
+    return {getAccessToken: mocks.getAccessToken};
+  }),
 }));
 
 const PROJECT = 'test-project';
@@ -349,7 +351,7 @@ describe('IntegrationClient', () => {
         [`${PATH_PREFIX}#TestAction`]: getActionOperation({
           action: 'TestAction',
           operation: 'EXECUTE_ACTION',
-          actionDisplayName: 'Test Action',
+          actionDisplayName: 'TestAction',
           toolName: 'tool',
           toolInstructions: 'Extra.',
         }),
@@ -357,16 +359,16 @@ describe('IntegrationClient', () => {
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
-        'Test Action_Request': actionRequest('Test Action'),
-        'connectorInputPayload_Test Action': {
+        TestAction_Request: actionRequest('TestAction'),
+        connectorInputPayload_TestAction: {
           type: 'object',
           properties: {input: {type: 'string'}},
         },
-        'connectorOutputPayload_Test Action': {
+        connectorOutputPayload_TestAction: {
           type: 'object',
           properties: {output: {type: 'string', nullable: true}},
         },
-        'Test Action_Response': actionResponse('Test Action'),
+        TestAction_Response: actionResponse('TestAction'),
       });
     });
 
@@ -387,16 +389,50 @@ describe('IntegrationClient', () => {
         [`${PATH_PREFIX}#ExecuteCustomQuery`]: getActionOperation({
           action: 'ExecuteCustomQuery',
           operation: 'EXECUTE_QUERY',
-          actionDisplayName: 'Execute Custom Query',
+          actionDisplayName: 'ExecuteCustomQuery',
         }),
       });
       const baseSchemas = CONNECTOR_BASE_SPEC.components.schemas;
       expect(spec.components.schemas).toEqual({
         ...baseSchemas,
         ExecuteCustomQuery_Request: executeCustomQueryRequest(),
-        'connectorOutputPayload_Execute Custom Query': {type: 'object'},
-        'Execute Custom Query_Response': actionResponse('Execute Custom Query'),
+        connectorOutputPayload_ExecuteCustomQuery: {type: 'object'},
+        ExecuteCustomQuery_Response: actionResponse('ExecuteCustomQuery'),
       });
+    });
+
+    it('keys ExecuteCustomQuery schemas by the space-stripped displayName', async () => {
+      routeFetch(
+        actionRoutes('ExecuteCustomQuery', {
+          inputJsonSchema: {type: 'object'},
+          outputJsonSchema: {type: 'object'},
+          displayName: 'Run Custom SQL Query',
+        }),
+      );
+
+      const spec = await connectionClient(undefined, [
+        'ExecuteCustomQuery',
+      ]).getOpenApiSpecForConnection();
+
+      expect(spec.paths).toEqual({
+        [`${PATH_PREFIX}#ExecuteCustomQuery`]: getActionOperation({
+          action: 'ExecuteCustomQuery',
+          operation: 'EXECUTE_QUERY',
+          actionDisplayName: 'RunCustomSQLQuery',
+        }),
+      });
+      expect(spec.components.schemas['RunCustomSQLQuery_Request']).toEqual(
+        executeCustomQueryRequest(),
+      );
+      expect(spec.components.schemas['RunCustomSQLQuery_Response']).toEqual(
+        actionResponse('RunCustomSQLQuery'),
+      );
+      expect(
+        spec.components.schemas['connectorOutputPayload_RunCustomSQLQuery'],
+      ).toEqual({type: 'object'});
+      expect(
+        spec.components.schemas['ExecuteCustomQuery_Request'],
+      ).toBeUndefined();
     });
 
     it('throws for an unknown operation', async () => {

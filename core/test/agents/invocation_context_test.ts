@@ -9,10 +9,12 @@ import {
   BaseAgentConfig,
   Event,
   InvocationContext,
+  LlmCallsLimitExceededError,
   LoopAgent,
   PluginManager,
   Session,
   createEvent,
+  isLlmCallsLimitExceededError,
 } from '@google/adk';
 import {describe, expect, it} from 'vitest';
 
@@ -170,5 +172,39 @@ describe('InvocationContext LLM-call cost tracking', () => {
     // Exactly the 3 permitted iterations produced an event before the throw,
     // proving the counter is shared across the per-iteration child contexts.
     expect(events).toHaveLength(3);
+  });
+});
+
+describe('LlmCallsLimitExceededError', () => {
+  it('throws LlmCallsLimitExceededError and matches isLlmCallsLimitExceededError when maxLlmCalls is exceeded', () => {
+    const context = new InvocationContext({
+      invocationId: 'inv-limit-err',
+      agent: new LoopAgent({name: 'root'}),
+      session: makeSession(),
+      pluginManager: new PluginManager(),
+      runConfig: {maxLlmCalls: 1},
+    });
+
+    context.incrementLlmCallCount();
+
+    let caughtError: unknown;
+    try {
+      context.incrementLlmCallCount();
+    } catch (e: unknown) {
+      caughtError = e;
+    }
+
+    expect(caughtError).toBeInstanceOf(LlmCallsLimitExceededError);
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(isLlmCallsLimitExceededError(caughtError)).toBe(true);
+    if (isLlmCallsLimitExceededError(caughtError)) {
+      expect(caughtError.name).toBe('LlmCallsLimitExceededError');
+      expect(caughtError.message).toBe(
+        'Max number of llm calls limit of 1 exceeded',
+      );
+    }
+    expect(isLlmCallsLimitExceededError(new Error('other'))).toBe(false);
+    expect(isLlmCallsLimitExceededError(null)).toBe(false);
+    expect(isLlmCallsLimitExceededError('limit exceeded')).toBe(false);
   });
 });

@@ -175,3 +175,54 @@ describe('live flow send_data span', () => {
     ).toEqual([]);
   });
 });
+
+class FakeTextLlm extends BaseLlm {
+  constructor() {
+    super({model: 'fake-text-llm'});
+  }
+
+  override async *generateContentAsync(): AsyncGenerator<
+    LlmResponse,
+    void,
+    void
+  > {
+    yield {
+      content: {role: 'model', parts: [{text: 'hello'}]},
+      usageMetadata: {totalTokenCount: 12},
+    };
+  }
+
+  override async connect(): Promise<BaseLlmConnection> {
+    throw new Error('connect is not used in text tests');
+  }
+}
+
+describe('call_llm span lifecycle', () => {
+  it('ends and exports the call_llm span when the consumer breaks early from runAsync', async () => {
+    const sessionService = new InMemorySessionService();
+    await sessionService.createSession({
+      appName: APP_NAME,
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+    });
+    const runner = new Runner({
+      appName: APP_NAME,
+      agent: new LlmAgent({name: 'root', model: new FakeTextLlm()}),
+      sessionService,
+    });
+
+    for await (const _event of runner.runAsync({
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      newMessage: {role: 'user', parts: [{text: 'hi'}]},
+    })) {
+      break;
+    }
+
+    const spanNames = exporter
+      .getFinishedSpans()
+      .map((s) => s.name)
+      .sort();
+    expect(spanNames).toEqual(['call_llm', 'invocation', 'invoke_agent root']);
+  });
+});

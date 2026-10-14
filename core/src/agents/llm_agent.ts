@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {GenerateContentConfig, Schema} from '@google/genai';
+import {GenerateContentConfig, Modality, Schema} from '@google/genai';
 import {context, trace} from '@opentelemetry/api';
 import {FinishTaskTool} from '../tools/finish_task_tool.js';
 import {FunctionTool} from '../tools/function_tool.js';
@@ -26,6 +26,7 @@ import {
   getFunctionCalls,
   getFunctionResponses,
   hasTrailingCodeExecutionResult,
+  isEvent,
   isFinalResponse,
   populateClientFunctionCallId,
 } from '../events/event.js';
@@ -46,6 +47,7 @@ import {BaseToolset} from '../tools/base_toolset.js';
 
 import {logger} from '../utils/logger.js';
 import {canUseOutputSchemaWithTools} from '../utils/output_schema_utils.js';
+import {ActiveStreamingTool} from './active_streaming_tool.js';
 import {Context} from './context.js';
 
 import {
@@ -67,6 +69,7 @@ import {
   generateRequestConfirmationEvent,
   getLongRunningFunctionCalls,
   handleFunctionCallsAsync,
+  handleFunctionCallsLive,
 } from './functions.js';
 
 import {AUTH_PREPROCESSOR} from '../auth/auth_preprocessor.js';
@@ -168,6 +171,9 @@ function applyLiveRunConfig(
     if (runConfig[k] !== undefined) {
       (liveConfig as Record<string, unknown>)[k] = runConfig[k];
     }
+  }
+  if (runConfig.supportCfc) {
+    liveConfig.responseModalities = [Modality.TEXT];
   }
 }
 
@@ -922,6 +928,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     while (true) {
       let lastEvent: Event | undefined = undefined;
       let stepHadToolCalls = false;
+      let stepTransferred = false;
       for await (const event of this.runOneStepAsync(context)) {
         if (context.abortSignal?.aborted) {
           return;
@@ -939,6 +946,9 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
         ) {
           stepHadToolCalls = true;
         }
+        if (event.author === this.name && event.actions.transferToAgent) {
+          stepTransferred = true;
+        }
         this.maybeSaveOutputToState(event);
         yield event;
       }
@@ -955,7 +965,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
 
       if (
         isFinalResponse(lastEvent) &&
-        !(isEmptyMetadataEvent && stepHadToolCalls)
+        !(isEmptyMetadataEvent && stepHadToolCalls && !stepTransferred)
       ) {
         break;
       }
@@ -1109,11 +1119,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       const combinedAbort = invocationContext.abortSignal
         ? AbortSignal.any([invocationContext.abortSignal, sendAbort.signal])
         : sendAbort.signal;
+      invocationContext.activeStreamingTools ??= {};
       const sendTask = this.runSendLoop(
         connection,
         invocationContext.liveRequestQueue,
         combinedAbort,
         invocationContext.abortSignal,
+        invocationContext.activeStreamingTools,
       );
       sendTask.catch((error) => {
         logger.error('Error in live send loop:', error);
@@ -1214,6 +1226,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     liveRequestQueue: LiveRequestQueue,
     sendAbortSignal?: AbortSignal,
     invocationAbortSignal?: AbortSignal,
+    activeStreamingTools?: Record<string, ActiveStreamingTool>,
   ): Promise<void> {
     while (true) {
       if (sendAbortSignal?.aborted || invocationAbortSignal?.aborted) {
@@ -1230,6 +1243,13 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
           return;
         }
         throw error;
+      }
+      if (activeStreamingTools) {
+        for (const activeStreamingTool of Object.values(activeStreamingTools)) {
+          if (activeStreamingTool.stream) {
+            activeStreamingTool.stream.send(liveRequest);
+          }
+        }
       }
       try {
         await this.dispatchLiveRequest(connection, liveRequest);
@@ -1493,7 +1513,7 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
       return;
     }
 
-    const functionResponseEvent = await handleFunctionCallsAsync({
+    const functionResponseEvent = await handleFunctionCallsLive({
       invocationContext,
       functionCallEvent: mergedEvent,
       toolsDict: llmRequest.toolsDict,
@@ -1618,50 +1638,67 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     // =========================================================================
     const span = tracer.startSpan('call_llm');
     const ctx = trace.setSpan(context.active(), span);
-    yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
-      ctx,
-      this,
-      async function* () {
-        const responsesGenerator = async function* (this: LlmAgent) {
-          for await (const llmResponse of this.callLlmAsync(
-            invocationContext,
-            llmRequest,
-            modelResponseEvent,
-          )) {
-            if (invocationContext.abortSignal?.aborted) {
-              return;
-            }
-
-            // ======================================================================
-            // Postprocess after calling the LLM
-            // ======================================================================
-            for await (const event of this.postprocess(
+    try {
+      yield* runAsyncGeneratorWithOtelContext<LlmAgent, Event>(
+        ctx,
+        this,
+        async function* () {
+          const responsesGenerator = async function* (this: LlmAgent) {
+            for await (const llmResponse of this.callLlmAsync(
               invocationContext,
               llmRequest,
-              llmResponse,
               modelResponseEvent,
             )) {
               if (invocationContext.abortSignal?.aborted) {
                 return;
               }
 
-              // Update the mutable event id to avoid conflict
-              modelResponseEvent.id = createNewEventId();
-              modelResponseEvent.timestamp = new Date().getTime();
-              yield event;
-            }
-          }
-        };
+              if (
+                invocationContext.runConfig?.supportCfc &&
+                isEvent(llmResponse)
+              ) {
+                modelResponseEvent.id = createNewEventId();
+                modelResponseEvent.timestamp = new Date().getTime();
+                yield llmResponse;
+                continue;
+              }
 
-        yield* this.runAndHandleError(
-          responsesGenerator.call(this),
-          invocationContext,
-          llmRequest,
-          modelResponseEvent,
-        );
-      },
-    );
-    span.end();
+              // ======================================================================
+              // Postprocess after calling the LLM
+              // ======================================================================
+              for await (const event of this.postprocess(
+                invocationContext,
+                llmRequest,
+                llmResponse,
+                modelResponseEvent,
+              )) {
+                if (invocationContext.abortSignal?.aborted) {
+                  return;
+                }
+
+                // Partial chunks of one streaming response share the base id;
+                // mint a fresh id only after a complete event so distinct
+                // responses differ.
+                if (!event.partial) {
+                  modelResponseEvent.id = createNewEventId();
+                  modelResponseEvent.timestamp = new Date().getTime();
+                }
+                yield event;
+              }
+            }
+          };
+
+          yield* this.runAndHandleError(
+            responsesGenerator.call(this),
+            invocationContext,
+            llmRequest,
+            modelResponseEvent,
+          );
+        },
+      );
+    } finally {
+      span.end();
+    }
   }
 
   private async *postprocess(
@@ -1888,13 +1925,41 @@ export class LlmAgent extends BaseAgent<LlmAgentConfig> {
     }
 
     const llm = this.canonicalModel;
+    invocationContext.incrementLlmCallCount();
     if (invocationContext.runConfig?.supportCfc) {
-      // TODO - b/425992518: Implement CFC call path
-      // This is a hack, underneath it calls runLive. Which makes
-      // runLive/run mixed.
-      throw new Error('CFC is not yet supported in callLlmAsync');
+      invocationContext.liveRequestQueue ??= new LiveRequestQueue();
+      const liveRequestQueue = invocationContext.liveRequestQueue;
+      try {
+        for await (const llmResponse of this.runLiveFlow(invocationContext)) {
+          if (invocationContext.abortSignal?.aborted) {
+            return;
+          }
+          const alteredLlmResponse = await this.handleAfterModelCallback(
+            invocationContext,
+            llmResponse,
+            modelResponseEvent,
+          );
+          if (invocationContext.abortSignal?.aborted) {
+            return;
+          }
+          const effectiveResponse = alteredLlmResponse
+            ? createEvent({...llmResponse, ...alteredLlmResponse})
+            : llmResponse;
+          // Only yield partial responses in SSE streaming mode.
+          if (
+            invocationContext.runConfig.streamingMode === StreamingMode.SSE ||
+            !effectiveResponse.partial
+          ) {
+            yield effectiveResponse;
+          }
+          if (effectiveResponse.turnComplete) {
+            liveRequestQueue.close();
+          }
+        }
+      } finally {
+        liveRequestQueue.close();
+      }
     } else {
-      invocationContext.incrementLlmCallCount();
       const responsesGenerator = llm.generateContentAsync(
         llmRequest,
         /* stream= */ invocationContext.runConfig?.streamingMode ===

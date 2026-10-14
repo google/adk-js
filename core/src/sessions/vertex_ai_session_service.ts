@@ -134,6 +134,11 @@ export interface VertexAiCreateSessionRequest extends CreateSessionRequest {
   expireTime?: string;
 }
 
+type EventsPage = {
+  sessionEvents?: VertexAiSessionEvent[];
+  nextPageToken?: string;
+};
+
 /**
  * A session service implementation that integrates with Vertex AI Agent Engine Sessions.
  */
@@ -282,14 +287,15 @@ export class VertexAiSessionService extends BaseSessionService {
 
     try {
       let getSessionResponse: VertexAiSession | undefined;
-      let eventsIterator: VertexAiSessionEvent[] = [];
+      const eventsIterator: VertexAiSessionEvent[] = [];
+      const listConfig: Record<string, string> = {};
+      let pageToken: string | undefined;
 
       if (config && config.numRecentEvents === 0) {
         getSessionResponse = (await this.sessions.get({
           name: sessionResourceName,
         })) as VertexAiSession;
       } else {
-        const listConfig: Record<string, string> = {};
         if (config && config.afterTimestamp) {
           listConfig.filter = `timestamp>="${new Date(
             config.afterTimestamp,
@@ -304,9 +310,9 @@ export class VertexAiSessionService extends BaseSessionService {
           }),
         ]);
         getSessionResponse = sessionRes as VertexAiSession;
-        eventsIterator =
-          (eventsRes as {sessionEvents?: VertexAiSessionEvent[]})
-            .sessionEvents || [];
+        const firstPage = eventsRes as EventsPage;
+        eventsIterator.push(...(firstPage.sessionEvents || []));
+        pageToken = firstPage.nextPageToken;
       }
 
       const sessionObj = getSessionResponse!;
@@ -315,6 +321,21 @@ export class VertexAiSessionService extends BaseSessionService {
         throw new Error(
           `Session ${sessionId} does not belong to user ${userId}.`,
         );
+      }
+
+      // The Agent Engine events.list API returns events oldest-first and does
+      // not support reverse ordering, so all pages must be fetched to reach the
+      // newest events at the end of the stream.
+      while (pageToken) {
+        const eventsRes = (await this.sessions.events.listInternal({
+          name: sessionResourceName,
+          config: {
+            ...listConfig,
+            pageToken,
+          },
+        })) as EventsPage;
+        eventsIterator.push(...(eventsRes.sessionEvents || []));
+        pageToken = eventsRes.nextPageToken;
       }
 
       const session = createSession({
@@ -328,12 +349,13 @@ export class VertexAiSessionService extends BaseSessionService {
           : Date.now(),
       });
 
-      for (const event of eventsIterator) {
-        session.events.push(_fromApiEvent(event));
-      }
+      const recentEvents =
+        config && config.numRecentEvents
+          ? eventsIterator.slice(-config.numRecentEvents)
+          : eventsIterator;
 
-      if (config && config.numRecentEvents) {
-        session.events = session.events.slice(-config.numRecentEvents);
+      for (const event of recentEvents) {
+        session.events.push(_fromApiEvent(event));
       }
 
       return session;

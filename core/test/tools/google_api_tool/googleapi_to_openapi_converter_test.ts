@@ -793,3 +793,112 @@ describe('GoogleApiToOpenApiConverter additional branch coverage', () => {
     );
   });
 });
+
+describe('GoogleApiToOpenApiConverter flatPath handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('converts methods and resources that define flatPath without path', async () => {
+    const spec = createCalendarApiSpec();
+    const calendarsResource = spec.resources?.['calendars'];
+    const getMethodSpec = calendarsResource?.methods?.['get'];
+    if (getMethodSpec) {
+      delete getMethodSpec.path;
+      getMethodSpec.flatPath = 'calendars/{calendarId}';
+    }
+    const listMethodSpec =
+      calendarsResource?.resources?.['events']?.methods?.['list'];
+    if (listMethodSpec) {
+      delete listMethodSpec.path;
+      listMethodSpec.flatPath = 'calendars/{calendarId}/events';
+    }
+
+    const methodConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
+    convertMethods(
+      calendarsResource?.methods ?? {},
+      '/calendars',
+      methodConverter.openapiSpec,
+    );
+    expect('/calendars/{calendarId}' in methodConverter.openapiSpec.paths).toBe(
+      true,
+    );
+    expect(
+      methodConverter.openapiSpec.paths['/calendars/{calendarId}']?.get
+        ?.operationId,
+    ).toBe('calendar.calendars.get');
+    expect('/calendars' in methodConverter.openapiSpec.paths).toBe(true);
+
+    const resourceConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
+    convertResources(spec.resources ?? {}, resourceConverter.openapiSpec);
+    expect(
+      '/calendars/{calendarId}' in resourceConverter.openapiSpec.paths,
+    ).toBe(true);
+    expect(
+      '/calendars/{calendarId}/events' in resourceConverter.openapiSpec.paths,
+    ).toBe(true);
+
+    const eventsGet =
+      resourceConverter.openapiSpec.paths['/calendars/{calendarId}/events']
+        ?.get;
+    expect(eventsGet?.operationId).toBe('calendar.events.list');
+    const eventParamNames = (
+      (eventsGet?.parameters ?? []) as OpenAPIV3.ParameterObject[]
+    ).map((p) => p.name);
+    expect(eventParamNames).toContain('calendarId');
+    expect(eventParamNames).toContain('maxResults');
+    expect(eventParamNames).toContain('orderBy');
+
+    const fullConverter = new GoogleApiToOpenApiConverter('calendar', 'v3');
+    fullConverter.googleApiSpec = spec;
+    const result = await fullConverter.convert();
+    expect(result.paths['/calendars/{calendarId}']?.get?.operationId).toBe(
+      'calendar.calendars.get',
+    );
+    expect(
+      result.paths['/calendars/{calendarId}/events']?.get?.operationId,
+    ).toBe('calendar.events.list');
+  });
+
+  it('prefers flatPath over path when a method defines both', () => {
+    const converter = new GoogleApiToOpenApiConverter('bigquery', 'v2');
+    convertMethods(
+      {
+        list: {
+          id: 'bigquery.projects.locations.list',
+          path: 'v2/{+parent}/locations',
+          flatPath: 'v2/projects/{projectsId}/locations',
+          httpMethod: 'GET',
+          description: 'Lists locations for a project.',
+          parameters: {
+            projectsId: {
+              type: 'string',
+              description: 'Project identifier',
+              required: true,
+              location: 'path',
+            },
+          },
+        },
+      },
+      '/projects',
+      converter.openapiSpec,
+    );
+
+    expect(
+      '/v2/projects/{projectsId}/locations' in converter.openapiSpec.paths,
+    ).toBe(true);
+    expect('/v2/{parent}/locations' in converter.openapiSpec.paths).toBe(false);
+
+    const getOp =
+      converter.openapiSpec.paths['/v2/projects/{projectsId}/locations']?.get;
+    expect(getOp?.operationId).toBe('bigquery.projects.locations.list');
+    expect(getOp?.parameters).toEqual([
+      {
+        name: 'projectsId',
+        in: 'path',
+        required: true,
+        schema: {type: 'string'},
+      },
+    ]);
+  });
+});

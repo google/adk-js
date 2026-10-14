@@ -45,19 +45,25 @@ import {
 import {ServiceAccountCredentialExchanger} from '../../../../../src/tools/openapi_tool/auth/credential_exchangers/service_account_exchanger.js';
 
 vi.mock('google-auth-library', () => ({
-  JWT: vi.fn().mockImplementation(() => ({
-    authorize: vi.fn().mockResolvedValue({access_token: 'mock_access_token'}),
-  })),
-  GoogleAuth: vi.fn().mockImplementation(() => ({
-    getClient: vi.fn().mockResolvedValue({
-      getAccessToken: vi.fn().mockResolvedValue({token: 'mock_access_token'}),
-    }),
-  })),
+  JWT: vi.fn().mockImplementation(function () {
+    return {
+      authorize: vi.fn().mockResolvedValue({access_token: 'mock_access_token'}),
+    };
+  }),
+  GoogleAuth: vi.fn().mockImplementation(function () {
+    return {
+      getClient: vi.fn().mockResolvedValue({
+        getAccessToken: vi.fn().mockResolvedValue({token: 'mock_access_token'}),
+      }),
+    };
+  }),
 }));
 
 /** Replaces the next `JWT` with one whose `authorize` behaves as given. */
 function stubJwtOnce(authorize: Mock): void {
-  vi.mocked(JWT).mockImplementationOnce(() => ({authorize}) as unknown as JWT);
+  vi.mocked(JWT).mockImplementationOnce(function () {
+    return {authorize} as unknown as JWT;
+  });
 }
 
 /** Mirrors the ten-field service account block the reference test builds. */
@@ -184,16 +190,15 @@ describe('ServiceAccountCredentialExchanger (adk-python v0.1.0 parity)', () => {
     // The other catch-all (`service_account_exchanger.ts:97`), which had no
     // test at all -- the only `GoogleAuth` coverage was the success case, so
     // this branch could have thrown anything.
-    vi.mocked(GoogleAuth).mockImplementationOnce(
-      () =>
-        ({
-          getClient: vi.fn().mockResolvedValue({
-            getAccessToken: vi
-              .fn()
-              .mockRejectedValue(new Error('metadata server unreachable')),
-          }),
-        }) as unknown as GoogleAuth,
-    );
+    vi.mocked(GoogleAuth).mockImplementationOnce(function () {
+      return {
+        getClient: vi.fn().mockResolvedValue({
+          getAccessToken: vi
+            .fn()
+            .mockRejectedValue(new Error('metadata server unreachable')),
+        }),
+      } as unknown as GoogleAuth;
+    });
 
     await expect(
       exchanger.exchange({

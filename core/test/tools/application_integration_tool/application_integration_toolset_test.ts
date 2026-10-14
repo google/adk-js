@@ -24,12 +24,14 @@ import {
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 vi.mock('google-auth-library', () => ({
-  GoogleAuth: vi.fn(() => ({
-    getAccessToken: vi.fn().mockResolvedValue('test_token'),
-    getClient: vi.fn().mockResolvedValue({
-      getAccessToken: vi.fn().mockResolvedValue({token: 'tool_token'}),
-    }),
-  })),
+  GoogleAuth: vi.fn(function () {
+    return {
+      getAccessToken: vi.fn().mockResolvedValue('test_token'),
+      getClient: vi.fn().mockResolvedValue({
+        getAccessToken: vi.fn().mockResolvedValue({token: 'tool_token'}),
+      }),
+    };
+  }),
 }));
 
 const PROJECT = 'test-project';

@@ -7,8 +7,14 @@
 import {Client} from '@google-cloud/vertexai';
 import {
   AgentEngineSandboxCodeExecutor,
+  BaseLlm,
+  BaseLlmConnection,
   CodeExecutionLanguage,
+  InMemoryRunner,
   InvocationContext,
+  LlmAgent,
+  LlmRequest,
+  LlmResponse,
 } from '@google/adk';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -510,6 +516,10 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       expect(contextWithoutState.session?.state).toEqual({
         sandbox_name_language_python:
           'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+        _code_execution_context: {
+          sandbox_name_language_python:
+            'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+        },
       });
     });
 
@@ -657,7 +667,122 @@ describe('AgentEngineSandboxCodeExecutor', () => {
       expect(invocationContext.session?.state).toEqual({
         sandbox_name_language_javascript:
           'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+        _code_execution_context: {
+          sandbox_name_language_javascript:
+            'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+        },
       });
+    });
+
+    it('reuses existing sandbox from _code_execution_context in session state', async () => {
+      invocationContext.session!.state!['_code_execution_context'] = {
+        sandbox_name_language_python:
+          'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+      };
+
+      await executor.executeCode({
+        invocationContext,
+        codeExecutionInput: {
+          code: 'print("hello")',
+          language: CodeExecutionLanguage.PYTHON,
+          inputFiles: [],
+        },
+      });
+
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.getInternal,
+      ).toHaveBeenCalledWith({
+        name: 'projects/test-project/locations/us-central1/reasoningEngines/123/sandboxEnvironments/456',
+      });
+      expect(
+        mockClient.agentEnginesInternal.sandboxes.createInternal,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('persists sandbox name in stateDelta and reuses a single sandbox across multiple turns with InMemoryRunner', async () => {
+      let created = 0;
+      const stubClient = {
+        agentEnginesInternal: {
+          sandboxes: {
+            createInternal: vi.fn().mockImplementation(async () => ({
+              done: true,
+              response: {name: `sandbox-${++created}`},
+            })),
+            getInternal: vi
+              .fn()
+              .mockImplementation(async ({name}: {name: string}) => ({
+                name,
+                state: 'STATE_RUNNING',
+              })),
+            executeCodeInternal: vi.fn().mockResolvedValue({outputs: []}),
+          },
+        },
+      };
+
+      class CodeTurnLlm extends BaseLlm {
+        constructor() {
+          super({model: 'stub'});
+        }
+
+        async *generateContentAsync(
+          req: LlmRequest,
+        ): AsyncGenerator<LlmResponse, void> {
+          const fresh = req.contents
+            .at(-1)
+            ?.parts?.some((p) => p.text?.startsWith('turn'));
+          yield {
+            content: {
+              role: 'model',
+              parts: [{text: fresh ? '```tool_code\nprint(1)\n```' : 'done'}],
+            },
+          };
+        }
+
+        async connect(): Promise<BaseLlmConnection> {
+          throw new Error('unused');
+        }
+      }
+
+      const agent = new LlmAgent({
+        name: 'code_agent',
+        model: new CodeTurnLlm(),
+        codeExecutor: new AgentEngineSandboxCodeExecutor({
+          agentEngineResourceName:
+            'projects/p/locations/us-central1/reasoningEngines/1',
+          client: stubClient as unknown as Client,
+        }),
+      });
+      const runner = new InMemoryRunner({agent, appName: 'repro'});
+      const {id} = await runner.sessionService.createSession({
+        appName: 'repro',
+        userId: 'u',
+      });
+
+      const storedStates: Array<Record<string, unknown>> = [];
+      for (let turn = 1; turn <= 3; turn++) {
+        for await (const _ of runner.runAsync({
+          userId: 'u',
+          sessionId: id,
+          newMessage: {role: 'user', parts: [{text: `turn ${turn}`}]},
+        })) {
+          // consume events
+        }
+        const session = await runner.sessionService.getSession({
+          appName: 'repro',
+          userId: 'u',
+          sessionId: id,
+        });
+        storedStates.push(session!.state);
+      }
+
+      expect(created).toBe(1);
+      const names = storedStates.map(
+        (s) =>
+          (
+            s['_code_execution_context'] as Record<string, unknown> | undefined
+          )?.['sandbox_name_language_python'],
+      );
+      expect(names).toEqual(['sandbox-1', 'sandbox-1', 'sandbox-1']);
     });
   });
 });
